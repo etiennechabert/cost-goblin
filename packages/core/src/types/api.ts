@@ -2,6 +2,8 @@ import type { BuiltInDimension, CostGoblinConfig, OrgNode, TagDimension } from '
 import type {
   CostQueryParams,
   CostResult,
+  DailyCostsParams,
+  DailyCostsResult,
   EntityDetailParams,
   EntityDetailResult,
   MissingTagsParams,
@@ -35,6 +37,7 @@ export interface DataInventoryResult {
 
 export interface CostApi {
   queryCosts(params: CostQueryParams): Promise<CostResult>;
+  queryDailyCosts(params: DailyCostsParams): Promise<DailyCostsResult>;
   queryTrends(params: TrendQueryParams): Promise<TrendResult>;
   queryMissingTags(params: MissingTagsParams): Promise<MissingTagsResult>;
   queryEntityDetail(params: EntityDetailParams): Promise<EntityDetailResult>;

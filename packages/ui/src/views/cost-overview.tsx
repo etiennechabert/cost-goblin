@@ -1,111 +1,113 @@
-import { useState } from 'react';
 import type {
+  CostResult,
+  DailyCostsResult,
+  DimensionId,
   Dimension,
   FilterMap,
-  CostResult,
-  EntityRef,
-  DimensionId,
-  OrgNode,
 } from '@costgoblin/core/browser';
-import { asDimensionId, asTagValue, findNode, getDescendantTagValues } from '@costgoblin/core/browser';
+import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
-import { getDimensionId, isOwnerDimension, isProductDimension } from '../lib/dimensions.js';
-import { ConceptPlaceholder } from '../components/concept-placeholder.js';
-import { SummaryCard } from '../components/summary-card.js';
-import { DimensionSelector } from '../components/dimension-selector.js';
+import {
+  useCostFocusReducer,
+  CostFocusProvider,
+  CostFocusDispatchProvider,
+  useCostFocus,
+  useCostFocusDispatch,
+} from '../hooks/use-cost-focus.js';
+import type { ExpandedPie } from '../hooks/use-cost-focus.js';
+import type { HistogramTab } from '../components/stacked-bar-chart.js';
+import { getDimensionId, getDimensionLabel, isProductDimension, isEnvironmentDimension, isOwnerDimension } from '../lib/dimensions.js';
 import { FilterBar } from '../components/filter-bar.js';
-import { CostTable } from '../components/cost-table.js';
-import { EntityPopup } from '../components/entity-popup.js';
+import { FilterActiveBanner } from '../components/filter-active-banner.js';
+import { SummaryCard } from '../components/summary-card.js';
+import { PieChart } from '../components/pie-chart.js';
+import type { PieSlice } from '../components/pie-chart.js';
+import { StackedBarChart } from '../components/stacked-bar-chart.js';
+import type { BarDay } from '../components/stacked-bar-chart.js';
 import { CsvExport } from '../components/csv-export.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
 import type { DateRange } from '../components/date-range-picker.js';
+import { formatDollars } from '../components/format.js';
+import { useState } from 'react';
 
-
-interface PopupTarget {
-  entity: string;
-  dimension: string;
+function costRowsToSlices(data: CostResult | null): PieSlice[] {
+  if (data === null) return [];
+  const total = data.totalCost;
+  return data.rows.map(r => ({
+    name: r.entity,
+    cost: r.totalCost,
+    percentage: total > 0 ? (r.totalCost / total) * 100 : 0,
+  }));
 }
 
-interface OverviewState {
-  selectedDimensionId: DimensionId | null;
-  filters: FilterMap;
-  dateRange: DateRange;
-  popup: PopupTarget | null;
-  orgPath: string[];
+function dailyCostsToBarDays(data: DailyCostsResult | null): BarDay[] {
+  if (data === null) return [];
+  return data.days.map(d => ({
+    date: d.date,
+    total: d.total,
+    breakdown: { ...d.breakdown },
+  }));
 }
 
-interface CostOverviewProps {
-  onEntityClick?: (entity: string, dimension: string) => void;
+function getProductDimensionId(dimensions: Dimension[]): DimensionId | null {
+  const dim = dimensions.find(isProductDimension);
+  return dim !== undefined ? getDimensionId(dim) : null;
 }
 
-export function CostOverview({ onEntityClick: onEntityClickProp }: CostOverviewProps = {}) {
+function getOwnerDimensionId(dimensions: Dimension[]): DimensionId | null {
+  const dim = dimensions.find(isOwnerDimension);
+  return dim !== undefined ? getDimensionId(dim) : null;
+}
+
+function OverviewInner() {
   const api = useCostApi();
+  const focus = useCostFocus();
+  const dispatch = useCostFocusDispatch();
+
+  const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange);
+  const [histogramTab, setHistogramTab] = useState<HistogramTab>('owner');
+  const [histogramExpanded, setHistogramExpanded] = useState(false);
+  const [filters, setFilters] = useState<FilterMap>({});
+  const [pie1DimId, setPie1DimId] = useState<DimensionId | null>(null);
+  const [pie2DimId, setPie2DimId] = useState<DimensionId | null>(null);
+  const [pie3DimId, setPie3DimId] = useState<DimensionId | null>(null);
 
   const dimensionsQuery = useQuery(() => api.getDimensions(), []);
+  const rawDimensions: Dimension[] = dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
 
-  const [state, setState] = useState<OverviewState>({
-    selectedDimensionId: null,
-    filters: {},
-    dateRange: getDefaultDateRange(),
-    popup: null,
-    orgPath: [],
+  const dimensions = [...rawDimensions].sort((a, b) => {
+    const priority = (d: Dimension) => {
+      if (isEnvironmentDimension(d)) return 0;
+      if (isOwnerDimension(d)) return 1;
+      if (isProductDimension(d)) return 2;
+      if (!('tagName' in d)) return 3;
+      return 4;
+    };
+    return priority(a) - priority(b);
   });
 
-  const orgTreeQuery = useQuery(() => api.getOrgTree(), []);
-  const orgTree: readonly OrgNode[] = orgTreeQuery.status === 'success' ? orgTreeQuery.data : [];
+  const ownerDimId = getOwnerDimensionId(rawDimensions);
+  const productDimId = getProductDimensionId(rawDimensions);
+  const serviceDimId = asDimensionId('service');
+  const accountDimId = asDimensionId('account');
 
-  const dimensions: Dimension[] =
-    dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
+  // Resolve effective pie dimensions (use defaults if not yet set)
+  const effectivePie1 = pie1DimId ?? accountDimId;
+  const effectivePie2 = pie2DimId ?? (productDimId ?? serviceDimId);
+  const effectivePie3 = pie3DimId ?? serviceDimId;
 
-  const firstDimId = dimensions.length > 0 && dimensions[0] !== undefined
-    ? getDimensionId(dimensions[0])
-    : null;
-
-  const activeDimensionId: DimensionId | null = state.selectedDimensionId ?? firstDimId;
-
-  const filtersKey = JSON.stringify(state.filters);
-  const dateRangeKey = `${state.dateRange.start}_${state.dateRange.end}`;
-  const orgPathKey = state.orgPath.join('/');
-
-  function getOrgNodeValuesForPath(path: string[], tree: readonly OrgNode[]): string[] | undefined {
-    if (path.length === 0) return undefined;
-    const lastNodeName = path[path.length - 1];
-    if (lastNodeName === undefined) return undefined;
-    const node = findNode(tree, lastNodeName);
-    if (node === undefined || node.children === undefined) return undefined;
-    return node.children.flatMap(child =>
-      child.virtual === true || (child.children !== undefined && child.children.length > 0)
-        ? getDescendantTagValues(child)
-        : [child.name],
-    );
+  function getDimLabel(dimId: DimensionId): string {
+    const dim = rawDimensions.find(d => getDimensionId(d) === dimId);
+    return dim !== undefined ? getDimensionLabel(dim) : dimId;
   }
 
-  const orgNodeValues = getOrgNodeValuesForPath(state.orgPath, orgTree);
+  const baseFilters: FilterMap = filters;
 
-  const costsQuery = useQuery(
-    () => {
-      if (activeDimensionId === null) return Promise.resolve(null);
-      return api.queryCosts({
-        groupBy: activeDimensionId,
-        dateRange: state.dateRange,
-        filters: state.filters,
-        ...(orgNodeValues !== undefined ? { orgNodeValues } : {}),
-      });
-    },
-    [activeDimensionId, filtersKey, dateRangeKey, orgPathKey, api],
-  );
-
-  function handleDimensionSelect(id: string) {
-    setState((prev) => ({ ...prev, selectedDimensionId: asDimensionId(id), orgPath: [] }));
-  }
-
-  function handleBreadcrumbClick(index: number) {
-    setState(prev => ({ ...prev, orgPath: prev.orgPath.slice(0, index) }));
-  }
-
-  function handleFilterChange(filters: FilterMap) {
-    setState((prev) => ({ ...prev, filters }));
+  const dateRangeKey = `${dateRange.start}_${dateRange.end}`;
+  const filterKey = JSON.stringify(baseFilters);
+  function handleFilterChange(newFilters: FilterMap) {
+    setFilters(newFilters);
   }
 
   function handleGetFilterValues(dimensionId: DimensionId, currentFilters: FilterMap): Promise<{ value: string; label: string; count: number }[]> {
@@ -113,165 +115,263 @@ export function CostOverview({ onEntityClick: onEntityClickProp }: CostOverviewP
     for (const [k, v] of Object.entries(currentFilters)) {
       if (v !== undefined) plainFilters[k] = v;
     }
-    return api.getFilterValues(dimensionId, plainFilters, state.dateRange);
+    return api.getFilterValues(dimensionId, plainFilters, dateRange);
   }
 
-  function handleDateRangeChange(dateRange: DateRange) {
-    setState((prev) => ({ ...prev, dateRange }));
-  }
+  // Pie 1 query
+  const pie1Query = useQuery(
+    () => api.queryCosts({ groupBy: effectivePie1, dateRange, filters: baseFilters }),
+    [effectivePie1, dateRangeKey, filterKey, api],
+  );
+  const pie1Slices = costRowsToSlices(pie1Query.status === 'success' ? pie1Query.data : null);
 
-  function handleVirtualEntityClick(entity: EntityRef) {
-    setState(prev => ({ ...prev, orgPath: [...prev.orgPath, entity] }));
-  }
+  // Pie 2 query
+  const pie2Query = useQuery(
+    () => api.queryCosts({ groupBy: effectivePie2, dateRange, filters: baseFilters }),
+    [effectivePie2, dateRangeKey, filterKey, api],
+  );
+  const pie2Slices = costRowsToSlices(pie2Query.status === 'success' ? pie2Query.data : null);
 
-  function handleEntityClick(entity: EntityRef) {
-    if (activeDimensionId !== null) {
-      const activeDim = dimensions.find(d => getDimensionId(d) === activeDimensionId);
-      if (activeDim !== undefined && isOwnerDimension(activeDim)) {
-        const currentRows = costData?.rows ?? [];
-        const row = currentRows.find(r => r.entity === entity);
-        if (row?.isVirtual === true) {
-          handleVirtualEntityClick(entity);
-          return;
-        }
+  // Pie 3 query (supports service drill-down when showing services)
+  const isServicePie = effectivePie3 === serviceDimId;
+  const pie3GroupBy = isServicePie && focus.serviceDrill.depth === 'service'
+    ? asDimensionId('service_family')
+    : effectivePie3;
+  const pie3Filters = isServicePie && focus.serviceDrill.depth === 'service'
+    ? { ...baseFilters, [serviceDimId]: asTagValue(focus.serviceDrill.service) }
+    : baseFilters;
+  const pie3Query = useQuery(
+    () => api.queryCosts({ groupBy: pie3GroupBy, dateRange, filters: pie3Filters }),
+    [pie3GroupBy, dateRangeKey, JSON.stringify(pie3Filters), focus.serviceDrill, api],
+  );
+  const pie3Slices = costRowsToSlices(pie3Query.status === 'success' ? pie3Query.data : null);
+
+  // Previous period query for comparison
+  const periodDays = Math.round(
+    (new Date(dateRange.end).getTime() - new Date(dateRange.start).getTime()) / (24 * 60 * 60 * 1000),
+  ) + 1;
+  const prevEnd = new Date(new Date(dateRange.start).getTime() - 24 * 60 * 60 * 1000);
+  const prevStart = new Date(prevEnd.getTime() - (periodDays - 1) * 24 * 60 * 60 * 1000);
+  const prevDateRange = {
+    start: prevStart.toISOString().slice(0, 10) as typeof dateRange.start,
+    end: prevEnd.toISOString().slice(0, 10) as typeof dateRange.end,
+  };
+
+  const prevQuery = useQuery(
+    () => api.queryCosts({ groupBy: effectivePie1, dateRange: prevDateRange, filters: baseFilters }),
+    [effectivePie1, prevDateRange.start, prevDateRange.end, filterKey, api],
+  );
+
+  const totalCost = pie1Query.status === 'success'
+    ? pie1Query.data.totalCost
+    : 0;
+  const previousCost = prevQuery.status === 'success'
+    ? prevQuery.data.totalCost
+    : undefined;
+
+  // Daily histogram via queryDailyCosts
+  const histogramDimId = histogramTab === 'owner' ? ownerDimId
+    : histogramTab === 'product' ? productDimId
+    : serviceDimId;
+
+  const dailyQuery = useQuery(
+    () => {
+      if (histogramDimId === null) return Promise.resolve(null);
+      return api.queryDailyCosts({ groupBy: histogramDimId, dateRange, filters: baseFilters });
+    },
+    [histogramDimId, dateRangeKey, filterKey, api],
+  );
+
+  const barDays = dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null);
+
+  // Click a pie slice → set as dimension filter
+  function handlePieSliceClick(dimId: DimensionId, name: string) {
+    // Service pie supports drill-down
+    if (dimId === serviceDimId) {
+      if (focus.serviceDrill.depth === 'none') {
+        dispatch({ type: 'DRILL_SERVICE', service: name });
+        return;
+      } else if (focus.serviceDrill.depth === 'service') {
+        dispatch({ type: 'DRILL_SERVICE_FAMILY', family: name });
+        return;
+      } else {
+        dispatch({ type: 'DRILL_UNWIND' });
+        return;
       }
-      setState(prev => ({ ...prev, popup: { entity, dimension: activeDimensionId } }));
     }
+    // All other pies: set as filter badge
+    setFilters(prev => ({ ...prev, [dimId]: asTagValue(name) }));
   }
 
-  function handlePopupClose() {
-    setState(prev => ({ ...prev, popup: null }));
+  function handleHover(entity: string | null, dimension: string | null) {
+    dispatch({ type: 'HOVER', entity, dimension });
   }
 
-  function handlePopupSetFilter(entity: string, dimension: string) {
-    setState(prev => ({
-      ...prev,
-      popup: null,
-      filters: { ...prev.filters, [asDimensionId(dimension)]: asTagValue(entity) },
-    }));
+  function handleExpandToggle(pie: ExpandedPie) {
+    dispatch({ type: 'TOGGLE_EXPAND', pie });
   }
 
-  function handlePopupOpenDetail(entity: string, dimension: string) {
-    setState(prev => ({ ...prev, popup: null }));
-    if (onEntityClickProp !== undefined) {
-      onEntityClickProp(entity, dimension);
-    }
+  function getPie3Title(): string {
+    if (!isServicePie) return getDimLabel(effectivePie3);
+    if (focus.serviceDrill.depth === 'none') return getDimLabel(serviceDimId);
+    if (focus.serviceDrill.depth === 'service') return focus.serviceDrill.service;
+    return `${focus.serviceDrill.service} → ${focus.serviceDrill.family}`;
   }
 
-  const costData: CostResult | null =
-    costsQuery.status === 'success' ? costsQuery.data : null;
+  function getPie3Subtitle(): string {
+    if (!isServicePie) return 'Click to filter';
+    if (focus.serviceDrill.depth === 'none') return 'Click to drill down';
+    if (focus.serviceDrill.depth === 'service') return 'Click to drill deeper';
+    return 'Click to go back';
+  }
+
+  const isLoading = dimensionsQuery.status === 'loading'
+    || pie1Query.status === 'loading'
+    || pie3Query.status === 'loading';
+
+  // Breakdown table data — use the first pie query's rows with service breakdown
+  const breakdownRows = pie1Query.status === 'success'
+    ? pie1Query.data.rows
+      .flatMap(r =>
+        Object.entries(r.serviceCosts).map(([svc, cost]) => ({
+          entity: r.entity,
+          service: svc,
+          cost: cost,
+          percentage: totalCost > 0 ? (cost / totalCost) * 100 : 0,
+        })),
+      )
+      .sort((a, b) => b.cost - a.cost)
+      .slice(0, 20)
+    : [];
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-5 p-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-text-primary">Cost Overview</h2>
           <p className="text-sm text-text-secondary mt-0.5">Cloud spending visibility</p>
         </div>
         <div className="flex items-center gap-3">
-          <DateRangePicker value={state.dateRange} onChange={handleDateRangeChange} />
-          {costData !== null && (
-            <CsvExport rows={costData.rows} topServices={costData.topServices} />
+          <DateRangePicker value={dateRange} onChange={setDateRange} />
+          {pie1Query.status === 'success' && (
+            <CsvExport rows={pie1Query.data.rows} topServices={pie1Query.data.topServices} />
           )}
         </div>
       </div>
 
-      {dimensionsQuery.status === 'loading' && (
-        <div className="text-sm text-text-secondary">Loading…</div>
-      )}
-      {dimensionsQuery.status === 'error' && (
-        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">
-          Failed to load dimensions: {dimensionsQuery.error.message}
-        </div>
-      )}
-
+      {/* Dimension filter bar */}
       {dimensions.length > 0 && (
-        <>
-          <FilterBar
-            dimensions={dimensions}
-            filters={state.filters}
-            onFilterChange={handleFilterChange}
-            getFilterValues={handleGetFilterValues}
-          />
-
-          {costData !== null && (
-            <SummaryCard
-              totalCost={costData.totalCost}
-              dateRange={costData.dateRange}
-            />
-          )}
-
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <DimensionSelector
-              dimensions={dimensions}
-              selected={activeDimensionId ?? ''}
-              onSelect={handleDimensionSelect}
-            />
-          </div>
-
-
-          {!dimensions.some(isOwnerDimension) && (
-            <ConceptPlaceholder concept="owner" />
-          )}
-
-          {!dimensions.some(isProductDimension) && (
-            <ConceptPlaceholder concept="product" />
-          )}
-
-          {costsQuery.status === 'loading' && (
-            <div className="text-sm text-text-secondary">Loading costs…</div>
-          )}
-          {costsQuery.status === 'error' && (
-            <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">
-              Failed to load costs: {costsQuery.error.message}
-            </div>
-          )}
-          {state.orgPath.length > 0 && (
-            <nav className="flex items-center gap-1 text-sm text-text-secondary">
-              <button
-                type="button"
-                className="hover:text-text-primary transition-colors"
-                onClick={() => { handleBreadcrumbClick(0); }}
-              >
-                All
-              </button>
-              {state.orgPath.map((name, i) => (
-                <span key={name} className="flex items-center gap-1">
-                  <span className="text-text-muted">/</span>
-                  {i < state.orgPath.length - 1 ? (
-                    <button
-                      type="button"
-                      className="hover:text-text-primary transition-colors"
-                      onClick={() => { handleBreadcrumbClick(i + 1); }}
-                    >
-                      {name}
-                    </button>
-                  ) : (
-                    <span className="text-text-primary">{name}</span>
-                  )}
-                </span>
-              ))}
-            </nav>
-          )}
-          {costData !== null && (
-            <CostTable
-              rows={[...costData.rows]}
-              topServices={[...costData.topServices]}
-              onEntityClick={handleEntityClick}
-            />
-          )}
-        </>
-      )}
-
-      {state.popup !== null && (
-        <EntityPopup
-          entity={state.popup.entity}
-          dimension={state.popup.dimension}
-          onClose={handlePopupClose}
-          onSetFilter={handlePopupSetFilter}
-          onOpenDetail={handlePopupOpenDetail}
+        <FilterBar
+          dimensions={dimensions}
+          filters={filters}
+          onFilterChange={handleFilterChange}
+          getFilterValues={handleGetFilterValues}
         />
       )}
+
+      {/* Filter active banner */}
+      <FilterActiveBanner />
+
+      {isLoading && (
+        <div className="text-sm text-text-secondary">Loading...</div>
+      )}
+
+      {/* Top row: Summary + Daily histogram */}
+      <div className={`grid gap-4 ${histogramExpanded ? 'grid-cols-1' : 'grid-cols-3'}`}>
+        {!histogramExpanded && (
+          <div className="flex flex-col h-full">
+            <SummaryCard
+              totalCost={totalCost}
+              previousCost={previousCost}
+              dateRange={dateRange}
+            />
+          </div>
+        )}
+
+        <div className={histogramExpanded ? '' : 'col-span-2'}>
+          <StackedBarChart
+            days={barDays}
+            highlightedGroup={focus.hoveredEntity}
+            tab={histogramTab}
+            onTabChange={setHistogramTab}
+            expanded={histogramExpanded}
+            onExpandToggle={() => { setHistogramExpanded(prev => !prev); }}
+          />
+        </div>
+      </div>
+
+      {/* Bottom row: 3 pie charts with expand/collapse */}
+      <div className="flex gap-4">
+        {([
+          { dimId: effectivePie1, setDim: setPie1DimId, slices: pie1Slices, expandKey: 'accounts' as ExpandedPie },
+          { dimId: effectivePie2, setDim: setPie2DimId, slices: pie2Slices, expandKey: 'products' as ExpandedPie },
+          { dimId: effectivePie3, setDim: setPie3DimId, slices: pie3Slices, expandKey: 'services' as ExpandedPie },
+        ] as const).map(({ dimId, setDim, slices, expandKey }, idx) => (
+          <div key={expandKey} className={`min-w-0 ${focus.expandedPie === null || focus.expandedPie === expandKey ? 'flex-1' : ''}`}>
+            <PieChart
+              data={slices}
+              title={idx === 2 ? getPie3Title() : getDimLabel(dimId)}
+              subtitle={idx === 2 ? getPie3Subtitle() : 'Click to filter'}
+              onSliceClick={(name) => { handlePieSliceClick(idx === 2 && isServicePie ? serviceDimId : dimId, name); }}
+              onSliceHover={(name) => { handleHover(name, dimId); }}
+              externalHoveredName={focus.hoveredDimension === dimId ? focus.hoveredEntity : null}
+              collapsed={focus.expandedPie !== null && focus.expandedPie !== expandKey}
+              onExpandToggle={() => { handleExpandToggle(expandKey); }}
+              dimensions={dimensions}
+              activeDimensionId={dimId}
+              onDimensionChange={(newDimId) => { setDim(asDimensionId(newDimId)); }}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* Breakdown table */}
+      {breakdownRows.length > 0 && (
+        <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden">
+          <div className="border-b border-border px-5 py-3">
+            <h3 className="text-sm font-medium text-text-secondary">Breakdown</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-text-secondary">
+                  <th className="px-5 pb-2 pt-3 font-medium">Entity</th>
+                  <th className="px-5 pb-2 pt-3 font-medium">Service</th>
+                  <th className="px-5 pb-2 pt-3 text-right font-medium">Cost</th>
+                  <th className="px-5 pb-2 pt-3 text-right font-medium">%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {breakdownRows.map((r, i) => (
+                  <tr key={`${r.entity}-${r.service}-${String(i)}`} className="border-b border-border-subtle hover:bg-bg-tertiary/20 transition-colors">
+                    <td className="px-5 py-2 text-text-primary">{r.entity}</td>
+                    <td className="px-5 py-2 text-text-secondary">{r.service}</td>
+                    <td className="px-5 py-2 text-right tabular-nums text-text-primary font-medium">
+                      {formatDollars(r.cost)}
+                    </td>
+                    <td className="px-5 py-2 text-right tabular-nums text-text-secondary">
+                      {r.percentage.toFixed(1)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+export function CostOverview() {
+  const [state, dispatch] = useCostFocusReducer();
+
+  return (
+    <CostFocusProvider value={state}>
+      <CostFocusDispatchProvider value={dispatch}>
+        <OverviewInner />
+      </CostFocusDispatchProvider>
+    </CostFocusProvider>
   );
 }

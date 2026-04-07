@@ -1,5 +1,6 @@
 export {
   buildCostQuery,
+  buildDailyCostsQuery,
   buildTrendQuery,
   buildMissingTagsQuery,
   buildEntityDetailQuery,

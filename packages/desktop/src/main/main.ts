@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, shell } from 'electron';
 import { join } from 'node:path';
 import { logger } from '@costgoblin/core';
 import type { LogEntry } from '@costgoblin/core';
@@ -57,6 +57,11 @@ async function createWindow(db: DuckDBInstance): Promise<void> {
   } else {
     await win.loadFile(join(__dirname, '..', 'renderer', 'index.html'));
   }
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: 'deny' };
+  });
 
   logger.info('Window created');
 }

@@ -1,5 +1,5 @@
 import type { DimensionsConfig } from '../types/config.js';
-import type { CostQueryParams, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
+import type { CostQueryParams, DailyCostsParams, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import type { DimensionId } from '../types/branded.js';
 import { buildAliasSqlCase } from '../normalize/normalize.js';
 
@@ -174,6 +174,31 @@ export function buildMissingTagsQuery(
     GROUP BY account_id, account_name, resource_id, service, service_family
     HAVING SUM(cost) >= ${String(params.minCost)}
     ORDER BY cost DESC
+  `.trim();
+}
+
+export function buildDailyCostsQuery(
+  params: DailyCostsParams,
+  dataDir: string,
+  dimensions: DimensionsConfig,
+): string {
+  const groupByResolved = resolveField(params.groupBy, dimensions);
+  const filterClauses = buildFilterClauses(params.filters, dimensions);
+
+  const whereConditions = [
+    `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
+    ...filterClauses,
+  ];
+
+  return `
+    SELECT
+      usage_date::VARCHAR AS date,
+      ${groupByResolved.fieldExpr} AS group_name,
+      SUM(cost) AS cost
+    FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true)
+    WHERE ${whereConditions.join(' AND ')}
+    GROUP BY date, group_name
+    ORDER BY date, cost DESC
   `.trim();
 }
 

@@ -2,12 +2,9 @@ import { useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
-import type { SyncStatus } from '@costgoblin/core/browser';
-
 type WizardStep =
   | { step: 'welcome' }
-  | { step: 'config'; profile: string; dailyBucket: string; hourlyBucket: string; connectionStatus: 'idle' | 'testing' | 'success' | 'error'; error: string }
-  | { step: 'sync'; syncStatus: 'idle' | 'syncing' | 'done' | 'error' };
+  | { step: 'config'; profile: string; dailyBucket: string; hourlyBucket: string; connectionStatus: 'idle' | 'testing' | 'success' | 'error'; error: string };
 
 interface SetupWizardProps {
   onComplete: () => void;
@@ -21,7 +18,7 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
         <p className="text-text-secondary text-lg">Cloud cost visibility for your team</p>
       </div>
       <p className="text-text-muted text-sm max-w-md">
-        Connect your AWS billing data to get started. CostGoblin syncs CUR data from S3, stores it locally, and lets you slice costs by any dimension.
+        Connect your AWS billing data to get started. CostGoblin syncs CUR (Cost and Usage Report) data from S3, stores it locally, and lets you slice costs by any dimension.
       </p>
       <Button
         onClick={onNext}
@@ -29,6 +26,17 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
       >
         Get Started
       </Button>
+      <p className="text-text-muted text-xs">
+        {"Don't have a CUR yet? "}
+        <a
+          href="https://docs.aws.amazon.com/cur/latest/userguide/cur-create.html"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-accent underline underline-offset-2 hover:text-accent-hover"
+        >
+          Learn how to create a CUR v2 report
+        </a>
+      </p>
     </div>
   );
 }
@@ -63,16 +71,19 @@ function ConfigStep({ state, onUpdate, onTestConnection, onNext }: {
 
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium text-text-secondary" htmlFor="setup-daily-bucket">
-            Daily S3 Bucket Path
+            CUR S3 Path
           </label>
           <input
             id="setup-daily-bucket"
             type="text"
             value={state.dailyBucket}
             onChange={(e) => { onUpdate({ dailyBucket: e.target.value, connectionStatus: 'idle', error: '' }); }}
-            placeholder="s3://my-cur-bucket/daily"
+            placeholder="s3://my-cur-bucket/report-prefix/"
             className="h-9 rounded-md border border-border bg-bg-primary px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
           />
+          <p className="text-xs text-text-muted">
+            Path to the CUR report prefix containing <code className="text-text-secondary">data/</code> and <code className="text-text-secondary">metadata/</code> folders.
+          </p>
         </div>
 
         <div className="flex flex-col gap-1.5">
@@ -116,78 +127,6 @@ function ConfigStep({ state, onUpdate, onTestConnection, onNext }: {
           Next
         </Button>
       </div>
-    </div>
-  );
-}
-
-function SyncStep({ state, onStartSync, onSkip, onDone }: {
-  state: Extract<WizardStep, { step: 'sync' }>;
-  onStartSync: () => void;
-  onSkip: () => void;
-  onDone: () => void;
-}) {
-  return (
-    <div className="flex flex-col gap-5">
-      <div>
-        <h2 className="text-xl font-semibold text-text-primary">Initial Sync</h2>
-        <p className="text-sm text-text-secondary mt-1">Download billing data from S3</p>
-      </div>
-
-      {state.syncStatus === 'idle' && (
-        <div className="flex flex-col items-center gap-4 py-6">
-          <p className="text-sm text-text-secondary text-center max-w-md">
-            Sync your billing data now, or skip and do it later from the Data tab.
-          </p>
-          <div className="flex items-center gap-3">
-            <Button
-              onClick={onStartSync}
-              className="bg-accent hover:bg-accent-hover text-white px-8"
-            >
-              Start Sync
-            </Button>
-          </div>
-          <button
-            type="button"
-            onClick={onSkip}
-            className="text-sm text-text-muted hover:text-text-secondary underline underline-offset-2"
-          >
-            Skip for now
-          </button>
-        </div>
-      )}
-
-      {state.syncStatus === 'syncing' && (
-        <div className="flex flex-col items-center gap-4 py-6">
-          <div className="h-1.5 w-full max-w-xs rounded-full bg-bg-tertiary overflow-hidden">
-            <div className="h-full bg-accent rounded-full animate-pulse" style={{ width: '60%' }} />
-          </div>
-          <p className="text-sm text-text-secondary">Syncing data...</p>
-        </div>
-      )}
-
-      {state.syncStatus === 'done' && (
-        <div className="flex flex-col items-center gap-4 py-6">
-          <span className="text-accent text-lg">Sync complete</span>
-          <Button
-            onClick={onDone}
-            className="bg-accent hover:bg-accent-hover text-white px-8"
-          >
-            Done
-          </Button>
-        </div>
-      )}
-
-      {state.syncStatus === 'error' && (
-        <div className="flex flex-col items-center gap-4 py-6">
-          <span className="text-sm text-negative">Sync failed. You can retry later from the Data tab.</span>
-          <Button
-            onClick={onDone}
-            className="bg-accent hover:bg-accent-hover text-white px-8"
-          >
-            Continue Anyway
-          </Button>
-        </div>
-      )}
     </div>
   );
 }
@@ -237,43 +176,8 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
       dailyBucket,
       ...(hourlyBucket.length > 0 ? { hourlyBucket } : {}),
     }).then(() => {
-      setWizard({ step: 'sync', syncStatus: 'idle' });
+      onComplete();
     });
-  }
-
-  function handleStartSync() {
-    setWizard({ step: 'sync', syncStatus: 'syncing' });
-
-    void api.triggerSync().then(() => {
-      return pollSyncUntilDone();
-    });
-  }
-
-  function pollSyncUntilDone(): Promise<void> {
-    return new Promise((resolve) => {
-      const check = () => {
-        void api.getSyncStatus().then((status: SyncStatus) => {
-          if (status.status === 'completed') {
-            setWizard({ step: 'sync', syncStatus: 'done' });
-            resolve();
-          } else if (status.status === 'failed') {
-            setWizard({ step: 'sync', syncStatus: 'error' });
-            resolve();
-          } else {
-            setTimeout(check, 1000);
-          }
-        });
-      };
-      setTimeout(check, 1000);
-    });
-  }
-
-  function handleSkip() {
-    onComplete();
-  }
-
-  function handleDone() {
-    onComplete();
   }
 
   return (
@@ -287,14 +191,6 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
               onUpdate={handleConfigUpdate}
               onTestConnection={handleTestConnection}
               onNext={handleConfigNext}
-            />
-          )}
-          {wizard.step === 'sync' && (
-            <SyncStep
-              state={wizard}
-              onStartSync={handleStartSync}
-              onSkip={handleSkip}
-              onDone={handleDone}
             />
           )}
         </CardContent>

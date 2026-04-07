@@ -9,6 +9,7 @@ import type {
   AccountMappingStatus,
   CostApi,
   CostResult,
+  DailyCostsResult,
   DataInventoryResult,
   Dimension,
   EntityDetailResult,
@@ -174,6 +175,27 @@ const orgTree: OrgNode[] = [
 
 export class MockCostApi implements CostApi {
   queryCosts(): Promise<CostResult> { return Promise.resolve(costResult); }
+  queryDailyCosts(): Promise<DailyCostsResult> {
+    const days = Array.from({ length: 30 }, (_, i) => {
+      const d = new Date(2026, 2, i + 1);
+      const date = d.toISOString().slice(0, 10);
+      return {
+        date: asDateString(date),
+        total: asDollars(3000 + Math.random() * 2000),
+        breakdown: {
+          platform: asDollars(1200 + Math.random() * 800),
+          data: asDollars(900 + Math.random() * 600),
+          growth: asDollars(500 + Math.random() * 400),
+          infra: asDollars(300 + Math.random() * 200),
+        },
+      };
+    });
+    return Promise.resolve({
+      days,
+      groups: ['platform', 'data', 'growth', 'infra'],
+      totalCost: asDollars(days.reduce((s, d) => s + d.total, 0)),
+    });
+  }
   queryTrends(): Promise<TrendResult> { return Promise.resolve(trendResult); }
   queryMissingTags(): Promise<MissingTagsResult> { return Promise.resolve(missingTagsResult); }
   queryEntityDetail(): Promise<EntityDetailResult> { return Promise.resolve(entityDetailResult); }

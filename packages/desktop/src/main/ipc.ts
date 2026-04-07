@@ -2,6 +2,7 @@ import { ipcMain, shell } from 'electron';
 import type { DuckDBInstance, DuckDBConnection } from './duckdb-loader.js';
 import {
   buildCostQuery,
+  buildDailyCostsQuery,
   buildTrendQuery,
   buildMissingTagsQuery,
   buildEntityDetailQuery,
@@ -39,12 +40,16 @@ import type {
   MissingTagsParams,
   MissingTagsResult,
   MissingTagRow,
+  DailyCostsParams,
+  DailyCostsResult,
+  DailyCostDay,
   EntityDetailParams,
   EntityDetailResult,
   DailyCost,
   DistributionSlice,
   SyncStatus,
   DateRange,
+  Dollars,
 } from '@costgoblin/core';
 
 type RawRow = Readonly<Record<string, unknown>>;
@@ -484,6 +489,53 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       }
 
       return result;
+    });
+  });
+
+  ipcMain.handle('query:daily-costs', async (_event, params: DailyCostsParams): Promise<DailyCostsResult> => {
+    const dimensions = await getDimensions();
+    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions);
+    logger.info('query:daily-costs', { groupBy: params.groupBy });
+
+    return withConnection(async (conn) => {
+      const rows = await queryAll(conn, sql);
+
+      const dayMap = new Map<string, Record<string, number>>();
+      const groupSet = new Set<string>();
+      let totalCost = 0;
+
+      for (const row of rows) {
+        const rawDate = row['date'];
+        const rawGroup = row['group_name'];
+        const date = rawDate instanceof Date
+          ? rawDate.toISOString().slice(0, 10)
+          : typeof rawDate === 'string' ? rawDate : '';
+        const group = typeof rawGroup === 'string' ? rawGroup : '';
+        const cost = Number(row['cost'] ?? 0);
+
+        groupSet.add(group);
+        totalCost += cost;
+
+        const existing = dayMap.get(date);
+        if (existing !== undefined) {
+          existing[group] = (existing[group] ?? 0) + cost;
+        } else {
+          dayMap.set(date, { [group]: cost });
+        }
+      }
+
+      const days: DailyCostDay[] = [...dayMap.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([date, breakdown]) => {
+          const total = Object.values(breakdown).reduce((s, v) => s + v, 0);
+          const typedBreakdown: Record<string, Dollars> = {};
+          for (const [k, v] of Object.entries(breakdown)) {
+            typedBreakdown[k] = asDollars(v);
+          }
+          return { date: asDateString(date), total: asDollars(total), breakdown: typedBreakdown };
+        });
+
+      return { days, groups: [...groupSet], totalCost: asDollars(totalCost) };
     });
   });
 

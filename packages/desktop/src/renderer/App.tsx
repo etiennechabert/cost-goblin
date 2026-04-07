@@ -194,7 +194,7 @@ export function App(): React.JSX.Element {
         </div>
 
         {/* View content */}
-        {view.page === 'overview' && <CostOverview onEntityClick={handleEntityClick} />}
+        {view.page === 'overview' && <CostOverview />}
         {view.page === 'trends' && <CostTrends onEntityClick={handleEntityClick} />}
         {view.page === 'missing-tags' && <MissingTags />}
         <div className={view.page === 'data' ? '' : 'hidden'}>

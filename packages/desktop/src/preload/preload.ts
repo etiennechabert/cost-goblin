@@ -5,6 +5,8 @@ import type {
   OrgNode,
   CostQueryParams,
   CostResult,
+  DailyCostsParams,
+  DailyCostsResult,
   TrendQueryParams,
   TrendResult,
   MissingTagsParams,
@@ -23,6 +25,9 @@ function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 const api: CostApi = {
   queryCosts(params: CostQueryParams): Promise<CostResult> {
     return invoke<CostResult>('query:costs', params);
+  },
+  queryDailyCosts(params: DailyCostsParams): Promise<DailyCostsResult> {
+    return invoke<DailyCostsResult>('query:daily-costs', params);
   },
   queryTrends(params: TrendQueryParams): Promise<TrendResult> {
     return invoke<TrendResult>('query:trends', params);
