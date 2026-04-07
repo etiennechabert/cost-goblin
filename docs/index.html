@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CostGoblin — Cloud cost visibility on your machine</title>
+  <meta name="description" content="CostGoblin is a desktop app that syncs your AWS billing data locally and queries it with DuckDB. No servers, no SaaS fees, no third-party data sharing.">
+  <meta property="og:title" content="CostGoblin — Cloud cost visibility on your machine">
+  <meta property="og:description" content="Desktop app for cloud cost analytics. Syncs AWS billing locally, queries with DuckDB. Your data never leaves your laptop.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://costgoblin.com">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="CostGoblin — Cloud cost visibility on your machine">
+  <meta name="twitter:description" content="Desktop app for cloud cost analytics. Your data stays local.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👹</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #050505;
+      --bg-raised: #0a0a0a;
+      --bg-card: #0d0f0d;
+      --border: #1a1f1a;
+      --border-glow: #10b981;
+      --text: #e2e8e2;
+      --text-dim: #6b7b6b;
+      --text-muted: #3a4a3a;
+      --emerald: #10b981;
+      --emerald-dim: #065f46;
+      --emerald-glow: rgba(16, 185, 129, 0.15);
+      --emerald-glow-strong: rgba(16, 185, 129, 0.3);
+      --gold: #d4a843;
+      --font-display: 'Outfit', sans-serif;
+      --font-mono: 'DM Mono', monospace;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font-display);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* --- Grid background --- */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(16, 185, 129, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(16, 185, 129, 0.03) 1px, transparent 1px);
+      background-size: 60px 60px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* --- Noise texture overlay --- */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      opacity: 0.4;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    section, header, footer { position: relative; z-index: 1; }
+
+    .container {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* --- NAV --- */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 16px 24px;
+      background: rgba(5, 5, 5, 0.8);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    nav .inner {
+      max-width: 980px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-logo {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--emerald);
+      letter-spacing: 0.05em;
+      text-decoration: none;
+    }
+
+    .nav-links { display: flex; gap: 24px; align-items: center; }
+
+    .nav-links a {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-dim);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover { color: var(--emerald); }
+
+    .gh-star {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-dim);
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+
+    .gh-star:hover {
+      border-color: var(--emerald);
+      color: var(--emerald);
+      background: var(--emerald-glow);
+    }
+
+    .gh-star svg { width: 16px; height: 16px; }
+
+    /* --- HERO --- */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 120px 24px 80px;
+      position: relative;
+    }
+
+    /* Radial glow behind hero */
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: 20%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, var(--emerald-glow) 0%, transparent 70%);
+      pointer-events: none;
+      opacity: 0.6;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      border: 1px solid var(--emerald-dim);
+      border-radius: 100px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--emerald);
+      margin-bottom: 40px;
+      background: rgba(16, 185, 129, 0.05);
+      animation: fadeInUp 0.8s ease both;
+    }
+
+    .hero-badge .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--emerald);
+      animation: pulse-dot 2s ease infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+      50% { opacity: 0.8; box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+    }
+
+    .hero-icon {
+      font-size: 56px;
+      margin-bottom: 32px;
+      animation: fadeInUp 0.8s ease 0.1s both;
+      filter: drop-shadow(0 0 40px rgba(16, 185, 129, 0.3));
+    }
+
+    .hero h1 {
+      font-size: clamp(40px, 6vw, 72px);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.05;
+      margin-bottom: 24px;
+      animation: fadeInUp 0.8s ease 0.2s both;
+    }
+
+    .hero h1 span {
+      background: linear-gradient(135deg, var(--emerald), #34d399);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-sub {
+      font-size: clamp(16px, 2vw, 20px);
+      font-weight: 300;
+      color: var(--text-dim);
+      max-width: 540px;
+      line-height: 1.7;
+      margin-bottom: 48px;
+      animation: fadeInUp 0.8s ease 0.3s both;
+    }
+
+    .hero-terminal {
+      width: 100%;
+      max-width: 520px;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      text-align: left;
+      animation: fadeInUp 0.8s ease 0.4s both;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .terminal-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .terminal-dot:nth-child(1) { background: #ff5f56; }
+    .terminal-dot:nth-child(2) { background: #ffbd2e; }
+    .terminal-dot:nth-child(3) { background: #27c93f; }
+
+    .terminal-body {
+      padding: 20px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 2;
+    }
+
+    .terminal-body .prompt { color: var(--emerald); }
+    .terminal-body .cmd { color: var(--text); }
+    .terminal-body .comment { color: var(--text-muted); }
+    .terminal-body .output { color: var(--text-dim); }
+
+    .cursor {
+      display: inline-block;
+      width: 8px;
+      height: 16px;
+      background: var(--emerald);
+      margin-left: 2px;
+      vertical-align: text-bottom;
+      animation: blink 1.2s step-end infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    /* --- VALUE PROPS --- */
+    .values {
+      padding: 100px 24px;
+      border-top: 1px solid var(--border);
+    }
+
+    .values-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+    }
+
+    .value-card {
+      position: relative;
+      padding: 36px 32px 32px;
+      border-radius: 12px;
+      background: linear-gradient(160deg, rgba(16, 185, 129, 0.06) 0%, var(--bg) 50%);
+      border: 1px solid var(--border);
+      opacity: 0;
+      transform: translateY(20px);
+      transition: all 0.6s ease;
+      overflow: hidden;
+    }
+
+    .value-card::before {
+      content: '';
+      position: absolute;
+      top: -1px;
+      left: 24px;
+      right: 24px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--emerald), transparent);
+      opacity: 0.5;
+    }
+
+    .value-card.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .value-card:hover {
+      border-color: rgba(16, 185, 129, 0.25);
+      background: linear-gradient(160deg, rgba(16, 185, 129, 0.1) 0%, var(--bg) 50%);
+    }
+
+    .value-icon {
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      margin-bottom: 24px;
+      font-size: 22px;
+      background: rgba(16, 185, 129, 0.08);
+      border: 1px solid rgba(16, 185, 129, 0.15);
+    }
+
+    .value-card h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 10px;
+      letter-spacing: -0.01em;
+    }
+
+    .value-card p {
+      font-size: 14px;
+      color: var(--text-dim);
+      line-height: 1.7;
+    }
+
+    /* --- FEATURES --- */
+    .features {
+      padding: 100px 24px;
+      border-top: 1px solid var(--border);
+    }
+
+    .section-label {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--emerald);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+    }
+
+    .section-title {
+      font-size: clamp(28px, 4vw, 40px);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-bottom: 64px;
+      max-width: 500px;
+    }
+
+    .features-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+    }
+
+    .feature-item {
+      padding: 28px 0;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+      opacity: 0;
+      transform: translateY(12px);
+      transition: all 0.5s ease;
+    }
+
+    .feature-item:nth-child(odd) { padding-right: 40px; border-right: 1px solid var(--border); }
+    .feature-item:nth-child(even) { padding-left: 40px; }
+
+    .feature-item.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .feature-num {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      min-width: 24px;
+      padding-top: 2px;
+    }
+
+    .feature-item h4 {
+      font-size: 15px;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+
+    .feature-item p {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    /* --- CTA / SIGNUP --- */
+    .cta {
+      padding: 120px 24px;
+      text-align: center;
+      border-top: 1px solid var(--border);
+      position: relative;
+    }
+
+    .cta::before {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 800px;
+      height: 400px;
+      background: radial-gradient(ellipse, var(--emerald-glow) 0%, transparent 70%);
+      pointer-events: none;
+      opacity: 0.4;
+    }
+
+    .cta h2 {
+      font-size: clamp(28px, 4vw, 44px);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-bottom: 16px;
+    }
+
+    .cta p {
+      font-size: 16px;
+      color: var(--text-dim);
+      margin-bottom: 48px;
+      max-width: 440px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .signup-form {
+      display: flex;
+      gap: 0;
+      max-width: 440px;
+      margin: 0 auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      transition: border-color 0.3s;
+    }
+
+    .signup-form:focus-within {
+      border-color: var(--emerald);
+      box-shadow: 0 0 0 3px var(--emerald-glow);
+    }
+
+    .signup-form input {
+      flex: 1;
+      padding: 14px 18px;
+      background: var(--bg-raised);
+      border: none;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 14px;
+      outline: none;
+    }
+
+    .signup-form input::placeholder { color: var(--text-muted); }
+
+    .signup-form button {
+      padding: 14px 28px;
+      background: var(--emerald);
+      border: none;
+      color: #050505;
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+      white-space: nowrap;
+    }
+
+    .signup-form button:hover { background: #34d399; }
+
+    .signup-note {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 12px;
+      font-family: var(--font-mono);
+    }
+
+    /* --- FOOTER --- */
+    footer {
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+    }
+
+    footer .inner {
+      max-width: 980px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    footer .left {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    footer .right { display: flex; gap: 20px; }
+
+    footer a {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-dim);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    footer a:hover { color: var(--emerald); }
+
+    /* --- ANIMATIONS --- */
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* --- RESPONSIVE --- */
+    @media (max-width: 768px) {
+      .values-grid { grid-template-columns: 1fr; }
+      .features-list { grid-template-columns: 1fr; }
+      .feature-item:nth-child(odd) { padding-right: 0; border-right: none; }
+      .feature-item:nth-child(even) { padding-left: 0; }
+      .signup-form { flex-direction: column; }
+      .signup-form button { padding: 14px; }
+      .nav-links a:not(.gh-star) { display: none; }
+    }
+
+    @media (max-width: 480px) {
+      .hero { padding: 100px 20px 60px; }
+      .terminal-body { font-size: 11px; padding: 14px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <div class="inner">
+      <a href="/" class="nav-logo">CostGoblin</a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#notify">Get notified</a>
+        <a href="https://github.com/etiennechabert/cost-goblin" target="_blank" rel="noopener" class="gh-star">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          Star
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-badge"><span class="dot"></span> Coming soon</div>
+    <div class="hero-icon">👹</div>
+    <h1>Know every dollar<br>in your <span>cloud</span></h1>
+    <p class="hero-sub">
+      CostGoblin syncs your AWS billing data locally and queries it with DuckDB.
+      No servers. No SaaS fees. Your data never leaves your machine.
+    </p>
+    <div class="hero-terminal">
+      <div class="terminal-bar">
+        <span class="terminal-dot"></span>
+        <span class="terminal-dot"></span>
+        <span class="terminal-dot"></span>
+      </div>
+      <div class="terminal-body">
+        <div><span class="comment"># sync billing data from S3</span></div>
+        <div><span class="prompt">$ </span><span class="cmd">costgoblin sync --provider aws</span></div>
+        <div><span class="output">Syncing 16 billing periods... done (3.5 GB)</span></div>
+        <div><span class="output">Repartitioned to 471 daily partitions</span></div>
+        <div>&nbsp;</div>
+        <div><span class="comment"># launch the desktop app</span></div>
+        <div><span class="prompt">$ </span><span class="cmd">costgoblin</span><span class="cursor"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VALUE PROPS -->
+  <section class="values">
+    <div class="container">
+      <div class="values-grid">
+        <div class="value-card" data-animate>
+          <div class="value-icon">&#x1F4BB;</div>
+          <h3>Zero servers</h3>
+          <p>No infrastructure to provision or maintain. CostGoblin runs entirely on your laptop as a native desktop app.</p>
+        </div>
+        <div class="value-card" data-animate>
+          <div class="value-icon">&#x1F512;</div>
+          <h3>Your data stays local</h3>
+          <p>Billing data is downloaded to your machine as Parquet files. Nothing is sent to any third party. Ever.</p>
+        </div>
+        <div class="value-card" data-animate>
+          <div class="value-icon">&#x26A1;</div>
+          <h3>DuckDB-powered</h3>
+          <p>Analytical queries over months of billing data complete in milliseconds. Filter, drill down, and slice by any dimension.</p>
+        </div>
+        <div class="value-card" data-animate>
+          <div class="value-icon">&#x2708;</div>
+          <h3>Works offline</h3>
+          <p>Once synced, your data lives on your machine. Analyze cloud costs from a plane at 10,000 meters — no Wi-Fi required.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="features" id="features">
+    <div class="container">
+      <div class="section-label">What it does</div>
+      <div class="section-title">Cloud cost visibility without the cloud</div>
+      <div class="features-list">
+        <div class="feature-item" data-animate>
+          <span class="feature-num">01</span>
+          <div>
+            <h4>S3 billing sync</h4>
+            <p>Downloads AWS Cost and Usage Reports from S3 and repartitions them into optimized daily Parquet files.</p>
+          </div>
+        </div>
+        <div class="feature-item" data-animate>
+          <span class="feature-num">02</span>
+          <div>
+            <h4>Cost breakdown by any dimension</h4>
+            <p>Slice costs by account, service, region, team, product, environment, or any custom tag.</p>
+          </div>
+        </div>
+        <div class="feature-item" data-animate>
+          <span class="feature-num">03</span>
+          <div>
+            <h4>Tag normalization</h4>
+            <p>Aliases and normalization rules applied at query time. Fix messy tags without re-processing data.</p>
+          </div>
+        </div>
+        <div class="feature-item" data-animate>
+          <span class="feature-num">04</span>
+          <div>
+            <h4>Drill-down analytics</h4>
+            <p>Click through from service to service family. Filter by environment. Cross-chart interactions update everything.</p>
+          </div>
+        </div>
+        <div class="feature-item" data-animate>
+          <span class="feature-num">05</span>
+          <div>
+            <h4>Period-over-period trends</h4>
+            <p>See which accounts, services, or teams are trending up. Spot anomalies before they become incidents.</p>
+          </div>
+        </div>
+        <div class="feature-item" data-animate>
+          <span class="feature-num">06</span>
+          <div>
+            <h4>CSV export</h4>
+            <p>Export any view to CSV for reporting, budgeting, or sharing with finance.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta" id="notify">
+    <div class="container">
+      <div class="section-label">Stay in the loop</div>
+      <h2>Get notified at launch</h2>
+      <p>We'll send exactly one email when CostGoblin is ready to download. Nothing else.</p>
+      <form class="signup-form" action="https://formspree.io/f/xyzgoblin" method="POST">
+        <input type="email" name="email" placeholder="you@company.com" required autocomplete="email">
+        <button type="submit">Notify me</button>
+      </form>
+      <div class="signup-note">No spam. Unsubscribe anytime.</div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="inner">
+      <div class="left">&copy; 2026 CostGoblin</div>
+      <div class="right">
+        <a href="https://github.com/etiennechabert/cost-goblin" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry, i) => {
+        if (entry.isIntersecting) {
+          const el = entry.target;
+          const siblings = [...el.parentElement.querySelectorAll('[data-animate]')];
+          const idx = siblings.indexOf(el);
+          el.style.transitionDelay = `${idx * 100}ms`;
+          el.classList.add('visible');
+          observer.unobserve(el);
+        }
+      });
+    }, { threshold: 0.15 });
+
+    document.querySelectorAll('[data-animate]').forEach(el => observer.observe(el));
+  </script>
+
+</body>
+</html>
