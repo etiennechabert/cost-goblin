@@ -542,6 +542,74 @@
 
     .hp { position: absolute; left: -9999px; }
 
+    /* --- ROADMAP --- */
+    .roadmap {
+      padding: 100px 24px;
+      border-top: 1px solid var(--border);
+    }
+
+    .roadmap-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+    }
+
+    .roadmap-card {
+      position: relative;
+      padding: 28px 24px;
+      border-radius: 10px;
+      border: 1px dashed var(--text-muted);
+      background: rgba(255, 255, 255, 0.01);
+      opacity: 0;
+      transform: translateY(16px);
+      transition: all 0.5s ease;
+    }
+
+    .roadmap-card.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .roadmap-card:hover {
+      border-color: var(--text-dim);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .roadmap-badge {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--gold);
+      border: 1px solid rgba(212, 168, 67, 0.3);
+      background: rgba(212, 168, 67, 0.06);
+      padding: 3px 8px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+    }
+
+    .roadmap-card h4 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: var(--text-dim);
+    }
+
+    .roadmap-card p {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    @media (max-width: 768px) {
+      .roadmap-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 480px) {
+      .roadmap-grid { grid-template-columns: 1fr; }
+    }
+
     /* --- FOOTER --- */
     footer {
       padding: 40px 24px;
@@ -716,6 +784,36 @@
             <h4>CSV export</h4>
             <p>Export any view to CSV for reporting, budgeting, or sharing with finance.</p>
           </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ROADMAP -->
+  <section class="roadmap">
+    <div class="container">
+      <div class="section-label">Roadmap</div>
+      <div class="section-title">What's next</div>
+      <div class="roadmap-grid">
+        <div class="roadmap-card" data-animate>
+          <div class="roadmap-badge">Coming soon</div>
+          <h4>Multi-cloud</h4>
+          <p>GCP and Azure billing support alongside AWS. One interface for all your cloud spend.</p>
+        </div>
+        <div class="roadmap-card" data-animate>
+          <div class="roadmap-badge">Coming soon</div>
+          <h4>Anomaly detection</h4>
+          <p>Automatic alerts when spending deviates from historical patterns. Catch surprises before the bill lands.</p>
+        </div>
+        <div class="roadmap-card" data-animate>
+          <div class="roadmap-badge">Coming soon</div>
+          <h4>Team budgets</h4>
+          <p>Set spending targets per team, product, or environment. Track burn rate against budget in real time.</p>
+        </div>
+        <div class="roadmap-card" data-animate>
+          <div class="roadmap-badge">Coming soon</div>
+          <h4>Collaboration</h4>
+          <p>Share dashboards and cost reports with your team. Collaborative triage for cost spikes.</p>
         </div>
       </div>
     </div>
