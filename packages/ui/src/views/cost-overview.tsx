@@ -16,8 +16,8 @@ import {
   useCostFocusDispatch,
 } from '../hooks/use-cost-focus.js';
 import type { HistogramTab } from '../components/stacked-bar-chart.js';
-import { getDimensionId, isProductDimension, isEnvironmentDimension } from '../lib/dimensions.js';
-import { EnvironmentBar } from '../components/environment-bar.js';
+import { getDimensionId, isProductDimension, isEnvironmentDimension, isOwnerDimension } from '../lib/dimensions.js';
+import { FilterBar } from '../components/filter-bar.js';
 import { FilterActiveBanner } from '../components/filter-active-banner.js';
 import { SummaryCard } from '../components/summary-card.js';
 import { PieChart } from '../components/pie-chart.js';
@@ -53,11 +53,6 @@ function entityDetailToBarDays(data: EntityDetailResult | null, groupBy: Histogr
   }));
 }
 
-function getEnvDimensionId(dimensions: Dimension[]): DimensionId | null {
-  const envDim = dimensions.find(isEnvironmentDimension);
-  return envDim !== undefined ? getDimensionId(envDim) : null;
-}
-
 function getProductDimensionId(dimensions: Dimension[]): DimensionId | null {
   const dim = dimensions.find(isProductDimension);
   return dim !== undefined ? getDimensionId(dim) : null;
@@ -70,18 +65,29 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
 
   const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange);
   const [histogramTab, setHistogramTab] = useState<HistogramTab>('owner');
+  const [filters, setFilters] = useState<FilterMap>({});
 
   const dimensionsQuery = useQuery(() => api.getDimensions(), []);
-  const dimensions: Dimension[] = dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
+  const rawDimensions: Dimension[] = dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
 
-  const envDimId = getEnvDimensionId(dimensions);
-  const productDimId = getProductDimensionId(dimensions);
+  // Sort dimensions: environment → owner → product → built-ins → rest
+  const dimensions = [...rawDimensions].sort((a, b) => {
+    const priority = (d: Dimension) => {
+      if (isEnvironmentDimension(d)) return 0;
+      if (isOwnerDimension(d)) return 1;
+      if (isProductDimension(d)) return 2;
+      if (!('tagName' in d)) return 3;
+      return 4;
+    };
+    return priority(a) - priority(b);
+  });
+
+  const productDimId = getProductDimensionId(rawDimensions);
   const serviceDimId = asDimensionId('service');
   const accountDimId = asDimensionId('account');
 
-  const baseFilters: FilterMap = focus.environment !== null && envDimId !== null
-    ? { [envDimId]: asTagValue(focus.environment) }
-    : {};
+  // Combine user filters with service drill-down
+  const baseFilters: FilterMap = filters;
 
   const serviceFilters: FilterMap = focus.serviceDrill.depth !== 'none'
     ? { ...baseFilters, [serviceDimId]: asTagValue(focus.serviceDrill.service) }
@@ -91,18 +97,17 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
   const filterKey = JSON.stringify(baseFilters);
   const serviceFilterKey = JSON.stringify(serviceFilters);
 
-  // Environment costs query (unfiltered, for the env bar)
-  const envCostsQuery = useQuery(
-    () => {
-      if (envDimId === null) return Promise.resolve(null);
-      return api.queryCosts({ groupBy: envDimId, dateRange, filters: {} });
-    },
-    [envDimId, dateRangeKey, api],
-  );
+  function handleFilterChange(newFilters: FilterMap) {
+    setFilters(newFilters);
+  }
 
-  const envBarData = envCostsQuery.status === 'success' && envCostsQuery.data !== null
-    ? envCostsQuery.data.rows.map(r => ({ name: r.entity, cost: r.totalCost }))
-    : [];
+  function handleGetFilterValues(dimensionId: DimensionId, currentFilters: FilterMap): Promise<{ value: string; label: string; count: number }[]> {
+    const plainFilters: Record<string, string> = {};
+    for (const [k, v] of Object.entries(currentFilters)) {
+      if (v !== undefined) plainFilters[k] = v;
+    }
+    return api.getFilterValues(dimensionId, plainFilters, dateRange);
+  }
 
   // Accounts pie
   const accountsQuery = useQuery(
@@ -224,12 +229,13 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
         </div>
       </div>
 
-      {/* Environment filter bar */}
-      {envBarData.length > 0 && (
-        <EnvironmentBar
-          environments={envBarData}
-          selected={focus.environment}
-          onSelect={(env) => { dispatch({ type: 'SET_ENVIRONMENT', env }); }}
+      {/* Dimension filter bar */}
+      {dimensions.length > 0 && (
+        <FilterBar
+          dimensions={dimensions}
+          filters={filters}
+          onFilterChange={handleFilterChange}
+          getFilterValues={handleGetFilterValues}
         />
       )}
 
