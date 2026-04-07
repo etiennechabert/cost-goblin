@@ -5,16 +5,15 @@ import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostOverview } from '../views/cost-overview.js';
 
-function renderOverview(onEntityClick?: (entity: string, dimension: string) => void) {
+function renderOverview() {
   const api = new MockCostApi();
   const user = userEvent.setup();
-  const props = onEntityClick !== undefined ? { onEntityClick } : {};
   return {
     api,
     user,
     ...render(
       <CostApiProvider value={api}>
-        <CostOverview {...props} />
+        <CostOverview />
       </CostApiProvider>,
     ),
   };
@@ -38,7 +37,6 @@ describe('CostOverview', () => {
     await waitFor(() => {
       expect(screen.getByText('Total Cost')).toBeDefined();
     });
-    expect(screen.getByText('Top entities')).toBeDefined();
     expect(screen.getByText('Daily Costs')).toBeDefined();
   });
 
@@ -79,13 +77,6 @@ describe('CostOverview', () => {
     renderOverview();
     await waitFor(() => {
       expect(screen.getByText('Total Cost')).toBeDefined();
-    });
-  });
-
-  it('renders top entities list', async () => {
-    renderOverview();
-    await waitFor(() => {
-      expect(screen.getByText('Top entities')).toBeDefined();
     });
   });
 });

@@ -3,6 +3,8 @@ import { Group } from '@visx/group';
 import { Pie } from '@visx/shape';
 import { PALETTE_STANDARD } from '../lib/palette.js';
 import { formatDollars } from './format.js';
+import type { Dimension } from '@costgoblin/core/browser';
+import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
 
 export interface PieSlice {
   readonly name: string;
@@ -20,6 +22,9 @@ interface PieChartProps {
   collapsed?: boolean;
   onExpandToggle?: () => void;
   maxSlices?: number;
+  dimensions?: readonly Dimension[] | undefined;
+  activeDimensionId?: string | undefined;
+  onDimensionChange?: ((dimId: string) => void) | undefined;
 }
 
 const OTHER_KEY = 'Other';
@@ -60,6 +65,9 @@ function PieChartInner({
   externalHoveredName,
   onExpandToggle,
   maxSlices = 15,
+  dimensions,
+  activeDimensionId,
+  onDimensionChange,
   width,
   height,
 }: Omit<PieChartProps, 'collapsed'> & { width: number; height: number }) {
@@ -87,7 +95,22 @@ function PieChartInner({
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium text-text-secondary">{title}</h3>
+        {dimensions !== undefined && dimensions.length > 0 && onDimensionChange !== undefined ? (
+          <select
+            value={activeDimensionId ?? ''}
+            onChange={(e) => { onDimensionChange(e.target.value); }}
+            className="text-sm font-medium text-text-secondary bg-transparent border-none outline-none cursor-pointer hover:text-text-primary transition-colors appearance-none pr-4"
+            style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'10\' height=\'6\' viewBox=\'0 0 10 6\' fill=\'none\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cpath d=\'M1 1l4 4 4-4\' stroke=\'%236b7280\' stroke-width=\'1.5\' stroke-linecap=\'round\'/%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right center' }}
+          >
+            {dimensions.map(d => (
+              <option key={getDimensionId(d)} value={getDimensionId(d)}>
+                {getDimensionLabel(d)}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <h3 className="text-sm font-medium text-text-secondary">{title}</h3>
+        )}
         <div className="flex items-center gap-2">
           {subtitle !== undefined && (
             <span className="text-[11px] text-text-muted">{subtitle}</span>

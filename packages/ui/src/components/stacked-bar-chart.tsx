@@ -15,9 +15,11 @@ interface StackedBarChartProps {
   highlightedGroup?: string | null;
   tab: HistogramTab;
   onTabChange: (tab: HistogramTab) => void;
+  expanded?: boolean | undefined;
+  onExpandToggle?: (() => void) | undefined;
 }
 
-export function StackedBarChart({ days, highlightedGroup, tab, onTabChange }: StackedBarChartProps) {
+export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle }: StackedBarChartProps) {
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
 
   const allKeys = new Set<string>();
@@ -40,6 +42,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange }: St
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-medium text-text-secondary">Daily Costs</h3>
+        <div className="flex items-center gap-2">
         <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
           {tabs.map(t => (
             <button
@@ -57,6 +60,19 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange }: St
             </button>
           ))}
         </div>
+        {onExpandToggle !== undefined && (
+          <button
+            type="button"
+            onClick={onExpandToggle}
+            className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-tertiary/50 transition-colors"
+            title={expanded === true ? 'Collapse' : 'Expand'}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M1 5V1h4M9 1h4v4M1 9v4h4M9 13h4v-4" />
+            </svg>
+          </button>
+        )}
+        </div>
       </div>
 
       {days.length > 0 ? (
@@ -67,7 +83,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange }: St
             <div className="flex-1 border-b border-border-subtle" />
           </div>
 
-          <div className="flex items-end ml-12" style={{ height: '180px', gap: '2px' }}>
+          <div className="flex items-end ml-12" style={{ height: expanded === true ? '360px' : '180px', gap: '2px' }}>
             {days.map((day) => {
               const barPct = maxCost > 0 ? (day.total / maxCost) * 100 : 0;
               const segments = breakdownKeys

@@ -2,7 +2,7 @@ import { formatDollars, formatDate } from './format.js';
 
 interface SummaryCardProps {
   totalCost: number;
-  previousCost?: number;
+  previousCost?: number | undefined;
   dateRange: { start: string; end: string };
 }
 
@@ -15,27 +15,47 @@ export function SummaryCard({ totalCost, previousCost, dateRange }: SummaryCardP
   const isDecrease = delta !== null && delta < 0;
   const isIncrease = delta !== null && delta > 0;
 
+  const dailyAvg = (() => {
+    const start = new Date(dateRange.start).getTime();
+    const end = new Date(dateRange.end).getTime();
+    const days = Math.max(1, Math.round((end - start) / (24 * 60 * 60 * 1000)) + 1);
+    return totalCost / days;
+  })();
+
   return (
-    <div className="rounded-xl border border-border bg-bg-secondary px-6 py-5">
-      <p className="text-xs font-medium uppercase tracking-wider text-text-secondary">Total Cost</p>
-      <div className="mt-1 flex items-end gap-3">
-        <span className="text-4xl font-bold tabular-nums text-text-primary">
+    <div className="flex flex-col justify-between rounded-xl border border-border bg-bg-secondary px-6 py-5 h-full">
+      <div>
+        <p className="text-xs font-medium uppercase tracking-wider text-text-secondary">Total Cost</p>
+        <span className="mt-2 block text-4xl font-bold tabular-nums text-text-primary">
           {formatDollars(totalCost)}
         </span>
-        {delta !== null && (
-          <span
-            className={[
-              'mb-1 flex items-center gap-0.5 text-sm font-medium tabular-nums',
-              isDecrease ? 'text-positive' : isIncrease ? 'text-negative' : 'text-text-secondary',
-            ].join(' ')}
-          >
-            {isDecrease ? '▼' : isIncrease ? '▲' : ''}
-            {Math.abs(delta).toFixed(1)}%
-            <span className="ml-1 font-normal text-text-secondary">vs prev period</span>
-          </span>
-        )}
       </div>
-      <p className="mt-2 text-xs text-text-secondary">
+
+      <div className="flex flex-col gap-3 mt-4">
+        {delta !== null && (
+          <div className="rounded-lg bg-bg-tertiary/30 px-4 py-3">
+            <p className="text-xs uppercase tracking-wider text-text-muted">vs Previous Period</p>
+            <p className={`mt-1 text-2xl font-bold tabular-nums ${isIncrease ? 'text-negative' : isDecrease ? 'text-positive' : 'text-text-secondary'}`}>
+              {isDecrease ? '▼' : isIncrease ? '▲' : ''}
+              {Math.abs(delta).toFixed(1)}%
+            </p>
+            {previousCost !== undefined && (
+              <p className="mt-0.5 text-xs text-text-muted">
+                Previous: {formatDollars(previousCost)}
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="rounded-lg bg-bg-tertiary/30 px-4 py-3">
+          <p className="text-xs uppercase tracking-wider text-text-muted">Daily Average</p>
+          <p className="mt-1 text-lg font-semibold tabular-nums text-text-primary">
+            {formatDollars(dailyAvg)}
+          </p>
+        </div>
+      </div>
+
+      <p className="mt-3 text-xs text-text-muted">
         {formatDate(dateRange.start)} – {formatDate(dateRange.end)}
       </p>
     </div>
