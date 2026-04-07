@@ -1,0 +1,35 @@
+{
+  "name": "costgoblin",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/core",
+    "packages/ui",
+    "packages/desktop"
+  ],
+  "scripts": {
+    "check": "tsc --noEmit -p packages/core/tsconfig.json && tsc --noEmit -p packages/ui/tsconfig.json && tsc --noEmit -p packages/desktop/tsconfig.json && eslint packages/*/src/ && vitest run",
+    "dev": "COSTGOBLIN_DATA_DIR=$PWD/data/processed COSTGOBLIN_CONFIG_DIR=$PWD/data/config npm run dev --workspace=packages/desktop",
+    "dev:fixtures": "COSTGOBLIN_DATA_DIR=$PWD/packages/core/src/__fixtures__/synthetic COSTGOBLIN_CONFIG_DIR=$PWD/packages/core/src/__fixtures__/config npm run dev --workspace=packages/desktop",
+    "repartition": "npx tsx scripts/repartition.ts",
+    "build": "npm run build --workspaces",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "@playwright/test": "^1.59.1",
+    "@tailwindcss/postcss": "^4.2.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "husky": "^9.1.7",
+    "jsdom": "^29.0.1",
+    "postcss": "^8.5.8",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

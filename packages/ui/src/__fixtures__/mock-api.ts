@@ -1,0 +1,194 @@
+import {
+  asBucketPath,
+  asDimensionId,
+  asDollars,
+  asDateString,
+  asEntityRef,
+} from '@costgoblin/core/browser';
+import type {
+  AccountMappingStatus,
+  CostApi,
+  CostResult,
+  DataInventoryResult,
+  Dimension,
+  EntityDetailResult,
+  MissingTagsResult,
+  OrgNode,
+  SyncStatus,
+  TrendResult,
+  CostGoblinConfig,
+} from '@costgoblin/core/browser';
+
+const costResult: CostResult = {
+  rows: [
+    {
+      entity: asEntityRef('platform'),
+      totalCost: asDollars(42_300.5),
+      serviceCosts: {
+        'Amazon EC2': asDollars(18_000),
+        'Amazon RDS': asDollars(9_500),
+        'Amazon S3': asDollars(6_200),
+        'AWS Lambda': asDollars(4_100),
+        'Amazon CloudFront': asDollars(4_500.5),
+      },
+    },
+    {
+      entity: asEntityRef('data'),
+      totalCost: asDollars(31_750),
+      serviceCosts: {
+        'Amazon EC2': asDollars(10_000),
+        'Amazon RDS': asDollars(14_000),
+        'Amazon S3': asDollars(5_200),
+        'AWS Lambda': asDollars(1_500),
+        'Amazon CloudFront': asDollars(1_050),
+      },
+    },
+    {
+      entity: asEntityRef('growth'),
+      totalCost: asDollars(18_900),
+      serviceCosts: {
+        'Amazon EC2': asDollars(7_000),
+        'Amazon RDS': asDollars(4_500),
+        'Amazon S3': asDollars(3_100),
+        'AWS Lambda': asDollars(2_800),
+        'Amazon CloudFront': asDollars(1_500),
+      },
+    },
+    {
+      entity: asEntityRef('infra'),
+      totalCost: asDollars(14_200),
+      serviceCosts: {
+        'Amazon EC2': asDollars(9_000),
+        'Amazon RDS': asDollars(2_000),
+        'Amazon S3': asDollars(1_800),
+        'AWS Lambda': asDollars(900),
+        'Amazon CloudFront': asDollars(500),
+      },
+    },
+    {
+      entity: asEntityRef('ml'),
+      totalCost: asDollars(9_600),
+      serviceCosts: {
+        'Amazon EC2': asDollars(5_500),
+        'Amazon RDS': asDollars(1_200),
+        'Amazon S3': asDollars(1_400),
+        'AWS Lambda': asDollars(800),
+        'Amazon CloudFront': asDollars(700),
+      },
+    },
+  ],
+  totalCost: asDollars(116_750.5),
+  topServices: ['Amazon EC2', 'Amazon RDS', 'Amazon S3', 'AWS Lambda', 'Amazon CloudFront'],
+  dateRange: { start: asDateString('2026-03-01'), end: asDateString('2026-03-31') },
+};
+
+const trendResult: TrendResult = {
+  increases: [
+    { entity: asEntityRef('ml'), currentCost: asDollars(9_600), previousCost: asDollars(7_200), delta: asDollars(2_400), percentChange: 33.3 },
+    { entity: asEntityRef('platform'), currentCost: asDollars(42_300.5), previousCost: asDollars(38_100), delta: asDollars(4_200.5), percentChange: 11.0 },
+    { entity: asEntityRef('growth'), currentCost: asDollars(18_900), previousCost: asDollars(17_500), delta: asDollars(1_400), percentChange: 8.0 },
+  ],
+  savings: [
+    { entity: asEntityRef('infra'), currentCost: asDollars(14_200), previousCost: asDollars(16_800), delta: asDollars(-2_600), percentChange: -15.5 },
+    { entity: asEntityRef('data'), currentCost: asDollars(31_750), previousCost: asDollars(33_400), delta: asDollars(-1_650), percentChange: -4.9 },
+  ],
+  totalIncrease: asDollars(8_000.5),
+  totalSavings: asDollars(4_250),
+};
+
+const missingTagsResult: MissingTagsResult = {
+  rows: [
+    { accountId: '123456789012', accountName: 'prod-main', resourceId: 'i-0abc123def456gh78', service: 'Amazon EC2', serviceFamily: 'Compute', cost: asDollars(1_200), closestOwner: asEntityRef('platform') },
+    { accountId: '234567890123', accountName: 'prod-data', resourceId: 'arn:aws:rds:us-east-1:234567890123:db:analytics-prod', service: 'Amazon RDS', serviceFamily: 'Database', cost: asDollars(870), closestOwner: asEntityRef('data') },
+    { accountId: '345678901234', accountName: 'staging', resourceId: 'arn:aws:s3:::untagged-bucket-staging', service: 'Amazon S3', serviceFamily: 'Storage', cost: asDollars(340), closestOwner: null },
+  ],
+  totalUntaggedCost: asDollars(2_410),
+  resourceCount: 3,
+};
+
+const entityDetailResult: EntityDetailResult = {
+  entity: asEntityRef('platform'),
+  totalCost: asDollars(42_300.5),
+  previousCost: asDollars(38_100),
+  percentChange: 11.0,
+  dailyCosts: [
+    { date: asDateString('2026-03-29'), cost: asDollars(1_380), breakdown: { 'Amazon EC2': asDollars(580), 'Amazon RDS': asDollars(310), 'Amazon S3': asDollars(200), 'AWS Lambda': asDollars(140), 'Amazon CloudFront': asDollars(150) }, breakdownByAccount: { 'prod-main': asDollars(900), 'prod-secondary': asDollars(330), 'staging': asDollars(150) } },
+    { date: asDateString('2026-03-30'), cost: asDollars(1_420), breakdown: { 'Amazon EC2': asDollars(600), 'Amazon RDS': asDollars(320), 'Amazon S3': asDollars(205), 'AWS Lambda': asDollars(145), 'Amazon CloudFront': asDollars(150) }, breakdownByAccount: { 'prod-main': asDollars(930), 'prod-secondary': asDollars(340), 'staging': asDollars(150) } },
+    { date: asDateString('2026-03-31'), cost: asDollars(1_360), breakdown: { 'Amazon EC2': asDollars(560), 'Amazon RDS': asDollars(305), 'Amazon S3': asDollars(198), 'AWS Lambda': asDollars(147), 'Amazon CloudFront': asDollars(150) }, breakdownByAccount: { 'prod-main': asDollars(880), 'prod-secondary': asDollars(330), 'staging': asDollars(150) } },
+  ],
+  byAccount: [
+    { name: 'prod-main', cost: asDollars(28_000), percentage: 66.2 },
+    { name: 'prod-secondary', cost: asDollars(10_000), percentage: 23.6 },
+    { name: 'staging', cost: asDollars(4_300.5), percentage: 10.2 },
+  ],
+  byService: [
+    { name: 'Amazon EC2', cost: asDollars(18_000), percentage: 42.6 },
+    { name: 'Amazon RDS', cost: asDollars(9_500), percentage: 22.5 },
+    { name: 'Amazon S3', cost: asDollars(6_200), percentage: 14.7 },
+    { name: 'Amazon CloudFront', cost: asDollars(4_500.5), percentage: 10.6 },
+    { name: 'AWS Lambda', cost: asDollars(4_100), percentage: 9.7 },
+  ],
+  bySubEntity: [
+    { name: 'backend', cost: asDollars(22_000), percentage: 52.0 },
+    { name: 'frontend', cost: asDollars(12_000), percentage: 28.4 },
+    { name: 'shared', cost: asDollars(8_300.5), percentage: 19.6 },
+  ],
+};
+
+const syncStatus: SyncStatus = { status: 'idle', lastSync: null };
+
+const config: CostGoblinConfig = {
+  providers: [{
+    name: 'aws-main',
+    type: 'aws',
+    credentials: { profile: 'default' },
+    sync: { daily: { bucket: asBucketPath('costgoblin-cur-bucket/daily'), retentionDays: 90 }, intervalMinutes: 60 },
+  }],
+  defaults: { periodDays: 30, costMetric: 'UnblendedCost', lagDays: 2 },
+  cache: { ttlMinutes: 15 },
+};
+
+const mockDimensions: Dimension[] = [
+  { name: asDimensionId('account'), label: 'Account', field: 'line_item_usage_account_id', displayField: 'account_name' },
+  { name: asDimensionId('service'), label: 'Service', field: 'product_service_name' },
+  { name: asDimensionId('region'), label: 'Region', field: 'product_region' },
+  { name: asDimensionId('resource'), label: 'Resource', field: 'line_item_resource_id' },
+  { tagName: 'team', label: 'Team', concept: 'owner', normalize: 'lowercase-kebab', aliases: { platform: ['Platform', 'platform-eng', 'plt'], data: ['Data', 'data-eng', 'data-platform'] } },
+  { tagName: 'env', label: 'Environment', concept: 'environment', normalize: 'lowercase', aliases: { prod: ['production', 'prd'], staging: ['stage', 'stg'] } },
+  { tagName: 'product', label: 'Product', concept: 'product', normalize: 'lowercase-kebab' },
+];
+
+const orgTree: OrgNode[] = [
+  {
+    name: 'engineering',
+    virtual: true,
+    children: [
+      { name: 'platform', children: [{ name: 'backend' }, { name: 'frontend' }, { name: 'shared' }] },
+      { name: 'data', children: [{ name: 'analytics' }, { name: 'pipelines' }] },
+      { name: 'ml', children: [{ name: 'training' }, { name: 'inference' }] },
+    ],
+  },
+  { name: 'growth', children: [{ name: 'acquisition' }, { name: 'retention' }] },
+  { name: 'infra', children: [{ name: 'networking' }, { name: 'security' }] },
+];
+
+export class MockCostApi implements CostApi {
+  queryCosts(): Promise<CostResult> { return Promise.resolve(costResult); }
+  queryTrends(): Promise<TrendResult> { return Promise.resolve(trendResult); }
+  queryMissingTags(): Promise<MissingTagsResult> { return Promise.resolve(missingTagsResult); }
+  queryEntityDetail(): Promise<EntityDetailResult> { return Promise.resolve(entityDetailResult); }
+  getSyncStatus(): Promise<SyncStatus> { return Promise.resolve(syncStatus); }
+  triggerSync(): Promise<void> { return Promise.resolve(); }
+  getConfig(): Promise<CostGoblinConfig> { return Promise.resolve(config); }
+  getDimensions(): Promise<Dimension[]> { return Promise.resolve(mockDimensions); }
+  getOrgTree(): Promise<OrgNode[]> { return Promise.resolve(orgTree); }
+  getFilterValues(): Promise<{ value: string; label: string; count: number }[]> { return Promise.resolve([]); }
+  getDataInventory(): Promise<DataInventoryResult> { return Promise.resolve({ periods: [], totalRemoteSize: 0, totalLocalPeriods: 0, totalRemotePeriods: 0, local: { dailyDates: [], dailyDiskBytes: 0, hourlyDates: [], hourlyDiskBytes: 0, oldestDate: null, newestDate: null } }); }
+  syncPeriods(): Promise<{ filesDownloaded: number; rowsProcessed: number }> { return Promise.resolve({ filesDownloaded: 0, rowsProcessed: 0 }); }
+  deleteLocalPeriod(): Promise<void> { return Promise.resolve(); }
+  openDataFolder(): Promise<void> { return Promise.resolve(); }
+  getAccountMapping(): Promise<AccountMappingStatus> { return Promise.resolve({ status: 'missing' }); }
+  getSetupStatus(): Promise<{ configured: boolean }> { return Promise.resolve({ configured: true }); }
+  testConnection(): Promise<{ ok: boolean; error?: string | undefined }> { return Promise.resolve({ ok: true }); }
+  writeConfig(): Promise<void> { return Promise.resolve(); }
+}

@@ -1,0 +1,20 @@
+tree:
+  - name: "Company"
+    virtual: true
+    children:
+      - name: "Engineering"
+        virtual: true
+        children:
+          - name: "core-banking"
+          - name: "payments"
+          - name: "identity"
+          - name: "platform"
+      - name: "Data"
+        virtual: true
+        children:
+          - name: "analytics"
+          - name: "ml-platform"
+      - name: "SRE"
+        children:
+          - name: "sre-emea"
+          - name: "sre-us"

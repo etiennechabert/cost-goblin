@@ -1,0 +1,21 @@
+providers:
+  - name: aws-main
+    type: aws
+    credentials:
+      profile: test-profile
+    sync:
+      daily:
+        bucket: s3://test-cur-bucket/daily/
+        retentionDays: 365
+      hourly:
+        bucket: s3://test-cur-bucket/hourly/
+        retentionDays: 30
+      intervalMinutes: 60
+
+defaults:
+  periodDays: 30
+  costMetric: unblended_cost
+  lagDays: 1
+
+cache:
+  ttlMinutes: 30

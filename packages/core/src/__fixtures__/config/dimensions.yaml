@@ -1,0 +1,55 @@
+builtIn:
+  - name: account
+    label: "Account"
+    field: account_id
+    displayField: account_name
+
+  - name: region
+    label: "Region"
+    field: region
+
+  - name: service
+    label: "Service"
+    field: service
+
+  - name: service_family
+    label: "Service Family"
+    field: service_family
+
+tags:
+  - tagName: "team"
+    label: "Team"
+    concept: owner
+    normalize: lowercase-kebab
+    aliases:
+      core-banking:
+        - core_banking
+        - corebanking
+        - CoreBanking
+      platform:
+        - platform-team
+        - platform_team
+
+  - tagName: "system"
+    label: "Service"
+    concept: product
+    normalize: lowercase
+
+  - tagName: "environment"
+    label: "Environment"
+    concept: environment
+    normalize: lowercase
+    aliases:
+      production:
+        - prod
+        - prd
+      staging:
+        - stg
+        - stage
+      development:
+        - dev
+        - develop
+
+  - tagName: "cost-center"
+    label: "Cost Center"
+    normalize: uppercase

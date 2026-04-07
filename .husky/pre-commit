@@ -1,0 +1,6 @@
+if git diff --cached --name-only | grep -q "^data/raw/"; then
+  echo "ERROR: Real data files must not be committed"
+  exit 1
+fi
+
+npm run check
