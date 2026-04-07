@@ -6,6 +6,7 @@ out/
 
 # Test artifacts
 test-results/
+coverage/
 e2e/*.png
 e2e/*.txt
 
