@@ -630,7 +630,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
     const sql = `
       SELECT ${fieldExpr} AS val, SUM(cost) AS total_cost
-      FROM read_parquet('${ctx.dataDir}/aws/daily/**/data.parquet', hive_partitioning = true)
+      FROM read_parquet('${ctx.dataDir}/aws/daily/**/data.parquet', hive_partitioning = true, union_by_name = true)
       ${whereStr}
       GROUP BY val
       HAVING val IS NOT NULL AND val != ''
