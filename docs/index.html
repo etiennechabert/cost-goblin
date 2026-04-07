@@ -12,7 +12,8 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="CostGoblin — Cloud cost visibility on your machine">
   <meta name="twitter:description" content="Desktop app for cloud cost analytics. Your data stays local.">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👹</text></svg>">
+  <link rel="icon" href="goblin.png">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -199,10 +200,14 @@
     }
 
     .hero-icon {
-      font-size: 56px;
       margin-bottom: 32px;
       animation: fadeInUp 0.8s ease 0.1s both;
       filter: drop-shadow(0 0 40px rgba(16, 185, 129, 0.3));
+    }
+
+    .hero-icon img {
+      width: clamp(140px, 20vw, 220px);
+      height: auto;
     }
 
     .hero h1 {
@@ -516,6 +521,27 @@
       font-family: var(--font-mono);
     }
 
+    .signup-success {
+      font-family: var(--font-mono);
+      font-size: 15px;
+      color: var(--emerald);
+      padding: 18px 24px;
+      border: 1px solid var(--emerald-dim);
+      border-radius: 8px;
+      background: rgba(16, 185, 129, 0.05);
+      display: none;
+    }
+
+    .signup-error {
+      font-size: 13px;
+      color: #f87171;
+      margin-top: 10px;
+      font-family: var(--font-mono);
+      display: none;
+    }
+
+    .hp { position: absolute; left: -9999px; }
+
     /* --- FOOTER --- */
     footer {
       padding: 40px 24px;
@@ -591,7 +617,7 @@
   <!-- HERO -->
   <section class="hero">
     <div class="hero-badge"><span class="dot"></span> Coming soon</div>
-    <div class="hero-icon">👹</div>
+    <div class="hero-icon"><img src="goblin.png" alt="CostGoblin mascot — a goblin guarding gold coins"></div>
     <h1>Know every dollar<br>in your <span>cloud</span></h1>
     <p class="hero-sub">
       CostGoblin syncs your AWS billing data locally and queries it with DuckDB.
@@ -701,11 +727,15 @@
       <div class="section-label">Stay in the loop</div>
       <h2>Get notified at launch</h2>
       <p>We'll send exactly one email when CostGoblin is ready to download. Nothing else.</p>
-      <form class="signup-form" action="https://formspree.io/f/xyzgoblin" method="POST">
+      <div class="signup-success" id="signup-success">You're on the list. We'll email you at launch.</div>
+      <form class="signup-form" id="signup-form" action="/api/signup" method="POST">
+        <input type="text" name="website" class="hp" tabindex="-1" autocomplete="off">
         <input type="email" name="email" placeholder="you@company.com" required autocomplete="email">
         <button type="submit">Notify me</button>
       </form>
-      <div class="signup-note">No spam. Unsubscribe anytime.</div>
+      <div class="cf-turnstile" data-sitekey="YOUR_SITE_KEY" data-theme="dark" style="margin-top: 12px; display: flex; justify-content: center;"></div>
+      <div class="signup-error" id="signup-error"></div>
+      <div class="signup-note" id="signup-note">No spam. Unsubscribe anytime.</div>
     </div>
   </section>
 
@@ -734,6 +764,49 @@
     }, { threshold: 0.15 });
 
     document.querySelectorAll('[data-animate]').forEach(el => observer.observe(el));
+
+    const form = document.getElementById('signup-form');
+    const successEl = document.getElementById('signup-success');
+    const errorEl = document.getElementById('signup-error');
+    const noteEl = document.getElementById('signup-note');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const formData = new FormData(form);
+      const btn = form.querySelector('button');
+      btn.disabled = true;
+      btn.textContent = 'Sending...';
+      errorEl.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: formData.get('email'),
+            website: formData.get('website'),
+            'cf-turnstile-response': formData.get('cf-turnstile-response'),
+          }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          form.style.display = 'none';
+          noteEl.style.display = 'none';
+          document.querySelector('.cf-turnstile').style.display = 'none';
+          successEl.style.display = 'block';
+        } else {
+          errorEl.textContent = data.error || 'Something went wrong. Try again.';
+          errorEl.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Notify me';
+        }
+      } catch {
+        errorEl.textContent = 'Network error. Try again.';
+        errorEl.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Notify me';
+      }
+    });
   </script>
 
 </body>
