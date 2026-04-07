@@ -507,7 +507,9 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       for (const row of rows) {
         const rawDate = row['date'];
         const rawGroup = row['group_name'];
-        const date = typeof rawDate === 'string' ? rawDate : '';
+        const date = rawDate instanceof Date
+          ? rawDate.toISOString().slice(0, 10)
+          : typeof rawDate === 'string' ? rawDate : '';
         const group = typeof rawGroup === 'string' ? rawGroup : '';
         const cost = Number(row['cost'] ?? 0);
 

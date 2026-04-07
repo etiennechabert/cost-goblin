@@ -192,7 +192,7 @@ export function buildDailyCostsQuery(
 
   return `
     SELECT
-      usage_date AS date,
+      usage_date::VARCHAR AS date,
       ${groupByResolved.fieldExpr} AS group_name,
       SUM(cost) AS cost
     FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true)
