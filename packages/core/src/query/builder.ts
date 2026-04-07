@@ -58,7 +58,7 @@ export function buildCostQuery(
         ${groupByResolved.fieldExpr} AS entity,
         service,
         SUM(cost) AS cost
-      FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true, union_by_name = true)
+      FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true)
       WHERE ${whereConditions.join(' AND ')}
       GROUP BY entity, service
     ),
@@ -114,7 +114,7 @@ export function buildTrendQuery(
       SELECT
         ${groupByResolved.fieldExpr} AS entity,
         SUM(cost) AS total_cost
-      FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true, union_by_name = true)
+      FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true)
       WHERE usage_date BETWEEN '${startDate}' AND '${endDate}'${filterWhere}
       GROUP BY entity
     ),
@@ -125,7 +125,7 @@ export function buildTrendQuery(
       SELECT
         ${groupByResolved.fieldExpr} AS entity,
         SUM(cost) AS total_cost
-      FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true, union_by_name = true)
+      FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true)
       WHERE usage_date BETWEEN
         DATE '${startDate}' - (SELECT days FROM period_length) * INTERVAL '1 day'
         AND DATE '${startDate}' - INTERVAL '1 day'${filterWhere}
@@ -169,7 +169,7 @@ export function buildMissingTagsQuery(
       service,
       service_family,
       SUM(cost) AS cost
-    FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true, union_by_name = true)
+    FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true)
     WHERE ${whereConditions.join(' AND ')}
     GROUP BY account_id, account_name, resource_id, service, service_family
     HAVING SUM(cost) >= ${String(params.minCost)}
@@ -195,7 +195,7 @@ export function buildDailyCostsQuery(
       usage_date::VARCHAR AS date,
       ${groupByResolved.fieldExpr} AS group_name,
       SUM(cost) AS cost
-    FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true, union_by_name = true)
+    FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true)
     WHERE ${whereConditions.join(' AND ')}
     GROUP BY date, group_name
     ORDER BY date, cost DESC
@@ -225,7 +225,7 @@ export function buildEntityDetailQuery(
       account_id,
       account_name,
       SUM(cost) AS cost
-    FROM read_parquet('${dataDir}/aws/${tier}/**/data.parquet', hive_partitioning = true, union_by_name = true)
+    FROM read_parquet('${dataDir}/aws/${tier}/**/data.parquet', hive_partitioning = true)
     WHERE ${whereConditions.join(' AND ')}
     GROUP BY usage_date, service, account_id, account_name
     ORDER BY usage_date, cost DESC
