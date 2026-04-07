@@ -23,6 +23,10 @@ export { FilterBar } from './components/filter-bar.js';
 export { EnvironmentBar } from './components/environment-bar.js';
 export { SummaryCard } from './components/summary-card.js';
 export { DimensionSelector } from './components/dimension-selector.js';
+export { PieChart } from './components/pie-chart.js';
+export { StackedBarChart } from './components/stacked-bar-chart.js';
+export { FilterActiveBanner } from './components/filter-active-banner.js';
+export { useCostFocus, useCostFocusDispatch, useCostFocusReducer, CostFocusProvider, CostFocusDispatchProvider } from './hooks/use-cost-focus.js';
 
 export { CostOverview } from './views/cost-overview.js';
 export { CostTrends } from './views/cost-trends.js';

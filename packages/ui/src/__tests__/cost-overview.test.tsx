@@ -23,34 +23,33 @@ function renderOverview(onEntityClick?: (entity: string, dimension: string) => v
 afterEach(cleanup);
 
 describe('CostOverview', () => {
-  it('renders "Cost Overview" heading', () => {
+  it('renders heading', () => {
     renderOverview();
     expect(screen.getByText('Cost Overview')).toBeDefined();
   });
 
   it('shows loading state initially', () => {
     renderOverview();
-    expect(screen.getByText('Loading\u2026')).toBeDefined();
+    expect(screen.getByText('Loading...')).toBeDefined();
   });
 
-  it('shows dimension selector after data loads', async () => {
+  it('renders summary and chart sections after data loads', async () => {
     renderOverview();
     await waitFor(() => {
-      expect(screen.getAllByText('Account').length).toBeGreaterThan(0);
+      expect(screen.getByText('Total Cost')).toBeDefined();
     });
-    expect(screen.getAllByText('Service').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Region').length).toBeGreaterThan(0);
+    expect(screen.getByText('Top entities')).toBeDefined();
+    expect(screen.getByText('Daily Costs')).toBeDefined();
   });
 
-  it('shows cost table with entity data after loading', async () => {
+  it('renders daily costs chart with tab selector', async () => {
     renderOverview();
     await waitFor(() => {
-      expect(screen.getByText('platform')).toBeDefined();
+      expect(screen.getByText('Daily Costs')).toBeDefined();
     });
-    expect(screen.getByText('data')).toBeDefined();
-    expect(screen.getByText('growth')).toBeDefined();
-    expect(screen.getByText('infra')).toBeDefined();
-    expect(screen.getByText('ml')).toBeDefined();
+    expect(screen.getByText('Groups')).toBeDefined();
+    expect(screen.getByText('Products')).toBeDefined();
+    expect(screen.getByText('Services')).toBeDefined();
   });
 
   it('date range picker is visible with "30 days" selected by default', () => {
@@ -60,16 +59,15 @@ describe('CostOverview', () => {
     expect(btn30d.className).toContain('bg-bg-secondary');
   });
 
-  it('changing date range triggers a new query with updated range', async () => {
+  it('changing date range triggers a new query', async () => {
     const { api, user } = renderOverview();
     const queryCostsSpy = vi.spyOn(api, 'queryCosts');
 
     await waitFor(() => {
-      expect(screen.getByText('platform')).toBeDefined();
+      expect(screen.getByText('Total Cost')).toBeDefined();
     });
 
     const initialCallCount = queryCostsSpy.mock.calls.length;
-
     await user.click(screen.getByText('7 days'));
 
     await waitFor(() => {
@@ -77,29 +75,17 @@ describe('CostOverview', () => {
     });
   });
 
-  it('filter bar shows dimension chips', async () => {
+  it('renders summary card with total cost', async () => {
     renderOverview();
     await waitFor(() => {
-      expect(screen.getAllByText('Account').length).toBeGreaterThan(0);
+      expect(screen.getByText('Total Cost')).toBeDefined();
     });
-    expect(screen.getAllByText('Team').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Environment').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Product').length).toBeGreaterThan(0);
   });
 
-  it('clicking an entity name in the table opens the popup', async () => {
-    const { user } = renderOverview();
-
+  it('renders top entities list', async () => {
+    renderOverview();
     await waitFor(() => {
-      expect(screen.getByText('platform')).toBeDefined();
-    });
-
-    const entityButton = screen.getByRole('button', { name: 'platform' });
-    await user.click(entityButton);
-
-    await waitFor(() => {
-      expect(screen.getByText('Set as filter')).toBeDefined();
-      expect(screen.getByText('Open full view')).toBeDefined();
+      expect(screen.getByText('Top entities')).toBeDefined();
     });
   });
 });
