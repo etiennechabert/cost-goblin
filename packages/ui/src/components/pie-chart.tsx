@@ -1,7 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Group } from '@visx/group';
 import { Pie } from '@visx/shape';
-import { ParentSize } from '@visx/responsive';
 import { PALETTE_STANDARD } from '../lib/palette.js';
 import { formatDollars } from './format.js';
 
@@ -200,19 +199,39 @@ function PieChartInner({
   );
 }
 
+function useContainerWidth(): [React.RefObject<HTMLDivElement | null>, number] {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (el === null) return;
+
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry !== undefined) {
+        setWidth(entry.contentRect.width);
+      }
+    });
+    ro.observe(el);
+    return () => { ro.disconnect(); };
+  }, []);
+
+  return [ref, width];
+}
+
+const PIE_HEIGHT = 320;
+
 export function PieChart(props: PieChartProps) {
   if (props.collapsed === true) {
     return <CollapsedPie title={props.title} onExpandToggle={props.onExpandToggle} />;
   }
 
+  const [containerRef, width] = useContainerWidth();
+
   return (
-    <div style={{ height: 320 }}>
-      <ParentSize>
-        {({ width }) => {
-          if (width < 10) return null;
-          return <PieChartInner {...props} width={width} height={320} />;
-        }}
-      </ParentSize>
+    <div ref={containerRef} style={{ height: PIE_HEIGHT, overflow: 'hidden' }}>
+      {width > 10 && <PieChartInner {...props} width={width} height={PIE_HEIGHT} />}
     </div>
   );
 }
