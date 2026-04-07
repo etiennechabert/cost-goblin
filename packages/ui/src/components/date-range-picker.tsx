@@ -2,12 +2,13 @@ import { useState } from 'react';
 import type { DateString } from '@costgoblin/core/browser';
 import { asDateString } from '@costgoblin/core/browser';
 
-type PresetKey = '7d' | '30d' | '90d' | 'custom';
+type PresetKey = '7d' | '30d' | '90d' | '365d' | 'custom';
 
 const PRESETS: { key: PresetKey; label: string; days: number }[] = [
   { key: '7d', label: '7 days', days: 7 },
   { key: '30d', label: '30 days', days: 30 },
   { key: '90d', label: '90 days', days: 90 },
+  { key: '365d', label: '365 days', days: 365 },
 ];
 
 function daysAgo(days: number): DateString {

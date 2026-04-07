@@ -18,7 +18,8 @@ interface PieChartProps {
   onSliceClick?: (name: string) => void;
   onSliceHover?: (name: string | null) => void;
   externalHoveredName?: string | null;
-  donut?: boolean;
+  collapsed?: boolean;
+  onExpandToggle?: () => void;
   maxSlices?: number;
 }
 
@@ -33,6 +34,24 @@ function aggregateOther(data: readonly PieSlice[], maxSlices: number): PieSlice[
   return [...top, { name: OTHER_KEY, cost: otherCost, percentage: otherPct }];
 }
 
+function CollapsedPie({ title, onExpandToggle }: { title: string; onExpandToggle?: (() => void) | undefined }) {
+  return (
+    <button
+      type="button"
+      onClick={onExpandToggle}
+      className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border bg-bg-secondary/50 px-2 py-6 hover:bg-bg-tertiary/30 transition-colors min-h-[260px]"
+    >
+      <span className="text-xs font-medium text-text-secondary [writing-mode:vertical-rl] rotate-180">
+        {title}
+      </span>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-text-muted">
+        <rect x="2" y="2" width="12" height="12" rx="2" />
+        <path d="M6 4v8M10 4v8" />
+      </svg>
+    </button>
+  );
+}
+
 function PieChartInner({
   data,
   title,
@@ -40,19 +59,18 @@ function PieChartInner({
   onSliceClick,
   onSliceHover,
   externalHoveredName,
-  donut = false,
-  maxSlices = 12,
+  onExpandToggle,
+  maxSlices = 15,
   width,
   height,
-}: PieChartProps & { width: number; height: number }) {
+}: Omit<PieChartProps, 'collapsed'> & { width: number; height: number }) {
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const hoveredName = externalHoveredName ?? localHovered;
 
   const displayData = aggregateOther(data, maxSlices);
-  const pieSize = Math.min(width * 0.45, height - 60);
+  const pieSize = Math.min(width * 0.42, height - 60);
   const radius = pieSize / 2;
-  const innerRadius = donut ? radius * 0.55 : 0;
-  const centerX = pieSize / 2 + 16;
+  const centerX = radius + 16;
   const centerY = height / 2;
 
   const handleMouseEnter = useCallback((name: string) => {
@@ -65,16 +83,29 @@ function PieChartInner({
     onSliceHover?.(null);
   }, [onSliceHover]);
 
-  const legendX = pieSize + 40;
-  const legendWidth = width - legendX - 8;
+  const legendX = pieSize + 44;
 
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-medium text-text-secondary">{title}</h3>
-        {subtitle !== undefined && (
-          <span className="text-[11px] text-text-muted">{subtitle}</span>
-        )}
+        <div className="flex items-center gap-2">
+          {subtitle !== undefined && (
+            <span className="text-[11px] text-text-muted">{subtitle}</span>
+          )}
+          {onExpandToggle !== undefined && (
+            <button
+              type="button"
+              onClick={onExpandToggle}
+              className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-tertiary/50 transition-colors"
+              title="Toggle expand"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M1 5V1h4M9 1h4v4M1 9v4h4M9 13h4v-4" />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
       <svg width={width} height={height - 50}>
         <Group top={centerY - 25} left={centerX}>
@@ -82,8 +113,8 @@ function PieChartInner({
             data={displayData}
             pieValue={(d) => d.cost}
             outerRadius={radius}
-            innerRadius={innerRadius}
-            padAngle={0.02}
+            innerRadius={0}
+            padAngle={0.015}
           >
             {(pie) =>
               pie.arcs.map((arc, i) => {
@@ -105,10 +136,10 @@ function PieChartInner({
                       d={path}
                       fill={color}
                       opacity={isDimmed ? 0.3 : 1}
+                      stroke={isHovered ? '#ffffff' : 'transparent'}
+                      strokeWidth={isHovered ? 2 : 0}
                       style={{
-                        filter: isHovered ? 'brightness(1.2) drop-shadow(0 0 6px rgba(0,0,0,0.4))' : 'none',
-                        transform: isHovered ? 'scale(1.04)' : 'scale(1)',
-                        transformOrigin: 'center',
+                        filter: isHovered ? 'brightness(1.3)' : 'none',
                         transition: 'all 0.15s ease',
                       }}
                     />
@@ -120,53 +151,65 @@ function PieChartInner({
         </Group>
 
         {/* Legend */}
-        {legendWidth > 80 && (
-          <Group top={10} left={legendX}>
-            {displayData.map((d, i) => {
-              const color = d.name === OTHER_KEY ? '#374151' : PALETTE_STANDARD[i % PALETTE_STANDARD.length] ?? '#374151';
-              const isHovered = hoveredName === d.name;
-              const isDimmed = hoveredName !== null && !isHovered;
-              const y = i * 22;
-              if (y > height - 80) return null;
+        <Group top={6} left={legendX}>
+          {displayData.map((d, i) => {
+            const color = d.name === OTHER_KEY ? '#374151' : PALETTE_STANDARD[i % PALETTE_STANDARD.length] ?? '#374151';
+            const isHovered = hoveredName === d.name;
+            const isDimmed = hoveredName !== null && !isHovered;
+            const y = i * 22;
+            if (y > height - 80) return null;
 
-              return (
-                <g
-                  key={d.name}
-                  onMouseEnter={() => { handleMouseEnter(d.name); }}
-                  onMouseLeave={handleMouseLeave}
-                  onClick={() => { if (d.name !== OTHER_KEY) onSliceClick?.(d.name); }}
-                  style={{ cursor: d.name !== OTHER_KEY && onSliceClick !== undefined ? 'pointer' : 'default', opacity: isDimmed ? 0.4 : 1, transition: 'opacity 0.15s' }}
+            return (
+              <g
+                key={d.name}
+                onMouseEnter={() => { handleMouseEnter(d.name); }}
+                onMouseLeave={handleMouseLeave}
+                onClick={() => { if (d.name !== OTHER_KEY) onSliceClick?.(d.name); }}
+                style={{ cursor: d.name !== OTHER_KEY && onSliceClick !== undefined ? 'pointer' : 'default' }}
+              >
+                {isHovered && (
+                  <rect
+                    x={-6}
+                    y={y - 4}
+                    width={width - legendX}
+                    height={20}
+                    rx={4}
+                    fill="rgba(255,255,255,0.08)"
+                  />
+                )}
+                <rect x={0} y={y} width={8} height={8} rx={2} fill={color} />
+                <text
+                  x={14}
+                  y={y + 8}
+                  fontSize={isHovered ? 12 : 11}
+                  fill={isDimmed ? '#4b5563' : isHovered ? '#f3f4f6' : '#9ca3af'}
+                  fontWeight={isHovered ? 600 : 400}
+                  style={{ transition: 'all 0.12s' }}
                 >
-                  <rect x={0} y={y} width={8} height={8} rx={2} fill={color} />
-                  <text
-                    x={14}
-                    y={y + 8}
-                    fontSize={11}
-                    fill={isHovered ? '#e5e7eb' : '#9ca3af'}
-                    fontWeight={isHovered ? 600 : 400}
-                    style={{ transition: 'all 0.15s' }}
-                  >
-                    {d.name.length > 18 ? `${d.name.slice(0, 17)}…` : d.name}
-                    {' — '}
-                    {formatDollars(d.cost)}
-                    {` (${d.percentage.toFixed(1)}%)`}
-                  </text>
-                </g>
-              );
-            })}
-          </Group>
-        )}
+                  {d.name.length > 22 ? `${d.name.slice(0, 21)}…` : d.name}
+                  {' — '}
+                  {formatDollars(d.cost)}
+                  {` (${d.percentage.toFixed(1)}%)`}
+                </text>
+              </g>
+            );
+          })}
+        </Group>
       </svg>
     </div>
   );
 }
 
 export function PieChart(props: PieChartProps) {
+  if (props.collapsed === true) {
+    return <CollapsedPie title={props.title} onExpandToggle={props.onExpandToggle} />;
+  }
+
   return (
     <ParentSize>
       {({ width }) => {
         if (width < 10) return null;
-        const h = Math.max(220, Math.min(320, width * 0.6));
+        const h = Math.max(240, Math.min(360, width * 0.65));
         return <PieChartInner {...props} width={width} height={h} />;
       }}
     </ParentSize>

@@ -109,6 +109,24 @@ export interface EntityDetailResult {
   readonly bySubEntity: readonly DistributionSlice[];
 }
 
+export interface DailyCostsParams {
+  readonly dateRange: DateRange;
+  readonly filters: FilterMap;
+  readonly groupBy: DimensionId;
+}
+
+export interface DailyCostDay {
+  readonly date: DateString;
+  readonly total: Dollars;
+  readonly breakdown: Readonly<Record<string, Dollars>>;
+}
+
+export interface DailyCostsResult {
+  readonly days: readonly DailyCostDay[];
+  readonly groups: readonly string[];
+  readonly totalCost: Dollars;
+}
+
 export type SyncPhase = 'downloading' | 'repartitioning';
 
 export type SyncStatus =

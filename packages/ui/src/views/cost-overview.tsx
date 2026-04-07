@@ -1,11 +1,11 @@
 import type {
   CostResult,
-  EntityDetailResult,
+  DailyCostsResult,
   DimensionId,
   Dimension,
   FilterMap,
 } from '@costgoblin/core/browser';
-import { asDimensionId, asEntityRef, asTagValue } from '@costgoblin/core/browser';
+import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import {
@@ -15,6 +15,7 @@ import {
   useCostFocus,
   useCostFocusDispatch,
 } from '../hooks/use-cost-focus.js';
+import type { ExpandedPie } from '../hooks/use-cost-focus.js';
 import type { HistogramTab } from '../components/stacked-bar-chart.js';
 import { getDimensionId, isProductDimension, isEnvironmentDimension, isOwnerDimension } from '../lib/dimensions.js';
 import { FilterBar } from '../components/filter-bar.js';
@@ -44,17 +45,22 @@ function costRowsToSlices(data: CostResult | null): PieSlice[] {
   }));
 }
 
-function entityDetailToBarDays(data: EntityDetailResult | null, groupBy: HistogramTab): BarDay[] {
+function dailyCostsToBarDays(data: DailyCostsResult | null): BarDay[] {
   if (data === null) return [];
-  return data.dailyCosts.map(d => ({
+  return data.days.map(d => ({
     date: d.date,
-    total: d.cost,
-    breakdown: groupBy === 'service' ? { ...d.breakdown } : { ...d.breakdownByAccount },
+    total: d.total,
+    breakdown: { ...d.breakdown },
   }));
 }
 
 function getProductDimensionId(dimensions: Dimension[]): DimensionId | null {
   const dim = dimensions.find(isProductDimension);
+  return dim !== undefined ? getDimensionId(dim) : null;
+}
+
+function getOwnerDimensionId(dimensions: Dimension[]): DimensionId | null {
+  const dim = dimensions.find(isOwnerDimension);
   return dim !== undefined ? getDimensionId(dim) : null;
 }
 
@@ -70,7 +76,6 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
   const dimensionsQuery = useQuery(() => api.getDimensions(), []);
   const rawDimensions: Dimension[] = dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
 
-  // Sort dimensions: environment → owner → product → built-ins → rest
   const dimensions = [...rawDimensions].sort((a, b) => {
     const priority = (d: Dimension) => {
       if (isEnvironmentDimension(d)) return 0;
@@ -82,11 +87,11 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
     return priority(a) - priority(b);
   });
 
+  const ownerDimId = getOwnerDimensionId(rawDimensions);
   const productDimId = getProductDimensionId(rawDimensions);
   const serviceDimId = asDimensionId('service');
   const accountDimId = asDimensionId('account');
 
-  // Combine user filters with service drill-down
   const baseFilters: FilterMap = filters;
 
   const serviceFilters: FilterMap = focus.serviceDrill.depth !== 'none'
@@ -116,7 +121,7 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
   );
   const accountSlices = costRowsToSlices(accountsQuery.status === 'success' ? accountsQuery.data : null);
 
-  // Products/Systems pie
+  // Products pie
   const productsQuery = useQuery(
     () => {
       if (productDimId === null) return Promise.resolve(null);
@@ -142,37 +147,27 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
   );
   const serviceSlices = costRowsToSlices(servicesQuery.status === 'success' ? servicesQuery.data : null);
 
-  // Summary — use total from accounts query as the primary
+  // Summary
   const totalCost = accountsQuery.status === 'success'
     ? accountsQuery.data.totalCost
     : 0;
 
-  // Histogram — reuse the entity detail for the first owner entity (aggregate)
-  // For now, use the owner-level query data to build a simple daily chart
-  // Daily histogram — use entity detail from first account to get daily breakdown
-  const firstEntity = accountsQuery.status === 'success' && accountsQuery.data.rows[0] !== undefined
-    ? accountsQuery.data.rows[0].entity
-    : null;
+  // Daily histogram via queryDailyCosts
+  const histogramDimId = histogramTab === 'owner' ? ownerDimId
+    : histogramTab === 'product' ? productDimId
+    : serviceDimId;
 
   const dailyQuery = useQuery(
     () => {
-      if (firstEntity === null) return Promise.resolve(null);
-      return api.queryEntityDetail({
-        entity: asEntityRef(firstEntity),
-        dimension: accountDimId,
-        dateRange,
-        filters: baseFilters,
-      });
+      if (histogramDimId === null) return Promise.resolve(null);
+      return api.queryDailyCosts({ groupBy: histogramDimId, dateRange, filters: baseFilters });
     },
-    [firstEntity, dateRangeKey, filterKey, api],
+    [histogramDimId, dateRangeKey, filterKey, api],
   );
 
-  const barDays = entityDetailToBarDays(
-    dailyQuery.status === 'success' ? dailyQuery.data : null,
-    histogramTab === 'service' ? 'service' : 'owner',
-  );
+  const barDays = dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null);
 
-  // Service drill-down click handler
+  // Handlers
   function handleServiceClick(name: string) {
     if (focus.serviceDrill.depth === 'none') {
       dispatch({ type: 'DRILL_SERVICE', service: name });
@@ -197,6 +192,10 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
     dispatch({ type: 'HOVER', entity, dimension });
   }
 
+  function handleExpandToggle(pie: ExpandedPie) {
+    dispatch({ type: 'TOGGLE_EXPAND', pie });
+  }
+
   const servicePieTitle = focus.serviceDrill.depth === 'none'
     ? 'AWS Services'
     : focus.serviceDrill.depth === 'service'
@@ -212,6 +211,21 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
   const isLoading = dimensionsQuery.status === 'loading'
     || accountsQuery.status === 'loading'
     || servicesQuery.status === 'loading';
+
+  // Breakdown table data — use the active account query's rows with service breakdown
+  const breakdownRows = accountsQuery.status === 'success'
+    ? accountsQuery.data.rows
+      .flatMap(r =>
+        Object.entries(r.serviceCosts).map(([svc, cost]) => ({
+          entity: r.entity,
+          service: svc,
+          cost: cost,
+          percentage: totalCost > 0 ? (cost / totalCost) * 100 : 0,
+        })),
+      )
+      .sort((a, b) => b.cost - a.cost)
+      .slice(0, 20)
+    : [];
 
   return (
     <div className="flex flex-col gap-5 p-6">
@@ -253,7 +267,6 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
             totalCost={totalCost}
             dateRange={dateRange}
           />
-          {/* Quick stats */}
           <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4">
             <p className="text-xs uppercase tracking-wider text-text-muted">Top entities</p>
             <div className="mt-2 flex flex-col gap-1.5">
@@ -277,33 +290,80 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
         </div>
       </div>
 
-      {/* Bottom row: 3 pie charts */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <PieChart
-          data={accountSlices}
-          title="Accounts"
-          subtitle="Click to navigate"
-          onSliceClick={handleAccountClick}
-          onSliceHover={(name) => { handleHover(name, 'account'); }}
-          externalHoveredName={focus.hoveredDimension === 'account' ? focus.hoveredEntity : null}
-        />
-        <PieChart
-          data={productSlices}
-          title="Products"
-          subtitle="Click to navigate"
-          onSliceClick={handleProductClick}
-          onSliceHover={(name) => { handleHover(name, 'product'); }}
-          externalHoveredName={focus.hoveredDimension === 'product' ? focus.hoveredEntity : null}
-        />
-        <PieChart
-          data={serviceSlices}
-          title={servicePieTitle}
-          subtitle={servicePieSubtitle}
-          onSliceClick={handleServiceClick}
-          onSliceHover={(name) => { handleHover(name, 'service'); }}
-          externalHoveredName={focus.hoveredDimension === 'service' ? focus.hoveredEntity : null}
-        />
+      {/* Bottom row: 3 pie charts with expand/collapse */}
+      <div className="flex gap-4">
+        <div className={focus.expandedPie === null || focus.expandedPie === 'accounts' ? 'flex-1' : ''}>
+          <PieChart
+            data={accountSlices}
+            title="Accounts"
+            subtitle="Click to navigate"
+            onSliceClick={handleAccountClick}
+            onSliceHover={(name) => { handleHover(name, 'account'); }}
+            externalHoveredName={focus.hoveredDimension === 'account' ? focus.hoveredEntity : null}
+            collapsed={focus.expandedPie !== null && focus.expandedPie !== 'accounts'}
+            onExpandToggle={() => { handleExpandToggle('accounts'); }}
+          />
+        </div>
+        <div className={focus.expandedPie === null || focus.expandedPie === 'products' ? 'flex-1' : ''}>
+          <PieChart
+            data={productSlices}
+            title="Products"
+            subtitle="Click to navigate"
+            onSliceClick={handleProductClick}
+            onSliceHover={(name) => { handleHover(name, 'product'); }}
+            externalHoveredName={focus.hoveredDimension === 'product' ? focus.hoveredEntity : null}
+            collapsed={focus.expandedPie !== null && focus.expandedPie !== 'products'}
+            onExpandToggle={() => { handleExpandToggle('products'); }}
+          />
+        </div>
+        <div className={focus.expandedPie === null || focus.expandedPie === 'services' ? 'flex-1' : ''}>
+          <PieChart
+            data={serviceSlices}
+            title={servicePieTitle}
+            subtitle={servicePieSubtitle}
+            onSliceClick={handleServiceClick}
+            onSliceHover={(name) => { handleHover(name, 'service'); }}
+            externalHoveredName={focus.hoveredDimension === 'service' ? focus.hoveredEntity : null}
+            collapsed={focus.expandedPie !== null && focus.expandedPie !== 'services'}
+            onExpandToggle={() => { handleExpandToggle('services'); }}
+          />
+        </div>
       </div>
+
+      {/* Breakdown table */}
+      {breakdownRows.length > 0 && (
+        <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden">
+          <div className="border-b border-border px-5 py-3">
+            <h3 className="text-sm font-medium text-text-secondary">Breakdown</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-text-secondary">
+                  <th className="px-5 pb-2 pt-3 font-medium">Entity</th>
+                  <th className="px-5 pb-2 pt-3 font-medium">Service</th>
+                  <th className="px-5 pb-2 pt-3 text-right font-medium">Cost</th>
+                  <th className="px-5 pb-2 pt-3 text-right font-medium">%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {breakdownRows.map((r, i) => (
+                  <tr key={`${r.entity}-${r.service}-${String(i)}`} className="border-b border-border-subtle hover:bg-bg-tertiary/20 transition-colors">
+                    <td className="px-5 py-2 text-text-primary">{r.entity}</td>
+                    <td className="px-5 py-2 text-text-secondary">{r.service}</td>
+                    <td className="px-5 py-2 text-right tabular-nums text-text-primary font-medium">
+                      {formatDollars(r.cost)}
+                    </td>
+                    <td className="px-5 py-2 text-right tabular-nums text-text-secondary">
+                      {r.percentage.toFixed(1)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
