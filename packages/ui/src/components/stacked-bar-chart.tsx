@@ -128,9 +128,29 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
 
                   {isHovered && (
                     <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20">
-                      <div className="rounded bg-bg-secondary/95 px-2.5 py-1.5 text-[10px] text-text-primary whitespace-nowrap shadow-lg border border-border">
-                        <div className="font-medium">{day.date.slice(5)}</div>
-                        <div>{formatDollars(day.total)}</div>
+                      <div className="rounded-lg bg-bg-secondary/95 px-3 py-2 text-[11px] text-text-primary whitespace-nowrap shadow-lg border border-border min-w-[160px]">
+                        <div className="font-semibold mb-1.5 text-xs">{day.date}</div>
+                        <div className="flex items-center justify-between font-medium mb-1 pb-1 border-b border-border-subtle">
+                          <span>Total</span>
+                          <span>{formatDollars(day.total)}</span>
+                        </div>
+                        <div className="flex flex-col gap-0.5 mt-1">
+                          {segments
+                            .sort((a, b) => b.value - a.value)
+                            .slice(0, 8)
+                            .map(seg => {
+                              const color = PALETTE_STANDARD[seg.colorIdx % PALETTE_STANDARD.length] ?? '#374151';
+                              return (
+                                <div key={seg.key} className="flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+                                    <span className="text-text-secondary truncate max-w-[120px]">{seg.key}</span>
+                                  </div>
+                                  <span className="tabular-nums text-text-primary">{formatDollars(seg.value)}</span>
+                                </div>
+                              );
+                            })}
+                        </div>
                       </div>
                     </div>
                   )}
