@@ -206,12 +206,13 @@ export function PieChart(props: PieChartProps) {
   }
 
   return (
-    <ParentSize>
-      {({ width }) => {
-        if (width < 10) return null;
-        const h = Math.max(240, Math.min(360, width * 0.65));
-        return <PieChartInner {...props} width={width} height={h} />;
-      }}
-    </ParentSize>
+    <div style={{ height: 320 }}>
+      <ParentSize>
+        {({ width }) => {
+          if (width < 10) return null;
+          return <PieChartInner {...props} width={width} height={320} />;
+        }}
+      </ParentSize>
+    </div>
   );
 }
