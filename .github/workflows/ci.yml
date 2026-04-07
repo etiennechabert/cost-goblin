@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Type check
+        run: |
+          npx tsc --noEmit -p packages/core/tsconfig.json
+          npx tsc --noEmit -p packages/ui/tsconfig.json
+          npx tsc --noEmit -p packages/desktop/tsconfig.json
+
+      - name: Lint
+        run: npx eslint packages/*/src/
+
+      - name: Test with coverage
+        run: npx vitest run --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
