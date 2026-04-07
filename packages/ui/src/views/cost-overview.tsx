@@ -292,7 +292,7 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
 
       {/* Bottom row: 3 pie charts with expand/collapse */}
       <div className="flex gap-4">
-        <div className={focus.expandedPie === null || focus.expandedPie === 'accounts' ? 'flex-1' : ''}>
+        <div className={`min-w-0 ${focus.expandedPie === null || focus.expandedPie === 'accounts' ? 'flex-1' : ''}`}>
           <PieChart
             data={accountSlices}
             title="Accounts"
@@ -304,7 +304,7 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
             onExpandToggle={() => { handleExpandToggle('accounts'); }}
           />
         </div>
-        <div className={focus.expandedPie === null || focus.expandedPie === 'products' ? 'flex-1' : ''}>
+        <div className={`min-w-0 ${focus.expandedPie === null || focus.expandedPie === 'products' ? 'flex-1' : ''}`}>
           <PieChart
             data={productSlices}
             title="Products"
@@ -316,7 +316,7 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
             onExpandToggle={() => { handleExpandToggle('products'); }}
           />
         </div>
-        <div className={focus.expandedPie === null || focus.expandedPie === 'services' ? 'flex-1' : ''}>
+        <div className={`min-w-0 ${focus.expandedPie === null || focus.expandedPie === 'services' ? 'flex-1' : ''}`}>
           <PieChart
             data={serviceSlices}
             title={servicePieTitle}
