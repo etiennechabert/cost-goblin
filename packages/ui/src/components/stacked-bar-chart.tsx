@@ -92,7 +92,8 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                   value: day.breakdown[key] ?? 0,
                   colorIdx: ki,
                 }))
-                .filter(s => s.value > 0);
+                .filter(s => s.value > 0)
+                .sort((a, b) => b.value - a.value);
               const segTotal = segments.reduce((sum, s) => sum + s.value, 0);
               const isHovered = hoveredDay === day.date;
 
@@ -136,17 +137,20 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                         </div>
                         <div className="flex flex-col gap-0.5 mt-1">
                           {segments
-                            .sort((a, b) => b.value - a.value)
                             .slice(0, 8)
                             .map(seg => {
                               const color = PALETTE_STANDARD[seg.colorIdx % PALETTE_STANDARD.length] ?? '#374151';
+                              const isHighlighted = highlightedGroup === seg.key;
                               return (
-                                <div key={seg.key} className="flex items-center justify-between gap-3">
+                                <div
+                                  key={seg.key}
+                                  className={`flex items-center justify-between gap-3 rounded px-1 -mx-1 ${isHighlighted ? 'bg-white/10' : ''}`}
+                                >
                                   <div className="flex items-center gap-1.5">
                                     <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
-                                    <span className="text-text-secondary truncate max-w-[120px]">{seg.key}</span>
+                                    <span className={`truncate max-w-[120px] ${isHighlighted ? 'text-text-primary font-medium' : 'text-text-secondary'}`}>{seg.key}</span>
                                   </div>
-                                  <span className="tabular-nums text-text-primary">{formatDollars(seg.value)}</span>
+                                  <span className={`tabular-nums ${isHighlighted ? 'text-text-primary font-medium' : 'text-text-primary'}`}>{formatDollars(seg.value)}</span>
                                 </div>
                               );
                             })}
