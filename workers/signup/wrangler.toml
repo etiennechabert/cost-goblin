@@ -1,0 +1,12 @@
+name = "costgoblin-signup"
+main = "src/index.ts"
+compatibility_date = "2026-04-07"
+
+routes = [
+  { pattern = "costgoblin.com/api/signup", zone_name = "costgoblin.com" }
+]
+
+[[kv_namespaces]]
+binding = "SIGNUPS"
+id = ""            # Run: npx wrangler kv namespace create SIGNUPS
+preview_id = ""    # Run: npx wrangler kv namespace create SIGNUPS --preview
