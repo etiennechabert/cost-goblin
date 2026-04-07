@@ -267,17 +267,6 @@ function OverviewInner({ onEntityClick: onEntityClickProp }: CostOverviewProps) 
             totalCost={totalCost}
             dateRange={dateRange}
           />
-          <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4">
-            <p className="text-xs uppercase tracking-wider text-text-muted">Top entities</p>
-            <div className="mt-2 flex flex-col gap-1.5">
-              {accountSlices.slice(0, 5).map(s => (
-                <div key={s.name} className="flex items-center justify-between text-xs">
-                  <span className="text-text-secondary truncate mr-2">{s.name}</span>
-                  <span className="text-text-primary tabular-nums font-medium">{formatDollars(s.cost)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
 
         <div className="col-span-2">
