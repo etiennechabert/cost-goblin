@@ -3,7 +3,7 @@ import { join, basename } from 'node:path';
 import { logger } from '../logger/logger.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { createS3Handle, parseS3Path } from './s3-client.js';
-import type { ProgressCallback, FileValidationInfo } from './s3-client.js';
+import type { ProgressCallback } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
 import { createLazyDuckDB } from './duckdb-lazy.js';
 
@@ -25,81 +25,6 @@ export interface FileValidationResult {
   readonly valid: boolean;
   readonly detectedType: ExpectedDataType | 'unknown';
   readonly message?: string | undefined;
-}
-
-const REQUIRED_CUR_COLUMNS = [
-  'line_item_usage_start_date',
-  'line_item_usage_account_id',
-  'line_item_unblended_cost',
-  'product_servicecode',
-  'product_product_family',
-  'product_region_code',
-  'resource_tags',
-];
-
-async function validateDownloadedFile(localPath: string, expectedType: ExpectedDataType | undefined): Promise<FileValidationResult> {
-  const fileName = basename(localPath);
-  try {
-    const db = await createLazyDuckDB();
-    const conn = await db.connect();
-
-    // Read parquet schema
-    const schemaResult = await conn.run(`SELECT name FROM parquet_schema('${localPath}') LIMIT 100`);
-    const columns: string[] = [];
-    let chunk = await schemaResult.fetchChunk();
-    while (chunk !== null && chunk.rowCount > 0) {
-      for (let r = 0; r < chunk.rowCount; r++) {
-        const val = chunk.getColumnVector(0).getItem(r);
-        if (typeof val === 'string') columns.push(val);
-      }
-      chunk = await schemaResult.fetchChunk();
-    }
-
-    // Detect type from schema
-    if (columns.includes('recommendation_id') || columns.includes('estimated_monthly_savings')) {
-      if (expectedType !== undefined && expectedType !== 'cost-optimization') {
-        return { file: fileName, valid: false, detectedType: 'cost-optimization', message: `Expected ${expectedType} data but file contains cost optimization recommendations` };
-      }
-      return { file: fileName, valid: true, detectedType: 'cost-optimization' };
-    }
-
-    // Check required CUR columns
-    const missingColumns = REQUIRED_CUR_COLUMNS.filter(c => !columns.includes(c));
-    if (missingColumns.length > 0) {
-      return {
-        file: fileName,
-        valid: false,
-        detectedType: 'unknown',
-        message: `Missing required columns: ${missingColumns.join(', ')}`,
-      };
-    }
-
-    // Distinguish daily vs hourly by checking distinct hours
-    const hourResult = await conn.run(
-      `SELECT COUNT(DISTINCT EXTRACT(HOUR FROM line_item_usage_start_date)) as h FROM read_parquet('${localPath}') LIMIT 10000`,
-    );
-    const hourChunk = await hourResult.fetchChunk();
-    const distinctHours = hourChunk !== null && hourChunk.rowCount > 0
-      ? Number(hourChunk.getColumnVector(0).getItem(0))
-      : 0;
-
-    const detectedType: ExpectedDataType = distinctHours > 1 ? 'hourly' : 'daily';
-    const valid = expectedType === undefined || expectedType === detectedType;
-
-    return {
-      file: fileName,
-      valid,
-      detectedType,
-      message: valid ? undefined : `Expected ${expectedType} data but detected ${detectedType} (${String(distinctHours)} distinct hours)`,
-    };
-  } catch (err: unknown) {
-    return {
-      file: fileName,
-      valid: false,
-      detectedType: 'unknown',
-      message: `Validation failed: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
 }
 
 function extractPeriod(key: string): string {
@@ -137,7 +62,6 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
   const totalBytes = files.reduce((s, f) => s + f.size, 0);
   let globalFilesDone = 0;
   let globalBytesDone = 0;
-  const allValidationResults: FileValidationInfo[] = [];
   const downloadStartTime = Date.now();
 
   for (const [period, periodFiles] of periodList) {
@@ -173,7 +97,6 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
               bytesDone: currentTotal,
               currentFile: fileName,
               bytesPerSecond,
-              validationResults: allValidationResults,
             });
           }
         },
