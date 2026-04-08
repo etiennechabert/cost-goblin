@@ -1,4 +1,4 @@
-.PHONY: dev reset check test
+.PHONY: dev reset test lint check
 
 dev:
 	cd packages/desktop && npm run dev
@@ -10,5 +10,10 @@ reset:
 test:
 	npx vitest run
 
-check:
-	npm run check
+lint:
+	npx tsc --noEmit -p packages/core/tsconfig.json
+	npx tsc --noEmit -p packages/ui/tsconfig.json
+	npx tsc --noEmit -p packages/desktop/tsconfig.json
+	npx eslint packages/*/src/
+
+check: lint test
