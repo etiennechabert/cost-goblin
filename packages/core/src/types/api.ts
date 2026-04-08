@@ -63,6 +63,7 @@ export interface CostApi {
     profile: string;
     dailyBucket: string;
     hourlyBucket?: string | undefined;
+    costOptBucket?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
   }): Promise<void>;
 }

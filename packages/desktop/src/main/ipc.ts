@@ -901,6 +901,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     profile: string;
     dailyBucket: string;
     hourlyBucket?: string | undefined;
+    costOptBucket?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
   }): Promise<void> => {
     const fs = await import('node:fs/promises');
@@ -916,9 +917,12 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         type: 'aws',
         credentials: { profile: wizardConfig.profile },
         sync: {
-          daily: { bucket: wizardConfig.dailyBucket, retentionDays: 90 },
+          daily: { bucket: wizardConfig.dailyBucket, retentionDays: 365 },
           ...(wizardConfig.hourlyBucket !== undefined && wizardConfig.hourlyBucket.length > 0
-            ? { hourly: { bucket: wizardConfig.hourlyBucket, retentionDays: 14 } }
+            ? { hourly: { bucket: wizardConfig.hourlyBucket, retentionDays: 30 } }
+            : {}),
+          ...(wizardConfig.costOptBucket !== undefined && wizardConfig.costOptBucket.length > 0
+            ? { costOptimization: { bucket: wizardConfig.costOptBucket, retentionDays: 90 } }
             : {}),
           intervalMinutes: 60,
         },

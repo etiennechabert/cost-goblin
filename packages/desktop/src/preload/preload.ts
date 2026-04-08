@@ -89,7 +89,7 @@ const api: CostApi = {
   scaffoldConfig(): Promise<void> {
     return invoke<undefined>('setup:scaffold-config').then(() => undefined);
   },
-  writeConfig(config: { providerName: string; profile: string; dailyBucket: string; hourlyBucket?: string | undefined; tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined }): Promise<void> {
+  writeConfig(config: { providerName: string; profile: string; dailyBucket: string; hourlyBucket?: string | undefined; costOptBucket?: string | undefined; tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined }): Promise<void> {
     return invoke<undefined>('setup:write-config', config).then(() => undefined);
   },
 };

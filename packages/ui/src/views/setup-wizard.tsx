@@ -8,7 +8,7 @@ type WizardStep =
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'browse'; profile: string; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isCurReport: boolean; path: string[] }
-  | { step: 'confirm'; profile: string; s3Path: string; retentionDays: number };
+  | { step: 'confirm'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
 
 interface SetupWizardProps {
   onComplete: () => void;
@@ -280,13 +280,15 @@ function BrowseStep({ state, onNavigate, onConfirm, onBack }: {
   );
 }
 
-function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
+function ConfirmStep({ state, onUpdate, onRetentionChange, onComplete, onBack }: {
   state: Extract<WizardStep, { step: 'confirm' }>;
+  onUpdate: (updates: Partial<Extract<WizardStep, { step: 'confirm' }>>) => void;
   onRetentionChange: (days: number) => void;
   onComplete: () => void;
   onBack: () => void;
 }) {
   const [saving, setSaving] = useState(false);
+  const [showExtra, setShowExtra] = useState(state.hourlyPath.length > 0 || state.costOptPath.length > 0);
   const api = useCostApi();
 
   const retentionOptions = [
@@ -302,6 +304,8 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
       providerName: 'aws-main',
       profile: state.profile,
       dailyBucket: state.s3Path,
+      ...(state.hourlyPath.length > 0 ? { hourlyBucket: state.hourlyPath } : {}),
+      ...(state.costOptPath.length > 0 ? { costOptBucket: state.costOptPath } : {}),
     }).then(() => {
       onComplete();
     });
@@ -320,9 +324,50 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
           <p className="text-sm font-mono text-text-primary mt-0.5">{state.profile}</p>
         </div>
         <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-          <p className="text-xs text-text-muted uppercase tracking-wider">CUR Location</p>
+          <p className="text-xs text-text-muted uppercase tracking-wider">Daily CUR</p>
           <p className="text-sm font-mono text-text-primary mt-0.5">{state.s3Path}</p>
         </div>
+
+        {/* Additional data sources */}
+        {!showExtra ? (
+          <button
+            type="button"
+            onClick={() => { setShowExtra(true); }}
+            className="text-xs text-accent hover:text-accent-hover text-left underline underline-offset-2"
+          >
+            + Add hourly CUR or cost optimization data
+          </button>
+        ) : (
+          <>
+            <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+              <p className="text-xs text-text-muted uppercase tracking-wider mb-1">
+                Hourly CUR <span className="normal-case text-text-muted">(optional)</span>
+              </p>
+              <input
+                type="text"
+                value={state.hourlyPath}
+                onChange={(e) => { onUpdate({ hourlyPath: e.target.value }); }}
+                placeholder="s3://bucket/path/to/hourly-cur/"
+                className="w-full h-8 rounded border border-border bg-bg-primary px-2 text-xs font-mono text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+              <p className="text-xs text-text-muted mt-1">For short-term drill-down and incident analysis</p>
+            </div>
+            <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+              <p className="text-xs text-text-muted uppercase tracking-wider mb-1">
+                Cost Optimization <span className="normal-case text-text-muted">(optional)</span>
+              </p>
+              <input
+                type="text"
+                value={state.costOptPath}
+                onChange={(e) => { onUpdate({ costOptPath: e.target.value }); }}
+                placeholder="s3://bucket/path/to/cost-optimization/"
+                className="w-full h-8 rounded border border-border bg-bg-primary px-2 text-xs font-mono text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+              <p className="text-xs text-text-muted mt-1">RI/SP recommendations and rightsizing suggestions</p>
+            </div>
+          </>
+        )}
+
         <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
           <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Data Retention</p>
           <div className="flex gap-2">
@@ -398,7 +443,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
   function handleBrowseConfirm() {
     if (wizard.step !== 'browse') return;
     const s3Path = `s3://${wizard.bucket}/${wizard.prefix}`;
-    setWizard({ step: 'confirm', profile: wizard.profile, s3Path, retentionDays: 365 });
+    setWizard({ step: 'confirm', profile: wizard.profile, s3Path, hourlyPath: '', costOptPath: '', retentionDays: 365 });
   }
 
   function handleBack() {
@@ -432,6 +477,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
           {wizard.step === 'confirm' && (
             <ConfirmStep
               state={wizard}
+              onUpdate={(updates) => { setWizard(prev => prev.step === 'confirm' ? { ...prev, ...updates } : prev); }}
               onRetentionChange={(days) => { setWizard(prev => prev.step === 'confirm' ? { ...prev, retentionDays: days } : prev); }}
               onComplete={onComplete}
               onBack={handleBack}
