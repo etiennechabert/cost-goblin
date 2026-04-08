@@ -188,12 +188,7 @@ function TierPanel({
           <div className="flex items-center justify-between mb-1.5">
             <div className="flex items-center gap-2 text-xs text-accent min-w-0">
               <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse shrink-0" />
-              <span className="truncate">
-                Downloading {String(syncState.filesDone)}/{String(syncState.filesTotal)}
-                {syncState.currentFile.length > 0 && (
-                  <span className="text-text-muted"> — {syncState.currentFile}</span>
-                )}
-              </span>
+              <span>Downloading {String(syncState.filesDone)}/{String(syncState.filesTotal)}</span>
             </div>
             <div className="flex items-center gap-2 shrink-0 ml-2">
               <span className="text-[10px] text-text-muted tabular-nums whitespace-nowrap">
