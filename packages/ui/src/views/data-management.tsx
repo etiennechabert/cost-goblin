@@ -319,9 +319,9 @@ function TierPanel({
 export function DataManagement() {
   const api = useCostApi();
   const [refreshKey, setRefreshKey] = useState(0);
+  const configQuery = useQuery(() => api.getConfig(), [refreshKey]);
   const inventoryQuery = useQuery(() => api.getDataInventory(), [refreshKey]);
   const accountQuery = useQuery(() => api.getAccountMapping(), [refreshKey]);
-  const configQuery = useQuery(() => api.getConfig(), [refreshKey]);
   const [selected, setSelected] = useState(new Set<string>());
   const [initialized, setInitialized] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>({ status: 'idle' });
@@ -420,6 +420,15 @@ export function DataManagement() {
   const dailyBucket = provider?.sync.daily.bucket ?? null;
   const dailyRetention = provider?.sync.daily.retentionDays ?? null;
   const hourlyBucket = provider?.sync.hourly?.bucket ?? null;
+
+  const hourlyInventoryQuery = useQuery(
+    () => {
+      if (hourlyBucket === null) return Promise.resolve(null);
+      return api.getDataInventory(hourlyBucket);
+    },
+    [hourlyBucket, refreshKey],
+  );
+  const hourlyInventory: DataInventoryResult | null = hourlyInventoryQuery.status === 'success' ? hourlyInventoryQuery.data : null;
   const hourlyRetention = provider?.sync.hourly?.retentionDays ?? null;
   const costOptBucket = provider?.sync.costOptimization?.bucket ?? null;
   const costOptRetention = provider?.sync.costOptimization?.retentionDays ?? null;
@@ -536,11 +545,11 @@ export function DataManagement() {
             configured={hourlyBucket !== null}
             bucket={hourlyBucket}
             retentionDays={hourlyRetention}
-            localDates={inventory.local.hourlyDates}
-            diskBytes={inventory.local.hourlyDiskBytes}
-            oldestDate={null}
-            newestDate={null}
-            periods={[]}
+            localDates={hourlyInventory?.local.dailyDates ?? []}
+            diskBytes={hourlyInventory?.local.dailyDiskBytes ?? 0}
+            oldestDate={hourlyInventory?.local.oldestDate ?? null}
+            newestDate={hourlyInventory?.local.newestDate ?? null}
+            periods={hourlyInventory !== null ? [...hourlyInventory.periods] : []}
             selected={new Set()}
             onToggle={() => {}}
             onSelectAll={() => {}}

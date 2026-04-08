@@ -56,8 +56,8 @@ const api: CostApi = {
   getFilterValues(dimensionId: string, filters: Record<string, string>, dateRange?: { start: string; end: string }): Promise<{ value: string; label: string; count: number }[]> {
     return invoke<{ value: string; label: string; count: number }[]>('query:filter-values', dimensionId, filters, dateRange);
   },
-  getDataInventory(): Promise<DataInventoryResult> {
-    return invoke<DataInventoryResult>('data:inventory');
+  getDataInventory(tierBucket?: string): Promise<DataInventoryResult> {
+    return invoke<DataInventoryResult>('data:inventory', tierBucket);
   },
   syncPeriods(files: readonly { key: string; contentHash: string; size: number }[]): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
     return invoke<{ filesDownloaded: number; rowsProcessed: number }>('data:sync-periods', files);

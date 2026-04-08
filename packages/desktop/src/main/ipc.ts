@@ -731,11 +731,12 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     return [...orgTree.tree];
   });
 
-  ipcMain.handle('data:inventory', async (): Promise<DataInventory> => {
+  ipcMain.handle('data:inventory', async (_event, tierBucket?: string): Promise<DataInventory> => {
     const config = await getConfig();
     const provider = config.providers[0];
     if (provider === undefined) throw new Error('No provider configured');
-    return getDataInventory(provider.sync.daily.bucket, provider.credentials.profile, ctx.dataDir);
+    const bucket = tierBucket ?? provider.sync.daily.bucket;
+    return getDataInventory(bucket, provider.credentials.profile, ctx.dataDir);
   });
 
   ipcMain.handle('data:delete-period', async (_event, period: string): Promise<void> => {
