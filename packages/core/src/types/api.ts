@@ -54,6 +54,9 @@ export interface CostApi {
   getAccountMapping(): Promise<AccountMappingStatus>;
   getSetupStatus(): Promise<{ configured: boolean }>;
   testConnection(params: { profile: string; bucket: string }): Promise<{ ok: boolean; error?: string | undefined }>;
+  listAwsProfiles(): Promise<string[]>;
+  listS3Buckets(profile: string): Promise<{ name: string; region: string }[]>;
+  browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean }>;
   writeConfig(config: {
     providerName: string;
     profile: string;

@@ -815,6 +815,84 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     }
   });
 
+  ipcMain.handle('setup:list-profiles', async (): Promise<string[]> => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const os = await import('node:os');
+
+    const profiles = new Set<string>();
+    profiles.add('default');
+
+    for (const filename of ['config', 'credentials']) {
+      const filePath = path.join(os.homedir(), '.aws', filename);
+      try {
+        const content = await fs.readFile(filePath, 'utf-8');
+        const profileRegex = /\[(?:profile\s+)?([^\]]+)\]/g;
+        let match = profileRegex.exec(content);
+        while (match !== null) {
+          const name = match[1];
+          if (name !== undefined) profiles.add(name.trim());
+          match = profileRegex.exec(content);
+        }
+      } catch {
+        // file doesn't exist
+      }
+    }
+
+    return [...profiles].sort();
+  });
+
+  ipcMain.handle('setup:list-buckets', async (_event, profile: string): Promise<{ name: string; region: string }[]> => {
+    try {
+      const { S3Client, ListBucketsCommand } = await import('@aws-sdk/client-s3');
+      const client = new S3Client({
+        region: 'us-east-1',
+        ...(profile !== 'default' ? { profile } : {}),
+      });
+
+      const response = await client.send(new ListBucketsCommand({}));
+      return (response.Buckets ?? [])
+        .filter(b => b.Name !== undefined)
+        .map(b => ({ name: b.Name ?? '', region: '' }));
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean }> => {
+    try {
+      const { S3Client, ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+      const client = new S3Client({
+        region: 'eu-central-1',
+        ...(params.profile !== 'default' ? { profile: params.profile } : {}),
+      });
+
+      const response = await client.send(new ListObjectsV2Command({
+        Bucket: params.bucket,
+        Prefix: params.prefix,
+        Delimiter: '/',
+        MaxKeys: 200,
+      }));
+
+      const prefixes = (response.CommonPrefixes ?? [])
+        .filter(p => p.Prefix !== undefined)
+        .map(p => {
+          const full = p.Prefix ?? '';
+          const relative = full.slice(params.prefix.length);
+          return relative.replace(/\/$/, '');
+        })
+        .filter(p => p.length > 0);
+
+      const hasData = prefixes.includes('data');
+      const hasMetadata = prefixes.includes('metadata');
+      const isCurReport = hasData && hasMetadata;
+
+      return { prefixes, isCurReport };
+    } catch {
+      return { prefixes: [], isCurReport: false };
+    }
+  });
+
   ipcMain.handle('setup:write-config', async (_event, wizardConfig: {
     providerName: string;
     profile: string;
