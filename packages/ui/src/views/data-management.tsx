@@ -222,13 +222,18 @@ function TierPanel({
         </div>
       )}
       {syncState.status === 'repartitioning' && (
-        <div className="rounded-lg border border-warning/50 bg-warning-muted px-3 py-2">
-          <div className="flex items-center gap-2 text-xs text-warning mb-1">
-            <div className="h-1.5 w-1.5 rounded-full bg-warning animate-pulse" />
-            Repartitioning day {String(syncState.datesDone)} of {String(syncState.datesTotal)}
+        <div className="rounded-lg border border-violet-500/50 bg-violet-500/5 px-3 py-2">
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2 text-xs text-violet-400">
+              <div className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-pulse" />
+              <span>Processing — repartitioning into daily partitions</span>
+            </div>
+            <span className="text-[10px] text-text-muted tabular-nums">
+              {String(syncState.datesDone)} / {String(syncState.datesTotal)} days
+            </span>
           </div>
-          <div className="h-1 rounded-full bg-bg-tertiary overflow-hidden">
-            <div className="h-full rounded-full bg-warning transition-all" style={{ width: `${String(syncState.datesTotal > 0 ? Math.round(syncState.datesDone / syncState.datesTotal * 100) : 0)}%` }} />
+          <div className="h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
+            <div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${String(syncState.datesTotal > 0 ? Math.round(syncState.datesDone / syncState.datesTotal * 100) : 0)}%` }} />
           </div>
         </div>
       )}
@@ -381,16 +386,21 @@ export function DataManagement() {
           if (s.phase === 'repartitioning') {
             setSyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
           } else {
-            setSyncState(prev => prev.status === 'downloading'
-              ? { ...prev, filesDone: s.filesDone, filesTotal: s.filesTotal }
-              : prev,
-            );
+            setSyncState({
+              status: 'downloading',
+              filesDone: s.filesDone,
+              filesTotal: s.filesTotal,
+              bytesTotal: s.bytesTotal,
+              bytesDone: s.bytesDone,
+              currentFile: s.currentFile,
+              bytesPerSecond: s.bytesPerSecond,
+            });
           }
         } else if (s.status === 'idle') {
           setSyncState({ status: 'idle' });
         }
       });
-    }, 1000);
+    }, 500);
 
     try {
       const result = await api.syncPeriods(selectedFiles);
