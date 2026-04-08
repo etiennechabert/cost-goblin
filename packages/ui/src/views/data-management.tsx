@@ -606,7 +606,7 @@ export function DataManagement() {
             onDownload={() => { void handleSync(); }}
             onDeletePeriod={handleDelete}
             syncState={activeSyncTier === 'daily' ? syncState : { status: 'idle' }}
-            onCancelSync={() => { void api.cancelSync(); }}
+            onCancelSync={() => { void api.cancelSync(); setSyncState({ status: 'idle' }); setActiveSyncTier(null); }}
             anySyncActive={activeSyncTier !== null}
           />
           <TierPanel
@@ -626,7 +626,7 @@ export function DataManagement() {
             onDownload={() => { void handleHourlySync(); }}
             onDeletePeriod={handleDelete}
             syncState={activeSyncTier === 'hourly' ? syncState : { status: 'idle' }}
-            onCancelSync={() => { void api.cancelSync(); }}
+            onCancelSync={() => { void api.cancelSync(); setSyncState({ status: 'idle' }); setActiveSyncTier(null); }}
             onConfigure={() => { setConfigureSource('hourly'); }}
           />
           <TierPanel
