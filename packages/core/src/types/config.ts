@@ -18,6 +18,7 @@ export interface AwsCredentials {
 export interface SyncConfig {
   readonly daily: SyncTierConfig;
   readonly hourly?: SyncTierConfig | undefined;
+  readonly costOptimization?: SyncTierConfig | undefined;
   readonly intervalMinutes: number;
 }
 

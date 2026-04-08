@@ -92,12 +92,20 @@ export async function createS3Handle(profile: string, region?: string): Promise<
   };
 }
 
+export interface FileValidationInfo {
+  readonly file: string;
+  readonly valid: boolean;
+  readonly detectedType: string;
+  readonly message?: string | undefined;
+}
+
 export interface SyncProgress {
-  readonly phase: 'listing' | 'downloading' | 'repartitioning' | 'done';
+  readonly phase: 'listing' | 'downloading' | 'validating' | 'repartitioning' | 'done';
   readonly filesTotal: number;
   readonly filesDone: number;
   readonly bytesTotal: number;
   readonly bytesDone: number;
+  readonly validationResults?: readonly FileValidationInfo[] | undefined;
 }
 
 export type ProgressCallback = (progress: SyncProgress) => void;
