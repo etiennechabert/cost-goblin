@@ -313,12 +313,22 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
   const [saving, setSaving] = useState(false);
   const api = useCostApi();
 
-  const retentionOptions = [
-    { days: 90, label: '3 months' },
-    { days: 180, label: '6 months' },
-    { days: 365, label: '12 months' },
-    { days: 730, label: '2 years' },
-  ];
+  const isDaily = state.s3Path.length > 0;
+  const isHourlyOnly = !isDaily && state.hourlyPath.length > 0;
+
+  const retentionOptions = isHourlyOnly
+    ? [
+        { days: 7, label: '7 days' },
+        { days: 14, label: '14 days' },
+        { days: 30, label: '30 days' },
+        { days: 90, label: '90 days' },
+      ]
+    : [
+        { days: 90, label: '3 months' },
+        { days: 180, label: '6 months' },
+        { days: 365, label: '12 months' },
+        { days: 730, label: '2 years' },
+      ];
 
   function handleSave() {
     setSaving(true);
@@ -326,13 +336,18 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
       providerName: 'aws-main',
       profile: state.profile,
       dailyBucket: state.s3Path,
-      retentionDays: state.retentionDays,
+      retentionDays: isDaily ? state.retentionDays : undefined,
       ...(state.hourlyPath.length > 0 ? { hourlyBucket: state.hourlyPath } : {}),
       ...(state.costOptPath.length > 0 ? { costOptBucket: state.costOptPath } : {}),
     }).then(() => {
       onComplete();
     });
   }
+
+  const paths: { label: string; value: string }[] = [];
+  if (state.s3Path.length > 0) paths.push({ label: 'Daily CUR', value: state.s3Path });
+  if (state.hourlyPath.length > 0) paths.push({ label: 'Hourly CUR', value: state.hourlyPath });
+  if (state.costOptPath.length > 0) paths.push({ label: 'Cost Optimization', value: state.costOptPath });
 
   return (
     <div className="flex flex-col gap-5">
@@ -346,24 +361,13 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
           <p className="text-xs text-text-muted uppercase tracking-wider">AWS Profile</p>
           <p className="text-sm font-mono text-text-primary mt-0.5">{state.profile}</p>
         </div>
-        <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-          <p className="text-xs text-text-muted uppercase tracking-wider">Daily CUR</p>
-          <p className="text-sm font-mono text-text-primary mt-0.5">{state.s3Path}</p>
-        </div>
 
-        {/* Additional data sources — shown as read-only summaries */}
-        {state.hourlyPath.length > 0 && (
-          <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-            <p className="text-xs text-text-muted uppercase tracking-wider">Hourly CUR</p>
-            <p className="text-sm font-mono text-text-primary mt-0.5">{state.hourlyPath}</p>
+        {paths.map(({ label, value }) => (
+          <div key={label} className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+            <p className="text-xs text-text-muted uppercase tracking-wider">{label}</p>
+            <p className="text-sm font-mono text-text-primary mt-0.5">{value}</p>
           </div>
-        )}
-        {state.costOptPath.length > 0 && (
-          <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-            <p className="text-xs text-text-muted uppercase tracking-wider">Cost Optimization</p>
-            <p className="text-sm font-mono text-text-primary mt-0.5">{state.costOptPath}</p>
-          </div>
-        )}
+        ))}
 
         <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
           <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Data Retention</p>
@@ -463,15 +467,19 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     const source = wizard.source;
 
     const updated = { ...collectedPaths };
+    let defaultRetention = 365;
     if (source === 'daily') {
       updated.daily = s3Path;
+      defaultRetention = 365;
     } else if (source === 'hourly') {
       updated.hourly = s3Path;
+      defaultRetention = 30;
     } else {
       updated.costOpt = s3Path;
+      defaultRetention = 90;
     }
     setCollectedPaths(updated);
-    goToConfirm(profile, updated);
+    goToConfirm(profile, updated, defaultRetention);
   }
 
   function handleBrowseSkip() {
@@ -486,7 +494,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     }
   }
 
-  function goToConfirm(profile: string, paths?: { daily: string; hourly: string; costOpt: string }) {
+  function goToConfirm(profile: string, paths?: { daily: string; hourly: string; costOpt: string }, retention?: number) {
     const p = paths ?? collectedPaths;
     setWizard({
       step: 'confirm',
@@ -494,7 +502,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       s3Path: p.daily,
       hourlyPath: p.hourly,
       costOptPath: p.costOpt,
-      retentionDays: 365,
+      retentionDays: retention ?? 365,
     });
   }
 
