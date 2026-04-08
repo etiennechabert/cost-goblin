@@ -15,7 +15,7 @@ type WizardStep =
   | { step: 'welcome' }
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
-  | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; path: string[] }
+  | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[]; path: string[] }
   | { step: 'confirm'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
 
 interface SetupWizardProps {
@@ -270,6 +270,18 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: {
         );
       })()}
 
+      {state.isCurReport && state.missingColumns.length > 0 && (
+        <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
+          <p className="text-sm font-medium text-negative">Missing required columns</p>
+          <p className="text-xs text-text-secondary mt-0.5">
+            {state.missingColumns.join(', ')}
+          </p>
+          <p className="text-xs text-text-muted mt-1">
+            CostGoblin needs these columns. Check your CUR report configuration in the AWS Console.
+          </p>
+        </div>
+      )}
+
       {state.loading ? (
         <div className="flex items-center justify-center py-6">
           <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border border-t-accent" />
@@ -466,9 +478,9 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
 
   function browseTo(profile: string, source: DataSource, bucket: string, prefix: string) {
     const path = prefix.split('/').filter(s => s.length > 0);
-    setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: [], loading: true, isCurReport: false, detectedType: 'unknown', path });
+    setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: [], loading: true, isCurReport: false, detectedType: 'unknown', missingColumns: [], path });
     void api.browseS3({ profile, bucket, prefix }).then(result => {
-      setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: result.prefixes, loading: false, isCurReport: result.isCurReport, detectedType: result.detectedType, path });
+      setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: result.prefixes, loading: false, isCurReport: result.isCurReport, detectedType: result.detectedType, missingColumns: result.missingColumns, path });
     });
   }
 

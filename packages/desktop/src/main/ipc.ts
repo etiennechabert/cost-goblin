@@ -862,7 +862,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     }
   });
 
-  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown' }> => {
+  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }> => {
     try {
       const { S3Client, ListObjectsV2Command, GetObjectCommand } = await import('@aws-sdk/client-s3');
       const client = new S3Client({
@@ -891,6 +891,13 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       const isCurReport = hasData && hasMetadata;
 
       let detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown' = 'unknown';
+      let missingColumns: string[] = [];
+
+      const requiredCurColumns = [
+        'line_item_usage_start_date', 'line_item_usage_account_id',
+        'line_item_unblended_cost', 'product_servicecode',
+        'product_product_family', 'product_region_code', 'resource_tags',
+      ];
 
       if (isCurReport) {
         try {
@@ -914,9 +921,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
               if (columnNames.includes('recommendation_id') || columnNames.includes('estimated_monthly_savings')) {
                 detectedType = 'cost-optimization';
               } else if (columnNames.includes('line_item_usage_start_date')) {
-                // CUR report — can't reliably distinguish daily vs hourly from manifest
-              // Validated post-download by checking distinct hours in the data
+                // CUR report — daily vs hourly validated post-download
                 detectedType = 'daily';
+                // Check for missing required columns
+                missingColumns = requiredCurColumns.filter(c => !columnNames.includes(c));
               }
             }
           }
@@ -925,9 +933,9 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         }
       }
 
-      return { prefixes, isCurReport, detectedType };
+      return { prefixes, isCurReport, detectedType, missingColumns };
     } catch {
-      return { prefixes: [], isCurReport: false, detectedType: 'unknown' };
+      return { prefixes: [], isCurReport: false, detectedType: 'unknown', missingColumns: [] };
     }
   });
 
