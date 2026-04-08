@@ -914,64 +914,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
               if (columnNames.includes('recommendation_id') || columnNames.includes('estimated_monthly_savings')) {
                 detectedType = 'cost-optimization';
               } else if (columnNames.includes('line_item_usage_start_date')) {
-                // CUR report — need to sample data to distinguish daily vs hourly
-                detectedType = 'daily'; // default, refined below by sampling
+                // CUR report — can't reliably distinguish daily vs hourly from manifest
+              // Validated post-download by checking distinct hours in the data
+                detectedType = 'daily';
               }
-            }
-          }
-          // If it's a CUR, sample data to detect daily vs hourly
-          // Download a parquet file to temp, query with DuckDB for distinct hours
-          if (detectedType === 'daily' && manifestKey !== undefined) {
-            try {
-              const mResp = await client.send(new GetObjectCommand({ Bucket: params.bucket, Key: manifestKey }));
-              const mBody = await mResp.Body?.transformToString();
-              const mJson = mBody !== undefined ? JSON.parse(mBody) as { dataFiles?: string[] } : { dataFiles: [] };
-              const firstFile = mJson.dataFiles?.[0];
-              if (firstFile !== undefined) {
-                const parsed = parseS3Path(firstFile);
-                const os = await import('node:os');
-                const fs = await import('node:fs/promises');
-                const path = await import('node:path');
-                const tmpPath = path.join(os.tmpdir(), 'costgoblin-sample.parquet');
-
-                // Download the full file (parquet needs footer for reading)
-                const getResponse = await client.send(new GetObjectCommand({
-                  Bucket: parsed.bucket,
-                  Key: parsed.prefix,
-                }));
-
-                if (getResponse.Body !== undefined) {
-                  const chunks: Buffer[] = [];
-                  for await (const chunk of getResponse.Body as AsyncIterable<Uint8Array>) {
-                    chunks.push(Buffer.from(chunk));
-                    // Stop after 5MB to avoid downloading huge files
-                    if (chunks.reduce((s, c) => s + c.length, 0) > 5 * 1024 * 1024) break;
-                  }
-                  await fs.writeFile(tmpPath, Buffer.concat(chunks));
-
-                  const { DuckDBInstance } = await import('@duckdb/node-api') as {
-                    DuckDBInstance: { create: () => Promise<{ connect: () => Promise<{ run: (sql: string) => Promise<{ fetchChunk: () => Promise<{ rowCount: number; getColumnVector: (i: number) => { getItem: (r: number) => unknown } } | null> }> }> }> }
-                  };
-                  const sampleDb = await DuckDBInstance.create();
-                  const sampleConn = await sampleDb.connect();
-
-                  const hourResult = await sampleConn.run(
-                    `SELECT COUNT(DISTINCT EXTRACT(HOUR FROM line_item_usage_start_date)) as h FROM read_parquet('${tmpPath}') LIMIT 10000`
-                  );
-                  const sampleChunk = await hourResult.fetchChunk();
-                  if (sampleChunk !== null && sampleChunk.rowCount > 0) {
-                    const distinctHours = Number(sampleChunk.getColumnVector(0).getItem(0));
-                    logger.info(`Data type detection: ${String(distinctHours)} distinct hours found`);
-                    if (distinctHours > 1) {
-                      detectedType = 'hourly';
-                    }
-                  }
-
-                  await fs.rm(tmpPath, { force: true });
-                }
-              }
-            } catch (sampleErr: unknown) {
-              logger.info(`Data sampling failed: ${sampleErr instanceof Error ? sampleErr.message : String(sampleErr)}`);
             }
           }
         } catch {
