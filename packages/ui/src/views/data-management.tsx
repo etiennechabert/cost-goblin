@@ -185,24 +185,20 @@ function TierPanel({
       {/* Sync progress */}
       {syncState.status === 'downloading' && (
         <div className="rounded-lg border border-accent/50 bg-positive-muted px-3 py-2">
-          <div className="flex items-center justify-between mb-1">
-            <div className="flex items-center gap-2 text-xs text-accent">
-              <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
-              <span>
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center gap-2 text-xs text-accent min-w-0">
+              <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse shrink-0" />
+              <span className="truncate">
                 Downloading {String(syncState.filesDone)}/{String(syncState.filesTotal)}
                 {syncState.currentFile.length > 0 && (
-                  <span className="text-text-muted ml-1">— {syncState.currentFile}</span>
+                  <span className="text-text-muted"> — {syncState.currentFile}</span>
                 )}
               </span>
             </div>
-            <div className="flex items-center gap-3">
-              {syncState.bytesPerSecond > 0 && (
-                <span className="text-[10px] text-text-muted tabular-nums">
-                  {formatBytes(Math.round(syncState.bytesPerSecond))}/s
-                </span>
-              )}
-              <span className="text-[10px] text-text-muted tabular-nums">
-                {formatBytes(syncState.bytesDone)} / {formatBytes(syncState.bytesTotal)}
+            <div className="flex items-center gap-2 shrink-0 ml-2">
+              <span className="text-[10px] text-text-muted tabular-nums whitespace-nowrap">
+                {syncState.bytesPerSecond > 0 ? `${formatBytes(Math.round(syncState.bytesPerSecond))}/s` : ''}
+                {' '}{formatBytes(syncState.bytesDone)}/{formatBytes(syncState.bytesTotal)}
               </span>
               <button
                 type="button"
@@ -210,13 +206,13 @@ function TierPanel({
                 className="p-0.5 rounded text-negative/70 hover:text-negative hover:bg-negative-muted transition-colors"
                 title="Cancel download"
               >
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="M2 2l10 10M12 2L2 12" />
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M1 1l10 10M11 1L1 11" />
                 </svg>
               </button>
             </div>
           </div>
-          <div className="h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
+          <div className="h-1 rounded-full bg-bg-tertiary overflow-hidden">
             <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${String(syncState.bytesTotal > 0 ? Math.round(syncState.bytesDone / syncState.bytesTotal * 100) : 0)}%` }} />
           </div>
         </div>
