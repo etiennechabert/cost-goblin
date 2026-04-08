@@ -80,8 +80,8 @@ const api: CostApi = {
   listAwsProfiles(): Promise<string[]> {
     return invoke<string[]>('setup:list-profiles');
   },
-  listS3Buckets(profile: string): Promise<{ name: string; region: string }[]> {
-    return invoke<{ name: string; region: string }[]>('setup:list-buckets', profile);
+  listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> {
+    return invoke<{ buckets: { name: string; region: string }[]; error?: string | undefined }>('setup:list-buckets', profile);
   },
   browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean }> {
     return invoke<{ prefixes: string[]; isCurReport: boolean }>('setup:browse-s3', params);

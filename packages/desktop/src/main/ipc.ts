@@ -842,7 +842,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     return [...profiles].sort();
   });
 
-  ipcMain.handle('setup:list-buckets', async (_event, profile: string): Promise<{ name: string; region: string }[]> => {
+  ipcMain.handle('setup:list-buckets', async (_event, profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> => {
     try {
       const { S3Client, ListBucketsCommand } = await import('@aws-sdk/client-s3');
       const client = new S3Client({
@@ -851,11 +851,14 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       });
 
       const response = await client.send(new ListBucketsCommand({}));
-      return (response.Buckets ?? [])
+      const buckets = (response.Buckets ?? [])
         .filter(b => b.Name !== undefined)
         .map(b => ({ name: b.Name ?? '', region: '' }));
-    } catch {
-      return [];
+      return { buckets };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.info('setup:list-buckets failed', { error: message });
+      return { buckets: [], error: message };
     }
   });
 

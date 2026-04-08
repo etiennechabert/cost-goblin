@@ -6,9 +6,9 @@ import { Button } from '../components/ui/button.js';
 type WizardStep =
   | { step: 'welcome' }
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
-  | { step: 'bucket'; profile: string; buckets: { name: string; region: string }[]; loading: boolean; selected: string }
+  | { step: 'bucket'; profile: string; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'browse'; profile: string; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isCurReport: boolean; path: string[] }
-  | { step: 'confirm'; profile: string; s3Path: string };
+  | { step: 'confirm'; profile: string; s3Path: string; retentionDays: number };
 
 interface SetupWizardProps {
   onComplete: () => void;
@@ -132,6 +132,12 @@ function BucketStep({ state, onSelect, onBack }: {
           <span className="text-text-muted"> (profile: {state.profile})</span>
         </p>
       </div>
+
+      {state.error.length > 0 && (
+        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">
+          {state.error}
+        </div>
+      )}
 
       {state.loading ? (
         <div className="flex items-center justify-center py-8">
@@ -274,13 +280,21 @@ function BrowseStep({ state, onNavigate, onConfirm, onBack }: {
   );
 }
 
-function ConfirmStep({ state, onComplete, onBack }: {
+function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
   state: Extract<WizardStep, { step: 'confirm' }>;
+  onRetentionChange: (days: number) => void;
   onComplete: () => void;
   onBack: () => void;
 }) {
   const [saving, setSaving] = useState(false);
   const api = useCostApi();
+
+  const retentionOptions = [
+    { days: 90, label: '3 months' },
+    { days: 180, label: '6 months' },
+    { days: 365, label: '12 months' },
+    { days: 730, label: '2 years' },
+  ];
 
   function handleSave() {
     setSaving(true);
@@ -309,11 +323,28 @@ function ConfirmStep({ state, onComplete, onBack }: {
           <p className="text-xs text-text-muted uppercase tracking-wider">CUR Location</p>
           <p className="text-sm font-mono text-text-primary mt-0.5">{state.s3Path}</p>
         </div>
+        <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+          <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Data Retention</p>
+          <div className="flex gap-2">
+            {retentionOptions.map(opt => (
+              <button
+                key={opt.days}
+                type="button"
+                onClick={() => { onRetentionChange(opt.days); }}
+                className={[
+                  'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  state.retentionDays === opt.days
+                    ? 'bg-accent text-bg-primary'
+                    : 'bg-bg-tertiary/50 text-text-secondary hover:text-text-primary',
+                ].join(' ')}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-text-muted mt-1.5">How far back to download billing data</p>
+        </div>
       </div>
-
-      <p className="text-xs text-text-muted">
-        After setup, go to the <strong className="text-text-secondary">Data</strong> tab to download billing periods.
-      </p>
 
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
@@ -341,9 +372,9 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
   }
 
   function handleProfileSelect(profile: string) {
-    setWizard({ step: 'bucket', profile, buckets: [], loading: true, selected: '' });
-    void api.listS3Buckets(profile).then(buckets => {
-      setWizard({ step: 'bucket', profile, buckets, loading: false, selected: '' });
+    setWizard({ step: 'bucket', profile, buckets: [], loading: true, selected: '', error: '' });
+    void api.listS3Buckets(profile).then(result => {
+      setWizard({ step: 'bucket', profile, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
     });
   }
 
@@ -367,7 +398,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
   function handleBrowseConfirm() {
     if (wizard.step !== 'browse') return;
     const s3Path = `s3://${wizard.bucket}/${wizard.prefix}`;
-    setWizard({ step: 'confirm', profile: wizard.profile, s3Path });
+    setWizard({ step: 'confirm', profile: wizard.profile, s3Path, retentionDays: 365 });
   }
 
   function handleBack() {
@@ -395,7 +426,14 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
           {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={onComplete} onBack={handleBack} />}
           {wizard.step === 'bucket' && <BucketStep state={wizard} onSelect={handleBucketSelect} onBack={handleBack} />}
           {wizard.step === 'browse' && <BrowseStep state={wizard} onNavigate={handleNavigate} onConfirm={handleBrowseConfirm} onBack={handleBack} />}
-          {wizard.step === 'confirm' && <ConfirmStep state={wizard} onComplete={onComplete} onBack={handleBack} />}
+          {wizard.step === 'confirm' && (
+            <ConfirmStep
+              state={wizard}
+              onRetentionChange={(days) => { setWizard(prev => prev.step === 'confirm' ? { ...prev, retentionDays: days } : prev); }}
+              onComplete={onComplete}
+              onBack={handleBack}
+            />
+          )}
         </CardContent>
       </Card>
     </div>

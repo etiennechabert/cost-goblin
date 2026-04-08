@@ -118,7 +118,7 @@ export function App(): React.JSX.Element {
 
   function handleSetupComplete() {
     setSetupCheck({ status: 'ready' });
-    setView({ page: 'overview' });
+    setView({ page: 'data' });
   }
 
   if (setupCheck.status === 'checking') {
