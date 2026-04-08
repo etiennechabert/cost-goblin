@@ -321,7 +321,7 @@ export function DataManagement() {
   const [refreshKey, setRefreshKey] = useState(0);
   const inventoryQuery = useQuery(() => api.getDataInventory(), [refreshKey]);
   const accountQuery = useQuery(() => api.getAccountMapping(), [refreshKey]);
-  const configQuery = useQuery(() => api.getConfig(), []);
+  const configQuery = useQuery(() => api.getConfig(), [refreshKey]);
   const [selected, setSelected] = useState(new Set<string>());
   const [initialized, setInitialized] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>({ status: 'idle' });
