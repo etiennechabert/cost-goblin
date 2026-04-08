@@ -45,9 +45,10 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
   );
 }
 
-function ProfileStep({ state, onSelect, onBack }: {
+function ProfileStep({ state, onSelect, onSkip, onBack }: {
   state: Extract<WizardStep, { step: 'profile' }>;
   onSelect: (profile: string) => void;
+  onSkip: () => void;
   onBack: () => void;
 }) {
   return (
@@ -55,6 +56,9 @@ function ProfileStep({ state, onSelect, onBack }: {
       <div>
         <h2 className="text-xl font-semibold text-text-primary">AWS Profile</h2>
         <p className="text-sm text-text-secondary mt-1">Select the AWS profile to use for accessing your billing data</p>
+        <p className="text-xs text-text-muted mt-1">
+          Profiles are read from <code className="text-text-secondary">~/.aws/credentials</code> and <code className="text-text-secondary">~/.aws/config</code>
+        </p>
       </div>
 
       {state.loading ? (
@@ -99,6 +103,14 @@ function ProfileStep({ state, onSelect, onBack }: {
           Next
         </Button>
       </div>
+
+      <button
+        type="button"
+        onClick={onSkip}
+        className="text-xs text-text-muted hover:text-text-secondary text-center underline underline-offset-2"
+      >
+        Skip — I'll configure this manually
+      </button>
     </div>
   );
 }
@@ -380,7 +392,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
       <Card className="w-full max-w-lg border-border bg-bg-secondary">
         <CardContent className="p-8">
           {wizard.step === 'welcome' && <WelcomeStep onNext={handleWelcomeNext} />}
-          {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onBack={handleBack} />}
+          {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={onComplete} onBack={handleBack} />}
           {wizard.step === 'bucket' && <BucketStep state={wizard} onSelect={handleBucketSelect} onBack={handleBack} />}
           {wizard.step === 'browse' && <BrowseStep state={wizard} onNavigate={handleNavigate} onConfirm={handleBrowseConfirm} onBack={handleBack} />}
           {wizard.step === 'confirm' && <ConfirmStep state={wizard} onComplete={onComplete} onBack={handleBack} />}
