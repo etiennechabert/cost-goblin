@@ -17,6 +17,7 @@ export interface SelectiveSyncOptions {
   readonly expectedDataType?: ExpectedDataType | undefined;
   readonly files: readonly ManifestFileEntry[];
   readonly onProgress?: ProgressCallback | undefined;
+  readonly signal?: AbortSignal | undefined;
 }
 
 export interface FileValidationResult {
@@ -133,10 +134,15 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
 
   let totalFilesDownloaded = 0;
   const totalFiles = files.length;
+  const totalBytes = files.reduce((s, f) => s + f.size, 0);
   let globalFilesDone = 0;
+  let globalBytesDone = 0;
   const allValidationResults: FileValidationInfo[] = [];
+  const downloadStartTime = Date.now();
 
   for (const [period, periodFiles] of periodList) {
+    if (options.signal?.aborted) break;
+
     logger.info(`Processing period ${period}: ${String(periodFiles.length)} files`);
 
     // Phase 1: Download and validate this period's files
@@ -144,14 +150,39 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     await mkdir(stagingDir, { recursive: true });
 
     for (const file of periodFiles) {
-      const localPath = join(stagingDir, basename(file.key));
-      logger.info(`Downloading ${basename(file.key)} (${String(Math.round(file.size / 1024 / 1024))}MB)`);
+      if (options.signal?.aborted) break;
 
-      await s3.downloadFile(s3Path.bucket, file.key, localPath);
+      const localPath = join(stagingDir, basename(file.key));
+      const fileName = basename(file.key);
+      logger.info(`Downloading ${fileName} (${String(Math.round(file.size / 1024 / 1024))}MB)`);
+
+      const fileStartBytes = globalBytesDone;
+      await s3.downloadFile(s3Path.bucket, file.key, localPath, {
+        signal: options.signal,
+        onBytes: (fileBytes) => {
+          const currentTotal = fileStartBytes + fileBytes;
+          const elapsed = (Date.now() - downloadStartTime) / 1000;
+          const bytesPerSecond = elapsed > 0 ? currentTotal / elapsed : 0;
+
+          if (onProgress !== undefined) {
+            onProgress({
+              phase: 'downloading',
+              filesTotal: totalFiles,
+              filesDone: globalFilesDone,
+              bytesTotal: totalBytes,
+              bytesDone: currentTotal,
+              currentFile: fileName,
+              bytesPerSecond,
+              validationResults: allValidationResults,
+            });
+          }
+        },
+      });
+      globalBytesDone += file.size;
       globalFilesDone++;
 
       // Validate downloaded file
-      logger.info(`Validating ${basename(file.key)}...`);
+      logger.info(`Validating ${fileName}...`);
       const validation = await validateDownloadedFile(localPath, options.expectedDataType);
       allValidationResults.push(validation);
 
@@ -159,17 +190,6 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
         logger.info(`Validation warning for ${validation.file}: ${validation.message ?? 'unknown issue'}`);
       } else {
         logger.info(`Validated ${validation.file}: ${validation.detectedType}`);
-      }
-
-      if (onProgress !== undefined) {
-        onProgress({
-          phase: 'downloading',
-          filesTotal: totalFiles,
-          filesDone: globalFilesDone,
-          bytesTotal: 0,
-          bytesDone: 0,
-          validationResults: allValidationResults,
-        });
       }
     }
 

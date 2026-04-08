@@ -747,11 +747,14 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     }
   });
 
+  let syncAbortController: AbortController | null = null;
+
   ipcMain.handle('data:sync-periods', async (_event, fileEntries: ManifestFileEntry[]): Promise<{ filesDownloaded: number; rowsProcessed: number }> => {
     const config = await getConfig();
     const provider = config.providers[0];
     if (provider === undefined) throw new Error('No provider configured');
 
+    syncAbortController = new AbortController();
     state.syncStatus = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0 };
 
     try {
@@ -762,24 +765,38 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         dataDir: ctx.dataDir,
         dimensionsConfig: dimensions,
         files: fileEntries,
+        signal: syncAbortController.signal,
         onProgress: (progress) => {
           state.syncStatus = {
             status: 'syncing',
             phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
-            progress: progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0,
+            progress: progress.bytesTotal > 0 ? progress.bytesDone / progress.bytesTotal : 0,
             filesTotal: progress.filesTotal,
             filesDone: progress.filesDone,
           };
         },
       });
 
+      syncAbortController = null;
       state.syncStatus = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
       return result;
     } catch (err: unknown) {
+      syncAbortController = null;
       const error = err instanceof Error ? err : new Error(String(err));
+      if (error.message === 'Download cancelled') {
+        state.syncStatus = { status: 'idle', lastSync: null };
+        return { filesDownloaded: 0, rowsProcessed: 0 };
+      }
       logger.error(`Selective sync failed: ${error.message}`);
       state.syncStatus = { status: 'failed', error, lastSync: null };
       throw error;
+    }
+  });
+
+  ipcMain.handle('data:cancel-sync', (): void => {
+    if (syncAbortController !== null) {
+      syncAbortController.abort();
+      logger.info('Sync cancelled by user');
     }
   });
 

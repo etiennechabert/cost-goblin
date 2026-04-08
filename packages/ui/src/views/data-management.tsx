@@ -22,7 +22,7 @@ function formatPeriod(period: string): string {
 
 type SyncState =
   | { status: 'idle' }
-  | { status: 'downloading'; filesDone: number; filesTotal: number; bytesDone: number; bytesTotal: number }
+  | { status: 'downloading'; filesDone: number; filesTotal: number; bytesDone: number; bytesTotal: number; currentFile: string; bytesPerSecond: number }
   | { status: 'repartitioning'; datesDone: number; datesTotal: number }
   | { status: 'done'; filesDownloaded: number }
   | { status: 'error'; message: string };
@@ -112,13 +112,14 @@ interface TierPanelProps {
   onDeletePeriod: (period: string) => void;
   syncState: SyncState;
   onConfigure?: (() => void) | undefined;
+  onCancelSync?: (() => void) | undefined;
 }
 
 function TierPanel({
   title, configured, bucket, retentionDays,
   localDates, diskBytes, oldestDate, newestDate,
   periods, selected, onToggle, onSelectAll, onDeselectAll, onDownload, onDeletePeriod,
-  syncState, onConfigure,
+  syncState, onConfigure, onCancelSync,
 }: TierPanelProps) {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const missingPeriods = periods.filter(p => p.localStatus === 'missing' || p.localStatus === 'stale');
@@ -184,12 +185,39 @@ function TierPanel({
       {/* Sync progress */}
       {syncState.status === 'downloading' && (
         <div className="rounded-lg border border-accent/50 bg-positive-muted px-3 py-2">
-          <div className="flex items-center gap-2 text-xs text-accent mb-1">
-            <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
-            Downloading {String(syncState.filesDone)}/{String(syncState.filesTotal)}
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2 text-xs text-accent">
+              <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
+              <span>
+                Downloading {String(syncState.filesDone)}/{String(syncState.filesTotal)}
+                {syncState.currentFile.length > 0 && (
+                  <span className="text-text-muted ml-1">— {syncState.currentFile}</span>
+                )}
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              {syncState.bytesPerSecond > 0 && (
+                <span className="text-[10px] text-text-muted tabular-nums">
+                  {formatBytes(Math.round(syncState.bytesPerSecond))}/s
+                </span>
+              )}
+              <span className="text-[10px] text-text-muted tabular-nums">
+                {formatBytes(syncState.bytesDone)} / {formatBytes(syncState.bytesTotal)}
+              </span>
+              <button
+                type="button"
+                onClick={() => { onCancelSync?.(); }}
+                className="p-0.5 rounded text-negative/70 hover:text-negative hover:bg-negative-muted transition-colors"
+                title="Cancel download"
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M2 2l10 10M12 2L2 12" />
+                </svg>
+              </button>
+            </div>
           </div>
-          <div className="h-1 rounded-full bg-bg-tertiary overflow-hidden">
-            <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${String(syncState.filesTotal > 0 ? Math.round(syncState.filesDone / syncState.filesTotal * 100) : 0)}%` }} />
+          <div className="h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
+            <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${String(syncState.bytesTotal > 0 ? Math.round(syncState.bytesDone / syncState.bytesTotal * 100) : 0)}%` }} />
           </div>
         </div>
       )}
@@ -345,7 +373,7 @@ export function DataManagement() {
       .flatMap(p => [...p.files]);
     if (selectedFiles.length === 0) return;
     const totalSize = selectedFiles.reduce((s, f) => s + f.size, 0);
-    setSyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, bytesDone: 0, bytesTotal: totalSize });
+    setSyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, bytesDone: 0, bytesTotal: totalSize, currentFile: '', bytesPerSecond: 0 });
 
     const pollInterval = setInterval(() => {
       void api.getSyncStatus().then((s) => {
@@ -353,8 +381,13 @@ export function DataManagement() {
           if (s.phase === 'repartitioning') {
             setSyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
           } else {
-            setSyncState({ status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, bytesDone: 0, bytesTotal: totalSize });
+            setSyncState(prev => prev.status === 'downloading'
+              ? { ...prev, filesDone: s.filesDone, filesTotal: s.filesTotal }
+              : prev,
+            );
           }
+        } else if (s.status === 'idle') {
+          setSyncState({ status: 'idle' });
         }
       });
     }, 1000);
@@ -495,6 +528,7 @@ export function DataManagement() {
             onDownload={() => { void handleSync(); }}
             onDeletePeriod={handleDelete}
             syncState={syncState}
+            onCancelSync={() => { void api.cancelSync(); }}
           />
           <TierPanel
             title="Hourly"

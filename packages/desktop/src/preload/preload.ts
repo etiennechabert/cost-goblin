@@ -62,6 +62,9 @@ const api: CostApi = {
   syncPeriods(files: readonly { key: string; contentHash: string; size: number }[]): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
     return invoke<{ filesDownloaded: number; rowsProcessed: number }>('data:sync-periods', files);
   },
+  cancelSync(): Promise<void> {
+    return invoke<undefined>('data:cancel-sync').then(() => undefined);
+  },
   deleteLocalPeriod(period: string): Promise<void> {
     return invoke<undefined>('data:delete-period', period).then(() => undefined);
   },

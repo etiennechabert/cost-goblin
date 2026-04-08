@@ -48,6 +48,7 @@ export interface CostApi {
   getOrgTree(): Promise<OrgNode[]>;
   getDataInventory(): Promise<DataInventoryResult>;
   syncPeriods(files: readonly { key: string; contentHash: string; size: number }[]): Promise<{ filesDownloaded: number; rowsProcessed: number }>;
+  cancelSync(): Promise<void>;
   getFilterValues(dimensionId: string, filters: Record<string, string>, dateRange?: { start: string; end: string }): Promise<{ value: string; label: string; count: number }[]>;
   deleteLocalPeriod(period: string): Promise<void>;
   openDataFolder(): Promise<void>;
