@@ -111,6 +111,7 @@ interface TierPanelProps {
   onDownload: () => void;
   onDeletePeriod: (period: string) => void;
   syncState: SyncState;
+  anySyncActive?: boolean | undefined;
   onConfigure?: (() => void) | undefined;
   onCancelSync?: (() => void) | undefined;
 }
@@ -119,7 +120,7 @@ function TierPanel({
   title, configured, bucket, retentionDays,
   localDates, diskBytes, oldestDate, newestDate,
   periods, selected, onToggle, onSelectAll, onDeselectAll, onDownload, onDeletePeriod,
-  syncState, onConfigure, onCancelSync,
+  syncState, anySyncActive, onConfigure, onCancelSync,
 }: TierPanelProps) {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const missingPeriods = periods.filter(p => p.localStatus === 'missing' || p.localStatus === 'stale');
@@ -127,6 +128,7 @@ function TierPanel({
   const selectedFiles = periods.filter(p => selected.has(p.period)).flatMap(p => [...p.files]);
   const selectedSize = selectedFiles.reduce((s, f) => s + f.size, 0);
   const isSyncing = syncState.status === 'downloading' || syncState.status === 'repartitioning';
+  const isBlocked = isSyncing || (anySyncActive === true);
 
   if (!configured) {
     return (
@@ -267,7 +269,7 @@ function TierPanel({
               <button
                 type="button"
                 onClick={onDownload}
-                disabled={isSyncing}
+                disabled={isBlocked}
                 className="w-full rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Download {String(selected.size)} ({formatBytes(selectedSize)})
@@ -605,6 +607,7 @@ export function DataManagement() {
             onDeletePeriod={handleDelete}
             syncState={activeSyncTier === 'daily' ? syncState : { status: 'idle' }}
             onCancelSync={() => { void api.cancelSync(); }}
+            anySyncActive={activeSyncTier !== null}
           />
           <TierPanel
             title="Hourly"
