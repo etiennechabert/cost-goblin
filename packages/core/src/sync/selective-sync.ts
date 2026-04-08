@@ -43,7 +43,7 @@ async function validateDownloadedFile(localPath: string, expectedType: ExpectedD
     const conn = await db.connect();
 
     // Read parquet schema
-    const schemaResult = await conn.run(`SELECT column_name FROM parquet_schema('${localPath}') LIMIT 100`);
+    const schemaResult = await conn.run(`SELECT name FROM parquet_schema('${localPath}') LIMIT 100`);
     const columns: string[] = [];
     let chunk = await schemaResult.fetchChunk();
     while (chunk !== null && chunk.rowCount > 0) {
