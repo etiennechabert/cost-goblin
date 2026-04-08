@@ -862,9 +862,9 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     }
   });
 
-  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean }> => {
+  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown' }> => {
     try {
-      const { S3Client, ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+      const { S3Client, ListObjectsV2Command, GetObjectCommand } = await import('@aws-sdk/client-s3');
       const client = new S3Client({
         region: 'eu-central-1',
         ...(params.profile !== 'default' ? { profile: params.profile } : {}),
@@ -890,9 +890,49 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       const hasMetadata = prefixes.includes('metadata');
       const isCurReport = hasData && hasMetadata;
 
-      return { prefixes, isCurReport };
+      let detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown' = 'unknown';
+
+      if (isCurReport) {
+        try {
+          // Find first manifest to detect report type
+          const metaList = await client.send(new ListObjectsV2Command({
+            Bucket: params.bucket,
+            Prefix: `${params.prefix}metadata/`,
+            MaxKeys: 10,
+          }));
+
+          const manifestKey = (metaList.Contents ?? []).find(c => c.Key?.endsWith('.json'))?.Key;
+          if (manifestKey !== undefined) {
+            const manifestResponse = await client.send(new GetObjectCommand({ Bucket: params.bucket, Key: manifestKey }));
+            const body = await manifestResponse.Body?.transformToString();
+            if (body !== undefined) {
+              const manifest = JSON.parse(body) as Record<string, unknown>;
+              const columns = manifest['columns'] as Array<{ name: string }> | undefined;
+              const columnNames = columns?.map(c => c.name) ?? [];
+
+              // Cost optimization reports have specific columns
+              if (columnNames.includes('recommendation_id') || columnNames.includes('estimated_monthly_savings')) {
+                detectedType = 'cost-optimization';
+              } else if (columnNames.includes('line_item_usage_start_date')) {
+                // Check granularity from report name or time_granularity field
+                const reportName = typeof manifest['reportName'] === 'string' ? manifest['reportName'] : '';
+                const contentColumns = typeof manifest['contentColumns'] === 'string' ? manifest['contentColumns'] : '';
+                if (reportName.toLowerCase().includes('hourly') || contentColumns.includes('HOURLY')) {
+                  detectedType = 'hourly';
+                } else {
+                  detectedType = 'daily';
+                }
+              }
+            }
+          }
+        } catch {
+          // manifest detection failed, leave as unknown
+        }
+      }
+
+      return { prefixes, isCurReport, detectedType };
     } catch {
-      return { prefixes: [], isCurReport: false };
+      return { prefixes: [], isCurReport: false, detectedType: 'unknown' };
     }
   });
 
