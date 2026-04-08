@@ -135,6 +135,50 @@ The architecture supports future providers via a normalization layer:
 
 Each provider has a sync module and a normalizer that maps provider-specific columns to CostGoblin's internal schema.
 
+### CUR 2.0 Report Configuration
+
+When creating the CUR report in the AWS Console (Cost and Usage Reports → Create report), use these settings:
+
+| Setting | Value |
+|---------|-------|
+| Table name | `CUR 2.0` |
+| Time granularity | `Daily` |
+| Additional content | `Include resource IDs` |
+| Billing view | `Primary View` |
+| Format | `Parquet` |
+| Compression | `Snappy` (default) |
+
+**Required columns** (CostGoblin uses all of these during repartitioning):
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `line_item_usage_start_date` | Timestamp | Date partitioning key |
+| `line_item_usage_account_id` | String | Account dimension |
+| `line_item_usage_account_name` | String | Account display name |
+| `line_item_unblended_cost` | Number | Primary cost metric |
+| `line_item_line_item_type` | String | Charge type (Usage, Fee, Credit, Tax) |
+| `line_item_line_item_description` | String | Line item description |
+| `line_item_operation` | String | AWS operation |
+| `line_item_usage_type` | String | Usage details |
+| `line_item_usage_amount` | Number | Usage quantity |
+| `line_item_resource_id` | String | Resource ARN (for missing tags analysis) |
+| `product_servicecode` | String | AWS service (e.g. AmazonEC2) |
+| `product_product_family` | String | Service family (e.g. Compute Instance) |
+| `product_region_code` | String | AWS region |
+| `pricing_public_on_demand_cost` | Number | On-demand list price (for savings calc) |
+| `resource_tags` | Map | Tag key-value pairs |
+
+The CUR export in S3 will have this structure:
+```
+s3://bucket/prefix/
+  data/
+    BILLING_PERIOD=YYYY-MM/
+      *.snappy.parquet
+  metadata/
+    BILLING_PERIOD=YYYY-MM/
+      manifest.json
+```
+
 ### S3 Sync
 
 The user configures AWS credentials and bucket paths. The app syncs Parquet files to local storage.
