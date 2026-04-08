@@ -862,9 +862,9 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     }
   });
 
-  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean }> => {
+  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }> => {
     try {
-      const { S3Client, ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+      const { S3Client, ListObjectsV2Command, GetObjectCommand } = await import('@aws-sdk/client-s3');
       const client = new S3Client({
         region: 'eu-central-1',
         ...(params.profile !== 'default' ? { profile: params.profile } : {}),
@@ -890,9 +890,52 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       const hasMetadata = prefixes.includes('metadata');
       const isCurReport = hasData && hasMetadata;
 
-      return { prefixes, isCurReport };
+      let detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown' = 'unknown';
+      let missingColumns: string[] = [];
+
+      const requiredCurColumns = [
+        'line_item_usage_start_date', 'line_item_usage_account_id',
+        'line_item_unblended_cost', 'product_servicecode',
+        'product_product_family', 'product_region_code', 'resource_tags',
+      ];
+
+      if (isCurReport) {
+        try {
+          // Find first manifest to detect report type
+          const metaList = await client.send(new ListObjectsV2Command({
+            Bucket: params.bucket,
+            Prefix: `${params.prefix}metadata/`,
+            MaxKeys: 10,
+          }));
+
+          const manifestKey = (metaList.Contents ?? []).find(c => c.Key?.endsWith('.json'))?.Key;
+          if (manifestKey !== undefined) {
+            const manifestResponse = await client.send(new GetObjectCommand({ Bucket: params.bucket, Key: manifestKey }));
+            const body = await manifestResponse.Body?.transformToString();
+            if (body !== undefined) {
+              const manifest = JSON.parse(body) as Record<string, unknown>;
+              const columns = manifest['columns'] as Array<{ name: string }> | undefined;
+              const columnNames = columns?.map(c => c.name) ?? [];
+
+              // Cost optimization reports have specific columns
+              if (columnNames.includes('recommendation_id') || columnNames.includes('estimated_monthly_savings')) {
+                detectedType = 'cost-optimization';
+              } else if (columnNames.includes('line_item_usage_start_date')) {
+                // CUR report — daily vs hourly validated post-download
+                detectedType = 'daily';
+                // Check for missing required columns
+                missingColumns = requiredCurColumns.filter(c => !columnNames.includes(c));
+              }
+            }
+          }
+        } catch {
+          // manifest detection failed
+        }
+      }
+
+      return { prefixes, isCurReport, detectedType, missingColumns };
     } catch {
-      return { prefixes: [], isCurReport: false };
+      return { prefixes: [], isCurReport: false, detectedType: 'unknown', missingColumns: [] };
     }
   });
 
@@ -900,7 +943,9 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     providerName: string;
     profile: string;
     dailyBucket: string;
+    retentionDays?: number | undefined;
     hourlyBucket?: string | undefined;
+    costOptBucket?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
   }): Promise<void> => {
     const fs = await import('node:fs/promises');
@@ -916,9 +961,12 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         type: 'aws',
         credentials: { profile: wizardConfig.profile },
         sync: {
-          daily: { bucket: wizardConfig.dailyBucket, retentionDays: 90 },
+          daily: { bucket: wizardConfig.dailyBucket, retentionDays: wizardConfig.retentionDays ?? 365 },
           ...(wizardConfig.hourlyBucket !== undefined && wizardConfig.hourlyBucket.length > 0
-            ? { hourly: { bucket: wizardConfig.hourlyBucket, retentionDays: 14 } }
+            ? { hourly: { bucket: wizardConfig.hourlyBucket, retentionDays: 30 } }
+            : {}),
+          ...(wizardConfig.costOptBucket !== undefined && wizardConfig.costOptBucket.length > 0
+            ? { costOptimization: { bucket: wizardConfig.costOptBucket, retentionDays: 90 } }
             : {}),
           intervalMinutes: 60,
         },

@@ -3,15 +3,25 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
 
+type DataSource = 'daily' | 'hourly' | 'costOptimization';
+
+const SOURCE_LABELS: Record<DataSource, { title: string; description: string }> = {
+  daily: { title: 'Daily CUR', description: 'Main billing data — required' },
+  hourly: { title: 'Hourly CUR', description: 'For short-term drill-down and incident analysis' },
+  costOptimization: { title: 'Cost Optimization', description: 'RI/SP recommendations and rightsizing suggestions' },
+};
+
 type WizardStep =
   | { step: 'welcome' }
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
-  | { step: 'bucket'; profile: string; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
-  | { step: 'browse'; profile: string; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isCurReport: boolean; path: string[] }
-  | { step: 'confirm'; profile: string; s3Path: string; retentionDays: number };
+  | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
+  | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[]; path: string[] }
+  | { step: 'confirm'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
 
 interface SetupWizardProps {
   onComplete: () => void;
+  source?: DataSource | undefined;
+  profile?: string | undefined;
 }
 
 function WelcomeStep({ onNext }: { onNext: () => void }) {
@@ -115,22 +125,22 @@ function ProfileStep({ state, onSelect, onSkip, onBack }: {
   );
 }
 
-function BucketStep({ state, onSelect, onBack }: {
+function BucketStep({ state, onSelect, onSkip, onBack }: {
   state: Extract<WizardStep, { step: 'bucket' }>;
   onSelect: (bucket: string) => void;
+  onSkip?: (() => void) | undefined;
   onBack: () => void;
 }) {
   const [filter, setFilter] = useState('');
   const filtered = state.buckets.filter(b => filter.length === 0 || b.name.toLowerCase().includes(filter.toLowerCase()));
+  const sourceLabel = SOURCE_LABELS[state.source];
 
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <h2 className="text-xl font-semibold text-text-primary">S3 Bucket</h2>
-        <p className="text-sm text-text-secondary mt-1">
-          Select the bucket containing your CUR data
-          <span className="text-text-muted"> (profile: {state.profile})</span>
-        </p>
+        <h2 className="text-xl font-semibold text-text-primary">{sourceLabel.title}</h2>
+        <p className="text-sm text-text-secondary mt-1">{sourceLabel.description}</p>
+        <p className="text-xs text-text-muted mt-0.5">Select the S3 bucket</p>
       </div>
 
       {state.error.length > 0 && (
@@ -177,29 +187,38 @@ function BucketStep({ state, onSelect, onBack }: {
 
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
-        <Button
-          onClick={() => { onSelect(state.selected); }}
-          disabled={state.selected.length === 0}
-          className="bg-accent hover:bg-accent-hover text-white px-8"
-        >
-          Next
-        </Button>
+        <div className="flex items-center gap-3">
+          {onSkip !== undefined && (
+            <button type="button" onClick={onSkip} className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2">Skip</button>
+          )}
+          <Button
+            onClick={() => { onSelect(state.selected); }}
+            disabled={state.selected.length === 0}
+            className="bg-accent hover:bg-accent-hover text-white px-8"
+          >
+            Next
+          </Button>
+        </div>
       </div>
     </div>
   );
 }
 
-function BrowseStep({ state, onNavigate, onConfirm, onBack }: {
+function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: {
   state: Extract<WizardStep, { step: 'browse' }>;
   onNavigate: (prefix: string) => void;
   onConfirm: () => void;
+  onSkip?: (() => void) | undefined;
   onBack: () => void;
 }) {
+  const sourceLabel = SOURCE_LABELS[state.source];
+
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <h2 className="text-xl font-semibold text-text-primary">Locate CUR Report</h2>
+        <h2 className="text-xl font-semibold text-text-primary">{sourceLabel.title}</h2>
         <p className="text-sm text-text-secondary mt-1">Navigate to the folder containing <code className="text-text-primary">data/</code> and <code className="text-text-primary">metadata/</code></p>
+        <p className="text-xs text-text-muted mt-0.5">{sourceLabel.description}</p>
       </div>
 
       {/* Breadcrumb */}
@@ -225,11 +244,40 @@ function BrowseStep({ state, onNavigate, onConfirm, onBack }: {
         ))}
       </div>
 
-      {state.isCurReport && (
-        <div className="rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
-          <p className="text-sm font-medium text-accent">CUR report detected</p>
+      {state.isCurReport && (() => {
+        const TYPE_LABELS: Record<string, string> = { daily: 'Daily CUR', hourly: 'Hourly CUR', 'cost-optimization': 'Cost Optimization', unknown: 'Unknown type' };
+        const SOURCE_TO_EXPECTED: Record<DataSource, string> = { daily: 'daily', hourly: 'hourly', costOptimization: 'cost-optimization' };
+        const expected = SOURCE_TO_EXPECTED[state.source];
+        const detected = state.detectedType;
+        const isMatch = detected === 'unknown' || detected === expected;
+
+        return (
+          <div className={`rounded-lg border px-4 py-3 ${isMatch ? 'border-accent/40 bg-accent/5' : 'border-warning/50 bg-warning-muted'}`}>
+            <p className={`text-sm font-medium ${isMatch ? 'text-accent' : 'text-warning'}`}>
+              {detected !== 'unknown' ? `Detected: ${TYPE_LABELS[detected] ?? detected}` : 'CUR report detected'}
+            </p>
+            {!isMatch && (
+              <p className="text-xs text-warning mt-0.5">
+                You are configuring <strong>{SOURCE_LABELS[state.source].title}</strong> but this looks like <strong>{TYPE_LABELS[detected] ?? detected}</strong> data. Continue anyway?
+              </p>
+            )}
+            {isMatch && detected !== 'unknown' && (
+              <p className="text-xs text-text-secondary mt-0.5">
+                Matches expected type for {SOURCE_LABELS[state.source].title}
+              </p>
+            )}
+          </div>
+        );
+      })()}
+
+      {state.isCurReport && state.missingColumns.length > 0 && (
+        <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
+          <p className="text-sm font-medium text-negative">Missing required columns</p>
           <p className="text-xs text-text-secondary mt-0.5">
-            Found <code className="text-text-primary">data/</code> and <code className="text-text-primary">metadata/</code> folders at this location
+            {state.missingColumns.join(', ')}
+          </p>
+          <p className="text-xs text-text-muted mt-1">
+            CostGoblin needs these columns. Check your CUR report configuration in the AWS Console.
           </p>
         </div>
       )}
@@ -268,13 +316,18 @@ function BrowseStep({ state, onNavigate, onConfirm, onBack }: {
 
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
-        <Button
-          onClick={onConfirm}
-          disabled={!state.isCurReport}
-          className="bg-accent hover:bg-accent-hover text-white px-8"
-        >
-          {state.isCurReport ? 'Use this location' : 'Select a CUR folder'}
-        </Button>
+        <div className="flex items-center gap-3">
+          {onSkip !== undefined && (
+            <button type="button" onClick={onSkip} className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2">Skip</button>
+          )}
+          <Button
+            onClick={onConfirm}
+            disabled={!state.isCurReport}
+            className="bg-accent hover:bg-accent-hover text-white px-8"
+          >
+            {state.isCurReport ? 'Use this location' : 'Select a CUR folder'}
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -289,12 +342,22 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
   const [saving, setSaving] = useState(false);
   const api = useCostApi();
 
-  const retentionOptions = [
-    { days: 90, label: '3 months' },
-    { days: 180, label: '6 months' },
-    { days: 365, label: '12 months' },
-    { days: 730, label: '2 years' },
-  ];
+  const isDaily = state.s3Path.length > 0;
+  const isHourlyOnly = !isDaily && state.hourlyPath.length > 0;
+
+  const retentionOptions = isHourlyOnly
+    ? [
+        { days: 7, label: '7 days' },
+        { days: 14, label: '14 days' },
+        { days: 30, label: '30 days' },
+        { days: 90, label: '90 days' },
+      ]
+    : [
+        { days: 90, label: '3 months' },
+        { days: 180, label: '6 months' },
+        { days: 365, label: '12 months' },
+        { days: 730, label: '2 years' },
+      ];
 
   function handleSave() {
     setSaving(true);
@@ -302,10 +365,18 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
       providerName: 'aws-main',
       profile: state.profile,
       dailyBucket: state.s3Path,
+      retentionDays: isDaily ? state.retentionDays : undefined,
+      ...(state.hourlyPath.length > 0 ? { hourlyBucket: state.hourlyPath } : {}),
+      ...(state.costOptPath.length > 0 ? { costOptBucket: state.costOptPath } : {}),
     }).then(() => {
       onComplete();
     });
   }
+
+  const paths: { label: string; value: string }[] = [];
+  if (state.s3Path.length > 0) paths.push({ label: 'Daily CUR', value: state.s3Path });
+  if (state.hourlyPath.length > 0) paths.push({ label: 'Hourly CUR', value: state.hourlyPath });
+  if (state.costOptPath.length > 0) paths.push({ label: 'Cost Optimization', value: state.costOptPath });
 
   return (
     <div className="flex flex-col gap-5">
@@ -319,10 +390,14 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
           <p className="text-xs text-text-muted uppercase tracking-wider">AWS Profile</p>
           <p className="text-sm font-mono text-text-primary mt-0.5">{state.profile}</p>
         </div>
-        <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-          <p className="text-xs text-text-muted uppercase tracking-wider">CUR Location</p>
-          <p className="text-sm font-mono text-text-primary mt-0.5">{state.s3Path}</p>
-        </div>
+
+        {paths.map(({ label, value }) => (
+          <div key={label} className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+            <p className="text-xs text-text-muted uppercase tracking-wider">{label}</p>
+            <p className="text-sm font-mono text-text-primary mt-0.5">{value}</p>
+          </div>
+        ))}
+
         <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
           <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Data Retention</p>
           <div className="flex gap-2">
@@ -360,9 +435,23 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
   );
 }
 
-export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element {
+export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile }: SetupWizardProps): React.JSX.Element {
   const api = useCostApi();
-  const [wizard, setWizard] = useState<WizardStep>({ step: 'welcome' });
+  const isSourceMode = initialSource !== undefined && initialProfile !== undefined;
+  const [wizard, setWizard] = useState<WizardStep>(
+    isSourceMode
+      ? { step: 'bucket', profile: initialProfile, source: initialSource, buckets: [], loading: true, selected: '', error: '' }
+      : { step: 'welcome' },
+  );
+  const [collectedPaths, setCollectedPaths] = useState({ daily: '', hourly: '', costOpt: '' });
+  const [bucketsLoaded, setBucketsLoaded] = useState(false);
+
+  if (isSourceMode && !bucketsLoaded) {
+    setBucketsLoaded(true);
+    void api.listS3Buckets(initialProfile).then(result => {
+      setWizard({ step: 'bucket', profile: initialProfile, source: initialSource, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
+    });
+  }
 
   function handleWelcomeNext() {
     setWizard({ step: 'profile', profiles: [], loading: true, selected: '' });
@@ -372,49 +461,95 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
   }
 
   function handleProfileSelect(profile: string) {
-    setWizard({ step: 'bucket', profile, buckets: [], loading: true, selected: '', error: '' });
+    startBucketStep(profile, 'daily');
+  }
+
+  function startBucketStep(profile: string, source: DataSource) {
+    setWizard({ step: 'bucket', profile, source, buckets: [], loading: true, selected: '', error: '' });
     void api.listS3Buckets(profile).then(result => {
-      setWizard({ step: 'bucket', profile, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
+      setWizard({ step: 'bucket', profile, source, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
     });
   }
 
   function handleBucketSelect(bucket: string) {
-    browseTo(wizard.step === 'bucket' ? wizard.profile : '', bucket, '');
+    if (wizard.step !== 'bucket') return;
+    browseTo(wizard.profile, wizard.source, bucket, '');
   }
 
-  function browseTo(profile: string, bucket: string, prefix: string) {
+  function browseTo(profile: string, source: DataSource, bucket: string, prefix: string) {
     const path = prefix.split('/').filter(s => s.length > 0);
-    setWizard({ step: 'browse', profile, bucket, prefix, prefixes: [], loading: true, isCurReport: false, path });
+    setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: [], loading: true, isCurReport: false, detectedType: 'unknown', missingColumns: [], path });
     void api.browseS3({ profile, bucket, prefix }).then(result => {
-      setWizard({ step: 'browse', profile, bucket, prefix, prefixes: result.prefixes, loading: false, isCurReport: result.isCurReport, path });
+      setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: result.prefixes, loading: false, isCurReport: result.isCurReport, detectedType: result.detectedType, missingColumns: result.missingColumns, path });
     });
   }
 
   function handleNavigate(prefix: string) {
     if (wizard.step !== 'browse') return;
-    browseTo(wizard.profile, wizard.bucket, prefix);
+    browseTo(wizard.profile, wizard.source, wizard.bucket, prefix);
   }
 
   function handleBrowseConfirm() {
     if (wizard.step !== 'browse') return;
     const s3Path = `s3://${wizard.bucket}/${wizard.prefix}`;
-    setWizard({ step: 'confirm', profile: wizard.profile, s3Path, retentionDays: 365 });
+    const profile = wizard.profile;
+    const source = wizard.source;
+
+    const updated = { ...collectedPaths };
+    let defaultRetention = 365;
+    if (source === 'daily') {
+      updated.daily = s3Path;
+      defaultRetention = 365;
+    } else if (source === 'hourly') {
+      updated.hourly = s3Path;
+      defaultRetention = 30;
+    } else {
+      updated.costOpt = s3Path;
+      defaultRetention = 90;
+    }
+    setCollectedPaths(updated);
+    goToConfirm(profile, updated, defaultRetention);
+  }
+
+  function handleBrowseSkip() {
+    if (wizard.step !== 'browse' && wizard.step !== 'bucket') return;
+    const profile = wizard.profile;
+    const source = wizard.step === 'browse' ? wizard.source : wizard.source;
+
+    if (source === 'hourly') {
+      startBucketStep(profile, 'costOptimization');
+    } else {
+      goToConfirm(profile);
+    }
+  }
+
+  function goToConfirm(profile: string, paths?: { daily: string; hourly: string; costOpt: string }, retention?: number) {
+    const p = paths ?? collectedPaths;
+    setWizard({
+      step: 'confirm',
+      profile,
+      s3Path: p.daily,
+      hourlyPath: p.hourly,
+      costOptPath: p.costOpt,
+      retentionDays: retention ?? 365,
+    });
   }
 
   function handleBack() {
     if (wizard.step === 'profile') {
       setWizard({ step: 'welcome' });
     } else if (wizard.step === 'bucket') {
-      handleWelcomeNext();
+      if (wizard.source === 'daily') {
+        handleWelcomeNext();
+      } else if (wizard.source === 'hourly') {
+        startBucketStep(wizard.profile, 'daily');
+      } else {
+        startBucketStep(wizard.profile, 'hourly');
+      }
     } else if (wizard.step === 'browse') {
-      handleProfileSelect(wizard.profile);
+      startBucketStep(wizard.profile, wizard.source);
     } else if (wizard.step === 'confirm') {
-      const profile = wizard.profile;
-      const parsed = wizard.s3Path.replace(/^s3:\/\//, '');
-      const slashIdx = parsed.indexOf('/');
-      const bucket = slashIdx > 0 ? parsed.slice(0, slashIdx) : parsed;
-      const prefix = slashIdx > 0 ? parsed.slice(slashIdx + 1) : '';
-      browseTo(profile, bucket, prefix);
+      startBucketStep(wizard.profile, 'costOptimization');
     }
   }
 
@@ -427,8 +562,23 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
           </div>
           {wizard.step === 'welcome' && <WelcomeStep onNext={handleWelcomeNext} />}
           {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={onComplete} onBack={handleBack} />}
-          {wizard.step === 'bucket' && <BucketStep state={wizard} onSelect={handleBucketSelect} onBack={handleBack} />}
-          {wizard.step === 'browse' && <BrowseStep state={wizard} onNavigate={handleNavigate} onConfirm={handleBrowseConfirm} onBack={handleBack} />}
+          {wizard.step === 'bucket' && (
+            <BucketStep
+              state={wizard}
+              onSelect={handleBucketSelect}
+              onSkip={wizard.source !== 'daily' ? handleBrowseSkip : undefined}
+              onBack={handleBack}
+            />
+          )}
+          {wizard.step === 'browse' && (
+            <BrowseStep
+              state={wizard}
+              onNavigate={handleNavigate}
+              onConfirm={handleBrowseConfirm}
+              onSkip={wizard.source !== 'daily' ? handleBrowseSkip : undefined}
+              onBack={handleBack}
+            />
+          )}
           {wizard.step === 'confirm' && (
             <ConfirmStep
               state={wizard}

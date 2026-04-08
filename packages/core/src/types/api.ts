@@ -56,13 +56,15 @@ export interface CostApi {
   testConnection(params: { profile: string; bucket: string }): Promise<{ ok: boolean; error?: string | undefined }>;
   listAwsProfiles(): Promise<string[]>;
   listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }>;
-  browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean }>;
+  browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }>;
   scaffoldConfig(): Promise<void>;
   writeConfig(config: {
     providerName: string;
     profile: string;
     dailyBucket: string;
+    retentionDays?: number | undefined;
     hourlyBucket?: string | undefined;
+    costOptBucket?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
   }): Promise<void>;
 }
