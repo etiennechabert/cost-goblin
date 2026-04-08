@@ -79,8 +79,15 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     // Phase 2: Repartition this period
     logger.info(`Repartitioning ${period}...`);
 
+    if (onProgress !== undefined) {
+      onProgress({ phase: 'repartitioning', filesTotal: 0, filesDone: 0, bytesTotal: 0, bytesDone: 0 });
+    }
+
+    logger.info('Creating DuckDB instance for repartitioning...');
     const db = await createLazyDuckDB();
+    logger.info('DuckDB instance created, connecting...');
     const conn = await db.connect();
+    logger.info('DuckDB connected');
 
     const tagColumns = options.dimensionsConfig.tags.map(t => ({
       key: `user_${t.tagName}`,
@@ -92,6 +99,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
 
     const parquetGlob = `'${stagingDir}/*.parquet'`;
 
+    logger.info(`Reading dates from ${parquetGlob}...`);
     const dateResult = await conn.run(
       `SELECT DISTINCT line_item_usage_start_date::DATE::VARCHAR AS d FROM read_parquet(${parquetGlob}) ORDER BY d`,
     );
@@ -104,6 +112,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
       }
       chunk = await dateResult.fetchChunk();
     }
+    logger.info(`Found ${String(dates.length)} dates to partition`);
 
     for (let di = 0; di < dates.length; di++) {
       const date = dates[di];

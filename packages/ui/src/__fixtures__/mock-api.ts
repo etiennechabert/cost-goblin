@@ -212,5 +212,9 @@ export class MockCostApi implements CostApi {
   getAccountMapping(): Promise<AccountMappingStatus> { return Promise.resolve({ status: 'missing' }); }
   getSetupStatus(): Promise<{ configured: boolean }> { return Promise.resolve({ configured: true }); }
   testConnection(): Promise<{ ok: boolean; error?: string | undefined }> { return Promise.resolve({ ok: true }); }
+  listAwsProfiles(): Promise<string[]> { return Promise.resolve(['default', 'prod', 'staging']); }
+  listS3Buckets(): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> { return Promise.resolve({ buckets: [{ name: 'my-cur-bucket', region: 'eu-central-1' }] }); }
+  browseS3(): Promise<{ prefixes: string[]; isCurReport: boolean }> { return Promise.resolve({ prefixes: ['data', 'metadata'], isCurReport: true }); }
+  scaffoldConfig(): Promise<void> { return Promise.resolve(); }
   writeConfig(): Promise<void> { return Promise.resolve(); }
 }

@@ -815,6 +815,87 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     }
   });
 
+  ipcMain.handle('setup:list-profiles', async (): Promise<string[]> => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const os = await import('node:os');
+
+    const profiles = new Set<string>();
+    profiles.add('default');
+
+    for (const filename of ['config', 'credentials']) {
+      const filePath = path.join(os.homedir(), '.aws', filename);
+      try {
+        const content = await fs.readFile(filePath, 'utf-8');
+        const profileRegex = /\[(?:profile\s+)?([^\]]+)\]/g;
+        let match = profileRegex.exec(content);
+        while (match !== null) {
+          const name = match[1];
+          if (name !== undefined) profiles.add(name.trim());
+          match = profileRegex.exec(content);
+        }
+      } catch {
+        // file doesn't exist
+      }
+    }
+
+    return [...profiles].sort();
+  });
+
+  ipcMain.handle('setup:list-buckets', async (_event, profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> => {
+    try {
+      const { S3Client, ListBucketsCommand } = await import('@aws-sdk/client-s3');
+      const client = new S3Client({
+        region: 'us-east-1',
+        ...(profile !== 'default' ? { profile } : {}),
+      });
+
+      const response = await client.send(new ListBucketsCommand({}));
+      const buckets = (response.Buckets ?? [])
+        .filter(b => b.Name !== undefined)
+        .map(b => ({ name: b.Name ?? '', region: '' }));
+      return { buckets };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.info('setup:list-buckets failed', { error: message });
+      return { buckets: [], error: message };
+    }
+  });
+
+  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean }> => {
+    try {
+      const { S3Client, ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+      const client = new S3Client({
+        region: 'eu-central-1',
+        ...(params.profile !== 'default' ? { profile: params.profile } : {}),
+      });
+
+      const response = await client.send(new ListObjectsV2Command({
+        Bucket: params.bucket,
+        Prefix: params.prefix,
+        Delimiter: '/',
+        MaxKeys: 200,
+      }));
+
+      const prefixes = (response.CommonPrefixes ?? [])
+        .filter(p => p.Prefix !== undefined)
+        .map(p => {
+          const full = p.Prefix ?? '';
+          const relative = full.slice(params.prefix.length);
+          return relative.replace(/\/$/, '');
+        })
+        .filter(p => p.length > 0);
+
+      const hasData = prefixes.includes('data');
+      const hasMetadata = prefixes.includes('metadata');
+      const isCurReport = hasData && hasMetadata;
+
+      return { prefixes, isCurReport };
+    } catch {
+      return { prefixes: [], isCurReport: false };
+    }
+  });
+
   ipcMain.handle('setup:write-config', async (_event, wizardConfig: {
     providerName: string;
     profile: string;
@@ -874,7 +955,84 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   });
 
   ipcMain.handle('data:open-folder', async (): Promise<void> => {
+    const fs = await import('node:fs/promises');
+    await fs.mkdir(ctx.dataDir, { recursive: true });
     await shell.openPath(ctx.dataDir);
+  });
+
+  ipcMain.handle('setup:scaffold-config', async (): Promise<void> => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+
+    const configDir = path.dirname(ctx.configPath);
+    await fs.mkdir(configDir, { recursive: true });
+
+    const configTemplate = `# CostGoblin configuration
+# See https://github.com/etiennechabert/cost-goblin for documentation
+
+providers:
+  - name: aws-main
+    type: aws
+    credentials:
+      profile: default  # <- your AWS CLI profile name
+    sync:
+      daily:
+        bucket: s3://your-bucket/path/to/cur/  # <- path containing data/ and metadata/
+        retentionDays: 365
+      intervalMinutes: 60
+
+defaults:
+  periodDays: 30
+  costMetric: UnblendedCost
+  lagDays: 2
+
+cache:
+  ttlMinutes: 15
+`;
+
+    const dimensionsTemplate = `# Dimension configuration
+# Built-in dimensions are always available. Add tag dimensions to map your CUR tags.
+
+builtIn:
+  - name: account
+    label: Account
+    field: line_item_usage_account_id
+    displayField: account_name
+  - name: region
+    label: Region
+    field: product_region
+  - name: service
+    label: Service
+    field: product_service_name
+  - name: service_family
+    label: Service Family
+    field: product_service_family
+
+# Map your CUR resource tags below.
+# tagName: the tag key in your CUR (without the "user_" prefix)
+# concept: owner | product | environment (enables special UI features)
+tags: []
+  # Example:
+  # - tagName: team
+  #   label: Team
+  #   concept: owner
+  # - tagName: app
+  #   label: Application
+  #   concept: product
+  # - tagName: env
+  #   label: Environment
+  #   concept: environment
+`;
+
+    try { await fs.access(ctx.configPath); } catch {
+      await fs.writeFile(ctx.configPath, configTemplate, 'utf-8');
+    }
+    try { await fs.access(ctx.dimensionsPath); } catch {
+      await fs.writeFile(ctx.dimensionsPath, dimensionsTemplate, 'utf-8');
+    }
+
+    await shell.openPath(configDir);
+    logger.info('Scaffolded template config files');
   });
 
   ipcMain.handle('data:account-mapping', async (): Promise<AccountMappingStatus> => {

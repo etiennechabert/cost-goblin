@@ -2,9 +2,13 @@ import { useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
+
 type WizardStep =
   | { step: 'welcome' }
-  | { step: 'config'; profile: string; dailyBucket: string; hourlyBucket: string; connectionStatus: 'idle' | 'testing' | 'success' | 'error'; error: string };
+  | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
+  | { step: 'bucket'; profile: string; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
+  | { step: 'browse'; profile: string; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isCurReport: boolean; path: string[] }
+  | { step: 'confirm'; profile: string; s3Path: string; retentionDays: number };
 
 interface SetupWizardProps {
   onComplete: () => void;
@@ -41,90 +45,315 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
   );
 }
 
-function ConfigStep({ state, onUpdate, onTestConnection, onNext }: {
-  state: Extract<WizardStep, { step: 'config' }>;
-  onUpdate: (updates: Partial<Extract<WizardStep, { step: 'config' }>>) => void;
-  onTestConnection: () => void;
-  onNext: () => void;
+function ProfileStep({ state, onSelect, onSkip, onBack }: {
+  state: Extract<WizardStep, { step: 'profile' }>;
+  onSelect: (profile: string) => void;
+  onSkip: () => void;
+  onBack: () => void;
 }) {
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <h2 className="text-xl font-semibold text-text-primary">AWS Configuration</h2>
-        <p className="text-sm text-text-secondary mt-1">Connect to your CUR data in S3</p>
+        <h2 className="text-xl font-semibold text-text-primary">AWS Profile</h2>
+        <p className="text-sm text-text-secondary mt-1">Select the AWS profile to use for accessing your billing data</p>
+        <p className="text-xs text-text-muted mt-1">
+          Profiles are read from <code className="text-text-secondary">~/.aws/credentials</code> and <code className="text-text-secondary">~/.aws/config</code>
+        </p>
       </div>
 
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-text-secondary" htmlFor="setup-profile">
-            AWS Profile
-          </label>
-          <input
-            id="setup-profile"
-            type="text"
-            value={state.profile}
-            onChange={(e) => { onUpdate({ profile: e.target.value, connectionStatus: 'idle', error: '' }); }}
-            placeholder="default"
-            className="h-9 rounded-md border border-border bg-bg-primary px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
-          />
+      {state.loading ? (
+        <div className="flex items-center justify-center py-8">
+          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border border-t-accent" />
+          <span className="ml-2 text-sm text-text-secondary">Loading profiles...</span>
         </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-text-secondary" htmlFor="setup-daily-bucket">
-            CUR S3 Path
-          </label>
-          <input
-            id="setup-daily-bucket"
-            type="text"
-            value={state.dailyBucket}
-            onChange={(e) => { onUpdate({ dailyBucket: e.target.value, connectionStatus: 'idle', error: '' }); }}
-            placeholder="s3://my-cur-bucket/report-prefix/"
-            className="h-9 rounded-md border border-border bg-bg-primary px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
-          />
-          <p className="text-xs text-text-muted">
-            Path to the CUR report prefix containing <code className="text-text-secondary">data/</code> and <code className="text-text-secondary">metadata/</code> folders.
+      ) : state.profiles.length === 0 ? (
+        <div className="rounded-lg border border-border bg-bg-tertiary/30 px-4 py-6 text-center">
+          <p className="text-sm text-text-secondary">No AWS profiles found</p>
+          <p className="text-xs text-text-muted mt-1">
+            Configure credentials in <code className="text-text-secondary">~/.aws/config</code> or <code className="text-text-secondary">~/.aws/credentials</code>
           </p>
         </div>
-
-        <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-text-secondary" htmlFor="setup-hourly-bucket">
-            Hourly S3 Bucket Path <span className="text-text-muted">(optional)</span>
-          </label>
-          <input
-            id="setup-hourly-bucket"
-            type="text"
-            value={state.hourlyBucket}
-            onChange={(e) => { onUpdate({ hourlyBucket: e.target.value }); }}
-            placeholder="s3://my-cur-bucket/hourly"
-            className="h-9 rounded-md border border-border bg-bg-primary px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
-          />
+      ) : (
+        <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+          {state.profiles.map(profile => (
+            <button
+              key={profile}
+              type="button"
+              onClick={() => { onSelect(profile); }}
+              className={[
+                'flex items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors',
+                state.selected === profile
+                  ? 'border-accent bg-accent-muted text-accent'
+                  : 'border-border bg-bg-tertiary/20 text-text-primary hover:border-border hover:bg-bg-tertiary/40',
+              ].join(' ')}
+            >
+              <span className="font-mono text-xs px-1.5 py-0.5 rounded bg-bg-tertiary text-text-secondary">{profile}</span>
+            </button>
+          ))}
         </div>
-      </div>
+      )}
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between pt-2">
+        <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
         <Button
-          onClick={onTestConnection}
-          disabled={state.connectionStatus === 'testing' || state.dailyBucket.length === 0}
-          variant="outline"
-          className="border-border"
-        >
-          {state.connectionStatus === 'testing' ? 'Testing...' : 'Test Connection'}
-        </Button>
-        {state.connectionStatus === 'success' && (
-          <span className="text-sm text-positive">Connection successful</span>
-        )}
-        {state.connectionStatus === 'error' && (
-          <span className="text-sm text-negative">{state.error}</span>
-        )}
-      </div>
-
-      <div className="flex justify-end pt-2">
-        <Button
-          onClick={onNext}
-          disabled={state.connectionStatus !== 'success'}
+          onClick={() => { onSelect(state.selected); }}
+          disabled={state.selected.length === 0}
           className="bg-accent hover:bg-accent-hover text-white px-8"
         >
           Next
+        </Button>
+      </div>
+
+      <button
+        type="button"
+        onClick={onSkip}
+        className="text-xs text-text-muted hover:text-text-secondary text-center underline underline-offset-2"
+      >
+        Skip — I'll configure this manually
+      </button>
+    </div>
+  );
+}
+
+function BucketStep({ state, onSelect, onBack }: {
+  state: Extract<WizardStep, { step: 'bucket' }>;
+  onSelect: (bucket: string) => void;
+  onBack: () => void;
+}) {
+  const [filter, setFilter] = useState('');
+  const filtered = state.buckets.filter(b => filter.length === 0 || b.name.toLowerCase().includes(filter.toLowerCase()));
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <h2 className="text-xl font-semibold text-text-primary">S3 Bucket</h2>
+        <p className="text-sm text-text-secondary mt-1">
+          Select the bucket containing your CUR data
+          <span className="text-text-muted"> (profile: {state.profile})</span>
+        </p>
+      </div>
+
+      {state.error.length > 0 && (
+        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">
+          {state.error}
+        </div>
+      )}
+
+      {state.loading ? (
+        <div className="flex items-center justify-center py-8">
+          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border border-t-accent" />
+          <span className="ml-2 text-sm text-text-secondary">Loading buckets...</span>
+        </div>
+      ) : (
+        <>
+          {state.buckets.length > 5 && (
+            <input
+              type="text"
+              value={filter}
+              onChange={(e) => { setFilter(e.target.value); }}
+              placeholder="Filter buckets..."
+              className="h-9 rounded-md border border-border bg-bg-primary px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+          )}
+          <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
+            {filtered.map(bucket => (
+              <button
+                key={bucket.name}
+                type="button"
+                onClick={() => { onSelect(bucket.name); }}
+                className={[
+                  'flex items-center rounded-lg border px-4 py-2.5 text-left text-sm transition-colors',
+                  state.selected === bucket.name
+                    ? 'border-accent bg-accent-muted text-accent'
+                    : 'border-border bg-bg-tertiary/20 text-text-primary hover:bg-bg-tertiary/40',
+                ].join(' ')}
+              >
+                <span className="font-mono text-xs">{bucket.name}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div className="flex items-center justify-between pt-2">
+        <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
+        <Button
+          onClick={() => { onSelect(state.selected); }}
+          disabled={state.selected.length === 0}
+          className="bg-accent hover:bg-accent-hover text-white px-8"
+        >
+          Next
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function BrowseStep({ state, onNavigate, onConfirm, onBack }: {
+  state: Extract<WizardStep, { step: 'browse' }>;
+  onNavigate: (prefix: string) => void;
+  onConfirm: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <h2 className="text-xl font-semibold text-text-primary">Locate CUR Report</h2>
+        <p className="text-sm text-text-secondary mt-1">Navigate to the folder containing <code className="text-text-primary">data/</code> and <code className="text-text-primary">metadata/</code></p>
+      </div>
+
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-1 text-xs font-mono text-text-muted flex-wrap">
+        <button
+          type="button"
+          onClick={() => { onNavigate(''); }}
+          className="hover:text-accent transition-colors"
+        >
+          {state.bucket}
+        </button>
+        {state.path.map((seg, i) => (
+          <span key={seg} className="flex items-center gap-1">
+            <span>/</span>
+            <button
+              type="button"
+              onClick={() => { onNavigate(state.path.slice(0, i + 1).join('/') + '/'); }}
+              className="hover:text-accent transition-colors"
+            >
+              {seg}
+            </button>
+          </span>
+        ))}
+      </div>
+
+      {state.isCurReport && (
+        <div className="rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
+          <p className="text-sm font-medium text-accent">CUR report detected</p>
+          <p className="text-xs text-text-secondary mt-0.5">
+            Found <code className="text-text-primary">data/</code> and <code className="text-text-primary">metadata/</code> folders at this location
+          </p>
+        </div>
+      )}
+
+      {state.loading ? (
+        <div className="flex items-center justify-center py-6">
+          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border border-t-accent" />
+          <span className="ml-2 text-sm text-text-secondary">Loading...</span>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
+          {state.prefixes.map(prefix => {
+            const isSpecial = prefix === 'data' || prefix === 'metadata';
+            return (
+              <button
+                key={prefix}
+                type="button"
+                onClick={() => { onNavigate(state.prefix + prefix + '/'); }}
+                className={[
+                  'flex items-center gap-2 rounded-lg border px-4 py-2 text-left text-sm transition-colors',
+                  isSpecial
+                    ? 'border-accent/30 bg-accent/5 text-accent'
+                    : 'border-border bg-bg-tertiary/20 text-text-primary hover:bg-bg-tertiary/40',
+                ].join(' ')}
+              >
+                <span className="text-text-muted">📁</span>
+                <span className="font-mono text-xs">{prefix}/</span>
+              </button>
+            );
+          })}
+          {state.prefixes.length === 0 && (
+            <p className="text-sm text-text-muted text-center py-4">No subfolders found</p>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between pt-2">
+        <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
+        <Button
+          onClick={onConfirm}
+          disabled={!state.isCurReport}
+          className="bg-accent hover:bg-accent-hover text-white px-8"
+        >
+          {state.isCurReport ? 'Use this location' : 'Select a CUR folder'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
+  state: Extract<WizardStep, { step: 'confirm' }>;
+  onRetentionChange: (days: number) => void;
+  onComplete: () => void;
+  onBack: () => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const api = useCostApi();
+
+  const retentionOptions = [
+    { days: 90, label: '3 months' },
+    { days: 180, label: '6 months' },
+    { days: 365, label: '12 months' },
+    { days: 730, label: '2 years' },
+  ];
+
+  function handleSave() {
+    setSaving(true);
+    void api.writeConfig({
+      providerName: 'aws-main',
+      profile: state.profile,
+      dailyBucket: state.s3Path,
+    }).then(() => {
+      onComplete();
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <h2 className="text-xl font-semibold text-text-primary">Confirm Setup</h2>
+        <p className="text-sm text-text-secondary mt-1">Review your configuration</p>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+          <p className="text-xs text-text-muted uppercase tracking-wider">AWS Profile</p>
+          <p className="text-sm font-mono text-text-primary mt-0.5">{state.profile}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+          <p className="text-xs text-text-muted uppercase tracking-wider">CUR Location</p>
+          <p className="text-sm font-mono text-text-primary mt-0.5">{state.s3Path}</p>
+        </div>
+        <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+          <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Data Retention</p>
+          <div className="flex gap-2">
+            {retentionOptions.map(opt => (
+              <button
+                key={opt.days}
+                type="button"
+                onClick={() => { onRetentionChange(opt.days); }}
+                className={[
+                  'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  state.retentionDays === opt.days
+                    ? 'bg-accent text-bg-primary'
+                    : 'bg-bg-tertiary/50 text-text-secondary hover:text-text-primary',
+                ].join(' ')}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-text-muted mt-1.5">How far back to download billing data</p>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between pt-2">
+        <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
+        <Button
+          onClick={handleSave}
+          disabled={saving}
+          className="bg-accent hover:bg-accent-hover text-white px-8"
+        >
+          {saving ? 'Saving...' : 'Complete Setup'}
         </Button>
       </div>
     </div>
@@ -136,61 +365,76 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
   const [wizard, setWizard] = useState<WizardStep>({ step: 'welcome' });
 
   function handleWelcomeNext() {
-    setWizard({ step: 'config', profile: 'default', dailyBucket: '', hourlyBucket: '', connectionStatus: 'idle', error: '' });
-  }
-
-  function handleConfigUpdate(updates: Partial<Extract<WizardStep, { step: 'config' }>>) {
-    setWizard(prev => {
-      if (prev.step !== 'config') return prev;
-      return { ...prev, ...updates };
+    setWizard({ step: 'profile', profiles: [], loading: true, selected: '' });
+    void api.listAwsProfiles().then(profiles => {
+      setWizard({ step: 'profile', profiles, loading: false, selected: '' });
     });
   }
 
-  function handleTestConnection() {
-    if (wizard.step !== 'config') return;
-    const { profile, dailyBucket } = wizard;
-
-    setWizard(prev => {
-      if (prev.step !== 'config') return prev;
-      return { ...prev, connectionStatus: 'testing', error: '' };
-    });
-
-    void api.testConnection({ profile, bucket: dailyBucket }).then(result => {
-      setWizard(prev => {
-        if (prev.step !== 'config') return prev;
-        if (result.ok) {
-          return { ...prev, connectionStatus: 'success', error: '' };
-        }
-        return { ...prev, connectionStatus: 'error', error: result.error ?? 'Connection failed' };
-      });
+  function handleProfileSelect(profile: string) {
+    setWizard({ step: 'bucket', profile, buckets: [], loading: true, selected: '', error: '' });
+    void api.listS3Buckets(profile).then(result => {
+      setWizard({ step: 'bucket', profile, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
     });
   }
 
-  function handleConfigNext() {
-    if (wizard.step !== 'config') return;
-    const { profile, dailyBucket, hourlyBucket } = wizard;
+  function handleBucketSelect(bucket: string) {
+    browseTo(wizard.step === 'bucket' ? wizard.profile : '', bucket, '');
+  }
 
-    void api.writeConfig({
-      providerName: 'aws-main',
-      profile,
-      dailyBucket,
-      ...(hourlyBucket.length > 0 ? { hourlyBucket } : {}),
-    }).then(() => {
-      onComplete();
+  function browseTo(profile: string, bucket: string, prefix: string) {
+    const path = prefix.split('/').filter(s => s.length > 0);
+    setWizard({ step: 'browse', profile, bucket, prefix, prefixes: [], loading: true, isCurReport: false, path });
+    void api.browseS3({ profile, bucket, prefix }).then(result => {
+      setWizard({ step: 'browse', profile, bucket, prefix, prefixes: result.prefixes, loading: false, isCurReport: result.isCurReport, path });
     });
+  }
+
+  function handleNavigate(prefix: string) {
+    if (wizard.step !== 'browse') return;
+    browseTo(wizard.profile, wizard.bucket, prefix);
+  }
+
+  function handleBrowseConfirm() {
+    if (wizard.step !== 'browse') return;
+    const s3Path = `s3://${wizard.bucket}/${wizard.prefix}`;
+    setWizard({ step: 'confirm', profile: wizard.profile, s3Path, retentionDays: 365 });
+  }
+
+  function handleBack() {
+    if (wizard.step === 'profile') {
+      setWizard({ step: 'welcome' });
+    } else if (wizard.step === 'bucket') {
+      handleWelcomeNext();
+    } else if (wizard.step === 'browse') {
+      handleProfileSelect(wizard.profile);
+    } else if (wizard.step === 'confirm') {
+      const profile = wizard.profile;
+      const parsed = wizard.s3Path.replace(/^s3:\/\//, '');
+      const slashIdx = parsed.indexOf('/');
+      const bucket = slashIdx > 0 ? parsed.slice(0, slashIdx) : parsed;
+      const prefix = slashIdx > 0 ? parsed.slice(slashIdx + 1) : '';
+      browseTo(profile, bucket, prefix);
+    }
   }
 
   return (
     <div className="min-h-screen bg-bg-primary flex items-center justify-center p-4">
       <Card className="w-full max-w-lg border-border bg-bg-secondary">
         <CardContent className="p-8">
+          <div className="flex justify-center mb-6">
+            <img src="goblin.png" alt="CostGoblin" className="h-16 w-auto" />
+          </div>
           {wizard.step === 'welcome' && <WelcomeStep onNext={handleWelcomeNext} />}
-          {wizard.step === 'config' && (
-            <ConfigStep
+          {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={onComplete} onBack={handleBack} />}
+          {wizard.step === 'bucket' && <BucketStep state={wizard} onSelect={handleBucketSelect} onBack={handleBack} />}
+          {wizard.step === 'browse' && <BrowseStep state={wizard} onNavigate={handleNavigate} onConfirm={handleBrowseConfirm} onBack={handleBack} />}
+          {wizard.step === 'confirm' && (
+            <ConfirmStep
               state={wizard}
-              onUpdate={handleConfigUpdate}
-              onTestConnection={handleTestConnection}
-              onNext={handleConfigNext}
+              onRetentionChange={(days) => { setWizard(prev => prev.step === 'confirm' ? { ...prev, retentionDays: days } : prev); }}
+              onComplete={onComplete}
+              onBack={handleBack}
             />
           )}
         </CardContent>
