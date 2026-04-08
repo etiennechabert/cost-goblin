@@ -363,10 +363,50 @@ export function DataManagement() {
     void Promise.all(promises).then(() => { setRefreshKey(k => k + 1); setShowDeleteAll(false); });
   }
 
+  const isNotConfigured = configQuery.status === 'error' || (configQuery.status === 'success' && config === null);
+
   const dailyBucket = provider?.sync.daily.bucket ?? null;
   const dailyRetention = provider?.sync.daily.retentionDays ?? null;
   const hourlyBucket = provider?.sync.hourly?.bucket ?? null;
   const hourlyRetention = provider?.sync.hourly?.retentionDays ?? null;
+
+  if (isNotConfigured) {
+    return (
+      <div className="flex flex-col gap-5 p-6">
+        <div>
+          <h2 className="text-xl font-semibold text-text-primary">Data Management</h2>
+          <p className="text-sm text-text-secondary mt-0.5">S3 sync and local data inventory</p>
+        </div>
+        <div className="flex flex-col items-center gap-5 py-12 text-center">
+          <div className="rounded-xl border border-border bg-bg-secondary/50 px-8 py-8 max-w-lg w-full">
+            <h3 className="text-lg font-semibold text-text-primary">No data source configured</h3>
+            <p className="text-sm text-text-secondary mt-2">
+              CostGoblin needs to know where your AWS billing data lives. You can either run the setup wizard or configure it manually.
+            </p>
+
+            <div className="flex flex-col gap-3 mt-6">
+              <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3 text-left">
+                <p className="text-xs font-medium text-text-secondary uppercase tracking-wider mb-1">Option 1: Run the wizard</p>
+                <p className="text-xs text-text-muted">Restart the app to go through the guided setup.</p>
+              </div>
+
+              <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3 text-left">
+                <p className="text-xs font-medium text-text-secondary uppercase tracking-wider mb-1">Option 2: Manual setup</p>
+                <p className="text-xs text-text-muted mb-2">Generate template config files and edit them with your S3 bucket path and tag mappings.</p>
+                <button
+                  type="button"
+                  onClick={() => { void api.scaffoldConfig(); }}
+                  className="rounded-md border border-accent/50 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+                >
+                  Generate config templates & open folder
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-5 p-6">
