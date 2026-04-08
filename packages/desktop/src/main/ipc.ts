@@ -914,10 +914,9 @@ export function registerIpcHandlers(ctx: IpcContext): void {
               if (columnNames.includes('recommendation_id') || columnNames.includes('estimated_monthly_savings')) {
                 detectedType = 'cost-optimization';
               } else if (columnNames.includes('line_item_usage_start_date')) {
-                // Check granularity from report name or time_granularity field
-                const reportName = typeof manifest['reportName'] === 'string' ? manifest['reportName'] : '';
-                const contentColumns = typeof manifest['contentColumns'] === 'string' ? manifest['contentColumns'] : '';
-                if (reportName.toLowerCase().includes('hourly') || contentColumns.includes('HOURLY')) {
+                // Check multiple signals for hourly vs daily
+                const manifestStr = JSON.stringify(manifest).toLowerCase();
+                if (manifestStr.includes('hourly')) {
                   detectedType = 'hourly';
                 } else {
                   detectedType = 'daily';
@@ -926,7 +925,19 @@ export function registerIpcHandlers(ctx: IpcContext): void {
             }
           }
         } catch {
-          // manifest detection failed, leave as unknown
+          // manifest detection failed
+        }
+
+        // Fallback: check path for type hints
+        if (detectedType === 'unknown') {
+          const pathLower = params.prefix.toLowerCase();
+          if (pathLower.includes('cost_optimization') || pathLower.includes('cost-optimization') || pathLower.includes('savings')) {
+            detectedType = 'cost-optimization';
+          } else if (pathLower.includes('hourly')) {
+            detectedType = 'hourly';
+          } else {
+            detectedType = 'daily';
+          }
         }
       }
 
