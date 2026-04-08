@@ -422,6 +422,9 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
     <div className="min-h-screen bg-bg-primary flex items-center justify-center p-4">
       <Card className="w-full max-w-lg border-border bg-bg-secondary">
         <CardContent className="p-8">
+          <div className="flex justify-center mb-6">
+            <img src="goblin.png" alt="CostGoblin" className="h-16 w-auto" />
+          </div>
           {wizard.step === 'welcome' && <WelcomeStep onNext={handleWelcomeNext} />}
           {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={onComplete} onBack={handleBack} />}
           {wizard.step === 'bucket' && <BucketStep state={wizard} onSelect={handleBucketSelect} onBack={handleBack} />}
