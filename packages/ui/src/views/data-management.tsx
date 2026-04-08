@@ -3,6 +3,7 @@ import type { AccountMappingStatus, DataInventoryResult, CostGoblinConfig } from
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
+import { SetupWizard } from './setup-wizard.js';
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${String(bytes)}B`;
@@ -110,13 +111,14 @@ interface TierPanelProps {
   onDownload: () => void;
   onDeletePeriod: (period: string) => void;
   syncState: SyncState;
+  onConfigure?: (() => void) | undefined;
 }
 
 function TierPanel({
   title, configured, bucket, retentionDays,
   localDates, diskBytes, oldestDate, newestDate,
   periods, selected, onToggle, onSelectAll, onDeselectAll, onDownload, onDeletePeriod,
-  syncState,
+  syncState, onConfigure,
 }: TierPanelProps) {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const missingPeriods = periods.filter(p => p.localStatus === 'missing' || p.localStatus === 'stale');
@@ -131,9 +133,19 @@ function TierPanel({
         <h3 className="text-sm font-semibold text-text-primary mb-4">{title}</h3>
         <div className="rounded-lg border border-dashed border-border p-6 text-center">
           <p className="text-sm text-text-secondary">Not configured</p>
-          <p className="text-xs text-text-muted mt-2">
-            Add a <span className="font-mono text-text-secondary">{title.toLowerCase()}</span> section to your provider sync config in <span className="font-mono text-accent">costgoblin.yaml</span>
-          </p>
+          {onConfigure !== undefined ? (
+            <button
+              type="button"
+              onClick={onConfigure}
+              className="mt-3 rounded-md border border-accent/50 bg-accent/10 px-4 py-1.5 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+            >
+              Configure {title.toLowerCase()} data source
+            </button>
+          ) : (
+            <p className="text-xs text-text-muted mt-2">
+              Add a <span className="font-mono text-text-secondary">{title.toLowerCase()}</span> section to your provider sync config in <span className="font-mono text-accent">costgoblin.yaml</span>
+            </p>
+          )}
         </div>
       </div>
     );
@@ -291,6 +303,7 @@ export function DataManagement() {
   const [syncState, setSyncState] = useState<SyncState>({ status: 'idle' });
   const [autoSync, setAutoSync] = useState(false);
   const [showDeleteAll, setShowDeleteAll] = useState(false);
+  const [configureSource, setConfigureSource] = useState<'hourly' | 'costOptimization' | null>(null);
 
   const inventory: DataInventoryResult | null =
     inventoryQuery.status === 'success' ? inventoryQuery.data : null;
@@ -374,6 +387,9 @@ export function DataManagement() {
   const dailyRetention = provider?.sync.daily.retentionDays ?? null;
   const hourlyBucket = provider?.sync.hourly?.bucket ?? null;
   const hourlyRetention = provider?.sync.hourly?.retentionDays ?? null;
+  const costOptBucket = provider?.sync.costOptimization?.bucket ?? null;
+  const costOptRetention = provider?.sync.costOptimization?.retentionDays ?? null;
+  const awsProfile = provider?.credentials.profile ?? null;
 
   if (isNotConfigured) {
     return (
@@ -497,6 +513,26 @@ export function DataManagement() {
             onDownload={() => {}}
             onDeletePeriod={() => {}}
             syncState={{ status: 'idle' }}
+            onConfigure={() => { setConfigureSource('hourly'); }}
+          />
+          <TierPanel
+            title="Cost Optimization"
+            configured={costOptBucket !== null}
+            bucket={costOptBucket}
+            retentionDays={costOptRetention}
+            localDates={[]}
+            diskBytes={0}
+            oldestDate={null}
+            newestDate={null}
+            periods={[]}
+            selected={new Set()}
+            onToggle={() => {}}
+            onSelectAll={() => {}}
+            onDeselectAll={() => {}}
+            onDownload={() => {}}
+            onDeletePeriod={() => {}}
+            syncState={{ status: 'idle' }}
+            onConfigure={() => { setConfigureSource('costOptimization'); }}
           />
         </div>
       )}
@@ -510,6 +546,16 @@ export function DataManagement() {
           onConfirm={handleDeleteAll}
           onCancel={() => { setShowDeleteAll(false); }}
         />
+      )}
+
+      {configureSource !== null && awsProfile !== null && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <SetupWizard
+            source={configureSource}
+            profile={awsProfile}
+            onComplete={() => { setConfigureSource(null); setRefreshKey(k => k + 1); }}
+          />
+        </div>
       )}
     </div>
   );

@@ -20,6 +20,8 @@ type WizardStep =
 
 interface SetupWizardProps {
   onComplete: () => void;
+  source?: DataSource | undefined;
+  profile?: string | undefined;
 }
 
 function WelcomeStep({ onNext }: { onNext: () => void }) {
@@ -400,10 +402,23 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
   );
 }
 
-export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element {
+export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile }: SetupWizardProps): React.JSX.Element {
   const api = useCostApi();
-  const [wizard, setWizard] = useState<WizardStep>({ step: 'welcome' });
+  const isSourceMode = initialSource !== undefined && initialProfile !== undefined;
+  const [wizard, setWizard] = useState<WizardStep>(
+    isSourceMode
+      ? { step: 'bucket', profile: initialProfile, source: initialSource, buckets: [], loading: true, selected: '', error: '' }
+      : { step: 'welcome' },
+  );
   const [collectedPaths, setCollectedPaths] = useState({ daily: '', hourly: '', costOpt: '' });
+  const [bucketsLoaded, setBucketsLoaded] = useState(false);
+
+  if (isSourceMode && !bucketsLoaded) {
+    setBucketsLoaded(true);
+    void api.listS3Buckets(initialProfile).then(result => {
+      setWizard({ step: 'bucket', profile: initialProfile, source: initialSource, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
+    });
+  }
 
   function handleWelcomeNext() {
     setWizard({ step: 'profile', profiles: [], loading: true, selected: '' });
@@ -449,10 +464,10 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
 
     if (source === 'daily') {
       setCollectedPaths(prev => ({ ...prev, daily: s3Path }));
-      startBucketStep(profile, 'hourly');
+      goToConfirm(profile);
     } else if (source === 'hourly') {
       setCollectedPaths(prev => ({ ...prev, hourly: s3Path }));
-      startBucketStep(profile, 'costOptimization');
+      goToConfirm(profile);
     } else {
       setCollectedPaths(prev => ({ ...prev, costOpt: s3Path }));
       goToConfirm(profile);
