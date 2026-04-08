@@ -326,6 +326,7 @@ export function DataManagement() {
   const [hourlySelected, setHourlySelected] = useState(new Set<string>());
   const [initialized, setInitialized] = useState(false);
   const [syncState, setSyncState] = useState<SyncState>({ status: 'idle' });
+  const [activeSyncTier, setActiveSyncTier] = useState<'daily' | 'hourly' | null>(null);
   const [autoSync, setAutoSync] = useState(false);
   const [showDeleteAll, setShowDeleteAll] = useState(false);
   const [configureSource, setConfigureSource] = useState<'hourly' | 'costOptimization' | null>(null);
@@ -369,6 +370,7 @@ export function DataManagement() {
       .filter(p => selected.has(p.period))
       .flatMap(p => [...p.files]);
     if (selectedFiles.length === 0) return;
+    setActiveSyncTier('daily');
     const totalSize = selectedFiles.reduce((s, f) => s + f.size, 0);
     setSyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, bytesDone: 0, bytesTotal: totalSize, currentFile: '', bytesPerSecond: 0 });
 
@@ -398,6 +400,7 @@ export function DataManagement() {
       const result = await api.syncPeriods(selectedFiles);
       clearInterval(pollInterval);
       setSyncState({ status: 'done', filesDownloaded: result.filesDownloaded });
+      setActiveSyncTier(null);
       setSelected(new Set());
       setRefreshKey(k => k + 1);
     } catch (err: unknown) {
@@ -458,6 +461,7 @@ export function DataManagement() {
       .filter(p => hourlySelected.has(p.period))
       .flatMap(p => [...p.files]);
     if (selectedFiles.length === 0) return;
+    setActiveSyncTier('hourly');
     const totalSize = selectedFiles.reduce((s, f) => s + f.size, 0);
     setSyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, bytesDone: 0, bytesTotal: totalSize, currentFile: '', bytesPerSecond: 0 });
 
@@ -487,6 +491,7 @@ export function DataManagement() {
       const result = await api.syncPeriods(selectedFiles);
       clearInterval(pollInterval);
       setSyncState({ status: 'done', filesDownloaded: result.filesDownloaded });
+      setActiveSyncTier(null);
       setHourlySelected(new Set());
       setRefreshKey(k => k + 1);
     } catch (err: unknown) {
@@ -598,7 +603,7 @@ export function DataManagement() {
             onDeselectAll={deselectAll}
             onDownload={() => { void handleSync(); }}
             onDeletePeriod={handleDelete}
-            syncState={syncState}
+            syncState={activeSyncTier === 'daily' ? syncState : { status: 'idle' }}
             onCancelSync={() => { void api.cancelSync(); }}
           />
           <TierPanel
@@ -617,7 +622,7 @@ export function DataManagement() {
             onDeselectAll={deselectAllHourly}
             onDownload={() => { void handleHourlySync(); }}
             onDeletePeriod={handleDelete}
-            syncState={syncState}
+            syncState={activeSyncTier === 'hourly' ? syncState : { status: 'idle' }}
             onCancelSync={() => { void api.cancelSync(); }}
             onConfigure={() => { setConfigureSource('hourly'); }}
           />
