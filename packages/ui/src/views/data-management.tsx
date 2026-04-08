@@ -392,17 +392,13 @@ export function DataManagement() {
 
               <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3 text-left">
                 <p className="text-xs font-medium text-text-secondary uppercase tracking-wider mb-1">Option 2: Manual setup</p>
-                <p className="text-xs text-text-muted mb-2">Create the config files in your app data directory:</p>
-                <div className="rounded border border-border bg-bg-primary px-3 py-2 font-mono text-xs text-text-secondary">
-                  <p>costgoblin.yaml</p>
-                  <p>dimensions.yaml</p>
-                </div>
+                <p className="text-xs text-text-muted mb-2">Generate template config files and edit them with your S3 bucket path and tag mappings.</p>
                 <button
                   type="button"
-                  onClick={() => { void api.openDataFolder(); }}
-                  className="mt-2 text-xs text-accent hover:text-accent-hover underline underline-offset-2"
+                  onClick={() => { void api.scaffoldConfig(); }}
+                  className="rounded-md border border-accent/50 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
                 >
-                  Open data folder
+                  Generate config templates & open folder
                 </button>
               </div>
             </div>

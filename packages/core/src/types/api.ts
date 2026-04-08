@@ -57,6 +57,7 @@ export interface CostApi {
   listAwsProfiles(): Promise<string[]>;
   listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }>;
   browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean }>;
+  scaffoldConfig(): Promise<void>;
   writeConfig(config: {
     providerName: string;
     profile: string;

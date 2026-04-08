@@ -955,7 +955,84 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   });
 
   ipcMain.handle('data:open-folder', async (): Promise<void> => {
+    const fs = await import('node:fs/promises');
+    await fs.mkdir(ctx.dataDir, { recursive: true });
     await shell.openPath(ctx.dataDir);
+  });
+
+  ipcMain.handle('setup:scaffold-config', async (): Promise<void> => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+
+    const configDir = path.dirname(ctx.configPath);
+    await fs.mkdir(configDir, { recursive: true });
+
+    const configTemplate = `# CostGoblin configuration
+# See https://github.com/etiennechabert/cost-goblin for documentation
+
+providers:
+  - name: aws-main
+    type: aws
+    credentials:
+      profile: default  # <- your AWS CLI profile name
+    sync:
+      daily:
+        bucket: s3://your-bucket/path/to/cur/  # <- path containing data/ and metadata/
+        retentionDays: 365
+      intervalMinutes: 60
+
+defaults:
+  periodDays: 30
+  costMetric: UnblendedCost
+  lagDays: 2
+
+cache:
+  ttlMinutes: 15
+`;
+
+    const dimensionsTemplate = `# Dimension configuration
+# Built-in dimensions are always available. Add tag dimensions to map your CUR tags.
+
+builtIn:
+  - name: account
+    label: Account
+    field: line_item_usage_account_id
+    displayField: account_name
+  - name: region
+    label: Region
+    field: product_region
+  - name: service
+    label: Service
+    field: product_service_name
+  - name: service_family
+    label: Service Family
+    field: product_service_family
+
+# Map your CUR resource tags below.
+# tagName: the tag key in your CUR (without the "user_" prefix)
+# concept: owner | product | environment (enables special UI features)
+tags: []
+  # Example:
+  # - tagName: team
+  #   label: Team
+  #   concept: owner
+  # - tagName: app
+  #   label: Application
+  #   concept: product
+  # - tagName: env
+  #   label: Environment
+  #   concept: environment
+`;
+
+    try { await fs.access(ctx.configPath); } catch {
+      await fs.writeFile(ctx.configPath, configTemplate, 'utf-8');
+    }
+    try { await fs.access(ctx.dimensionsPath); } catch {
+      await fs.writeFile(ctx.dimensionsPath, dimensionsTemplate, 'utf-8');
+    }
+
+    await shell.openPath(configDir);
+    logger.info('Scaffolded template config files');
   });
 
   ipcMain.handle('data:account-mapping', async (): Promise<AccountMappingStatus> => {
