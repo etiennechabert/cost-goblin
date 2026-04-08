@@ -954,25 +954,44 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
     const configDir = path.dirname(ctx.configPath);
     await fs.mkdir(configDir, { recursive: true });
+    const { parse: parseYaml } = await import('yaml');
+
+    // Load existing config if present, then merge
+    let existing: Record<string, unknown> = {};
+    try {
+      const raw = await fs.readFile(ctx.configPath, 'utf-8');
+      existing = parseYaml(raw) as Record<string, unknown>;
+    } catch {
+      // no existing config
+    }
+
+    const existingProviders = Array.isArray(existing['providers']) ? existing['providers'] as Record<string, unknown>[] : [];
+    const existingProvider = existingProviders[0] ?? {};
+    const existingSync = (existingProvider['sync'] ?? {}) as Record<string, unknown>;
+
+    const sync: Record<string, unknown> = { ...existingSync, intervalMinutes: 60 };
+
+    // Only update tiers that have values — preserve existing for others
+    if (wizardConfig.dailyBucket.length > 0) {
+      sync['daily'] = { bucket: wizardConfig.dailyBucket, retentionDays: wizardConfig.retentionDays ?? 365 };
+    }
+    if (wizardConfig.hourlyBucket !== undefined && wizardConfig.hourlyBucket.length > 0) {
+      sync['hourly'] = { bucket: wizardConfig.hourlyBucket, retentionDays: 30 };
+    }
+    if (wizardConfig.costOptBucket !== undefined && wizardConfig.costOptBucket.length > 0) {
+      sync['costOptimization'] = { bucket: wizardConfig.costOptBucket, retentionDays: 90 };
+    }
 
     const costgoblinYaml = {
+      ...existing,
       providers: [{
         name: wizardConfig.providerName,
         type: 'aws',
         credentials: { profile: wizardConfig.profile },
-        sync: {
-          daily: { bucket: wizardConfig.dailyBucket, retentionDays: wizardConfig.retentionDays ?? 365 },
-          ...(wizardConfig.hourlyBucket !== undefined && wizardConfig.hourlyBucket.length > 0
-            ? { hourly: { bucket: wizardConfig.hourlyBucket, retentionDays: 30 } }
-            : {}),
-          ...(wizardConfig.costOptBucket !== undefined && wizardConfig.costOptBucket.length > 0
-            ? { costOptimization: { bucket: wizardConfig.costOptBucket, retentionDays: 90 } }
-            : {}),
-          intervalMinutes: 60,
-        },
+        sync,
       }],
-      defaults: { periodDays: 30, costMetric: 'UnblendedCost', lagDays: 2 },
-      cache: { ttlMinutes: 15 },
+      defaults: (existing['defaults'] as Record<string, unknown> | undefined) ?? { periodDays: 30, costMetric: 'UnblendedCost', lagDays: 2 },
+      cache: (existing['cache'] as Record<string, unknown> | undefined) ?? { ttlMinutes: 15 },
     };
 
     await fs.writeFile(ctx.configPath, stringify(costgoblinYaml), 'utf-8');

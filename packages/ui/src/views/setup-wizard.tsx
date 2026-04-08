@@ -245,27 +245,32 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: {
       </div>
 
       {state.isCurReport && (() => {
-        const TYPE_LABELS: Record<string, string> = { daily: 'Daily CUR', hourly: 'Hourly CUR', 'cost-optimization': 'Cost Optimization', unknown: 'Unknown type' };
-        const SOURCE_TO_EXPECTED: Record<DataSource, string> = { daily: 'daily', hourly: 'hourly', costOptimization: 'cost-optimization' };
-        const expected = SOURCE_TO_EXPECTED[state.source];
         const detected = state.detectedType;
-        const isMatch = detected === 'unknown' || detected === expected;
+        const isCostOptMismatch = detected === 'cost-optimization' && state.source !== 'costOptimization';
+        const isCurForCostOpt = detected !== 'cost-optimization' && detected !== 'unknown' && state.source === 'costOptimization';
+
+        if (isCostOptMismatch || isCurForCostOpt) {
+          return (
+            <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3">
+              <p className="text-sm font-medium text-warning">Data type mismatch</p>
+              <p className="text-xs text-warning mt-0.5">
+                {isCostOptMismatch
+                  ? 'This looks like a Cost Optimization report, not a CUR.'
+                  : 'This looks like a CUR report, not a Cost Optimization export.'}
+                {' '}Continue anyway?
+              </p>
+            </div>
+          );
+        }
 
         return (
-          <div className={`rounded-lg border px-4 py-3 ${isMatch ? 'border-accent/40 bg-accent/5' : 'border-warning/50 bg-warning-muted'}`}>
-            <p className={`text-sm font-medium ${isMatch ? 'text-accent' : 'text-warning'}`}>
-              {detected !== 'unknown' ? `Detected: ${TYPE_LABELS[detected] ?? detected}` : 'CUR report detected'}
+          <div className="rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
+            <p className="text-sm font-medium text-accent">
+              {detected === 'cost-optimization' ? 'Cost Optimization report detected' : 'CUR report detected'}
             </p>
-            {!isMatch && (
-              <p className="text-xs text-warning mt-0.5">
-                You are configuring <strong>{SOURCE_LABELS[state.source].title}</strong> but this looks like <strong>{TYPE_LABELS[detected] ?? detected}</strong> data. Continue anyway?
-              </p>
-            )}
-            {isMatch && detected !== 'unknown' && (
-              <p className="text-xs text-text-secondary mt-0.5">
-                Matches expected type for {SOURCE_LABELS[state.source].title}
-              </p>
-            )}
+            <p className="text-xs text-text-secondary mt-0.5">
+              Found <code className="text-text-primary">data/</code> and <code className="text-text-primary">metadata/</code> folders
+            </p>
           </div>
         );
       })()}
