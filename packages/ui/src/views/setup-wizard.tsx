@@ -324,7 +324,7 @@ export function SetupWizard({ onComplete }: SetupWizardProps): React.JSX.Element
   function handleWelcomeNext() {
     setWizard({ step: 'profile', profiles: [], loading: true, selected: '' });
     void api.listAwsProfiles().then(profiles => {
-      setWizard({ step: 'profile', profiles, loading: false, selected: profiles[0] ?? '' });
+      setWizard({ step: 'profile', profiles, loading: false, selected: '' });
     });
   }
 
