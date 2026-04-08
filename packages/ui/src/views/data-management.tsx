@@ -298,10 +298,15 @@ export function DataManagement() {
     configQuery.status === 'success' ? configQuery.data : null;
   const provider = config?.providers[0] ?? null;
 
-  const missingPeriods = inventory?.periods.filter(p => p.localStatus === 'missing') ?? [];
+  const retentionDays = provider?.sync.daily.retentionDays ?? 365;
+  const retentionCutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+  const retentionCutoffPeriod = `${String(retentionCutoff.getFullYear())}-${String(retentionCutoff.getMonth() + 1).padStart(2, '0')}`;
 
-  if (!initialized && inventoryQuery.status === 'success' && missingPeriods.length > 0) {
-    setSelected(new Set(missingPeriods.map(p => p.period)));
+  const missingPeriods = inventory?.periods.filter(p => p.localStatus === 'missing') ?? [];
+  const missingWithinRetention = missingPeriods.filter(p => p.period >= retentionCutoffPeriod);
+
+  if (!initialized && inventoryQuery.status === 'success' && missingWithinRetention.length > 0) {
+    setSelected(new Set(missingWithinRetention.map(p => p.period)));
     setInitialized(true);
   }
 

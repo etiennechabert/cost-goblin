@@ -900,6 +900,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     providerName: string;
     profile: string;
     dailyBucket: string;
+    retentionDays?: number | undefined;
     hourlyBucket?: string | undefined;
     costOptBucket?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
@@ -917,7 +918,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         type: 'aws',
         credentials: { profile: wizardConfig.profile },
         sync: {
-          daily: { bucket: wizardConfig.dailyBucket, retentionDays: 365 },
+          daily: { bucket: wizardConfig.dailyBucket, retentionDays: wizardConfig.retentionDays ?? 365 },
           ...(wizardConfig.hourlyBucket !== undefined && wizardConfig.hourlyBucket.length > 0
             ? { hourly: { bucket: wizardConfig.hourlyBucket, retentionDays: 30 } }
             : {}),

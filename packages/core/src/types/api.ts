@@ -62,6 +62,7 @@ export interface CostApi {
     providerName: string;
     profile: string;
     dailyBucket: string;
+    retentionDays?: number | undefined;
     hourlyBucket?: string | undefined;
     costOptBucket?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
