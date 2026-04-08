@@ -181,16 +181,8 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
       globalBytesDone += file.size;
       globalFilesDone++;
 
-      // Validate downloaded file
-      logger.info(`Validating ${fileName}...`);
-      const validation = await validateDownloadedFile(localPath, options.expectedDataType);
-      allValidationResults.push(validation);
-
-      if (!validation.valid) {
-        logger.info(`Validation warning for ${validation.file}: ${validation.message ?? 'unknown issue'}`);
-      } else {
-        logger.info(`Validated ${validation.file}: ${validation.detectedType}`);
-      }
+      // TODO: validate after all downloads complete, using main DuckDB instance
+      // Per-file validation disabled — createLazyDuckDB() conflicts with main process DuckDB
     }
 
     totalFilesDownloaded += periodFiles.length;
