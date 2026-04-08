@@ -1,4 +1,4 @@
-.PHONY: dev reset test lint check
+.PHONY: dev reset test lint
 
 dev:
 	cd packages/desktop && npm run dev
@@ -15,5 +15,3 @@ lint:
 	npx tsc --noEmit -p packages/ui/tsconfig.json
 	npx tsc --noEmit -p packages/desktop/tsconfig.json
 	npx eslint packages/*/src/
-
-check: lint test
