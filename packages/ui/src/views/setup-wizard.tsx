@@ -462,16 +462,16 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     const profile = wizard.profile;
     const source = wizard.source;
 
+    const updated = { ...collectedPaths };
     if (source === 'daily') {
-      setCollectedPaths(prev => ({ ...prev, daily: s3Path }));
-      goToConfirm(profile);
+      updated.daily = s3Path;
     } else if (source === 'hourly') {
-      setCollectedPaths(prev => ({ ...prev, hourly: s3Path }));
-      goToConfirm(profile);
+      updated.hourly = s3Path;
     } else {
-      setCollectedPaths(prev => ({ ...prev, costOpt: s3Path }));
-      goToConfirm(profile);
+      updated.costOpt = s3Path;
     }
+    setCollectedPaths(updated);
+    goToConfirm(profile, updated);
   }
 
   function handleBrowseSkip() {
@@ -486,13 +486,14 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     }
   }
 
-  function goToConfirm(profile: string) {
+  function goToConfirm(profile: string, paths?: { daily: string; hourly: string; costOpt: string }) {
+    const p = paths ?? collectedPaths;
     setWizard({
       step: 'confirm',
       profile,
-      s3Path: collectedPaths.daily,
-      hourlyPath: collectedPaths.hourly,
-      costOptPath: collectedPaths.costOpt,
+      s3Path: p.daily,
+      hourlyPath: p.hourly,
+      costOptPath: p.costOpt,
       retentionDays: 365,
     });
   }
