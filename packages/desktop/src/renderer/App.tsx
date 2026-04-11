@@ -142,9 +142,9 @@ export function App(): React.JSX.Element {
       <div className="min-h-screen bg-bg-primary text-text-primary">
         {/* Title bar + nav */}
         <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border">
-          <div className="h-8 flex items-center justify-center gap-1.5 px-4 [-webkit-app-region:drag]">
-            <img src="goblin.png" alt="" className="h-5 w-5 object-contain" />
-            <span className="text-xs font-bold text-accent tracking-wider">CostGoblin</span>
+          <div className="h-10 flex items-center justify-center gap-2 px-4 [-webkit-app-region:drag]">
+            <img src="goblin.png" alt="" className="h-7 w-7 object-contain" />
+            <span className="text-sm font-bold text-accent tracking-wider">CostGoblin</span>
           </div>
           <nav className="flex items-center justify-between px-4 pb-2">
             <div className="flex items-center gap-1">

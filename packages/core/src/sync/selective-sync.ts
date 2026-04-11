@@ -1,9 +1,10 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { spawn } from 'node:child_process';
+import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { logger } from '../logger/logger.js';
 import type { DimensionsConfig } from '../types/config.js';
-import { createS3Handle, parseS3Path } from './s3-client.js';
-import type { ProgressCallback, FileValidationInfo } from './s3-client.js';
+import { parseS3Path } from './s3-client.js';
+import type { ProgressCallback } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
 import { createLazyDuckDB } from './duckdb-lazy.js';
 
@@ -17,93 +18,32 @@ export interface SelectiveSyncOptions {
   readonly expectedDataType?: ExpectedDataType | undefined;
   readonly files: readonly ManifestFileEntry[];
   readonly onProgress?: ProgressCallback | undefined;
+  readonly signal?: AbortSignal | undefined;
 }
 
-export interface FileValidationResult {
-  readonly file: string;
-  readonly valid: boolean;
-  readonly detectedType: ExpectedDataType | 'unknown';
-  readonly message?: string | undefined;
-}
-
-const REQUIRED_CUR_COLUMNS = [
-  'line_item_usage_start_date',
-  'line_item_usage_account_id',
-  'line_item_unblended_cost',
-  'product_servicecode',
-  'product_product_family',
-  'product_region_code',
-  'resource_tags',
-];
-
-async function validateDownloadedFile(localPath: string, expectedType: ExpectedDataType | undefined): Promise<FileValidationResult> {
-  const fileName = basename(localPath);
-  try {
-    const db = await createLazyDuckDB();
-    const conn = await db.connect();
-
-    // Read parquet schema
-    const schemaResult = await conn.run(`SELECT name FROM parquet_schema('${localPath}') LIMIT 100`);
-    const columns: string[] = [];
-    let chunk = await schemaResult.fetchChunk();
-    while (chunk !== null && chunk.rowCount > 0) {
-      for (let r = 0; r < chunk.rowCount; r++) {
-        const val = chunk.getColumnVector(0).getItem(r);
-        if (typeof val === 'string') columns.push(val);
-      }
-      chunk = await schemaResult.fetchChunk();
-    }
-
-    // Detect type from schema
-    if (columns.includes('recommendation_id') || columns.includes('estimated_monthly_savings')) {
-      if (expectedType !== undefined && expectedType !== 'cost-optimization') {
-        return { file: fileName, valid: false, detectedType: 'cost-optimization', message: `Expected ${expectedType} data but file contains cost optimization recommendations` };
-      }
-      return { file: fileName, valid: true, detectedType: 'cost-optimization' };
-    }
-
-    // Check required CUR columns
-    const missingColumns = REQUIRED_CUR_COLUMNS.filter(c => !columns.includes(c));
-    if (missingColumns.length > 0) {
-      return {
-        file: fileName,
-        valid: false,
-        detectedType: 'unknown',
-        message: `Missing required columns: ${missingColumns.join(', ')}`,
-      };
-    }
-
-    // Distinguish daily vs hourly by checking distinct hours
-    const hourResult = await conn.run(
-      `SELECT COUNT(DISTINCT EXTRACT(HOUR FROM line_item_usage_start_date)) as h FROM read_parquet('${localPath}') LIMIT 10000`,
-    );
-    const hourChunk = await hourResult.fetchChunk();
-    const distinctHours = hourChunk !== null && hourChunk.rowCount > 0
-      ? Number(hourChunk.getColumnVector(0).getItem(0))
-      : 0;
-
-    const detectedType: ExpectedDataType = distinctHours > 1 ? 'hourly' : 'daily';
-    const valid = expectedType === undefined || expectedType === detectedType;
-
-    return {
-      file: fileName,
-      valid,
-      detectedType,
-      message: valid ? undefined : `Expected ${expectedType} data but detected ${detectedType} (${String(distinctHours)} distinct hours)`,
-    };
-  } catch (err: unknown) {
-    return {
-      file: fileName,
-      valid: false,
-      detectedType: 'unknown',
-      message: `Validation failed: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-}
+const ETAG_FILES: Record<string, string> = {
+  'daily': 'sync-etags.json',
+  'hourly': 'sync-etags-hourly.json',
+  'cost-optimization': 'sync-etags-cost-optimization.json',
+};
 
 function extractPeriod(key: string): string {
-  const match = /BILLING_PERIOD=(\d{4}-\d{2})/.exec(key);
-  return match?.[1] ?? 'unknown';
+  const billingMatch = /BILLING_PERIOD=(\d{4}-\d{2})/.exec(key);
+  if (billingMatch?.[1] !== undefined) return billingMatch[1];
+  const dateMatch = /date=(\d{4}-\d{2})-\d{2}/.exec(key);
+  return dateMatch?.[1] ?? 'unknown';
+}
+
+function extractPeriodPrefix(key: string): string {
+  const billingMatch = /^(.*BILLING_PERIOD=\d{4}-\d{2}\/)/.exec(key);
+  if (billingMatch?.[1] !== undefined) return billingMatch[1];
+  const dateMatch = /^(.*date=\d{4}-\d{2}-\d{2}\/)/.exec(key);
+  return dateMatch?.[1] ?? '';
+}
+
+function extractDate(key: string): string | undefined {
+  const match = /date=(\d{4}-\d{2}-\d{2})/.exec(key);
+  return match?.[1];
 }
 
 function groupByPeriod(files: readonly ManifestFileEntry[]): Map<string, ManifestFileEntry[]> {
@@ -120,58 +60,241 @@ function groupByPeriod(files: readonly ManifestFileEntry[]): Map<string, Manifes
   return groups;
 }
 
-export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
+function runAwsS3Sync(options: {
+  readonly source: string;
+  readonly dest: string;
+  readonly profile: string;
+  readonly signal?: AbortSignal | undefined;
+  readonly onLine?: ((line: string) => void) | undefined;
+}): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const args = ['s3', 'sync', options.source, options.dest, '--profile', options.profile];
+
+    const proc = spawn('aws', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    if (options.signal !== undefined) {
+      if (options.signal.aborted) {
+        proc.kill();
+        reject(new Error('Download cancelled'));
+        return;
+      }
+      const onAbort = () => { proc.kill(); };
+      options.signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    let stderr = '';
+
+    proc.stdout.on('data', (data: Buffer) => {
+      const lines = data.toString().split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.length > 0) {
+          options.onLine?.(trimmed);
+        }
+      }
+    });
+
+    proc.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString();
+      const lines = data.toString().split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.length > 0) {
+          options.onLine?.(trimmed);
+        }
+      }
+    });
+
+    proc.on('error', (err: Error) => {
+      if (err.message.includes('ENOENT')) {
+        reject(new Error('AWS CLI not found — install it with: brew install awscli'));
+      } else {
+        reject(err);
+      }
+    });
+
+    proc.on('close', (code, signal) => {
+      if (signal === 'SIGTERM' || options.signal?.aborted) {
+        reject(new Error('Download cancelled'));
+      } else if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`aws s3 sync failed (exit ${String(code)}): ${stderr.trim()}`));
+      }
+    });
+  });
+}
+
+async function saveEtags(
+  dataDir: string,
+  tier: string,
+  period: string,
+  periodFiles: readonly ManifestFileEntry[],
+): Promise<void> {
+  const etagFile = ETAG_FILES[tier] ?? 'sync-etags.json';
+  const etagPath = join(dataDir, etagFile);
+  let savedEtags: Record<string, Record<string, string>> = {};
+  try {
+    const raw = await readFile(etagPath, 'utf-8');
+    savedEtags = JSON.parse(raw) as Record<string, Record<string, string>>;
+  } catch {
+    // first time
+  }
+  const periodEtags: Record<string, string> = {};
+  for (const f of periodFiles) {
+    periodEtags[f.key] = f.contentHash;
+  }
+  savedEtags[period] = periodEtags;
+  await writeFile(etagPath, JSON.stringify(savedEtags, null, 2));
+}
+
+async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
   const { bucketPath, profile, dataDir, files, onProgress } = options;
   const s3Path = parseS3Path(bucketPath);
-  const dailyDir = join(dataDir, 'aws', 'daily');
+  const outputDir = join(dataDir, 'aws', 'cost-optimization');
+  await mkdir(outputDir, { recursive: true });
 
-  await mkdir(dailyDir, { recursive: true });
+  const periods = groupByPeriod(files);
+  const periodList = [...periods.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const totalFiles = files.length;
+  let globalFilesDone = 0;
+  let totalFilesDownloaded = 0;
 
-  const s3 = await createS3Handle(profile);
+  for (const [period, periodFiles] of periodList) {
+    if (options.signal?.aborted) break;
+
+    // Group files by date within the period
+    const dateGroups = new Map<string, ManifestFileEntry[]>();
+    for (const file of periodFiles) {
+      const date = extractDate(file.key);
+      if (date === undefined) continue;
+      const existing = dateGroups.get(date);
+      if (existing !== undefined) {
+        existing.push(file);
+      } else {
+        dateGroups.set(date, [file]);
+      }
+    }
+
+    logger.info(`Processing cost optimization period ${period}: ${String(dateGroups.size)} dates`);
+
+    for (const [date, dateFiles] of dateGroups) {
+      if (options.signal?.aborted) break;
+
+      const firstFile = dateFiles[0];
+      if (firstFile === undefined) continue;
+
+      const datePrefix = extractPeriodPrefix(firstFile.key);
+      const s3Source = `s3://${s3Path.bucket}/${datePrefix}`;
+      const stagingDir = join(dataDir, 'aws', 'raw', `cost-opt-${date}`);
+      await mkdir(stagingDir, { recursive: true });
+
+      await runAwsS3Sync({
+        source: s3Source,
+        dest: stagingDir,
+        profile,
+        signal: options.signal,
+        onLine: (line) => {
+          logger.info(`[aws] ${line}`);
+          if (line.startsWith('download:')) {
+            globalFilesDone++;
+          }
+          if (onProgress !== undefined) {
+            onProgress({
+              phase: 'downloading',
+              filesTotal: totalFiles,
+              filesDone: globalFilesDone,
+              message: line.startsWith('Completed') ? line : undefined,
+            });
+          }
+        },
+      });
+
+      // Move downloaded files to the output dir (already daily-partitioned)
+      const dateDir = join(outputDir, `usage_date=${date}`);
+      await mkdir(dateDir, { recursive: true });
+
+      const downloaded = await readdir(stagingDir);
+      for (const f of downloaded) {
+        if (f.endsWith('.parquet')) {
+          await copyFile(join(stagingDir, f), join(dateDir, 'data.parquet'));
+        }
+      }
+
+      totalFilesDownloaded += dateFiles.length;
+    }
+
+    if (onProgress !== undefined) {
+      onProgress({ phase: 'repartitioning', filesTotal: 1, filesDone: 1 });
+    }
+
+    await saveEtags(dataDir, 'cost-optimization', period, periodFiles);
+  }
+
+  if (onProgress !== undefined) {
+    onProgress({ phase: 'done', filesTotal: totalFiles, filesDone: totalFiles });
+  }
+
+  logger.info(`Cost optimization sync complete: ${String(totalFilesDownloaded)} files`);
+  return { filesDownloaded: totalFilesDownloaded, rowsProcessed: 0 };
+}
+
+export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
+  const tier = options.expectedDataType ?? 'daily';
+
+  if (tier === 'cost-optimization') {
+    return syncCostOptimization(options);
+  }
+
+  const { bucketPath, profile, dataDir, files, onProgress } = options;
+  const s3Path = parseS3Path(bucketPath);
+  const tierDir = join(dataDir, 'aws', tier);
+
+  await mkdir(tierDir, { recursive: true });
+
   const periods = groupByPeriod(files);
   const periodList = [...periods.entries()].sort((a, b) => a[0].localeCompare(b[0]));
 
   let totalFilesDownloaded = 0;
   const totalFiles = files.length;
   let globalFilesDone = 0;
-  const allValidationResults: FileValidationInfo[] = [];
 
   for (const [period, periodFiles] of periodList) {
+    if (options.signal?.aborted) break;
+
     logger.info(`Processing period ${period}: ${String(periodFiles.length)} files`);
 
-    // Phase 1: Download and validate this period's files
-    const stagingDir = join(dataDir, 'aws', 'staging', period);
+    const firstFile = periodFiles[0];
+    if (firstFile === undefined) continue;
+
+    const periodPrefix = extractPeriodPrefix(firstFile.key);
+    const s3Source = `s3://${s3Path.bucket}/${periodPrefix}`;
+    const stagingDir = join(dataDir, 'aws', 'raw', `${tier}-${period}`);
     await mkdir(stagingDir, { recursive: true });
 
-    for (const file of periodFiles) {
-      const localPath = join(stagingDir, basename(file.key));
-      logger.info(`Downloading ${basename(file.key)} (${String(Math.round(file.size / 1024 / 1024))}MB)`);
+    // Phase 1: Download using aws s3 sync
+    logger.info(`Running: aws s3 sync ${s3Source} ${stagingDir}`);
 
-      await s3.downloadFile(s3Path.bucket, file.key, localPath);
-      globalFilesDone++;
-
-      // Validate downloaded file
-      logger.info(`Validating ${basename(file.key)}...`);
-      const validation = await validateDownloadedFile(localPath, options.expectedDataType);
-      allValidationResults.push(validation);
-
-      if (!validation.valid) {
-        logger.info(`Validation warning for ${validation.file}: ${validation.message ?? 'unknown issue'}`);
-      } else {
-        logger.info(`Validated ${validation.file}: ${validation.detectedType}`);
-      }
-
-      if (onProgress !== undefined) {
-        onProgress({
-          phase: 'downloading',
-          filesTotal: totalFiles,
-          filesDone: globalFilesDone,
-          bytesTotal: 0,
-          bytesDone: 0,
-          validationResults: allValidationResults,
-        });
-      }
-    }
+    await runAwsS3Sync({
+      source: s3Source,
+      dest: stagingDir,
+      profile,
+      signal: options.signal,
+      onLine: (line) => {
+        logger.info(`[aws] ${line}`);
+        if (line.startsWith('download:')) {
+          globalFilesDone++;
+        }
+        if (onProgress !== undefined) {
+          onProgress({
+            phase: 'downloading',
+            filesTotal: totalFiles,
+            filesDone: globalFilesDone,
+            message: line.startsWith('Completed') ? line : undefined,
+          });
+        }
+      },
+    });
 
     totalFilesDownloaded += periodFiles.length;
 
@@ -179,14 +302,11 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     logger.info(`Repartitioning ${period}...`);
 
     if (onProgress !== undefined) {
-      onProgress({ phase: 'repartitioning', filesTotal: 0, filesDone: 0, bytesTotal: 0, bytesDone: 0 });
+      onProgress({ phase: 'repartitioning', filesTotal: 0, filesDone: 0 });
     }
 
-    logger.info('Creating DuckDB instance for repartitioning...');
     const db = await createLazyDuckDB();
-    logger.info('DuckDB instance created, connecting...');
     const conn = await db.connect();
-    logger.info('DuckDB connected');
 
     const tagColumns = options.dimensionsConfig.tags.map(t => ({
       key: `user_${t.tagName}`,
@@ -216,7 +336,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     for (let di = 0; di < dates.length; di++) {
       const date = dates[di];
       if (date === undefined) continue;
-      const dateDir = join(dailyDir, `usage_date=${date}`);
+      const dateDir = join(tierDir, `usage_date=${date}`);
       await mkdir(dateDir, { recursive: true });
       const outPath = join(dateDir, 'data.parquet');
 
@@ -244,45 +364,17 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
       `);
 
       if (onProgress !== undefined) {
-        onProgress({ phase: 'repartitioning', filesTotal: dates.length, filesDone: di + 1, bytesTotal: 0, bytesDone: 0 });
+        onProgress({ phase: 'repartitioning', filesTotal: dates.length, filesDone: di + 1 });
       }
     }
 
     logger.info(`${period}: repartitioned into ${String(dates.length)} daily partitions`);
 
-    // Save ETags for this period so we can detect stale data later
-    const etagPath = join(dataDir, 'sync-etags.json');
-    let savedEtags: Record<string, Record<string, string>> = {};
-    try {
-      const raw = await readFile(etagPath, 'utf-8');
-      savedEtags = JSON.parse(raw) as Record<string, Record<string, string>>;
-    } catch {
-      // first time
-    }
-    const periodEtags: Record<string, string> = {};
-    for (const f of periodFiles) {
-      periodEtags[f.key] = f.contentHash;
-    }
-    savedEtags[period] = periodEtags;
-    await writeFile(etagPath, JSON.stringify(savedEtags, null, 2));
-
-    // Phase 3: Clean this period's staging
-    try {
-      await rm(stagingDir, { recursive: true });
-    } catch {
-      // ignore
-    }
-  }
-
-  // Clean parent staging dir if empty
-  try {
-    await rm(join(dataDir, 'aws', 'staging'), { recursive: true });
-  } catch {
-    // ignore
+    await saveEtags(dataDir, tier, period, periodFiles);
   }
 
   if (onProgress !== undefined) {
-    onProgress({ phase: 'done', filesTotal: totalFiles, filesDone: totalFiles, bytesTotal: 0, bytesDone: 0 });
+    onProgress({ phase: 'done', filesTotal: totalFiles, filesDone: totalFiles });
   }
 
   logger.info(`Sync complete: ${String(totalFilesDownloaded)} files across ${String(periodList.length)} periods`);

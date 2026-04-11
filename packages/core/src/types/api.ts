@@ -15,6 +15,8 @@ import type {
 
 export type Dimension = BuiltInDimension | TagDimension;
 
+export type DataTier = 'daily' | 'hourly' | 'cost-optimization';
+
 export interface DataInventoryResult {
   readonly periods: readonly {
     readonly period: string;
@@ -26,10 +28,8 @@ export interface DataInventoryResult {
   readonly totalLocalPeriods: number;
   readonly totalRemotePeriods: number;
   readonly local: {
-    readonly dailyDates: readonly string[];
-    readonly dailyDiskBytes: number;
-    readonly hourlyDates: readonly string[];
-    readonly hourlyDiskBytes: number;
+    readonly dates: readonly string[];
+    readonly diskBytes: number;
     readonly oldestDate: string | null;
     readonly newestDate: string | null;
   };
@@ -41,15 +41,16 @@ export interface CostApi {
   queryTrends(params: TrendQueryParams): Promise<TrendResult>;
   queryMissingTags(params: MissingTagsParams): Promise<MissingTagsResult>;
   queryEntityDetail(params: EntityDetailParams): Promise<EntityDetailResult>;
-  getSyncStatus(): Promise<SyncStatus>;
+  getSyncStatus(syncId?: string): Promise<SyncStatus>;
   triggerSync(): Promise<void>;
   getConfig(): Promise<CostGoblinConfig>;
   getDimensions(): Promise<Dimension[]>;
   getOrgTree(): Promise<OrgNode[]>;
-  getDataInventory(): Promise<DataInventoryResult>;
-  syncPeriods(files: readonly { key: string; contentHash: string; size: number }[]): Promise<{ filesDownloaded: number; rowsProcessed: number }>;
+  getDataInventory(tier?: DataTier): Promise<DataInventoryResult>;
+  syncPeriods(files: readonly { key: string; contentHash: string; size: number }[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }>;
+  cancelSync(syncId?: string): Promise<void>;
   getFilterValues(dimensionId: string, filters: Record<string, string>, dateRange?: { start: string; end: string }): Promise<{ value: string; label: string; count: number }[]>;
-  deleteLocalPeriod(period: string): Promise<void>;
+  deleteLocalPeriod(period: string, tier?: DataTier): Promise<void>;
   openDataFolder(): Promise<void>;
   getAccountMapping(): Promise<AccountMappingStatus>;
   getSetupStatus(): Promise<{ configured: boolean }>;
