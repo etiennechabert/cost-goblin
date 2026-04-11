@@ -66,7 +66,7 @@ function OverviewInner() {
   const dispatch = useCostFocusDispatch();
 
   const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange);
-  const [histogramTab, setHistogramTab] = useState<HistogramTab>('owner');
+  const [histogramTab, setHistogramTab] = useState<HistogramTab>('service');
   const [histogramExpanded, setHistogramExpanded] = useState(false);
   const [filters, setFilters] = useState<FilterMap>({});
   const [pie1DimId, setPie1DimId] = useState<DimensionId | null>(null);
@@ -170,15 +170,17 @@ function OverviewInner() {
     : undefined;
 
   // Daily histogram via queryDailyCosts
-  const histogramDimId = histogramTab === 'owner' ? ownerDimId
-    : histogramTab === 'product' ? productDimId
-    : serviceDimId;
+  let histogramDimId: DimensionId;
+  if (histogramTab === 'owner' && ownerDimId !== null) {
+    histogramDimId = ownerDimId;
+  } else if (histogramTab === 'product' && productDimId !== null) {
+    histogramDimId = productDimId;
+  } else {
+    histogramDimId = serviceDimId;
+  }
 
   const dailyQuery = useQuery(
-    () => {
-      if (histogramDimId === null) return Promise.resolve(null);
-      return api.queryDailyCosts({ groupBy: histogramDimId, dateRange, filters: baseFilters });
-    },
+    () => api.queryDailyCosts({ groupBy: histogramDimId, dateRange, filters: baseFilters }),
     [histogramDimId, dateRangeKey, filterKey, api],
   );
 

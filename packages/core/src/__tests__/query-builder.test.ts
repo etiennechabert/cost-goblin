@@ -34,7 +34,7 @@ describe('buildCostQuery', () => {
     );
     expect(sql).toContain('service AS entity');
     expect(sql).toContain("usage_date BETWEEN '2026-01-01' AND '2026-01-31'");
-    expect(sql).toContain('read_parquet');
+    expect(sql).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet')");
   });
 
   it('includes filter clauses', () => {

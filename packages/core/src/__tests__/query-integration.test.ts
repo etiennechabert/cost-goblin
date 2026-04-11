@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildCostQuery, buildMissingTagsQuery, buildEntityDetailQuery } from '../query/builder.js';
+import { buildCostQuery, buildMissingTagsQuery, buildEntityDetailQuery, buildSource } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asTagValue } from '../types/branded.js';
 
@@ -76,7 +76,8 @@ describe('DuckDB query integration', () => {
   });
 
   it('reads fixture parquet files', async () => {
-    const rows = await queryAll(conn, `SELECT COUNT(*) as cnt FROM read_parquet('${SYNTHETIC_DIR}/aws/daily/**/data.parquet', hive_partitioning = true)`);
+    const source = buildSource(SYNTHETIC_DIR, 'daily', dimensions);
+    const rows = await queryAll(conn, `SELECT COUNT(*) as cnt FROM ${source}`);
     expect(Number(rows[0]?.['cnt'])).toBeGreaterThan(0);
   });
 
@@ -154,8 +155,9 @@ describe('DuckDB query integration', () => {
     expect(rows.length).toBeGreaterThan(0);
   });
 
-  it('reads hourly partitions', async () => {
-    const rows = await queryAll(conn, `SELECT COUNT(*) as cnt FROM read_parquet('${SYNTHETIC_DIR}/aws/hourly/**/data.parquet', hive_partitioning = true)`);
+  it('reads hourly raw files', async () => {
+    const source = buildSource(SYNTHETIC_DIR, 'hourly', dimensions);
+    const rows = await queryAll(conn, `SELECT COUNT(*) as cnt FROM ${source}`);
     expect(Number(rows[0]?.['cnt'])).toBeGreaterThan(0);
   });
 });
