@@ -33,6 +33,35 @@ function buildFilterClauses(filters: FilterMap, dimensions: DimensionsConfig): s
   return clauses;
 }
 
+export function buildSource(dataDir: string, tier: string, dimensions: DimensionsConfig): string {
+  const tagSelects = dimensions.tags.map(t => {
+    const curKey = `user_${t.tagName}`;
+    const colName = `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    return `element_at(resource_tags, '${curKey}')[1] AS ${colName}`;
+  });
+
+  const tagClause = tagSelects.length > 0 ? `,\n      ${tagSelects.join(',\n      ')}` : '';
+
+  return `(
+    SELECT
+      line_item_usage_start_date::DATE AS usage_date,
+      line_item_usage_account_id AS account_id,
+      COALESCE(line_item_usage_account_name, '') AS account_name,
+      COALESCE(product_region_code, '') AS region,
+      COALESCE(product_servicecode, '') AS service,
+      COALESCE(product_product_family, '') AS service_family,
+      COALESCE(line_item_line_item_description, '') AS description,
+      COALESCE(line_item_resource_id, '') AS resource_id,
+      COALESCE(line_item_usage_amount, 0) AS usage_amount,
+      COALESCE(line_item_unblended_cost, 0) AS cost,
+      COALESCE(pricing_public_on_demand_cost, 0) AS list_cost,
+      COALESCE(line_item_line_item_type, '') AS line_item_type,
+      COALESCE(line_item_operation, '') AS operation,
+      COALESCE(line_item_usage_type, '') AS usage_type${tagClause}
+    FROM read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')
+  )`;
+}
+
 export function buildCostQuery(
   params: CostQueryParams,
   dataDir: string,
@@ -41,6 +70,7 @@ export function buildCostQuery(
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
+  const source = buildSource(dataDir, 'daily', dimensions);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -58,7 +88,7 @@ export function buildCostQuery(
         ${groupByResolved.fieldExpr} AS entity,
         service,
         SUM(cost) AS cost
-      FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true)
+      FROM ${source}
       WHERE ${whereConditions.join(' AND ')}
       GROUP BY entity, service
     ),
@@ -103,6 +133,7 @@ export function buildTrendQuery(
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
+  const source = buildSource(dataDir, 'daily', dimensions);
 
   const startDate = params.dateRange.start;
   const endDate = params.dateRange.end;
@@ -114,7 +145,7 @@ export function buildTrendQuery(
       SELECT
         ${groupByResolved.fieldExpr} AS entity,
         SUM(cost) AS total_cost
-      FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true)
+      FROM ${source}
       WHERE usage_date BETWEEN '${startDate}' AND '${endDate}'${filterWhere}
       GROUP BY entity
     ),
@@ -125,7 +156,7 @@ export function buildTrendQuery(
       SELECT
         ${groupByResolved.fieldExpr} AS entity,
         SUM(cost) AS total_cost
-      FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true)
+      FROM ${source}
       WHERE usage_date BETWEEN
         DATE '${startDate}' - (SELECT days FROM period_length) * INTERVAL '1 day'
         AND DATE '${startDate}' - INTERVAL '1 day'${filterWhere}
@@ -154,6 +185,7 @@ export function buildMissingTagsQuery(
 ): string {
   const tagResolved = resolveField(params.tagDimension, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
+  const source = buildSource(dataDir, 'daily', dimensions);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -169,7 +201,7 @@ export function buildMissingTagsQuery(
       service,
       service_family,
       SUM(cost) AS cost
-    FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true)
+    FROM ${source}
     WHERE ${whereConditions.join(' AND ')}
     GROUP BY account_id, account_name, resource_id, service, service_family
     HAVING SUM(cost) >= ${String(params.minCost)}
@@ -184,6 +216,7 @@ export function buildDailyCostsQuery(
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
+  const source = buildSource(dataDir, 'daily', dimensions);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -195,7 +228,7 @@ export function buildDailyCostsQuery(
       usage_date::VARCHAR AS date,
       ${groupByResolved.fieldExpr} AS group_name,
       SUM(cost) AS cost
-    FROM read_parquet('${dataDir}/aws/daily/**/data.parquet', hive_partitioning = true)
+    FROM ${source}
     WHERE ${whereConditions.join(' AND ')}
     GROUP BY date, group_name
     ORDER BY date, cost DESC
@@ -211,6 +244,7 @@ export function buildEntityDetailQuery(
   const filterClauses = buildFilterClauses(params.filters, dimensions);
   const granularity = params.granularity ?? 'daily';
   const tier = granularity === 'hourly' ? 'hourly' : 'daily';
+  const source = buildSource(dataDir, tier, dimensions);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -225,7 +259,7 @@ export function buildEntityDetailQuery(
       account_id,
       account_name,
       SUM(cost) AS cost
-    FROM read_parquet('${dataDir}/aws/${tier}/**/data.parquet', hive_partitioning = true)
+    FROM ${source}
     WHERE ${whereConditions.join(' AND ')}
     GROUP BY usage_date, service, account_id, account_name
     ORDER BY usage_date, cost DESC

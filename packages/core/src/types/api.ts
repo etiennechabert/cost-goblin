@@ -28,10 +28,10 @@ export interface DataInventoryResult {
   readonly totalLocalPeriods: number;
   readonly totalRemotePeriods: number;
   readonly local: {
-    readonly dates: readonly string[];
+    readonly periods: readonly string[];
     readonly diskBytes: number;
-    readonly oldestDate: string | null;
-    readonly newestDate: string | null;
+    readonly oldestPeriod: string | null;
+    readonly newestPeriod: string | null;
   };
 }
 

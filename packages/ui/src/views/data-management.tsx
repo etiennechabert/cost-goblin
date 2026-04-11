@@ -99,10 +99,10 @@ interface TierPanelProps {
   configured: boolean;
   bucket: string | null;
   retentionDays: number | null;
-  localDates: readonly string[];
+  localPeriods: readonly string[];
   diskBytes: number;
-  oldestDate: string | null;
-  newestDate: string | null;
+  oldestPeriod: string | null;
+  newestPeriod: string | null;
   periods: DataInventoryResult['periods'];
   selected: Set<string>;
   onToggle: (period: string) => void;
@@ -117,13 +117,13 @@ interface TierPanelProps {
 
 function TierPanel({
   title, configured, bucket, retentionDays,
-  localDates, diskBytes, oldestDate, newestDate,
+  localPeriods, diskBytes, oldestPeriod, newestPeriod,
   periods, selected, onToggle, onSelectAll, onDeselectAll, onDownload, onDeletePeriod,
   syncState, onConfigure, onCancelSync,
 }: TierPanelProps) {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const missingPeriods = periods.filter(p => p.localStatus === 'missing' || p.localStatus === 'stale');
-  const localPeriods = periods.filter(p => p.localStatus === 'repartitioned');
+  const downloadedPeriods = periods.filter(p => p.localStatus === 'repartitioned');
   const selectedFiles = periods.filter(p => selected.has(p.period)).flatMap(p => [...p.files]);
   const selectedSize = selectedFiles.reduce((s, f) => s + f.size, 0);
   const isSyncing = syncState.status === 'downloading' || syncState.status === 'repartitioning';
@@ -154,7 +154,14 @@ function TierPanel({
 
   return (
     <div className="flex-1 rounded-xl border border-border bg-bg-secondary/30 p-5 flex flex-col gap-4">
-      <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
+        {onConfigure !== undefined && (
+          <button type="button" onClick={onConfigure} className="text-text-muted hover:text-text-secondary transition-colors" title={`Configure ${title.toLowerCase()}`}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        )}
+      </div>
 
       {/* Config */}
       <div className="space-y-2 text-xs">
@@ -172,13 +179,13 @@ function TierPanel({
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded-lg border border-border bg-bg-primary/50 p-3">
           <p className="text-xs text-text-muted">Local</p>
-          <p className="text-lg font-bold tabular-nums text-accent">{String(localDates.length)} <span className="text-xs font-normal text-text-muted">days</span></p>
+          <p className="text-lg font-bold tabular-nums text-accent">{String(localPeriods.length)} <span className="text-xs font-normal text-text-muted">months</span></p>
           <p className="text-xs text-text-muted tabular-nums">{formatBytes(diskBytes)}</p>
         </div>
         <div className="rounded-lg border border-border bg-bg-primary/50 p-3">
           <p className="text-xs text-text-muted">Range</p>
-          <p className="text-xs font-medium text-text-primary mt-1">{oldestDate ?? '—'}</p>
-          <p className="text-xs text-text-muted">{newestDate !== null ? `to ${newestDate}` : ''}</p>
+          <p className="text-xs font-medium text-text-primary mt-1">{oldestPeriod ?? '—'}</p>
+          <p className="text-xs text-text-muted">{newestPeriod !== null ? `to ${newestPeriod}` : ''}</p>
         </div>
       </div>
 
@@ -275,13 +282,13 @@ function TierPanel({
       )}
 
       {/* Local periods */}
-      {localPeriods.length > 0 && (
+      {downloadedPeriods.length > 0 && (
         <div className="rounded-lg border border-border overflow-hidden">
           <div className="border-b border-border px-3 py-2">
             <span className="text-xs font-medium text-text-secondary">Downloaded</span>
           </div>
           <div className="max-h-48 overflow-y-auto divide-y divide-border-subtle">
-            {localPeriods.map(p => (
+            {downloadedPeriods.map(p => (
               <div key={p.period} className="flex items-center gap-2 px-3 py-1.5 text-xs">
                 <div className="h-1.5 w-1.5 rounded-full bg-accent" />
                 <span className="text-text-primary w-16">{formatPeriod(p.period)}</span>
@@ -295,7 +302,7 @@ function TierPanel({
         </div>
       )}
 
-      {missingPeriods.length === 0 && localPeriods.length === 0 && (
+      {missingPeriods.length === 0 && downloadedPeriods.length === 0 && (
         <div className="text-xs text-text-muted text-center py-4">No data found in S3</div>
       )}
 
@@ -331,7 +338,7 @@ export function DataManagement() {
   const [costOptSyncState, setCostOptSyncState] = useState<SyncState>({ status: 'idle' });
   const [autoSync, setAutoSync] = useState(false);
   const [showDeleteAll, setShowDeleteAll] = useState(false);
-  const [configureSource, setConfigureSource] = useState<'hourly' | 'costOptimization' | null>(null);
+  const [configureSource, setConfigureSource] = useState<'daily' | 'hourly' | 'costOptimization' | null>(null);
 
   const inventory: DataInventoryResult | null =
     inventoryQuery.status === 'success' ? inventoryQuery.data : null;
@@ -658,10 +665,10 @@ export function DataManagement() {
             configured={dailyBucket !== null}
             bucket={dailyBucket}
             retentionDays={dailyRetention}
-            localDates={inventory.local.dates}
+            localPeriods={inventory.local.periods}
             diskBytes={inventory.local.diskBytes}
-            oldestDate={inventory.local.oldestDate}
-            newestDate={inventory.local.newestDate}
+            oldestPeriod={inventory.local.oldestPeriod}
+            newestPeriod={inventory.local.newestPeriod}
             periods={[...inventory.periods]}
             selected={selected}
             onToggle={togglePeriod}
@@ -671,16 +678,17 @@ export function DataManagement() {
             onDeletePeriod={handleDeleteDaily}
             syncState={dailySyncState}
             onCancelSync={() => { void api.cancelSync('daily'); setDailySyncState({ status: 'idle' }); }}
+            onConfigure={() => { setConfigureSource('daily'); }}
           />
           <TierPanel
             title="Hourly"
             configured={hourlyBucket !== null}
             bucket={hourlyBucket}
             retentionDays={hourlyRetention}
-            localDates={hourlyInventory?.local.dates ?? []}
+            localPeriods={hourlyInventory?.local.periods ?? []}
             diskBytes={hourlyInventory?.local.diskBytes ?? 0}
-            oldestDate={hourlyInventory?.local.oldestDate ?? null}
-            newestDate={hourlyInventory?.local.newestDate ?? null}
+            oldestPeriod={hourlyInventory?.local.oldestPeriod ?? null}
+            newestPeriod={hourlyInventory?.local.newestPeriod ?? null}
             periods={hourlyInventory !== null ? [...hourlyInventory.periods] : []}
             selected={hourlySelected}
             onToggle={toggleHourlyPeriod}
@@ -697,10 +705,10 @@ export function DataManagement() {
             configured={costOptBucket !== null}
             bucket={costOptBucket}
             retentionDays={costOptRetention}
-            localDates={costOptInventory?.local.dates ?? []}
+            localPeriods={costOptInventory?.local.periods ?? []}
             diskBytes={costOptInventory?.local.diskBytes ?? 0}
-            oldestDate={costOptInventory?.local.oldestDate ?? null}
-            newestDate={costOptInventory?.local.newestDate ?? null}
+            oldestPeriod={costOptInventory?.local.oldestPeriod ?? null}
+            newestPeriod={costOptInventory?.local.newestPeriod ?? null}
             periods={costOptInventory !== null ? [...costOptInventory.periods] : []}
             selected={costOptSelected}
             onToggle={toggleCostOptPeriod}
@@ -727,12 +735,17 @@ export function DataManagement() {
       )}
 
       {configureSource !== null && awsProfile !== null && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <SetupWizard
-            source={configureSource}
-            profile={awsProfile}
-            onComplete={() => { setConfigureSource(null); setConfigRefreshKey(k => k + 1); setDailyRefreshKey(k => k + 1); setHourlyRefreshKey(k => k + 1); setCostOptRefreshKey(k => k + 1); }}
-          />
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) setConfigureSource(null); }}>
+          <div className="relative">
+            <button type="button" onClick={() => { setConfigureSource(null); }} className="absolute -top-2 -right-2 z-10 rounded-full bg-bg-tertiary border border-border w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-secondary transition-colors" title="Close">
+              &#10005;
+            </button>
+            <SetupWizard
+              source={configureSource}
+              profile={awsProfile}
+              onComplete={() => { setConfigureSource(null); setConfigRefreshKey(k => k + 1); setDailyRefreshKey(k => k + 1); setHourlyRefreshKey(k => k + 1); setCostOptRefreshKey(k => k + 1); }}
+            />
+          </div>
         </div>
       )}
     </div>

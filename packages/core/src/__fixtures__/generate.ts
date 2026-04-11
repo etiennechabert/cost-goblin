@@ -258,34 +258,34 @@ async function generate(): Promise<void> {
       const usageAmount = Math.round(rand() * 1000 * 100) / 100;
       const resourceId = `arn:aws:${service.name.toLowerCase()}:${region}:${account.id}:resource/${String(Math.floor(rand() * 10000))}`;
 
-      const teamVal = owner !== null ? `'${owner}'` : 'NULL';
-      const sysVal = product !== null ? `'${product}'` : 'NULL';
-      const envVal = env !== null ? `'${env}'` : 'NULL';
+      const tagEntries: string[] = [];
+      if (owner !== null) tagEntries.push(`'user_team': '${owner}'`);
+      if (product !== null) tagEntries.push(`'user_system': '${product}'`);
+      if (env !== null) tagEntries.push(`'user_environment': '${env}'`);
+      const tagsMap = `MAP {${tagEntries.join(', ')}}`;
 
-      rows.push(`('${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', 'Compute', '${lineItemType}', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(listCost)}, '${lineItemType}', 'RunInstances', 'Usage', ${teamVal}, ${sysVal}, ${envVal})`);
+      rows.push(`(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', 'Compute', '${lineItemType}', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(listCost)}, '${lineItemType}', 'RunInstances', 'Usage', ${tagsMap})`);
     }
   }
 
-  // Create table and export as partitioned parquet
+  // Create table with raw CUR column names
   await conn.run(`
     CREATE TABLE synthetic (
-      usage_date DATE,
-      account_id VARCHAR,
-      account_name VARCHAR,
-      region VARCHAR,
-      service VARCHAR,
-      service_family VARCHAR,
-      description VARCHAR,
-      resource_id VARCHAR,
-      usage_amount DOUBLE,
-      cost DOUBLE,
-      list_cost DOUBLE,
-      line_item_type VARCHAR,
-      operation VARCHAR,
-      usage_type VARCHAR,
-      tag_team VARCHAR,
-      tag_system VARCHAR,
-      tag_environment VARCHAR
+      line_item_usage_start_date TIMESTAMP,
+      line_item_usage_account_id VARCHAR,
+      line_item_usage_account_name VARCHAR,
+      product_region_code VARCHAR,
+      product_servicecode VARCHAR,
+      product_product_family VARCHAR,
+      line_item_line_item_description VARCHAR,
+      line_item_resource_id VARCHAR,
+      line_item_usage_amount DOUBLE,
+      line_item_unblended_cost DOUBLE,
+      pricing_public_on_demand_cost DOUBLE,
+      line_item_line_item_type VARCHAR,
+      line_item_operation VARCHAR,
+      line_item_usage_type VARCHAR,
+      resource_tags MAP(VARCHAR, VARCHAR)
     )
   `);
 
@@ -298,32 +298,28 @@ async function generate(): Promise<void> {
 
   process.stdout.write(`  Generated ${String(rows.length)} rows\n`);
 
-  // Export daily partitions
-  const dailyDir = join(SYNTHETIC_DIR, 'aws', 'daily');
-  for (const date of dailyDates) {
-    const dateDir = join(dailyDir, `usage_date=${date}`);
-    await mkdir(dateDir, { recursive: true });
-    const outPath = join(dateDir, 'data.parquet');
-    await conn.run(`COPY (SELECT * EXCLUDE(usage_date) FROM synthetic WHERE usage_date = '${date}') TO '${outPath}' (FORMAT PARQUET)`);
+  // Export daily data as raw monthly files
+  const rawDir = join(SYNTHETIC_DIR, 'aws', 'raw');
+  const months = [...new Set(dailyDates.map(d => d.slice(0, 7)))];
+  for (const month of months) {
+    const monthDir = join(rawDir, `daily-${month}`);
+    await mkdir(monthDir, { recursive: true });
+    const outPath = join(monthDir, 'data.parquet');
+    await conn.run(`COPY (SELECT * FROM synthetic WHERE line_item_usage_start_date::DATE::VARCHAR LIKE '${month}%') TO '${outPath}' (FORMAT PARQUET)`);
   }
-  process.stdout.write(`  Exported ${String(dailyDates.length)} daily partitions\n`);
+  process.stdout.write(`  Exported ${String(months.length)} monthly raw files\n`);
 
-  // Export hourly data (last 7 days of Feb, with synthetic hourly breakdown)
+  // Export hourly data (last 7 days of Feb as a single monthly file)
+  const hourlyMonthDir = join(rawDir, 'hourly-2026-02');
+  await mkdir(hourlyMonthDir, { recursive: true });
   const hourlyDates = dailyDates.slice(-7);
-  const hourlyDir = join(SYNTHETIC_DIR, 'aws', 'hourly');
-  for (const date of hourlyDates) {
-    const dateDir = join(hourlyDir, `usage_date=${date}`);
-    await mkdir(dateDir, { recursive: true });
-    const outPath = join(dateDir, 'data.parquet');
-    // Reuse daily data but add a usage_hour column
-    await conn.run(`
-      COPY (
-        SELECT *, TIMESTAMP '${date} 00:00:00' + INTERVAL (FLOOR(RANDOM() * 24)::INT) HOUR AS usage_hour
-        FROM synthetic WHERE usage_date = '${date}'
-      ) TO '${outPath}' (FORMAT PARQUET)
-    `);
-  }
-  process.stdout.write(`  Exported ${String(hourlyDates.length)} hourly partitions\n`);
+  const hourlyWhereClause = hourlyDates.map(d => `line_item_usage_start_date::DATE = '${d}'`).join(' OR ');
+  await conn.run(`
+    COPY (
+      SELECT * FROM synthetic WHERE ${hourlyWhereClause}
+    ) TO '${join(hourlyMonthDir, 'data.parquet')}' (FORMAT PARQUET)
+  `);
+  process.stdout.write(`  Exported hourly raw file (${String(hourlyDates.length)} days)\n`);
 
   process.stdout.write('Done!\n');
 }

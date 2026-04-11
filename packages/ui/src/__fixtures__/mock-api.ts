@@ -205,7 +205,7 @@ export class MockCostApi implements CostApi {
   getDimensions(): Promise<Dimension[]> { return Promise.resolve(mockDimensions); }
   getOrgTree(): Promise<OrgNode[]> { return Promise.resolve(orgTree); }
   getFilterValues(): Promise<{ value: string; label: string; count: number }[]> { return Promise.resolve([]); }
-  getDataInventory(): Promise<DataInventoryResult> { return Promise.resolve({ periods: [], totalRemoteSize: 0, totalLocalPeriods: 0, totalRemotePeriods: 0, local: { dates: [], diskBytes: 0, oldestDate: null, newestDate: null } }); }
+  getDataInventory(): Promise<DataInventoryResult> { return Promise.resolve({ periods: [], totalRemoteSize: 0, totalLocalPeriods: 0, totalRemotePeriods: 0, local: { periods: [], diskBytes: 0, oldestPeriod: null, newestPeriod: null } }); }
   syncPeriods(): Promise<{ filesDownloaded: number; rowsProcessed: number }> { return Promise.resolve({ filesDownloaded: 0, rowsProcessed: 0 }); }
   cancelSync(): Promise<void> { return Promise.resolve(); }
   deleteLocalPeriod(): Promise<void> { return Promise.resolve(); }
