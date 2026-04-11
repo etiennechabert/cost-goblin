@@ -22,7 +22,7 @@ function formatPeriod(period: string): string {
 
 type SyncState =
   | { status: 'idle' }
-  | { status: 'downloading'; filesDone: number; filesTotal: number; bytesDone: number; bytesTotal: number; currentFile: string; bytesPerSecond: number }
+  | { status: 'downloading'; filesDone: number; filesTotal: number; message: string }
   | { status: 'repartitioning'; datesDone: number; datesTotal: number }
   | { status: 'done'; filesDownloaded: number }
   | { status: 'error'; message: string };
@@ -190,28 +190,25 @@ function TierPanel({
           <div className="flex items-center justify-between mb-1.5">
             <div className="flex items-center gap-2 text-xs text-accent min-w-0">
               <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse shrink-0" />
-              <span>Downloading {String(syncState.filesDone)}/{String(syncState.filesTotal)}</span>
+              <span>Downloading {String(syncState.filesDone)}/{String(syncState.filesTotal)} files</span>
             </div>
-            <div className="flex items-center gap-2 shrink-0 ml-2">
-              <span className="text-[10px] text-text-muted tabular-nums whitespace-nowrap">
-                {syncState.bytesPerSecond > 0 ? `${formatBytes(Math.round(syncState.bytesPerSecond))}/s` : ''}
-                {' '}{formatBytes(syncState.bytesDone)}/{formatBytes(syncState.bytesTotal)}
-              </span>
-              <button
-                type="button"
-                onClick={() => { onCancelSync?.(); }}
-                className="p-0.5 rounded text-negative/70 hover:text-negative hover:bg-negative-muted transition-colors"
-                title="Cancel download"
-              >
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="M1 1l10 10M11 1L1 11" />
-                </svg>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => { onCancelSync?.(); }}
+              className="p-0.5 rounded text-negative/70 hover:text-negative hover:bg-negative-muted transition-colors shrink-0 ml-2"
+              title="Cancel download"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M1 1l10 10M11 1L1 11" />
+              </svg>
+            </button>
           </div>
-          <div className="h-1 rounded-full bg-bg-tertiary overflow-hidden">
-            <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${String(syncState.bytesTotal > 0 ? Math.round(syncState.bytesDone / syncState.bytesTotal * 100) : 0)}%` }} />
+          <div className="h-1 rounded-full bg-bg-tertiary overflow-hidden mb-1.5">
+            <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${String(syncState.filesTotal > 0 ? Math.round(syncState.filesDone / syncState.filesTotal * 100) : 0)}%` }} />
           </div>
+          {syncState.message.length > 0 && (
+            <p className="text-[10px] text-text-muted font-mono truncate">{syncState.message}</p>
+          )}
         </div>
       )}
       {syncState.status === 'repartitioning' && (
@@ -373,8 +370,7 @@ export function DataManagement() {
       .flatMap(p => [...p.files]);
     if (selectedFiles.length === 0) return;
     setActiveSyncTier('daily');
-    const totalSize = selectedFiles.reduce((s, f) => s + f.size, 0);
-    setSyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, bytesDone: 0, bytesTotal: totalSize, currentFile: '', bytesPerSecond: 0 });
+    setSyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, message: '' });
 
     const pollInterval = setInterval(() => {
       void api.getSyncStatus().then((s) => {
@@ -382,15 +378,7 @@ export function DataManagement() {
           if (s.phase === 'repartitioning') {
             setSyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
           } else {
-            setSyncState({
-              status: 'downloading',
-              filesDone: s.filesDone,
-              filesTotal: s.filesTotal,
-              bytesTotal: s.bytesTotal,
-              bytesDone: s.bytesDone,
-              currentFile: s.currentFile,
-              bytesPerSecond: s.bytesPerSecond,
-            });
+            setSyncState({ status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, message: s.message });
           }
         } else if (s.status === 'idle') {
           setSyncState({ status: 'idle' });
@@ -464,8 +452,7 @@ export function DataManagement() {
       .flatMap(p => [...p.files]);
     if (selectedFiles.length === 0) return;
     setActiveSyncTier('hourly');
-    const totalSize = selectedFiles.reduce((s, f) => s + f.size, 0);
-    setSyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, bytesDone: 0, bytesTotal: totalSize, currentFile: '', bytesPerSecond: 0 });
+    setSyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, message: '' });
 
     const pollInterval = setInterval(() => {
       void api.getSyncStatus().then((s) => {
@@ -473,15 +460,7 @@ export function DataManagement() {
           if (s.phase === 'repartitioning') {
             setSyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
           } else {
-            setSyncState({
-              status: 'downloading',
-              filesDone: s.filesDone,
-              filesTotal: s.filesTotal,
-              bytesTotal: s.bytesTotal,
-              bytesDone: s.bytesDone,
-              currentFile: s.currentFile,
-              bytesPerSecond: s.bytesPerSecond,
-            });
+            setSyncState({ status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, message: s.message });
           }
         } else if (s.status === 'idle') {
           setSyncState({ status: 'idle' });

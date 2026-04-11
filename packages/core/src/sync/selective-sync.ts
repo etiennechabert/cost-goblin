@@ -1,8 +1,9 @@
+import { spawn } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { join } from 'node:path';
 import { logger } from '../logger/logger.js';
 import type { DimensionsConfig } from '../types/config.js';
-import { createS3Handle, parseS3Path } from './s3-client.js';
+import { parseS3Path } from './s3-client.js';
 import type { ProgressCallback } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
 import { createLazyDuckDB } from './duckdb-lazy.js';
@@ -20,16 +21,14 @@ export interface SelectiveSyncOptions {
   readonly signal?: AbortSignal | undefined;
 }
 
-export interface FileValidationResult {
-  readonly file: string;
-  readonly valid: boolean;
-  readonly detectedType: ExpectedDataType | 'unknown';
-  readonly message?: string | undefined;
-}
-
 function extractPeriod(key: string): string {
   const match = /BILLING_PERIOD=(\d{4}-\d{2})/.exec(key);
   return match?.[1] ?? 'unknown';
+}
+
+function extractPeriodPrefix(key: string): string {
+  const match = /^(.*BILLING_PERIOD=\d{4}-\d{2}\/)/.exec(key);
+  return match?.[1] ?? '';
 }
 
 function groupByPeriod(files: readonly ManifestFileEntry[]): Map<string, ManifestFileEntry[]> {
@@ -46,6 +45,71 @@ function groupByPeriod(files: readonly ManifestFileEntry[]): Map<string, Manifes
   return groups;
 }
 
+function runAwsS3Sync(options: {
+  readonly source: string;
+  readonly dest: string;
+  readonly profile: string;
+  readonly signal?: AbortSignal | undefined;
+  readonly onLine?: ((line: string) => void) | undefined;
+}): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const args = ['s3', 'sync', options.source, options.dest, '--profile', options.profile];
+
+    const proc = spawn('aws', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    if (options.signal !== undefined) {
+      if (options.signal.aborted) {
+        proc.kill();
+        reject(new Error('Download cancelled'));
+        return;
+      }
+      const onAbort = () => { proc.kill(); };
+      options.signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    let stderr = '';
+
+    proc.stdout.on('data', (data: Buffer) => {
+      const lines = data.toString().split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.length > 0) {
+          options.onLine?.(trimmed);
+        }
+      }
+    });
+
+    proc.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString();
+      const lines = data.toString().split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.length > 0) {
+          options.onLine?.(trimmed);
+        }
+      }
+    });
+
+    proc.on('error', (err: Error) => {
+      if (err.message.includes('ENOENT')) {
+        reject(new Error('AWS CLI not found — install it with: brew install awscli'));
+      } else {
+        reject(err);
+      }
+    });
+
+    proc.on('close', (code, signal) => {
+      if (signal === 'SIGTERM' || options.signal?.aborted) {
+        reject(new Error('Download cancelled'));
+      } else if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`aws s3 sync failed (exit ${String(code)}): ${stderr.trim()}`));
+      }
+    });
+  });
+}
+
 export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
   const { bucketPath, profile, dataDir, files, onProgress } = options;
   const s3Path = parseS3Path(bucketPath);
@@ -53,60 +117,49 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
 
   await mkdir(dailyDir, { recursive: true });
 
-  const s3 = await createS3Handle(profile);
   const periods = groupByPeriod(files);
   const periodList = [...periods.entries()].sort((a, b) => a[0].localeCompare(b[0]));
 
   let totalFilesDownloaded = 0;
   const totalFiles = files.length;
-  const totalBytes = files.reduce((s, f) => s + f.size, 0);
   let globalFilesDone = 0;
-  let globalBytesDone = 0;
-  const downloadStartTime = Date.now();
 
   for (const [period, periodFiles] of periodList) {
     if (options.signal?.aborted) break;
 
     logger.info(`Processing period ${period}: ${String(periodFiles.length)} files`);
 
-    // Phase 1: Download and validate this period's files
+    const firstFile = periodFiles[0];
+    if (firstFile === undefined) continue;
+
+    const periodPrefix = extractPeriodPrefix(firstFile.key);
+    const s3Source = `s3://${s3Path.bucket}/${periodPrefix}`;
     const stagingDir = join(dataDir, 'aws', 'staging', period);
     await mkdir(stagingDir, { recursive: true });
 
-    for (const file of periodFiles) {
-      if (options.signal?.aborted) break;
+    // Phase 1: Download using aws s3 sync
+    logger.info(`Running: aws s3 sync ${s3Source} ${stagingDir}`);
 
-      const localPath = join(stagingDir, basename(file.key));
-      const fileName = basename(file.key);
-      logger.info(`Downloading ${fileName} (${String(Math.round(file.size / 1024 / 1024))}MB)`);
-
-      const fileStartBytes = globalBytesDone;
-      await s3.downloadFile(s3Path.bucket, file.key, localPath, {
-        signal: options.signal,
-        onBytes: (fileBytes) => {
-          const currentTotal = fileStartBytes + fileBytes;
-          const elapsed = (Date.now() - downloadStartTime) / 1000;
-          const bytesPerSecond = elapsed > 0 ? currentTotal / elapsed : 0;
-
-          if (onProgress !== undefined) {
-            onProgress({
-              phase: 'downloading',
-              filesTotal: totalFiles,
-              filesDone: globalFilesDone,
-              bytesTotal: totalBytes,
-              bytesDone: currentTotal,
-              currentFile: fileName,
-              bytesPerSecond,
-            });
-          }
-        },
-      });
-      globalBytesDone += file.size;
-      globalFilesDone++;
-
-      // TODO: validate after all downloads complete, using main DuckDB instance
-      // Per-file validation disabled — createLazyDuckDB() conflicts with main process DuckDB
-    }
+    await runAwsS3Sync({
+      source: s3Source,
+      dest: stagingDir,
+      profile,
+      signal: options.signal,
+      onLine: (line) => {
+        logger.info(`[aws] ${line}`);
+        if (line.startsWith('download:')) {
+          globalFilesDone++;
+        }
+        if (onProgress !== undefined) {
+          onProgress({
+            phase: 'downloading',
+            filesTotal: totalFiles,
+            filesDone: globalFilesDone,
+            message: line,
+          });
+        }
+      },
+    });
 
     totalFilesDownloaded += periodFiles.length;
 
@@ -114,14 +167,11 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     logger.info(`Repartitioning ${period}...`);
 
     if (onProgress !== undefined) {
-      onProgress({ phase: 'repartitioning', filesTotal: 0, filesDone: 0, bytesTotal: 0, bytesDone: 0 });
+      onProgress({ phase: 'repartitioning', filesTotal: 0, filesDone: 0 });
     }
 
-    logger.info('Creating DuckDB instance for repartitioning...');
     const db = await createLazyDuckDB();
-    logger.info('DuckDB instance created, connecting...');
     const conn = await db.connect();
-    logger.info('DuckDB connected');
 
     const tagColumns = options.dimensionsConfig.tags.map(t => ({
       key: `user_${t.tagName}`,
@@ -179,13 +229,13 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
       `);
 
       if (onProgress !== undefined) {
-        onProgress({ phase: 'repartitioning', filesTotal: dates.length, filesDone: di + 1, bytesTotal: 0, bytesDone: 0 });
+        onProgress({ phase: 'repartitioning', filesTotal: dates.length, filesDone: di + 1 });
       }
     }
 
     logger.info(`${period}: repartitioned into ${String(dates.length)} daily partitions`);
 
-    // Save ETags for this period so we can detect stale data later
+    // Save ETags for this period
     const etagPath = join(dataDir, 'sync-etags.json');
     let savedEtags: Record<string, Record<string, string>> = {};
     try {
@@ -201,7 +251,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     savedEtags[period] = periodEtags;
     await writeFile(etagPath, JSON.stringify(savedEtags, null, 2));
 
-    // Phase 3: Clean this period's staging
+    // Phase 3: Clean staging
     try {
       await rm(stagingDir, { recursive: true });
     } catch {
@@ -209,7 +259,6 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     }
   }
 
-  // Clean parent staging dir if empty
   try {
     await rm(join(dataDir, 'aws', 'staging'), { recursive: true });
   } catch {
@@ -217,7 +266,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
   }
 
   if (onProgress !== undefined) {
-    onProgress({ phase: 'done', filesTotal: totalFiles, filesDone: totalFiles, bytesTotal: 0, bytesDone: 0 });
+    onProgress({ phase: 'done', filesTotal: totalFiles, filesDone: totalFiles });
   }
 
   logger.info(`Sync complete: ${String(totalFilesDownloaded)} files across ${String(periodList.length)} periods`);

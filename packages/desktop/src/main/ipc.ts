@@ -665,7 +665,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         throw new Error('No provider configured');
       }
 
-      state.syncStatus = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: 0, filesDone: 0, bytesTotal: 0, bytesDone: 0, currentFile: '', bytesPerSecond: 0 };
+      state.syncStatus = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: 0, filesDone: 0, message: '' };
 
       const result = await runSync({
         syncConfig: provider.sync,
@@ -676,13 +676,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
           state.syncStatus = {
             status: 'syncing',
             phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
-            progress: progress.bytesTotal > 0 ? progress.bytesDone / progress.bytesTotal : 0,
+            progress: progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0,
             filesTotal: progress.filesTotal,
             filesDone: progress.filesDone,
-            bytesTotal: progress.bytesTotal,
-            bytesDone: progress.bytesDone,
-            currentFile: progress.currentFile ?? '',
-            bytesPerSecond: progress.bytesPerSecond ?? 0,
+            message: progress.message ?? '',
           };
         },
       });
@@ -760,7 +757,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     if (provider === undefined) throw new Error('No provider configured');
 
     syncAbortController = new AbortController();
-    state.syncStatus = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0, bytesTotal: 0, bytesDone: 0, currentFile: '', bytesPerSecond: 0 };
+    state.syncStatus = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0, message: '' };
 
     try {
       const dimensions = await getDimensions();
@@ -775,13 +772,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
           state.syncStatus = {
             status: 'syncing',
             phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
-            progress: progress.bytesTotal > 0 ? progress.bytesDone / progress.bytesTotal : 0,
+            progress: progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0,
             filesTotal: progress.filesTotal,
             filesDone: progress.filesDone,
-            bytesTotal: progress.bytesTotal,
-            bytesDone: progress.bytesDone,
-            currentFile: progress.currentFile ?? '',
-            bytesPerSecond: progress.bytesPerSecond ?? 0,
+            message: progress.message ?? '',
           };
         },
       });
