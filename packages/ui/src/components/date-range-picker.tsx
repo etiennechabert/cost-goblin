@@ -16,9 +16,6 @@ function daysAgo(days: number): DateString {
   return asDateString(d.toISOString().slice(0, 10));
 }
 
-function today(): DateString {
-  return asDateString(new Date().toISOString().slice(0, 10));
-}
 
 export interface DateRange {
   start: DateString;
@@ -31,20 +28,21 @@ interface DateRangePickerProps {
 }
 
 export function getDefaultDateRange(): DateRange {
-  return { start: daysAgo(30), end: today() };
+  return { start: daysAgo(31), end: daysAgo(1) };
 }
 
 export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
   const [showCustom, setShowCustom] = useState(false);
 
+  const yesterday = daysAgo(1);
   const activePreset = PRESETS.find((p) => {
-    const expected = daysAgo(p.days);
-    return value.start === expected && value.end === today();
+    const expected = daysAgo(p.days + 1);
+    return value.start === expected && value.end === yesterday;
   });
 
   function handlePreset(preset: typeof PRESETS[number]) {
     setShowCustom(false);
-    onChange({ start: daysAgo(preset.days), end: today() });
+    onChange({ start: daysAgo(preset.days + 1), end: yesterday });
   }
 
   function handleCustomToggle() {

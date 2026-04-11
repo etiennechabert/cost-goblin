@@ -57,10 +57,10 @@ async function getDirSize(dirPath: string): Promise<number> {
 async function listRawPeriods(rawDir: string, tierPrefix: string): Promise<string[]> {
   try {
     const entries = await readdir(rawDir);
-    return entries
+    const raw = entries
       .filter(e => e.startsWith(`${tierPrefix}-`))
-      .map(e => e.slice(tierPrefix.length + 1))
-      .sort();
+      .map(e => e.slice(tierPrefix.length + 1).slice(0, 7));
+    return [...new Set(raw)].sort();
   } catch {
     return [];
   }

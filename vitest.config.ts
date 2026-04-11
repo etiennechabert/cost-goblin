@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     include: ['packages/*/src/**/*.test.{ts,tsx}'],
     passWithNoTests: true,
+    globalSetup: ['packages/core/src/__fixtures__/setup.ts'],
     environmentMatchGlobs: [
       ['packages/ui/src/**/*.test.tsx', 'jsdom'],
     ],

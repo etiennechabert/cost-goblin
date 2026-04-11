@@ -94,7 +94,8 @@ function OverviewInner() {
 
   // Resolve effective pie dimensions (use defaults if not yet set)
   const effectivePie1 = pie1DimId ?? accountDimId;
-  const effectivePie2 = pie2DimId ?? (productDimId ?? serviceDimId);
+  const regionDimId = asDimensionId('region');
+  const effectivePie2 = pie2DimId ?? (productDimId ?? regionDimId);
   const effectivePie3 = pie3DimId ?? serviceDimId;
 
   function getDimLabel(dimId: DimensionId): string {
