@@ -52,6 +52,8 @@ export type {
   DailyCost,
   DistributionSlice,
   EntityDetailResult,
+  SavingsRecommendation,
+  SavingsResult,
   SyncStatus,
   QueryState,
 } from './query.js';

@@ -31,6 +31,7 @@ export { useCostFocus, useCostFocusDispatch, useCostFocusReducer, CostFocusProvi
 export { CostOverview } from './views/cost-overview.js';
 export { CostTrends } from './views/cost-trends.js';
 export { MissingTags } from './views/missing-tags.js';
+export { Savings } from './views/savings.js';
 export { EntityDetail } from './views/entity-detail.js';
 export { DataManagement } from './views/data-management.js';
 export { SetupWizard } from './views/setup-wizard.js';

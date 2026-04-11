@@ -127,6 +127,33 @@ export interface DailyCostsResult {
   readonly totalCost: Dollars;
 }
 
+export type ImplementationEffort = 'VeryLow' | 'Low' | 'Medium' | 'High';
+
+export interface SavingsRecommendation {
+  readonly accountId: string;
+  readonly accountName: string;
+  readonly actionType: string;
+  readonly resourceType: string;
+  readonly summary: string;
+  readonly region: string;
+  readonly monthlySavings: Dollars;
+  readonly monthlyCost: Dollars;
+  readonly savingsPercentage: number;
+  readonly effort: ImplementationEffort;
+  readonly resourceArn: string;
+  readonly currentDetails: string;
+  readonly recommendedDetails: string;
+  readonly currentSummary: string;
+  readonly restartNeeded: boolean;
+  readonly rollbackPossible: boolean;
+  readonly recommendationSource: string;
+}
+
+export interface SavingsResult {
+  readonly recommendations: readonly SavingsRecommendation[];
+  readonly totalMonthlySavings: Dollars;
+}
+
 export type SyncPhase = 'downloading' | 'repartitioning';
 
 export type SyncStatus =
