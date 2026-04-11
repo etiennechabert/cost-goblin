@@ -32,9 +32,15 @@ export function ConfirmModal({
   }, [onCancel]);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
+    <div className="fixed inset-0 z-[100] flex items-center justify-center" role="dialog" aria-modal="true">
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        role="button"
+        tabIndex={0}
+        onClick={onCancel}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onCancel(); }}
+        aria-label="Close dialog"
+      />
 
       {/* Modal */}
       <div className="relative rounded-xl border border-border bg-bg-secondary p-6 shadow-2xl max-w-sm w-full mx-4">

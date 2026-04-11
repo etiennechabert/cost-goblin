@@ -301,6 +301,12 @@ interface OrgTreeConfig {
   readonly tree: readonly OrgNode[];
 }
 
+function isOwnerGroupBy(groupBy: string, dimensions: DimensionsConfig): boolean {
+  return dimensions.tags.some(
+    t => t.concept === 'owner' && `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === groupBy,
+  );
+}
+
 export function registerIpcHandlers(ctx: IpcContext): void {
   const state: AppState = {
     config: null,
@@ -376,12 +382,6 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   function resolveEntityName(entity: string, accountMap: Map<string, string>): string {
     const mapped = accountMap.get(entity);
     return mapped !== undefined ? mapped : entity;
-  }
-
-  function isOwnerGroupBy(groupBy: string, dimensions: DimensionsConfig): boolean {
-    return dimensions.tags.some(
-      t => t.concept === 'owner' && `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === groupBy,
-    );
   }
 
   function applyOrgTreeRollup(result: CostResult, tree: readonly OrgNode[]): CostResult {
@@ -730,9 +730,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     });
   });
 
-  ipcMain.handle('sync:status', (_event, syncId?: string): SyncStatus => {
-    const id = syncId ?? 'default';
-    return state.syncStatuses[id] ?? { status: 'idle', lastSync: null };
+  ipcMain.handle('sync:status', (_event, syncId: string = 'default'): SyncStatus => {
+    return state.syncStatuses[syncId] ?? { status: 'idle', lastSync: null };
   });
 
   ipcMain.handle('sync:trigger', async (): Promise<void> => {
@@ -828,10 +827,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     return getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, t);
   });
 
-  ipcMain.handle('data:delete-period', async (_event, period: string, tier?: 'daily' | 'hourly' | 'cost-optimization'): Promise<void> => {
+  ipcMain.handle('data:delete-period', async (_event, period: string, tier: 'daily' | 'hourly' | 'cost-optimization' = 'daily'): Promise<void> => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const t = tier ?? 'daily';
+    const t = tier;
     const tierDir = path.join(ctx.dataDir, 'aws', t);
     try {
       const entries = await fs.readdir(tierDir);
@@ -848,8 +847,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   const syncAbortControllers = new Map<string, AbortController>();
 
-  ipcMain.handle('data:sync-periods', async (_event, fileEntries: ManifestFileEntry[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }> => {
-    const id = syncId ?? 'default';
+  ipcMain.handle('data:sync-periods', async (_event, fileEntries: ManifestFileEntry[], syncId: string = 'default'): Promise<{ filesDownloaded: number; rowsProcessed: number }> => {
+    const id = syncId;
     const config = await getConfig();
     const provider = config.providers[0];
     if (provider === undefined) throw new Error('No provider configured');
@@ -905,8 +904,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     }
   });
 
-  ipcMain.handle('data:cancel-sync', (_event, syncId?: string): void => {
-    const id = syncId ?? 'default';
+  ipcMain.handle('data:cancel-sync', (_event, syncId: string = 'default'): void => {
+    const id = syncId;
     const controller = syncAbortControllers.get(id);
     if (controller !== undefined) {
       controller.abort();
@@ -970,7 +969,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       }
     }
 
-    return [...profiles].sort();
+    return [...profiles].sort((a, b) => a.localeCompare(b));
   });
 
   ipcMain.handle('setup:list-buckets', async (_event, profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> => {

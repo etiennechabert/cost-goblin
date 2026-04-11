@@ -101,15 +101,17 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
   const trendData: TrendResult | null =
     trendsQuery.status === 'success' ? trendsQuery.data : null;
 
-  const rows: readonly TrendRow[] = trendData !== null
-    ? (state.direction === 'increases' ? trendData.increases : trendData.savings)
-    : [];
+  let rows: readonly TrendRow[] = [];
+  if (trendData !== null) {
+    rows = state.direction === 'increases' ? trendData.increases : trendData.savings;
+  }
 
-  const totalLabel = trendData !== null
-    ? (state.direction === 'increases'
+  let totalLabel = '';
+  if (trendData !== null) {
+    totalLabel = state.direction === 'increases'
       ? `+${formatDollars(trendData.totalIncrease)} total increase`
-      : `-${formatDollars(trendData.totalSavings)} total savings`)
-    : '';
+      : `-${formatDollars(trendData.totalSavings)} total savings`;
+  }
 
   function handleEntityClick(entity: EntityRef) {
     if (onEntityClickProp !== undefined && activeDimensionId !== null) {
@@ -154,7 +156,7 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
 
           <div className="flex items-center gap-3 text-xs text-text-secondary">
             <label className="flex items-center gap-1.5">
-              Min $
+              <span>Min $</span>
               <input
                 type="number"
                 value={state.deltaThreshold}
@@ -163,7 +165,7 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
               />
             </label>
             <label className="flex items-center gap-1.5">
-              Min %
+              <span>Min %</span>
               <input
                 type="number"
                 value={state.percentThreshold}

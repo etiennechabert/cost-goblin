@@ -102,6 +102,8 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                   key={day.date}
                   className="group relative flex-1 min-w-0"
                   style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
+                  role="button"
+                  tabIndex={0}
                   onMouseEnter={() => { setHoveredDay(day.date); }}
                   onMouseLeave={() => { setHoveredDay(null); }}
                 >

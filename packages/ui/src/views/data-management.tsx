@@ -735,7 +735,7 @@ export function DataManagement() {
       )}
 
       {configureSource !== null && awsProfile !== null && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) setConfigureSource(null); }}>
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" role="button" tabIndex={0} onClick={(e) => { if (e.target === e.currentTarget) setConfigureSource(null); }} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setConfigureSource(null); }}>
           <div className="relative">
             <button type="button" onClick={() => { setConfigureSource(null); }} className="absolute -top-2 -right-2 z-10 rounded-full bg-bg-tertiary border border-border w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-secondary transition-colors" title="Close">
               &#10005;
