@@ -2,7 +2,7 @@ import type { SavingsResult, SavingsRecommendation } from '@costgoblin/core/brow
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { formatDollars } from '../components/format.js';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 
 type SortField = 'monthlySavings' | 'savingsPercentage' | 'monthlyCost' | 'effort' | 'accountName';
 
@@ -236,14 +236,13 @@ export function Savings() {
                 </th>
               </tr>
             </thead>
-            <tbody>
               {filtered.map((rec: SavingsRecommendation, i: number) => {
                 const isExpanded = expandedRow === i;
                 const current = isExpanded ? parseResourceDetails(rec.currentDetails) : null;
                 const recommended = isExpanded ? parseResourceDetails(rec.recommendedDetails) : null;
                 return (
-                  <>
-                  <tr key={`row-${String(i)}`} className={`border-b ${isExpanded ? 'border-border bg-bg-tertiary/20' : 'border-border-subtle'} hover:bg-bg-tertiary/30 transition-colors cursor-pointer`} onClick={() => { setExpandedRow(isExpanded ? null : i); }}>
+                  <tbody key={`group-${String(i)}`}>
+                  <tr className={`border-b ${isExpanded ? 'border-border bg-bg-tertiary/20' : 'border-border-subtle'} hover:bg-bg-tertiary/30 transition-colors cursor-pointer`} onClick={() => { setExpandedRow(isExpanded ? null : i); }}>
                     <td className="px-4 py-3 max-w-lg">
                       <div className="flex items-baseline gap-2">
                         <span className="text-text-primary text-xs font-medium shrink-0">{humanizeAction(rec.actionType)}</span>
@@ -279,7 +278,7 @@ export function Savings() {
                             {current !== null && Object.keys(current.config).length > 0 && (
                               <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
                                 {Object.entries(current.config).map(([k, v]) => (
-                                  <><span key={`k-${k}`} className="text-text-muted">{k}</span><span key={`v-${k}`} className="text-text-secondary">{v}</span></>
+                                  <Fragment key={`c-${k}`}><span className="text-text-muted">{k}</span><span className="text-text-secondary">{v}</span></Fragment>
                                 ))}
                               </div>
                             )}
@@ -298,7 +297,7 @@ export function Savings() {
                             {recommended !== null && Object.keys(recommended.config).length > 0 && (
                               <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
                                 {Object.entries(recommended.config).map(([k, v]) => (
-                                  <><span key={`k-${k}`} className="text-text-muted">{k}</span><span key={`v-${k}`} className="text-accent">{v}</span></>
+                                  <Fragment key={`r-${k}`}><span className="text-text-muted">{k}</span><span className="text-accent">{v}</span></Fragment>
                                 ))}
                               </div>
                             )}
@@ -314,10 +313,9 @@ export function Savings() {
                       </td>
                     </tr>
                   )}
-                  </>
+                  </tbody>
                 );
               })}
-            </tbody>
           </table>
         </div>
       )}
