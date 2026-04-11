@@ -15,6 +15,7 @@ import type {
   EntityDetailResult,
   SyncStatus,
   DataInventoryResult,
+  DataTier,
   AccountMappingStatus,
 } from '@costgoblin/core';
 
@@ -38,8 +39,8 @@ const api: CostApi = {
   queryEntityDetail(params: EntityDetailParams): Promise<EntityDetailResult> {
     return invoke<EntityDetailResult>('query:entity-detail', params);
   },
-  getSyncStatus(): Promise<SyncStatus> {
-    return invoke<SyncStatus>('sync:status');
+  getSyncStatus(syncId?: string): Promise<SyncStatus> {
+    return invoke<SyncStatus>('sync:status', syncId);
   },
   triggerSync(): Promise<void> {
     return invoke<undefined>('sync:trigger').then(() => undefined);
@@ -56,17 +57,17 @@ const api: CostApi = {
   getFilterValues(dimensionId: string, filters: Record<string, string>, dateRange?: { start: string; end: string }): Promise<{ value: string; label: string; count: number }[]> {
     return invoke<{ value: string; label: string; count: number }[]>('query:filter-values', dimensionId, filters, dateRange);
   },
-  getDataInventory(tierBucket?: string): Promise<DataInventoryResult> {
-    return invoke<DataInventoryResult>('data:inventory', tierBucket);
+  getDataInventory(tier?: DataTier): Promise<DataInventoryResult> {
+    return invoke<DataInventoryResult>('data:inventory', tier);
   },
-  syncPeriods(files: readonly { key: string; contentHash: string; size: number }[]): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
-    return invoke<{ filesDownloaded: number; rowsProcessed: number }>('data:sync-periods', files);
+  syncPeriods(files: readonly { key: string; contentHash: string; size: number }[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
+    return invoke<{ filesDownloaded: number; rowsProcessed: number }>('data:sync-periods', files, syncId);
   },
-  cancelSync(): Promise<void> {
-    return invoke<undefined>('data:cancel-sync').then(() => undefined);
+  cancelSync(syncId?: string): Promise<void> {
+    return invoke<undefined>('data:cancel-sync', syncId).then(() => undefined);
   },
-  deleteLocalPeriod(period: string): Promise<void> {
-    return invoke<undefined>('data:delete-period', period).then(() => undefined);
+  deleteLocalPeriod(period: string, tier?: DataTier): Promise<void> {
+    return invoke<undefined>('data:delete-period', period, tier).then(() => undefined);
   },
   openDataFolder(): Promise<void> {
     return invoke<undefined>('data:open-folder').then(() => undefined);

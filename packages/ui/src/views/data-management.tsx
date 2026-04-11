@@ -111,7 +111,6 @@ interface TierPanelProps {
   onDownload: () => void;
   onDeletePeriod: (period: string) => void;
   syncState: SyncState;
-  anySyncActive?: boolean | undefined;
   onConfigure?: (() => void) | undefined;
   onCancelSync?: (() => void) | undefined;
 }
@@ -120,7 +119,7 @@ function TierPanel({
   title, configured, bucket, retentionDays,
   localDates, diskBytes, oldestDate, newestDate,
   periods, selected, onToggle, onSelectAll, onDeselectAll, onDownload, onDeletePeriod,
-  syncState, anySyncActive, onConfigure, onCancelSync,
+  syncState, onConfigure, onCancelSync,
 }: TierPanelProps) {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const missingPeriods = periods.filter(p => p.localStatus === 'missing' || p.localStatus === 'stale');
@@ -128,7 +127,6 @@ function TierPanel({
   const selectedFiles = periods.filter(p => selected.has(p.period)).flatMap(p => [...p.files]);
   const selectedSize = selectedFiles.reduce((s, f) => s + f.size, 0);
   const isSyncing = syncState.status === 'downloading' || syncState.status === 'repartitioning';
-  const isBlocked = isSyncing || (anySyncActive === true);
 
   if (!configured) {
     return (
@@ -266,7 +264,7 @@ function TierPanel({
               <button
                 type="button"
                 onClick={onDownload}
-                disabled={isBlocked}
+                disabled={isSyncing}
                 className="w-full rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Download {String(selected.size)} ({formatBytes(selectedSize)})
@@ -317,15 +315,20 @@ function TierPanel({
 
 export function DataManagement() {
   const api = useCostApi();
-  const [refreshKey, setRefreshKey] = useState(0);
-  const configQuery = useQuery(() => api.getConfig(), [refreshKey]);
-  const inventoryQuery = useQuery(() => api.getDataInventory(), [refreshKey]);
-  const accountQuery = useQuery(() => api.getAccountMapping(), [refreshKey]);
+  const [configRefreshKey, setConfigRefreshKey] = useState(0);
+  const [dailyRefreshKey, setDailyRefreshKey] = useState(0);
+  const [hourlyRefreshKey, setHourlyRefreshKey] = useState(0);
+  const [costOptRefreshKey, setCostOptRefreshKey] = useState(0);
+  const configQuery = useQuery(() => api.getConfig(), [configRefreshKey]);
+  const inventoryQuery = useQuery(() => api.getDataInventory(), [dailyRefreshKey]);
+  const accountQuery = useQuery(() => api.getAccountMapping(), [configRefreshKey]);
   const [selected, setSelected] = useState(new Set<string>());
   const [hourlySelected, setHourlySelected] = useState(new Set<string>());
+  const [costOptSelected, setCostOptSelected] = useState(new Set<string>());
   const [initialized, setInitialized] = useState(false);
-  const [syncState, setSyncState] = useState<SyncState>({ status: 'idle' });
-  const [activeSyncTier, setActiveSyncTier] = useState<'daily' | 'hourly' | null>(null);
+  const [dailySyncState, setDailySyncState] = useState<SyncState>({ status: 'idle' });
+  const [hourlySyncState, setHourlySyncState] = useState<SyncState>({ status: 'idle' });
+  const [costOptSyncState, setCostOptSyncState] = useState<SyncState>({ status: 'idle' });
   const [autoSync, setAutoSync] = useState(false);
   const [showDeleteAll, setShowDeleteAll] = useState(false);
   const [configureSource, setConfigureSource] = useState<'hourly' | 'costOptimization' | null>(null);
@@ -369,44 +372,46 @@ export function DataManagement() {
       .filter(p => selected.has(p.period))
       .flatMap(p => [...p.files]);
     if (selectedFiles.length === 0) return;
-    setActiveSyncTier('daily');
-    setSyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, message: '' });
+    setDailySyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, message: '' });
 
     const pollInterval = setInterval(() => {
-      void api.getSyncStatus().then((s) => {
+      void api.getSyncStatus('daily').then((s) => {
         if (s.status === 'syncing') {
           if (s.phase === 'repartitioning') {
-            setSyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
+            setDailySyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
           } else {
-            setSyncState({ status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, message: s.message });
+            setDailySyncState({ status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, message: s.message });
           }
         } else if (s.status === 'idle') {
-          setSyncState({ status: 'idle' });
+          setDailySyncState({ status: 'idle' });
         }
       });
     }, 500);
 
     try {
-      const result = await api.syncPeriods(selectedFiles);
+      const result = await api.syncPeriods(selectedFiles, 'daily');
       clearInterval(pollInterval);
-      setSyncState({ status: 'done', filesDownloaded: result.filesDownloaded });
-      setActiveSyncTier(null);
+      setDailySyncState({ status: 'done', filesDownloaded: result.filesDownloaded });
       setSelected(new Set());
-      setRefreshKey(k => k + 1);
+      setDailyRefreshKey(k => k + 1);
     } catch (err: unknown) {
       clearInterval(pollInterval);
-      setSyncState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+      setDailySyncState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
     }
   }
 
-  function handleDelete(period: string) {
-    void api.deleteLocalPeriod(period).then(() => { setRefreshKey(k => k + 1); });
+  function handleDeleteDaily(period: string) {
+    void api.deleteLocalPeriod(period, 'daily').then(() => { setDailyRefreshKey(k => k + 1); });
+  }
+
+  function handleDeleteHourly(period: string) {
+    void api.deleteLocalPeriod(period, 'hourly').then(() => { setHourlyRefreshKey(k => k + 1); });
   }
 
   function handleDeleteAll() {
     const local = inventory?.periods.filter(p => p.localStatus === 'repartitioned') ?? [];
-    const promises = local.map(p => api.deleteLocalPeriod(p.period));
-    void Promise.all(promises).then(() => { setRefreshKey(k => k + 1); setShowDeleteAll(false); });
+    const promises = local.map(p => api.deleteLocalPeriod(p.period, 'daily'));
+    void Promise.all(promises).then(() => { setDailyRefreshKey(k => k + 1); setShowDeleteAll(false); });
   }
 
   const isNotConfigured = configQuery.status === 'error' || (configQuery.status === 'success' && config === null);
@@ -418,9 +423,9 @@ export function DataManagement() {
   const hourlyInventoryQuery = useQuery(
     () => {
       if (hourlyBucket === null) return Promise.resolve(null);
-      return api.getDataInventory(hourlyBucket);
+      return api.getDataInventory('hourly');
     },
-    [hourlyBucket, refreshKey],
+    [hourlyBucket, hourlyRefreshKey],
   );
   const hourlyInventory: DataInventoryResult | null = hourlyInventoryQuery.status === 'success' ? hourlyInventoryQuery.data : null;
   const hourlyRetention = provider?.sync.hourly?.retentionDays ?? null;
@@ -428,7 +433,17 @@ export function DataManagement() {
   const costOptRetention = provider?.sync.costOptimization?.retentionDays ?? null;
   const awsProfile = provider?.credentials.profile ?? null;
 
+  const costOptInventoryQuery = useQuery(
+    () => {
+      if (costOptBucket === null) return Promise.resolve(null);
+      return api.getDataInventory('cost-optimization');
+    },
+    [costOptBucket, costOptRefreshKey],
+  );
+  const costOptInventory: DataInventoryResult | null = costOptInventoryQuery.status === 'success' ? costOptInventoryQuery.data : null;
+
   const hourlyMissing = hourlyInventory?.periods.filter(p => p.localStatus === 'missing') ?? [];
+  const costOptMissing = costOptInventory?.periods.filter(p => p.localStatus === 'missing') ?? [];
 
   function toggleHourlyPeriod(period: string) {
     setHourlySelected(prev => {
@@ -451,33 +466,84 @@ export function DataManagement() {
       .filter(p => hourlySelected.has(p.period))
       .flatMap(p => [...p.files]);
     if (selectedFiles.length === 0) return;
-    setActiveSyncTier('hourly');
-    setSyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, message: '' });
+    setHourlySyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, message: '' });
 
     const pollInterval = setInterval(() => {
-      void api.getSyncStatus().then((s) => {
+      void api.getSyncStatus('hourly').then((s) => {
         if (s.status === 'syncing') {
           if (s.phase === 'repartitioning') {
-            setSyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
+            setHourlySyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
           } else {
-            setSyncState({ status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, message: s.message });
+            setHourlySyncState({ status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, message: s.message });
           }
         } else if (s.status === 'idle') {
-          setSyncState({ status: 'idle' });
+          setHourlySyncState({ status: 'idle' });
         }
       });
     }, 500);
 
     try {
-      const result = await api.syncPeriods(selectedFiles);
+      const result = await api.syncPeriods(selectedFiles, 'hourly');
       clearInterval(pollInterval);
-      setSyncState({ status: 'done', filesDownloaded: result.filesDownloaded });
-      setActiveSyncTier(null);
+      setHourlySyncState({ status: 'done', filesDownloaded: result.filesDownloaded });
       setHourlySelected(new Set());
-      setRefreshKey(k => k + 1);
+      setHourlyRefreshKey(k => k + 1);
     } catch (err: unknown) {
       clearInterval(pollInterval);
-      setSyncState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+      setHourlySyncState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  function toggleCostOptPeriod(period: string) {
+    setCostOptSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(period)) { next.delete(period); } else { next.add(period); }
+      return next;
+    });
+  }
+
+  function selectAllCostOpt() {
+    setCostOptSelected(new Set(costOptMissing.map(p => p.period)));
+  }
+
+  function deselectAllCostOpt() {
+    setCostOptSelected(new Set());
+  }
+
+  function handleDeleteCostOpt(period: string) {
+    void api.deleteLocalPeriod(period, 'cost-optimization').then(() => { setCostOptRefreshKey(k => k + 1); });
+  }
+
+  async function handleCostOptSync() {
+    const selectedFiles = (costOptInventory?.periods ?? [])
+      .filter(p => costOptSelected.has(p.period))
+      .flatMap(p => [...p.files]);
+    if (selectedFiles.length === 0) return;
+    setCostOptSyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, message: '' });
+
+    const pollInterval = setInterval(() => {
+      void api.getSyncStatus('cost-optimization').then((s) => {
+        if (s.status === 'syncing') {
+          if (s.phase === 'repartitioning') {
+            setCostOptSyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
+          } else {
+            setCostOptSyncState({ status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, message: s.message });
+          }
+        } else if (s.status === 'idle') {
+          setCostOptSyncState({ status: 'idle' });
+        }
+      });
+    }, 500);
+
+    try {
+      const result = await api.syncPeriods(selectedFiles, 'cost-optimization');
+      clearInterval(pollInterval);
+      setCostOptSyncState({ status: 'done', filesDownloaded: result.filesDownloaded });
+      setCostOptSelected(new Set());
+      setCostOptRefreshKey(k => k + 1);
+    } catch (err: unknown) {
+      clearInterval(pollInterval);
+      setCostOptSyncState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -544,7 +610,7 @@ export function DataManagement() {
           <button type="button" onClick={() => { void api.openDataFolder(); }} className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors">
             Open Folder
           </button>
-          <button type="button" onClick={() => { setRefreshKey(k => k + 1); }} className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors">
+          <button type="button" onClick={() => { setDailyRefreshKey(k => k + 1); setHourlyRefreshKey(k => k + 1); setCostOptRefreshKey(k => k + 1); }} className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors">
             Refresh
           </button>
         </div>
@@ -573,8 +639,8 @@ export function DataManagement() {
             configured={dailyBucket !== null}
             bucket={dailyBucket}
             retentionDays={dailyRetention}
-            localDates={inventory.local.dailyDates}
-            diskBytes={inventory.local.dailyDiskBytes}
+            localDates={inventory.local.dates}
+            diskBytes={inventory.local.diskBytes}
             oldestDate={inventory.local.oldestDate}
             newestDate={inventory.local.newestDate}
             periods={[...inventory.periods]}
@@ -583,18 +649,17 @@ export function DataManagement() {
             onSelectAll={selectAll}
             onDeselectAll={deselectAll}
             onDownload={() => { void handleSync(); }}
-            onDeletePeriod={handleDelete}
-            syncState={activeSyncTier === 'daily' ? syncState : { status: 'idle' }}
-            onCancelSync={() => { void api.cancelSync(); setSyncState({ status: 'idle' }); setActiveSyncTier(null); }}
-            anySyncActive={activeSyncTier !== null}
+            onDeletePeriod={handleDeleteDaily}
+            syncState={dailySyncState}
+            onCancelSync={() => { void api.cancelSync('daily'); setDailySyncState({ status: 'idle' }); }}
           />
           <TierPanel
             title="Hourly"
             configured={hourlyBucket !== null}
             bucket={hourlyBucket}
             retentionDays={hourlyRetention}
-            localDates={hourlyInventory?.local.dailyDates ?? []}
-            diskBytes={hourlyInventory?.local.dailyDiskBytes ?? 0}
+            localDates={hourlyInventory?.local.dates ?? []}
+            diskBytes={hourlyInventory?.local.diskBytes ?? 0}
             oldestDate={hourlyInventory?.local.oldestDate ?? null}
             newestDate={hourlyInventory?.local.newestDate ?? null}
             periods={hourlyInventory !== null ? [...hourlyInventory.periods] : []}
@@ -603,9 +668,9 @@ export function DataManagement() {
             onSelectAll={selectAllHourly}
             onDeselectAll={deselectAllHourly}
             onDownload={() => { void handleHourlySync(); }}
-            onDeletePeriod={handleDelete}
-            syncState={activeSyncTier === 'hourly' ? syncState : { status: 'idle' }}
-            onCancelSync={() => { void api.cancelSync(); setSyncState({ status: 'idle' }); setActiveSyncTier(null); }}
+            onDeletePeriod={handleDeleteHourly}
+            syncState={hourlySyncState}
+            onCancelSync={() => { void api.cancelSync('hourly'); setHourlySyncState({ status: 'idle' }); }}
             onConfigure={() => { setConfigureSource('hourly'); }}
           />
           <TierPanel
@@ -613,18 +678,19 @@ export function DataManagement() {
             configured={costOptBucket !== null}
             bucket={costOptBucket}
             retentionDays={costOptRetention}
-            localDates={[]}
-            diskBytes={0}
-            oldestDate={null}
-            newestDate={null}
-            periods={[]}
-            selected={new Set()}
-            onToggle={() => {}}
-            onSelectAll={() => {}}
-            onDeselectAll={() => {}}
-            onDownload={() => {}}
-            onDeletePeriod={() => {}}
-            syncState={{ status: 'idle' }}
+            localDates={costOptInventory?.local.dates ?? []}
+            diskBytes={costOptInventory?.local.diskBytes ?? 0}
+            oldestDate={costOptInventory?.local.oldestDate ?? null}
+            newestDate={costOptInventory?.local.newestDate ?? null}
+            periods={costOptInventory !== null ? [...costOptInventory.periods] : []}
+            selected={costOptSelected}
+            onToggle={toggleCostOptPeriod}
+            onSelectAll={selectAllCostOpt}
+            onDeselectAll={deselectAllCostOpt}
+            onDownload={() => { void handleCostOptSync(); }}
+            onDeletePeriod={handleDeleteCostOpt}
+            syncState={costOptSyncState}
+            onCancelSync={() => { void api.cancelSync('cost-optimization'); setCostOptSyncState({ status: 'idle' }); }}
             onConfigure={() => { setConfigureSource('costOptimization'); }}
           />
         </div>
@@ -646,7 +712,7 @@ export function DataManagement() {
           <SetupWizard
             source={configureSource}
             profile={awsProfile}
-            onComplete={() => { setConfigureSource(null); setRefreshKey(k => k + 1); }}
+            onComplete={() => { setConfigureSource(null); setConfigRefreshKey(k => k + 1); setDailyRefreshKey(k => k + 1); setHourlyRefreshKey(k => k + 1); setCostOptRefreshKey(k => k + 1); }}
           />
         </div>
       )}

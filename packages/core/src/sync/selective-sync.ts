@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { logger } from '../logger/logger.js';
 import type { DimensionsConfig } from '../types/config.js';
@@ -21,14 +21,29 @@ export interface SelectiveSyncOptions {
   readonly signal?: AbortSignal | undefined;
 }
 
+const ETAG_FILES: Record<string, string> = {
+  'daily': 'sync-etags.json',
+  'hourly': 'sync-etags-hourly.json',
+  'cost-optimization': 'sync-etags-cost-optimization.json',
+};
+
 function extractPeriod(key: string): string {
-  const match = /BILLING_PERIOD=(\d{4}-\d{2})/.exec(key);
-  return match?.[1] ?? 'unknown';
+  const billingMatch = /BILLING_PERIOD=(\d{4}-\d{2})/.exec(key);
+  if (billingMatch?.[1] !== undefined) return billingMatch[1];
+  const dateMatch = /date=(\d{4}-\d{2})-\d{2}/.exec(key);
+  return dateMatch?.[1] ?? 'unknown';
 }
 
 function extractPeriodPrefix(key: string): string {
-  const match = /^(.*BILLING_PERIOD=\d{4}-\d{2}\/)/.exec(key);
-  return match?.[1] ?? '';
+  const billingMatch = /^(.*BILLING_PERIOD=\d{4}-\d{2}\/)/.exec(key);
+  if (billingMatch?.[1] !== undefined) return billingMatch[1];
+  const dateMatch = /^(.*date=\d{4}-\d{2}-\d{2}\/)/.exec(key);
+  return dateMatch?.[1] ?? '';
+}
+
+function extractDate(key: string): string | undefined {
+  const match = /date=(\d{4}-\d{2}-\d{2})/.exec(key);
+  return match?.[1];
 }
 
 function groupByPeriod(files: readonly ManifestFileEntry[]): Map<string, ManifestFileEntry[]> {
@@ -110,12 +125,144 @@ function runAwsS3Sync(options: {
   });
 }
 
-export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
+async function saveEtags(
+  dataDir: string,
+  tier: string,
+  period: string,
+  periodFiles: readonly ManifestFileEntry[],
+): Promise<void> {
+  const etagFile = ETAG_FILES[tier] ?? 'sync-etags.json';
+  const etagPath = join(dataDir, etagFile);
+  let savedEtags: Record<string, Record<string, string>> = {};
+  try {
+    const raw = await readFile(etagPath, 'utf-8');
+    savedEtags = JSON.parse(raw) as Record<string, Record<string, string>>;
+  } catch {
+    // first time
+  }
+  const periodEtags: Record<string, string> = {};
+  for (const f of periodFiles) {
+    periodEtags[f.key] = f.contentHash;
+  }
+  savedEtags[period] = periodEtags;
+  await writeFile(etagPath, JSON.stringify(savedEtags, null, 2));
+}
+
+async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
   const { bucketPath, profile, dataDir, files, onProgress } = options;
   const s3Path = parseS3Path(bucketPath);
-  const dailyDir = join(dataDir, 'aws', 'daily');
+  const outputDir = join(dataDir, 'aws', 'cost-optimization');
+  await mkdir(outputDir, { recursive: true });
 
-  await mkdir(dailyDir, { recursive: true });
+  const periods = groupByPeriod(files);
+  const periodList = [...periods.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const totalFiles = files.length;
+  let globalFilesDone = 0;
+  let totalFilesDownloaded = 0;
+
+  for (const [period, periodFiles] of periodList) {
+    if (options.signal?.aborted) break;
+
+    // Group files by date within the period
+    const dateGroups = new Map<string, ManifestFileEntry[]>();
+    for (const file of periodFiles) {
+      const date = extractDate(file.key);
+      if (date === undefined) continue;
+      const existing = dateGroups.get(date);
+      if (existing !== undefined) {
+        existing.push(file);
+      } else {
+        dateGroups.set(date, [file]);
+      }
+    }
+
+    logger.info(`Processing cost optimization period ${period}: ${String(dateGroups.size)} dates`);
+
+    for (const [date, dateFiles] of dateGroups) {
+      if (options.signal?.aborted) break;
+
+      const firstFile = dateFiles[0];
+      if (firstFile === undefined) continue;
+
+      const datePrefix = extractPeriodPrefix(firstFile.key);
+      const s3Source = `s3://${s3Path.bucket}/${datePrefix}`;
+      const stagingDir = join(dataDir, 'aws', 'staging', `cost-opt-${date}`);
+      await mkdir(stagingDir, { recursive: true });
+
+      await runAwsS3Sync({
+        source: s3Source,
+        dest: stagingDir,
+        profile,
+        signal: options.signal,
+        onLine: (line) => {
+          logger.info(`[aws] ${line}`);
+          if (line.startsWith('download:')) {
+            globalFilesDone++;
+          }
+          if (onProgress !== undefined) {
+            onProgress({
+              phase: 'downloading',
+              filesTotal: totalFiles,
+              filesDone: globalFilesDone,
+              message: line.startsWith('Completed') ? line : undefined,
+            });
+          }
+        },
+      });
+
+      // Move downloaded files to the output dir (already daily-partitioned)
+      const dateDir = join(outputDir, `usage_date=${date}`);
+      await mkdir(dateDir, { recursive: true });
+
+      const downloaded = await readdir(stagingDir);
+      for (const f of downloaded) {
+        if (f.endsWith('.parquet')) {
+          await copyFile(join(stagingDir, f), join(dateDir, 'data.parquet'));
+        }
+      }
+
+      try {
+        await rm(stagingDir, { recursive: true });
+      } catch {
+        // ignore
+      }
+
+      totalFilesDownloaded += dateFiles.length;
+    }
+
+    if (onProgress !== undefined) {
+      onProgress({ phase: 'repartitioning', filesTotal: 1, filesDone: 1 });
+    }
+
+    await saveEtags(dataDir, 'cost-optimization', period, periodFiles);
+  }
+
+  try {
+    await rm(join(dataDir, 'aws', 'staging'), { recursive: true });
+  } catch {
+    // ignore
+  }
+
+  if (onProgress !== undefined) {
+    onProgress({ phase: 'done', filesTotal: totalFiles, filesDone: totalFiles });
+  }
+
+  logger.info(`Cost optimization sync complete: ${String(totalFilesDownloaded)} files`);
+  return { filesDownloaded: totalFilesDownloaded, rowsProcessed: 0 };
+}
+
+export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
+  const tier = options.expectedDataType ?? 'daily';
+
+  if (tier === 'cost-optimization') {
+    return syncCostOptimization(options);
+  }
+
+  const { bucketPath, profile, dataDir, files, onProgress } = options;
+  const s3Path = parseS3Path(bucketPath);
+  const tierDir = join(dataDir, 'aws', tier);
+
+  await mkdir(tierDir, { recursive: true });
 
   const periods = groupByPeriod(files);
   const periodList = [...periods.entries()].sort((a, b) => a[0].localeCompare(b[0]));
@@ -155,7 +302,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
             phase: 'downloading',
             filesTotal: totalFiles,
             filesDone: globalFilesDone,
-            message: line,
+            message: line.startsWith('Completed') ? line : undefined,
           });
         }
       },
@@ -201,7 +348,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     for (let di = 0; di < dates.length; di++) {
       const date = dates[di];
       if (date === undefined) continue;
-      const dateDir = join(dailyDir, `usage_date=${date}`);
+      const dateDir = join(tierDir, `usage_date=${date}`);
       await mkdir(dateDir, { recursive: true });
       const outPath = join(dateDir, 'data.parquet');
 
@@ -235,21 +382,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
 
     logger.info(`${period}: repartitioned into ${String(dates.length)} daily partitions`);
 
-    // Save ETags for this period
-    const etagPath = join(dataDir, 'sync-etags.json');
-    let savedEtags: Record<string, Record<string, string>> = {};
-    try {
-      const raw = await readFile(etagPath, 'utf-8');
-      savedEtags = JSON.parse(raw) as Record<string, Record<string, string>>;
-    } catch {
-      // first time
-    }
-    const periodEtags: Record<string, string> = {};
-    for (const f of periodFiles) {
-      periodEtags[f.key] = f.contentHash;
-    }
-    savedEtags[period] = periodEtags;
-    await writeFile(etagPath, JSON.stringify(savedEtags, null, 2));
+    await saveEtags(dataDir, tier, period, periodFiles);
 
     // Phase 3: Clean staging
     try {
