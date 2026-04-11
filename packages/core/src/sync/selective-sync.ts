@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { copyFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { logger } from '../logger/logger.js';
 import type { DimensionsConfig } from '../types/config.js';
@@ -186,7 +186,7 @@ async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ fi
 
       const datePrefix = extractPeriodPrefix(firstFile.key);
       const s3Source = `s3://${s3Path.bucket}/${datePrefix}`;
-      const stagingDir = join(dataDir, 'aws', 'staging', `cost-opt-${date}`);
+      const stagingDir = join(dataDir, 'aws', 'raw', `cost-opt-${date}`);
       await mkdir(stagingDir, { recursive: true });
 
       await runAwsS3Sync({
@@ -221,12 +221,6 @@ async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ fi
         }
       }
 
-      try {
-        await rm(stagingDir, { recursive: true });
-      } catch {
-        // ignore
-      }
-
       totalFilesDownloaded += dateFiles.length;
     }
 
@@ -235,12 +229,6 @@ async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ fi
     }
 
     await saveEtags(dataDir, 'cost-optimization', period, periodFiles);
-  }
-
-  try {
-    await rm(join(dataDir, 'aws', 'staging'), { recursive: true });
-  } catch {
-    // ignore
   }
 
   if (onProgress !== undefined) {
@@ -281,7 +269,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
 
     const periodPrefix = extractPeriodPrefix(firstFile.key);
     const s3Source = `s3://${s3Path.bucket}/${periodPrefix}`;
-    const stagingDir = join(dataDir, 'aws', 'staging', period);
+    const stagingDir = join(dataDir, 'aws', 'raw', `${tier}-${period}`);
     await mkdir(stagingDir, { recursive: true });
 
     // Phase 1: Download using aws s3 sync
@@ -383,19 +371,6 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     logger.info(`${period}: repartitioned into ${String(dates.length)} daily partitions`);
 
     await saveEtags(dataDir, tier, period, periodFiles);
-
-    // Phase 3: Clean staging
-    try {
-      await rm(stagingDir, { recursive: true });
-    } catch {
-      // ignore
-    }
-  }
-
-  try {
-    await rm(join(dataDir, 'aws', 'staging'), { recursive: true });
-  } catch {
-    // ignore
   }
 
   if (onProgress !== undefined) {

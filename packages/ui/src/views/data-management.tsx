@@ -442,8 +442,27 @@ export function DataManagement() {
   );
   const costOptInventory: DataInventoryResult | null = costOptInventoryQuery.status === 'success' ? costOptInventoryQuery.data : null;
 
-  const hourlyMissing = hourlyInventory?.periods.filter(p => p.localStatus === 'missing') ?? [];
-  const costOptMissing = costOptInventory?.periods.filter(p => p.localStatus === 'missing') ?? [];
+  const hourlyRetentionDays = provider?.sync.hourly?.retentionDays ?? 30;
+  const hourlyRetentionCutoff = new Date(Date.now() - hourlyRetentionDays * 24 * 60 * 60 * 1000);
+  const hourlyRetentionCutoffPeriod = `${String(hourlyRetentionCutoff.getFullYear())}-${String(hourlyRetentionCutoff.getMonth() + 1).padStart(2, '0')}`;
+  const hourlyMissing = (hourlyInventory?.periods.filter(p => p.localStatus === 'missing') ?? []).filter(p => p.period >= hourlyRetentionCutoffPeriod);
+
+  const costOptRetentionDays = provider?.sync.costOptimization?.retentionDays ?? 90;
+  const costOptRetentionCutoff = new Date(Date.now() - costOptRetentionDays * 24 * 60 * 60 * 1000);
+  const costOptRetentionCutoffPeriod = `${String(costOptRetentionCutoff.getFullYear())}-${String(costOptRetentionCutoff.getMonth() + 1).padStart(2, '0')}`;
+  const costOptMissing = (costOptInventory?.periods.filter(p => p.localStatus === 'missing') ?? []).filter(p => p.period >= costOptRetentionCutoffPeriod);
+
+  const [hourlyInitialized, setHourlyInitialized] = useState(false);
+  if (!hourlyInitialized && hourlyInventoryQuery.status === 'success' && hourlyMissing.length > 0) {
+    setHourlySelected(new Set(hourlyMissing.map(p => p.period)));
+    setHourlyInitialized(true);
+  }
+
+  const [costOptInitialized, setCostOptInitialized] = useState(false);
+  if (!costOptInitialized && costOptInventoryQuery.status === 'success' && costOptMissing.length > 0) {
+    setCostOptSelected(new Set(costOptMissing.map(p => p.period)));
+    setCostOptInitialized(true);
+  }
 
   function toggleHourlyPeriod(period: string) {
     setHourlySelected(prev => {
