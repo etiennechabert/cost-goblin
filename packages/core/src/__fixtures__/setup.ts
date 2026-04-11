@@ -35,8 +35,9 @@ function weightedPick<T extends { costShare: number }>(arr: readonly T[], rand: 
 }
 
 export async function setup(): Promise<void> {
+  const dailyParquet = join(SYNTHETIC_DIR, 'aws', 'raw', 'daily-2026-01', 'data.parquet');
   try {
-    await access(MARKER);
+    await access(dailyParquet);
     return;
   } catch {
     // needs generation
