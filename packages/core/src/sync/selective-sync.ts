@@ -2,11 +2,9 @@ import { spawn } from 'node:child_process';
 import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { logger } from '../logger/logger.js';
-import type { DimensionsConfig } from '../types/config.js';
 import { parseS3Path } from './s3-client.js';
 import type { ProgressCallback } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
-import { createLazyDuckDB } from './duckdb-lazy.js';
 
 export type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
 
@@ -14,7 +12,6 @@ export interface SelectiveSyncOptions {
   readonly bucketPath: string;
   readonly profile: string;
   readonly dataDir: string;
-  readonly dimensionsConfig: DimensionsConfig;
   readonly expectedDataType?: ExpectedDataType | undefined;
   readonly files: readonly ManifestFileEntry[];
   readonly onProgress?: ProgressCallback | undefined;
@@ -248,9 +245,6 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
 
   const { bucketPath, profile, dataDir, files, onProgress } = options;
   const s3Path = parseS3Path(bucketPath);
-  const tierDir = join(dataDir, 'aws', tier);
-
-  await mkdir(tierDir, { recursive: true });
 
   const periods = groupByPeriod(files);
   const periodList = [...periods.entries()].sort((a, b) => a[0].localeCompare(b[0]));
@@ -297,78 +291,6 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     });
 
     totalFilesDownloaded += periodFiles.length;
-
-    // Phase 2: Repartition this period
-    logger.info(`Repartitioning ${period}...`);
-
-    if (onProgress !== undefined) {
-      onProgress({ phase: 'repartitioning', filesTotal: 0, filesDone: 0 });
-    }
-
-    const db = await createLazyDuckDB();
-    const conn = await db.connect();
-
-    const tagColumns = options.dimensionsConfig.tags.map(t => ({
-      key: `user_${t.tagName}`,
-      column: `tag_${t.concept ?? t.tagName}`,
-    }));
-    const tagSelect = tagColumns
-      .map(t => `element_at(resource_tags, '${t.key}')[1] AS ${t.column}`)
-      .join(',\n      ');
-
-    const parquetGlob = `'${stagingDir}/*.parquet'`;
-
-    logger.info(`Reading dates from ${parquetGlob}...`);
-    const dateResult = await conn.run(
-      `SELECT DISTINCT line_item_usage_start_date::DATE::VARCHAR AS d FROM read_parquet(${parquetGlob}) ORDER BY d`,
-    );
-    const dates: string[] = [];
-    let chunk = await dateResult.fetchChunk();
-    while (chunk !== null && chunk.rowCount > 0) {
-      for (let r = 0; r < chunk.rowCount; r++) {
-        const val = chunk.getColumnVector(0).getItem(r);
-        if (typeof val === 'string') dates.push(val);
-      }
-      chunk = await dateResult.fetchChunk();
-    }
-    logger.info(`Found ${String(dates.length)} dates to partition`);
-
-    for (let di = 0; di < dates.length; di++) {
-      const date = dates[di];
-      if (date === undefined) continue;
-      const dateDir = join(tierDir, `usage_date=${date}`);
-      await mkdir(dateDir, { recursive: true });
-      const outPath = join(dateDir, 'data.parquet');
-
-      await conn.run(`
-        COPY (
-          SELECT
-            line_item_usage_start_date::DATE AS usage_date,
-            line_item_usage_account_id AS account_id,
-            line_item_usage_account_name AS account_name,
-            COALESCE(product_region_code, '') AS region,
-            COALESCE(product_servicecode, '') AS service,
-            COALESCE(product_product_family, '') AS service_family,
-            COALESCE(line_item_line_item_description, '') AS description,
-            COALESCE(line_item_resource_id, '') AS resource_id,
-            COALESCE(line_item_usage_amount, 0) AS usage_amount,
-            COALESCE(line_item_unblended_cost, 0) AS cost,
-            COALESCE(pricing_public_on_demand_cost, 0) AS list_cost,
-            COALESCE(line_item_line_item_type, '') AS line_item_type,
-            COALESCE(line_item_operation, '') AS operation,
-            COALESCE(line_item_usage_type, '') AS usage_type,
-            ${tagSelect}
-          FROM read_parquet(${parquetGlob})
-          WHERE line_item_usage_start_date::DATE = '${date}'
-        ) TO '${outPath}' (FORMAT PARQUET, COMPRESSION ZSTD)
-      `);
-
-      if (onProgress !== undefined) {
-        onProgress({ phase: 'repartitioning', filesTotal: dates.length, filesDone: di + 1 });
-      }
-    }
-
-    logger.info(`${period}: repartitioned into ${String(dates.length)} daily partitions`);
 
     await saveEtags(dataDir, tier, period, periodFiles);
   }

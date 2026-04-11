@@ -14,10 +14,10 @@ export interface BillingPeriod {
 }
 
 export interface LocalDataInfo {
-  readonly dates: readonly string[];
+  readonly periods: readonly string[];
   readonly diskBytes: number;
-  readonly oldestDate: string | null;
-  readonly newestDate: string | null;
+  readonly oldestPeriod: string | null;
+  readonly newestPeriod: string | null;
 }
 
 export interface DataInventory {
@@ -54,16 +54,31 @@ async function getDirSize(dirPath: string): Promise<number> {
   return total;
 }
 
-async function listPartitionDates(baseDir: string, prefix: string): Promise<string[]> {
+async function listRawPeriods(rawDir: string, tierPrefix: string): Promise<string[]> {
   try {
-    const entries = await readdir(baseDir);
+    const entries = await readdir(rawDir);
     return entries
-      .filter(e => e.startsWith(`${prefix}=`))
-      .map(e => e.replace(`${prefix}=`, ''))
+      .filter(e => e.startsWith(`${tierPrefix}-`))
+      .map(e => e.slice(tierPrefix.length + 1))
       .sort();
   } catch {
     return [];
   }
+}
+
+async function getRawTierSize(rawDir: string, tierPrefix: string): Promise<number> {
+  let total = 0;
+  try {
+    const entries = await readdir(rawDir);
+    for (const entry of entries) {
+      if (entry.startsWith(`${tierPrefix}-`)) {
+        total += await getDirSize(join(rawDir, entry));
+      }
+    }
+  } catch {
+    // dir may not exist
+  }
+  return total;
 }
 
 const ETAG_FILES: Record<DataTier, string> = {
@@ -72,9 +87,11 @@ const ETAG_FILES: Record<DataTier, string> = {
   'cost-optimization': 'sync-etags-cost-optimization.json',
 };
 
-function tierDir(dataDir: string, tier: DataTier): string {
-  return join(dataDir, 'aws', tier);
-}
+const TIER_PREFIXES: Record<DataTier, string> = {
+  'daily': 'daily',
+  'hourly': 'hourly',
+  'cost-optimization': 'cost-opt',
+};
 
 export async function getDataInventory(
   bucketPath: string,
@@ -98,10 +115,11 @@ export async function getDataInventory(
     }
   }
 
-  const dir = tierDir(dataDir, tier);
-  const dates = await listPartitionDates(dir, 'usage_date');
-  const diskBytes = await getDirSize(dir);
-  const localPeriods = new Set(dates.map(d => d.slice(0, 7)));
+  const rawDir = join(dataDir, 'aws', 'raw');
+  const tierPrefix = TIER_PREFIXES[tier];
+  const localPeriodList = await listRawPeriods(rawDir, tierPrefix);
+  const diskBytes = await getRawTierSize(rawDir, tierPrefix);
+  const localPeriods = new Set(localPeriodList);
 
   let savedEtags: Record<string, Record<string, string>> = {};
   try {
@@ -132,8 +150,8 @@ export async function getDataInventory(
       localStatus: getPeriodStatus(period, files),
     }));
 
-  const oldestDate = dates.length > 0 ? dates[0] ?? null : null;
-  const newestDate = dates.length > 0 ? dates[dates.length - 1] ?? null : null;
+  const oldestPeriod = localPeriodList.length > 0 ? localPeriodList[0] ?? null : null;
+  const newestPeriod = localPeriodList.length > 0 ? localPeriodList[localPeriodList.length - 1] ?? null : null;
 
   return {
     periods,
@@ -141,10 +159,10 @@ export async function getDataInventory(
     totalLocalPeriods: localPeriods.size,
     totalRemotePeriods: periods.length,
     local: {
-      dates,
+      periods: localPeriodList,
       diskBytes,
-      oldestDate,
-      newestDate,
+      oldestPeriod,
+      newestPeriod,
     },
   };
 }

@@ -6,6 +6,7 @@ import {
   buildTrendQuery,
   buildMissingTagsQuery,
   buildEntityDetailQuery,
+  buildSource,
   loadConfig,
   loadDimensions,
   loadOrgTree,
@@ -628,9 +629,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
     const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
+    const source = buildSource(ctx.dataDir, 'daily', dimensions);
     const sql = `
       SELECT ${fieldExpr} AS val, SUM(cost) AS total_cost
-      FROM read_parquet('${ctx.dataDir}/aws/daily/**/data.parquet', hive_partitioning = true)
+      FROM ${source}
       ${whereStr}
       GROUP BY val
       HAVING val IS NOT NULL AND val != ''
@@ -789,12 +791,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     state.syncStatuses[id] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0, message: '' };
 
     try {
-      const dimensions = await getDimensions();
       const result = await syncSelectedFiles({
         bucketPath,
         profile: provider.credentials.profile,
         dataDir: ctx.dataDir,
-        dimensionsConfig: dimensions,
         expectedDataType: id === 'hourly' ? 'hourly' : id === 'cost-optimization' ? 'cost-optimization' : 'daily',
         files: fileEntries,
         signal: controller.signal,
@@ -1049,10 +1049,10 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     await fs.writeFile(ctx.configPath, stringify(costgoblinYaml), 'utf-8');
 
     const builtInDimensions = [
-      { name: 'account', label: 'Account', field: 'line_item_usage_account_id', displayField: 'account_name' },
-      { name: 'region', label: 'Region', field: 'product_region' },
-      { name: 'service', label: 'Service', field: 'product_service_name' },
-      { name: 'service_family', label: 'Service Family', field: 'product_service_family' },
+      { name: 'account', label: 'Account', field: 'account_id', displayField: 'account_name' },
+      { name: 'region', label: 'Region', field: 'region' },
+      { name: 'service', label: 'Service', field: 'service' },
+      { name: 'service_family', label: 'Service Family', field: 'service_family' },
     ];
 
     const tagDimensions = (wizardConfig.tags ?? []).map(t => ({
@@ -1115,17 +1115,17 @@ cache:
 builtIn:
   - name: account
     label: Account
-    field: line_item_usage_account_id
+    field: account_id
     displayField: account_name
   - name: region
     label: Region
-    field: product_region
+    field: region
   - name: service
     label: Service
-    field: product_service_name
+    field: service
   - name: service_family
     label: Service Family
-    field: product_service_family
+    field: service_family
 
 # Map your CUR resource tags below.
 # tagName: the tag key in your CUR (without the "user_" prefix)
