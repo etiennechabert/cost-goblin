@@ -60,7 +60,7 @@ async function listRawPeriods(rawDir: string, tierPrefix: string): Promise<strin
     const raw = entries
       .filter(e => e.startsWith(`${tierPrefix}-`))
       .map(e => e.slice(tierPrefix.length + 1).slice(0, 7));
-    return [...new Set(raw)].sort();
+    return [...new Set(raw)].sort((a, b) => a.localeCompare(b));
   } catch {
     return [];
   }

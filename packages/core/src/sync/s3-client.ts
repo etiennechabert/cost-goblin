@@ -56,15 +56,10 @@ export async function createS3Handle(profile: string, region?: string): Promise<
         });
         const response = await client.send(command);
 
-        if (response.Contents !== undefined) {
-          for (const obj of response.Contents) {
-            if (obj.Key === undefined || obj.Size === undefined) continue;
-            if (!obj.Key.endsWith('.parquet')) continue;
-            entries.push({
-              key: obj.Key,
-              contentHash: obj.ETag ?? '',
-              size: obj.Size,
-            });
+        for (const obj of response.Contents ?? []) {
+          if (obj.Key === undefined || obj.Size === undefined) continue;
+          if (obj.Key.endsWith('.parquet')) {
+            entries.push({ key: obj.Key, contentHash: obj.ETag ?? '', size: obj.Size });
           }
         }
 

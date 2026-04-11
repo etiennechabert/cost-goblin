@@ -17,7 +17,7 @@ const LOG_LEVELS: Record<LogLevel, number> = {
 };
 
 export class Logger {
-  private handlers: LogHandler[] = [];
+  private readonly handlers: LogHandler[] = [];
   private minLevel: LogLevel = 'info';
 
   setLevel(level: LogLevel): void {
