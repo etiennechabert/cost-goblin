@@ -25,9 +25,14 @@ async function getS3Module(): Promise<typeof import('@aws-sdk/client-s3')> {
   return import('@aws-sdk/client-s3');
 }
 
+export interface DownloadOptions {
+  onBytes?: ((bytesReceived: number) => void) | undefined;
+  signal?: AbortSignal | undefined;
+}
+
 export interface S3Handle {
   listFiles(bucket: string, prefix: string): Promise<ManifestFileEntry[]>;
-  downloadFile(bucket: string, key: string, localPath: string): Promise<void>;
+  downloadFile(bucket: string, key: string, localPath: string, options?: DownloadOptions): Promise<void>;
 }
 
 export async function createS3Handle(profile: string, region?: string): Promise<S3Handle> {
@@ -69,7 +74,7 @@ export async function createS3Handle(profile: string, region?: string): Promise<
       return entries;
     },
 
-    async downloadFile(bucket: string, key: string, localPath: string): Promise<void> {
+    async downloadFile(bucket: string, key: string, localPath: string, options?: DownloadOptions): Promise<void> {
       await mkdir(dirname(localPath), { recursive: true });
 
       const command = new GetObjectCommand({ Bucket: bucket, Key: key });
@@ -81,9 +86,16 @@ export async function createS3Handle(profile: string, region?: string): Promise<
 
       const chunks: Buffer[] = [];
       const body = response.Body;
+      let totalBytes = 0;
       if (typeof (body as NodeJS.ReadableStream)[Symbol.asyncIterator] === 'function') {
         for await (const chunk of body as AsyncIterable<Uint8Array>) {
-          chunks.push(Buffer.from(chunk));
+          if (options?.signal?.aborted) {
+            throw new Error('Download cancelled');
+          }
+          const buf = Buffer.from(chunk);
+          chunks.push(buf);
+          totalBytes += buf.length;
+          options?.onBytes?.(totalBytes);
         }
       }
 
@@ -92,20 +104,11 @@ export async function createS3Handle(profile: string, region?: string): Promise<
   };
 }
 
-export interface FileValidationInfo {
-  readonly file: string;
-  readonly valid: boolean;
-  readonly detectedType: string;
-  readonly message?: string | undefined;
-}
-
 export interface SyncProgress {
-  readonly phase: 'listing' | 'downloading' | 'validating' | 'repartitioning' | 'done';
+  readonly phase: 'downloading' | 'repartitioning' | 'done';
   readonly filesTotal: number;
   readonly filesDone: number;
-  readonly bytesTotal: number;
-  readonly bytesDone: number;
-  readonly validationResults?: readonly FileValidationInfo[] | undefined;
+  readonly message?: string | undefined;
 }
 
 export type ProgressCallback = (progress: SyncProgress) => void;

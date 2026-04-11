@@ -61,10 +61,12 @@ function validateSync(raw: unknown): SyncConfig {
   assertObject(raw, 'sync');
   const daily = validateSyncTier(raw['daily'], 'sync.daily');
   const hourly = raw['hourly'] !== undefined ? validateSyncTier(raw['hourly'], 'sync.hourly') : undefined;
+  const costOptimization = raw['costOptimization'] !== undefined ? validateSyncTier(raw['costOptimization'], 'sync.costOptimization') : undefined;
   assertNumber(raw['intervalMinutes'], 'sync.intervalMinutes');
   return {
     daily,
     ...(hourly !== undefined ? { hourly } : {}),
+    ...(costOptimization !== undefined ? { costOptimization } : {}),
     intervalMinutes: raw['intervalMinutes'],
   };
 }

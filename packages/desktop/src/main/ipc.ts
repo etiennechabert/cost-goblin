@@ -284,7 +284,7 @@ interface AppState {
   config: CostGoblinConfig | null;
   dimensions: DimensionsConfig | null;
   orgTree: OrgTreeConfig | null;
-  syncStatus: SyncStatus;
+  syncStatuses: Record<string, SyncStatus>;
   accountMap: Map<string, string> | null;
 }
 
@@ -297,7 +297,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     config: null,
     dimensions: null,
     orgTree: null,
-    syncStatus: { status: 'idle', lastSync: null },
+    syncStatuses: {},
     accountMap: null,
   };
 
@@ -649,8 +649,9 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     });
   });
 
-  ipcMain.handle('sync:status', (): SyncStatus => {
-    return state.syncStatus;
+  ipcMain.handle('sync:status', (_event, syncId?: string): SyncStatus => {
+    const id = syncId ?? 'default';
+    return state.syncStatuses[id] ?? { status: 'idle', lastSync: null };
   });
 
   ipcMain.handle('sync:trigger', async (): Promise<void> => {
@@ -665,7 +666,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         throw new Error('No provider configured');
       }
 
-      state.syncStatus = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: 0, filesDone: 0 };
+      state.syncStatuses['default'] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: 0, filesDone: 0, message: '' };
 
       const result = await runSync({
         syncConfig: provider.sync,
@@ -673,17 +674,18 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         dataDir: ctx.dataDir,
         dimensionsConfig: dimensions,
         onProgress: (progress) => {
-          state.syncStatus = {
+          state.syncStatuses['default'] = {
             status: 'syncing',
             phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
             progress: progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0,
             filesTotal: progress.filesTotal,
             filesDone: progress.filesDone,
+            message: progress.message ?? '',
           };
         },
       });
 
-      state.syncStatus = {
+      state.syncStatuses['default'] = {
         status: 'completed',
         lastSync: new Date(),
         filesDownloaded: result.filesDownloaded,
@@ -691,7 +693,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err));
       logger.error(`Sync failed: ${error.message}`);
-      state.syncStatus = {
+      state.syncStatuses['default'] = {
         status: 'failed',
         error,
         lastSync: null,
@@ -727,59 +729,109 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     return [...orgTree.tree];
   });
 
-  ipcMain.handle('data:inventory', async (): Promise<DataInventory> => {
+  ipcMain.handle('data:inventory', async (_event, tier?: 'daily' | 'hourly' | 'cost-optimization'): Promise<DataInventory> => {
     const config = await getConfig();
     const provider = config.providers[0];
     if (provider === undefined) throw new Error('No provider configured');
-    return getDataInventory(provider.sync.daily.bucket, provider.credentials.profile, ctx.dataDir);
+    const t = tier ?? 'daily';
+    let bucket: string;
+    if (t === 'hourly') {
+      bucket = provider.sync.hourly?.bucket ?? provider.sync.daily.bucket;
+    } else if (t === 'cost-optimization') {
+      const costOptBucket = provider.sync.costOptimization?.bucket;
+      if (costOptBucket === undefined) throw new Error('Cost optimization not configured');
+      bucket = costOptBucket;
+    } else {
+      bucket = provider.sync.daily.bucket;
+    }
+    return getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, t);
   });
 
-  ipcMain.handle('data:delete-period', async (_event, period: string): Promise<void> => {
+  ipcMain.handle('data:delete-period', async (_event, period: string, tier?: 'daily' | 'hourly' | 'cost-optimization'): Promise<void> => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const dailyDir = path.join(ctx.dataDir, 'aws', 'daily');
-    const entries = await fs.readdir(dailyDir);
-    for (const entry of entries) {
-      if (entry.startsWith(`usage_date=${period}`)) {
-        await fs.rm(path.join(dailyDir, entry), { recursive: true });
-        logger.info(`Deleted local partition: ${entry}`);
+    const t = tier ?? 'daily';
+    const tierDir = path.join(ctx.dataDir, 'aws', t);
+    try {
+      const entries = await fs.readdir(tierDir);
+      for (const entry of entries) {
+        if (entry.startsWith(`usage_date=${period}`)) {
+          await fs.rm(path.join(tierDir, entry), { recursive: true });
+          logger.info(`Deleted local partition (${t}): ${entry}`);
+        }
       }
+    } catch {
+      // dir may not exist
     }
   });
 
-  ipcMain.handle('data:sync-periods', async (_event, fileEntries: ManifestFileEntry[]): Promise<{ filesDownloaded: number; rowsProcessed: number }> => {
+  const syncAbortControllers = new Map<string, AbortController>();
+
+  ipcMain.handle('data:sync-periods', async (_event, fileEntries: ManifestFileEntry[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }> => {
+    const id = syncId ?? 'default';
     const config = await getConfig();
     const provider = config.providers[0];
     if (provider === undefined) throw new Error('No provider configured');
 
-    state.syncStatus = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0 };
+    let bucketPath: string;
+    if (id === 'hourly') {
+      bucketPath = provider.sync.hourly?.bucket ?? provider.sync.daily.bucket;
+    } else if (id === 'cost-optimization') {
+      const costOptBucket = provider.sync.costOptimization?.bucket;
+      if (costOptBucket === undefined) throw new Error('Cost optimization not configured');
+      bucketPath = costOptBucket;
+    } else {
+      bucketPath = provider.sync.daily.bucket;
+    }
+
+    const controller = new AbortController();
+    syncAbortControllers.set(id, controller);
+    state.syncStatuses[id] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0, message: '' };
 
     try {
       const dimensions = await getDimensions();
       const result = await syncSelectedFiles({
-        bucketPath: provider.sync.daily.bucket,
+        bucketPath,
         profile: provider.credentials.profile,
         dataDir: ctx.dataDir,
         dimensionsConfig: dimensions,
+        expectedDataType: id === 'hourly' ? 'hourly' : id === 'cost-optimization' ? 'cost-optimization' : 'daily',
         files: fileEntries,
+        signal: controller.signal,
         onProgress: (progress) => {
-          state.syncStatus = {
+          state.syncStatuses[id] = {
             status: 'syncing',
             phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
             progress: progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0,
             filesTotal: progress.filesTotal,
             filesDone: progress.filesDone,
+            message: progress.message ?? '',
           };
         },
       });
 
-      state.syncStatus = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
+      syncAbortControllers.delete(id);
+      state.syncStatuses[id] = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
       return result;
     } catch (err: unknown) {
+      syncAbortControllers.delete(id);
       const error = err instanceof Error ? err : new Error(String(err));
-      logger.error(`Selective sync failed: ${error.message}`);
-      state.syncStatus = { status: 'failed', error, lastSync: null };
+      if (error.message === 'Download cancelled') {
+        state.syncStatuses[id] = { status: 'idle', lastSync: null };
+        return { filesDownloaded: 0, rowsProcessed: 0 };
+      }
+      logger.error(`Selective sync '${id}' failed: ${error.message}`);
+      state.syncStatuses[id] = { status: 'failed', error, lastSync: null };
       throw error;
+    }
+  });
+
+  ipcMain.handle('data:cancel-sync', (_event, syncId?: string): void => {
+    const id = syncId ?? 'default';
+    const controller = syncAbortControllers.get(id);
+    if (controller !== undefined) {
+      controller.abort();
+      logger.info(`Sync '${id}' cancelled by user`);
     }
   });
 

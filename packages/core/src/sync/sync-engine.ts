@@ -112,8 +112,6 @@ async function repartitionToDaily(
         phase: 'repartitioning',
         filesTotal: dates.length,
         filesDone: i + 1,
-        bytesTotal: 0,
-        bytesDone: 0,
       });
     }
   }
@@ -134,7 +132,7 @@ export async function runSync(options: SyncEngineOptions): Promise<{ filesDownlo
   // Phase 1: List S3 files
   logger.info(`Listing S3 files: ${s3Path.bucket}/${s3Path.prefix}`);
   if (onProgress !== undefined) {
-    onProgress({ phase: 'listing', filesTotal: 0, filesDone: 0, bytesTotal: 0, bytesDone: 0 });
+    onProgress({ phase: 'downloading', filesTotal: 0, filesDone: 0, message: 'Listing S3 files...' });
   }
 
   const s3 = await createS3Handle(profile);
@@ -157,9 +155,6 @@ export async function runSync(options: SyncEngineOptions): Promise<{ filesDownlo
   }
 
   // Phase 3: Download new/changed files
-  const bytesTotal = diff.toDownload.reduce((s, f) => s + f.size, 0);
-  let bytesDone = 0;
-
   for (let i = 0; i < diff.toDownload.length; i++) {
     const file = diff.toDownload[i];
     if (file === undefined) continue;
@@ -168,15 +163,13 @@ export async function runSync(options: SyncEngineOptions): Promise<{ filesDownlo
     logger.info(`Downloading ${file.key} (${String(file.size)} bytes)`);
 
     await s3.downloadFile(s3Path.bucket, file.key, localPath);
-    bytesDone += file.size;
 
     if (onProgress !== undefined) {
       onProgress({
         phase: 'downloading',
         filesTotal: diff.toDownload.length,
         filesDone: i + 1,
-        bytesTotal,
-        bytesDone,
+        message: `download: ${file.key}`,
       });
     }
   }
@@ -223,8 +216,6 @@ export async function runSync(options: SyncEngineOptions): Promise<{ filesDownlo
       phase: 'done',
       filesTotal: diff.toDownload.length,
       filesDone: diff.toDownload.length,
-      bytesTotal,
-      bytesDone: bytesTotal,
     });
   }
 
