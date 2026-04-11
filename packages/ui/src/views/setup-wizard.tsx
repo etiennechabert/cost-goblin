@@ -501,7 +501,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     const source = wizard.source;
 
     const updated = { ...collectedPaths };
-    let defaultRetention = 365;
+    let defaultRetention: number;
     if (source === 'daily') {
       updated.daily = s3Path;
       defaultRetention = 365;
@@ -519,7 +519,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   function handleBrowseSkip() {
     if (wizard.step !== 'browse' && wizard.step !== 'bucket') return;
     const profile = wizard.profile;
-    const source = wizard.step === 'browse' ? wizard.source : wizard.source;
+    const source = wizard.source;
 
     if (source === 'hourly') {
       startBucketStep(profile, 'costOptimization');

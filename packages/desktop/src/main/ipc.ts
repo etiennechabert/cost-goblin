@@ -55,6 +55,13 @@ import type {
 } from '@costgoblin/core';
 
 type RawRow = Readonly<Record<string, unknown>>;
+type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
+
+function resolveDataType(syncId: string): ExpectedDataType {
+  if (syncId === 'hourly') return 'hourly';
+  if (syncId === 'cost-optimization') return 'cost-optimization';
+  return 'daily';
+}
 
 async function queryAll(conn: DuckDBConnection, sql: string): Promise<RawRow[]> {
   const result = await conn.run(sql);
@@ -509,9 +516,14 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       for (const row of rows) {
         const rawDate = row['date'];
         const rawGroup = row['group_name'];
-        const date = rawDate instanceof Date
-          ? rawDate.toISOString().slice(0, 10)
-          : typeof rawDate === 'string' ? rawDate : '';
+        let date: string;
+        if (rawDate instanceof Date) {
+          date = rawDate.toISOString().slice(0, 10);
+        } else if (typeof rawDate === 'string') {
+          date = rawDate;
+        } else {
+          date = '';
+        }
         const group = typeof rawGroup === 'string' ? rawGroup : '';
         const cost = Number(row['cost'] ?? 0);
 
@@ -862,7 +874,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         bucketPath,
         profile: provider.credentials.profile,
         dataDir: ctx.dataDir,
-        expectedDataType: id === 'hourly' ? 'hourly' : id === 'cost-optimization' ? 'cost-optimization' : 'daily',
+        expectedDataType: resolveDataType(id),
         files: fileEntries,
         signal: controller.signal,
         onProgress: (progress) => {
