@@ -14,6 +14,7 @@ import type {
   EntityDetailParams,
   EntityDetailResult,
   SyncStatus,
+  SavingsResult,
   DataInventoryResult,
   DataTier,
   AccountMappingStatus,
@@ -35,6 +36,9 @@ const api: CostApi = {
   },
   queryMissingTags(params: MissingTagsParams): Promise<MissingTagsResult> {
     return invoke<MissingTagsResult>('query:missing-tags', params);
+  },
+  querySavings(): Promise<SavingsResult> {
+    return invoke<SavingsResult>('query:savings');
   },
   queryEntityDetail(params: EntityDetailParams): Promise<EntityDetailResult> {
     return invoke<EntityDetailResult>('query:entity-detail', params);

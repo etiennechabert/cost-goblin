@@ -48,6 +48,7 @@ import type {
   EntityDetailResult,
   DailyCost,
   DistributionSlice,
+  SavingsResult,
   SyncStatus,
   DateRange,
   Dollars,
@@ -576,6 +577,72 @@ export function registerIpcHandlers(ctx: IpcContext): void {
           accountName: resolveEntityName(r.accountId, accountMap) || r.accountName,
         })),
       };
+    });
+  });
+
+  ipcMain.handle('query:savings', async (): Promise<SavingsResult> => {
+    const config = await getConfig();
+    const provider = config.providers[0];
+    if (provider?.sync.costOptimization === undefined) {
+      return { recommendations: [], totalMonthlySavings: asDollars(0) };
+    }
+
+    return withConnection(async (conn) => {
+      let rows: RawRow[];
+      try {
+        rows = await queryAll(conn, `
+          SELECT
+            account_id,
+            account_name,
+            action_type,
+            current_resource_type,
+            COALESCE(recommended_resource_summary, '') AS summary,
+            COALESCE(region, '') AS region,
+            COALESCE(estimated_monthly_savings_after_discount, 0) AS monthly_savings,
+            COALESCE(estimated_monthly_cost_after_discount, 0) AS monthly_cost,
+            COALESCE(estimated_savings_percentage_after_discount, 0) AS savings_pct,
+            COALESCE(implementation_effort, '') AS effort,
+            COALESCE(resource_arn, '') AS resource_arn,
+            COALESCE(current_resource_details, '') AS current_details,
+            COALESCE(recommended_resource_details, '') AS recommended_details,
+            COALESCE(current_resource_summary, '') AS current_summary,
+            COALESCE(restart_needed, false) AS restart_needed,
+            COALESCE(rollback_possible, false) AS rollback_possible,
+            COALESCE(recommendation_source, '') AS recommendation_source
+          FROM read_parquet('${ctx.dataDir}/aws/raw/cost-opt-*/*.parquet', filename=true)
+          QUALIFY ROW_NUMBER() OVER (PARTITION BY recommendation_id ORDER BY filename DESC) = 1
+          ORDER BY monthly_savings DESC
+        `);
+      } catch {
+        return { recommendations: [], totalMonthlySavings: asDollars(0) };
+      }
+
+      let totalSavings = 0;
+      const recommendations = rows.map(r => {
+        const savings = toNum(r['monthly_savings']);
+        totalSavings += savings;
+        return {
+          accountId: toStr(r['account_id']),
+          accountName: toStr(r['account_name']),
+          actionType: toStr(r['action_type']),
+          resourceType: toStr(r['current_resource_type']),
+          summary: toStr(r['summary']),
+          region: toStr(r['region']),
+          monthlySavings: asDollars(savings),
+          monthlyCost: asDollars(toNum(r['monthly_cost'])),
+          savingsPercentage: toNum(r['savings_pct']),
+          effort: toStr(r['effort']) as 'VeryLow' | 'Low' | 'Medium' | 'High',
+          resourceArn: toStr(r['resource_arn']),
+          currentDetails: toStr(r['current_details']),
+          recommendedDetails: toStr(r['recommended_details']),
+          currentSummary: toStr(r['current_summary']),
+          restartNeeded: r['restart_needed'] === true || r['restart_needed'] === 1,
+          rollbackPossible: r['rollback_possible'] === true || r['rollback_possible'] === 1,
+          recommendationSource: toStr(r['recommendation_source']),
+        };
+      });
+
+      return { recommendations, totalMonthlySavings: asDollars(totalSavings) };
     });
   });
 

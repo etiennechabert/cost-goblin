@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CostOverview, CostTrends, MissingTags, EntityDetail, DataManagement, CostApiProvider, SetupWizard } from '@costgoblin/ui';
+import { CostOverview, CostTrends, MissingTags, Savings, EntityDetail, DataManagement, CostApiProvider, SetupWizard } from '@costgoblin/ui';
 import type { CostApi } from '@costgoblin/core/browser';
 
 function getApi(): CostApi {
@@ -11,6 +11,7 @@ type View =
   | { page: 'overview' }
   | { page: 'trends' }
   | { page: 'missing-tags' }
+  | { page: 'savings' }
   | { page: 'data' }
   | { page: 'entity-detail'; entity: string; dimension: string };
 
@@ -18,6 +19,7 @@ const LEFT_NAV: { id: string; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'trends', label: 'Trends' },
   { id: 'missing-tags', label: 'Missing Tags' },
+  { id: 'savings', label: 'Savings' },
 ];
 
 function getStoredTheme(): 'dark' | 'light' {
@@ -100,6 +102,7 @@ export function App(): React.JSX.Element {
       case 'overview': setView({ page: 'overview' }); break;
       case 'trends': setView({ page: 'trends' }); break;
       case 'missing-tags': setView({ page: 'missing-tags' }); break;
+      case 'savings': setView({ page: 'savings' }); break;
       case 'data': setView({ page: 'data' }); break;
     }
   }
@@ -198,6 +201,7 @@ export function App(): React.JSX.Element {
         {view.page === 'overview' && <CostOverview />}
         {view.page === 'trends' && <CostTrends onEntityClick={handleEntityClick} />}
         {view.page === 'missing-tags' && <MissingTags />}
+        {view.page === 'savings' && <Savings />}
         <div className={view.page === 'data' ? '' : 'hidden'}>
           <DataManagement />
         </div>

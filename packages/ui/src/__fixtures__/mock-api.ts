@@ -15,6 +15,7 @@ import type {
   EntityDetailResult,
   MissingTagsResult,
   OrgNode,
+  SavingsResult,
   SyncStatus,
   TrendResult,
   CostGoblinConfig,
@@ -198,6 +199,7 @@ export class MockCostApi implements CostApi {
   }
   queryTrends(): Promise<TrendResult> { return Promise.resolve(trendResult); }
   queryMissingTags(): Promise<MissingTagsResult> { return Promise.resolve(missingTagsResult); }
+  querySavings(): Promise<SavingsResult> { return Promise.resolve({ recommendations: [], totalMonthlySavings: asDollars(0) }); }
   queryEntityDetail(): Promise<EntityDetailResult> { return Promise.resolve(entityDetailResult); }
   getSyncStatus(): Promise<SyncStatus> { return Promise.resolve(syncStatus); }
   triggerSync(): Promise<void> { return Promise.resolve(); }

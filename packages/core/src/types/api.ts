@@ -8,6 +8,7 @@ import type {
   EntityDetailResult,
   MissingTagsParams,
   MissingTagsResult,
+  SavingsResult,
   SyncStatus,
   TrendQueryParams,
   TrendResult,
@@ -40,6 +41,7 @@ export interface CostApi {
   queryDailyCosts(params: DailyCostsParams): Promise<DailyCostsResult>;
   queryTrends(params: TrendQueryParams): Promise<TrendResult>;
   queryMissingTags(params: MissingTagsParams): Promise<MissingTagsResult>;
+  querySavings(): Promise<SavingsResult>;
   queryEntityDetail(params: EntityDetailParams): Promise<EntityDetailResult>;
   getSyncStatus(syncId?: string): Promise<SyncStatus>;
   triggerSync(): Promise<void>;
