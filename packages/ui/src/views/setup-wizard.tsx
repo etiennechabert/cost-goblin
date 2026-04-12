@@ -246,36 +246,32 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: {
         ))}
       </div>
 
-      {state.isCurReport && (() => {
-        const detected = state.detectedType;
-        const isCostOptMismatch = detected === 'cost-optimization' && state.source !== 'costOptimization';
-        const isCurForCostOpt = detected !== 'cost-optimization' && detected !== 'unknown' && state.source === 'costOptimization';
-
-        if (isCostOptMismatch || isCurForCostOpt) {
-          return (
-            <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3">
-              <p className="text-sm font-medium text-warning">Data type mismatch</p>
-              <p className="text-xs text-warning mt-0.5">
-                {isCostOptMismatch
-                  ? 'This looks like a Cost Optimization report, not a CUR.'
-                  : 'This looks like a CUR report, not a Cost Optimization export.'}
-                {' '}Continue anyway?
-              </p>
-            </div>
-          );
-        }
-
-        return (
-          <div className="rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
-            <p className="text-sm font-medium text-accent">
-              {detected === 'cost-optimization' ? 'Cost Optimization report detected' : 'CUR report detected'}
-            </p>
-            <p className="text-xs text-text-secondary mt-0.5">
-              Found <code className="text-text-primary">data/</code> and <code className="text-text-primary">metadata/</code> folders
-            </p>
-          </div>
-        );
-      })()}
+      {state.isCurReport && state.detectedType === 'cost-optimization' && state.source !== 'costOptimization' && (
+        <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3">
+          <p className="text-sm font-medium text-warning">Data type mismatch</p>
+          <p className="text-xs text-warning mt-0.5">
+            This looks like a Cost Optimization report, not a CUR. Continue anyway?
+          </p>
+        </div>
+      )}
+      {state.isCurReport && state.detectedType !== 'cost-optimization' && state.detectedType !== 'unknown' && state.source === 'costOptimization' && (
+        <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3">
+          <p className="text-sm font-medium text-warning">Data type mismatch</p>
+          <p className="text-xs text-warning mt-0.5">
+            This looks like a CUR report, not a Cost Optimization export. Continue anyway?
+          </p>
+        </div>
+      )}
+      {state.isCurReport && !(state.detectedType === 'cost-optimization' && state.source !== 'costOptimization') && !(state.detectedType !== 'cost-optimization' && state.detectedType !== 'unknown' && state.source === 'costOptimization') && (
+        <div className="rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
+          <p className="text-sm font-medium text-accent">
+            {state.detectedType === 'cost-optimization' ? 'Cost Optimization report detected' : 'CUR report detected'}
+          </p>
+          <p className="text-xs text-text-secondary mt-0.5">
+            Found <code className="text-text-primary">data/</code> and <code className="text-text-primary">metadata/</code> folders
+          </p>
+        </div>
+      )}
 
       {state.isCurReport && state.missingColumns.length > 0 && (
         <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">

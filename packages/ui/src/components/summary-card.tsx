@@ -15,12 +15,10 @@ export function SummaryCard({ totalCost, previousCost, dateRange }: SummaryCardP
   const isDecrease = delta !== null && delta < 0;
   const isIncrease = delta !== null && delta > 0;
 
-  const dailyAvg = (() => {
-    const start = new Date(dateRange.start).getTime();
-    const end = new Date(dateRange.end).getTime();
-    const days = Math.max(1, Math.round((end - start) / (24 * 60 * 60 * 1000)) + 1);
-    return totalCost / days;
-  })();
+  const rangeStart = new Date(dateRange.start).getTime();
+  const rangeEnd = new Date(dateRange.end).getTime();
+  const rangeDays = Math.max(1, Math.round((rangeEnd - rangeStart) / (24 * 60 * 60 * 1000)) + 1);
+  const dailyAvg = totalCost / rangeDays;
 
   return (
     <div className="flex flex-col justify-between rounded-xl border border-border bg-bg-secondary px-6 py-5 h-full">
@@ -35,8 +33,8 @@ export function SummaryCard({ totalCost, previousCost, dateRange }: SummaryCardP
         {delta !== null && (
           <div className="rounded-lg bg-bg-tertiary/30 px-4 py-3">
             <p className="text-xs uppercase tracking-wider text-text-muted">vs Previous Period</p>
-            <p className={`mt-1 text-2xl font-bold tabular-nums ${(() => { if (isIncrease) return 'text-negative'; if (isDecrease) return 'text-positive'; return 'text-text-secondary'; })()}`}>
-              {(() => { if (isDecrease) return '▼'; if (isIncrease) return '▲'; return ''; })()}
+            <p className={`mt-1 text-2xl font-bold tabular-nums ${isIncrease ? 'text-negative' : isDecrease ? 'text-positive' : 'text-text-secondary'}`}>
+              {isDecrease ? '▼' : isIncrease ? '▲' : ''}
               {Math.abs(delta).toFixed(1)}%
             </p>
             {previousCost !== undefined && (
