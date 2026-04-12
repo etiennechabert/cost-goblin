@@ -312,21 +312,24 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-cyan-500/30 border border-cyan-500/50" /> resource</span>
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-violet-500/30 border border-violet-500/50" /> account</span>
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-500/30 border border-emerald-500/50" /> both</span>
+              {aliasPreviewCount > 0 && <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-rose-500/30 border border-rose-500/50" /> aliased</span>}
               {!isPassthrough && <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-warning/30 border border-warning/50" /> formatted</span>}
             </div>
             <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
               {unique.map(({ resolved, changed, source }) => {
-                const colors = source === 'template'
-                  ? 'bg-warning/10 border-warning/30 text-warning italic'
-                  : source === 'both'
-                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                    : source === 'account'
-                      ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
-                      : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300';
+                const colors = changed
+                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                  : source === 'template'
+                    ? 'bg-warning/10 border-warning/30 text-warning italic'
+                    : source === 'both'
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                      : source === 'account'
+                        ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
+                        : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300';
                 return (
                 <span
                   key={resolved}
-                  className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${changed ? 'ring-1 ring-accent/50' : ''} ${colors}`}
+                  className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${colors}`}
                 >
                   {resolved}
                 </span>
