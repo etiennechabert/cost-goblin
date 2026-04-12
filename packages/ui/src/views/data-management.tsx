@@ -39,8 +39,12 @@ function OrgAccountsSection({ profile }: Readonly<{ profile: string | null }>) {
   const [expanded, setExpanded] = useState(false);
   const [syncState, setSyncState] = useState<OrgSyncState>({ status: 'idle' });
   const [tagFilter, setTagFilter] = useState('');
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
 
   const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
+  const selectedAccount = orgData !== null && selectedAccountId !== null
+    ? orgData.accounts.find(a => a.id === selectedAccountId) ?? null
+    : null;
 
   async function handleSync() {
     if (profile === null) return;
@@ -178,7 +182,11 @@ function OrgAccountsSection({ profile }: Readonly<{ profile: string | null }>) {
               </thead>
               <tbody className="divide-y divide-border-subtle">
                 {orgData.accounts.map(a => (
-                  <tr key={a.id} className="hover:bg-bg-tertiary/20">
+                  <tr
+                    key={a.id}
+                    className={`cursor-pointer transition-colors ${selectedAccountId === a.id ? 'bg-bg-tertiary/40' : 'hover:bg-bg-tertiary/20'}`}
+                    onClick={() => { setSelectedAccountId(selectedAccountId === a.id ? null : a.id); }}
+                  >
                     <td className="px-4 py-1.5 font-mono text-text-secondary">{a.id}</td>
                     <td className="px-4 py-1.5 text-text-primary">{a.name}</td>
                     <td className="px-4 py-1.5 text-text-muted">{a.ouPath.length > 0 ? a.ouPath : '—'}</td>
@@ -189,6 +197,57 @@ function OrgAccountsSection({ profile }: Readonly<{ profile: string | null }>) {
               </tbody>
             </table>
           </div>
+
+          {selectedAccount !== null && (
+            <div className="border-t border-accent/30 bg-bg-tertiary/10 px-5 py-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-text-primary">{selectedAccount.name}</h4>
+                  <p className="text-xs text-text-muted font-mono mt-0.5">{selectedAccount.id}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setSelectedAccountId(null); }}
+                  className="rounded-md p-1 text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-xs mb-4">
+                <div className="flex justify-between">
+                  <span className="text-text-muted">Email</span>
+                  <span className="text-text-secondary">{selectedAccount.email}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-muted">Status</span>
+                  <span className="text-text-secondary">{selectedAccount.status}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-muted">OU Path</span>
+                  <span className="text-text-secondary">{selectedAccount.ouPath.length > 0 ? selectedAccount.ouPath : '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-muted">Joined</span>
+                  <span className="text-text-secondary">{selectedAccount.joinedTimestamp.length > 0 ? new Date(selectedAccount.joinedTimestamp).toLocaleDateString() : '—'}</span>
+                </div>
+              </div>
+              {Object.keys(selectedAccount.tags).length > 0 ? (
+                <div>
+                  <h5 className="text-xs font-medium text-text-secondary mb-2">Tags ({String(Object.keys(selectedAccount.tags).length)})</h5>
+                  <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+                    {Object.entries(selectedAccount.tags).sort((a, b) => a[0].localeCompare(b[0])).map(([key, value]) => (
+                      <div key={key} className="contents">
+                        <span className="text-text-muted font-mono">{key}</span>
+                        <span className="text-text-primary">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-text-muted">No tags</p>
+              )}
+            </div>
+          )}
 
           {allTagKeys.length > 0 && (
             <div className="border-t border-border px-4 py-3">
