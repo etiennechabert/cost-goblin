@@ -229,6 +229,8 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           return { raw, resolved, changed: resolved !== raw };
         });
 
+        const aliasPreviewCount = transformed.filter(t => t.changed).length;
+
         // Deduplicate by resolved value, sort alphabetically
         const seen = new Set<string>();
         const unique = transformed.filter(t => {
@@ -240,10 +242,11 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         return (
           <div className="flex flex-col gap-1">
             <span className="text-xs text-text-muted">
-              Preview — {String(unique.length)} resolved values
+              Preview — {String(allRaw.length)} raw → {String(unique.length)} resolved
               {state.normalize.length > 0 ? ` (${state.normalize})` : ''}
+              {aliasPreviewCount > 0 ? ` · ${String(aliasPreviewCount)} aliased` : ''}
             </span>
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
               {unique.map(({ resolved, changed }) => (
                 <span
                   key={resolved}
