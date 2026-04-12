@@ -57,6 +57,7 @@ export interface TagDimension {
   readonly normalize?: NormalizationRule | undefined;
   readonly separator?: string | undefined;
   readonly aliases?: Readonly<Record<string, readonly string[]>> | undefined;
+  readonly accountTagFallback?: string | undefined;
 }
 
 export interface DimensionsConfig {

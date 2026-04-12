@@ -1,4 +1,4 @@
-import type { BuiltInDimension, CostGoblinConfig, OrgNode, TagDimension } from './config.js';
+import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, OrgNode, TagDimension } from './config.js';
 import type {
   CostQueryParams,
   CostResult,
@@ -96,6 +96,9 @@ export interface CostApi {
   scaffoldConfig(): Promise<void>;
   getSavingsPreferences(): Promise<SavingsPreferences>;
   saveSavingsPreferences(prefs: SavingsPreferences): Promise<void>;
+  discoverTagKeys(): Promise<{ key: string; sampleValues: string[]; rowCount: number }[]>;
+  getDimensionsConfig(): Promise<DimensionsConfig>;
+  saveDimensionsConfig(config: DimensionsConfig): Promise<void>;
   getAutoSyncEnabled(): Promise<boolean>;
   setAutoSyncEnabled(enabled: boolean): Promise<void>;
   getAutoSyncStatus(): Promise<AutoSyncStatus>;

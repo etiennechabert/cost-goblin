@@ -183,6 +183,7 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
       ...(normalize !== undefined ? { normalize } : {}),
       ...(separator !== undefined ? { separator } : {}),
       ...(aliases !== undefined ? { aliases } : {}),
+      ...(typeof tag['accountTagFallback'] === 'string' ? { accountTagFallback: tag['accountTagFallback'] } : {}),
     };
   });
 
