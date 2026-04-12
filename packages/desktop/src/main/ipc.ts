@@ -1398,7 +1398,12 @@ tags: []
         : `read_parquet('${ctx.dataDir}/aws/raw/daily-*/*.parquet')`;
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-      // Single query: get all tag keys with counts AND sample values
+      // Get total row count for coverage %
+      const totalSql = `SELECT COUNT(*) AS total FROM ${rawParquet} WHERE line_item_usage_start_date >= '${thirtyDaysAgo}'`;
+      const totalRows = await queryAll(conn, totalSql);
+      const totalRowCount = totalRows[0] !== undefined ? toNum(totalRows[0]['total']) : 0;
+
+      // Single query: get all tag keys with counts, distinct values, AND top values
       const sql = `
         WITH tags AS (
           SELECT unnest(map_keys(resource_tags)) AS tag_key,
@@ -1410,26 +1415,27 @@ tags: []
         ranked AS (
           SELECT tag_key, tag_val,
                  COUNT(*) AS val_cnt,
-                 COUNT(*) OVER (PARTITION BY tag_key) AS key_cnt,
+                 SUM(COUNT(*)) OVER (PARTITION BY tag_key) AS key_cnt,
+                 COUNT(*) OVER (PARTITION BY tag_key) AS distinct_cnt,
                  ROW_NUMBER() OVER (PARTITION BY tag_key ORDER BY COUNT(*) DESC) AS rn
           FROM tags
           WHERE tag_val IS NOT NULL AND tag_val != ''
           GROUP BY tag_key, tag_val
         )
-        SELECT tag_key, key_cnt, tag_val, val_cnt
+        SELECT tag_key, key_cnt, distinct_cnt, tag_val, val_cnt
         FROM ranked
         WHERE rn <= 10
         ORDER BY key_cnt DESC, tag_key, rn
       `;
       const rows = await queryAll(conn, sql);
 
-      const tagMap = new Map<string, { rowCount: number; values: { val: string; cnt: number }[] }>();
+      const tagMap = new Map<string, { rowCount: number; distinctCount: number; values: { val: string; cnt: number }[] }>();
       for (const row of rows) {
         const key = toStr(row['tag_key']);
         if (key.length === 0) continue;
         let entry = tagMap.get(key);
         if (entry === undefined) {
-          entry = { rowCount: toNum(row['key_cnt']), values: [] };
+          entry = { rowCount: toNum(row['key_cnt']), distinctCount: toNum(row['distinct_cnt']), values: [] };
           tagMap.set(key, entry);
         }
         entry.values.push({ val: toStr(row['tag_val']), cnt: toNum(row['val_cnt']) });
@@ -1439,6 +1445,8 @@ tags: []
         key,
         sampleValues: data.values.map(v => v.val),
         rowCount: data.rowCount,
+        distinctCount: data.distinctCount,
+        coveragePct: totalRowCount > 0 ? Math.round((data.rowCount / totalRowCount) * 100) : 0,
       }));
 
       const samplePeriod = `last 30 days (since ${thirtyDaysAgo})`;

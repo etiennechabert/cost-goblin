@@ -235,7 +235,7 @@ export class MockCostApi implements CostApi {
   syncOrgAccounts(): Promise<{ accounts: readonly never[]; orgId: string; syncedAt: string }> { return Promise.resolve({ accounts: [], orgId: 'mock', syncedAt: new Date().toISOString() }); }
   getOrgSyncResult(): Promise<null> { return Promise.resolve(null); }
   getOrgSyncProgress(): Promise<null> { return Promise.resolve(null); }
-  discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number }[]; samplePeriod: string }> { return Promise.resolve({ tags: [{ key: 'team', sampleValues: ['platform', 'payments'], rowCount: 500 }, { key: 'environment', sampleValues: ['production', 'staging'], rowCount: 400 }], samplePeriod: '2026-04' }); }
+  discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> { return Promise.resolve({ tags: [{ key: 'team', sampleValues: ['platform', 'payments'], rowCount: 500, distinctCount: 8, coveragePct: 45 }, { key: 'environment', sampleValues: ['production', 'staging'], rowCount: 400, distinctCount: 4, coveragePct: 36 }], samplePeriod: '2026-04' }); }
   getDimensionsConfig(): Promise<DimensionsConfig> { return Promise.resolve({ builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name' }], tags: [{ tagName: 'team', label: 'Team', concept: 'owner' as const }] }); }
   saveDimensionsConfig(): Promise<void> { return Promise.resolve(); }
   getAutoSyncEnabled(): Promise<boolean> { return Promise.resolve(false); }

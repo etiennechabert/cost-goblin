@@ -53,7 +53,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   onCancel: () => void;
   onRemove: (() => void) | undefined;
   availableTags: readonly string[];
-  discoveredTags: readonly { key: string; sampleValues: string[]; rowCount: number }[];
+  discoveredTags: readonly { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[];
   accountTagKeys: readonly string[];
   orgAccounts: readonly { tags: Readonly<Record<string, string>> }[];
 }>) {
@@ -139,7 +139,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         <div className="flex flex-col gap-1">
           {tagMatch !== undefined && (
             <>
-              <span className="text-xs text-text-muted">{tagMatch.rowCount.toLocaleString()} rows — top values</span>
+              <span className="text-xs text-text-muted">{String(tagMatch.coveragePct)}% coverage · {String(tagMatch.distinctCount)} distinct values</span>
               <div className="flex flex-wrap gap-1">
                 {tagMatch.sampleValues.map(v => (
                   <span key={v} className="rounded bg-bg-tertiary/50 px-1.5 py-0.5 text-[10px] text-text-secondary">{v}</span>
@@ -508,7 +508,7 @@ export function DimensionsView() {
                       <th key={t.key} className="px-3 py-2 font-medium whitespace-nowrap">
                         <div className="flex flex-col gap-0.5">
                           <span className="font-mono">{t.key}</span>
-                          <span className="text-[9px] text-text-muted font-normal">{t.rowCount.toLocaleString()} rows</span>
+                          <span className="text-[9px] text-text-muted font-normal">{String(t.coveragePct)}% · {String(t.distinctCount)} values</span>
                         </div>
                       </th>
                     ))}
