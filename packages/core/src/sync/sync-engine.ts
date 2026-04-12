@@ -193,7 +193,7 @@ export async function runSync(options: SyncEngineOptions): Promise<{ filesDownlo
   try {
     await rm(stagingDir, { recursive: true });
   } catch {
-    // ignore
+    // staging cleanup is best-effort
   }
 
   // Phase 7: Save new state

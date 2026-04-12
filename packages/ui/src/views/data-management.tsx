@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { AccountMappingStatus, DataInventoryResult, CostGoblinConfig } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -353,10 +353,12 @@ export function DataManagement() {
   const missingPeriods = inventory?.periods.filter(p => p.localStatus === 'missing') ?? [];
   const missingWithinRetention = missingPeriods.filter(p => p.period >= retentionCutoffPeriod);
 
-  if (!initialized && inventoryQuery.status === 'success' && missingWithinRetention.length > 0) {
-    setSelected(new Set(missingWithinRetention.map(p => p.period)));
-    setInitialized(true);
-  }
+  useEffect(() => {
+    if (!initialized && inventoryQuery.status === 'success' && missingWithinRetention.length > 0) {
+      setSelected(new Set(missingWithinRetention.map(p => p.period)));
+      setInitialized(true);
+    }
+  }, [initialized, inventoryQuery.status, missingWithinRetention]);
 
   function togglePeriod(period: string) {
     setSelected(prev => {
@@ -392,7 +394,7 @@ export function DataManagement() {
         } else if (s.status === 'idle') {
           setDailySyncState({ status: 'idle' });
         }
-      });
+      }).catch(() => { /* poll failure is transient */ });
     }, 500);
 
     try {
@@ -408,17 +410,17 @@ export function DataManagement() {
   }
 
   function handleDeleteDaily(period: string) {
-    void api.deleteLocalPeriod(period, 'daily').then(() => { setDailyRefreshKey(k => k + 1); });
+    void api.deleteLocalPeriod(period, 'daily').then(() => { setDailyRefreshKey(k => k + 1); }).catch(() => { /* deletion best-effort */ });
   }
 
   function handleDeleteHourly(period: string) {
-    void api.deleteLocalPeriod(period, 'hourly').then(() => { setHourlyRefreshKey(k => k + 1); });
+    void api.deleteLocalPeriod(period, 'hourly').then(() => { setHourlyRefreshKey(k => k + 1); }).catch(() => { /* deletion best-effort */ });
   }
 
   function handleDeleteAll() {
     const local = inventory?.periods.filter(p => p.localStatus === 'repartitioned') ?? [];
     const promises = local.map(p => api.deleteLocalPeriod(p.period, 'daily'));
-    void Promise.all(promises).then(() => { setDailyRefreshKey(k => k + 1); setShowDeleteAll(false); });
+    void Promise.all(promises).then(() => { setDailyRefreshKey(k => k + 1); setShowDeleteAll(false); }).catch(() => { /* deletion best-effort */ });
   }
 
   const isNotConfigured = configQuery.status === 'error' || (configQuery.status === 'success' && config === null);
@@ -460,16 +462,20 @@ export function DataManagement() {
   const costOptMissing = (costOptInventory?.periods.filter(p => p.localStatus === 'missing') ?? []).filter(p => p.period >= costOptRetentionCutoffPeriod);
 
   const [hourlyInitialized, setHourlyInitialized] = useState(false);
-  if (!hourlyInitialized && hourlyInventoryQuery.status === 'success' && hourlyMissing.length > 0) {
-    setHourlySelected(new Set(hourlyMissing.map(p => p.period)));
-    setHourlyInitialized(true);
-  }
+  useEffect(() => {
+    if (!hourlyInitialized && hourlyInventoryQuery.status === 'success' && hourlyMissing.length > 0) {
+      setHourlySelected(new Set(hourlyMissing.map(p => p.period)));
+      setHourlyInitialized(true);
+    }
+  }, [hourlyInitialized, hourlyInventoryQuery.status, hourlyMissing]);
 
   const [costOptInitialized, setCostOptInitialized] = useState(false);
-  if (!costOptInitialized && costOptInventoryQuery.status === 'success' && costOptMissing.length > 0) {
-    setCostOptSelected(new Set(costOptMissing.map(p => p.period)));
-    setCostOptInitialized(true);
-  }
+  useEffect(() => {
+    if (!costOptInitialized && costOptInventoryQuery.status === 'success' && costOptMissing.length > 0) {
+      setCostOptSelected(new Set(costOptMissing.map(p => p.period)));
+      setCostOptInitialized(true);
+    }
+  }, [costOptInitialized, costOptInventoryQuery.status, costOptMissing]);
 
   function toggleHourlyPeriod(period: string) {
     setHourlySelected(prev => {
@@ -505,7 +511,7 @@ export function DataManagement() {
         } else if (s.status === 'idle') {
           setHourlySyncState({ status: 'idle' });
         }
-      });
+      }).catch(() => { /* poll failure is transient */ });
     }, 500);
 
     try {
@@ -537,7 +543,7 @@ export function DataManagement() {
   }
 
   function handleDeleteCostOpt(period: string) {
-    void api.deleteLocalPeriod(period, 'cost-optimization').then(() => { setCostOptRefreshKey(k => k + 1); });
+    void api.deleteLocalPeriod(period, 'cost-optimization').then(() => { setCostOptRefreshKey(k => k + 1); }).catch(() => { /* deletion best-effort */ });
   }
 
   async function handleCostOptSync() {
@@ -558,7 +564,7 @@ export function DataManagement() {
         } else if (s.status === 'idle') {
           setCostOptSyncState({ status: 'idle' });
         }
-      });
+      }).catch(() => { /* poll failure is transient */ });
     }, 500);
 
     try {

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
@@ -377,7 +377,7 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
       ...(state.costOptPath.length > 0 ? { costOptBucket: state.costOptPath } : {}),
     }).then(() => {
       onComplete();
-    });
+    }).catch(() => { setSaving(false); });
   }
 
   const paths: { label: string; value: string }[] = [];
@@ -453,12 +453,14 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   const [collectedPaths, setCollectedPaths] = useState({ daily: '', hourly: '', costOpt: '' });
   const [bucketsLoaded, setBucketsLoaded] = useState(false);
 
-  if (isSourceMode && !bucketsLoaded) {
-    setBucketsLoaded(true);
-    void api.listS3Buckets(initialProfile).then(result => {
-      setWizard({ step: 'bucket', profile: initialProfile, source: initialSource, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
-    });
-  }
+  useEffect(() => {
+    if (isSourceMode && !bucketsLoaded) {
+      setBucketsLoaded(true);
+      void api.listS3Buckets(initialProfile).then(result => {
+        setWizard({ step: 'bucket', profile: initialProfile, source: initialSource, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
+      });
+    }
+  }, [isSourceMode, bucketsLoaded, api, initialProfile, initialSource]);
 
   function handleWelcomeNext() {
     setWizard({ step: 'profile', profiles: [], loading: true, selected: '' });

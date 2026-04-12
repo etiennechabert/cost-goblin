@@ -44,13 +44,13 @@ export function CostTable({ rows, topServices, onEntityClick, onServiceClick }: 
                 <button
                   type="button"
                   className={`flex items-center gap-1.5 hover:underline ${
-                    row.isVirtual === true
+                    row.isVirtual
                       ? 'font-semibold text-warning hover:text-warning'
                       : 'font-medium text-accent hover:text-accent-hover'
                   }`}
                   onClick={(e) => { e.stopPropagation(); onEntityClick(row.entity); }}
                 >
-                  {row.isVirtual === true && (
+                  {row.isVirtual && (
                     <>
                       <Folder className="h-3.5 w-3.5 shrink-0" />
                       <ChevronRight className="h-3 w-3 shrink-0" />

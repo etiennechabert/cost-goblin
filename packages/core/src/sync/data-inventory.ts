@@ -62,6 +62,7 @@ async function listRawPeriods(rawDir: string, tierPrefix: string): Promise<strin
       .map(e => e.slice(tierPrefix.length + 1).slice(0, 7));
     return [...new Set(raw)].sort((a, b) => a.localeCompare(b));
   } catch {
+    // raw dir may not exist yet
     return [];
   }
 }

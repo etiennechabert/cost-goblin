@@ -63,7 +63,7 @@ export async function createS3Handle(profile: string, region?: string): Promise<
           }
         }
 
-        continuationToken = response.IsTruncated === true ? response.NextContinuationToken : undefined;
+        continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
       } while (continuationToken !== undefined);
 
       return entries;
@@ -79,22 +79,22 @@ export async function createS3Handle(profile: string, region?: string): Promise<
         throw new Error(`Empty response body for s3://${bucket}/${key}`);
       }
 
-      const chunks: Buffer[] = [];
+      const chunks: Uint8Array[] = [];
       const body = response.Body;
       let totalBytes = 0;
-      if (typeof (body as NodeJS.ReadableStream)[Symbol.asyncIterator] === 'function') {
-        for await (const chunk of body as AsyncIterable<Uint8Array>) {
+      if (Symbol.asyncIterator in body) {
+        const iterable = body as AsyncIterable<Uint8Array>;
+        for await (const chunk of iterable) {
           if (options?.signal?.aborted) {
             throw new Error('Download cancelled');
           }
-          const buf = Buffer.from(chunk);
-          chunks.push(buf);
-          totalBytes += buf.length;
+          chunks.push(chunk);
+          totalBytes += chunk.byteLength;
           options?.onBytes?.(totalBytes);
         }
       }
 
-      await writeFile(localPath, Buffer.concat(chunks));
+      await writeFile(localPath, Buffer.concat(chunks.map(c => Buffer.from(c))));
     },
   };
 }
