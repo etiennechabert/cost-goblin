@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { AccountMappingStatus, DataInventoryResult, CostGoblinConfig } from '@costgoblin/core/browser';
+import type { DataInventoryResult, CostGoblinConfig } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
@@ -27,29 +27,96 @@ type SyncState =
   | { status: 'done'; filesDownloaded: number }
   | { status: 'error'; message: string };
 
-function AccountMappingSection({ status, loading }: Readonly<{ status: AccountMappingStatus | null; loading: boolean }>) {
+type OrgSyncState =
+  | { status: 'idle' }
+  | { status: 'syncing'; phase: string; done: number; total: number }
+  | { status: 'done'; count: number }
+  | { status: 'error'; message: string };
+
+function OrgAccountsSection({ profile }: Readonly<{ profile: string | null }>) {
+  const api = useCostApi();
+  const orgQuery = useQuery(() => api.getOrgSyncResult(), []);
   const [expanded, setExpanded] = useState(false);
+  const [syncState, setSyncState] = useState<OrgSyncState>({ status: 'idle' });
+  const [tagFilter, setTagFilter] = useState('');
 
-  if (loading) return null;
+  const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
 
-  if (status === null || status.status === 'missing') {
+  async function handleSync() {
+    if (profile === null) return;
+    setSyncState({ status: 'syncing', phase: 'accounts', done: 0, total: 0 });
+
+    const pollInterval = setInterval(() => {
+      void api.getOrgSyncProgress().then(p => {
+        if (p !== null) {
+          setSyncState({ status: 'syncing', phase: p.phase, done: p.done, total: p.total });
+        }
+      }).catch(() => { /* transient */ });
+    }, 500);
+
+    try {
+      const result = await api.syncOrgAccounts(profile);
+      clearInterval(pollInterval);
+      setSyncState({ status: 'done', count: result.accounts.length });
+    } catch (err: unknown) {
+      clearInterval(pollInterval);
+      setSyncState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  // Collect all unique tag keys across accounts
+  const allTagKeys = orgData !== null
+    ? [...new Set(orgData.accounts.flatMap(a => Object.keys(a.tags)))].sort()
+    : [];
+
+  const filteredTagKeys = tagFilter.length > 0
+    ? allTagKeys.filter(k => k.toLowerCase().includes(tagFilter.toLowerCase()))
+    : allTagKeys;
+
+  if (orgData === null) {
     return (
       <div className="rounded-xl border border-warning/50 bg-warning-muted p-4">
         <div className="flex items-start gap-3">
           <span className="text-warning text-lg">&#9888;</span>
-          <div>
-            <p className="text-sm font-medium text-warning">Account mapping not found</p>
+          <div className="flex-1">
+            <p className="text-sm font-medium text-warning">AWS Organizations not synced</p>
             <p className="text-xs text-text-secondary mt-1 leading-relaxed">
-              CostGoblin uses an AWS Organizations account export to map Account IDs to friendly names.
+              Sync your AWS Organization to discover accounts, their OU placement, and tags.
+              This replaces the manual CSV export.
             </p>
-            <div className="mt-3 rounded-lg border border-border bg-bg-primary/50 p-3 text-xs text-text-secondary leading-relaxed">
-              <p className="font-medium text-text-secondary mb-1">How to export:</p>
-              <ol className="list-decimal list-inside space-y-1">
-                <li>Go to <span className="text-text-primary">AWS Organizations → AWS accounts</span></li>
-                <li>Click <span className="text-text-primary">Actions → Export account list</span></li>
-                <li>Save the CSV to <span className="font-mono text-accent">data/raw/</span></li>
-              </ol>
-            </div>
+
+            {syncState.status === 'syncing' && (
+              <div className="mt-3 rounded-lg border border-accent/50 bg-positive-muted px-3 py-2">
+                <div className="flex items-center gap-2 text-xs text-accent">
+                  <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
+                  <span className="capitalize">{syncState.phase}</span>
+                  {syncState.total > 0 && <span>— {String(syncState.done)}/{String(syncState.total)}</span>}
+                </div>
+              </div>
+            )}
+            {syncState.status === 'error' && (
+              <div className="mt-3 rounded-lg border border-negative/50 bg-negative-muted px-3 py-2 text-xs text-negative">
+                {syncState.message}
+              </div>
+            )}
+            {syncState.status === 'done' && (
+              <div className="mt-3 rounded-lg border border-accent/50 bg-positive-muted px-3 py-2 text-xs text-accent">
+                Synced {String(syncState.count)} accounts
+              </div>
+            )}
+
+            {profile !== null && syncState.status !== 'syncing' && (
+              <button
+                type="button"
+                onClick={() => { void handleSync(); }}
+                className="mt-3 rounded-md border border-accent/50 bg-accent/10 px-4 py-1.5 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+              >
+                Sync from AWS Organizations
+              </button>
+            )}
+            {profile === null && (
+              <p className="text-xs text-text-muted mt-2">Configure an AWS profile first via the setup wizard.</p>
+            )}
           </div>
         </div>
       </div>
@@ -58,36 +125,92 @@ function AccountMappingSection({ status, loading }: Readonly<{ status: AccountMa
 
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden">
-      <button
-        type="button"
-        onClick={() => { setExpanded(v => !v); }}
-        className="flex items-center gap-2 w-full px-4 py-3 text-left hover:bg-bg-tertiary/30 transition-colors"
-      >
-        <div className="h-2 w-2 rounded-full bg-accent" />
-        <span className="text-sm font-medium text-text-primary">Account mapping</span>
-        <span className="text-xs text-text-secondary">{String(status.accounts.length)} accounts</span>
-        <span className="text-text-muted ml-auto text-xs">{expanded ? '▾' : '▸'}</span>
-      </button>
+      <div className="flex items-center gap-2 px-4 py-3">
+        <button
+          type="button"
+          onClick={() => { setExpanded(v => !v); }}
+          className="flex items-center gap-2 flex-1 text-left hover:bg-bg-tertiary/30 transition-colors rounded -mx-1 px-1"
+        >
+          <div className="h-2 w-2 rounded-full bg-accent" />
+          <span className="text-sm font-medium text-text-primary">AWS Organization</span>
+          <span className="text-xs text-text-secondary">{String(orgData.accounts.length)} accounts</span>
+          <span className="text-xs text-text-muted">{String(allTagKeys.length)} tag keys</span>
+          <span className="text-text-muted ml-auto text-xs">{expanded ? '▾' : '▸'}</span>
+        </button>
+        {profile !== null && (
+          <button
+            type="button"
+            onClick={() => { void handleSync(); }}
+            disabled={syncState.status === 'syncing'}
+            className="text-xs text-text-muted hover:text-accent transition-colors disabled:opacity-50"
+            title="Re-sync"
+          >
+            ↻
+          </button>
+        )}
+      </div>
+
+      {syncState.status === 'syncing' && (
+        <div className="px-4 pb-2">
+          <div className="flex items-center gap-2 text-xs text-accent">
+            <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
+            <span className="capitalize">{syncState.phase}</span>
+            {syncState.total > 0 && <span>— {String(syncState.done)}/{String(syncState.total)}</span>}
+          </div>
+        </div>
+      )}
+
       {expanded && (
-        <div className="border-t border-border max-h-48 overflow-y-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-left text-text-muted">
-                <th className="px-4 py-2 font-medium">Account ID</th>
-                <th className="px-4 py-2 font-medium">Name</th>
-                <th className="px-4 py-2 font-medium">State</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border-subtle">
-              {status.accounts.map(a => (
-                <tr key={a.accountId} className="hover:bg-bg-tertiary/20">
-                  <td className="px-4 py-1.5 font-mono text-text-secondary">{a.accountId}</td>
-                  <td className="px-4 py-1.5 text-text-primary">{a.name}</td>
-                  <td className="px-4 py-1.5 text-text-muted">{a.state}</td>
+        <div className="border-t border-border">
+          <div className="px-4 py-2 text-[10px] text-text-muted">
+            Synced {new Date(orgData.syncedAt).toLocaleDateString()} · Org {orgData.orgId}
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-text-muted sticky top-0 bg-bg-secondary">
+                  <th className="px-4 py-2 font-medium">Account ID</th>
+                  <th className="px-4 py-2 font-medium">Name</th>
+                  <th className="px-4 py-2 font-medium">OU Path</th>
+                  <th className="px-4 py-2 font-medium">Status</th>
+                  <th className="px-4 py-2 font-medium">Tags</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-border-subtle">
+                {orgData.accounts.map(a => (
+                  <tr key={a.id} className="hover:bg-bg-tertiary/20">
+                    <td className="px-4 py-1.5 font-mono text-text-secondary">{a.id}</td>
+                    <td className="px-4 py-1.5 text-text-primary">{a.name}</td>
+                    <td className="px-4 py-1.5 text-text-muted">{a.ouPath.length > 0 ? a.ouPath : '—'}</td>
+                    <td className="px-4 py-1.5 text-text-muted">{a.status}</td>
+                    <td className="px-4 py-1.5 text-text-muted">{String(Object.keys(a.tags).length)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {allTagKeys.length > 0 && (
+            <div className="border-t border-border px-4 py-3">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-medium text-text-secondary">Discovered Tags</h4>
+                <input
+                  type="text"
+                  placeholder="Filter tags..."
+                  value={tagFilter}
+                  onChange={e => { setTagFilter(e.target.value); }}
+                  className="w-40 rounded border border-border bg-bg-primary px-2 py-1 text-[10px] text-text-primary outline-none focus:border-accent"
+                />
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {filteredTagKeys.map(key => (
+                  <span key={key} className="rounded-full border border-border bg-bg-tertiary/30 px-2 py-0.5 text-[10px] text-text-secondary">
+                    {key}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -328,7 +451,6 @@ export function DataManagement() {
   const [costOptRefreshKey, setCostOptRefreshKey] = useState(0);
   const configQuery = useQuery(() => api.getConfig(), [configRefreshKey]);
   const inventoryQuery = useQuery(() => api.getDataInventory(), [dailyRefreshKey]);
-  const accountQuery = useQuery(() => api.getAccountMapping(), [configRefreshKey]);
   const [selected, setSelected] = useState(new Set<string>());
   const [hourlySelected, setHourlySelected] = useState(new Set<string>());
   const [costOptSelected, setCostOptSelected] = useState(new Set<string>());
@@ -649,7 +771,7 @@ export function DataManagement() {
       </div>
 
       {/* Account mapping */}
-      <AccountMappingSection status={accountQuery.status === 'success' ? accountQuery.data : null} loading={accountQuery.status === 'loading'} />
+      <OrgAccountsSection profile={awsProfile} />
 
       {inventoryQuery.status === 'loading' && (
         <div className="rounded-xl border border-border bg-bg-secondary/50 p-12 text-center text-text-secondary">

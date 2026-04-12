@@ -20,6 +20,8 @@ import type {
   DataTier,
   AccountMappingStatus,
   SavingsPreferences,
+  OrgSyncResult,
+  OrgSyncProgress,
 } from '@costgoblin/core';
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -107,6 +109,15 @@ const api: CostApi = {
   },
   saveSavingsPreferences(prefs: SavingsPreferences): Promise<void> {
     return invoke<undefined>('savings:save-preferences', prefs).then(() => undefined);
+  },
+  syncOrgAccounts(profile: string): Promise<OrgSyncResult> {
+    return invoke<OrgSyncResult>('org:sync-accounts', profile);
+  },
+  getOrgSyncResult(): Promise<OrgSyncResult | null> {
+    return invoke<OrgSyncResult | null>('org:get-result');
+  },
+  getOrgSyncProgress(): Promise<OrgSyncProgress | null> {
+    return invoke<OrgSyncProgress | null>('org:get-progress');
   },
 };
 

@@ -58,4 +58,4 @@ export type {
   QueryState,
 } from './query.js';
 
-export type { Dimension, CostApi, DataInventoryResult, DataTier, AccountMappingStatus, AccountMappingEntry, SavingsPreferences } from './api.js';
+export type { Dimension, CostApi, DataInventoryResult, DataTier, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, OrgAccount, OrgSyncResult, OrgSyncProgress } from './api.js';
