@@ -209,7 +209,6 @@ export function DimensionsView() {
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [addingNew, setAddingNew] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [tagSearch, setTagSearch] = useState('');
 
   const discoveredTags = tagsQuery.status === 'success' ? tagsQuery.data : [];
   const config: DimensionsConfig | null = configQuery.status === 'success' ? configQuery.data : null;
@@ -228,11 +227,6 @@ export function DimensionsView() {
     .map(t => t.key)
     .filter(k => !mappedTagNames.has(k))
     .sort();
-
-  // Filter discovered tags
-  const filteredDiscovered = tagSearch.length > 0
-    ? discoveredTags.filter(t => t.key.toLowerCase().includes(tagSearch.toLowerCase()))
-    : discoveredTags;
 
   function editingToTagDimension(editing: EditingTag): TagDimension {
     const base: { tagName: string; label: string } = { tagName: editing.tagName, label: editing.label };
@@ -269,20 +263,6 @@ export function DimensionsView() {
   }
 
   // Quick-add a discovered tag as a dimension
-  function handleQuickAdd(tagKey: string) {
-    const label = tagKey
-      .replace(/^(user:|aws:|resource_tags_user_)/i, '')
-      .replaceAll('_', ' ')
-      .replaceAll('-', ' ')
-      .replace(/\b\w/g, c => c.toUpperCase());
-
-    setAddingNew(true);
-    setEditingIdx(null);
-    // The TagEditor will be shown with pre-filled values
-    // We need to pass the initial state — using a key trick
-    setQuickAddState({ tagName: tagKey, label, concept: '', normalize: '', aliases: '', fallbackTag: undefined });
-  }
-
   const [quickAddState, setQuickAddState] = useState<EditingTag | null>(null);
 
   void refreshKey; // used as useQuery dep to force re-fetch
@@ -389,87 +369,107 @@ export function DimensionsView() {
         </div>
       )}
 
-      {/* Discovered tags from billing data */}
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium text-text-secondary">
-            Discovered Resource Tags
-            {discoveredTags.length > 0 && <span className="text-text-muted ml-1">({String(discoveredTags.length)})</span>}
-          </h3>
-          <input
-            type="text"
-            placeholder="Search tags..."
-            value={tagSearch}
-            onChange={e => { setTagSearch(e.target.value); }}
-            className="w-48 rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
-          />
-        </div>
-
-        {tagsQuery.status === 'loading' && (
-          <div className="text-sm text-text-secondary">Scanning billing data for tags...</div>
-        )}
-
-        {filteredDiscovered.length > 0 && (
-          <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden">
-            <table className="w-full text-xs">
+      {/* Resource tags pivot table — columns are tag keys, rows are top values */}
+      {discoveredTags.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-text-secondary">
+              Resource Tags
+              <span className="text-text-muted ml-1">({String(discoveredTags.length)} keys found in billing data)</span>
+            </h3>
+          </div>
+          <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-x-auto">
+            <table className="text-xs">
               <thead>
                 <tr className="border-b border-border text-left text-text-muted">
-                  <th className="px-4 py-2 font-medium">Tag Key</th>
-                  <th className="px-4 py-2 font-medium">Rows</th>
-                  <th className="px-4 py-2 font-medium">Sample Values</th>
-                  <th className="px-4 py-2 font-medium w-24"></th>
+                  {discoveredTags.map(t => (
+                    <th key={t.key} className="px-3 py-2 font-medium whitespace-nowrap">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-mono">{t.key}</span>
+                        <span className="text-[9px] text-text-muted font-normal">{t.rowCount.toLocaleString()} rows</span>
+                      </div>
+                    </th>
+                  ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border-subtle">
-                {filteredDiscovered.map(tag => (
-                  <tr key={tag.key} className="hover:bg-bg-tertiary/20">
-                    <td className="px-4 py-2 font-mono text-text-primary">{tag.key}</td>
-                    <td className="px-4 py-2 tabular-nums text-text-secondary">{tag.rowCount.toLocaleString()}</td>
-                    <td className="px-4 py-2 text-text-muted">
-                      <div className="flex flex-wrap gap-1">
-                        {tag.sampleValues.slice(0, 5).map(v => (
-                          <span key={v} className="rounded bg-bg-tertiary/50 px-1.5 py-0.5 text-[10px]">{v}</span>
-                        ))}
-                        {tag.sampleValues.length > 5 && <span className="text-[10px] text-text-muted">+{String(tag.sampleValues.length - 5)}</span>}
-                      </div>
-                    </td>
-                    <td className="px-4 py-2">
-                      {mappedTagNames.has(tag.key) ? (
-                        <span className="text-[10px] text-accent">Mapped</span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => { handleQuickAdd(tag.key); }}
-                          className="rounded px-2 py-0.5 text-[10px] font-medium text-accent hover:bg-accent/10 transition-colors"
-                        >
-                          + Add
-                        </button>
-                      )}
-                    </td>
+              <tbody>
+                {Array.from({ length: Math.max(...discoveredTags.map(t => t.sampleValues.length), 0) }, (_, rowIdx) => (
+                  <tr key={rowIdx} className="border-b border-border-subtle">
+                    {discoveredTags.map(t => {
+                      const val = t.sampleValues[rowIdx];
+                      return (
+                        <td key={t.key} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
+                          {val !== undefined ? val : ''}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Account tags from AWS Organizations */}
-      {accountTagKeys.length > 0 && (
+      {tagsQuery.status === 'loading' && (
+        <div className="text-sm text-text-secondary">Scanning billing data for tags...</div>
+      )}
+
+      {/* Account tags pivot table */}
+      {accountTagKeys.length > 0 && orgData !== null && (
         <div className="flex flex-col gap-3">
-          <h3 className="text-sm font-medium text-text-secondary">
-            Account Tags (from AWS Organizations)
-            <span className="text-text-muted ml-1">({String(accountTagKeys.length)} keys)</span>
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-text-secondary">
+              Account Tags
+              <span className="text-text-muted ml-1">({String(accountTagKeys.length)} keys from AWS Organizations)</span>
+            </h3>
+          </div>
           <p className="text-xs text-text-muted">
-            These tags are set at the account level in AWS Organizations. They can be used as fallback values when resource-level tags are missing.
+            Values sorted by frequency. Can be used as fallback when resource-level tags are missing.
           </p>
-          <div className="flex flex-wrap gap-1.5">
-            {accountTagKeys.map(key => (
-              <span key={key} className="rounded-full border border-border bg-bg-tertiary/30 px-2.5 py-0.5 text-[10px] text-text-secondary">
-                {key}
-              </span>
-            ))}
+          <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-x-auto">
+            <table className="text-xs">
+              <thead>
+                <tr className="border-b border-border text-left text-text-muted">
+                  {accountTagKeys.map(key => {
+                    const count = orgData.accounts.filter(a => a.tags[key] !== undefined && a.tags[key] !== '').length;
+                    return (
+                      <th key={key} className="px-3 py-2 font-medium whitespace-nowrap">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-mono">{key}</span>
+                          <span className="text-[9px] text-text-muted font-normal">{String(count)}/{String(orgData.accounts.length)} accounts</span>
+                        </div>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  // For each tag key, compute sorted unique values by frequency
+                  const columnValues = accountTagKeys.map(key => {
+                    const counts = new Map<string, number>();
+                    for (const acct of orgData.accounts) {
+                      const val = acct.tags[key];
+                      if (val !== undefined && val.length > 0) {
+                        counts.set(val, (counts.get(val) ?? 0) + 1);
+                      }
+                    }
+                    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([v, c]) => `${v} (${String(c)})`);
+                  });
+                  const maxRows = Math.max(...columnValues.map(c => c.length), 0);
+                  return Array.from({ length: Math.min(maxRows, 15) }, (_, rowIdx) => (
+                    <tr key={rowIdx} className="border-b border-border-subtle">
+                      {columnValues.map((vals, colIdx) => (
+                        <td key={accountTagKeys[colIdx]} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
+                          {vals[rowIdx] ?? ''}
+                        </td>
+                      ))}
+                    </tr>
+                  ));
+                })()}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
