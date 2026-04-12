@@ -42,9 +42,13 @@ export function buildSource(dataDir: string, tier: string, dimensions: Dimension
 
   const tagClause = tagSelects.length > 0 ? `,\n      ${tagSelects.join(',\n      ')}` : '';
 
+  const dateExpr = tier === 'hourly'
+    ? 'line_item_usage_start_date AS usage_date'
+    : 'line_item_usage_start_date::DATE AS usage_date';
+
   return `(
     SELECT
-      line_item_usage_start_date::DATE AS usage_date,
+      ${dateExpr},
       line_item_usage_account_id AS account_id,
       COALESCE(line_item_usage_account_name, '') AS account_name,
       COALESCE(product_region_code, '') AS region,
@@ -70,7 +74,8 @@ export function buildCostQuery(
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
-  const source = buildSource(dataDir, 'daily', dimensions);
+  const costTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
+  const source = buildSource(dataDir, costTier, dimensions);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -216,16 +221,21 @@ export function buildDailyCostsQuery(
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
-  const source = buildSource(dataDir, 'daily', dimensions);
+  const dailyTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
+  const source = buildSource(dataDir, dailyTier, dimensions);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
     ...filterClauses,
   ];
 
+  const dateExpr = dailyTier === 'hourly'
+    ? "strftime(usage_date, '%Y-%m-%d %H:00')"
+    : 'usage_date::VARCHAR';
+
   return `
     SELECT
-      usage_date::VARCHAR AS date,
+      ${dateExpr} AS date,
       ${groupByResolved.fieldExpr} AS group_name,
       SUM(cost) AS cost
     FROM ${source}
