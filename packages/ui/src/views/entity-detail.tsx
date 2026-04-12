@@ -8,7 +8,7 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { formatDollars, formatPercent } from '../components/format.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
-import type { DateRange } from '../components/date-range-picker.js';
+import type { DateRange, Granularity } from '../components/date-range-picker.js';
 
 interface EntityDetailProps {
   entity: string;
@@ -112,6 +112,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   const api = useCostApi();
   const [histogramGroup, setHistogramGroup] = useState<HistogramGroupBy>('service');
   const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange);
+  const [granularity, setGranularity] = useState<Granularity>('daily');
 
   const dateRangeKey = `${dateRange.start}_${dateRange.end}`;
 
@@ -122,8 +123,9 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
         dimension: asDimensionId(dimension),
         dateRange,
         filters: {},
+        granularity,
       }),
-    [entity, dimension, dateRangeKey, api],
+    [entity, dimension, dateRangeKey, granularity, api],
   );
 
   const data: EntityDetailResult | null =
@@ -161,7 +163,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <DateRangePicker value={dateRange} granularity="daily" onChange={(range) => { setDateRange(range); }} />
+          <DateRangePicker value={dateRange} granularity={granularity} onChange={(range, g) => { setDateRange(range); setGranularity(g); }} />
           {data !== null && (
             <button
               type="button"
@@ -214,7 +216,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
             {/* Daily costs histogram — spans 2 columns */}
             <div className="col-span-2 rounded-xl border border-border bg-bg-secondary/50 px-5 py-4">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-text-secondary">Daily Costs</h3>
+                <h3 className="text-sm font-medium text-text-secondary">{granularity === 'hourly' ? 'Hourly Costs' : 'Daily Costs'}</h3>
                 <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
                   {(['service', 'account'] as const).map(g => (
                     <button
