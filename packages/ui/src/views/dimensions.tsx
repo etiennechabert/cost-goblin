@@ -184,32 +184,32 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         </div>
       )}
 
-      {/* Row: Missing value template */}
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-text-muted">Fallback format</span>
-        <input
-          type="text"
-          value={state.missingValueTemplate}
-          onChange={e => { setState(s => ({ ...s, missingValueTemplate: e.target.value })); }}
-          className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary font-mono outline-none focus:border-accent"
-          placeholder="{fallback}"
-        />
-        <span className="text-[10px] text-text-muted">
-          {'{fallback}'} = account tag value. Example: unknown-{'{fallback}'} → unknown-payments
-        </span>
-      </label>
-
-      {/* Row 4: Alias rules (compact) */}
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-text-muted">Alias Rules (canonical: alias1, alias2)</span>
-        <textarea
-          value={state.aliases}
-          onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
-          rows={2}
-          className="rounded border border-border bg-bg-primary px-3 py-1.5 text-[11px] text-text-primary font-mono outline-none focus:border-accent resize-y"
-          placeholder="production: prod, prd&#10;staging: stg, stage"
-        />
-      </label>
+      {/* Row 4: Fallback format + Alias rules side by side */}
+      <div className="grid grid-cols-[1fr_2fr] gap-4 items-start">
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-text-muted">Fallback format</span>
+          <input
+            type="text"
+            value={state.missingValueTemplate}
+            onChange={e => { setState(s => ({ ...s, missingValueTemplate: e.target.value })); }}
+            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary font-mono outline-none focus:border-accent"
+            placeholder="{fallback}"
+          />
+          <span className="text-[10px] text-text-muted">
+            {'{fallback}'} = account tag value
+          </span>
+        </div>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-text-muted">Alias Rules (canonical: alias1, alias2)</span>
+          <textarea
+            value={state.aliases}
+            onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
+            rows={2}
+            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-[11px] text-text-primary font-mono outline-none focus:border-accent resize-y"
+            placeholder="production: prod, prd&#10;staging: stg, stage"
+          />
+        </label>
+      </div>
 
       {/* Row 5: Merged + normalized preview of all values */}
       {(() => {
