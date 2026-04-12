@@ -307,6 +307,20 @@ interface OrgTreeConfig {
   readonly tree: readonly OrgNode[];
 }
 
+function isCredentialError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const name = err.name;
+  if (name === 'CredentialsProviderError' || name === 'TokenProviderError') return true;
+  return err.message.includes('Token is expired') || err.message.includes('SSO session') || err.message.includes('credentials');
+}
+
+function toUserFriendlyError(err: unknown, profile: string): Error {
+  if (isCredentialError(err)) {
+    return new Error(`AWS credentials expired for profile "${profile}". Run: aws sso login --profile ${profile}`);
+  }
+  return err instanceof Error ? err : new Error(String(err));
+}
+
 function isOwnerGroupBy(groupBy: string, dimensions: DimensionsConfig): boolean {
   return dimensions.tags.some(
     t => t.concept === 'owner' && `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === groupBy,
@@ -777,7 +791,9 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         filesDownloaded: result.filesDownloaded,
       };
     } catch (err: unknown) {
-      const error = err instanceof Error ? err : new Error(String(err));
+      const provider = (await getConfig()).providers[0];
+      const profile = provider?.credentials.profile ?? 'default';
+      const error = isCredentialError(err) ? toUserFriendlyError(err, profile) : err instanceof Error ? err : new Error(String(err));
       logger.error(`Sync failed: ${error.message}`);
       state.syncStatuses['default'] = {
         status: 'failed',
@@ -830,7 +846,11 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     } else {
       bucket = provider.sync.daily.bucket;
     }
-    return getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, t);
+    try {
+      return await getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, t);
+    } catch (err: unknown) {
+      throw toUserFriendlyError(err, provider.credentials.profile);
+    }
   });
 
   ipcMain.handle('data:delete-period', async (_event, period: string, tier: 'daily' | 'hourly' | 'cost-optimization' = 'daily'): Promise<void> => {
@@ -899,11 +919,12 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       return result;
     } catch (err: unknown) {
       syncAbortControllers.delete(id);
-      const error = err instanceof Error ? err : new Error(String(err));
-      if (error.message === 'Download cancelled') {
+      const raw = err instanceof Error ? err : new Error(String(err));
+      if (raw.message === 'Download cancelled') {
         state.syncStatuses[id] = { status: 'idle', lastSync: null };
         return { filesDownloaded: 0, rowsProcessed: 0 };
       }
+      const error = isCredentialError(err) ? toUserFriendlyError(err, provider.credentials.profile) : raw;
       logger.error(`Selective sync '${id}' failed: ${error.message}`);
       state.syncStatuses[id] = { status: 'failed', error, lastSync: null };
       throw error;
