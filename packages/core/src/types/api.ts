@@ -96,7 +96,7 @@ export interface CostApi {
   scaffoldConfig(): Promise<void>;
   getSavingsPreferences(): Promise<SavingsPreferences>;
   saveSavingsPreferences(prefs: SavingsPreferences): Promise<void>;
-  discoverTagKeys(): Promise<{ key: string; sampleValues: string[]; rowCount: number }[]>;
+  discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>;
   getDimensionsConfig(): Promise<DimensionsConfig>;
   saveDimensionsConfig(config: DimensionsConfig): Promise<void>;
   getAutoSyncEnabled(): Promise<boolean>;
