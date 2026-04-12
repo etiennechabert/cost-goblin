@@ -95,8 +95,11 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
-    void api.getDataInventory().then((inv) => {
-      const missing = inv.periods.filter(p => p.localStatus === 'missing').length;
+    void Promise.all([api.getDataInventory(), api.getConfig()]).then(([inv, config]) => {
+      const retentionDays = config.providers[0]?.sync.daily.retentionDays ?? 365;
+      const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+      const cutoffPeriod = `${String(cutoff.getFullYear())}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
+      const missing = inv.periods.filter(p => p.localStatus === 'missing' && p.period >= cutoffPeriod).length;
       setMissingPeriods(missing);
     }).catch(() => {
       // ignore — S3 may not be configured yet
