@@ -40,13 +40,41 @@ function costRowsToSlices(data: CostResult | null): PieSlice[] {
   }));
 }
 
-function dailyCostsToBarDays(data: DailyCostsResult | null): BarDay[] {
+function getISOWeekStart(dateStr: string): string {
+  const d = new Date(dateStr);
+  const day = d.getUTCDay();
+  const diff = (day === 0 ? -6 : 1) - day;
+  d.setUTCDate(d.getUTCDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+
+function aggregateToWeekly(days: BarDay[]): BarDay[] {
+  const weeks = new Map<string, { total: number; breakdown: Record<string, number> }>();
+  for (const day of days) {
+    const weekStart = getISOWeekStart(day.date);
+    let week = weeks.get(weekStart);
+    if (week === undefined) {
+      week = { total: 0, breakdown: {} };
+      weeks.set(weekStart, week);
+    }
+    week.total += day.total;
+    for (const [key, val] of Object.entries(day.breakdown)) {
+      week.breakdown[key] = (week.breakdown[key] ?? 0) + val;
+    }
+  }
+  return [...weeks.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, data]) => ({ date, total: data.total, breakdown: data.breakdown }));
+}
+
+function dailyCostsToBarDays(data: DailyCostsResult | null, useWeekly: boolean): BarDay[] {
   if (data === null) return [];
-  return data.days.map(d => ({
+  const daily = data.days.map(d => ({
     date: d.date,
     total: d.total,
     breakdown: { ...d.breakdown },
   }));
+  return useWeekly ? aggregateToWeekly(daily) : daily;
 }
 
 function getProductDimensionId(dimensions: Dimension[]): DimensionId | null {
@@ -185,7 +213,9 @@ function OverviewInner() {
     [histogramDimId, dateRangeKey, filterKey, granularity, api],
   );
 
-  const barDays = dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null);
+  const useWeekly = periodDays > 90;
+  const barDays = dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null, useWeekly);
+  const histogramLoading = dailyQuery.status === 'loading';
 
   // Click a pie slice → set as dimension filter
   function handlePieSliceClick(dimId: DimensionId, name: string) {
@@ -299,7 +329,8 @@ function OverviewInner() {
             onTabChange={setHistogramTab}
             expanded={histogramExpanded}
             onExpandToggle={() => { setHistogramExpanded(prev => !prev); }}
-            title={granularity === 'hourly' ? 'Hourly Costs' : 'Daily Costs'}
+            title={granularity === 'hourly' ? 'Hourly Costs' : useWeekly ? 'Weekly Costs' : 'Daily Costs'}
+            loading={histogramLoading}
           />
         </div>
       </div>
