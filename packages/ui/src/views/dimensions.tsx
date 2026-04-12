@@ -186,19 +186,17 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
 
       {/* Row: Missing value template */}
       <label className="flex flex-col gap-1">
-        <span className="text-xs text-text-muted">When value is missing (after fallback)</span>
+        <span className="text-xs text-text-muted">Fallback format</span>
         <input
           type="text"
           value={state.missingValueTemplate}
           onChange={e => { setState(s => ({ ...s, missingValueTemplate: e.target.value })); }}
           className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary font-mono outline-none focus:border-accent"
-          placeholder={state.fallbackTag !== undefined && state.fallbackTag.length > 0 ? `e.g. unknown-{${state.fallbackTag}}` : 'e.g. unknown-{owner}'}
+          placeholder="{fallback}"
         />
-        {state.missingValueTemplate.length > 0 && (
-          <span className="text-[10px] text-text-muted">
-            Example: {state.missingValueTemplate.replaceAll(/\{[^}]+\}/g, 'some-value')} — variables in {'{ }'} are resolved from other dimensions
-          </span>
-        )}
+        <span className="text-[10px] text-text-muted">
+          {'{fallback}'} = account tag value. Example: unknown-{'{fallback}'} → unknown-payments
+        </span>
       </label>
 
       {/* Row 4: Alias rules (compact) */}
@@ -218,30 +216,30 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         // Collect values with source tracking
         const resourceVals = tagMatch !== undefined ? tagMatch.sampleValues : [];
         const accountVals = fallbackValues.map(([v]) => v);
-        const hasTemplate = state.missingValueTemplate.length > 0;
+        // Fallback format: {fallback} = raw account value, or custom like "unknown-{fallback}"
+        const fallbackFormat = state.missingValueTemplate.length > 0 ? state.missingValueTemplate : '{fallback}';
+        const isPassthrough = fallbackFormat === '{fallback}';
 
-        // When a template is set, account fallback values are replaced by template-generated values
+        // Generate formatted fallback values
         const templateVals: string[] = [];
-        if (hasTemplate) {
-          // Generate template values by substituting each account fallback value
-          const templateHasVar = /\{[^}]+\}/.test(state.missingValueTemplate);
-          if (templateHasVar) {
+        if (!isPassthrough && accountVals.length > 0) {
+          if (fallbackFormat.includes('{fallback}')) {
             for (const acctVal of accountVals) {
-              templateVals.push(state.missingValueTemplate.replaceAll(/\{[^}]+\}/g, acctVal));
+              templateVals.push(fallbackFormat.replaceAll('{fallback}', acctVal));
             }
           } else {
-            // Static template — just one value
-            templateVals.push(state.missingValueTemplate);
+            // Static string, no variable
+            templateVals.push(fallbackFormat);
           }
         }
 
         const resourceSet = new Set(resourceVals);
         const templateSet = new Set(templateVals);
-        // When template is set, don't include raw account vals — they're replaced by template vals
-        const allRaw = hasTemplate
-          ? [...new Set([...resourceVals, ...templateVals])]
-          : [...new Set([...resourceVals, ...accountVals])];
-        const accountSet = hasTemplate ? new Set<string>() : new Set(accountVals);
+        // When format changes the value, show template vals instead of raw account vals
+        const allRaw = isPassthrough
+          ? [...new Set([...resourceVals, ...accountVals])]
+          : [...new Set([...resourceVals, ...templateVals])];
+        const accountSet = isPassthrough ? new Set(accountVals) : new Set<string>();
         if (allRaw.length === 0) return null;
 
         // Apply normalization
@@ -314,7 +312,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-cyan-500/30 border border-cyan-500/50" /> resource</span>
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-violet-500/30 border border-violet-500/50" /> account</span>
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-500/30 border border-emerald-500/50" /> both</span>
-              {hasTemplate && <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-warning/30 border border-warning/50" /> template</span>}
+              {!isPassthrough && <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-warning/30 border border-warning/50" /> formatted</span>}
             </div>
             <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
               {unique.map(({ resolved, changed, source }) => {
