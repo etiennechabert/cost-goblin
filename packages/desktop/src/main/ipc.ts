@@ -1357,6 +1357,80 @@ tags: []
 
   // -- AWS Organizations sync --
 
+  // -- Tag discovery + Dimensions config --
+
+  ipcMain.handle('dimensions:discover-tags', async (): Promise<{ key: string; sampleValues: string[]; rowCount: number }[]> => {
+    const config = await getConfig();
+    const provider = config.providers[0];
+    if (provider === undefined) return [];
+
+    const conn = await ctx.db.connect();
+    try {
+      const source = buildSource(ctx.dataDir, 'daily', await getDimensions());
+      const sql = `
+        SELECT
+          unnest(map_keys(resource_tags)) AS tag_key,
+          COUNT(*) AS cnt
+        FROM ${source}
+        GROUP BY tag_key
+        ORDER BY cnt DESC
+      `;
+      const rows = await queryAll(conn, sql);
+      const tagKeys: { key: string; sampleValues: string[]; rowCount: number }[] = [];
+
+      for (const row of rows) {
+        const key = toStr(row['tag_key']);
+        const cnt = toNum(row['cnt']);
+        if (key.length === 0) continue;
+
+        // fetch sample values for each key
+        const sampleSql = `
+          SELECT DISTINCT element_at(resource_tags, '${key.replaceAll("'", "''")}')[1] AS val
+          FROM ${source}
+          WHERE element_at(resource_tags, '${key.replaceAll("'", "''")}')[1] IS NOT NULL
+          LIMIT 10
+        `;
+        const sampleRows = await queryAll(conn, sampleSql);
+        const samples = sampleRows.map(r => toStr(r['val'])).filter(v => v.length > 0);
+
+        tagKeys.push({ key, sampleValues: samples, rowCount: cnt });
+      }
+
+      return tagKeys;
+    } finally {
+      conn.disconnectSync();
+    }
+  });
+
+  ipcMain.handle('dimensions:get-config', async (): Promise<DimensionsConfig> => {
+    return getDimensions();
+  });
+
+  ipcMain.handle('dimensions:save-config', async (_event, config: DimensionsConfig): Promise<void> => {
+    const yaml = await import('yaml');
+    const fs = await import('node:fs/promises');
+    const output = yaml.stringify({
+      builtIn: config.builtIn.map(d => ({
+        name: d.name,
+        label: d.label,
+        field: d.field,
+        ...(d.displayField === undefined ? {} : { displayField: d.displayField }),
+      })),
+      tags: config.tags.map(t => ({
+        tagName: t.tagName,
+        label: t.label,
+        ...(t.concept === undefined ? {} : { concept: t.concept }),
+        ...(t.normalize === undefined ? {} : { normalize: t.normalize }),
+        ...(t.separator === undefined ? {} : { separator: t.separator }),
+        ...(t.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(t.aliases).map(([k, v]) => [k, [...v]])) }),
+      })),
+    });
+    await fs.writeFile(ctx.dimensionsPath, output);
+    state.dimensions = null; // invalidate cache
+  });
+
+  // -- AWS Organizations sync --
+
   let orgSyncProgress: OrgSyncProgress | null = null;
 
   async function orgResultPath(): Promise<string> {

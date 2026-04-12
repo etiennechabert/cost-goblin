@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CostOverview, CostTrends, MissingTags, Savings, EntityDetail, DataManagement, CostApiProvider, SetupWizard, ErrorBoundary } from '@costgoblin/ui';
+import { CostOverview, CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostApiProvider, SetupWizard, ErrorBoundary } from '@costgoblin/ui';
 import type { CostApi } from '@costgoblin/core/browser';
 
 function getApi(): CostApi {
@@ -12,7 +12,8 @@ type View =
   | { page: 'trends' }
   | { page: 'missing-tags' }
   | { page: 'savings' }
-  | { page: 'data' }
+  | { page: 'dimensions' }
+  | { page: 'sync' }
   | { page: 'entity-detail'; entity: string; dimension: string };
 
 const LEFT_NAV: { id: string; label: string }[] = [
@@ -20,6 +21,11 @@ const LEFT_NAV: { id: string; label: string }[] = [
   { id: 'trends', label: 'Trends' },
   { id: 'missing-tags', label: 'Missing Tags' },
   { id: 'savings', label: 'Savings' },
+];
+
+const RIGHT_NAV: { id: string; label: string }[] = [
+  { id: 'dimensions', label: 'Dimensions' },
+  { id: 'sync', label: 'Sync' },
 ];
 
 function getStoredTheme(): 'dark' | 'light' {
@@ -103,7 +109,8 @@ export function App(): React.JSX.Element {
       case 'trends': setView({ page: 'trends' }); break;
       case 'missing-tags': setView({ page: 'missing-tags' }); break;
       case 'savings': setView({ page: 'savings' }); break;
-      case 'data': setView({ page: 'data' }); break;
+      case 'dimensions': setView({ page: 'dimensions' }); break;
+      case 'sync': setView({ page: 'sync' }); break;
     }
   }
 
@@ -121,7 +128,7 @@ export function App(): React.JSX.Element {
 
   function handleSetupComplete() {
     setSetupCheck({ status: 'ready' });
-    setView({ page: 'data' });
+    setView({ page: 'sync' });
   }
 
   if (setupCheck.status === 'checking') {
@@ -177,23 +184,26 @@ export function App(): React.JSX.Element {
               >
                 {isDark ? <SunIcon /> : <MoonIcon />}
               </button>
-              <button
-                type="button"
-                onClick={() => { handleNavClick('data'); }}
-                className={[
-                  'relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
-                  view.page === 'data'
-                    ? 'bg-bg-tertiary text-text-primary'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
-                ].join(' ')}
-              >
-                Data
-                {missingPeriods > 0 && view.page !== 'data' && (
-                  <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-bg-primary">
-                    {String(missingPeriods)}
-                  </span>
-                )}
-              </button>
+              {RIGHT_NAV.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => { handleNavClick(item.id); }}
+                  className={[
+                    'relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
+                    view.page === item.id
+                      ? 'bg-bg-tertiary text-text-primary'
+                      : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
+                  ].join(' ')}
+                >
+                  {item.label}
+                  {item.id === 'sync' && missingPeriods > 0 && view.page !== 'sync' && (
+                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-bg-primary">
+                      {String(missingPeriods)}
+                    </span>
+                  )}
+                </button>
+              ))}
             </div>
           </nav>
         </div>
@@ -203,7 +213,8 @@ export function App(): React.JSX.Element {
         {view.page === 'trends' && <CostTrends onEntityClick={handleEntityClick} />}
         {view.page === 'missing-tags' && <MissingTags />}
         {view.page === 'savings' && <Savings />}
-        <div className={view.page === 'data' ? '' : 'hidden'}>
+        {view.page === 'dimensions' && <DimensionsView />}
+        <div className={view.page === 'sync' ? '' : 'hidden'}>
           <DataManagement />
         </div>
         {view.page === 'entity-detail' && (
