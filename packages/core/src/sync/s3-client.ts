@@ -9,6 +9,12 @@ export interface S3SyncOptions {
   readonly region?: string | undefined;
 }
 
+export interface S3EndpointOptions {
+  readonly endpoint?: string | undefined;
+  readonly forcePathStyle?: boolean | undefined;
+  readonly credentials?: { readonly accessKeyId: string; readonly secretAccessKey: string } | undefined;
+}
+
 function parseS3Path(s3Path: string): { bucket: string; prefix: string } {
   const stripped = s3Path.replace(/^s3:\/\//, '');
   const slashIdx = stripped.indexOf('/');
@@ -35,12 +41,16 @@ export interface S3Handle {
   downloadFile(bucket: string, key: string, localPath: string, options?: DownloadOptions): Promise<void>;
 }
 
-export async function createS3Handle(profile: string, region?: string): Promise<S3Handle> {
+export async function createS3Handle(profile: string, region?: string, endpointOptions?: S3EndpointOptions): Promise<S3Handle> {
   const { S3Client, ListObjectsV2Command, GetObjectCommand } = await getS3Module();
 
   const client = new S3Client({
     region: region ?? 'eu-central-1',
-    ...(profile !== 'default' ? { profile } : {}),
+    ...(endpointOptions?.credentials !== undefined
+      ? { credentials: endpointOptions.credentials }
+      : profile !== 'default' ? { profile } : {}),
+    ...(endpointOptions?.endpoint !== undefined ? { endpoint: endpointOptions.endpoint } : {}),
+    ...(endpointOptions?.forcePathStyle !== undefined ? { forcePathStyle: endpointOptions.forcePathStyle } : {}),
   });
 
   return {
