@@ -304,11 +304,10 @@ export function DimensionsView() {
   // Which resource tags are already mapped as dimensions
   const mappedTagNames = new Set(config?.tags.map(t => t.tagName) ?? []);
 
-  // Only CUR resource tags for the primary dropdown (not account tags)
+  // CUR resource tags for the primary dropdown — same order as table, exclude hidden columns
   const unmappedTagKeys = discoveredTags
     .map(t => t.key)
-    .filter(k => !mappedTagNames.has(k))
-    .sort();
+    .filter(k => !mappedTagNames.has(k) && !hiddenResourceCols.has(k));
 
   function editingToTagDimension(editing: EditingTag): TagDimension {
     const base: { tagName: string; label: string } = { tagName: editing.tagName, label: editing.label };
