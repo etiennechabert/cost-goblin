@@ -281,14 +281,14 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
 
 export function DimensionsView() {
   const api = useCostApi();
-  const tagsQuery = useQuery(() => api.discoverTagKeys(), []);
-  const configQuery = useQuery(() => api.getDimensionsConfig(), []);
-  const orgQuery = useQuery(() => api.getOrgSyncResult(), []);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [hiddenResourceCols, setHiddenResourceCols] = useState(new Set<string>());
   const [hiddenAccountCols, setHiddenAccountCols] = useState(new Set<string>());
   const [addingNew, setAddingNew] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const tagsQuery = useQuery(() => api.discoverTagKeys(), []);
+  const configQuery = useQuery(() => api.getDimensionsConfig(), [refreshKey]);
+  const orgQuery = useQuery(() => api.getOrgSyncResult(), []);
 
   const tagsResult = tagsQuery.status === 'success' ? tagsQuery.data : null;
   const discoveredTags = tagsResult?.tags ?? [];
@@ -346,8 +346,6 @@ export function DimensionsView() {
 
   // Quick-add a discovered tag as a dimension
   const [quickAddState, setQuickAddState] = useState<EditingTag | null>(null);
-
-  void refreshKey; // used as useQuery dep to force re-fetch
 
   return (
     <div className="flex flex-col gap-6 p-6">
