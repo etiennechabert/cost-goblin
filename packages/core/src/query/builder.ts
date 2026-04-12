@@ -43,8 +43,7 @@ export function buildSource(dataDir: string, tier: string, dimensions: Dimension
     const resourceExpr = `element_at(resource_tags, '${curKey}')[1]`;
 
     if (t.accountTagFallback !== undefined && needsOrgJoin) {
-      const fallbackKey = t.accountTagFallback.replaceAll("'", "''");
-      return `COALESCE(NULLIF(${resourceExpr}, ''), element_at(acct_tags.tags, '${fallbackKey}')[1]) AS ${colName}`;
+      return `COALESCE(NULLIF(${resourceExpr}, ''), acct_tags.fallback_${colName}) AS ${colName}`;
     }
 
     return `${resourceExpr} AS ${colName}`;
@@ -58,11 +57,22 @@ export function buildSource(dataDir: string, tier: string, dimensions: Dimension
 
   const parquetSource = `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`;
 
+  // Build fallback column extractions for the org-accounts join
+  const fallbackSelects = needsOrgJoin
+    ? dimensions.tags
+        .filter(t => t.accountTagFallback !== undefined)
+        .map(t => {
+          const colName = `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`;
+          const fallbackKey = (t.accountTagFallback ?? '').replaceAll("'", "''");
+          return `tags->>'${fallbackKey}' AS fallback_${colName}`;
+        })
+    : [];
+
   const fromClause = needsOrgJoin
     ? `${parquetSource} AS cur
       LEFT JOIN (
-        SELECT id, tags::MAP(VARCHAR, VARCHAR) AS tags
-        FROM read_json_auto('${orgAccountsPath}', format='array', records='true', columns={id: 'VARCHAR', tags: 'JSON'})
+        SELECT id, ${fallbackSelects.join(', ')}
+        FROM read_json_auto('${orgAccountsPath}')
       ) AS acct_tags ON cur.line_item_usage_account_id = acct_tags.id`
     : parquetSource;
 
