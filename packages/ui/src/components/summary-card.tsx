@@ -35,8 +35,8 @@ export function SummaryCard({ totalCost, previousCost, dateRange }: SummaryCardP
         {delta !== null && (
           <div className="rounded-lg bg-bg-tertiary/30 px-4 py-3">
             <p className="text-xs uppercase tracking-wider text-text-muted">vs Previous Period</p>
-            <p className={`mt-1 text-2xl font-bold tabular-nums ${isIncrease ? 'text-negative' : isDecrease ? 'text-positive' : 'text-text-secondary'}`}>
-              {isDecrease ? '▼' : isIncrease ? '▲' : ''}
+            <p className={`mt-1 text-2xl font-bold tabular-nums ${(() => { if (isIncrease) return 'text-negative'; if (isDecrease) return 'text-positive'; return 'text-text-secondary'; })()}`}>
+              {(() => { if (isDecrease) return '▼'; if (isIncrease) return '▲'; return ''; })()}
               {Math.abs(delta).toFixed(1)}%
             </p>
             {previousCost !== undefined && (

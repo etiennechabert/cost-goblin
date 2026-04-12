@@ -72,9 +72,17 @@ function parseResourceDetails(json: string): ParsedDetails | null {
             const uType = usage['usageType'];
             const uAmount = usage['usageAmount'];
             const uUnit = usage['unit'];
+            let amountStr: string;
+            if (typeof uAmount === 'number') {
+              amountStr = String(uAmount);
+            } else if (typeof uAmount === 'string') {
+              amountStr = uAmount;
+            } else {
+              amountStr = '';
+            }
             usages.push({
               type: typeof uType === 'string' ? uType : '',
-              amount: typeof uAmount === 'number' ? String(uAmount) : typeof uAmount === 'string' ? uAmount : '',
+              amount: amountStr,
               unit: typeof uUnit === 'string' ? uUnit : '',
             });
           }
@@ -241,7 +249,7 @@ export function Savings() {
                 const current = isExpanded ? parseResourceDetails(rec.currentDetails) : null;
                 const recommended = isExpanded ? parseResourceDetails(rec.recommendedDetails) : null;
                 return (
-                  <tbody key={`group-${String(i)}`}>
+                  <tbody key={`${rec.actionType}-${rec.resourceArn}-${rec.accountId}`}>
                   <tr className={`border-b ${isExpanded ? 'border-border bg-bg-tertiary/20' : 'border-border-subtle'} hover:bg-bg-tertiary/30 transition-colors cursor-pointer`} onClick={() => { setExpandedRow(isExpanded ? null : i); }}>
                     <td className="px-4 py-3 max-w-lg">
                       <div className="flex items-baseline gap-2">

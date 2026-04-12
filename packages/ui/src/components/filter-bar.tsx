@@ -177,7 +177,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                   {dropdown.status === 'loading' && (
                     <div className="flex items-center justify-center gap-2 py-6 text-xs text-text-secondary">
                       <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-border border-t-accent" />
-                      Loading…
+                      <span>Loading…</span>
                     </div>
                   )}
 
