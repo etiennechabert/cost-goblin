@@ -1366,12 +1366,13 @@ tags: []
 
     const conn = await ctx.db.connect();
     try {
-      const source = buildSource(ctx.dataDir, 'daily', await getDimensions());
+      const rawParquet = `read_parquet('${ctx.dataDir}/aws/raw/daily-*/*.parquet')`;
       const sql = `
         SELECT
           unnest(map_keys(resource_tags)) AS tag_key,
           COUNT(*) AS cnt
-        FROM ${source}
+        FROM ${rawParquet}
+        WHERE resource_tags IS NOT NULL
         GROUP BY tag_key
         ORDER BY cnt DESC
       `;
@@ -1383,11 +1384,11 @@ tags: []
         const cnt = toNum(row['cnt']);
         if (key.length === 0) continue;
 
-        // fetch sample values for each key
         const sampleSql = `
           SELECT DISTINCT element_at(resource_tags, '${key.replaceAll("'", "''")}')[1] AS val
-          FROM ${source}
+          FROM ${rawParquet}
           WHERE element_at(resource_tags, '${key.replaceAll("'", "''")}')[1] IS NOT NULL
+            AND element_at(resource_tags, '${key.replaceAll("'", "''")}')[1] != ''
           LIMIT 10
         `;
         const sampleRows = await queryAll(conn, sampleSql);

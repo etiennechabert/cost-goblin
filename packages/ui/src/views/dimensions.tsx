@@ -46,11 +46,13 @@ function textToAliases(text: string): Record<string, readonly string[]> | undefi
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function TagEditor({ tag, onSave, onCancel, onRemove }: Readonly<{
+function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, isNew }: Readonly<{
   tag: EditingTag;
   onSave: (tag: EditingTag) => void;
   onCancel: () => void;
   onRemove: (() => void) | undefined;
+  availableTags: readonly string[];
+  isNew: boolean;
 }>) {
   const [state, setState] = useState(tag);
 
@@ -59,13 +61,33 @@ function TagEditor({ tag, onSave, onCancel, onRemove }: Readonly<{
       <div className="grid grid-cols-2 gap-4">
         <label className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">Tag Name (CUR column)</span>
-          <input
-            type="text"
-            value={state.tagName}
-            onChange={e => { setState(s => ({ ...s, tagName: e.target.value })); }}
-            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
-            placeholder="e.g. team"
-          />
+          {isNew && availableTags.length > 0 ? (
+            <select
+              value={state.tagName}
+              onChange={e => {
+                const name = e.target.value;
+                const label = name
+                  .replace(/^user_/i, '')
+                  .replaceAll('_', ' ')
+                  .replaceAll('-', ' ')
+                  .replace(/\b\w/g, c => c.toUpperCase());
+                setState(s => ({ ...s, tagName: name, label: s.label.length === 0 ? label : s.label }));
+              }}
+              className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+            >
+              <option value="">Select a tag...</option>
+              {availableTags.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={state.tagName}
+              readOnly={!isNew}
+              onChange={e => { setState(s => ({ ...s, tagName: e.target.value })); }}
+              className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+              placeholder="e.g. team"
+            />
+          )}
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">Display Label</span>
@@ -155,6 +177,13 @@ export function DimensionsView() {
 
   // Which resource tags are already mapped as dimensions
   const mappedTagNames = new Set(config?.tags.map(t => t.tagName) ?? []);
+
+  // Tags discovered in billing data + account tags, minus already-mapped ones
+  const allKnownTags = [...new Set([
+    ...discoveredTags.map(t => t.key),
+    ...accountTagKeys,
+  ])].sort();
+  const unmappedTagKeys = allKnownTags.filter(k => !mappedTagNames.has(k));
 
   // Filter discovered tags
   const filteredDiscovered = tagSearch.length > 0
@@ -261,6 +290,8 @@ export function DimensionsView() {
                   onSave={(edited) => { void handleSaveTag(idx, edited); }}
                   onCancel={() => { setEditingIdx(null); }}
                   onRemove={() => { void handleRemoveTag(idx); }}
+                  availableTags={[]}
+                  isNew={false}
                 />
               ) : (
                 <button
@@ -296,6 +327,8 @@ export function DimensionsView() {
               onSave={(edited) => { void handleAddTag(edited); }}
               onCancel={() => { setAddingNew(false); setQuickAddState(null); }}
               onRemove={undefined}
+              availableTags={unmappedTagKeys}
+              isNew
             />
           )}
         </div>
