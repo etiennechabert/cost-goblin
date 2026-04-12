@@ -18,7 +18,7 @@ export function ConfirmModal({
   destructive = false,
   onConfirm,
   onCancel,
-}: ConfirmModalProps) {
+}: Readonly<ConfirmModalProps>) {
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -35,11 +35,8 @@ export function ConfirmModal({
     <div className="fixed inset-0 z-[100] flex items-center justify-center" role="dialog" aria-modal="true">
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        role="button"
-        tabIndex={0}
         onClick={onCancel}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onCancel(); }}
-        aria-label="Close dialog"
+        aria-hidden="true"
       />
 
       {/* Modal */}

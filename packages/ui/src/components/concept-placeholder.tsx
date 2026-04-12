@@ -23,7 +23,7 @@ const CONCEPTS = {
   },
 } as const;
 
-export function ConceptPlaceholder({ concept }: ConceptPlaceholderProps) {
+export function ConceptPlaceholder({ concept }: Readonly<ConceptPlaceholderProps>) {
   const { icon, label, description } = CONCEPTS[concept];
 
   return (

@@ -24,7 +24,7 @@ interface SetupWizardProps {
   profile?: string | undefined;
 }
 
-function WelcomeStep({ onNext }: { onNext: () => void }) {
+function WelcomeStep({ onNext }: Readonly<{ onNext: () => void }>) {
   return (
     <div className="flex flex-col items-center gap-6 text-center">
       <div className="flex flex-col items-center gap-2">

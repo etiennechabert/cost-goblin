@@ -32,7 +32,7 @@ interface TrendsState {
   percentThreshold: number;
 }
 
-function TrendRowItem({ row, onClick }: { row: TrendRow; onClick: (e: EntityRef) => void }) {
+function TrendRowItem({ row, onClick }: Readonly<{ row: TrendRow; onClick: (e: EntityRef) => void }>) {
   const isIncrease = row.delta > 0;
   return (
     <tr className="border-b border-border-subtle hover:bg-bg-tertiary/30 transition-colors">

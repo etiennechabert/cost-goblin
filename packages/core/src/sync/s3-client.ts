@@ -44,11 +44,18 @@ export interface S3Handle {
 export async function createS3Handle(profile: string, region?: string, endpointOptions?: S3EndpointOptions): Promise<S3Handle> {
   const { S3Client, ListObjectsV2Command, GetObjectCommand } = await getS3Module();
 
+  let credentialConfig: { credentials: { readonly accessKeyId: string; readonly secretAccessKey: string } } | { profile: string } | Record<string, never>;
+  if (endpointOptions?.credentials !== undefined) {
+    credentialConfig = { credentials: endpointOptions.credentials };
+  } else if (profile !== 'default') {
+    credentialConfig = { profile };
+  } else {
+    credentialConfig = {};
+  }
+
   const client = new S3Client({
     region: region ?? 'eu-central-1',
-    ...(endpointOptions?.credentials !== undefined
-      ? { credentials: endpointOptions.credentials }
-      : profile !== 'default' ? { profile } : {}),
+    ...credentialConfig,
     ...(endpointOptions?.endpoint !== undefined ? { endpoint: endpointOptions.endpoint } : {}),
     ...(endpointOptions?.forcePathStyle !== undefined ? { forcePathStyle: endpointOptions.forcePathStyle } : {}),
   });

@@ -7,7 +7,7 @@ interface DimensionSelectorProps {
   onSelect: (id: string) => void;
 }
 
-export function DimensionSelector({ dimensions, selected, onSelect }: DimensionSelectorProps) {
+export function DimensionSelector({ dimensions, selected, onSelect }: Readonly<DimensionSelectorProps>) {
   return (
     <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary/30 p-1">
       {dimensions.map((dim) => {
