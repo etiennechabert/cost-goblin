@@ -44,7 +44,7 @@ function assertNumber(value: unknown, context: string): asserts value is number 
 }
 
 function isValidNormalizationRule(value: string): value is NormalizationRule {
-  return value === 'lowercase' || value === 'uppercase' || value === 'lowercase-kebab';
+  return value === 'lowercase' || value === 'uppercase' || value === 'lowercase-kebab' || value === 'lowercase-underscore' || value === 'camelCase';
 }
 
 function validateSyncTier(raw: unknown, context: string): SyncTierConfig {
@@ -155,7 +155,7 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
     const normalize = tag['normalize'] !== undefined ? (() => {
       assertString(tag['normalize'], `${ctx}.normalize`);
       if (!isValidNormalizationRule(tag['normalize'])) {
-        throw new ConfigValidationError(`${ctx}.normalize must be 'lowercase', 'uppercase', or 'lowercase-kebab'`);
+        throw new ConfigValidationError(`${ctx}.normalize must be 'lowercase', 'uppercase', 'lowercase-kebab', 'lowercase-underscore', or 'camelCase'`);
       }
       return tag['normalize'];
     })() : undefined;

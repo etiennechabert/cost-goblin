@@ -1,6 +1,6 @@
 import type { BucketPath, DimensionId } from './branded.js';
 
-export type NormalizationRule = 'lowercase' | 'uppercase' | 'lowercase-kebab';
+export type NormalizationRule = 'lowercase' | 'uppercase' | 'lowercase-kebab' | 'lowercase-underscore' | 'camelCase';
 
 export type ConceptType = 'owner' | 'product' | 'environment';
 
