@@ -15,10 +15,18 @@ import { BubbleChart } from '../components/bubble-chart.js';
 import { DimensionSelector } from '../components/dimension-selector.js';
 import { formatDollars, formatPercent } from '../components/format.js';
 
-function getDateRange(): { start: DateString; end: DateString } {
+const PERIOD_PRESETS = [
+  { label: '7d', days: 7 },
+  { label: '14d', days: 14 },
+  { label: '30d', days: 30 },
+  { label: '90d', days: 90 },
+  { label: '180d', days: 180 },
+] as const;
+
+function getDateRange(days: number): { start: DateString; end: DateString } {
   const today = new Date();
   const end = asDateString(today.toISOString().slice(0, 10));
-  const startDate = new Date(today.getTime() - 15 * 24 * 60 * 60 * 1000);
+  const startDate = new Date(today.getTime() - days * 24 * 60 * 60 * 1000);
   const start = asDateString(startDate.toISOString().slice(0, 10));
   return { start, end };
 }
@@ -28,6 +36,7 @@ type Direction = 'increases' | 'savings';
 interface TrendsState {
   selectedDimensionId: DimensionId | null;
   direction: Direction;
+  periodDays: number;
   deltaThreshold: number;
   percentThreshold: number;
 }
@@ -72,6 +81,7 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
   const [state, setState] = useState<TrendsState>({
     selectedDimensionId: null,
     direction: 'increases',
+    periodDays: 30,
     deltaThreshold: 10,
     percentThreshold: 1,
   });
@@ -89,13 +99,13 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
       if (activeDimensionId === null) return Promise.resolve(null);
       return api.queryTrends({
         groupBy: activeDimensionId,
-        dateRange: getDateRange(),
+        dateRange: getDateRange(state.periodDays),
         filters: {},
         deltaThreshold: asDollars(state.deltaThreshold),
         percentThreshold: state.percentThreshold,
       });
     },
-    [activeDimensionId, state.deltaThreshold, state.percentThreshold, api],
+    [activeDimensionId, state.periodDays, state.deltaThreshold, state.percentThreshold, api],
   );
 
   const trendData: TrendResult | null =
@@ -125,6 +135,23 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
         <div>
           <h2 className="text-xl font-semibold text-text-primary">Cost Trends</h2>
           <p className="text-sm text-text-secondary mt-1">Period-over-period comparison</p>
+        </div>
+        <div className="flex items-center gap-0.5 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
+          {PERIOD_PRESETS.map(p => (
+            <button
+              key={p.days}
+              type="button"
+              onClick={() => { setState(s => ({ ...s, periodDays: p.days })); }}
+              className={[
+                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                state.periodDays === p.days
+                  ? 'bg-bg-secondary text-text-primary shadow-sm'
+                  : 'text-text-secondary hover:text-text-primary',
+              ].join(' ')}
+            >
+              {p.label}
+            </button>
+          ))}
         </div>
       </div>
 
