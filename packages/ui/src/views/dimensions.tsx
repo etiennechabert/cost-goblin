@@ -46,13 +46,15 @@ function textToAliases(text: string): Record<string, readonly string[]> | undefi
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, accountTagKeys: acctTags, isNew }: Readonly<{
+function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredTags: discovered, accountTagKeys: acctTags, orgAccounts, isNew }: Readonly<{
   tag: EditingTag;
   onSave: (tag: EditingTag) => void;
   onCancel: () => void;
   onRemove: (() => void) | undefined;
   availableTags: readonly string[];
+  discoveredTags: readonly { key: string; sampleValues: string[]; rowCount: number }[];
   accountTagKeys: readonly string[];
+  orgAccounts: readonly { tags: Readonly<Record<string, string>> }[];
   isNew: boolean;
 }>) {
   const [state, setState] = useState(tag);
@@ -89,6 +91,18 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, accountTagK
               placeholder="e.g. team"
             />
           )}
+          {state.tagName.length > 0 && (() => {
+            const match = discovered.find(t => t.key === state.tagName);
+            if (match === undefined) return null;
+            return (
+              <div className="flex flex-wrap gap-1 mt-1">
+                <span className="text-[10px] text-text-muted">{match.rowCount.toLocaleString()} rows:</span>
+                {match.sampleValues.map(v => (
+                  <span key={v} className="rounded bg-bg-tertiary/50 px-1.5 py-0.5 text-[10px] text-text-secondary">{v}</span>
+                ))}
+              </div>
+            );
+          })()}
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">Display Label</span>
@@ -128,7 +142,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, accountTagK
       </div>
 
       {acctTags.length > 0 && (
-        <label className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">Fallback account tag (used when resource tag is missing)</span>
           <select
             value={state.fallbackTag ?? ''}
@@ -138,7 +152,27 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, accountTagK
             <option value="">No fallback</option>
             {acctTags.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
-        </label>
+          {state.fallbackTag !== undefined && state.fallbackTag.length > 0 && (() => {
+            const counts = new Map<string, number>();
+            for (const acct of orgAccounts) {
+              const val = acct.tags[state.fallbackTag];
+              if (val !== undefined && val.length > 0) {
+                counts.set(val, (counts.get(val) ?? 0) + 1);
+              }
+            }
+            const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+            if (sorted.length === 0) return null;
+            return (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {sorted.map(([val, cnt]) => (
+                  <span key={val} className="rounded bg-bg-tertiary/50 px-1.5 py-0.5 text-[10px] text-text-secondary">
+                    {val} <span className="text-text-muted">({String(cnt)})</span>
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
       )}
 
       <label className="flex flex-col gap-1">
@@ -309,7 +343,9 @@ export function DimensionsView() {
                   onCancel={() => { setEditingIdx(null); }}
                   onRemove={() => { void handleRemoveTag(idx); }}
                   availableTags={[]}
+                  discoveredTags={discoveredTags}
                   accountTagKeys={accountTagKeys}
+                  orgAccounts={orgData?.accounts ?? []}
                   isNew={false}
                 />
               ) : (
@@ -350,7 +386,9 @@ export function DimensionsView() {
               onCancel={() => { setAddingNew(false); setQuickAddState(null); }}
               onRemove={undefined}
               availableTags={unmappedTagKeys}
+              discoveredTags={discoveredTags}
               accountTagKeys={accountTagKeys}
+              orgAccounts={orgData?.accounts ?? []}
               isNew
             />
           )}
