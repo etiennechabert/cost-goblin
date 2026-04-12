@@ -36,23 +36,26 @@ interface ParsedDetails {
   usages: { type: string; amount: string; unit: string }[];
 }
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
 function parseResourceDetails(json: string): ParsedDetails | null {
   if (json.length === 0) return null;
   try {
     const parsed: unknown = JSON.parse(json);
-    if (typeof parsed !== 'object' || parsed === null) return null;
+    if (!isRecord(parsed)) return null;
     const topKey = Object.keys(parsed)[0];
     if (topKey === undefined) return null;
-    const inner = (parsed as Record<string, unknown>)[topKey];
-    if (typeof inner !== 'object' || inner === null) return null;
-    const obj = inner as Record<string, unknown>;
+    const inner = parsed[topKey];
+    if (!isRecord(inner)) return null;
 
     const config: Record<string, string> = {};
-    const rawConfig = obj['configuration'];
-    if (typeof rawConfig === 'object' && rawConfig !== null) {
-      for (const [section, value] of Object.entries(rawConfig as Record<string, unknown>)) {
-        if (typeof value === 'object' && value !== null) {
-          for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    const rawConfig = inner['configuration'];
+    if (isRecord(rawConfig)) {
+      for (const [section, value] of Object.entries(rawConfig)) {
+        if (isRecord(value)) {
+          for (const [k, v] of Object.entries(value)) {
             config[`${section}.${k}`] = String(v);
           }
         } else {
@@ -62,30 +65,28 @@ function parseResourceDetails(json: string): ParsedDetails | null {
     }
 
     const usages: ParsedDetails['usages'] = [];
-    const costCalc = obj['costCalculation'];
-    if (typeof costCalc === 'object' && costCalc !== null) {
-      const rawUsages = (costCalc as Record<string, unknown>)['usages'];
+    const costCalc = inner['costCalculation'];
+    if (isRecord(costCalc)) {
+      const rawUsages = costCalc['usages'];
       if (Array.isArray(rawUsages)) {
         for (const u of rawUsages) {
-          if (typeof u === 'object' && u !== null) {
-            const usage = u as Record<string, unknown>;
-            const uType = usage['usageType'];
-            const uAmount = usage['usageAmount'];
-            const uUnit = usage['unit'];
-            let amountStr: string;
-            if (typeof uAmount === 'number') {
-              amountStr = String(uAmount);
-            } else if (typeof uAmount === 'string') {
-              amountStr = uAmount;
-            } else {
-              amountStr = '';
-            }
-            usages.push({
-              type: typeof uType === 'string' ? uType : '',
-              amount: amountStr,
-              unit: typeof uUnit === 'string' ? uUnit : '',
-            });
+          if (!isRecord(u)) continue;
+          const uType = u['usageType'];
+          const uAmount = u['usageAmount'];
+          const uUnit = u['unit'];
+          let amountStr: string;
+          if (typeof uAmount === 'number') {
+            amountStr = String(uAmount);
+          } else if (typeof uAmount === 'string') {
+            amountStr = uAmount;
+          } else {
+            amountStr = '';
           }
+          usages.push({
+            type: typeof uType === 'string' ? uType : '',
+            amount: amountStr,
+            unit: typeof uUnit === 'string' ? uUnit : '',
+          });
         }
       }
     }

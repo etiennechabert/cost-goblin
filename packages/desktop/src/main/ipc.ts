@@ -98,6 +98,12 @@ function toStr(v: unknown): string {
   return '';
 }
 
+type EffortLevel = 'VeryLow' | 'Low' | 'Medium' | 'High';
+const EFFORT_LEVELS = new Set<string>(['VeryLow', 'Low', 'Medium', 'High']);
+function toEffort(v: string): EffortLevel {
+  return EFFORT_LEVELS.has(v) ? v as EffortLevel : 'Medium';
+}
+
 function buildCostResult(rows: RawRow[], dateRange: DateRange): CostResult {
   const entityMap = new Map<string, { totalCost: number; serviceCosts: Record<string, number> }>();
   const serviceTotals = new Map<string, number>();
@@ -394,7 +400,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const consumedEntities = new Set<string>();
 
     for (const node of tree) {
-      if (node.virtual === true) {
+      if (node.virtual) {
         const descendants = getDescendantTagValues(node);
         let totalCost = 0;
         const mergedServices: Record<string, number> = {};
@@ -643,13 +649,13 @@ export function registerIpcHandlers(ctx: IpcContext): void {
           monthlySavings: asDollars(savings),
           monthlyCost: asDollars(toNum(r['monthly_cost'])),
           savingsPercentage: toNum(r['savings_pct']),
-          effort: toStr(r['effort']) as 'VeryLow' | 'Low' | 'Medium' | 'High',
+          effort: toEffort(toStr(r['effort'])),
           resourceArn: toStr(r['resource_arn']),
           currentDetails: toStr(r['current_details']),
           recommendedDetails: toStr(r['recommended_details']),
           currentSummary: toStr(r['current_summary']),
-          restartNeeded: r['restart_needed'] === true || r['restart_needed'] === 1,
-          rollbackPossible: r['rollback_possible'] === true || r['rollback_possible'] === 1,
+          restartNeeded: Boolean(r['restart_needed']),
+          rollbackPossible: Boolean(r['rollback_possible']),
           recommendationSource: toStr(r['recommendation_source']),
         };
       });
@@ -1043,9 +1049,14 @@ export function registerIpcHandlers(ctx: IpcContext): void {
             const manifestResponse = await client.send(new GetObjectCommand({ Bucket: params.bucket, Key: manifestKey }));
             const body = await manifestResponse.Body?.transformToString();
             if (body !== undefined) {
-              const manifest = JSON.parse(body) as Record<string, unknown>;
-              const columns = manifest['columns'] as Array<{ name: string }> | undefined;
-              const columnNames = columns?.map(c => c.name) ?? [];
+              const manifest: unknown = JSON.parse(body);
+              let columnNames: string[] = [];
+              if (typeof manifest === 'object' && manifest !== null && 'columns' in manifest && Array.isArray((manifest as Record<string, unknown>)['columns'])) {
+                columnNames = ((manifest as Record<string, unknown>)['columns'] as unknown[])
+                  .filter((c): c is Record<string, unknown> => typeof c === 'object' && c !== null)
+                  .map(c => typeof c['name'] === 'string' ? c['name'] : '')
+                  .filter(n => n.length > 0);
+              }
 
               // Cost optimization reports have specific columns
               if (columnNames.includes('recommendation_id') || columnNames.includes('estimated_monthly_savings')) {
@@ -1090,14 +1101,22 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     let existing: Record<string, unknown> = {};
     try {
       const raw = await fs.readFile(ctx.configPath, 'utf-8');
-      existing = parseYaml(raw) as Record<string, unknown>;
+      const parsed: unknown = parseYaml(raw);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        existing = parsed as Record<string, unknown>;
+      }
     } catch {
       // no existing config
     }
 
-    const existingProviders = Array.isArray(existing['providers']) ? existing['providers'] as Record<string, unknown>[] : [];
+    const existingProviders: Record<string, unknown>[] = Array.isArray(existing['providers'])
+      ? existing['providers'].filter((p): p is Record<string, unknown> => typeof p === 'object' && p !== null)
+      : [];
     const existingProvider = existingProviders[0] ?? {};
-    const existingSync = (existingProvider['sync'] ?? {}) as Record<string, unknown>;
+    const rawSync = existingProvider['sync'];
+    const existingSync: Record<string, unknown> = typeof rawSync === 'object' && rawSync !== null && !Array.isArray(rawSync)
+      ? rawSync as Record<string, unknown>
+      : {};
 
     const sync: Record<string, unknown> = { ...existingSync, intervalMinutes: 60 };
 
@@ -1120,8 +1139,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
         credentials: { profile: wizardConfig.profile },
         sync,
       }],
-      defaults: (existing['defaults'] as Record<string, unknown> | undefined) ?? { periodDays: 30, costMetric: 'UnblendedCost', lagDays: 2 },
-      cache: (existing['cache'] as Record<string, unknown> | undefined) ?? { ttlMinutes: 15 },
+      defaults: typeof existing['defaults'] === 'object' && existing['defaults'] !== null ? existing['defaults'] : { periodDays: 30, costMetric: 'UnblendedCost', lagDays: 2 },
+      cache: typeof existing['cache'] === 'object' && existing['cache'] !== null ? existing['cache'] : { ttlMinutes: 15 },
     };
 
     await fs.writeFile(ctx.configPath, stringify(costgoblinYaml), 'utf-8');

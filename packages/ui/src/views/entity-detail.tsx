@@ -197,7 +197,7 @@ export function EntityDetail({ entity, dimension, onBack }: EntityDetailProps) {
               </div>
               <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4">
                 <p className="text-xs uppercase tracking-wider text-text-muted">vs Previous Period</p>
-                <p className={`mt-1 text-2xl font-bold tabular-nums ${(() => { if (isIncrease) return 'text-negative'; if (isDecrease) return 'text-positive'; return 'text-text-secondary'; })()}`}>
+                <p className={`mt-1 text-2xl font-bold tabular-nums ${isIncrease ? 'text-negative' : isDecrease ? 'text-positive' : 'text-text-secondary'}`}>
                   {formatPercent(data.percentChange)}
                 </p>
                 <p className="mt-0.5 text-xs text-text-muted">

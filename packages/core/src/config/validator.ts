@@ -186,7 +186,7 @@ function validateOrgNode(raw: unknown, path: string): OrgNode {
   assertObject(raw, path);
   assertString(raw['name'], `${path}.name`);
 
-  const virtual = raw['virtual'] === true ? true : undefined;
+  const virtual = raw['virtual'] === true || undefined;
   let children: OrgNode[] | undefined;
   if (raw['children'] !== undefined) {
     assertArray(raw['children'], `${path}.children`);
