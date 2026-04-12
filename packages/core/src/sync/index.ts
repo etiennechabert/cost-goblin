@@ -14,6 +14,7 @@ export {
 
 export {
   type S3SyncOptions,
+  type S3EndpointOptions,
   type SyncProgress,
   type ProgressCallback,
   type S3Handle,
