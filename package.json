@@ -13,6 +13,7 @@
     "dev:fixtures": "COSTGOBLIN_DATA_DIR=$PWD/packages/core/src/__fixtures__/synthetic COSTGOBLIN_CONFIG_DIR=$PWD/packages/core/src/__fixtures__/config npm run dev --workspace=packages/desktop",
     "repartition": "npx tsx scripts/repartition.ts",
     "build": "npm run build --workspaces",
+    "e2e": "npm run build --workspace=packages/desktop && npx playwright test && npx tsx e2e/collect-coverage.ts",
     "prepare": "husky"
   },
   "devDependencies": {
@@ -29,6 +30,7 @@
     "jsdom": "^29.0.1",
     "postcss": "^8.5.8",
     "typescript": "^5.7.0",
+    "v8-to-istanbul": "^9.3.0",
     "vitest": "^3.0.0"
   },
   "engines": {

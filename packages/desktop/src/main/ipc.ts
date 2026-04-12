@@ -95,6 +95,7 @@ function toStr(v: unknown): string {
   if (typeof v === 'string') return v;
   if (v === null || v === undefined) return '';
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
   return '';
 }
 

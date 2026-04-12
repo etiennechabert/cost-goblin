@@ -44,6 +44,25 @@ function BubbleChartInner({
     tooltipOpen,
   } = useTooltip<TrendRow>();
 
+  const handleMouseMove = useCallback(
+    (row: TrendRow, event: React.MouseEvent<SVGCircleElement>) => {
+      const coords = localPoint(event);
+      if (coords === null) return;
+      showTooltip({
+        tooltipData: row,
+        tooltipLeft: coords.x,
+        tooltipTop: coords.y,
+      });
+      setHoveredEntity(row.entity);
+    },
+    [showTooltip],
+  );
+
+  const handleMouseLeave = useCallback(() => {
+    hideTooltip();
+    setHoveredEntity(null);
+  }, [hideTooltip]);
+
   const innerWidth = width - MARGIN.left - MARGIN.right;
   const innerHeight = height - MARGIN.top - MARGIN.bottom;
 
@@ -78,25 +97,6 @@ function BubbleChartInner({
     domain: [0, costMax],
     range: [MIN_RADIUS, MAX_RADIUS],
   });
-
-  const handleMouseMove = useCallback(
-    (row: TrendRow, event: React.MouseEvent<SVGCircleElement>) => {
-      const coords = localPoint(event);
-      if (coords === null) return;
-      showTooltip({
-        tooltipData: row,
-        tooltipLeft: coords.x,
-        tooltipTop: coords.y,
-      });
-      setHoveredEntity(row.entity);
-    },
-    [showTooltip],
-  );
-
-  const handleMouseLeave = useCallback(() => {
-    hideTooltip();
-    setHoveredEntity(null);
-  }, [hideTooltip]);
 
   const sortedData = [...data].sort((a, b) => b.currentCost - a.currentCost);
 

@@ -4,7 +4,7 @@
   "type": "module",
   "main": "out/main/main.js",
   "scripts": {
-    "build": "electron-vite build",
+    "build": "electron-vite build --sourcemap",
     "check": "tsc --noEmit && eslint src/ && vitest run",
     "test": "vitest run",
     "dev": "electron-vite dev"
