@@ -288,6 +288,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-cyan-500/30 border border-cyan-500/50" /> resource</span>
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-violet-500/30 border border-violet-500/50" /> account</span>
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-500/30 border border-emerald-500/50" /> both</span>
+              {state.missingValueTemplate.length > 0 && <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-warning/30 border border-warning/50" /> missing</span>}
             </div>
             <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
               {unique.map(({ resolved, changed, source }) => {
@@ -305,6 +306,11 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
                 </span>
                 );
               })}
+              {state.missingValueTemplate.length > 0 && (
+                <span className="rounded border px-1.5 py-0.5 text-[10px] font-mono bg-warning/10 border-warning/30 text-warning italic">
+                  {state.missingValueTemplate}
+                </span>
+              )}
             </div>
           </div>
         );
