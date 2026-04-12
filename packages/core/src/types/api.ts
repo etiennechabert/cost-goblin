@@ -34,6 +34,13 @@ export interface OrgSyncResult {
   readonly syncedAt: string;
 }
 
+export type AutoSyncStatus =
+  | { readonly state: 'disabled' }
+  | { readonly state: 'idle'; readonly lastRun: string | null; readonly nextRun: string | null }
+  | { readonly state: 'checking' }
+  | { readonly state: 'syncing'; readonly tier: string; readonly filesDone: number; readonly filesTotal: number }
+  | { readonly state: 'error'; readonly message: string; readonly lastRun: string | null };
+
 export interface OrgSyncProgress {
   readonly phase: 'accounts' | 'ous' | 'tags';
   readonly done: number;
@@ -89,6 +96,9 @@ export interface CostApi {
   scaffoldConfig(): Promise<void>;
   getSavingsPreferences(): Promise<SavingsPreferences>;
   saveSavingsPreferences(prefs: SavingsPreferences): Promise<void>;
+  getAutoSyncEnabled(): Promise<boolean>;
+  setAutoSyncEnabled(enabled: boolean): Promise<void>;
+  getAutoSyncStatus(): Promise<AutoSyncStatus>;
   syncOrgAccounts(profile: string): Promise<OrgSyncResult>;
   getOrgSyncResult(): Promise<OrgSyncResult | null>;
   getOrgSyncProgress(): Promise<OrgSyncProgress | null>;
