@@ -100,7 +100,7 @@ test.describe('App shell', () => {
   });
 
   test('shows all navigation buttons', async () => {
-    for (const label of ['Overview', 'Trends', 'Missing Tags', 'Savings', 'Data']) {
+    for (const label of ['Overview', 'Trends', 'Missing Tags', 'Savings', 'Dimensions', 'Sync']) {
       await expect(page.getByRole('button', { name: label })).toBeVisible();
     }
   });
@@ -130,7 +130,8 @@ test.describe('App shell', () => {
       { button: 'Trends', heading: 'Cost Trends' },
       { button: 'Missing Tags', heading: 'Missing Tags' },
       { button: 'Savings', heading: 'Savings Opportunities' },
-      { button: 'Data', heading: 'Data Management' },
+      { button: 'Dimensions', heading: 'Dimensions' },
+      { button: 'Sync', heading: 'Data Management' },
     ];
 
     for (const { button, heading } of views) {
@@ -860,7 +861,7 @@ test.describe('Data Management', () => {
     app = await launchApp();
     page = await app.firstWindow();
     await expect(page).toHaveTitle('CostGoblin');
-    await page.getByRole('button', { name: 'Data' }).click();
+    await page.getByRole('button', { name: 'Sync' }).click();
     await expect(page.getByRole('heading', { name: 'Data Management' })).toBeVisible();
     // Data management loads S3 inventory which can be slow — wait longer
     await waitForQuerySettle(page);
@@ -1001,6 +1002,138 @@ test.describe('Data Management', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Dimensions
+// ---------------------------------------------------------------------------
+test.describe('Dimensions', () => {
+  let app: ElectronApplication;
+  let page: Page;
+
+  test.beforeAll(async () => {
+    app = await launchApp();
+    page = await app.firstWindow();
+    await expect(page).toHaveTitle('CostGoblin');
+    await startCoverage(page);
+    await page.getByRole('button', { name: 'Dimensions' }).click();
+    await expect(page.getByRole('heading', { name: 'Dimensions' })).toBeVisible();
+    await waitForQuerySettle(page);
+  });
+
+  test.afterAll(async () => { await stopAndCollectCoverage(page); await app.close(); });
+
+  test('shows heading and subtitle', async () => {
+    await expect(page.getByText('Map tags to cost allocation dimensions')).toBeVisible();
+  });
+
+  test('shows Active Dimensions section with built-in dimensions', async () => {
+    await expect(page.getByText('Active Dimensions')).toBeVisible();
+    await expect(page.getByText('Account')).toBeVisible();
+    await expect(page.getByText('Region')).toBeVisible();
+    await expect(page.getByText('Service', { exact: true }).first()).toBeVisible();
+  });
+
+  test('shows Add Dimension button', async () => {
+    await expect(page.getByRole('button', { name: '+ Add Dimension' })).toBeVisible();
+  });
+
+  test('clicking a tag dimension opens the editor', async () => {
+    // find a tag dimension (not built-in) and click it
+    const editBtn = page.locator('button').filter({ hasText: 'Edit →' }).first();
+    const exists = await editBtn.isVisible().catch(() => false);
+
+    if (exists) {
+      await editBtn.click();
+
+      // editor should show concept, label, normalization dropdowns
+      await expect(page.getByText('Concept')).toBeVisible();
+      await expect(page.getByText('Display Label')).toBeVisible();
+      await expect(page.getByText('Normalization')).toBeVisible();
+      await expect(page.getByText('Resource Tag')).toBeVisible();
+
+      // Save and Cancel buttons
+      await expect(page.getByRole('button', { name: 'Save' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
+
+      await screenshot(page, 'dimensions-editor');
+
+      // Cancel to close
+      await page.getByRole('button', { name: 'Cancel' }).click();
+    }
+  });
+
+  test('Add Dimension opens editor with tag dropdown', async () => {
+    await page.getByRole('button', { name: '+ Add Dimension' }).click();
+
+    // should show a select for tag name
+    await expect(page.getByText('Resource Tag')).toBeVisible();
+    await expect(page.getByText('Select a tag...')).toBeVisible();
+
+    await screenshot(page, 'dimensions-add-new');
+
+    // Cancel
+    await page.getByRole('button', { name: 'Cancel' }).click();
+  });
+
+  test('Resource Tags table loads or shows loading state', async () => {
+    const hasTable = await page.getByText('Resource Tags').isVisible().catch(() => false);
+    const hasLoading = await page.getByText('Scanning billing data').isVisible().catch(() => false);
+
+    // one of them should be visible
+    expect(hasTable || hasLoading).toBe(true);
+
+    if (hasTable) {
+      // badges should be visible
+      const badges = page.locator('button.rounded-full');
+      const badgeCount = await badges.count();
+      expect(badgeCount).toBeGreaterThan(0);
+
+      // table should not show "undefined"
+      const tableText = await page.locator('table').first().textContent();
+      expect(tableText).not.toContain('undefined');
+
+      await screenshot(page, 'dimensions-resource-tags');
+    }
+  });
+
+  test('Account Tags table shows when org data exists', async () => {
+    const hasAccountTags = await page.getByText('Account Tags').isVisible().catch(() => false);
+
+    if (hasAccountTags) {
+      // badges should be visible
+      const badges = page.locator('button.rounded-full');
+      const badgeCount = await badges.count();
+      expect(badgeCount).toBeGreaterThan(0);
+
+      await screenshot(page, 'dimensions-account-tags');
+    }
+  });
+
+  test('tag table badges toggle columns', async () => {
+    const badges = page.locator('button.rounded-full.border-accent\\/40');
+    const count = await badges.count();
+
+    if (count > 2) {
+      // click first badge to hide a column
+      const firstBadge = badges.first();
+      await firstBadge.click();
+
+      // it should now have strikethrough styling
+      await screenshot(page, 'dimensions-badge-toggled');
+
+      // click again to restore
+      const hiddenBadge = page.locator('button.rounded-full.line-through').first();
+      const isHidden = await hiddenBadge.isVisible().catch(() => false);
+      if (isHidden) {
+        await hiddenBadge.click();
+      }
+    }
+  });
+
+  test('no React crash on Dimensions view', async () => {
+    await assertNoReactCrash(page);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Cross-view navigation — full user journey
 // ---------------------------------------------------------------------------
 test.describe('Full user journey', () => {
@@ -1036,11 +1169,15 @@ test.describe('Full user journey', () => {
     await expect(page.getByRole('heading', { name: 'Savings Opportunities' })).toBeVisible();
     await waitForQuerySettle(page);
 
-    // 5. Data
-    await page.getByRole('button', { name: 'Data' }).click();
+    // 5. Dimensions
+    await page.getByRole('button', { name: 'Dimensions' }).click();
+    await expect(page.getByRole('heading', { name: 'Dimensions' })).toBeVisible();
+
+    // 6. Sync
+    await page.getByRole('button', { name: 'Sync' }).click();
     await expect(page.getByRole('heading', { name: 'Data Management' })).toBeVisible();
 
-    // 6. Back to Overview
+    // 7. Back to Overview
     await page.getByRole('button', { name: 'Overview' }).click();
     await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
 
@@ -1048,7 +1185,7 @@ test.describe('Full user journey', () => {
   });
 
   test('rapid navigation between views does not crash', async () => {
-    const views = ['Trends', 'Overview', 'Missing Tags', 'Savings', 'Data', 'Overview', 'Trends', 'Missing Tags'];
+    const views = ['Trends', 'Overview', 'Missing Tags', 'Savings', 'Dimensions', 'Sync', 'Overview', 'Trends', 'Missing Tags'];
     for (const view of views) {
       await page.getByRole('button', { name: view }).click();
     }
