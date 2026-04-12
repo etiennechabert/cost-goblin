@@ -1386,11 +1386,12 @@ tags: []
     try {
       const rawParquet = `read_parquet('${ctx.dataDir}/aws/raw/daily-*/*.parquet')`;
       const sql = `
-        SELECT
-          unnest(map_keys(resource_tags)) AS tag_key,
-          COUNT(*) AS cnt
-        FROM ${rawParquet}
-        WHERE resource_tags IS NOT NULL
+        SELECT tag_key, COUNT(*) AS cnt
+        FROM (
+          SELECT unnest(map_keys(resource_tags)) AS tag_key
+          FROM ${rawParquet}
+          WHERE resource_tags IS NOT NULL
+        )
         GROUP BY tag_key
         ORDER BY cnt DESC
       `;
