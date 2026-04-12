@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createS3Handle, parseS3Path } from './s3-client.js';
+import type { S3Handle } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
 import type { DataTier } from '../types/api.js';
 
@@ -99,9 +100,10 @@ export async function getDataInventory(
   profile: string,
   dataDir: string,
   tier: DataTier = 'daily',
+  s3Override?: S3Handle,
 ): Promise<DataInventory> {
   const s3Path = parseS3Path(bucketPath);
-  const s3 = await createS3Handle(profile);
+  const s3 = s3Override ?? await createS3Handle(profile);
   const remoteFiles = await s3.listFiles(s3Path.bucket, s3Path.prefix);
 
   const periodMap = new Map<string, ManifestFileEntry[]>();
