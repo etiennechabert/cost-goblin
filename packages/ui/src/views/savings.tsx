@@ -192,7 +192,7 @@ export function Savings() {
       }
       return sortAsc ? cmp : -cmp;
     });
-  }, [data, activeFilter, sortField, sortAsc]);
+  }, [visibleRecs, activeFilter, sortField, sortAsc]);
 
   const filteredSavings = filtered.reduce((s, r) => s + r.monthlySavings, 0);
 
