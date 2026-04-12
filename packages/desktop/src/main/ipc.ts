@@ -1384,7 +1384,7 @@ tags: []
 
     const conn = await ctx.db.connect();
     try {
-      // Only scan the most recent month for speed
+      // Scan last 2 partitions (~30 days) with a date filter
       const fs = await import('node:fs/promises');
       const path = await import('node:path');
       const dailyDir = path.join(ctx.dataDir, 'aws', 'raw');
@@ -1392,8 +1392,10 @@ tags: []
       try {
         dirs = (await fs.readdir(dailyDir)).filter(d => d.startsWith('daily-')).sort();
       } catch { /* no data */ }
-      const recentDir = dirs.length > 0 ? dirs[dirs.length - 1] : 'daily-*';
-      const rawParquet = `read_parquet('${ctx.dataDir}/aws/raw/${recentDir ?? 'daily-*'}/*.parquet')`;
+      const recentDirs = dirs.slice(-2);
+      const globPattern = recentDirs.length > 0 ? `{${recentDirs.join(',')}}` : 'daily-*';
+      const rawParquet = `read_parquet('${ctx.dataDir}/aws/raw/${globPattern}/*.parquet')`;
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
       // Single query: get all tag keys with counts AND sample values
       const sql = `
@@ -1402,6 +1404,7 @@ tags: []
                  unnest(map_values(resource_tags)) AS tag_val
           FROM ${rawParquet}
           WHERE resource_tags IS NOT NULL
+            AND line_item_usage_start_date >= '${thirtyDaysAgo}'
         ),
         ranked AS (
           SELECT tag_key, tag_val,
@@ -1437,8 +1440,7 @@ tags: []
         rowCount: data.rowCount,
       }));
 
-      // Extract period from dir name (e.g. "daily-2026-04" → "2026-04")
-      const samplePeriod = (recentDir ?? '').replace(/^daily-/, '');
+      const samplePeriod = `last 30 days (since ${thirtyDaysAgo})`;
       return { tags: tagKeys, samplePeriod };
     } finally {
       conn.disconnectSync();
