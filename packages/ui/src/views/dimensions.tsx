@@ -58,48 +58,52 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
 }>) {
   const [state, setState] = useState(tag);
 
+  const tagOptions = state.tagName.length > 0 && !availableTags.includes(state.tagName)
+    ? [state.tagName, ...availableTags]
+    : [...availableTags];
+
+  const tagMatch = discovered.find(t => t.key === state.tagName);
+
+  const fallbackValues = (() => {
+    if (state.fallbackTag === undefined || state.fallbackTag.length === 0) return [];
+    const counts = new Map<string, number>();
+    for (const acct of orgAccounts) {
+      const val = acct.tags[state.fallbackTag];
+      if (val !== undefined && val.length > 0) {
+        counts.set(val, (counts.get(val) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  })();
+
+  // Compute alias preview: show what each alias resolves to
+  const aliasPreview = (() => {
+    const parsed = textToAliases(state.aliases);
+    if (parsed === undefined) return [];
+    const result: { from: string; to: string }[] = [];
+    for (const [canonical, alts] of Object.entries(parsed)) {
+      for (const alt of alts) {
+        result.push({ from: alt, to: canonical });
+      }
+    }
+    return result;
+  })();
+
   return (
     <div className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-4">
-        <div className="flex flex-col gap-1">
-          <span className="text-xs text-text-muted">Tag Name (CUR column)</span>
-          {(() => {
-            // Build option list: current tag (if set) + all unmapped tags
-            const options = state.tagName.length > 0 && !availableTags.includes(state.tagName)
-              ? [state.tagName, ...availableTags]
-              : [...availableTags];
-            return (
-              <select
-                value={state.tagName}
-                onChange={e => {
-                  const name = e.target.value;
-                  const label = name
-                    .replace(/^user_/i, '')
-                    .replaceAll('_', ' ')
-                    .replaceAll('-', ' ')
-                    .replace(/\b\w/g, c => c.toUpperCase());
-                  setState(s => ({ ...s, tagName: name, label: s.label.length === 0 ? label : s.label }));
-                }}
-                className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
-              >
-                <option value="">Select a tag...</option>
-                {options.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            );
-          })()}
-          {state.tagName.length > 0 && (() => {
-            const match = discovered.find(t => t.key === state.tagName);
-            if (match === undefined) return null;
-            return (
-              <div className="flex flex-wrap gap-1 mt-1">
-                <span className="text-[10px] text-text-muted">{match.rowCount.toLocaleString()} rows:</span>
-                {match.sampleValues.map(v => (
-                  <span key={v} className="rounded bg-bg-tertiary/50 px-1.5 py-0.5 text-[10px] text-text-secondary">{v}</span>
-                ))}
-              </div>
-            );
-          })()}
-        </div>
+      {/* Row 1: Concept + Display Label + Normalization */}
+      <div className="grid grid-cols-3 gap-4">
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-text-muted">Concept</span>
+          <select
+            value={state.concept}
+            onChange={e => { setState(s => ({ ...s, concept: e.target.value })); }}
+            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+          >
+            <option value="">None</option>
+            {CONCEPTS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </select>
+        </label>
         <label className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">Display Label</span>
           <input
@@ -109,20 +113,6 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
             className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
             placeholder="e.g. Team"
           />
-        </label>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-text-muted">Concept (dimension role)</span>
-          <select
-            value={state.concept}
-            onChange={e => { setState(s => ({ ...s, concept: e.target.value })); }}
-            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
-          >
-            <option value="">None</option>
-            {CONCEPTS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-          </select>
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">Normalization</span>
@@ -137,50 +127,102 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         </label>
       </div>
 
-      {acctTags.length > 0 && (
+      {/* Row 2: Tag Name + preview */}
+      <div className="grid grid-cols-[1fr_2fr] gap-4 items-start">
         <div className="flex flex-col gap-1">
-          <span className="text-xs text-text-muted">Fallback account tag (used when resource tag is missing)</span>
+          <span className="text-xs text-text-muted">Resource Tag</span>
           <select
-            value={state.fallbackTag ?? ''}
-            onChange={e => { setState(s => ({ ...s, fallbackTag: e.target.value.length > 0 ? e.target.value : undefined })); }}
+            value={state.tagName}
+            onChange={e => {
+              const name = e.target.value;
+              const label = name
+                .replace(/^user_/i, '')
+                .replaceAll('_', ' ')
+                .replaceAll('-', ' ')
+                .replace(/\b\w/g, c => c.toUpperCase());
+              setState(s => ({ ...s, tagName: name, label: s.label.length === 0 ? label : s.label }));
+            }}
             className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
           >
-            <option value="">No fallback</option>
-            {acctTags.map(t => <option key={t} value={t}>{t}</option>)}
+            <option value="">Select a tag...</option>
+            {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
-          {state.fallbackTag !== undefined && state.fallbackTag.length > 0 && (() => {
-            const counts = new Map<string, number>();
-            for (const acct of orgAccounts) {
-              const val = acct.tags[state.fallbackTag];
-              if (val !== undefined && val.length > 0) {
-                counts.set(val, (counts.get(val) ?? 0) + 1);
-              }
-            }
-            const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-            if (sorted.length === 0) return null;
-            return (
-              <div className="flex flex-wrap gap-1 mt-1">
-                {sorted.map(([val, cnt]) => (
-                  <span key={val} className="rounded bg-bg-tertiary/50 px-1.5 py-0.5 text-[10px] text-text-secondary">
-                    {val} <span className="text-text-muted">({String(cnt)})</span>
-                  </span>
+        </div>
+        <div className="flex flex-col gap-1">
+          {tagMatch !== undefined && (
+            <>
+              <span className="text-xs text-text-muted">{tagMatch.rowCount.toLocaleString()} rows — top values</span>
+              <div className="flex flex-wrap gap-1">
+                {tagMatch.sampleValues.map(v => (
+                  <span key={v} className="rounded bg-bg-tertiary/50 px-1.5 py-0.5 text-[10px] text-text-secondary">{v}</span>
                 ))}
               </div>
-            );
-          })()}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Row 3: Fallback + preview */}
+      {acctTags.length > 0 && (
+        <div className="grid grid-cols-[1fr_2fr] gap-4 items-start">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-text-muted">Fallback (account tag)</span>
+            <select
+              value={state.fallbackTag ?? ''}
+              onChange={e => { setState(s => ({ ...s, fallbackTag: e.target.value.length > 0 ? e.target.value : undefined })); }}
+              className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+            >
+              <option value="">No fallback</option>
+              {acctTags.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            {fallbackValues.length > 0 && (
+              <>
+                <span className="text-xs text-text-muted">{String(fallbackValues.length)} distinct values</span>
+                <div className="flex flex-wrap gap-1">
+                  {fallbackValues.slice(0, 12).map(([val, cnt]) => (
+                    <span key={val} className="rounded bg-bg-tertiary/50 px-1.5 py-0.5 text-[10px] text-text-secondary">
+                      {val} <span className="text-text-muted">({String(cnt)})</span>
+                    </span>
+                  ))}
+                  {fallbackValues.length > 12 && <span className="text-[10px] text-text-muted">+{String(fallbackValues.length - 12)}</span>}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-text-muted">Alias Rules (one per line: canonical: alias1, alias2)</span>
-        <textarea
-          value={state.aliases}
-          onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
-          rows={4}
-          className="rounded border border-border bg-bg-primary px-3 py-1.5 text-xs text-text-primary font-mono outline-none focus:border-accent resize-y"
-          placeholder="production: prod, prd, Production&#10;staging: stg, stage"
-        />
-      </label>
+      {/* Row 4: Alias rules + resolved preview */}
+      <div className="grid grid-cols-[1fr_1fr] gap-4 items-start">
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-text-muted">Alias Rules</span>
+          <textarea
+            value={state.aliases}
+            onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
+            rows={3}
+            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-xs text-text-primary font-mono outline-none focus:border-accent resize-y"
+            placeholder="production: prod, prd&#10;staging: stg, stage"
+          />
+        </label>
+        <div className="flex flex-col gap-1">
+          {aliasPreview.length > 0 && (
+            <>
+              <span className="text-xs text-text-muted">Resolved mappings</span>
+              <div className="flex flex-col gap-0.5 text-xs">
+                {aliasPreview.map(({ from, to }) => (
+                  <div key={from} className="flex items-center gap-2">
+                    <span className="text-text-muted font-mono">{from}</span>
+                    <span className="text-text-muted">→</span>
+                    <span className="text-accent font-mono">{to}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -207,6 +249,8 @@ export function DimensionsView() {
   const configQuery = useQuery(() => api.getDimensionsConfig(), []);
   const orgQuery = useQuery(() => api.getOrgSyncResult(), []);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [hiddenResourceCols, setHiddenResourceCols] = useState(new Set<string>());
+  const [hiddenAccountCols, setHiddenAccountCols] = useState(new Set<string>());
   const [addingNew, setAddingNew] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -369,110 +413,149 @@ export function DimensionsView() {
         </div>
       )}
 
-      {/* Resource tags pivot table — columns are tag keys, rows are top values */}
-      {discoveredTags.length > 0 && (
+      {/* Resource tags pivot table */}
+      {discoveredTags.length > 0 && (() => {
+        const visibleTags = discoveredTags.filter(t => !hiddenResourceCols.has(t.key));
+        return (
         <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-text-secondary">
-              Resource Tags
-              <span className="text-text-muted ml-1">({String(discoveredTags.length)} keys found in billing data)</span>
-            </h3>
+          <h3 className="text-sm font-medium text-text-secondary">
+            Resource Tags
+            <span className="text-text-muted ml-1">({String(discoveredTags.length)} keys)</span>
+          </h3>
+          <div className="flex flex-wrap gap-1.5">
+            {discoveredTags.map(t => {
+              const hidden = hiddenResourceCols.has(t.key);
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => { setHiddenResourceCols(prev => { const next = new Set(prev); if (hidden) { next.delete(t.key); } else { next.add(t.key); } return next; }); }}
+                  className={[
+                    'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
+                    hidden
+                      ? 'border-border bg-bg-tertiary/20 text-text-muted line-through'
+                      : 'border-accent/40 bg-accent/10 text-accent',
+                  ].join(' ')}
+                >
+                  {t.key}
+                </button>
+              );
+            })}
           </div>
-          <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-x-auto">
-            <table className="text-xs">
-              <thead>
-                <tr className="border-b border-border text-left text-text-muted">
-                  {discoveredTags.map(t => (
-                    <th key={t.key} className="px-3 py-2 font-medium whitespace-nowrap">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="font-mono">{t.key}</span>
-                        <span className="text-[9px] text-text-muted font-normal">{t.rowCount.toLocaleString()} rows</span>
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {Array.from({ length: Math.max(...discoveredTags.map(t => t.sampleValues.length), 0) }, (_, rowIdx) => (
-                  <tr key={rowIdx} className="border-b border-border-subtle">
-                    {discoveredTags.map(t => {
-                      const val = t.sampleValues[rowIdx];
-                      return (
-                        <td key={t.key} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
-                          {val !== undefined ? val : ''}
-                        </td>
-                      );
-                    })}
+          {visibleTags.length > 0 && (
+            <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-x-auto">
+              <table className="text-xs">
+                <thead>
+                  <tr className="border-b border-border text-left text-text-muted">
+                    {visibleTags.map(t => (
+                      <th key={t.key} className="px-3 py-2 font-medium whitespace-nowrap">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-mono">{t.key}</span>
+                          <span className="text-[9px] text-text-muted font-normal">{t.rowCount.toLocaleString()} rows</span>
+                        </div>
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {Array.from({ length: Math.max(...visibleTags.map(t => t.sampleValues.length), 0) }, (_, rowIdx) => (
+                    <tr key={rowIdx} className="border-b border-border-subtle">
+                      {visibleTags.map(t => (
+                        <td key={t.key} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
+                          {t.sampleValues[rowIdx] ?? ''}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-      )}
+        );
+      })()}
 
       {tagsQuery.status === 'loading' && (
         <div className="text-sm text-text-secondary">Scanning billing data for tags...</div>
       )}
 
       {/* Account tags pivot table */}
-      {accountTagKeys.length > 0 && orgData !== null && (
+      {accountTagKeys.length > 0 && orgData !== null && (() => {
+        const visibleKeys = accountTagKeys.filter(k => !hiddenAccountCols.has(k));
+        return (
         <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-text-secondary">
-              Account Tags
-              <span className="text-text-muted ml-1">({String(accountTagKeys.length)} keys from AWS Organizations)</span>
-            </h3>
+          <h3 className="text-sm font-medium text-text-secondary">
+            Account Tags
+            <span className="text-text-muted ml-1">({String(accountTagKeys.length)} keys)</span>
+          </h3>
+          <div className="flex flex-wrap gap-1.5">
+            {accountTagKeys.map(key => {
+              const hidden = hiddenAccountCols.has(key);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => { setHiddenAccountCols(prev => { const next = new Set(prev); if (hidden) { next.delete(key); } else { next.add(key); } return next; }); }}
+                  className={[
+                    'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
+                    hidden
+                      ? 'border-border bg-bg-tertiary/20 text-text-muted line-through'
+                      : 'border-accent/40 bg-accent/10 text-accent',
+                  ].join(' ')}
+                >
+                  {key}
+                </button>
+              );
+            })}
           </div>
-          <p className="text-xs text-text-muted">
-            Values sorted by frequency. Can be used as fallback when resource-level tags are missing.
-          </p>
-          <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-x-auto">
-            <table className="text-xs">
-              <thead>
-                <tr className="border-b border-border text-left text-text-muted">
-                  {accountTagKeys.map(key => {
-                    const count = orgData.accounts.filter(a => a.tags[key] !== undefined && a.tags[key] !== '').length;
-                    return (
-                      <th key={key} className="px-3 py-2 font-medium whitespace-nowrap">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="font-mono">{key}</span>
-                          <span className="text-[9px] text-text-muted font-normal">{String(count)}/{String(orgData.accounts.length)} accounts</span>
-                        </div>
-                      </th>
-                    );
-                  })}
-                </tr>
-              </thead>
-              <tbody>
-                {(() => {
-                  // For each tag key, compute sorted unique values by frequency
-                  const columnValues = accountTagKeys.map(key => {
-                    const counts = new Map<string, number>();
-                    for (const acct of orgData.accounts) {
-                      const val = acct.tags[key];
-                      if (val !== undefined && val.length > 0) {
-                        counts.set(val, (counts.get(val) ?? 0) + 1);
+          {visibleKeys.length > 0 && (
+            <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-x-auto">
+              <table className="text-xs">
+                <thead>
+                  <tr className="border-b border-border text-left text-text-muted">
+                    {visibleKeys.map(key => {
+                      const count = orgData.accounts.filter(a => a.tags[key] !== undefined && a.tags[key] !== '').length;
+                      return (
+                        <th key={key} className="px-3 py-2 font-medium whitespace-nowrap">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-mono">{key}</span>
+                            <span className="text-[9px] text-text-muted font-normal">{String(count)}/{String(orgData.accounts.length)} accts</span>
+                          </div>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const columnValues = visibleKeys.map(key => {
+                      const counts = new Map<string, number>();
+                      for (const acct of orgData.accounts) {
+                        const val = acct.tags[key];
+                        if (val !== undefined && val.length > 0) {
+                          counts.set(val, (counts.get(val) ?? 0) + 1);
+                        }
                       }
-                    }
-                    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([v, c]) => `${v} (${String(c)})`);
-                  });
-                  const maxRows = Math.max(...columnValues.map(c => c.length), 0);
-                  return Array.from({ length: Math.min(maxRows, 15) }, (_, rowIdx) => (
-                    <tr key={rowIdx} className="border-b border-border-subtle">
-                      {columnValues.map((vals, colIdx) => (
-                        <td key={accountTagKeys[colIdx]} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
-                          {vals[rowIdx] ?? ''}
-                        </td>
-                      ))}
-                    </tr>
-                  ));
-                })()}
-              </tbody>
-            </table>
-          </div>
+                      return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([v, c]) => `${v} (${String(c)})`);
+                    });
+                    const maxRows = Math.max(...columnValues.map(c => c.length), 0);
+                    return Array.from({ length: Math.min(maxRows, 15) }, (_, rowIdx) => (
+                      <tr key={rowIdx} className="border-b border-border-subtle">
+                        {columnValues.map((vals, colIdx) => (
+                          <td key={visibleKeys[colIdx]} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
+                            {vals[rowIdx] ?? ''}
+                          </td>
+                        ))}
+                      </tr>
+                    ));
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
