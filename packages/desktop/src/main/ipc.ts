@@ -1377,10 +1377,10 @@ tags: []
 
   // -- Tag discovery + Dimensions config --
 
-  ipcMain.handle('dimensions:discover-tags', async (): Promise<{ key: string; sampleValues: string[]; rowCount: number }[]> => {
+  ipcMain.handle('dimensions:discover-tags', async (): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number }[]; samplePeriod: string }> => {
     const config = await getConfig();
     const provider = config.providers[0];
-    if (provider === undefined) return [];
+    if (provider === undefined) return { tags: [], samplePeriod: '' };
 
     const conn = await ctx.db.connect();
     try {
@@ -1437,7 +1437,9 @@ tags: []
         rowCount: data.rowCount,
       }));
 
-      return tagKeys;
+      // Extract period from dir name (e.g. "daily-2026-04" → "2026-04")
+      const samplePeriod = (recentDir ?? '').replace(/^daily-/, '');
+      return { tags: tagKeys, samplePeriod };
     } finally {
       conn.disconnectSync();
     }

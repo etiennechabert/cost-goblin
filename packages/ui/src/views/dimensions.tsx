@@ -254,7 +254,9 @@ export function DimensionsView() {
   const [addingNew, setAddingNew] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const discoveredTags = tagsQuery.status === 'success' ? tagsQuery.data : [];
+  const tagsResult = tagsQuery.status === 'success' ? tagsQuery.data : null;
+  const discoveredTags = tagsResult?.tags ?? [];
+  const samplePeriod = tagsResult?.samplePeriod ?? '';
   const config: DimensionsConfig | null = configQuery.status === 'success' ? configQuery.data : null;
   const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
 
@@ -420,7 +422,7 @@ export function DimensionsView() {
         <div className="flex flex-col gap-3">
           <h3 className="text-sm font-medium text-text-secondary">
             Resource Tags
-            <span className="text-text-muted ml-1">({String(discoveredTags.length)} keys)</span>
+            <span className="text-text-muted ml-1">({String(discoveredTags.length)} keys{samplePeriod.length > 0 ? ` · sampled from ${samplePeriod}` : ''})</span>
           </h3>
           <div className="flex flex-wrap gap-1.5">
             {[...discoveredTags].sort((a, b) => {
