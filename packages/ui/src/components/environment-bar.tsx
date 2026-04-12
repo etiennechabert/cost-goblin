@@ -11,7 +11,7 @@ interface EnvironmentBarProps {
   onSelect: (env: string | null) => void;
 }
 
-export function EnvironmentBar({ environments, selected, onSelect }: EnvironmentBarProps) {
+export function EnvironmentBar({ environments, selected, onSelect }: Readonly<EnvironmentBarProps>) {
   function handleClick(name: string) {
     onSelect(selected === name ? null : name);
   }

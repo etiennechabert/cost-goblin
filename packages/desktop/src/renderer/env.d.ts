@@ -4,4 +4,5 @@ declare global {
   interface Window {
     costgoblin: CostApi;
   }
+  var costgoblin: CostApi;
 }

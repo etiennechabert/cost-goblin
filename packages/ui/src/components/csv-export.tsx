@@ -8,7 +8,7 @@ interface CsvExportProps {
 
 function escapeCell(value: string): string {
   if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-    return `"${value.replace(/"/g, '""')}"`;
+    return `"${value.replaceAll('"', '""')}"`;
   }
   return value;
 }
@@ -23,7 +23,7 @@ function buildCsv(rows: readonly CostRow[], topServices: readonly string[]): str
       String(row.totalCost),
       ...topServices.map((svc) => {
         const cost = row.serviceCosts[svc];
-        return cost !== undefined ? String(cost) : '';
+        return cost === undefined ? '' : String(cost);
       }),
     ];
     lines.push(cells.join(','));
@@ -32,7 +32,7 @@ function buildCsv(rows: readonly CostRow[], topServices: readonly string[]): str
   return lines.join('\n');
 }
 
-export function CsvExport({ rows, topServices, filename = 'costgoblin-export.csv' }: CsvExportProps) {
+export function CsvExport({ rows, topServices, filename = 'costgoblin-export.csv' }: Readonly<CsvExportProps>) {
   function handleExport() {
     const csv = buildCsv(rows, topServices);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });

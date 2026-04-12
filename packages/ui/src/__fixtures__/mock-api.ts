@@ -87,8 +87,8 @@ const costResult: CostResult = {
 const trendResult: TrendResult = {
   increases: [
     { entity: asEntityRef('ml'), currentCost: asDollars(9_600), previousCost: asDollars(7_200), delta: asDollars(2_400), percentChange: 33.3 },
-    { entity: asEntityRef('platform'), currentCost: asDollars(42_300.5), previousCost: asDollars(38_100), delta: asDollars(4_200.5), percentChange: 11.0 },
-    { entity: asEntityRef('growth'), currentCost: asDollars(18_900), previousCost: asDollars(17_500), delta: asDollars(1_400), percentChange: 8.0 },
+    { entity: asEntityRef('platform'), currentCost: asDollars(42_300.5), previousCost: asDollars(38_100), delta: asDollars(4_200.5), percentChange: 11 },
+    { entity: asEntityRef('growth'), currentCost: asDollars(18_900), previousCost: asDollars(17_500), delta: asDollars(1_400), percentChange: 8 },
   ],
   savings: [
     { entity: asEntityRef('infra'), currentCost: asDollars(14_200), previousCost: asDollars(16_800), delta: asDollars(-2_600), percentChange: -15.5 },
@@ -112,7 +112,7 @@ const entityDetailResult: EntityDetailResult = {
   entity: asEntityRef('platform'),
   totalCost: asDollars(42_300.5),
   previousCost: asDollars(38_100),
-  percentChange: 11.0,
+  percentChange: 11,
   dailyCosts: [
     { date: asDateString('2026-03-29'), cost: asDollars(1_380), breakdown: { 'Amazon EC2': asDollars(580), 'Amazon RDS': asDollars(310), 'Amazon S3': asDollars(200), 'AWS Lambda': asDollars(140), 'Amazon CloudFront': asDollars(150) }, breakdownByAccount: { 'prod-main': asDollars(900), 'prod-secondary': asDollars(330), 'staging': asDollars(150) } },
     { date: asDateString('2026-03-30'), cost: asDollars(1_420), breakdown: { 'Amazon EC2': asDollars(600), 'Amazon RDS': asDollars(320), 'Amazon S3': asDollars(205), 'AWS Lambda': asDollars(145), 'Amazon CloudFront': asDollars(150) }, breakdownByAccount: { 'prod-main': asDollars(930), 'prod-secondary': asDollars(340), 'staging': asDollars(150) } },
@@ -131,7 +131,7 @@ const entityDetailResult: EntityDetailResult = {
     { name: 'AWS Lambda', cost: asDollars(4_100), percentage: 9.7 },
   ],
   bySubEntity: [
-    { name: 'backend', cost: asDollars(22_000), percentage: 52.0 },
+    { name: 'backend', cost: asDollars(22_000), percentage: 52 },
     { name: 'frontend', cost: asDollars(12_000), percentage: 28.4 },
     { name: 'shared', cost: asDollars(8_300.5), percentage: 19.6 },
   ],

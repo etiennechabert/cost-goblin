@@ -120,12 +120,11 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
               const isHovered = hoveredDay === day.date;
 
               return (
-                <div
+                <button
+                  type="button"
                   key={day.date}
                   className="group relative flex-1 min-w-0"
                   style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
-                  role="button"
-                  tabIndex={0}
                   onMouseEnter={() => { setHoveredDay(day.date); }}
                   onMouseLeave={() => { setHoveredDay(null); }}
                 >
@@ -182,7 +181,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                       </div>
                     </div>
                   )}
-                </div>
+                </button>
               );
             })}
           </div>

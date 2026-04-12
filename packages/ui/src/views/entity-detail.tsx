@@ -23,12 +23,12 @@ function DistributionSection({
   items,
   color,
   onItemClick,
-}: {
+}: Readonly<{
   title: string;
   items: readonly DistributionSlice[];
   color: string;
   onItemClick?: (name: string) => void;
-}) {
+}>) {
   const maxPct = items.reduce((m, i) => Math.max(m, i.percentage), 0);
 
   return (
@@ -108,7 +108,7 @@ const HIST_COLORS = [
   'bg-rose-500', 'bg-blue-500', 'bg-orange-500', 'bg-teal-500',
 ];
 
-export function EntityDetail({ entity, dimension, onBack }: EntityDetailProps) {
+export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetailProps>) {
   const api = useCostApi();
   const [histogramGroup, setHistogramGroup] = useState<HistogramGroupBy>('service');
   const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange);
@@ -129,7 +129,7 @@ export function EntityDetail({ entity, dimension, onBack }: EntityDetailProps) {
   const data: EntityDetailResult | null =
     detailQuery.status === 'success' ? detailQuery.data : null;
 
-  const last30Days = data !== null ? data.dailyCosts.slice(-30) : [];
+  const last30Days = data === null ? [] : data.dailyCosts.slice(-30);
   const maxDailyCost = last30Days.reduce((m, d) => Math.max(m, d.cost), 0);
   const isIncrease = data !== null && data.percentChange > 0;
   const isDecrease = data !== null && data.percentChange < 0;
@@ -197,9 +197,14 @@ export function EntityDetail({ entity, dimension, onBack }: EntityDetailProps) {
               </div>
               <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4">
                 <p className="text-xs uppercase tracking-wider text-text-muted">vs Previous Period</p>
-                <p className={`mt-1 text-2xl font-bold tabular-nums ${isIncrease ? 'text-negative' : isDecrease ? 'text-positive' : 'text-text-secondary'}`}>
-                  {formatPercent(data.percentChange)}
-                </p>
+                {(() => {
+                  const changeColor = isIncrease ? 'text-negative' : isDecrease ? 'text-positive' : 'text-text-secondary';
+                  return (
+                    <p className={`mt-1 text-2xl font-bold tabular-nums ${changeColor}`}>
+                      {formatPercent(data.percentChange)}
+                    </p>
+                  );
+                })()}
                 <p className="mt-0.5 text-xs text-text-muted">
                   Previous: {formatDollars(data.previousCost)}
                 </p>
