@@ -12,6 +12,7 @@ export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 export { Button, buttonVariants } from './components/ui/button.js';
 export type { ButtonProps } from './components/ui/button.js';
 
+export { ErrorBoundary } from './components/error-boundary.js';
 export { BubbleChart } from './components/bubble-chart.js';
 export { CostTable } from './components/cost-table.js';
 export { EntityPopup } from './components/entity-popup.js';

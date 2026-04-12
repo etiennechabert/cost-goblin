@@ -658,8 +658,11 @@ export function DataManagement() {
       )}
 
       {inventoryQuery.status === 'error' && (
-        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">
-          {inventoryQuery.error.message}
+        <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
+          <p className="text-sm font-medium text-negative">{inventoryQuery.error.message}</p>
+          {inventoryQuery.error.message.includes('aws sso login') && (
+            <p className="text-xs text-text-secondary mt-1">Refresh this page after logging in.</p>
+          )}
         </div>
       )}
 

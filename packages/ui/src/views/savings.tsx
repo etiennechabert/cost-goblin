@@ -184,7 +184,7 @@ export function Savings() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => { setActiveFilter(null); }}
+            onClick={() => { setActiveFilter(null); setExpandedRow(null); }}
             className={[
               'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
               activeFilter === null
@@ -198,7 +198,7 @@ export function Savings() {
             <button
               key={at.type}
               type="button"
-              onClick={() => { setActiveFilter(activeFilter === at.type ? null : at.type); }}
+              onClick={() => { setActiveFilter(activeFilter === at.type ? null : at.type); setExpandedRow(null); }}
               className={[
                 'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
                 activeFilter === at.type
@@ -250,7 +250,7 @@ export function Savings() {
                 const current = isExpanded ? parseResourceDetails(rec.currentDetails) : null;
                 const recommended = isExpanded ? parseResourceDetails(rec.recommendedDetails) : null;
                 return (
-                  <tbody key={`${rec.actionType}-${rec.resourceArn}-${rec.accountId}`}>
+                  <tbody key={`${rec.actionType}-${rec.resourceArn}-${rec.accountId}-${String(i)}`}>
                   <tr className={`border-b ${isExpanded ? 'border-border bg-bg-tertiary/20' : 'border-border-subtle'} hover:bg-bg-tertiary/30 transition-colors cursor-pointer`} onClick={() => { setExpandedRow(isExpanded ? null : i); }}>
                     <td className="px-4 py-3 max-w-lg">
                       <div className="flex items-baseline gap-2">
