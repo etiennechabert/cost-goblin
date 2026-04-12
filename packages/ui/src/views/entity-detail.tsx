@@ -1,14 +1,23 @@
 import { useState } from 'react';
 import type {
+  CostResult,
+  DailyCostsResult,
+  Dimension,
+  DimensionId,
   EntityDetailResult,
-  DistributionSlice,
+  FilterMap,
 } from '@costgoblin/core/browser';
-import { asDimensionId, asEntityRef } from '@costgoblin/core/browser';
+import { asDimensionId, asEntityRef, asTagValue } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { formatDollars, formatPercent } from '../components/format.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
-import type { DateRange } from '../components/date-range-picker.js';
+import type { DateRange, Granularity } from '../components/date-range-picker.js';
+import { PieChart } from '../components/pie-chart.js';
+import type { PieSlice } from '../components/pie-chart.js';
+import { StackedBarChart } from '../components/stacked-bar-chart.js';
+import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
+import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension } from '../lib/dimensions.js';
 
 interface EntityDetailProps {
   entity: string;
@@ -16,59 +25,23 @@ interface EntityDetailProps {
   onBack: () => void;
 }
 
-type HistogramGroupBy = 'service' | 'account';
+function costRowsToSlices(data: CostResult | null): PieSlice[] {
+  if (data === null) return [];
+  const total = data.totalCost;
+  return data.rows.map(r => ({
+    name: r.entity,
+    cost: r.totalCost,
+    percentage: total > 0 ? (r.totalCost / total) * 100 : 0,
+  }));
+}
 
-function DistributionSection({
-  title,
-  items,
-  color,
-  onItemClick,
-}: Readonly<{
-  title: string;
-  items: readonly DistributionSlice[];
-  color: string;
-  onItemClick?: (name: string) => void;
-}>) {
-  const maxPct = items.reduce((m, i) => Math.max(m, i.percentage), 0);
-
-  return (
-    <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4">
-      <h3 className="mb-3 text-sm font-medium text-text-secondary">{title}</h3>
-      {items.length === 0 ? (
-        <p className="text-sm text-text-muted">No data</p>
-      ) : (
-        <div className="flex flex-col gap-1.5">
-          {items.slice(0, 10).map((item) => {
-            const barWidth = maxPct > 0 ? (item.percentage / maxPct) * 100 : 0;
-            return (
-              <div key={item.name} className="flex items-center gap-2 text-xs">
-                <button
-                  type="button"
-                  onClick={() => { onItemClick?.(item.name); }}
-                  className="w-36 shrink-0 truncate text-left text-text-secondary hover:text-accent transition-colors"
-                  title={item.name}
-                >
-                  {item.name}
-                </button>
-                <div className="relative h-3 flex-1 rounded-sm bg-bg-tertiary">
-                  <div
-                    className={`absolute inset-y-0 left-0 rounded-sm ${color}`}
-                    style={{ width: `${String(barWidth)}%` }}
-                  />
-                </div>
-                <span className="w-16 shrink-0 text-right tabular-nums text-text-primary">
-                  {formatDollars(item.cost)}
-                </span>
-                <span className="w-12 shrink-0 text-right tabular-nums text-text-muted">
-                  {item.percentage.toFixed(1)}%
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
+function dailyCostsToBarDays(data: DailyCostsResult | null): BarDay[] {
+  if (data === null) return [];
+  return data.days.map(d => ({
+    date: d.date,
+    total: d.total,
+    breakdown: { ...d.breakdown },
+  }));
 }
 
 function buildEntityCsv(data: EntityDetailResult): string {
@@ -85,9 +58,6 @@ function buildEntityCsv(data: EntityDetailResult): string {
     '',
     'Service,Cost,Percentage',
     ...data.byService.map((r) => `${r.name},${String(r.cost)},${String(r.percentage)}`),
-    '',
-    'Sub-Entity,Cost,Percentage',
-    ...data.bySubEntity.map((r) => `${r.name},${String(r.cost)},${String(r.percentage)}`),
   ];
   return lines.join('\n');
 }
@@ -103,45 +73,95 @@ function handleCsvExport(data: EntityDetailResult, entity: string) {
   URL.revokeObjectURL(url);
 }
 
-const HIST_COLORS = [
-  'bg-emerald-500', 'bg-cyan-500', 'bg-amber-500', 'bg-violet-500',
-  'bg-rose-500', 'bg-blue-500', 'bg-orange-500', 'bg-teal-500',
-];
-
 export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetailProps>) {
   const api = useCostApi();
-  const [histogramGroup, setHistogramGroup] = useState<HistogramGroupBy>('service');
   const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange);
+  const [granularity, setGranularity] = useState<Granularity>('daily');
+  const [histogramTab, setHistogramTab] = useState<HistogramTab>('service');
+  const [histogramExpanded, setHistogramExpanded] = useState(false);
+  const [pie1DimId, setPie1DimId] = useState<DimensionId | null>(null);
+  const [pie2DimId, setPie2DimId] = useState<DimensionId | null>(null);
+  const [pie3DimId, setPie3DimId] = useState<DimensionId | null>(null);
 
   const dateRangeKey = `${dateRange.start}_${dateRange.end}`;
+  const entityFilter: FilterMap = { [asDimensionId(dimension)]: asTagValue(entity) };
+  const filterKey = JSON.stringify(entityFilter);
 
+  // Entity detail summary (total, previous, percent change)
   const detailQuery = useQuery(
-    () =>
-      api.queryEntityDetail({
-        entity: asEntityRef(entity),
-        dimension: asDimensionId(dimension),
-        dateRange,
-        filters: {},
-      }),
-    [entity, dimension, dateRangeKey, api],
+    () => api.queryEntityDetail({
+      entity: asEntityRef(entity),
+      dimension: asDimensionId(dimension),
+      dateRange,
+      filters: {},
+      granularity,
+    }),
+    [entity, dimension, dateRangeKey, granularity, api],
   );
-
   const data: EntityDetailResult | null =
     detailQuery.status === 'success' ? detailQuery.data : null;
 
-  const last30Days = data === null ? [] : data.dailyCosts.slice(-30);
-  const maxDailyCost = last30Days.reduce((m, d) => Math.max(m, d.cost), 0);
+  // Dimensions for pie selectors
+  const dimensionsQuery = useQuery(() => api.getDimensions(), []);
+  const rawDimensions: Dimension[] = dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
+  const dimensions = [...rawDimensions].sort((a, b) => {
+    const priority = (d: Dimension) => {
+      if (isEnvironmentDimension(d)) return 0;
+      if (isOwnerDimension(d)) return 1;
+      if (isProductDimension(d)) return 2;
+      if (!('tagName' in d)) return 3;
+      return 4;
+    };
+    return priority(a) - priority(b);
+  });
+
+  const serviceDimId = asDimensionId('service');
+  const accountDimId = asDimensionId('account');
+  const ownerDim = rawDimensions.find(isOwnerDimension);
+  const productDim = rawDimensions.find(isProductDimension);
+  const regionDimId = asDimensionId('region');
+
+  const effectivePie1 = pie1DimId ?? accountDimId;
+  const effectivePie2 = pie2DimId ?? (productDim !== undefined ? getDimensionId(productDim) : regionDimId);
+  const effectivePie3 = pie3DimId ?? serviceDimId;
+
+  // Pie queries — same as overview but scoped to this entity via filter
+  const pie1Query = useQuery(
+    () => api.queryCosts({ groupBy: effectivePie1, dateRange, filters: entityFilter, granularity }),
+    [effectivePie1, dateRangeKey, filterKey, granularity, api],
+  );
+  const pie1Slices = costRowsToSlices(pie1Query.status === 'success' ? pie1Query.data : null);
+
+  const pie2Query = useQuery(
+    () => api.queryCosts({ groupBy: effectivePie2, dateRange, filters: entityFilter, granularity }),
+    [effectivePie2, dateRangeKey, filterKey, granularity, api],
+  );
+  const pie2Slices = costRowsToSlices(pie2Query.status === 'success' ? pie2Query.data : null);
+
+  const pie3Query = useQuery(
+    () => api.queryCosts({ groupBy: effectivePie3, dateRange, filters: entityFilter, granularity }),
+    [effectivePie3, dateRangeKey, filterKey, granularity, api],
+  );
+  const pie3Slices = costRowsToSlices(pie3Query.status === 'success' ? pie3Query.data : null);
+
+  // Histogram — reuse StackedBarChart with queryDailyCosts
+  const histogramDimId = histogramTab === 'owner' && ownerDim !== undefined
+    ? getDimensionId(ownerDim)
+    : histogramTab === 'product' && productDim !== undefined
+      ? getDimensionId(productDim)
+      : serviceDimId;
+
+  const dailyQuery = useQuery(
+    () => api.queryDailyCosts({ groupBy: histogramDimId, dateRange, filters: entityFilter, granularity }),
+    [histogramDimId, dateRangeKey, filterKey, granularity, api],
+  );
+  const barDays = dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null);
+
+  const totalCost = data !== null ? data.totalCost : 0;
   const isIncrease = data !== null && data.percentChange > 0;
   const isDecrease = data !== null && data.percentChange < 0;
 
-  const allBreakdownKeys = new Set<string>();
-  for (const day of last30Days) {
-    const bd = histogramGroup === 'account' ? day.breakdownByAccount : day.breakdown;
-    for (const key of Object.keys(bd)) {
-      allBreakdownKeys.add(key);
-    }
-  }
-  const breakdownKeys = [...allBreakdownKeys];
+  const isLoading = detailQuery.status === 'loading';
 
   return (
     <div className="flex flex-col gap-5 p-6">
@@ -161,7 +181,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <DateRangePicker value={dateRange} granularity="daily" onChange={(range) => { setDateRange(range); }} />
+          <DateRangePicker value={dateRange} granularity={granularity} onChange={(range, g) => { setDateRange(range); setGranularity(g); }} />
           {data !== null && (
             <button
               type="button"
@@ -174,7 +194,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
         </div>
       </div>
 
-      {detailQuery.status === 'loading' && (
+      {isLoading && (
         <div className="text-sm text-text-secondary">Loading...</div>
       )}
       {detailQuery.status === 'error' && (
@@ -185,134 +205,67 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
 
       {data !== null && (
         <>
-          {/* Row 1: Summary cards + Daily histogram */}
-          <div className="grid grid-cols-3 gap-4">
-            {/* Total + delta */}
-            <div className="flex flex-col gap-4">
-              <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4">
-                <p className="text-xs uppercase tracking-wider text-text-muted">Total</p>
-                <p className="mt-1 text-3xl font-bold tabular-nums text-text-primary">
-                  {formatDollars(data.totalCost)}
-                </p>
-              </div>
-              <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4">
-                <p className="text-xs uppercase tracking-wider text-text-muted">vs Previous Period</p>
-                {(() => {
-                  const changeColor = isIncrease ? 'text-negative' : isDecrease ? 'text-positive' : 'text-text-secondary';
-                  return (
-                    <p className={`mt-1 text-2xl font-bold tabular-nums ${changeColor}`}>
-                      {formatPercent(data.percentChange)}
-                    </p>
-                  );
-                })()}
-                <p className="mt-0.5 text-xs text-text-muted">
-                  Previous: {formatDollars(data.previousCost)}
-                </p>
-              </div>
-            </div>
-
-            {/* Daily costs histogram — spans 2 columns */}
-            <div className="col-span-2 rounded-xl border border-border bg-bg-secondary/50 px-5 py-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-text-secondary">Daily Costs</h3>
-                <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
-                  {(['service', 'account'] as const).map(g => (
-                    <button
-                      key={g}
-                      type="button"
-                      onClick={() => { setHistogramGroup(g); }}
-                      className={[
-                        'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors capitalize',
-                        histogramGroup === g
-                          ? 'bg-bg-secondary text-text-primary shadow-sm'
-                          : 'text-text-secondary hover:text-text-primary',
-                      ].join(' ')}
-                    >
-                      {g}
-                    </button>
-                  ))}
+          {/* Row 1: Summary + histogram (same layout as overview) */}
+          <div className={`grid gap-4 ${histogramExpanded ? 'grid-cols-1' : 'grid-cols-3'}`}>
+            {!histogramExpanded && (
+              <div className="flex flex-col gap-4">
+                <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4">
+                  <p className="text-xs uppercase tracking-wider text-text-muted">Total</p>
+                  <p className="mt-1 text-3xl font-bold tabular-nums text-text-primary">
+                    {formatDollars(totalCost)}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4">
+                  <p className="text-xs uppercase tracking-wider text-text-muted">vs Previous Period</p>
+                  {(() => {
+                    const changeColor = isIncrease ? 'text-negative' : isDecrease ? 'text-positive' : 'text-text-secondary';
+                    return (
+                      <p className={`mt-1 text-2xl font-bold tabular-nums ${changeColor}`}>
+                        {formatPercent(data.percentChange)}
+                      </p>
+                    );
+                  })()}
+                  <p className="mt-0.5 text-xs text-text-muted">
+                    Previous: {formatDollars(data.previousCost)}
+                  </p>
                 </div>
               </div>
-              {last30Days.length > 0 ? (
-                <div>
-                  <div className="flex items-end" style={{ height: '160px', gap: '3px' }}>
-                    {last30Days.map((day) => {
-                      const bd = histogramGroup === 'account' ? day.breakdownByAccount : day.breakdown;
-                      const barPct = maxDailyCost > 0 ? (day.cost / maxDailyCost) * 100 : 0;
-                      const segments = breakdownKeys
-                        .map((key, ki) => ({
-                          key,
-                          value: bd[key] ?? 0,
-                          colorIdx: ki,
-                        }))
-                        .filter(s => s.value > 0);
-                      const segTotal = segments.reduce((sum, s) => sum + s.value, 0);
+            )}
 
-                      return (
-                        <div
-                          key={day.date}
-                          className="group relative flex-1 min-w-0 cursor-pointer"
-                          style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
-                        >
-                          <div
-                            className="w-full overflow-hidden rounded-t-sm"
-                            style={{ height: `${String(barPct)}%`, minHeight: barPct > 0 ? '2px' : '0' }}
-                          >
-                            {segments.map(seg => {
-                              const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
-                              return (
-                                <div
-                                  key={seg.key}
-                                  className={`w-full ${HIST_COLORS[seg.colorIdx % HIST_COLORS.length] ?? ''} opacity-80 group-hover:opacity-100 transition-opacity`}
-                                  style={{ height: `${String(pct)}%` }}
-                                />
-                              );
-                            })}
-                          </div>
-                          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                            <div className="rounded bg-bg-secondary/90 px-2 py-1 text-[10px] text-text-primary whitespace-nowrap shadow-lg border border-border">
-                              <div className="font-medium">{day.date.slice(5)}</div>
-                              <div>{formatDollars(day.cost)}</div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="flex mt-1" style={{ gap: '3px' }}>
-                    {last30Days.map((day, idx) => (
-                      <div key={day.date} className="flex-1 min-w-0 text-center">
-                        {idx % 5 === 0 ? (
-                          <span className="text-[10px] text-text-muted">{day.date.slice(5)}</span>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center justify-center h-32 text-sm text-text-muted">No daily data</div>
-              )}
-              <div className="mt-7" />
+            <div className={histogramExpanded ? '' : 'col-span-2'}>
+              <StackedBarChart
+                days={barDays}
+                tab={histogramTab}
+                onTabChange={setHistogramTab}
+                expanded={histogramExpanded}
+                onExpandToggle={() => { setHistogramExpanded(prev => !prev); }}
+                title={granularity === 'hourly' ? 'Hourly Costs' : 'Daily Costs'}
+                loading={dailyQuery.status === 'loading'}
+              />
             </div>
           </div>
 
-          {/* Row 2: Distribution charts */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <DistributionSection
-              title="Accounts"
-              items={data.byAccount}
-              color="bg-cyan-500"
-            />
-            <DistributionSection
-              title="Services"
-              items={data.byService}
-              color="bg-emerald-500"
-            />
-            <DistributionSection
-              title="Sub-Entities"
-              items={data.bySubEntity}
-              color="bg-violet-500"
-            />
+          {/* Row 2: Three pie charts with dimension selectors (same as overview) */}
+          <div className="flex gap-4">
+            {([
+              { dimId: effectivePie1, setDim: setPie1DimId, slices: pie1Slices },
+              { dimId: effectivePie2, setDim: setPie2DimId, slices: pie2Slices },
+              { dimId: effectivePie3, setDim: setPie3DimId, slices: pie3Slices },
+            ] as const).map(({ dimId, setDim, slices }) => (
+              <div key={dimId} className="min-w-0 flex-1">
+                <PieChart
+                  data={slices}
+                  title={(() => {
+                    const dim = rawDimensions.find(d => getDimensionId(d) === dimId);
+                    return dim !== undefined ? getDimensionLabel(dim) : dimId;
+                  })()}
+                  subtitle="Click to filter"
+                  dimensions={dimensions}
+                  activeDimensionId={dimId}
+                  onDimensionChange={(newDimId) => { setDim(asDimensionId(newDimId)); }}
+                />
+              </div>
+            ))}
           </div>
 
           {/* Row 3: Breakdown table */}
