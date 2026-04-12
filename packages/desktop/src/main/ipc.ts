@@ -1384,37 +1384,58 @@ tags: []
 
     const conn = await ctx.db.connect();
     try {
-      const rawParquet = `read_parquet('${ctx.dataDir}/aws/raw/daily-*/*.parquet')`;
+      // Only scan the most recent month for speed
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
+      const dailyDir = path.join(ctx.dataDir, 'aws', 'raw');
+      let dirs: string[] = [];
+      try {
+        dirs = (await fs.readdir(dailyDir)).filter(d => d.startsWith('daily-')).sort();
+      } catch { /* no data */ }
+      const recentDir = dirs.length > 0 ? dirs[dirs.length - 1] : 'daily-*';
+      const rawParquet = `read_parquet('${ctx.dataDir}/aws/raw/${recentDir ?? 'daily-*'}/*.parquet')`;
+
+      // Single query: get all tag keys with counts AND sample values
       const sql = `
-        SELECT tag_key, COUNT(*) AS cnt
-        FROM (
-          SELECT unnest(map_keys(resource_tags)) AS tag_key
+        WITH tags AS (
+          SELECT unnest(map_keys(resource_tags)) AS tag_key,
+                 unnest(map_values(resource_tags)) AS tag_val
           FROM ${rawParquet}
           WHERE resource_tags IS NOT NULL
+        ),
+        ranked AS (
+          SELECT tag_key, tag_val,
+                 COUNT(*) AS val_cnt,
+                 COUNT(*) OVER (PARTITION BY tag_key) AS key_cnt,
+                 ROW_NUMBER() OVER (PARTITION BY tag_key ORDER BY COUNT(*) DESC) AS rn
+          FROM tags
+          WHERE tag_val IS NOT NULL AND tag_val != ''
+          GROUP BY tag_key, tag_val
         )
-        GROUP BY tag_key
-        ORDER BY cnt DESC
+        SELECT tag_key, key_cnt, tag_val, val_cnt
+        FROM ranked
+        WHERE rn <= 10
+        ORDER BY key_cnt DESC, tag_key, rn
       `;
       const rows = await queryAll(conn, sql);
-      const tagKeys: { key: string; sampleValues: string[]; rowCount: number }[] = [];
 
+      const tagMap = new Map<string, { rowCount: number; values: { val: string; cnt: number }[] }>();
       for (const row of rows) {
         const key = toStr(row['tag_key']);
-        const cnt = toNum(row['cnt']);
         if (key.length === 0) continue;
-
-        const sampleSql = `
-          SELECT DISTINCT element_at(resource_tags, '${key.replaceAll("'", "''")}')[1] AS val
-          FROM ${rawParquet}
-          WHERE element_at(resource_tags, '${key.replaceAll("'", "''")}')[1] IS NOT NULL
-            AND element_at(resource_tags, '${key.replaceAll("'", "''")}')[1] != ''
-          LIMIT 10
-        `;
-        const sampleRows = await queryAll(conn, sampleSql);
-        const samples = sampleRows.map(r => toStr(r['val'])).filter(v => v.length > 0);
-
-        tagKeys.push({ key, sampleValues: samples, rowCount: cnt });
+        let entry = tagMap.get(key);
+        if (entry === undefined) {
+          entry = { rowCount: toNum(row['key_cnt']), values: [] };
+          tagMap.set(key, entry);
+        }
+        entry.values.push({ val: toStr(row['tag_val']), cnt: toNum(row['val_cnt']) });
       }
+
+      const tagKeys = [...tagMap.entries()].map(([key, data]) => ({
+        key,
+        sampleValues: data.values.map(v => v.val),
+        rowCount: data.rowCount,
+      }));
 
       return tagKeys;
     } finally {
