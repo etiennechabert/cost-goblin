@@ -38,7 +38,7 @@ function OrgAccountsSection({ profile }: Readonly<{ profile: string | null }>) {
   const orgQuery = useQuery(() => api.getOrgSyncResult(), []);
   const [expanded, setExpanded] = useState(false);
   const [syncState, setSyncState] = useState<OrgSyncState>({ status: 'idle' });
-  const [tagFilter, setTagFilter] = useState('');
+  const [accountSearch, setAccountSearch] = useState('');
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
 
   const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
@@ -73,9 +73,13 @@ function OrgAccountsSection({ profile }: Readonly<{ profile: string | null }>) {
     ? [...new Set(orgData.accounts.flatMap(a => Object.keys(a.tags)))].sort()
     : [];
 
-  const filteredTagKeys = tagFilter.length > 0
-    ? allTagKeys.filter(k => k.toLowerCase().includes(tagFilter.toLowerCase()))
-    : allTagKeys;
+  // Filter accounts by search
+  const filteredAccounts = orgData !== null && accountSearch.length > 0
+    ? orgData.accounts.filter(a =>
+      a.id.includes(accountSearch) ||
+      a.name.toLowerCase().includes(accountSearch.toLowerCase()) ||
+      a.ouPath.toLowerCase().includes(accountSearch.toLowerCase()))
+    : orgData?.accounts ?? [];
 
   if (orgData === null) {
     return (
@@ -166,8 +170,17 @@ function OrgAccountsSection({ profile }: Readonly<{ profile: string | null }>) {
 
       {expanded && (
         <div className="border-t border-border">
-          <div className="px-4 py-2 text-[10px] text-text-muted">
-            Synced {new Date(orgData.syncedAt).toLocaleDateString()} · Org {orgData.orgId}
+          <div className="flex items-center justify-between px-4 py-2">
+            <span className="text-[10px] text-text-muted">
+              Synced {new Date(orgData.syncedAt).toLocaleDateString()} · Org {orgData.orgId}
+            </span>
+            <input
+              type="text"
+              placeholder="Search accounts..."
+              value={accountSearch}
+              onChange={e => { setAccountSearch(e.target.value); }}
+              className="w-48 rounded border border-border bg-bg-primary px-2 py-1 text-[10px] text-text-primary outline-none focus:border-accent"
+            />
           </div>
           <div className="max-h-64 overflow-y-auto">
             <table className="w-full text-xs">
@@ -181,7 +194,7 @@ function OrgAccountsSection({ profile }: Readonly<{ profile: string | null }>) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border-subtle">
-                {orgData.accounts.map(a => (
+                {filteredAccounts.map(a => (
                   <tr
                     key={a.id}
                     className={`cursor-pointer transition-colors ${selectedAccountId === a.id ? 'bg-bg-tertiary/40' : 'hover:bg-bg-tertiary/20'}`}
@@ -251,18 +264,9 @@ function OrgAccountsSection({ profile }: Readonly<{ profile: string | null }>) {
 
           {allTagKeys.length > 0 && (
             <div className="border-t border-border px-4 py-3">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-medium text-text-secondary">Discovered Tags</h4>
-                <input
-                  type="text"
-                  placeholder="Filter tags..."
-                  value={tagFilter}
-                  onChange={e => { setTagFilter(e.target.value); }}
-                  className="w-40 rounded border border-border bg-bg-primary px-2 py-1 text-[10px] text-text-primary outline-none focus:border-accent"
-                />
-              </div>
+              <h4 className="text-xs font-medium text-text-secondary mb-2">Discovered Tags</h4>
               <div className="flex flex-wrap gap-1.5">
-                {filteredTagKeys.map(key => (
+                {allTagKeys.map(key => (
                   <span key={key} className="rounded-full border border-border bg-bg-tertiary/30 px-2 py-0.5 text-[10px] text-text-secondary">
                     {key}
                   </span>
