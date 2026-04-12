@@ -36,6 +36,7 @@ export { MissingTags } from './views/missing-tags.js';
 export { Savings } from './views/savings.js';
 export { EntityDetail } from './views/entity-detail.js';
 export { DataManagement } from './views/data-management.js';
+export { DimensionsView } from './views/dimensions.js';
 export { SetupWizard } from './views/setup-wizard.js';
 
 export { getDimensionId, isTagDimension, isEnvironmentDimension, isOwnerDimension, isProductDimension } from './lib/dimensions.js';

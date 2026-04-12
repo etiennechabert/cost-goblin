@@ -20,6 +20,7 @@ import type {
   DataTier,
   AccountMappingStatus,
   SavingsPreferences,
+  DimensionsConfig,
   OrgSyncResult,
   OrgSyncProgress,
   AutoSyncStatus,
@@ -119,6 +120,15 @@ const api: CostApi = {
   },
   getOrgSyncProgress(): Promise<OrgSyncProgress | null> {
     return invoke<OrgSyncProgress | null>('org:get-progress');
+  },
+  discoverTagKeys(): Promise<{ key: string; sampleValues: string[]; rowCount: number }[]> {
+    return invoke<{ key: string; sampleValues: string[]; rowCount: number }[]>('dimensions:discover-tags');
+  },
+  getDimensionsConfig(): Promise<DimensionsConfig> {
+    return invoke<DimensionsConfig>('dimensions:get-config');
+  },
+  saveDimensionsConfig(config: DimensionsConfig): Promise<void> {
+    return invoke<undefined>('dimensions:save-config', config).then(() => undefined);
   },
   getAutoSyncEnabled(): Promise<boolean> {
     return invoke<boolean>('auto-sync:get-enabled');

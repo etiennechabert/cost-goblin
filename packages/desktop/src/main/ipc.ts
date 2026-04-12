@@ -391,6 +391,18 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     return dimensions;
   }
 
+  async function getOrgAccountsPath(): Promise<string | undefined> {
+    const path = await import('node:path');
+    const fs = await import('node:fs/promises');
+    const p = path.join(path.dirname(ctx.dataDir), 'org-accounts.json');
+    try {
+      await fs.access(p);
+      return p;
+    } catch {
+      return undefined;
+    }
+  }
+
   async function getOrgTreeConfig(): Promise<OrgTreeConfig> {
     if (state.orgTree !== null) return state.orgTree;
     const orgTree = await loadOrgTree(ctx.orgTreePath);
@@ -504,7 +516,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   ipcMain.handle('query:costs', async (_event, params: CostQueryParams): Promise<CostResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-    const sql = buildCostQuery(params, ctx.dataDir, dimensions);
+    const orgPath = await getOrgAccountsPath();
+    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath);
     logger.info('query:costs', { groupBy: params.groupBy });
 
     return withConnection(async (conn) => {
@@ -531,7 +544,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle('query:daily-costs', async (_event, params: DailyCostsParams): Promise<DailyCostsResult> => {
     const dimensions = await getDimensions();
-    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions);
+    const orgPath = await getOrgAccountsPath();
+    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath);
     logger.info('query:daily-costs', { groupBy: params.groupBy });
 
     return withConnection(async (conn) => {
@@ -584,7 +598,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   ipcMain.handle('query:trends', async (_event, params: TrendQueryParams): Promise<TrendResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-    const sql = buildTrendQuery(params, ctx.dataDir, dimensions);
+    const orgPath = await getOrgAccountsPath();
+    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath);
     logger.info('query:trends', { groupBy: params.groupBy });
 
     return withConnection(async (conn) => {
@@ -604,7 +619,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   ipcMain.handle('query:missing-tags', async (_event, params: MissingTagsParams): Promise<MissingTagsResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-    const sql = buildMissingTagsQuery(params, ctx.dataDir, dimensions);
+    const orgPath = await getOrgAccountsPath();
+    const sql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath);
     logger.info('query:missing-tags', { tagDimension: params.tagDimension });
 
     return withConnection(async (conn) => {
@@ -689,7 +705,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   ipcMain.handle('query:entity-detail', async (_event, params: EntityDetailParams): Promise<EntityDetailResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions);
+    const orgPath = await getOrgAccountsPath();
+    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath);
     logger.info('query:entity-detail', { entity: params.entity });
 
     return withConnection(async (conn) => {
@@ -736,7 +753,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
     const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
-    const source = buildSource(ctx.dataDir, 'daily', dimensions);
+    const orgPath = await getOrgAccountsPath();
+    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath);
     const sql = `
       SELECT ${fieldExpr} AS val, SUM(cost) AS total_cost
       FROM ${source}
@@ -1353,6 +1371,104 @@ tags: []
   ipcMain.handle('savings:save-preferences', async (_event, prefs: SavingsPreferences): Promise<void> => {
     const fs = await import('node:fs/promises');
     await fs.writeFile(await savingsPrefsPath(), JSON.stringify(prefs, null, 2));
+  });
+
+  // -- AWS Organizations sync --
+
+  // -- Tag discovery + Dimensions config --
+
+  ipcMain.handle('dimensions:discover-tags', async (): Promise<{ key: string; sampleValues: string[]; rowCount: number }[]> => {
+    const config = await getConfig();
+    const provider = config.providers[0];
+    if (provider === undefined) return [];
+
+    const conn = await ctx.db.connect();
+    try {
+      // Only scan the most recent month for speed
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
+      const dailyDir = path.join(ctx.dataDir, 'aws', 'raw');
+      let dirs: string[] = [];
+      try {
+        dirs = (await fs.readdir(dailyDir)).filter(d => d.startsWith('daily-')).sort();
+      } catch { /* no data */ }
+      const recentDir = dirs.length > 0 ? dirs[dirs.length - 1] : 'daily-*';
+      const rawParquet = `read_parquet('${ctx.dataDir}/aws/raw/${recentDir ?? 'daily-*'}/*.parquet')`;
+
+      // Single query: get all tag keys with counts AND sample values
+      const sql = `
+        WITH tags AS (
+          SELECT unnest(map_keys(resource_tags)) AS tag_key,
+                 unnest(map_values(resource_tags)) AS tag_val
+          FROM ${rawParquet}
+          WHERE resource_tags IS NOT NULL
+        ),
+        ranked AS (
+          SELECT tag_key, tag_val,
+                 COUNT(*) AS val_cnt,
+                 COUNT(*) OVER (PARTITION BY tag_key) AS key_cnt,
+                 ROW_NUMBER() OVER (PARTITION BY tag_key ORDER BY COUNT(*) DESC) AS rn
+          FROM tags
+          WHERE tag_val IS NOT NULL AND tag_val != ''
+          GROUP BY tag_key, tag_val
+        )
+        SELECT tag_key, key_cnt, tag_val, val_cnt
+        FROM ranked
+        WHERE rn <= 10
+        ORDER BY key_cnt DESC, tag_key, rn
+      `;
+      const rows = await queryAll(conn, sql);
+
+      const tagMap = new Map<string, { rowCount: number; values: { val: string; cnt: number }[] }>();
+      for (const row of rows) {
+        const key = toStr(row['tag_key']);
+        if (key.length === 0) continue;
+        let entry = tagMap.get(key);
+        if (entry === undefined) {
+          entry = { rowCount: toNum(row['key_cnt']), values: [] };
+          tagMap.set(key, entry);
+        }
+        entry.values.push({ val: toStr(row['tag_val']), cnt: toNum(row['val_cnt']) });
+      }
+
+      const tagKeys = [...tagMap.entries()].map(([key, data]) => ({
+        key,
+        sampleValues: data.values.map(v => v.val),
+        rowCount: data.rowCount,
+      }));
+
+      return tagKeys;
+    } finally {
+      conn.disconnectSync();
+    }
+  });
+
+  ipcMain.handle('dimensions:get-config', async (): Promise<DimensionsConfig> => {
+    return getDimensions();
+  });
+
+  ipcMain.handle('dimensions:save-config', async (_event, config: DimensionsConfig): Promise<void> => {
+    const yaml = await import('yaml');
+    const fs = await import('node:fs/promises');
+    const output = yaml.stringify({
+      builtIn: config.builtIn.map(d => ({
+        name: d.name,
+        label: d.label,
+        field: d.field,
+        ...(d.displayField === undefined ? {} : { displayField: d.displayField }),
+      })),
+      tags: config.tags.map(t => ({
+        tagName: t.tagName,
+        label: t.label,
+        ...(t.concept === undefined ? {} : { concept: t.concept }),
+        ...(t.normalize === undefined ? {} : { normalize: t.normalize }),
+        ...(t.separator === undefined ? {} : { separator: t.separator }),
+        ...(t.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(t.aliases).map(([k, v]) => [k, [...v]])) }),
+        ...(t.accountTagFallback === undefined ? {} : { accountTagFallback: t.accountTagFallback }),
+      })),
+    });
+    await fs.writeFile(ctx.dimensionsPath, output);
+    state.dimensions = null; // invalidate cache
   });
 
   // -- AWS Organizations sync --
