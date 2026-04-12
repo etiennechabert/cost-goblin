@@ -467,10 +467,10 @@ export function DimensionsView() {
             })}
           </div>
           {visibleTags.length > 0 && (
-            <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-x-auto">
+            <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-auto max-h-96">
               <table className="text-xs">
                 <thead>
-                  <tr className="border-b border-border text-left text-text-muted">
+                  <tr className="border-b border-border text-left text-text-muted sticky top-0 bg-bg-secondary z-10">
                     {visibleTags.map(t => (
                       <th key={t.key} className="px-3 py-2 font-medium whitespace-nowrap">
                         <div className="flex flex-col gap-0.5">
@@ -533,10 +533,10 @@ export function DimensionsView() {
             })}
           </div>
           {visibleKeys.length > 0 && (
-            <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-x-auto">
+            <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-auto max-h-96">
               <table className="text-xs">
                 <thead>
-                  <tr className="border-b border-border text-left text-text-muted">
+                  <tr className="border-b border-border text-left text-text-muted sticky top-0 bg-bg-secondary z-10">
                     {visibleKeys.map(key => {
                       const count = orgData.accounts.filter(a => a.tags[key] !== undefined && a.tags[key] !== '').length;
                       return (
