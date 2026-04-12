@@ -71,19 +71,21 @@ function ProfileStep({ state, onSelect, onSkip, onBack }: {
         </p>
       </div>
 
-      {state.loading ? (
+      {state.loading && (
         <div className="flex items-center justify-center py-8">
           <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border border-t-accent" />
           <span className="ml-2 text-sm text-text-secondary">Loading profiles...</span>
         </div>
-      ) : state.profiles.length === 0 ? (
+      )}
+      {!state.loading && state.profiles.length === 0 && (
         <div className="rounded-lg border border-border bg-bg-tertiary/30 px-4 py-6 text-center">
           <p className="text-sm text-text-secondary">No AWS profiles found</p>
           <p className="text-xs text-text-muted mt-1">
             Configure credentials in <code className="text-text-secondary">~/.aws/config</code> or <code className="text-text-secondary">~/.aws/credentials</code>
           </p>
         </div>
-      ) : (
+      )}
+      {!state.loading && state.profiles.length > 0 && (
         <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
           {state.profiles.map(profile => (
             <button

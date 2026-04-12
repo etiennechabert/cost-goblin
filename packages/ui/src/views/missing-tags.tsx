@@ -84,7 +84,7 @@ export function MissingTags() {
         )}
 
         <label className="flex items-center gap-1.5 text-xs text-text-secondary">
-          Min cost $
+          <span>Min cost $</span>
           <input
             type="number"
             value={minCost}
