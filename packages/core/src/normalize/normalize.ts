@@ -69,8 +69,8 @@ export function buildAliasSqlCase(
 
   if (dimension.aliases !== undefined) {
     for (const [canonical, aliasList] of Object.entries(dimension.aliases)) {
-      const allValues = aliasList.map(a => `'${a.replace(/'/g, "''")}'`).join(', ');
-      cases.push(`WHEN ${fieldExpr} IN (${allValues}) THEN '${canonical.replace(/'/g, "''")}'`);
+      const allValues = aliasList.map(a => `'${a.replaceAll("'", "''")}'`).join(', ');
+      cases.push(`WHEN ${fieldExpr} IN (${allValues}) THEN '${canonical.replaceAll("'", "''")}'`);
     }
   }
 

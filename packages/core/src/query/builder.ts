@@ -28,7 +28,7 @@ function buildFilterClauses(filters: FilterMap, dimensions: DimensionsConfig): s
   for (const [dimId, value] of Object.entries(filters)) {
     if (value === undefined) continue;
     const resolved = resolveField(dimId as DimensionId, dimensions);
-    clauses.push(`${resolved.fieldExpr} = '${String(value).replace(/'/g, "''")}'`);
+    clauses.push(`${resolved.fieldExpr} = '${String(value).replaceAll("'", "''")}'`);
   }
   return clauses;
 }
@@ -83,7 +83,7 @@ export function buildCostQuery(
   ];
 
   if (params.orgNodeValues !== undefined && params.orgNodeValues.length > 0) {
-    const escaped = params.orgNodeValues.map(v => `'${v.replace(/'/g, "''")}'`).join(', ');
+    const escaped = params.orgNodeValues.map(v => `'${v.replaceAll("'", "''")}'`).join(', ');
     whereConditions.push(`${groupByResolved.fieldExpr} IN (${escaped})`);
   }
 
@@ -258,7 +258,7 @@ export function buildEntityDetailQuery(
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
-    `${dimResolved.fieldExpr} = '${String(params.entity).replace(/'/g, "''")}'`,
+    `${dimResolved.fieldExpr} = '${String(params.entity).replaceAll("'", "''")}'`,
     ...filterClauses,
   ];
 

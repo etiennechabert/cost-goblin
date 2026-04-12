@@ -17,14 +17,14 @@ function formatLastSync(date: Date): string {
   return date.toLocaleDateString();
 }
 
-export function SyncStatusIndicator({ status, onSync }: SyncStatusProps) {
+export function SyncStatusIndicator({ status, onSync }: Readonly<SyncStatusProps>) {
   return (
     <div className="flex items-center gap-3">
       {status.status === 'idle' && (
         <span className="text-xs text-text-secondary">
-          {status.lastSync !== null
-            ? `Last sync: ${formatLastSync(status.lastSync)}`
-            : 'Not synced'}
+          {status.lastSync === null
+            ? 'Not synced'
+            : `Last sync: ${formatLastSync(status.lastSync)}`}
         </span>
       )}
 

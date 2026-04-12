@@ -402,7 +402,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   function resolveEntityName(entity: string, accountMap: Map<string, string>): string {
     const mapped = accountMap.get(entity);
-    return mapped !== undefined ? mapped : entity;
+    return mapped === undefined ? entity : mapped;
   }
 
   function applyOrgTreeRollup(result: CostResult, tree: readonly OrgNode[]): CostResult {
@@ -442,17 +442,17 @@ export function registerIpcHandlers(ctx: IpcContext): void {
           });
         }
       } else {
-        const descendants = node.children !== undefined ? getDescendantTagValues(node) : [];
+        const descendants = node.children === undefined ? [] : getDescendantTagValues(node);
         for (const desc of descendants) {
           if (desc !== node.name) consumedEntities.add(desc);
         }
 
         const row = entityCostMap.get(node.name);
         if (node.children !== undefined && node.children.length > 0) {
-          let totalCost = row !== undefined ? row.totalCost : 0;
-          const mergedServices: Record<string, number> = row !== undefined
-            ? Object.fromEntries(Object.entries(row.serviceCosts).map(([k, v]) => [k, Number(v)]))
-            : {};
+          let totalCost = row === undefined ? 0 : row.totalCost;
+          const mergedServices: Record<string, number> = row === undefined
+            ? {}
+            : Object.fromEntries(Object.entries(row.serviceCosts).map(([k, v]) => [k, Number(v)]));
 
           for (const desc of descendants) {
             if (desc === node.name) continue;
@@ -705,7 +705,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const builtIn = dimensions.builtIn.find(d => d.name === dimensionId);
     const tag = dimensions.tags.find(d => `tag_${d.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === dimensionId);
 
-    const field = builtIn !== undefined ? builtIn.field : dimensionId;
+    const field = builtIn === undefined ? dimensionId : builtIn.field;
     let fieldExpr = field;
     if (tag !== undefined) {
       fieldExpr = (await import('@costgoblin/core')).buildAliasSqlCase(field, tag);
@@ -715,12 +715,12 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     for (const [key, value] of Object.entries(filterEntries)) {
       const fb = dimensions.builtIn.find(d => d.name === key);
       const ft = dimensions.tags.find(d => `tag_${d.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === key);
-      const ff = fb !== undefined ? fb.field : key;
+      const ff = fb === undefined ? key : fb.field;
       let ffExpr = ff;
       if (ft !== undefined) {
         ffExpr = (await import('@costgoblin/core')).buildAliasSqlCase(ff, ft);
       }
-      whereClauses.push(`${ffExpr} = '${value.replace(/'/g, "''")}'`);
+      whereClauses.push(`${ffExpr} = '${value.replaceAll("'", "''")}'`);
     }
 
     if (dateRange !== undefined) {
@@ -794,7 +794,14 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     } catch (err: unknown) {
       const provider = (await getConfig()).providers[0];
       const profile = provider?.credentials.profile ?? 'default';
-      const error = isCredentialError(err) ? toUserFriendlyError(err, profile) : err instanceof Error ? err : new Error(String(err));
+      let error: Error;
+      if (isCredentialError(err)) {
+        error = toUserFriendlyError(err, profile);
+      } else if (err instanceof Error) {
+        error = err;
+      } else {
+        error = new Error(String(err));
+      }
       logger.error(`Sync failed: ${error.message}`);
       state.syncStatuses['default'] = {
         status: 'failed',
@@ -814,15 +821,15 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       name: asDimensionId(d.name),
       label: d.label,
       field: d.field,
-      ...(d.displayField !== undefined ? { displayField: d.displayField } : {}),
+      ...(d.displayField === undefined ? {} : { displayField: d.displayField }),
     }));
     const tags: Dimension[] = dimensions.tags.map(d => ({
       tagName: d.tagName,
       label: d.label,
-      ...(d.concept !== undefined ? { concept: d.concept } : {}),
-      ...(d.normalize !== undefined ? { normalize: d.normalize } : {}),
-      ...(d.separator !== undefined ? { separator: d.separator } : {}),
-      ...(d.aliases !== undefined ? { aliases: d.aliases } : {}),
+      ...(d.concept === undefined ? {} : { concept: d.concept }),
+      ...(d.normalize === undefined ? {} : { normalize: d.normalize }),
+      ...(d.separator === undefined ? {} : { separator: d.separator }),
+      ...(d.aliases === undefined ? {} : { aliases: d.aliases }),
     }));
     return [...builtIn, ...tags];
   });
@@ -957,7 +964,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       const parsed = parseS3Path(params.bucket);
       const client = new S3Client({
         region: 'eu-central-1',
-        ...(params.profile !== 'default' ? { profile: params.profile } : {}),
+        ...(params.profile === 'default' ? {} : { profile: params.profile }),
       });
 
       await client.send(new ListObjectsV2Command({
@@ -1025,7 +1032,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
       const { S3Client, ListObjectsV2Command, GetObjectCommand } = await import('@aws-sdk/client-s3');
       const client = new S3Client({
         region: 'eu-central-1',
-        ...(params.profile !== 'default' ? { profile: params.profile } : {}),
+        ...(params.profile === 'default' ? {} : { profile: params.profile }),
       });
 
       const response = await client.send(new ListObjectsV2Command({
@@ -1177,7 +1184,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     const tagDimensions = (wizardConfig.tags ?? []).map(t => ({
       tagName: t.tagName,
       label: t.label,
-      ...(t.concept !== undefined ? { concept: t.concept } : {}),
+      ...(t.concept === undefined ? {} : { concept: t.concept }),
     }));
 
     const dimensionsYaml = {

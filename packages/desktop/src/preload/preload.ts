@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { CostApi, Dimension } from '@costgoblin/core';
 import type {
+  CostApi,
+  Dimension,
   CostGoblinConfig,
   OrgNode,
   CostQueryParams,

@@ -204,7 +204,7 @@ function PieChartInner({
                   x={14}
                   y={y + 8}
                   fontSize={isHovered ? 12 : 11}
-                  fill={isDimmed ? '#4b5563' : isHovered ? '#f3f4f6' : '#9ca3af'}
+                  fill={(() => { if (isDimmed) return '#4b5563'; if (isHovered) return '#f3f4f6'; return '#9ca3af'; })()}
                   fontWeight={isHovered ? 600 : 400}
                   style={{ transition: 'all 0.12s' }}
                 >

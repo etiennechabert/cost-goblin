@@ -20,7 +20,7 @@ function getDateRange(): { start: DateString; end: DateString } {
   return { start, end };
 }
 
-function MiniHistogram({ dailyCosts }: { dailyCosts: EntityDetailResult['dailyCosts'] }) {
+function MiniHistogram({ dailyCosts }: Readonly<{ dailyCosts: EntityDetailResult['dailyCosts'] }>) {
   const last10 = dailyCosts.slice(-10);
   const max = last10.reduce((m, d) => Math.max(m, d.cost), 0);
 
@@ -52,7 +52,7 @@ export function EntityPopup({
   onClose,
   onSetFilter,
   onOpenDetail,
-}: EntityPopupProps) {
+}: Readonly<EntityPopupProps>) {
   const api = useCostApi();
 
   const detailQuery = useQuery(
@@ -69,7 +69,7 @@ export function EntityPopup({
   const data: EntityDetailResult | null =
     detailQuery.status === 'success' ? detailQuery.data : null;
 
-  const top5 = data !== null ? data.bySubEntity.slice(0, 5) : [];
+  const top5 = data === null ? [] : data.bySubEntity.slice(0, 5);
 
   return (
     <>

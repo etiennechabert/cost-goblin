@@ -23,7 +23,7 @@ interface FilterBarProps {
   getFilterValues: (dimensionId: DimensionId, currentFilters: FilterMap) => Promise<FilterValue[]>;
 }
 
-export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues }: FilterBarProps) {
+export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues }: Readonly<FilterBarProps>) {
   const [openDimId, setOpenDimId] = useState<DimensionId | null>(null);
   const [dropdown, setDropdown] = useState<DropdownState>({ status: 'closed' });
   const [search, setSearch] = useState('');
@@ -124,34 +124,33 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
 
         return (
           <div key={dimId} className="relative">
-            <button
-              type="button"
-              onClick={() => { handleChipClick(dimId); }}
+            <div
               className={[
                 'flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                activeValue !== undefined
-                  ? 'border-accent bg-accent-muted text-accent'
-                  : 'border-border bg-bg-tertiary/30 text-text-secondary hover:border-border hover:text-text-primary',
+                activeValue === undefined
+                  ? 'border-border bg-bg-tertiary/30 text-text-secondary hover:border-border hover:text-text-primary'
+                  : 'border-accent bg-accent-muted text-accent',
               ].join(' ')}
             >
-              {activeValue !== undefined ? (
-                <>
-                  <span>{dim.label}: {labelMap[activeValue] ?? activeValue}</span>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Clear ${dim.label} filter`}
-                    onClick={(e) => { handleClearFilter(dimId, e); }}
-                    onKeyDown={(e) => { handleClearFilterKey(dimId, e); }}
-                    className="ml-0.5 rounded-full p-0.5 hover:bg-accent-muted"
-                  >
-                    ×
-                  </span>
-                </>
-              ) : (
-                <span>{dim.label}</span>
+              <button
+                type="button"
+                onClick={() => { handleChipClick(dimId); }}
+                className="bg-transparent border-none p-0 text-inherit font-inherit cursor-pointer"
+              >
+                {activeValue === undefined ? dim.label : `${dim.label}: ${labelMap[activeValue] ?? activeValue}`}
+              </button>
+              {activeValue !== undefined && (
+                <button
+                  type="button"
+                  aria-label={`Clear ${dim.label} filter`}
+                  onClick={(e) => { handleClearFilter(dimId, e); }}
+                  onKeyDown={(e) => { handleClearFilterKey(dimId, e); }}
+                  className="ml-0.5 rounded-full p-0.5 hover:bg-accent-muted"
+                >
+                  ×
+                </button>
               )}
-            </button>
+            </div>
 
             {isOpen && (
               <div className="absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-border bg-bg-secondary shadow-lg">

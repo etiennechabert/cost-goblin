@@ -3,7 +3,7 @@ import { CostOverview, CostTrends, MissingTags, Savings, EntityDetail, DataManag
 import type { CostApi } from '@costgoblin/core/browser';
 
 function getApi(): CostApi {
-  return window.costgoblin;
+  return globalThis.costgoblin;
 }
 
 type View =

@@ -40,7 +40,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
   ];
 
   return (
-    <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col">
+    <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col h-full">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-medium text-text-secondary">{title ?? 'Daily Costs'}</h3>
         <div className="flex items-center gap-2">
@@ -77,12 +77,12 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
       </div>
 
       {days.length > 0 ? (() => {
-        const chartHeight = expanded ? 360 : 180;
+        const minChartHeight = expanded ? 360 : 180;
         const ticks = [1, 0.75, 0.5, 0.25, 0];
         return (
-        <div className="relative">
+        <div className="relative flex-1" style={{ minHeight: `${String(minChartHeight)}px` }}>
           {/* Y axis ticks */}
-          <div className="absolute left-0 top-0 w-10 h-full" style={{ height: `${String(chartHeight)}px` }}>
+          <div className="absolute left-0 top-0 w-10 h-full">
             {ticks.map(pct => (
               <div
                 key={pct}
@@ -95,7 +95,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
           </div>
 
           {/* Grid lines */}
-          <div className="absolute left-12 right-0 top-0" style={{ height: `${String(chartHeight)}px` }}>
+          <div className="absolute left-12 right-0 top-0 h-full">
             {ticks.map(pct => (
               <div
                 key={pct}
@@ -105,7 +105,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             ))}
           </div>
 
-          <div className="flex items-end ml-12 relative z-10" style={{ height: `${String(chartHeight)}px`, gap: '2px' }}>
+          <div className="flex items-end ml-12 relative z-10 h-full" style={{ gap: '2px' }}>
             {days.map((day) => {
               const barPct = maxCost > 0 ? (day.total / maxCost) * 100 : 0;
               const segments = breakdownKeys
@@ -120,12 +120,11 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
               const isHovered = hoveredDay === day.date;
 
               return (
-                <div
+                <button
+                  type="button"
                   key={day.date}
                   className="group relative flex-1 min-w-0"
                   style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
-                  role="button"
-                  tabIndex={0}
                   onMouseEnter={() => { setHoveredDay(day.date); }}
                   onMouseLeave={() => { setHoveredDay(null); }}
                 >
@@ -182,7 +181,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                       </div>
                     </div>
                   )}
-                </div>
+                </button>
               );
             })}
           </div>
@@ -203,7 +202,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
         </div>
         );
       })() : (
-        <div className="flex items-center justify-center h-40 text-sm text-text-muted">No daily data</div>
+        <div className="flex items-center justify-center flex-1 min-h-40 text-sm text-text-muted">No daily data</div>
       )}
     </div>
   );

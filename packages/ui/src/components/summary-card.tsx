@@ -6,7 +6,7 @@ interface SummaryCardProps {
   dateRange: { start: string; end: string };
 }
 
-export function SummaryCard({ totalCost, previousCost, dateRange }: SummaryCardProps) {
+export function SummaryCard({ totalCost, previousCost, dateRange }: Readonly<SummaryCardProps>) {
   const delta =
     previousCost !== undefined && previousCost > 0
       ? ((totalCost - previousCost) / previousCost) * 100
@@ -33,10 +33,16 @@ export function SummaryCard({ totalCost, previousCost, dateRange }: SummaryCardP
         {delta !== null && (
           <div className="rounded-lg bg-bg-tertiary/30 px-4 py-3">
             <p className="text-xs uppercase tracking-wider text-text-muted">vs Previous Period</p>
-            <p className={`mt-1 text-2xl font-bold tabular-nums ${isIncrease ? 'text-negative' : isDecrease ? 'text-positive' : 'text-text-secondary'}`}>
-              {isDecrease ? '▼' : isIncrease ? '▲' : ''}
-              {Math.abs(delta).toFixed(1)}%
-            </p>
+            {(() => {
+              const deltaColor = isIncrease ? 'text-negative' : isDecrease ? 'text-positive' : 'text-text-secondary';
+              const deltaArrow = isDecrease ? '▼' : isIncrease ? '▲' : '';
+              return (
+                <p className={`mt-1 text-2xl font-bold tabular-nums ${deltaColor}`}>
+                  {deltaArrow}
+                  {Math.abs(delta).toFixed(1)}%
+                </p>
+              );
+            })()}
             {previousCost !== undefined && (
               <p className="mt-0.5 text-xs text-text-muted">
                 Previous: {formatDollars(previousCost)}

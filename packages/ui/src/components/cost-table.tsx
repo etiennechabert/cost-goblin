@@ -9,7 +9,7 @@ interface CostTableProps {
   onServiceClick?: (service: string) => void;
 }
 
-export function CostTable({ rows, topServices, onEntityClick, onServiceClick }: CostTableProps) {
+export function CostTable({ rows, topServices, onEntityClick, onServiceClick }: Readonly<CostTableProps>) {
   const sorted = [...rows].sort((a, b) => b.totalCost - a.totalCost);
 
   return (
@@ -21,7 +21,7 @@ export function CostTable({ rows, topServices, onEntityClick, onServiceClick }: 
             <th className="px-4 pb-3 pt-4 text-right font-medium">Total</th>
             {topServices.map((service) => (
               <th key={service} className="px-4 pb-3 pt-4 text-right font-medium">
-                {onServiceClick !== undefined ? (
+                {onServiceClick === undefined ? service : (
                   <button
                     type="button"
                     className="hover:text-text-primary transition-colors"
@@ -29,7 +29,7 @@ export function CostTable({ rows, topServices, onEntityClick, onServiceClick }: 
                   >
                     {service}
                   </button>
-                ) : service}
+                )}
               </th>
             ))}
           </tr>
@@ -66,7 +66,7 @@ export function CostTable({ rows, topServices, onEntityClick, onServiceClick }: 
                 const cost = row.serviceCosts[service];
                 return (
                   <td key={service} className="px-4 py-3 text-right tabular-nums text-text-secondary">
-                    {cost !== undefined ? formatDollars(cost) : '—'}
+                    {cost === undefined ? '—' : formatDollars(cost)}
                   </td>
                 );
               })}
