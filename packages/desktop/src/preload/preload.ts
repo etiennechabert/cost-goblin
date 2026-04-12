@@ -22,6 +22,7 @@ import type {
   SavingsPreferences,
   OrgSyncResult,
   OrgSyncProgress,
+  AutoSyncStatus,
 } from '@costgoblin/core';
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -118,6 +119,15 @@ const api: CostApi = {
   },
   getOrgSyncProgress(): Promise<OrgSyncProgress | null> {
     return invoke<OrgSyncProgress | null>('org:get-progress');
+  },
+  getAutoSyncEnabled(): Promise<boolean> {
+    return invoke<boolean>('auto-sync:get-enabled');
+  },
+  setAutoSyncEnabled(enabled: boolean): Promise<void> {
+    return invoke<undefined>('auto-sync:set-enabled', enabled).then(() => undefined);
+  },
+  getAutoSyncStatus(): Promise<AutoSyncStatus> {
+    return invoke<AutoSyncStatus>('auto-sync:get-status');
   },
 };
 

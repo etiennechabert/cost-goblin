@@ -55,8 +55,10 @@ import type {
   SavingsPreferences,
   OrgSyncResult,
   OrgSyncProgress,
+  AutoSyncStatus,
 } from '@costgoblin/core';
 import { syncOrgAccounts } from './aws-org-client.js';
+import { startAutoSync, stopAutoSync, getAutoSyncStatus, readAutoSyncEnabled, writeAutoSyncEnabled } from './auto-sync.js';
 
 type RawRow = Readonly<Record<string, unknown>>;
 type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
@@ -1389,4 +1391,81 @@ tags: []
   ipcMain.handle('org:get-progress', (): OrgSyncProgress | null => {
     return orgSyncProgress;
   });
+
+  // -- Auto-sync --
+
+  async function autoSyncPrefsPath(): Promise<string> {
+    const path = await import('node:path');
+    return path.join(path.dirname(ctx.dataDir), 'app-preferences.json');
+  }
+
+  function buildAutoSyncDeps() {
+    return {
+      getPrefsPath: autoSyncPrefsPath,
+      getConfig: async () => {
+        const config = await getConfig();
+        return { providers: [...config.providers] };
+      },
+      getInventory: async (tier: string) => {
+        const config = await getConfig();
+        const provider = config.providers[0];
+        if (provider === undefined) return { periods: [] };
+        const bucket = tier === 'hourly'
+          ? provider.sync.hourly?.bucket ?? provider.sync.daily.bucket
+          : tier === 'cost-optimization'
+            ? provider.sync.costOptimization?.bucket ?? provider.sync.daily.bucket
+            : provider.sync.daily.bucket;
+        const inv = await getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, tier as 'daily' | 'hourly' | 'cost-optimization');
+        return {
+          periods: inv.periods.map(p => ({
+            period: p.period,
+            localStatus: p.localStatus,
+            files: [...p.files],
+          })),
+        };
+      },
+      syncPeriods: async (files: { key: string; contentHash: string; size: number }[], tier: string) => {
+        const config = await getConfig();
+        const provider = config.providers[0];
+        if (provider === undefined) return { filesDownloaded: 0 };
+        const bucket = tier === 'hourly'
+          ? provider.sync.hourly?.bucket ?? provider.sync.daily.bucket
+          : tier === 'cost-optimization'
+            ? provider.sync.costOptimization?.bucket ?? provider.sync.daily.bucket
+            : provider.sync.daily.bucket;
+        return syncSelectedFiles({
+          bucketPath: bucket,
+          profile: provider.credentials.profile,
+          dataDir: ctx.dataDir,
+          expectedDataType: tier as 'daily' | 'hourly' | 'cost-optimization',
+          files,
+        });
+      },
+    };
+  }
+
+  ipcMain.handle('auto-sync:get-enabled', async (): Promise<boolean> => {
+    return readAutoSyncEnabled(await autoSyncPrefsPath());
+  });
+
+  ipcMain.handle('auto-sync:set-enabled', async (_event, enabled: boolean): Promise<void> => {
+    await writeAutoSyncEnabled(await autoSyncPrefsPath(), enabled);
+    if (enabled) {
+      startAutoSync(buildAutoSyncDeps(), 60);
+    } else {
+      stopAutoSync();
+    }
+  });
+
+  ipcMain.handle('auto-sync:get-status', (): AutoSyncStatus => {
+    return getAutoSyncStatus();
+  });
+
+  // Start auto-sync on launch if previously enabled
+  void autoSyncPrefsPath().then(async (prefsPath) => {
+    const enabled = await readAutoSyncEnabled(prefsPath);
+    if (enabled) {
+      startAutoSync(buildAutoSyncDeps(), 60);
+    }
+  }).catch(() => { /* auto-sync startup failure is non-fatal */ });
 }

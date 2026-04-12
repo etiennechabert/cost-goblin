@@ -521,9 +521,14 @@ export function DataManagement() {
   const [dailySyncState, setDailySyncState] = useState<SyncState>({ status: 'idle' });
   const [hourlySyncState, setHourlySyncState] = useState<SyncState>({ status: 'idle' });
   const [costOptSyncState, setCostOptSyncState] = useState<SyncState>({ status: 'idle' });
-  const [autoSync, setAutoSync] = useState(() => {
-    try { return localStorage.getItem('costgoblin-auto-sync') === 'true'; } catch { return false; }
-  });
+  const autoSyncQuery = useQuery(() => api.getAutoSyncEnabled(), []);
+  const [autoSync, setAutoSync] = useState(false);
+  const [autoSyncLoaded, setAutoSyncLoaded] = useState(false);
+
+  if (!autoSyncLoaded && autoSyncQuery.status === 'success') {
+    setAutoSyncLoaded(true);
+    setAutoSync(autoSyncQuery.data);
+  }
   const [showDeleteAll, setShowDeleteAll] = useState(false);
   const [configureSource, setConfigureSource] = useState<'daily' | 'hourly' | 'costOptimization' | null>(null);
 
@@ -540,22 +545,12 @@ export function DataManagement() {
   const missingPeriods = inventory?.periods.filter(p => p.localStatus === 'missing') ?? [];
   const missingWithinRetention = missingPeriods.filter(p => p.period >= retentionCutoffPeriod);
 
-  const [autoSyncTriggered, setAutoSyncTriggered] = useState(false);
-
   useEffect(() => {
     if (!initialized && inventoryQuery.status === 'success' && missingWithinRetention.length > 0) {
       setSelected(new Set(missingWithinRetention.map(p => p.period)));
       setInitialized(true);
     }
   }, [initialized, inventoryQuery.status, missingWithinRetention]);
-
-  // Auto-sync: trigger daily sync when toggle is on and missing periods exist
-  useEffect(() => {
-    if (autoSync && !autoSyncTriggered && initialized && missingWithinRetention.length > 0 && dailySyncState.status === 'idle') {
-      setAutoSyncTriggered(true);
-      void handleSync();
-    }
-  }, [autoSync, autoSyncTriggered, initialized, missingWithinRetention.length, dailySyncState.status]);
 
   function togglePeriod(period: string) {
     setSelected(prev => {
@@ -827,7 +822,7 @@ export function DataManagement() {
             <span className="text-xs text-text-secondary">Auto-sync</span>
             <button
               type="button"
-              onClick={() => { setAutoSync(v => { const next = !v; try { localStorage.setItem('costgoblin-auto-sync', String(next)); } catch { /* */ } return next; }); }}
+              onClick={() => { const next = !autoSync; setAutoSync(next); void api.setAutoSyncEnabled(next); }}
               className={['relative h-5 w-9 rounded-full transition-colors', autoSync ? 'bg-accent' : 'bg-bg-tertiary'].join(' ')}
             >
               <span className={['absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', autoSync ? 'translate-x-4' : 'translate-x-0'].join(' ')} />
