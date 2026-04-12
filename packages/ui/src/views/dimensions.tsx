@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { DimensionsConfig, TagDimension, ConceptType, NormalizationRule } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
+import { CoinRainLoader } from '../components/coin-rain-loader.js';
 
 const CONCEPTS: { value: ConceptType; label: string }[] = [
   { value: 'owner', label: 'Owner (team)' },
@@ -416,6 +417,23 @@ export function DimensionsView() {
       )}
 
       {/* Resource tags pivot table */}
+      {tagsQuery.status === 'loading' && (
+        <div className="flex flex-col gap-3">
+          <h3 className="text-sm font-medium text-text-secondary">Resource Tags</h3>
+          <div className="rounded-xl border border-border bg-bg-secondary/50 p-8 text-center">
+            <CoinRainLoader height={80} count={4} />
+            <p className="text-xs text-text-muted mt-2">Scanning billing data for tags...</p>
+          </div>
+        </div>
+      )}
+      {tagsQuery.status === 'error' && (
+        <div className="flex flex-col gap-3">
+          <h3 className="text-sm font-medium text-text-secondary">Resource Tags</h3>
+          <div className="rounded-xl border border-negative/50 bg-negative-muted p-4 text-sm text-negative">
+            {tagsQuery.error.message}
+          </div>
+        </div>
+      )}
       {discoveredTags.length > 0 && (() => {
         const visibleTags = discoveredTags.filter(t => !hiddenResourceCols.has(t.key));
         return (
@@ -480,10 +498,6 @@ export function DimensionsView() {
         </div>
         );
       })()}
-
-      {tagsQuery.status === 'loading' && (
-        <div className="text-sm text-text-secondary">Scanning billing data for tags...</div>
-      )}
 
       {/* Account tags pivot table */}
       {accountTagKeys.length > 0 && orgData !== null && (() => {

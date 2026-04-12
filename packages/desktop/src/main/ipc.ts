@@ -1393,8 +1393,9 @@ tags: []
         dirs = (await fs.readdir(dailyDir)).filter(d => d.startsWith('daily-')).sort();
       } catch { /* no data */ }
       const recentDirs = dirs.slice(-2);
-      const globPattern = recentDirs.length > 0 ? `{${recentDirs.join(',')}}` : 'daily-*';
-      const rawParquet = `read_parquet('${ctx.dataDir}/aws/raw/${globPattern}/*.parquet')`;
+      const rawParquet = recentDirs.length > 0
+        ? `read_parquet([${recentDirs.map(d => `'${ctx.dataDir}/aws/raw/${d}/*.parquet'`).join(', ')}])`
+        : `read_parquet('${ctx.dataDir}/aws/raw/daily-*/*.parquet')`;
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
       // Single query: get all tag keys with counts AND sample values
