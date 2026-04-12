@@ -46,7 +46,7 @@ function textToAliases(text: string): Record<string, readonly string[]> | undefi
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredTags: discovered, accountTagKeys: acctTags, orgAccounts, isNew }: Readonly<{
+function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredTags: discovered, accountTagKeys: acctTags, orgAccounts }: Readonly<{
   tag: EditingTag;
   onSave: (tag: EditingTag) => void;
   onCancel: () => void;
@@ -55,42 +55,38 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   discoveredTags: readonly { key: string; sampleValues: string[]; rowCount: number }[];
   accountTagKeys: readonly string[];
   orgAccounts: readonly { tags: Readonly<Record<string, string>> }[];
-  isNew: boolean;
 }>) {
   const [state, setState] = useState(tag);
 
   return (
     <div className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-4">
-        <label className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">Tag Name (CUR column)</span>
-          {isNew && availableTags.length > 0 ? (
-            <select
-              value={state.tagName}
-              onChange={e => {
-                const name = e.target.value;
-                const label = name
-                  .replace(/^user_/i, '')
-                  .replaceAll('_', ' ')
-                  .replaceAll('-', ' ')
-                  .replace(/\b\w/g, c => c.toUpperCase());
-                setState(s => ({ ...s, tagName: name, label: s.label.length === 0 ? label : s.label }));
-              }}
-              className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
-            >
-              <option value="">Select a tag...</option>
-              {availableTags.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-          ) : (
-            <input
-              type="text"
-              value={state.tagName}
-              readOnly={!isNew}
-              onChange={e => { setState(s => ({ ...s, tagName: e.target.value })); }}
-              className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
-              placeholder="e.g. team"
-            />
-          )}
+          {(() => {
+            // Build option list: current tag (if set) + all unmapped tags
+            const options = state.tagName.length > 0 && !availableTags.includes(state.tagName)
+              ? [state.tagName, ...availableTags]
+              : [...availableTags];
+            return (
+              <select
+                value={state.tagName}
+                onChange={e => {
+                  const name = e.target.value;
+                  const label = name
+                    .replace(/^user_/i, '')
+                    .replaceAll('_', ' ')
+                    .replaceAll('-', ' ')
+                    .replace(/\b\w/g, c => c.toUpperCase());
+                  setState(s => ({ ...s, tagName: name, label: s.label.length === 0 ? label : s.label }));
+                }}
+                className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+              >
+                <option value="">Select a tag...</option>
+                {options.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            );
+          })()}
           {state.tagName.length > 0 && (() => {
             const match = discovered.find(t => t.key === state.tagName);
             if (match === undefined) return null;
@@ -103,7 +99,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
               </div>
             );
           })()}
-        </label>
+        </div>
         <label className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">Display Label</span>
           <input
@@ -342,11 +338,10 @@ export function DimensionsView() {
                   onSave={(edited) => { void handleSaveTag(idx, edited); }}
                   onCancel={() => { setEditingIdx(null); }}
                   onRemove={() => { void handleRemoveTag(idx); }}
-                  availableTags={[]}
+                  availableTags={unmappedTagKeys}
                   discoveredTags={discoveredTags}
                   accountTagKeys={accountTagKeys}
                   orgAccounts={orgData?.accounts ?? []}
-                  isNew={false}
                 />
               ) : (
                 <button
@@ -389,7 +384,6 @@ export function DimensionsView() {
               discoveredTags={discoveredTags}
               accountTagKeys={accountTagKeys}
               orgAccounts={orgData?.accounts ?? []}
-              isNew
             />
           )}
         </div>
