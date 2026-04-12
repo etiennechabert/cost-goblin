@@ -5,7 +5,7 @@ import type {
   Dimension,
   FilterMap,
 } from '@costgoblin/core/browser';
-import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
+import { asDimensionId, asDateString, asTagValue } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import {
@@ -153,9 +153,9 @@ function OverviewInner() {
   ) + 1;
   const prevEnd = new Date(new Date(dateRange.start).getTime() - 24 * 60 * 60 * 1000);
   const prevStart = new Date(prevEnd.getTime() - (periodDays - 1) * 24 * 60 * 60 * 1000);
-  const prevDateRange = {
-    start: prevStart.toISOString().slice(0, 10) as typeof dateRange.start,
-    end: prevEnd.toISOString().slice(0, 10) as typeof dateRange.end,
+  const prevDateRange: DateRange = {
+    start: asDateString(prevStart.toISOString().slice(0, 10)),
+    end: asDateString(prevEnd.toISOString().slice(0, 10)),
   };
 
   const prevQuery = useQuery(
@@ -307,9 +307,9 @@ function OverviewInner() {
       {/* Bottom row: 3 pie charts with expand/collapse */}
       <div className="flex gap-4">
         {([
-          { dimId: effectivePie1, setDim: setPie1DimId, slices: pie1Slices, expandKey: 'accounts' as ExpandedPie },
-          { dimId: effectivePie2, setDim: setPie2DimId, slices: pie2Slices, expandKey: 'products' as ExpandedPie },
-          { dimId: effectivePie3, setDim: setPie3DimId, slices: pie3Slices, expandKey: 'services' as ExpandedPie },
+          { dimId: effectivePie1, setDim: setPie1DimId, slices: pie1Slices, expandKey: 'accounts' satisfies ExpandedPie },
+          { dimId: effectivePie2, setDim: setPie2DimId, slices: pie2Slices, expandKey: 'products' satisfies ExpandedPie },
+          { dimId: effectivePie3, setDim: setPie3DimId, slices: pie3Slices, expandKey: 'services' satisfies ExpandedPie },
         ] as const).map(({ dimId, setDim, slices, expandKey }, idx) => (
           <div key={expandKey} className={`min-w-0 ${focus.expandedPie === null || focus.expandedPie === expandKey ? 'flex-1' : ''}`}>
             <PieChart

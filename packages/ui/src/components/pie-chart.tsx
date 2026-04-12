@@ -246,11 +246,11 @@ function useContainerWidth(): [React.RefObject<HTMLDivElement | null>, number] {
 const PIE_HEIGHT = 320;
 
 export function PieChart(props: PieChartProps) {
-  if (props.collapsed === true) {
+  const [containerRef, width] = useContainerWidth();
+
+  if (props.collapsed) {
     return <CollapsedPie title={props.title} onExpandToggle={props.onExpandToggle} />;
   }
-
-  const [containerRef, width] = useContainerWidth();
 
   return (
     <div ref={containerRef} style={{ height: PIE_HEIGHT, overflow: 'hidden' }}>
