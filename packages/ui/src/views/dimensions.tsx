@@ -423,7 +423,11 @@ export function DimensionsView() {
             <span className="text-text-muted ml-1">({String(discoveredTags.length)} keys)</span>
           </h3>
           <div className="flex flex-wrap gap-1.5">
-            {discoveredTags.map(t => {
+            {[...discoveredTags].sort((a, b) => {
+              const aHidden = hiddenResourceCols.has(a.key) ? 1 : 0;
+              const bHidden = hiddenResourceCols.has(b.key) ? 1 : 0;
+              return aHidden - bHidden;
+            }).map(t => {
               const hidden = hiddenResourceCols.has(t.key);
               return (
                 <button
@@ -489,7 +493,11 @@ export function DimensionsView() {
             <span className="text-text-muted ml-1">({String(accountTagKeys.length)} keys)</span>
           </h3>
           <div className="flex flex-wrap gap-1.5">
-            {accountTagKeys.map(key => {
+            {[...accountTagKeys].sort((a, b) => {
+              const aH = hiddenAccountCols.has(a) ? 1 : 0;
+              const bH = hiddenAccountCols.has(b) ? 1 : 0;
+              return aH - bH;
+            }).map(key => {
               const hidden = hiddenAccountCols.has(key);
               return (
                 <button
