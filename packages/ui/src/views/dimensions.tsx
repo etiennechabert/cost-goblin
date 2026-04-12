@@ -77,19 +77,6 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   })();
 
-  // Compute alias preview: show what each alias resolves to
-  const aliasPreview = (() => {
-    const parsed = textToAliases(state.aliases);
-    if (parsed === undefined) return [];
-    const result: { from: string; to: string }[] = [];
-    for (const [canonical, alts] of Object.entries(parsed)) {
-      for (const alt of alts) {
-        result.push({ from: alt, to: canonical });
-      }
-    }
-    return result;
-  })();
-
   return (
     <div className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
       {/* Row 1: Concept + Display Label + Normalization */}
@@ -195,35 +182,81 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         </div>
       )}
 
-      {/* Row 4: Alias rules + resolved preview */}
-      <div className="grid grid-cols-[1fr_1fr] gap-4 items-start">
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-text-muted">Alias Rules</span>
-          <textarea
-            value={state.aliases}
-            onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
-            rows={3}
-            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-xs text-text-primary font-mono outline-none focus:border-accent resize-y"
-            placeholder="production: prod, prd&#10;staging: stg, stage"
-          />
-        </label>
-        <div className="flex flex-col gap-1">
-          {aliasPreview.length > 0 && (
-            <>
-              <span className="text-xs text-text-muted">Resolved mappings</span>
-              <div className="flex flex-col gap-0.5 text-xs">
-                {aliasPreview.map(({ from, to }) => (
-                  <div key={from} className="flex items-center gap-2">
-                    <span className="text-text-muted font-mono">{from}</span>
-                    <span className="text-text-muted">→</span>
-                    <span className="text-accent font-mono">{to}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
+      {/* Row 4: Alias rules (compact) */}
+      <label className="flex flex-col gap-1">
+        <span className="text-xs text-text-muted">Alias Rules (canonical: alias1, alias2)</span>
+        <textarea
+          value={state.aliases}
+          onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
+          rows={2}
+          className="rounded border border-border bg-bg-primary px-3 py-1.5 text-[11px] text-text-primary font-mono outline-none focus:border-accent resize-y"
+          placeholder="production: prod, prd&#10;staging: stg, stage"
+        />
+      </label>
+
+      {/* Row 5: Merged + normalized preview of all values */}
+      {(() => {
+        // Collect all raw values from both sources
+        const resourceVals = tagMatch !== undefined ? tagMatch.sampleValues : [];
+        const accountVals = fallbackValues.map(([v]) => v);
+        const allRaw = [...new Set([...resourceVals, ...accountVals])];
+        if (allRaw.length === 0) return null;
+
+        // Apply normalization
+        const normalize = (v: string): string => {
+          switch (state.normalize) {
+            case 'lowercase': return v.toLowerCase();
+            case 'uppercase': return v.toUpperCase();
+            case 'lowercase-kebab': return v.toLowerCase().replaceAll('_', '-').replaceAll(' ', '-');
+            default: return v;
+          }
+        };
+
+        // Build alias reverse map
+        const aliasMap = new Map<string, string>();
+        const parsed = textToAliases(state.aliases);
+        if (parsed !== undefined) {
+          for (const [canonical, alts] of Object.entries(parsed)) {
+            for (const alt of alts) {
+              aliasMap.set(normalize(alt), canonical);
+            }
+          }
+        }
+
+        // Transform: normalize → alias resolve → deduplicate
+        const transformed = allRaw.map(raw => {
+          const normalized = normalize(raw);
+          const resolved = aliasMap.get(normalized) ?? normalized;
+          return { raw, resolved, changed: resolved !== raw };
+        });
+
+        // Deduplicate by resolved value, sort alphabetically
+        const seen = new Set<string>();
+        const unique = transformed.filter(t => {
+          if (seen.has(t.resolved)) return false;
+          seen.add(t.resolved);
+          return true;
+        }).sort((a, b) => a.resolved.localeCompare(b.resolved));
+
+        return (
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-text-muted">
+              Preview — {String(unique.length)} resolved values
+              {state.normalize.length > 0 ? ` (${state.normalize})` : ''}
+            </span>
+            <div className="flex flex-wrap gap-1">
+              {unique.map(({ resolved, changed }) => (
+                <span
+                  key={resolved}
+                  className={`rounded px-1.5 py-0.5 text-[10px] font-mono ${changed ? 'bg-accent/15 text-accent' : 'bg-bg-tertiary/50 text-text-secondary'}`}
+                >
+                  {resolved}
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
