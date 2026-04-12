@@ -25,6 +25,7 @@ interface EditingTag {
   normalize: string;
   aliases: string;
   fallbackTag: string | undefined;
+  missingValueTemplate: string;
 }
 
 function aliasesToText(aliases: Readonly<Record<string, readonly string[]>> | undefined): string {
@@ -183,6 +184,23 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         </div>
       )}
 
+      {/* Row: Missing value template */}
+      <label className="flex flex-col gap-1">
+        <span className="text-xs text-text-muted">When value is missing (after fallback)</span>
+        <input
+          type="text"
+          value={state.missingValueTemplate}
+          onChange={e => { setState(s => ({ ...s, missingValueTemplate: e.target.value })); }}
+          className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary font-mono outline-none focus:border-accent"
+          placeholder={state.fallbackTag !== undefined && state.fallbackTag.length > 0 ? `e.g. unknown-{${state.fallbackTag}}` : 'e.g. unknown-{owner}'}
+        />
+        {state.missingValueTemplate.length > 0 && (
+          <span className="text-[10px] text-text-muted">
+            Example: {state.missingValueTemplate.replaceAll(/\{[^}]+\}/g, 'some-value')} — variables in {'{ }'} are resolved from other dimensions
+          </span>
+        )}
+      </label>
+
       {/* Row 4: Alias rules (compact) */}
       <label className="flex flex-col gap-1">
         <span className="text-xs text-text-muted">Alias Rules (canonical: alias1, alias2)</span>
@@ -319,7 +337,8 @@ export function DimensionsView() {
     const normalize = editing.normalize.length > 0 ? editing.normalize as NormalizationRule : undefined;
     const aliases = textToAliases(editing.aliases);
     const accountTagFallback = editing.fallbackTag !== undefined && editing.fallbackTag.length > 0 ? editing.fallbackTag : undefined;
-    return { ...base, concept, normalize, aliases, accountTagFallback };
+    const missingValueTemplate = editing.missingValueTemplate.length > 0 ? editing.missingValueTemplate : undefined;
+    return { ...base, concept, normalize, aliases, accountTagFallback, missingValueTemplate };
   }
 
   async function handleSaveTag(idx: number, editing: EditingTag) {
@@ -397,6 +416,7 @@ export function DimensionsView() {
                     normalize: tag.normalize ?? '',
                     aliases: aliasesToText(tag.aliases),
                     fallbackTag: tag.accountTagFallback,
+                    missingValueTemplate: tag.missingValueTemplate ?? '',
                   }}
                   onSave={(edited) => { void handleSaveTag(idx, edited); }}
                   onCancel={() => { setEditingIdx(null); }}
@@ -429,6 +449,9 @@ export function DimensionsView() {
                     {tag.accountTagFallback !== undefined && (
                       <span className="text-[10px] text-text-muted">fallback: {tag.accountTagFallback}</span>
                     )}
+                    {tag.missingValueTemplate !== undefined && (
+                      <span className="text-[10px] text-text-muted font-mono">missing: {tag.missingValueTemplate}</span>
+                    )}
                   </div>
                   <span className="text-xs text-text-muted">Edit →</span>
                 </button>
@@ -439,7 +462,7 @@ export function DimensionsView() {
           {/* Add new dimension form */}
           {addingNew && (
             <TagEditor
-              tag={quickAddState ?? { tagName: '', label: '', concept: '', normalize: '', aliases: '', fallbackTag: undefined }}
+              tag={quickAddState ?? { tagName: '', label: '', concept: '', normalize: '', aliases: '', fallbackTag: undefined, missingValueTemplate: '' }}
               onSave={(edited) => { void handleAddTag(edited); }}
               onCancel={() => { setAddingNew(false); setQuickAddState(null); }}
               onRemove={undefined}

@@ -184,6 +184,7 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
       ...(separator !== undefined ? { separator } : {}),
       ...(aliases !== undefined ? { aliases } : {}),
       ...(typeof tag['accountTagFallback'] === 'string' ? { accountTagFallback: tag['accountTagFallback'] } : {}),
+      ...(typeof tag['missingValueTemplate'] === 'string' ? { missingValueTemplate: tag['missingValueTemplate'] } : {}),
     };
   });
 

@@ -58,6 +58,7 @@ export interface TagDimension {
   readonly separator?: string | undefined;
   readonly aliases?: Readonly<Record<string, readonly string[]>> | undefined;
   readonly accountTagFallback?: string | undefined;
+  readonly missingValueTemplate?: string | undefined;
 }
 
 export interface DimensionsConfig {

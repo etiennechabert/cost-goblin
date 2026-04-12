@@ -1480,6 +1480,7 @@ tags: []
         ...(t.separator === undefined ? {} : { separator: t.separator }),
         ...(t.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(t.aliases).map(([k, v]) => [k, [...v]])) }),
         ...(t.accountTagFallback === undefined ? {} : { accountTagFallback: t.accountTagFallback }),
+        ...(t.missingValueTemplate === undefined ? {} : { missingValueTemplate: t.missingValueTemplate }),
       })),
     });
     await fs.writeFile(ctx.dimensionsPath, output);
