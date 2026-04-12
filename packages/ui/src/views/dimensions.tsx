@@ -140,7 +140,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           {tagMatch !== undefined && (
             <>
               <span className="text-xs text-text-muted">{String(tagMatch.coveragePct)}% coverage · {String(tagMatch.distinctCount)} distinct values</span>
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
                 {tagMatch.sampleValues.map(v => (
                   <span key={v} className="rounded bg-bg-tertiary/50 px-1.5 py-0.5 text-[10px] text-text-secondary">{v}</span>
                 ))}
@@ -168,13 +168,12 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
             {fallbackValues.length > 0 && (
               <>
                 <span className="text-xs text-text-muted">{String(fallbackValues.length)} distinct values</span>
-                <div className="flex flex-wrap gap-1">
-                  {fallbackValues.slice(0, 12).map(([val, cnt]) => (
+                <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
+                  {fallbackValues.map(([val, cnt]) => (
                     <span key={val} className="rounded bg-bg-tertiary/50 px-1.5 py-0.5 text-[10px] text-text-secondary">
                       {val} <span className="text-text-muted">({String(cnt)})</span>
                     </span>
                   ))}
-                  {fallbackValues.length > 12 && <span className="text-[10px] text-text-muted">+{String(fallbackValues.length - 12)}</span>}
                 </div>
               </>
             )}

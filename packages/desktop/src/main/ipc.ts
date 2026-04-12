@@ -1427,7 +1427,6 @@ tags: []
         )
         SELECT tag_key, key_cnt, distinct_cnt, tag_val, val_cnt
         FROM with_stats
-        WHERE rn <= 10
         ORDER BY key_cnt DESC, tag_key, rn
       `;
       const rows = await queryAll(conn, sql);
