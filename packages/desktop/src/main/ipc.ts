@@ -1377,7 +1377,7 @@ tags: []
 
   // -- Tag discovery + Dimensions config --
 
-  ipcMain.handle('dimensions:discover-tags', async (): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number }[]; samplePeriod: string }> => {
+  ipcMain.handle('dimensions:discover-tags', async (): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> => {
     const config = await getConfig();
     const provider = config.providers[0];
     if (provider === undefined) return { tags: [], samplePeriod: '' };
@@ -1412,18 +1412,21 @@ tags: []
           WHERE resource_tags IS NOT NULL
             AND line_item_usage_start_date >= '${thirtyDaysAgo}'
         ),
-        ranked AS (
-          SELECT tag_key, tag_val,
-                 COUNT(*) AS val_cnt,
-                 SUM(COUNT(*)) OVER (PARTITION BY tag_key) AS key_cnt,
-                 COUNT(*) OVER (PARTITION BY tag_key) AS distinct_cnt,
-                 ROW_NUMBER() OVER (PARTITION BY tag_key ORDER BY COUNT(*) DESC) AS rn
+        grouped AS (
+          SELECT tag_key, tag_val, COUNT(*) AS val_cnt
           FROM tags
           WHERE tag_val IS NOT NULL AND tag_val != ''
           GROUP BY tag_key, tag_val
+        ),
+        with_stats AS (
+          SELECT *,
+                 SUM(val_cnt) OVER (PARTITION BY tag_key) AS key_cnt,
+                 COUNT(*) OVER (PARTITION BY tag_key) AS distinct_cnt,
+                 ROW_NUMBER() OVER (PARTITION BY tag_key ORDER BY val_cnt DESC) AS rn
+          FROM grouped
         )
         SELECT tag_key, key_cnt, distinct_cnt, tag_val, val_cnt
-        FROM ranked
+        FROM with_stats
         WHERE rn <= 10
         ORDER BY key_cnt DESC, tag_key, rn
       `;
