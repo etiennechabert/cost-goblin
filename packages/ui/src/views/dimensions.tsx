@@ -215,9 +215,11 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
 
       {/* Row 5: Merged + normalized preview of all values */}
       {(() => {
-        // Collect all raw values from both sources
+        // Collect values with source tracking
         const resourceVals = tagMatch !== undefined ? tagMatch.sampleValues : [];
         const accountVals = fallbackValues.map(([v]) => v);
+        const resourceSet = new Set(resourceVals);
+        const accountSet = new Set(accountVals);
         const allRaw = [...new Set([...resourceVals, ...accountVals])];
         if (allRaw.length === 0) return null;
 
@@ -244,22 +246,36 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           }
         }
 
-        // Transform: normalize → alias resolve → deduplicate
+        // Transform: normalize → alias resolve → track source
+        type Source = 'resource' | 'account' | 'both';
         const transformed = allRaw.map(raw => {
           const normalized = normalize(raw);
           const resolved = aliasMap.get(normalized) ?? normalized;
-          return { raw, resolved, changed: resolved !== raw };
+          const fromResource = resourceSet.has(raw);
+          const fromAccount = accountSet.has(raw);
+          const source: Source = fromResource && fromAccount ? 'both' : fromResource ? 'resource' : 'account';
+          return { raw, resolved, changed: resolved !== raw, source };
         });
 
         const aliasPreviewCount = transformed.filter(t => t.changed).length;
 
-        // Deduplicate by resolved value, sort alphabetically
-        const seen = new Set<string>();
-        const unique = transformed.filter(t => {
-          if (seen.has(t.resolved)) return false;
-          seen.add(t.resolved);
-          return true;
-        }).sort((a, b) => a.resolved.localeCompare(b.resolved));
+        // Deduplicate by resolved value, merge sources, sort alphabetically
+        const resolvedMap = new Map<string, Source>();
+        for (const t of transformed) {
+          const existing = resolvedMap.get(t.resolved);
+          if (existing === undefined) {
+            resolvedMap.set(t.resolved, t.source);
+          } else if (existing !== 'both' && existing !== t.source) {
+            resolvedMap.set(t.resolved, 'both');
+          }
+        }
+        const unique = [...resolvedMap.entries()]
+          .map(([resolved, source]) => ({
+            resolved,
+            changed: transformed.some(t => t.resolved === resolved && t.changed),
+            source,
+          }))
+          .sort((a, b) => a.resolved.localeCompare(b.resolved));
 
         return (
           <div className="flex flex-col gap-1">
@@ -268,15 +284,27 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
               {state.normalize.length > 0 ? ` (${state.normalize})` : ''}
               {aliasPreviewCount > 0 ? ` · ${String(aliasPreviewCount)} aliased` : ''}
             </span>
+            <div className="flex items-center gap-3 text-[9px] text-text-muted mb-1">
+              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-cyan-500/30 border border-cyan-500/50" /> resource</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-violet-500/30 border border-violet-500/50" /> account</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-500/30 border border-emerald-500/50" /> both</span>
+            </div>
             <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
-              {unique.map(({ resolved, changed }) => (
+              {unique.map(({ resolved, changed, source }) => {
+                const colors = source === 'both'
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                  : source === 'account'
+                    ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
+                    : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300';
+                return (
                 <span
                   key={resolved}
-                  className={`rounded px-1.5 py-0.5 text-[10px] font-mono ${changed ? 'bg-accent/15 text-accent' : 'bg-bg-tertiary/50 text-text-secondary'}`}
+                  className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${changed ? 'ring-1 ring-accent/50' : ''} ${colors}`}
                 >
                   {resolved}
                 </span>
-              ))}
+                );
+              })}
             </div>
           </div>
         );
