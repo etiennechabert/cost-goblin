@@ -278,10 +278,11 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           else if (fromResource && fromAccount) source = 'both';
           else if (fromResource) source = 'resource';
           else source = 'account';
-          return { raw, resolved, changed: resolved !== raw, source };
+          const aliased = aliasMap.has(normalized);
+          return { raw, resolved, aliased, source };
         });
 
-        const aliasPreviewCount = transformed.filter(t => t.changed).length;
+        const aliasPreviewCount = transformed.filter(t => t.aliased).length;
 
         // Deduplicate by resolved value, merge sources, sort alphabetically
         const resolvedMap = new Map<string, Source>();
@@ -296,7 +297,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         const unique = [...resolvedMap.entries()]
           .map(([resolved, source]) => ({
             resolved,
-            changed: transformed.some(t => t.resolved === resolved && t.changed),
+            aliased: transformed.some(t => t.resolved === resolved && t.aliased),
             source,
           }))
           .sort((a, b) => a.resolved.localeCompare(b.resolved));
@@ -316,8 +317,8 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
               {!isPassthrough && <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-warning/30 border border-warning/50" /> formatted</span>}
             </div>
             <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
-              {unique.map(({ resolved, changed, source }) => {
-                const colors = changed
+              {unique.map(({ resolved, aliased, source }) => {
+                const colors = aliased
                   ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
                   : source === 'template'
                     ? 'bg-warning/10 border-warning/30 text-warning italic'
