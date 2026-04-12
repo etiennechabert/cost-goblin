@@ -20,8 +20,8 @@ interface EditingTag {
   label: string;
   concept: string;
   normalize: string;
-  aliases: string; // "canonical: alias1, alias2\n..."
-  accountTagFallback: boolean;
+  aliases: string;
+  fallbackTag: string | undefined;
 }
 
 function aliasesToText(aliases: Readonly<Record<string, readonly string[]>> | undefined): string {
@@ -46,12 +46,13 @@ function textToAliases(text: string): Record<string, readonly string[]> | undefi
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, isNew }: Readonly<{
+function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, accountTagKeys: acctTags, isNew }: Readonly<{
   tag: EditingTag;
   onSave: (tag: EditingTag) => void;
   onCancel: () => void;
   onRemove: (() => void) | undefined;
   availableTags: readonly string[];
+  accountTagKeys: readonly string[];
   isNew: boolean;
 }>) {
   const [state, setState] = useState(tag);
@@ -126,6 +127,20 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, isNew }: Re
         </label>
       </div>
 
+      {acctTags.length > 0 && (
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-text-muted">Fallback account tag (used when resource tag is missing)</span>
+          <select
+            value={state.fallbackTag ?? ''}
+            onChange={e => { setState(s => ({ ...s, fallbackTag: e.target.value.length > 0 ? e.target.value : undefined })); }}
+            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+          >
+            <option value="">No fallback</option>
+            {acctTags.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </label>
+      )}
+
       <label className="flex flex-col gap-1">
         <span className="text-xs text-text-muted">Alias Rules (one per line: canonical: alias1, alias2)</span>
         <textarea
@@ -195,7 +210,8 @@ export function DimensionsView() {
     const concept = editing.concept.length > 0 ? editing.concept as ConceptType : undefined;
     const normalize = editing.normalize.length > 0 ? editing.normalize as NormalizationRule : undefined;
     const aliases = textToAliases(editing.aliases);
-    return { ...base, concept, normalize, aliases };
+    const accountTagFallback = editing.fallbackTag !== undefined && editing.fallbackTag.length > 0 ? editing.fallbackTag : undefined;
+    return { ...base, concept, normalize, aliases, accountTagFallback };
   }
 
   async function handleSaveTag(idx: number, editing: EditingTag) {
@@ -235,7 +251,7 @@ export function DimensionsView() {
     setEditingIdx(null);
     // The TagEditor will be shown with pre-filled values
     // We need to pass the initial state — using a key trick
-    setQuickAddState({ tagName: tagKey, label, concept: '', normalize: '', aliases: '', accountTagFallback: false });
+    setQuickAddState({ tagName: tagKey, label, concept: '', normalize: '', aliases: '', fallbackTag: undefined });
   }
 
   const [quickAddState, setQuickAddState] = useState<EditingTag | null>(null);
@@ -266,9 +282,12 @@ export function DimensionsView() {
           {/* Built-in dimensions (read-only) */}
           {config.builtIn.map(d => (
             <div key={d.name} className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between">
-              <div>
+              <div className="flex items-center gap-3">
                 <span className="text-sm font-medium text-text-primary">{d.label}</span>
-                <span className="text-xs text-text-muted ml-2">built-in · {d.field}</span>
+                <span className="text-xs text-text-muted font-mono">{d.field}</span>
+                {d.displayField !== undefined && (
+                  <span className="text-[10px] text-text-muted">display: {d.displayField}</span>
+                )}
               </div>
               <span className="text-[10px] text-text-muted uppercase tracking-wider">Built-in</span>
             </div>
@@ -285,12 +304,13 @@ export function DimensionsView() {
                     concept: tag.concept ?? '',
                     normalize: tag.normalize ?? '',
                     aliases: aliasesToText(tag.aliases),
-                    accountTagFallback: false,
+                    fallbackTag: tag.accountTagFallback,
                   }}
                   onSave={(edited) => { void handleSaveTag(idx, edited); }}
                   onCancel={() => { setEditingIdx(null); }}
                   onRemove={() => { void handleRemoveTag(idx); }}
                   availableTags={[]}
+                  accountTagKeys={accountTagKeys}
                   isNew={false}
                 />
               ) : (
@@ -313,6 +333,9 @@ export function DimensionsView() {
                     {tag.aliases !== undefined && (
                       <span className="text-[10px] text-text-muted">{String(Object.keys(tag.aliases).length)} alias rules</span>
                     )}
+                    {tag.accountTagFallback !== undefined && (
+                      <span className="text-[10px] text-text-muted">fallback: {tag.accountTagFallback}</span>
+                    )}
                   </div>
                   <span className="text-xs text-text-muted">Edit →</span>
                 </button>
@@ -323,11 +346,12 @@ export function DimensionsView() {
           {/* Add new dimension form */}
           {addingNew && (
             <TagEditor
-              tag={quickAddState ?? { tagName: '', label: '', concept: '', normalize: '', aliases: '', accountTagFallback: false }}
+              tag={quickAddState ?? { tagName: '', label: '', concept: '', normalize: '', aliases: '', fallbackTag: undefined }}
               onSave={(edited) => { void handleAddTag(edited); }}
               onCancel={() => { setAddingNew(false); setQuickAddState(null); }}
               onRemove={undefined}
               availableTags={unmappedTagKeys}
+              accountTagKeys={accountTagKeys}
               isNew
             />
           )}

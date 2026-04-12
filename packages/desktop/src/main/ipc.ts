@@ -391,6 +391,18 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     return dimensions;
   }
 
+  async function getOrgAccountsPath(): Promise<string | undefined> {
+    const path = await import('node:path');
+    const fs = await import('node:fs/promises');
+    const p = path.join(path.dirname(ctx.dataDir), 'org-accounts.json');
+    try {
+      await fs.access(p);
+      return p;
+    } catch {
+      return undefined;
+    }
+  }
+
   async function getOrgTreeConfig(): Promise<OrgTreeConfig> {
     if (state.orgTree !== null) return state.orgTree;
     const orgTree = await loadOrgTree(ctx.orgTreePath);
@@ -504,7 +516,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   ipcMain.handle('query:costs', async (_event, params: CostQueryParams): Promise<CostResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-    const sql = buildCostQuery(params, ctx.dataDir, dimensions);
+    const orgPath = await getOrgAccountsPath();
+    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath);
     logger.info('query:costs', { groupBy: params.groupBy });
 
     return withConnection(async (conn) => {
@@ -531,7 +544,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
   ipcMain.handle('query:daily-costs', async (_event, params: DailyCostsParams): Promise<DailyCostsResult> => {
     const dimensions = await getDimensions();
-    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions);
+    const orgPath = await getOrgAccountsPath();
+    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath);
     logger.info('query:daily-costs', { groupBy: params.groupBy });
 
     return withConnection(async (conn) => {
@@ -584,7 +598,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   ipcMain.handle('query:trends', async (_event, params: TrendQueryParams): Promise<TrendResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-    const sql = buildTrendQuery(params, ctx.dataDir, dimensions);
+    const orgPath = await getOrgAccountsPath();
+    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath);
     logger.info('query:trends', { groupBy: params.groupBy });
 
     return withConnection(async (conn) => {
@@ -604,7 +619,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   ipcMain.handle('query:missing-tags', async (_event, params: MissingTagsParams): Promise<MissingTagsResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-    const sql = buildMissingTagsQuery(params, ctx.dataDir, dimensions);
+    const orgPath = await getOrgAccountsPath();
+    const sql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath);
     logger.info('query:missing-tags', { tagDimension: params.tagDimension });
 
     return withConnection(async (conn) => {
@@ -689,7 +705,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   ipcMain.handle('query:entity-detail', async (_event, params: EntityDetailParams): Promise<EntityDetailResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions);
+    const orgPath = await getOrgAccountsPath();
+    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath);
     logger.info('query:entity-detail', { entity: params.entity });
 
     return withConnection(async (conn) => {
@@ -736,7 +753,8 @@ export function registerIpcHandlers(ctx: IpcContext): void {
 
     const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
-    const source = buildSource(ctx.dataDir, 'daily', dimensions);
+    const orgPath = await getOrgAccountsPath();
+    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath);
     const sql = `
       SELECT ${fieldExpr} AS val, SUM(cost) AS total_cost
       FROM ${source}
@@ -1424,6 +1442,7 @@ tags: []
         ...(t.normalize === undefined ? {} : { normalize: t.normalize }),
         ...(t.separator === undefined ? {} : { separator: t.separator }),
         ...(t.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(t.aliases).map(([k, v]) => [k, [...v]])) }),
+        ...(t.accountTagFallback === undefined ? {} : { accountTagFallback: t.accountTagFallback }),
       })),
     });
     await fs.writeFile(ctx.dimensionsPath, output);

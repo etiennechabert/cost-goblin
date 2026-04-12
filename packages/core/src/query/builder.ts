@@ -33,11 +33,21 @@ function buildFilterClauses(filters: FilterMap, dimensions: DimensionsConfig): s
   return clauses;
 }
 
-export function buildSource(dataDir: string, tier: string, dimensions: DimensionsConfig): string {
+export function buildSource(dataDir: string, tier: string, dimensions: DimensionsConfig, orgAccountsPath?: string): string {
+  const hasFallbacks = dimensions.tags.some(t => t.accountTagFallback !== undefined);
+  const needsOrgJoin = hasFallbacks && orgAccountsPath !== undefined;
+
   const tagSelects = dimensions.tags.map(t => {
     const curKey = `user_${t.tagName}`;
     const colName = `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`;
-    return `element_at(resource_tags, '${curKey}')[1] AS ${colName}`;
+    const resourceExpr = `element_at(resource_tags, '${curKey}')[1]`;
+
+    if (t.accountTagFallback !== undefined && needsOrgJoin) {
+      const fallbackKey = t.accountTagFallback.replaceAll("'", "''");
+      return `COALESCE(NULLIF(${resourceExpr}, ''), element_at(acct_tags.tags, '${fallbackKey}')[1]) AS ${colName}`;
+    }
+
+    return `${resourceExpr} AS ${colName}`;
   });
 
   const tagClause = tagSelects.length > 0 ? `,\n      ${tagSelects.join(',\n      ')}` : '';
@@ -46,23 +56,33 @@ export function buildSource(dataDir: string, tier: string, dimensions: Dimension
     ? 'line_item_usage_start_date AS usage_date'
     : 'line_item_usage_start_date::DATE AS usage_date';
 
+  const parquetSource = `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`;
+
+  const fromClause = needsOrgJoin
+    ? `${parquetSource} AS cur
+      LEFT JOIN (
+        SELECT id, tags::MAP(VARCHAR, VARCHAR) AS tags
+        FROM read_json_auto('${orgAccountsPath}', format='array', records='true', columns={id: 'VARCHAR', tags: 'JSON'})
+      ) AS acct_tags ON cur.line_item_usage_account_id = acct_tags.id`
+    : parquetSource;
+
   return `(
     SELECT
       ${dateExpr},
-      line_item_usage_account_id AS account_id,
-      COALESCE(line_item_usage_account_name, '') AS account_name,
-      COALESCE(product_region_code, '') AS region,
-      COALESCE(product_servicecode, '') AS service,
-      COALESCE(product_product_family, '') AS service_family,
-      COALESCE(line_item_line_item_description, '') AS description,
-      COALESCE(line_item_resource_id, '') AS resource_id,
-      COALESCE(line_item_usage_amount, 0) AS usage_amount,
-      COALESCE(line_item_unblended_cost, 0) AS cost,
-      COALESCE(pricing_public_on_demand_cost, 0) AS list_cost,
-      COALESCE(line_item_line_item_type, '') AS line_item_type,
-      COALESCE(line_item_operation, '') AS operation,
-      COALESCE(line_item_usage_type, '') AS usage_type${tagClause}
-    FROM read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')
+      ${needsOrgJoin ? 'cur.' : ''}line_item_usage_account_id AS account_id,
+      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_usage_account_name, '') AS account_name,
+      COALESCE(${needsOrgJoin ? 'cur.' : ''}product_region_code, '') AS region,
+      COALESCE(${needsOrgJoin ? 'cur.' : ''}product_servicecode, '') AS service,
+      COALESCE(${needsOrgJoin ? 'cur.' : ''}product_product_family, '') AS service_family,
+      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_line_item_description, '') AS description,
+      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_resource_id, '') AS resource_id,
+      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_usage_amount, 0) AS usage_amount,
+      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_unblended_cost, 0) AS cost,
+      COALESCE(${needsOrgJoin ? 'cur.' : ''}pricing_public_on_demand_cost, 0) AS list_cost,
+      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_line_item_type, '') AS line_item_type,
+      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_operation, '') AS operation,
+      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_usage_type, '') AS usage_type${tagClause}
+    FROM ${fromClause}
   )`;
 }
 
@@ -71,11 +91,12 @@ export function buildCostQuery(
   dataDir: string,
   dimensions: DimensionsConfig,
   topN: number = 5,
+  orgAccountsPath?: string,
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
   const costTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
-  const source = buildSource(dataDir, costTier, dimensions);
+  const source = buildSource(dataDir, costTier, dimensions, orgAccountsPath);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -135,10 +156,11 @@ export function buildTrendQuery(
   params: TrendQueryParams,
   dataDir: string,
   dimensions: DimensionsConfig,
+  orgAccountsPath?: string,
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
-  const source = buildSource(dataDir, 'daily', dimensions);
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath);
 
   const startDate = params.dateRange.start;
   const endDate = params.dateRange.end;
@@ -187,10 +209,11 @@ export function buildMissingTagsQuery(
   params: MissingTagsParams,
   dataDir: string,
   dimensions: DimensionsConfig,
+  orgAccountsPath?: string,
 ): string {
   const tagResolved = resolveField(params.tagDimension, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
-  const source = buildSource(dataDir, 'daily', dimensions);
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -218,11 +241,12 @@ export function buildDailyCostsQuery(
   params: DailyCostsParams,
   dataDir: string,
   dimensions: DimensionsConfig,
+  orgAccountsPath?: string,
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
   const dailyTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
-  const source = buildSource(dataDir, dailyTier, dimensions);
+  const source = buildSource(dataDir, dailyTier, dimensions, orgAccountsPath);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -249,12 +273,13 @@ export function buildEntityDetailQuery(
   params: EntityDetailParams,
   dataDir: string,
   dimensions: DimensionsConfig,
+  orgAccountsPath?: string,
 ): string {
   const dimResolved = resolveField(params.dimension, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
   const granularity = params.granularity ?? 'daily';
   const tier = granularity === 'hourly' ? 'hourly' : 'daily';
-  const source = buildSource(dataDir, tier, dimensions);
+  const source = buildSource(dataDir, tier, dimensions, orgAccountsPath);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
