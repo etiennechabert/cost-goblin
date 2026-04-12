@@ -218,9 +218,30 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         // Collect values with source tracking
         const resourceVals = tagMatch !== undefined ? tagMatch.sampleValues : [];
         const accountVals = fallbackValues.map(([v]) => v);
+        const hasTemplate = state.missingValueTemplate.length > 0;
+
+        // When a template is set, account fallback values are replaced by template-generated values
+        const templateVals: string[] = [];
+        if (hasTemplate) {
+          // Generate template values by substituting each account fallback value
+          const templateHasVar = /\{[^}]+\}/.test(state.missingValueTemplate);
+          if (templateHasVar) {
+            for (const acctVal of accountVals) {
+              templateVals.push(state.missingValueTemplate.replaceAll(/\{[^}]+\}/g, acctVal));
+            }
+          } else {
+            // Static template — just one value
+            templateVals.push(state.missingValueTemplate);
+          }
+        }
+
         const resourceSet = new Set(resourceVals);
-        const accountSet = new Set(accountVals);
-        const allRaw = [...new Set([...resourceVals, ...accountVals])];
+        const templateSet = new Set(templateVals);
+        // When template is set, don't include raw account vals — they're replaced by template vals
+        const allRaw = hasTemplate
+          ? [...new Set([...resourceVals, ...templateVals])]
+          : [...new Set([...resourceVals, ...accountVals])];
+        const accountSet = hasTemplate ? new Set<string>() : new Set(accountVals);
         if (allRaw.length === 0) return null;
 
         // Apply normalization
@@ -247,13 +268,18 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         }
 
         // Transform: normalize → alias resolve → track source
-        type Source = 'resource' | 'account' | 'both';
+        type Source = 'resource' | 'account' | 'both' | 'template';
         const transformed = allRaw.map(raw => {
           const normalized = normalize(raw);
           const resolved = aliasMap.get(normalized) ?? normalized;
           const fromResource = resourceSet.has(raw);
           const fromAccount = accountSet.has(raw);
-          const source: Source = fromResource && fromAccount ? 'both' : fromResource ? 'resource' : 'account';
+          const fromTemplate = templateSet.has(raw);
+          let source: Source;
+          if (fromTemplate) source = 'template';
+          else if (fromResource && fromAccount) source = 'both';
+          else if (fromResource) source = 'resource';
+          else source = 'account';
           return { raw, resolved, changed: resolved !== raw, source };
         });
 
@@ -288,15 +314,17 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-cyan-500/30 border border-cyan-500/50" /> resource</span>
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-violet-500/30 border border-violet-500/50" /> account</span>
               <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-500/30 border border-emerald-500/50" /> both</span>
-              {state.missingValueTemplate.length > 0 && <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-warning/30 border border-warning/50" /> missing</span>}
+              {hasTemplate && <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-warning/30 border border-warning/50" /> template</span>}
             </div>
             <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
               {unique.map(({ resolved, changed, source }) => {
-                const colors = source === 'both'
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                  : source === 'account'
-                    ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
-                    : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300';
+                const colors = source === 'template'
+                  ? 'bg-warning/10 border-warning/30 text-warning italic'
+                  : source === 'both'
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                    : source === 'account'
+                      ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
+                      : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300';
                 return (
                 <span
                   key={resolved}
@@ -306,11 +334,6 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
                 </span>
                 );
               })}
-              {state.missingValueTemplate.length > 0 && (
-                <span className="rounded border px-1.5 py-0.5 text-[10px] font-mono bg-warning/10 border-warning/30 text-warning italic">
-                  {state.missingValueTemplate}
-                </span>
-              )}
             </div>
           </div>
         );
