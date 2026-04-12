@@ -234,4 +234,7 @@ export class MockCostApi implements CostApi {
   syncOrgAccounts(): Promise<{ accounts: readonly never[]; orgId: string; syncedAt: string }> { return Promise.resolve({ accounts: [], orgId: 'mock', syncedAt: new Date().toISOString() }); }
   getOrgSyncResult(): Promise<null> { return Promise.resolve(null); }
   getOrgSyncProgress(): Promise<null> { return Promise.resolve(null); }
+  getAutoSyncEnabled(): Promise<boolean> { return Promise.resolve(false); }
+  setAutoSyncEnabled(): Promise<void> { return Promise.resolve(); }
+  getAutoSyncStatus(): Promise<{ state: 'disabled' }> { return Promise.resolve({ state: 'disabled' }); }
 }
