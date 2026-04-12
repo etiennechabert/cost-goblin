@@ -85,7 +85,8 @@ describe('EntityDetail', () => {
 
   it('date range picker is visible', () => {
     renderDetail();
-    expect(screen.getByText('30 days')).toBeDefined();
-    expect(screen.getByText('7 days')).toBeDefined();
+    expect(screen.getByText('Daily')).toBeDefined();
+    expect(screen.getByText('Hourly')).toBeDefined();
+    expect(screen.getByText('90 days')).toBeDefined();
   });
 });

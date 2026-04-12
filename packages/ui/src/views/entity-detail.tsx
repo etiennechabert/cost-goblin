@@ -161,7 +161,7 @@ export function EntityDetail({ entity, dimension, onBack }: EntityDetailProps) {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <DateRangePicker value={dateRange} onChange={setDateRange} />
+          <DateRangePicker value={dateRange} granularity="daily" onChange={(range) => { setDateRange(range); }} />
           {data !== null && (
             <button
               type="button"

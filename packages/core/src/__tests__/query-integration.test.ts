@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildCostQuery, buildMissingTagsQuery, buildEntityDetailQuery, buildSource } from '../query/builder.js';
+import { buildCostQuery, buildDailyCostsQuery, buildMissingTagsQuery, buildEntityDetailQuery, buildSource } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asTagValue } from '../types/branded.js';
 
@@ -159,5 +159,46 @@ describe('DuckDB query integration', () => {
     const source = buildSource(SYNTHETIC_DIR, 'hourly', dimensions);
     const rows = await queryAll(conn, `SELECT COUNT(*) as cnt FROM ${source}`);
     expect(Number(rows[0]?.['cnt'])).toBeGreaterThan(0);
+  });
+
+  it('daily costs query with hourly granularity includes hour in date field', async () => {
+    const sql = buildDailyCostsQuery(
+      {
+        groupBy: asDimensionId('service'),
+        dateRange: { start: asDateString('2026-02-01'), end: asDateString('2026-02-28') },
+        filters: {},
+        granularity: 'hourly',
+      },
+      SYNTHETIC_DIR,
+      dimensions,
+    );
+    const rows = await queryAll(conn, sql);
+    expect(rows.length).toBeGreaterThan(0);
+
+    const dates = [...new Set(rows.map(r => String(r['date'])))];
+    const hasHourComponent = dates.some(d => d.includes(':'));
+    expect(hasHourComponent).toBe(true);
+    // Fixture only has daily timestamps at 00:00, but the date field should contain hour info
+    expect(dates[0]).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:00/);
+  });
+
+  it('daily costs query with daily granularity returns daily data points', async () => {
+    const sql = buildDailyCostsQuery(
+      {
+        groupBy: asDimensionId('service'),
+        dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
+        filters: {},
+        granularity: 'daily',
+      },
+      SYNTHETIC_DIR,
+      dimensions,
+    );
+    const rows = await queryAll(conn, sql);
+    expect(rows.length).toBeGreaterThan(0);
+
+    const dates = new Set(rows.map(r => String(r['date'])));
+    const hasHourComponent = [...dates].some(d => d.includes(':'));
+    expect(hasHourComponent).toBe(false);
+    expect(dates.size).toBeLessThanOrEqual(31);
   });
 });

@@ -17,9 +17,10 @@ interface StackedBarChartProps {
   onTabChange: (tab: HistogramTab) => void;
   expanded?: boolean | undefined;
   onExpandToggle?: (() => void) | undefined;
+  title?: string | undefined;
 }
 
-export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle }: StackedBarChartProps) {
+export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title }: StackedBarChartProps) {
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
 
   const allKeys = new Set<string>();
@@ -41,7 +42,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium text-text-secondary">Daily Costs</h3>
+        <h3 className="text-sm font-medium text-text-secondary">{title ?? 'Daily Costs'}</h3>
         <div className="flex items-center gap-2">
         <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
           {tabs.map(t => (

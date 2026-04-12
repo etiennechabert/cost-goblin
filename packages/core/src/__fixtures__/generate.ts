@@ -309,14 +309,37 @@ async function generate(): Promise<void> {
   }
   process.stdout.write(`  Exported ${String(months.length)} monthly raw files\n`);
 
-  // Export hourly data (last 7 days of Feb as a single monthly file)
+  // Export hourly data (last 7 days of Feb with hourly timestamps)
   const hourlyMonthDir = join(rawDir, 'hourly-2026-02');
   await mkdir(hourlyMonthDir, { recursive: true });
   const hourlyDates = dailyDates.slice(-7);
-  const hourlyWhereClause = hourlyDates.map(d => `line_item_usage_start_date::DATE = '${d}'`).join(' OR ');
+  // Expand daily rows into hourly rows by adding hour offsets
+  await conn.run(`
+    CREATE TABLE hourly_synthetic AS
+    SELECT
+      line_item_usage_start_date + INTERVAL (h) HOUR AS line_item_usage_start_date,
+      line_item_usage_account_id,
+      line_item_usage_account_name,
+      product_region_code,
+      product_servicecode,
+      product_product_family,
+      line_item_line_item_type,
+      line_item_resource_id,
+      line_item_usage_amount / 24.0 AS line_item_usage_amount,
+      line_item_unblended_cost / 24.0 AS line_item_unblended_cost,
+      pricing_public_on_demand_cost / 24.0 AS pricing_public_on_demand_cost,
+      line_item_line_item_description,
+      line_item_operation,
+      line_item_usage_type,
+      resource_tags
+    FROM synthetic
+    CROSS JOIN generate_series(0, 23) AS t(h)
+    WHERE line_item_usage_start_date::DATE::VARCHAR IN (${hourlyDates.map(d => `'${d}'`).join(', ')})
+  `);
+  const hourlyWhereClause = '1=1';
   await conn.run(`
     COPY (
-      SELECT * FROM synthetic WHERE ${hourlyWhereClause}
+      SELECT * FROM hourly_synthetic WHERE ${hourlyWhereClause}
     ) TO '${join(hourlyMonthDir, 'data.parquet')}' (FORMAT PARQUET)
   `);
   process.stdout.write(`  Exported hourly raw file (${String(hourlyDates.length)} days)\n`);
