@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { PALETTE_STANDARD } from '../lib/palette.js';
 import { formatDollars } from './format.js';
+import { CoinRainLoader } from './coin-rain-loader.js';
 
 export interface BarDay {
   readonly date: string;
@@ -18,9 +19,10 @@ interface StackedBarChartProps {
   expanded?: boolean | undefined;
   onExpandToggle?: (() => void) | undefined;
   title?: string | undefined;
+  loading?: boolean | undefined;
 }
 
-export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title }: StackedBarChartProps) {
+export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading }: StackedBarChartProps) {
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
 
   const allKeys = new Set<string>();
@@ -202,7 +204,13 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
         </div>
         );
       })() : (
-        <div className="flex items-center justify-center flex-1 min-h-40 text-sm text-text-muted">No daily data</div>
+        loading === true ? (
+          <div className="flex-1 min-h-40 flex items-center justify-center">
+            <CoinRainLoader height={expanded ? 340 : 160} count={6} />
+          </div>
+        ) : (
+          <div className="flex items-center justify-center flex-1 min-h-40 text-sm text-text-muted">No daily data</div>
+        )
       )}
     </div>
   );

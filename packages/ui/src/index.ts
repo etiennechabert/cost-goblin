@@ -27,6 +27,7 @@ export { DimensionSelector } from './components/dimension-selector.js';
 export { PieChart } from './components/pie-chart.js';
 export { StackedBarChart } from './components/stacked-bar-chart.js';
 export { FilterActiveBanner } from './components/filter-active-banner.js';
+export { CoinRainLoader } from './components/coin-rain-loader.js';
 export { useCostFocus, useCostFocusDispatch, useCostFocusReducer, CostFocusProvider, CostFocusDispatchProvider } from './hooks/use-cost-focus.js';
 
 export { CostOverview } from './views/cost-overview.js';
