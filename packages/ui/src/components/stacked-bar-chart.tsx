@@ -75,15 +75,36 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
         </div>
       </div>
 
-      {days.length > 0 ? (
-        <div>
-          {/* Y axis label */}
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] text-text-muted w-10 text-right">{formatDollars(maxCost)}</span>
-            <div className="flex-1 border-b border-border-subtle" />
+      {days.length > 0 ? (() => {
+        const chartHeight = expanded ? 360 : 180;
+        const ticks = [1, 0.75, 0.5, 0.25, 0];
+        return (
+        <div className="relative">
+          {/* Y axis ticks */}
+          <div className="absolute left-0 top-0 w-10 h-full" style={{ height: `${String(chartHeight)}px` }}>
+            {ticks.map(pct => (
+              <div
+                key={pct}
+                className="absolute right-0 flex items-center"
+                style={{ top: `${String((1 - pct) * 100)}%`, transform: 'translateY(-50%)' }}
+              >
+                <span className="text-[10px] text-text-muted tabular-nums">{formatDollars(maxCost * pct)}</span>
+              </div>
+            ))}
           </div>
 
-          <div className="flex items-end ml-12" style={{ height: expanded ? '360px' : '180px', gap: '2px' }}>
+          {/* Grid lines */}
+          <div className="absolute left-12 right-0 top-0" style={{ height: `${String(chartHeight)}px` }}>
+            {ticks.map(pct => (
+              <div
+                key={pct}
+                className="absolute left-0 right-0 border-b border-border-subtle/50"
+                style={{ top: `${String((1 - pct) * 100)}%` }}
+              />
+            ))}
+          </div>
+
+          <div className="flex items-end ml-12 relative z-10" style={{ height: `${String(chartHeight)}px`, gap: '2px' }}>
             {days.map((day) => {
               const barPct = maxCost > 0 ? (day.total / maxCost) * 100 : 0;
               const segments = breakdownKeys
@@ -167,16 +188,20 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
 
           {/* X axis */}
           <div className="flex ml-12 mt-1" style={{ gap: '2px' }}>
-            {days.map((day, idx) => (
-              <div key={day.date} className="flex-1 min-w-0 text-center">
-                {idx % Math.max(1, Math.floor(days.length / 6)) === 0 ? (
-                  <span className="text-[10px] text-text-muted">{day.date.slice(5)}</span>
+            {days.map((day, idx) => {
+              const step = Math.max(1, Math.ceil(days.length / 7));
+              return (
+              <div key={day.date} className="flex-1 min-w-0 text-center overflow-hidden">
+                {idx % step === 0 ? (
+                  <span className="text-[10px] text-text-muted whitespace-nowrap">{day.date.slice(5)}</span>
                 ) : null}
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
-      ) : (
+        );
+      })() : (
         <div className="flex items-center justify-center h-40 text-sm text-text-muted">No daily data</div>
       )}
     </div>

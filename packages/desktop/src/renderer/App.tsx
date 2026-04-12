@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CostOverview, CostTrends, MissingTags, Savings, EntityDetail, DataManagement, CostApiProvider, SetupWizard } from '@costgoblin/ui';
+import { CostOverview, CostTrends, MissingTags, Savings, EntityDetail, DataManagement, CostApiProvider, SetupWizard, ErrorBoundary } from '@costgoblin/ui';
 import type { CostApi } from '@costgoblin/core/browser';
 
 function getApi(): CostApi {
@@ -141,6 +141,7 @@ export function App(): React.JSX.Element {
   }
 
   return (
+    <ErrorBoundary>
     <CostApiProvider value={api}>
       <div className="min-h-screen bg-bg-primary text-text-primary">
         {/* Title bar + nav */}
@@ -214,5 +215,6 @@ export function App(): React.JSX.Element {
         )}
       </div>
     </CostApiProvider>
+    </ErrorBoundary>
   );
 }
