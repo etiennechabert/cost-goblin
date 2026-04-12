@@ -45,15 +45,40 @@ describe('Savings', () => {
     expect(screen.getByText(/Rightsize \(1\)/)).toBeDefined();
   });
 
-  it('filters by action type when badge clicked', async () => {
+  it('filters table rows by action type when badge clicked', async () => {
     const { user } = renderSavings();
     await waitFor(() => {
       expect(screen.getByText(/Delete \(1\)/)).toBeDefined();
     });
+
+    // all 3 recs visible initially
+    expect(screen.getByText(/Detach and delete/)).toBeDefined();
+    expect(screen.getByText(/10 db.t4g.micro/)).toBeDefined();
+    expect(screen.getByText(/Downsize to t3.medium/)).toBeDefined();
+
+    // click Delete filter
     await user.click(screen.getByText(/Delete \(1\)/));
-    await waitFor(() => {
-      expect(screen.getByText('Potential Monthly Savings')).toBeDefined();
-    });
+
+    // only Delete row visible, others gone
+    expect(screen.getByText(/Detach and delete/)).toBeDefined();
+    expect(screen.queryByText(/10 db.t4g.micro/)).toBeNull();
+    expect(screen.queryByText(/Downsize to t3.medium/)).toBeNull();
+
+    // click Rightsize filter
+    await user.click(screen.getByText(/Rightsize \(1\)/));
+
+    // only Rightsize row visible
+    expect(screen.getByText(/Downsize to t3.medium/)).toBeDefined();
+    expect(screen.queryByText(/Detach and delete/)).toBeNull();
+    expect(screen.queryByText(/10 db.t4g.micro/)).toBeNull();
+
+    // click All to reset
+    await user.click(screen.getByText(/All \(3\)/));
+
+    // all 3 back
+    expect(screen.getByText(/Detach and delete/)).toBeDefined();
+    expect(screen.getByText(/10 db.t4g.micro/)).toBeDefined();
+    expect(screen.getByText(/Downsize to t3.medium/)).toBeDefined();
   });
 
   it('shows resource ARN in recommendation column', async () => {

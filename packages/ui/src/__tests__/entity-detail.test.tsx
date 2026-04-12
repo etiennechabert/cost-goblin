@@ -30,39 +30,34 @@ describe('EntityDetail', () => {
     expect(screen.getByText('account')).toBeDefined();
   });
 
-  it('shows daily costs histogram with individual day bars after data loads', async () => {
-    const { container } = renderDetail();
+  it('shows histogram with Groups/Products/Services tabs after data loads', async () => {
+    renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Daily Costs')).toBeDefined();
     });
 
-    // Histogram container has bars (flex-1 children with cursor-pointer)
-    const histogram = container.querySelector('[style*="height: 160px"]');
-    expect(histogram).not.toBeNull();
-    if (histogram === null) throw new Error('histogram not found');
-    const bars = histogram.querySelectorAll('.group');
-    // Mock has 3 days of data
-    expect(bars.length).toBe(3);
+    // StackedBarChart uses Groups/Products/Services tabs (same as overview)
+    expect(screen.getByRole('button', { name: 'Groups' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Products' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Services' })).toBeDefined();
   });
 
-  it('service/account toggle switches active state', async () => {
+  it('histogram tab toggle switches active state', async () => {
     const { user } = renderDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Daily Costs')).toBeDefined();
     });
 
-    const serviceBtn = screen.getByRole('button', { name: 'service' });
-    const accountBtn = screen.getByRole('button', { name: 'account' });
+    const groupsBtn = screen.getByRole('button', { name: 'Groups' });
+    const servicesBtn = screen.getByRole('button', { name: 'Services' });
 
-    expect(serviceBtn.className).toContain('bg-bg-secondary');
-    expect(accountBtn.className).not.toContain('bg-bg-secondary');
+    await user.click(groupsBtn);
+    expect(groupsBtn.className).toContain('bg-accent');
 
-    await user.click(accountBtn);
-
-    expect(accountBtn.className).toContain('bg-bg-secondary');
-    expect(serviceBtn.className).not.toContain('bg-bg-secondary');
+    await user.click(servicesBtn);
+    expect(servicesBtn.className).toContain('bg-accent');
   });
 
   it('back button calls onBack', async () => {
@@ -83,7 +78,7 @@ describe('EntityDetail', () => {
     });
   });
 
-  it('date range picker is visible', () => {
+  it('date range picker is visible with daily and hourly presets', () => {
     renderDetail();
     expect(screen.getByText('Daily')).toBeDefined();
     expect(screen.getByText('Hourly')).toBeDefined();
