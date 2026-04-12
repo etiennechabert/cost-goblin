@@ -144,7 +144,14 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
     assertString(tag['tagName'], `${ctx}.tagName`);
     assertString(tag['label'], `${ctx}.label`);
 
-    const concept = tag['concept'] !== undefined ? (assertString(tag['concept'], `${ctx}.concept`), tag['concept'] as 'owner' | 'product' | 'environment') : undefined;
+    const concept = tag['concept'] !== undefined ? (() => {
+      assertString(tag['concept'], `${ctx}.concept`);
+      const validConcepts = new Set(['owner', 'product', 'environment']);
+      if (!validConcepts.has(tag['concept'])) {
+        throw new ConfigValidationError(`${ctx}.concept must be 'owner', 'product', or 'environment'`);
+      }
+      return tag['concept'] as 'owner' | 'product' | 'environment';
+    })() : undefined;
     const normalize = tag['normalize'] !== undefined ? (() => {
       assertString(tag['normalize'], `${ctx}.normalize`);
       if (!isValidNormalizationRule(tag['normalize'])) {
