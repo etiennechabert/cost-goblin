@@ -231,4 +231,7 @@ export class MockCostApi implements CostApi {
   writeConfig(): Promise<void> { return Promise.resolve(); }
   getSavingsPreferences(): Promise<{ hiddenActionTypes: readonly string[] }> { return Promise.resolve({ hiddenActionTypes: [] }); }
   saveSavingsPreferences(): Promise<void> { return Promise.resolve(); }
+  syncOrgAccounts(): Promise<{ accounts: readonly never[]; orgId: string; syncedAt: string }> { return Promise.resolve({ accounts: [], orgId: 'mock', syncedAt: new Date().toISOString() }); }
+  getOrgSyncResult(): Promise<null> { return Promise.resolve(null); }
+  getOrgSyncProgress(): Promise<null> { return Promise.resolve(null); }
 }

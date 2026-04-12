@@ -29,10 +29,10 @@ describe('DataManagement', () => {
     });
   });
 
-  it('shows account mapping warning when missing', async () => {
+  it('shows org sync prompt when not synced', async () => {
     renderDataManagement();
     await waitFor(() => {
-      expect(screen.getByText('Account mapping not found')).toBeDefined();
+      expect(screen.getByText('AWS Organizations not synced')).toBeDefined();
     });
   });
 

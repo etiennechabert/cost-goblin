@@ -18,6 +18,28 @@ export interface SavingsPreferences {
   readonly hiddenActionTypes: readonly string[];
 }
 
+export interface OrgAccount {
+  readonly id: string;
+  readonly name: string;
+  readonly email: string;
+  readonly status: string;
+  readonly joinedTimestamp: string;
+  readonly ouPath: string;
+  readonly tags: Readonly<Record<string, string>>;
+}
+
+export interface OrgSyncResult {
+  readonly accounts: readonly OrgAccount[];
+  readonly orgId: string;
+  readonly syncedAt: string;
+}
+
+export interface OrgSyncProgress {
+  readonly phase: 'accounts' | 'ous' | 'tags';
+  readonly done: number;
+  readonly total: number;
+}
+
 export type Dimension = BuiltInDimension | TagDimension;
 
 export type DataTier = 'daily' | 'hourly' | 'cost-optimization';
@@ -67,6 +89,9 @@ export interface CostApi {
   scaffoldConfig(): Promise<void>;
   getSavingsPreferences(): Promise<SavingsPreferences>;
   saveSavingsPreferences(prefs: SavingsPreferences): Promise<void>;
+  syncOrgAccounts(profile: string): Promise<OrgSyncResult>;
+  getOrgSyncResult(): Promise<OrgSyncResult | null>;
+  getOrgSyncProgress(): Promise<OrgSyncProgress | null>;
   writeConfig(config: {
     providerName: string;
     profile: string;
