@@ -19,6 +19,7 @@ import type {
   DataInventoryResult,
   DataTier,
   AccountMappingStatus,
+  SavingsPreferences,
 } from '@costgoblin/core';
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -100,6 +101,12 @@ const api: CostApi = {
   },
   writeConfig(config: { providerName: string; profile: string; dailyBucket: string; retentionDays?: number | undefined; hourlyBucket?: string | undefined; costOptBucket?: string | undefined; tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined }): Promise<void> {
     return invoke<undefined>('setup:write-config', config).then(() => undefined);
+  },
+  getSavingsPreferences(): Promise<SavingsPreferences> {
+    return invoke<SavingsPreferences>('savings:get-preferences');
+  },
+  saveSavingsPreferences(prefs: SavingsPreferences): Promise<void> {
+    return invoke<undefined>('savings:save-preferences', prefs).then(() => undefined);
   },
 };
 

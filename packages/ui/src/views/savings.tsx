@@ -100,15 +100,52 @@ function parseResourceDetails(json: string): ParsedDetails | null {
 export function Savings() {
   const api = useCostApi();
   const savingsQuery = useQuery(() => api.querySavings(), [api]);
+  const prefsQuery = useQuery(() => api.getSavingsPreferences(), [api]);
   const [sortField, setSortField] = useState<SortField>('monthlySavings');
   const [sortAsc, setSortAsc] = useState(false);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [hiddenTypes, setHiddenTypes] = useState(new Set<string>());
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
 
   const data: SavingsResult | null =
     savingsQuery.status === 'success' ? savingsQuery.data : null;
 
+  // Load saved preferences once
+  if (!prefsLoaded && prefsQuery.status === 'success') {
+    setPrefsLoaded(true);
+    if (prefsQuery.data.hiddenActionTypes.length > 0) {
+      setHiddenTypes(new Set(prefsQuery.data.hiddenActionTypes));
+    }
+  }
+
+  // Apply hidden filter before anything else
+  const visibleRecs = useMemo(() => {
+    if (data === null) return [];
+    return hiddenTypes.size === 0
+      ? data.recommendations
+      : data.recommendations.filter(r => !hiddenTypes.has(r.actionType));
+  }, [data, hiddenTypes]);
+
   const actionTypes = useMemo(() => {
+    const map = new Map<string, { count: number; savings: number }>();
+    for (const rec of visibleRecs) {
+      const existing = map.get(rec.actionType);
+      if (existing !== undefined) {
+        existing.count++;
+        existing.savings += rec.monthlySavings;
+      } else {
+        map.set(rec.actionType, { count: 1, savings: rec.monthlySavings });
+      }
+    }
+    return [...map.entries()]
+      .sort((a, b) => b[1].savings - a[1].savings)
+      .map(([type, info]) => ({ type, ...info }));
+  }, [visibleRecs]);
+
+  // All action types including hidden ones (for the settings panel)
+  const allActionTypes = useMemo(() => {
     if (data === null) return [];
     const map = new Map<string, { count: number; savings: number }>();
     for (const rec of data.recommendations) {
@@ -125,11 +162,24 @@ export function Savings() {
       .map(([type, info]) => ({ type, ...info }));
   }, [data]);
 
+  function toggleHiddenType(actionType: string) {
+    setHiddenTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(actionType)) {
+        next.delete(actionType);
+      } else {
+        next.add(actionType);
+        if (activeFilter === actionType) setActiveFilter(null);
+      }
+      void api.saveSavingsPreferences({ hiddenActionTypes: [...next] });
+      return next;
+    });
+  }
+
   const filtered = useMemo(() => {
-    if (data === null) return [];
     const recs = activeFilter !== null
-      ? data.recommendations.filter(r => r.actionType === activeFilter)
-      : [...data.recommendations];
+      ? visibleRecs.filter(r => r.actionType === activeFilter)
+      : [...visibleRecs];
     return recs.sort((a, b) => {
       let cmp: number;
       switch (sortField) {
@@ -162,10 +212,55 @@ export function Savings() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <div>
-        <h2 className="text-xl font-semibold text-text-primary">Savings Opportunities</h2>
-        <p className="text-sm text-text-secondary mt-1">AWS cost optimization recommendations</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-text-primary">Savings Opportunities</h2>
+          <p className="text-sm text-text-secondary mt-1">AWS cost optimization recommendations</p>
+        </div>
+        {data !== null && (
+          <button
+            type="button"
+            onClick={() => { setShowSettings(s => !s); }}
+            className={[
+              'rounded-md p-1.5 transition-colors',
+              showSettings
+                ? 'bg-bg-tertiary text-text-primary'
+                : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
+            ].join(' ')}
+            title="Configure visible recommendation types"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
+        )}
       </div>
+
+      {showSettings && allActionTypes.length > 0 && (
+        <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4">
+          <h3 className="text-sm font-medium text-text-secondary mb-3">Visible recommendation types</h3>
+          <div className="flex flex-col gap-2">
+            {allActionTypes.map(at => (
+              <label key={at.type} className="flex items-center gap-3 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!hiddenTypes.has(at.type)}
+                  onChange={() => { toggleHiddenType(at.type); }}
+                  className="h-4 w-4 rounded accent-emerald-500"
+                />
+                <span className="text-text-primary">{humanizeAction(at.type)}</span>
+                <span className="text-text-muted text-xs">({String(at.count)} items, {formatDollars(at.savings)}/mo)</span>
+              </label>
+            ))}
+          </div>
+          {hiddenTypes.size > 0 && (
+            <p className="text-xs text-text-muted mt-3">
+              {String(hiddenTypes.size)} type{hiddenTypes.size > 1 ? 's' : ''} hidden. Settings saved automatically.
+            </p>
+          )}
+        </div>
+      )}
 
       {data !== null && (
         <div className="flex items-center gap-6">
@@ -192,7 +287,7 @@ export function Savings() {
                 : 'border-border bg-bg-tertiary/30 text-text-secondary hover:text-text-primary',
             ].join(' ')}
           >
-            All ({String(data?.recommendations.length ?? 0)})
+            All ({String(visibleRecs.length)})
           </button>
           {actionTypes.map(at => (
             <button
