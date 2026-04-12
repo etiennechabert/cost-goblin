@@ -2,20 +2,24 @@ import { useState } from 'react';
 import type { DateString } from '@costgoblin/core/browser';
 import { asDateString } from '@costgoblin/core/browser';
 
-type PresetKey = '7d' | '30d' | '90d' | '365d' | 'custom';
+export type Granularity = 'daily' | 'hourly';
 
-const PRESETS: { key: PresetKey; label: string; days: number }[] = [
-  { key: '7d', label: '7 days', days: 7 },
-  { key: '30d', label: '30 days', days: 30 },
-  { key: '90d', label: '90 days', days: 90 },
-  { key: '365d', label: '365 days', days: 365 },
+const DAILY_PRESETS = [
+  { label: '30 days', days: 30 },
+  { label: '90 days', days: 90 },
+  { label: '365 days', days: 365 },
+];
+
+const HOURLY_PRESETS = [
+  { label: '7 days', days: 7 },
+  { label: '14 days', days: 14 },
+  { label: '30 days', days: 30 },
 ];
 
 function daysAgo(days: number): DateString {
   const d = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   return asDateString(d.toISOString().slice(0, 10));
 }
-
 
 export interface DateRange {
   start: DateString;
@@ -24,42 +28,47 @@ export interface DateRange {
 
 interface DateRangePickerProps {
   value: DateRange;
-  onChange: (range: DateRange) => void;
+  granularity: Granularity;
+  onChange: (range: DateRange, granularity: Granularity) => void;
 }
 
 export function getDefaultDateRange(): DateRange {
   return { start: daysAgo(31), end: daysAgo(1) };
 }
 
-export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
+export function DateRangePicker({ value, granularity, onChange }: DateRangePickerProps) {
   const [showCustom, setShowCustom] = useState(false);
-
   const yesterday = daysAgo(1);
-  const activePreset = PRESETS.find((p) => {
-    const expected = daysAgo(p.days + 1);
-    return value.start === expected && value.end === yesterday;
-  });
 
-  function handlePreset(preset: typeof PRESETS[number]) {
+  function isActive(days: number): boolean {
+    return value.start === daysAgo(days + 1) && value.end === yesterday;
+  }
+
+  function handlePreset(days: number, g: Granularity) {
     setShowCustom(false);
-    onChange({ start: daysAgo(preset.days + 1), end: yesterday });
+    onChange({ start: daysAgo(days + 1), end: yesterday }, g);
   }
 
   function handleCustomToggle() {
-    setShowCustom((prev) => !prev);
+    setShowCustom(prev => !prev);
   }
 
+  const isCustom = granularity === 'daily' && !DAILY_PRESETS.some(p => isActive(p.days))
+    && !showCustom;
+
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex flex-col items-end gap-1">
+      {/* Daily row */}
       <div className="flex items-center gap-0.5 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
-        {PRESETS.map((preset) => (
+        <span className="text-[10px] text-text-muted px-1.5">Daily</span>
+        {DAILY_PRESETS.map(preset => (
           <button
-            key={preset.key}
+            key={preset.days}
             type="button"
-            onClick={() => { handlePreset(preset); }}
+            onClick={() => { handlePreset(preset.days, 'daily'); }}
             className={[
               'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-              activePreset?.key === preset.key
+              granularity === 'daily' && isActive(preset.days)
                 ? 'bg-bg-secondary text-text-primary shadow-sm'
                 : 'text-text-secondary hover:text-text-primary',
             ].join(' ')}
@@ -72,7 +81,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
           onClick={handleCustomToggle}
           className={[
             'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-            activePreset === undefined
+            isCustom || showCustom
               ? 'bg-bg-secondary text-text-primary shadow-sm'
               : 'text-text-secondary hover:text-text-primary',
           ].join(' ')}
@@ -81,28 +90,43 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
         </button>
       </div>
 
+      {/* Hourly row */}
+      <div className="flex items-center gap-0.5 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
+        <span className="text-[10px] text-text-muted px-1.5">Hourly</span>
+        {HOURLY_PRESETS.map(preset => (
+          <button
+            key={preset.days}
+            type="button"
+            onClick={() => { handlePreset(preset.days, 'hourly'); }}
+            className={[
+              'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+              granularity === 'hourly' && isActive(preset.days)
+                ? 'bg-bg-secondary text-text-primary shadow-sm'
+                : 'text-text-secondary hover:text-text-primary',
+            ].join(' ')}
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Custom date inputs */}
       {showCustom && (
         <div className="flex items-center gap-1.5">
           <input
             type="date"
             value={value.start}
-            onChange={(e) => { onChange({ ...value, start: asDateString(e.target.value) }); }}
+            onChange={(e) => { onChange({ ...value, start: asDateString(e.target.value) }, 'daily'); }}
             className="rounded border border-border bg-bg-secondary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
           />
           <span className="text-xs text-text-muted">–</span>
           <input
             type="date"
             value={value.end}
-            onChange={(e) => { onChange({ ...value, end: asDateString(e.target.value) }); }}
+            onChange={(e) => { onChange({ ...value, end: asDateString(e.target.value) }, 'daily'); }}
             className="rounded border border-border bg-bg-secondary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
           />
         </div>
-      )}
-
-      {activePreset === undefined && !showCustom && (
-        <span className="text-xs text-text-muted">
-          {value.start} – {value.end}
-        </span>
       )}
     </div>
   );

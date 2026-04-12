@@ -50,11 +50,11 @@ describe('CostOverview', () => {
     expect(screen.getByText('Services')).toBeDefined();
   });
 
-  it('date range picker is visible with "30 days" selected by default', () => {
+  it('date range picker is visible with daily/hourly rows', () => {
     renderOverview();
-    const btn30d = screen.getByText('30 days');
-    expect(btn30d).toBeDefined();
-    expect(btn30d.className).toContain('bg-bg-secondary');
+    expect(screen.getByText('Daily')).toBeDefined();
+    expect(screen.getByText('Hourly')).toBeDefined();
+    expect(screen.getByText('90 days')).toBeDefined();
   });
 
   it('changing date range triggers a new query', async () => {

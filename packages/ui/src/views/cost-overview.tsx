@@ -25,9 +25,8 @@ import { PieChart } from '../components/pie-chart.js';
 import type { PieSlice } from '../components/pie-chart.js';
 import { StackedBarChart } from '../components/stacked-bar-chart.js';
 import type { BarDay } from '../components/stacked-bar-chart.js';
-import { CsvExport } from '../components/csv-export.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
-import type { DateRange } from '../components/date-range-picker.js';
+import type { DateRange, Granularity } from '../components/date-range-picker.js';
 import { formatDollars } from '../components/format.js';
 import { useState } from 'react';
 
@@ -66,6 +65,7 @@ function OverviewInner() {
   const dispatch = useCostFocusDispatch();
 
   const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange);
+  const [granularity, setGranularity] = useState<Granularity>('daily');
   const [histogramTab, setHistogramTab] = useState<HistogramTab>('service');
   const [histogramExpanded, setHistogramExpanded] = useState(false);
   const [filters, setFilters] = useState<FilterMap>({});
@@ -121,15 +121,15 @@ function OverviewInner() {
 
   // Pie 1 query
   const pie1Query = useQuery(
-    () => api.queryCosts({ groupBy: effectivePie1, dateRange, filters: baseFilters }),
-    [effectivePie1, dateRangeKey, filterKey, api],
+    () => api.queryCosts({ groupBy: effectivePie1, dateRange, filters: baseFilters, granularity }),
+    [effectivePie1, dateRangeKey, filterKey, granularity, api],
   );
   const pie1Slices = costRowsToSlices(pie1Query.status === 'success' ? pie1Query.data : null);
 
   // Pie 2 query
   const pie2Query = useQuery(
-    () => api.queryCosts({ groupBy: effectivePie2, dateRange, filters: baseFilters }),
-    [effectivePie2, dateRangeKey, filterKey, api],
+    () => api.queryCosts({ groupBy: effectivePie2, dateRange, filters: baseFilters, granularity }),
+    [effectivePie2, dateRangeKey, filterKey, granularity, api],
   );
   const pie2Slices = costRowsToSlices(pie2Query.status === 'success' ? pie2Query.data : null);
 
@@ -142,8 +142,8 @@ function OverviewInner() {
     ? { ...baseFilters, [serviceDimId]: asTagValue(focus.serviceDrill.service) }
     : baseFilters;
   const pie3Query = useQuery(
-    () => api.queryCosts({ groupBy: pie3GroupBy, dateRange, filters: pie3Filters }),
-    [pie3GroupBy, dateRangeKey, JSON.stringify(pie3Filters), focus.serviceDrill, api],
+    () => api.queryCosts({ groupBy: pie3GroupBy, dateRange, filters: pie3Filters, granularity }),
+    [pie3GroupBy, dateRangeKey, JSON.stringify(pie3Filters), focus.serviceDrill, granularity, api],
   );
   const pie3Slices = costRowsToSlices(pie3Query.status === 'success' ? pie3Query.data : null);
 
@@ -159,8 +159,8 @@ function OverviewInner() {
   };
 
   const prevQuery = useQuery(
-    () => api.queryCosts({ groupBy: effectivePie1, dateRange: prevDateRange, filters: baseFilters }),
-    [effectivePie1, prevDateRange.start, prevDateRange.end, filterKey, api],
+    () => api.queryCosts({ groupBy: effectivePie1, dateRange: prevDateRange, filters: baseFilters, granularity }),
+    [effectivePie1, prevDateRange.start, prevDateRange.end, filterKey, granularity, api],
   );
 
   const totalCost = pie1Query.status === 'success'
@@ -181,8 +181,8 @@ function OverviewInner() {
   }
 
   const dailyQuery = useQuery(
-    () => api.queryDailyCosts({ groupBy: histogramDimId, dateRange, filters: baseFilters }),
-    [histogramDimId, dateRangeKey, filterKey, api],
+    () => api.queryDailyCosts({ groupBy: histogramDimId, dateRange, filters: baseFilters, granularity }),
+    [histogramDimId, dateRangeKey, filterKey, granularity, api],
   );
 
   const barDays = dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null);
@@ -250,17 +250,16 @@ function OverviewInner() {
   return (
     <div className="flex flex-col gap-5 p-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between">
         <div>
           <h2 className="text-xl font-semibold text-text-primary">Cost Overview</h2>
           <p className="text-sm text-text-secondary mt-0.5">Cloud spending visibility</p>
         </div>
-        <div className="flex items-center gap-3">
-          <DateRangePicker value={dateRange} onChange={setDateRange} />
-          {pie1Query.status === 'success' && (
-            <CsvExport rows={pie1Query.data.rows} topServices={pie1Query.data.topServices} />
-          )}
-        </div>
+        <DateRangePicker
+          value={dateRange}
+          granularity={granularity}
+          onChange={(range, g) => { setDateRange(range); setGranularity(g); }}
+        />
       </div>
 
       {/* Dimension filter bar */}
@@ -300,6 +299,7 @@ function OverviewInner() {
             onTabChange={setHistogramTab}
             expanded={histogramExpanded}
             onExpandToggle={() => { setHistogramExpanded(prev => !prev); }}
+            title={granularity === 'hourly' ? 'Hourly Costs' : 'Daily Costs'}
           />
         </div>
       </div>

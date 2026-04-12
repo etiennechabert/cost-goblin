@@ -113,6 +113,7 @@ export interface DailyCostsParams {
   readonly dateRange: DateRange;
   readonly filters: FilterMap;
   readonly groupBy: DimensionId;
+  readonly granularity?: Granularity | undefined;
 }
 
 export interface DailyCostDay {
