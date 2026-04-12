@@ -13,6 +13,15 @@ export function applyNormalizationRule(value: string, rule: NormalizationRule): 
         .replace(/([a-z])([A-Z])/g, '$1-$2')
         .replace(/[_\s]+/g, '-')
         .toLowerCase();
+    case 'lowercase-underscore':
+      return value
+        .replace(/([a-z])([A-Z])/g, '$1_$2')
+        .replace(/[-\s]+/g, '_')
+        .toLowerCase();
+    case 'camelCase':
+      return value
+        .replace(/[-_\s]+(.)/g, (_, c: string) => c.toUpperCase())
+        .replace(/^(.)/, (_, c: string) => c.toLowerCase());
   }
 }
 
@@ -63,6 +72,13 @@ export function buildAliasSqlCase(
         break;
       case 'lowercase-kebab':
         fieldExpr = `LOWER(REGEXP_REPLACE(REGEXP_REPLACE(${fieldExpr}, '([a-z])([A-Z])', '\\1-\\2'), '[_\\s]+', '-', 'g'))`;
+        break;
+      case 'lowercase-underscore':
+        fieldExpr = `LOWER(REGEXP_REPLACE(REGEXP_REPLACE(${fieldExpr}, '([a-z])([A-Z])', '\\1_\\2'), '[-\\s]+', '_', 'g'))`;
+        break;
+      case 'camelCase':
+        // SQL approximation for grouping — true camelCase applied in TypeScript
+        fieldExpr = `LOWER(REPLACE(REPLACE(REPLACE(${fieldExpr}, '-', ''), '_', ''), ' ', ''))`;
         break;
     }
   }
