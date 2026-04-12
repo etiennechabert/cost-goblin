@@ -193,12 +193,11 @@ export function DimensionsView() {
   // Which resource tags are already mapped as dimensions
   const mappedTagNames = new Set(config?.tags.map(t => t.tagName) ?? []);
 
-  // Tags discovered in billing data + account tags, minus already-mapped ones
-  const allKnownTags = [...new Set([
-    ...discoveredTags.map(t => t.key),
-    ...accountTagKeys,
-  ])].sort();
-  const unmappedTagKeys = allKnownTags.filter(k => !mappedTagNames.has(k));
+  // Only CUR resource tags for the primary dropdown (not account tags)
+  const unmappedTagKeys = discoveredTags
+    .map(t => t.key)
+    .filter(k => !mappedTagNames.has(k))
+    .sort();
 
   // Filter discovered tags
   const filteredDiscovered = tagSearch.length > 0
