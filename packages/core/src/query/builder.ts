@@ -43,7 +43,16 @@ export function buildSource(dataDir: string, tier: string, dimensions: Dimension
     const resourceExpr = `element_at(resource_tags, '${curKey}')[1]`;
 
     if (t.accountTagFallback !== undefined && needsOrgJoin) {
-      return `COALESCE(NULLIF(${resourceExpr}, ''), acct_tags.fallback_${colName}) AS ${colName}`;
+      const fallbackExpr = `acct_tags.fallback_${colName}`;
+      // Apply missingValueTemplate if set — e.g. "unknown-{fallback}" → 'unknown-' || account_tag
+      if (t.missingValueTemplate !== undefined && t.missingValueTemplate.length > 0 && t.missingValueTemplate !== '{fallback}') {
+        const parts = t.missingValueTemplate.split('{fallback}');
+        const prefix = (parts[0] ?? '').replaceAll("'", "''");
+        const suffix = (parts[1] ?? '').replaceAll("'", "''");
+        const formatted = `'${prefix}' || ${fallbackExpr} || '${suffix}'`;
+        return `COALESCE(NULLIF(${resourceExpr}, ''), ${formatted}) AS ${colName}`;
+      }
+      return `COALESCE(NULLIF(${resourceExpr}, ''), ${fallbackExpr}) AS ${colName}`;
     }
 
     return `${resourceExpr} AS ${colName}`;
