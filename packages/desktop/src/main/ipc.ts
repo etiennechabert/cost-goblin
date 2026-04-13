@@ -394,12 +394,22 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   async function getOrgAccountsPath(): Promise<string | undefined> {
     const path = await import('node:path');
     const fs = await import('node:fs/promises');
-    const p = path.join(path.dirname(ctx.dataDir), 'org-accounts.json');
+    const baseDir = path.dirname(ctx.dataDir);
+    const flatPath = path.join(baseDir, 'org-account-tags.json');
     try {
-      await fs.access(p);
-      return p;
+      await fs.access(flatPath);
+      return flatPath;
     } catch {
-      return undefined;
+      // Try to generate from org-accounts.json if it exists
+      try {
+        const raw = await fs.readFile(path.join(baseDir, 'org-accounts.json'), 'utf-8');
+        const data = JSON.parse(raw) as { accounts: { id: string; tags: Record<string, string> }[] };
+        const tagLookup = data.accounts.map(a => ({ id: a.id, tags: a.tags }));
+        await fs.writeFile(flatPath, JSON.stringify(tagLookup));
+        return flatPath;
+      } catch {
+        return undefined;
+      }
     }
   }
 
@@ -1502,6 +1512,10 @@ tags: []
       const result = await syncOrgAccounts(profile, (p) => { orgSyncProgress = p; });
       const fs = await import('node:fs/promises');
       await fs.writeFile(await orgResultPath(), JSON.stringify(result, null, 2));
+      // Write a flat lookup file for DuckDB SQL joins
+      const path = await import('node:path');
+      const tagLookup = result.accounts.map(a => ({ id: a.id, tags: a.tags }));
+      await fs.writeFile(path.join(path.dirname(ctx.dataDir), 'org-account-tags.json'), JSON.stringify(tagLookup));
       orgSyncProgress = null;
       return result;
     } catch (err: unknown) {
