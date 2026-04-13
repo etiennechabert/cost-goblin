@@ -40,7 +40,8 @@ export function buildSource(dataDir: string, tier: string, dimensions: Dimension
   const tagSelects = dimensions.tags.map(t => {
     const curKey = `user_${t.tagName}`;
     const colName = `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`;
-    const resourceExpr = `element_at(resource_tags, '${curKey}')[1]`;
+    const tablePrefix = needsOrgJoin ? 'cur.' : '';
+    const resourceExpr = `element_at(${tablePrefix}resource_tags, '${curKey}')[1]`;
 
     if (t.accountTagFallback !== undefined && needsOrgJoin) {
       const fallbackExpr = `acct_tags.fallback_${colName}`;
