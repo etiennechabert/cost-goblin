@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildCostQuery, buildTrendQuery, buildMissingTagsQuery, buildEntityDetailQuery } from '../query/builder.js';
+import { buildCostQuery, buildTrendQuery, buildMissingTagsQuery, buildEntityDetailQuery, buildSource } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asTagValue } from '../types/branded.js';
 
@@ -100,6 +100,52 @@ describe('buildMissingTagsQuery', () => {
     expect(sql).toContain('IS NULL');
     expect(sql).toContain("= ''");
     expect(sql).toContain('50');
+  });
+});
+
+describe('buildSource with account tag fallback', () => {
+  it('generates COALESCE with raw fallback when no template', () => {
+    const dims: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
+      tags: [{ tagName: 'system', label: 'System', concept: 'product', accountTagFallback: 'sb:system' }],
+    };
+    const sql = buildSource('/data', 'daily', dims, '/org-tags.json');
+    expect(sql).toContain('COALESCE(NULLIF(');
+    expect(sql).toContain('fallback_tag_system');
+    expect(sql).not.toContain('unknown');
+  });
+
+  it('generates formatted COALESCE when missingValueTemplate is set', () => {
+    const dims: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
+      tags: [{ tagName: 'system', label: 'System', concept: 'product', accountTagFallback: 'sb:owner', missingValueTemplate: 'unknown-{fallback}' }],
+    };
+    const sql = buildSource('/data', 'daily', dims, '/org-tags.json');
+    expect(sql).toContain("'unknown-'");
+    expect(sql).toContain('fallback_tag_system');
+    expect(sql).toContain('COALESCE');
+  });
+
+  it('uses passthrough when template is {fallback}', () => {
+    const dims: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
+      tags: [{ tagName: 'team', label: 'Team', accountTagFallback: 'sb:team', missingValueTemplate: '{fallback}' }],
+    };
+    const sql = buildSource('/data', 'daily', dims, '/org-tags.json');
+    expect(sql).toContain('COALESCE(NULLIF(');
+    expect(sql).toContain('fallback_tag_team');
+    // Should NOT contain string concatenation — {fallback} is passthrough
+    expect(sql).not.toContain("'' ||");
+  });
+
+  it('does not JOIN when no orgAccountsPath', () => {
+    const dims: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
+      tags: [{ tagName: 'system', label: 'System', accountTagFallback: 'sb:system' }],
+    };
+    const sql = buildSource('/data', 'daily', dims);
+    expect(sql).not.toContain('LEFT JOIN');
+    expect(sql).not.toContain('fallback');
   });
 });
 
