@@ -3,6 +3,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildCostQuery, buildDailyCostsQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource } from '../query/builder.js';
+import { buildSource as rebuildSource } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asTagValue } from '../types/branded.js';
 
@@ -79,6 +80,28 @@ describe('DuckDB query integration', () => {
     const source = buildSource(SYNTHETIC_DIR, 'daily', dimensions);
     const rows = await queryAll(conn, `SELECT COUNT(*) as cnt FROM ${source}`);
     expect(Number(rows[0]?.['cnt'])).toBeGreaterThan(0);
+  });
+
+  it('narrowed source with specific months reads the same data as the wildcard', async () => {
+    // Synthetic fixtures: daily-2026-01/ and daily-2026-02/.
+    const wide = buildSource(SYNTHETIC_DIR, 'daily', dimensions);
+    const narrow = buildSource(SYNTHETIC_DIR, 'daily', dimensions, undefined, ['2026-01', '2026-02']);
+    const [[wideRow], [narrowRow]] = await Promise.all([
+      queryAll(conn, `SELECT COUNT(*) as cnt, SUM(cost) as total FROM ${wide}`),
+      queryAll(conn, `SELECT COUNT(*) as cnt, SUM(cost) as total FROM ${narrow}`),
+    ]);
+    expect(Number(narrowRow?.['cnt'])).toBe(Number(wideRow?.['cnt']));
+    expect(Number(narrowRow?.['total'])).toBeCloseTo(Number(wideRow?.['total']), 4);
+  });
+
+  it('narrowed source with a missing month directory errors — fs intersection is required', async () => {
+    // Verified behavior: DuckDB's read_parquet errors on a glob pattern that
+    // matches zero files, even when other patterns in the list match. Callers
+    // must intersect required periods with what's actually on disk BEFORE
+    // passing to buildSource. The query handlers do this via listLocalMonths.
+    const source = rebuildSource(SYNTHETIC_DIR, 'daily', dimensions, undefined, ['2025-11']);
+    await expect(queryAll(conn, `SELECT COUNT(*) as cnt FROM ${source}`))
+      .rejects.toThrow(/No files found/);
   });
 
   it('queries costs grouped by service', async () => {

@@ -34,6 +34,29 @@ export function getRawDirPrefix(tier: string): string {
   return TIER_RAW_PREFIXES['daily'];
 }
 
+/**
+ * Lists YYYY-MM period directories on disk for a given tier. Used by query
+ * handlers to intersect a date range's required months with what's actually
+ * been synced — DuckDB's read_parquet errors on glob patterns that match
+ * zero files, so missing months must be filtered out before query time.
+ */
+export async function listLocalMonths(dataDir: string, tier: string): Promise<string[]> {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const prefix = getRawDirPrefix(tier);
+  const rawDir = path.join(dataDir, 'aws', 'raw');
+  try {
+    const entries = await fs.readdir(rawDir);
+    const months = entries
+      .filter(e => e.startsWith(`${prefix}-`))
+      .map(e => e.slice(prefix.length + 1).slice(0, 7))
+      .filter(p => /^\d{4}-\d{2}$/.test(p));
+    return [...new Set(months)].sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
+}
+
 export function extractPeriod(key: string): string {
   const billingMatch = /BILLING_PERIOD=(\d{4}-\d{2})/.exec(key);
   if (billingMatch?.[1] !== undefined) return billingMatch[1];

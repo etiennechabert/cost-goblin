@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildCostQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource } from '../query/builder.js';
+import { buildCostQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource, computePeriodsInRange } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asTagValue } from '../types/branded.js';
 
@@ -34,7 +34,10 @@ describe('buildCostQuery', () => {
     );
     expect(sql).toContain('service AS entity');
     expect(sql).toContain("usage_date BETWEEN '2026-01-01' AND '2026-01-31'");
-    expect(sql).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet')");
+    // Parquet source is narrowed to the months the range touches, not the
+    // year-wide wildcard.
+    expect(sql).toContain("'/data/aws/raw/daily-2026-01/*.parquet'");
+    expect(sql).not.toContain("daily-*/*.parquet");
   });
 
   it('includes filter clauses', () => {
@@ -82,6 +85,71 @@ describe('buildTrendQuery', () => {
     expect(sql).toContain('previous_period');
     expect(sql).toContain('delta');
     expect(sql).toContain('100');
+  });
+});
+
+describe('computePeriodsInRange', () => {
+  it('returns the single month when start and end are in the same month', () => {
+    expect(computePeriodsInRange({ start: '2026-04-01', end: '2026-04-18' })).toEqual(['2026-04']);
+  });
+
+  it('spans two adjacent months', () => {
+    expect(computePeriodsInRange({ start: '2026-03-19', end: '2026-04-18' })).toEqual(['2026-03', '2026-04']);
+  });
+
+  it('spans a year boundary', () => {
+    expect(computePeriodsInRange({ start: '2025-12-20', end: '2026-02-05' }))
+      .toEqual(['2025-12', '2026-01', '2026-02']);
+  });
+
+  it('returns empty when start > end', () => {
+    expect(computePeriodsInRange({ start: '2026-04-30', end: '2026-04-01' })).toEqual([]);
+  });
+
+  it('returns empty for invalid inputs', () => {
+    expect(computePeriodsInRange({ start: 'not-a-date', end: '2026-04-01' })).toEqual([]);
+  });
+});
+
+describe('buildSource narrowed paths', () => {
+  it('emits read_parquet with a list of month paths when periods are given', () => {
+    const sql = buildSource('/data', 'daily', dimensions, undefined, ['2026-03', '2026-04']);
+    expect(sql).toContain("'/data/aws/raw/daily-2026-03/*.parquet'");
+    expect(sql).toContain("'/data/aws/raw/daily-2026-04/*.parquet'");
+    expect(sql).not.toContain("daily-*/*.parquet");
+  });
+
+  it('falls back to the wildcard when periods are empty or omitted', () => {
+    const sql = buildSource('/data', 'daily', dimensions, undefined, []);
+    expect(sql).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet')");
+    const sql2 = buildSource('/data', 'daily', dimensions);
+    expect(sql2).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet')");
+  });
+
+  it('uses the hourly prefix when tier is hourly', () => {
+    const sql = buildSource('/data', 'hourly', dimensions, undefined, ['2026-04']);
+    expect(sql).toContain("'/data/aws/raw/hourly-2026-04/*.parquet'");
+  });
+});
+
+describe('buildTrendQuery', () => {
+  it('includes periods from both current and previous spans', () => {
+    // 30-day window ending 2026-04-18 → current is 2026-03/2026-04, previous
+    // is 2026-02-18 to 2026-03-18 → 2026-02/2026-03. Union: Feb, Mar, Apr.
+    const sql = buildTrendQuery(
+      {
+        groupBy: asDimensionId('service'),
+        dateRange: { start: asDateString('2026-03-20'), end: asDateString('2026-04-18') },
+        filters: {},
+        deltaThreshold: asDollars(0),
+        percentThreshold: 0,
+      },
+      '/data',
+      dimensions,
+    );
+    expect(sql).toContain("'/data/aws/raw/daily-2026-02/*.parquet'");
+    expect(sql).toContain("'/data/aws/raw/daily-2026-03/*.parquet'");
+    expect(sql).toContain("'/data/aws/raw/daily-2026-04/*.parquet'");
   });
 });
 

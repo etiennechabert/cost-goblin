@@ -35,5 +35,6 @@ export {
   getEtagFileName,
   getRawDirPrefix,
   groupByPeriod,
+  listLocalMonths,
   parseEtagsJson,
 } from './sync-utils.js';

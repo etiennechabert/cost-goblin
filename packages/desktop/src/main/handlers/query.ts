@@ -8,6 +8,8 @@ import {
   buildEntityDetailQuery,
   buildSource,
   buildAliasSqlCase,
+  computePeriodsInRange,
+  listLocalMonths,
   logger,
   asEntityRef,
   asDollars,
@@ -46,11 +48,21 @@ import {
 export function registerQueryHandlers(app: AppContext): void {
   const { ctx, getDimensions, getAccountMap, getOrgAccountsPath, getOrgTreeConfig, getConfig, runQuery } = app;
 
+  // Intersect the query's date range with the months actually on disk so
+  // buildSource only globs directories that exist — DuckDB errors on empty
+  // patterns, and this is also where the perf win comes from (open Parquet
+  // footers only for relevant months instead of every synced month).
+  async function availableMonths(tier: 'daily' | 'hourly'): Promise<string[]> {
+    return listLocalMonths(ctx.dataDir, tier);
+  }
+
   ipcMain.handle('query:costs', async (_event, params: CostQueryParams): Promise<CostResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const orgPath = await getOrgAccountsPath();
-    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath);
+    const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
+    const available = await availableMonths(tier);
+    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available);
     logger.info('query:costs', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -76,7 +88,9 @@ export function registerQueryHandlers(app: AppContext): void {
   ipcMain.handle('query:daily-costs', async (_event, params: DailyCostsParams): Promise<DailyCostsResult> => {
     const dimensions = await getDimensions();
     const orgPath = await getOrgAccountsPath();
-    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath);
+    const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
+    const available = await availableMonths(tier);
+    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available);
     logger.info('query:daily-costs', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -128,7 +142,8 @@ export function registerQueryHandlers(app: AppContext): void {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const orgPath = await getOrgAccountsPath();
-    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath);
+    const available = await availableMonths('daily');
+    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath, available);
     logger.info('query:trends', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -149,8 +164,9 @@ export function registerQueryHandlers(app: AppContext): void {
     const orgPath = await getOrgAccountsPath();
     logger.info('query:missing-tags', { tagDimension: params.tagDimension });
 
-    const resourceSql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath);
-    const nonResourceSql = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath);
+    const available = await availableMonths('daily');
+    const resourceSql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath, available);
+    const nonResourceSql = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath, available);
     const [resourceRows, nonResourceRows] = await Promise.all([
       runQuery(resourceSql),
       runQuery(nonResourceSql),
@@ -233,7 +249,9 @@ export function registerQueryHandlers(app: AppContext): void {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const orgPath = await getOrgAccountsPath();
-    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath);
+    const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
+    const available = await availableMonths(tier);
+    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available);
     logger.info('query:entity-detail', { entity: params.entity });
 
     const rows = await runQuery(sql);
@@ -279,7 +297,8 @@ export function registerQueryHandlers(app: AppContext): void {
     const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
     const orgPath = await getOrgAccountsPath();
-    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath);
+    const periods = dateRange === undefined ? undefined : computePeriodsInRange(dateRange);
+    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods);
     const sql = `
       SELECT ${fieldExpr} AS val, SUM(cost) AS total_cost
       FROM ${source}

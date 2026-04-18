@@ -3,6 +3,34 @@ import type { CostQueryParams, DailyCostsParams, FilterMap, TrendQueryParams, Mi
 import type { DimensionId } from '../types/branded.js';
 import { buildAliasSqlCase } from '../normalize/normalize.js';
 
+/**
+ * YYYY-MM month strings that a date range touches, inclusive. The data layout
+ * is one directory per billing period (e.g. `daily-2026-03/`), so a 30-day
+ * window ending 2026-04-18 only needs 2026-03 and 2026-04 — skipping the other
+ * 11+ months of data avoids the Parquet footer reads for those files and is
+ * the biggest single perf win for short-window queries over a year of data.
+ *
+ * Inputs are YYYY-MM-DD strings (as produced by asDateString). Output is sorted
+ * ascending and de-duplicated.
+ */
+export function computePeriodsInRange(dateRange: { readonly start: string; readonly end: string }): string[] {
+  const start = new Date(`${dateRange.start}T00:00:00Z`);
+  const end = new Date(`${dateRange.end}T00:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+    return [];
+  }
+  const periods: string[] = [];
+  const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+  const endMonth = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1));
+  while (cursor.getTime() <= endMonth.getTime()) {
+    const y = cursor.getUTCFullYear();
+    const m = cursor.getUTCMonth() + 1;
+    periods.push(`${String(y)}-${String(m).padStart(2, '0')}`);
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return periods;
+}
+
 interface ResolvedDimension {
   readonly fieldExpr: string;
   readonly rawField: string;
@@ -33,7 +61,16 @@ function buildFilterClauses(filters: FilterMap, dimensions: DimensionsConfig): s
   return clauses;
 }
 
-export function buildSource(dataDir: string, tier: string, dimensions: DimensionsConfig, orgAccountsPath?: string): string {
+/**
+ * Build the Parquet source subquery. When `periods` is non-empty, emits a
+ * narrow list of paths like `read_parquet(['…/daily-2026-03/*.parquet',
+ * '…/daily-2026-04/*.parquet'])` instead of the wildcard over every month.
+ *
+ * DuckDB errors when any glob in the list matches zero files — so callers
+ * must pre-filter `periods` to months that actually exist on disk. An empty
+ * `periods` (or undefined) falls back to the original wildcard.
+ */
+export function buildSource(dataDir: string, tier: string, dimensions: DimensionsConfig, orgAccountsPath?: string, periods?: readonly string[]): string {
   const hasFallbacks = dimensions.tags.some(t => t.accountTagFallback !== undefined);
   const needsOrgJoin = hasFallbacks && orgAccountsPath !== undefined;
 
@@ -77,7 +114,9 @@ export function buildSource(dataDir: string, tier: string, dimensions: Dimension
     ? 'line_item_usage_start_date::DATE AS usage_date,\n      line_item_usage_start_date::TIMESTAMP AS usage_hour'
     : 'line_item_usage_start_date::DATE AS usage_date';
 
-  const parquetSource = `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`;
+  const parquetSource = periods !== undefined && periods.length > 0
+    ? `read_parquet([${periods.map(p => `'${dataDir}/aws/raw/${tier}-${p}/*.parquet'`).join(', ')}])`
+    : `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`;
 
   // Build fallback column extractions for the org-accounts join
   const fallbackSelects = needsOrgJoin
@@ -118,17 +157,35 @@ export function buildSource(dataDir: string, tier: string, dimensions: Dimension
   )`;
 }
 
+/**
+ * Compute the Parquet glob periods for a query. Intersects the months the
+ * query's date range touches with the months actually on disk — DuckDB errors
+ * on glob patterns that match zero files, so the caller must pre-filter. When
+ * `availablePeriods` is omitted (tests, filter-values without date range),
+ * falls back to all required periods. An empty result means "use the wildcard".
+ */
+function resolveQueryPeriods(
+  dateRange: { readonly start: string; readonly end: string },
+  availablePeriods?: readonly string[],
+): string[] {
+  const required = computePeriodsInRange(dateRange);
+  if (availablePeriods === undefined) return required;
+  return required.filter(p => availablePeriods.includes(p));
+}
+
 export function buildCostQuery(
   params: CostQueryParams,
   dataDir: string,
   dimensions: DimensionsConfig,
   topN: number = 5,
   orgAccountsPath?: string,
+  availablePeriods?: readonly string[],
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
   const costTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
-  const source = buildSource(dataDir, costTier, dimensions, orgAccountsPath);
+  const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
+  const source = buildSource(dataDir, costTier, dimensions, orgAccountsPath, periods);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -189,13 +246,28 @@ export function buildTrendQuery(
   dataDir: string,
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
+  availablePeriods?: readonly string[],
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
-  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath);
 
   const startDate = params.dateRange.start;
   const endDate = params.dateRange.end;
+
+  // Trend reads both the current period and the previous (same-duration)
+  // period, so the source needs to cover months from both spans. The previous
+  // span ends the day before `startDate`.
+  const currentPeriods = computePeriodsInRange(params.dateRange);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const startMs = new Date(`${startDate}T00:00:00Z`).getTime();
+  const endMs = new Date(`${endDate}T00:00:00Z`).getTime();
+  const durationDays = Math.round((endMs - startMs) / dayMs) + 1;
+  const prevEndIso = new Date(startMs - dayMs).toISOString().slice(0, 10);
+  const prevStartIso = new Date(startMs - durationDays * dayMs).toISOString().slice(0, 10);
+  const previousPeriods = computePeriodsInRange({ start: prevStartIso, end: prevEndIso });
+  const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
+  const periods = availablePeriods === undefined ? required : required.filter(p => availablePeriods.includes(p));
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods);
 
   const filterWhere = filterClauses.length > 0 ? ` AND ${filterClauses.join(' AND ')}` : '';
 
@@ -260,10 +332,12 @@ export function buildMissingTagsQuery(
   dataDir: string,
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
+  availablePeriods?: readonly string[],
 ): string {
   const tagResolved = resolveField(params.tagDimension, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
-  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath);
+  const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods);
 
   // Date + user filters apply to the resource aggregation.
   const whereConditions = [
@@ -331,9 +405,11 @@ export function buildNonResourceCostQuery(
   dataDir: string,
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
+  availablePeriods?: readonly string[],
 ): string {
   const filterClauses = buildFilterClauses(params.filters, dimensions);
-  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath);
+  const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -360,11 +436,13 @@ export function buildDailyCostsQuery(
   dataDir: string,
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
+  availablePeriods?: readonly string[],
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
   const dailyTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
-  const source = buildSource(dataDir, dailyTier, dimensions, orgAccountsPath);
+  const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
+  const source = buildSource(dataDir, dailyTier, dimensions, orgAccountsPath, periods);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -392,12 +470,14 @@ export function buildEntityDetailQuery(
   dataDir: string,
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
+  availablePeriods?: readonly string[],
 ): string {
   const dimResolved = resolveField(params.dimension, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions);
   const granularity = params.granularity ?? 'daily';
   const tier = granularity === 'hourly' ? 'hourly' : 'daily';
-  const source = buildSource(dataDir, tier, dimensions, orgAccountsPath);
+  const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
+  const source = buildSource(dataDir, tier, dimensions, orgAccountsPath, periods);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
