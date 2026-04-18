@@ -26,3 +26,13 @@ export {
   type SelectiveSyncOptions,
   syncSelectedFiles,
 } from './selective-sync.js';
+
+export {
+  type ExpectedDataType,
+  extractDate,
+  extractPeriod,
+  extractPeriodPrefix,
+  getEtagFileName,
+  groupByPeriod,
+  parseEtagsJson,
+} from './sync-utils.js';

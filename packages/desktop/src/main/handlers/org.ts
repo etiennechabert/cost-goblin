@@ -1,7 +1,33 @@
 import { ipcMain } from 'electron';
-import type { OrgSyncResult, OrgSyncProgress } from '@costgoblin/core';
+import { isStringRecord } from '@costgoblin/core';
+import type { OrgSyncResult, OrgSyncProgress, OrgAccount } from '@costgoblin/core';
 import { syncOrgAccounts } from '../aws-org-client.js';
 import type { AppContext } from './context.js';
+
+function isOrgAccount(v: unknown): v is OrgAccount {
+  if (!isStringRecord(v)) return false;
+  return (
+    typeof v['id'] === 'string' &&
+    typeof v['name'] === 'string' &&
+    typeof v['email'] === 'string' &&
+    typeof v['status'] === 'string' &&
+    typeof v['joinedTimestamp'] === 'string' &&
+    typeof v['ouPath'] === 'string' &&
+    isStringRecord(v['tags'])
+  );
+}
+
+function decodeOrgSyncResult(raw: string): OrgSyncResult | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { return null; }
+  if (!isStringRecord(parsed)) return null;
+  const accounts = parsed['accounts'];
+  const orgId = parsed['orgId'];
+  const syncedAt = parsed['syncedAt'];
+  if (!Array.isArray(accounts) || typeof orgId !== 'string' || typeof syncedAt !== 'string') return null;
+  if (!accounts.every(isOrgAccount)) return null;
+  return { accounts, orgId, syncedAt };
+}
 
 export function registerOrgHandlers(app: AppContext): void {
   const { ctx } = app;
@@ -33,7 +59,7 @@ export function registerOrgHandlers(app: AppContext): void {
     const fs = await import('node:fs/promises');
     try {
       const raw = await fs.readFile(await orgResultPath(), 'utf-8');
-      return JSON.parse(raw) as OrgSyncResult;
+      return decodeOrgSyncResult(raw);
     } catch {
       return null;
     }
