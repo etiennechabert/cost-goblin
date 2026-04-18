@@ -69,7 +69,10 @@ async function createWindow(db: DuckDBClient): Promise<void> {
 async function main(): Promise<void> {
   await app.whenReady();
 
-  const workerPath = join(__dirname, 'duckdb-worker.js');
+  // Worker bundle is built by `npm run build:worker` (esbuild) into out/worker/
+  // — sibling to out/main/ where this file lives. We resolve up one level then
+  // into out/worker/ to find it.
+  const workerPath = join(__dirname, '..', 'worker', 'duckdb-worker.cjs');
   const db = await createDuckDBClient(workerPath);
   logger.info('DuckDB worker ready');
 
