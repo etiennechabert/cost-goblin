@@ -33,14 +33,9 @@ export interface DefaultsConfig {
   readonly lagDays: number;
 }
 
-export interface CacheConfig {
-  readonly ttlMinutes: number;
-}
-
 export interface CostGoblinConfig {
   readonly providers: readonly ProviderConfig[];
   readonly defaults: DefaultsConfig;
-  readonly cache: CacheConfig;
 }
 
 export interface BuiltInDimension {

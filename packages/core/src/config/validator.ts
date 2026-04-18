@@ -1,6 +1,5 @@
 import { asBucketPath, asDimensionId } from '../types/branded.js';
 import type {
-  CacheConfig,
   CostGoblinConfig,
   DefaultsConfig,
   DimensionsConfig,
@@ -103,19 +102,12 @@ function validateDefaults(raw: unknown): DefaultsConfig {
   };
 }
 
-function validateCache(raw: unknown): CacheConfig {
-  assertObject(raw, 'cache');
-  assertNumber(raw['ttlMinutes'], 'cache.ttlMinutes');
-  return { ttlMinutes: raw['ttlMinutes'] };
-}
-
 export function validateConfig(raw: unknown): CostGoblinConfig {
   assertObject(raw, 'config');
   assertArray(raw['providers'], 'providers');
   const providers = raw['providers'].map((p, i) => validateProvider(p, i));
   const defaults = validateDefaults(raw['defaults']);
-  const cache = validateCache(raw['cache']);
-  return { providers, defaults, cache };
+  return { providers, defaults };
 }
 
 export function validateDimensions(raw: unknown): DimensionsConfig {

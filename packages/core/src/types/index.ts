@@ -23,7 +23,6 @@ export type {
   SyncConfig,
   SyncTierConfig,
   DefaultsConfig,
-  CacheConfig,
   CostGoblinConfig,
   BuiltInDimension,
   TagDimension,

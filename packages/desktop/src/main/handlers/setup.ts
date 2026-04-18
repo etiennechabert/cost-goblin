@@ -216,7 +216,6 @@ export function registerSetupHandlers(app: AppContext): void {
         sync,
       }],
       defaults: typeof existing['defaults'] === 'object' && existing['defaults'] !== null ? existing['defaults'] : { periodDays: 30, costMetric: 'UnblendedCost', lagDays: 2 },
-      cache: typeof existing['cache'] === 'object' && existing['cache'] !== null ? existing['cache'] : { ttlMinutes: 15 },
     };
 
     await fs.writeFile(ctx.configPath, stringify(costgoblinYaml), 'utf-8');
@@ -271,9 +270,6 @@ defaults:
   periodDays: 30
   costMetric: UnblendedCost
   lagDays: 2
-
-cache:
-  ttlMinutes: 15
 `;
 
     const dimensionsTemplate = `# Dimension configuration
