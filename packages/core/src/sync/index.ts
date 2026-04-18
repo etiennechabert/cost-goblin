@@ -33,6 +33,7 @@ export {
   extractPeriod,
   extractPeriodPrefix,
   getEtagFileName,
+  getRawDirPrefix,
   groupByPeriod,
   parseEtagsJson,
 } from './sync-utils.js';

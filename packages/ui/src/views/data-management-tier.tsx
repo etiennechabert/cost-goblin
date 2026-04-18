@@ -239,7 +239,7 @@ export function TierPanel({
       {pendingDelete !== null && (
         <ConfirmModal
           title="Delete local data"
-          message={`Remove all local daily partitions for ${formatPeriod(pendingDelete)}? The data can be re-downloaded from S3.`}
+          message={`Remove local ${title.toLowerCase()} data for ${formatPeriod(pendingDelete)}? The data can be re-downloaded from S3.`}
           confirmLabel="Delete"
           destructive
           onConfirm={() => { onDeletePeriod(pendingDelete); setPendingDelete(null); }}
