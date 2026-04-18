@@ -2,8 +2,8 @@ import { app, BrowserWindow, shell } from 'electron';
 import { join } from 'node:path';
 import { logger } from '@costgoblin/core';
 import type { LogEntry } from '@costgoblin/core';
-import { createDuckDB } from './duckdb-loader.js';
-import type { DuckDBInstance } from './duckdb-loader.js';
+import { createDuckDBClient } from './duckdb-client.js';
+import type { DuckDBClient } from './duckdb-client.js';
 import { registerIpcHandlers } from './ipc.js';
 
 logger.addHandler((entry: LogEntry) => {
@@ -17,7 +17,7 @@ function resolveConfigPath(base: string, name: string): string {
   return typeof env === 'string' && env.length > 0 ? env : join(base, `${name}.yaml`);
 }
 
-async function createWindow(db: DuckDBInstance): Promise<void> {
+async function createWindow(db: DuckDBClient): Promise<void> {
   const userDataPath = app.getPath('userData');
   const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
   const configBase = process.env['COSTGOBLIN_CONFIG_DIR'] ?? join(userDataPath, 'config');
@@ -69,8 +69,9 @@ async function createWindow(db: DuckDBInstance): Promise<void> {
 async function main(): Promise<void> {
   await app.whenReady();
 
-  const db = await createDuckDB();
-  logger.info('DuckDB initialized');
+  const workerPath = join(__dirname, 'duckdb-worker.js');
+  const db = await createDuckDBClient(workerPath);
+  logger.info('DuckDB worker ready');
 
   await createWindow(db);
 
