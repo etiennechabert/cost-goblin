@@ -1,4 +1,4 @@
-import type { DuckDBInstance, DuckDBConnection } from '../duckdb-loader.js';
+import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import {
   loadConfig,
   loadDimensions,
@@ -14,7 +14,7 @@ import type {
 } from '@costgoblin/core';
 
 export interface IpcContext {
-  readonly db: DuckDBInstance;
+  readonly db: DuckDBClient;
   readonly configPath: string;
   readonly dimensionsPath: string;
   readonly orgTreePath: string;
@@ -41,7 +41,7 @@ export interface AppContext {
   readonly getOrgTreeConfig: () => Promise<OrgTreeConfig>;
   readonly getAccountMap: () => Promise<Map<string, string>>;
   readonly getOrgAccountsPath: () => Promise<string | undefined>;
-  readonly withConnection: <T>(fn: (conn: DuckDBConnection) => Promise<T>) => Promise<T>;
+  readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly invalidateConfig: () => void;
   readonly invalidateDimensions: () => void;
 }
@@ -144,15 +144,6 @@ export function createAppContext(ctx: IpcContext): AppContext {
     }
   }
 
-  async function withConnection<T>(fn: (conn: DuckDBConnection) => Promise<T>): Promise<T> {
-    const conn = await ctx.db.connect();
-    try {
-      return await fn(conn);
-    } finally {
-      conn.disconnectSync();
-    }
-  }
-
   return {
     ctx,
     state,
@@ -161,7 +152,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getOrgTreeConfig,
     getAccountMap,
     getOrgAccountsPath,
-    withConnection,
+    runQuery: (sql: string) => ctx.db.runQuery(sql),
     invalidateConfig: () => { state.config = null; },
     invalidateDimensions: () => { state.dimensions = null; },
   };
