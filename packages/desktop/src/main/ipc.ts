@@ -15,7 +15,6 @@ import {
   asDollars,
   asDateString,
   asDimensionId,
-  runSync,
   getDataInventory,
   syncSelectedFiles,
   getDescendantTagValues,
@@ -53,6 +52,7 @@ import type {
   DateRange,
   Dollars,
   SavingsPreferences,
+  UIPreferences,
   OrgSyncResult,
   OrgSyncProgress,
   AutoSyncStatus,
@@ -790,62 +790,6 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     return state.syncStatuses[syncId] ?? { status: 'idle', lastSync: null };
   });
 
-  ipcMain.handle('sync:trigger', async (): Promise<void> => {
-    logger.info('sync:trigger called');
-
-    try {
-      const config = await getConfig();
-      const dimensions = await getDimensions();
-      const provider = config.providers[0];
-
-      if (provider === undefined) {
-        throw new Error('No provider configured');
-      }
-
-      state.syncStatuses['default'] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: 0, filesDone: 0, message: '' };
-
-      const result = await runSync({
-        syncConfig: provider.sync,
-        profile: provider.credentials.profile,
-        dataDir: ctx.dataDir,
-        dimensionsConfig: dimensions,
-        onProgress: (progress) => {
-          state.syncStatuses['default'] = {
-            status: 'syncing',
-            phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
-            progress: progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0,
-            filesTotal: progress.filesTotal,
-            filesDone: progress.filesDone,
-            message: progress.message ?? '',
-          };
-        },
-      });
-
-      state.syncStatuses['default'] = {
-        status: 'completed',
-        lastSync: new Date(),
-        filesDownloaded: result.filesDownloaded,
-      };
-    } catch (err: unknown) {
-      const provider = (await getConfig()).providers[0];
-      const profile = provider?.credentials.profile ?? 'default';
-      let error: Error;
-      if (isCredentialError(err)) {
-        error = toUserFriendlyError(err, profile);
-      } else if (err instanceof Error) {
-        error = err;
-      } else {
-        error = new Error(String(err));
-      }
-      logger.error(`Sync failed: ${error.message}`);
-      state.syncStatuses['default'] = {
-        status: 'failed',
-        error,
-        lastSync: null,
-      };
-    }
-  });
-
   ipcMain.handle('config:get', async (): Promise<CostGoblinConfig> => {
     return getConfig();
   });
@@ -1381,6 +1325,36 @@ tags: []
   ipcMain.handle('savings:save-preferences', async (_event, prefs: SavingsPreferences): Promise<void> => {
     const fs = await import('node:fs/promises');
     await fs.writeFile(await savingsPrefsPath(), JSON.stringify(prefs, null, 2));
+  });
+
+  // -- UI preferences (theme, etc.) --
+
+  async function uiPrefsPath(): Promise<string> {
+    const path = await import('node:path');
+    return path.join(path.dirname(ctx.dataDir), 'ui-preferences.json');
+  }
+
+  ipcMain.handle('ui:get-preferences', async (): Promise<UIPreferences> => {
+    const fs = await import('node:fs/promises');
+    try {
+      const raw = await fs.readFile(await uiPrefsPath(), 'utf-8');
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        const record: Record<string, unknown> = { ...parsed };
+        const theme = record['theme'];
+        if (theme === 'light' || theme === 'dark') {
+          return { theme };
+        }
+      }
+    } catch {
+      // file doesn't exist yet
+    }
+    return { theme: 'dark' };
+  });
+
+  ipcMain.handle('ui:save-preferences', async (_event, prefs: UIPreferences): Promise<void> => {
+    const fs = await import('node:fs/promises');
+    await fs.writeFile(await uiPrefsPath(), JSON.stringify(prefs, null, 2));
   });
 
   // -- AWS Organizations sync --
