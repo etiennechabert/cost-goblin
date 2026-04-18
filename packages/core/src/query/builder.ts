@@ -237,6 +237,24 @@ export function buildTrendQuery(
   `.trim();
 }
 
+/**
+ * Missing-tags classifier.
+ *
+ * Pass 1 (resources CTE): aggregate Usage/DiscountedUsage line items by
+ * resource_id. A resource is "tagged" if ANY of its line items in the window
+ * has the target tag populated — tags can be added mid-month.
+ *
+ * Pass 2 (category_coverage CTE): per (service, service_family), compute the
+ * cost-weighted ratio of cost that is tagged. A category with ratio = 0 is
+ * "likely-untaggable": no resource in it has ever been tagged, so either AWS
+ * doesn't allow it or the org never has. A category with ratio > 0 has proof
+ * that it IS taggable, so untagged resources in it are "actionable".
+ *
+ * Returns one row per untagged resource with its category's tagged ratio and
+ * bucket. The minCost threshold filters per-resource, after classification —
+ * so a small untaggable resource is hidden the same way a small actionable
+ * one is.
+ */
 export function buildMissingTagsQuery(
   params: MissingTagsParams,
   dataDir: string,
@@ -247,24 +265,92 @@ export function buildMissingTagsQuery(
   const filterClauses = buildFilterClauses(params.filters, dimensions);
   const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath);
 
+  // Date + user filters apply to the resource aggregation.
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
-    `(${tagResolved.rawField} IS NULL OR ${tagResolved.rawField} = '')`,
+    `line_item_type IN ('Usage', 'DiscountedUsage')`,
+    `resource_id IS NOT NULL AND resource_id != ''`,
+    ...filterClauses,
+  ];
+
+  return `
+    WITH resources AS (
+      SELECT
+        account_id,
+        account_name,
+        service,
+        service_family,
+        resource_id,
+        SUM(cost) AS cost,
+        MAX(CASE WHEN ${tagResolved.rawField} IS NOT NULL AND ${tagResolved.rawField} != '' THEN 1 ELSE 0 END) AS has_tag
+      FROM ${source}
+      WHERE ${whereConditions.join(' AND ')}
+      GROUP BY account_id, account_name, service, service_family, resource_id
+    ),
+    category_coverage AS (
+      SELECT
+        service,
+        service_family,
+        CASE
+          WHEN SUM(cost) > 0 THEN SUM(CASE WHEN has_tag = 1 THEN cost ELSE 0 END) / SUM(cost)
+          ELSE 0
+        END AS tagged_ratio
+      FROM resources
+      GROUP BY service, service_family
+    )
+    SELECT
+      r.account_id,
+      r.account_name,
+      r.resource_id,
+      r.service,
+      r.service_family,
+      r.cost,
+      c.tagged_ratio,
+      CASE WHEN c.tagged_ratio > 0 THEN 'actionable' ELSE 'likely-untaggable' END AS bucket
+    FROM resources r
+    JOIN category_coverage c USING (service, service_family)
+    WHERE r.has_tag = 0
+      AND r.cost >= ${String(params.minCost)}
+    ORDER BY r.cost DESC
+  `.trim();
+}
+
+/**
+ * Non-resource cost: everything that's NOT a resource-bound Usage line.
+ *   - line_item_type not in (Usage, DiscountedUsage): tax, support, fees,
+ *     credits, savings-plan recurring fees, bundled discounts, etc.
+ *   - resource_id empty on a Usage line: some data-transfer and misc charges
+ *     are Usage but have no resource to attach tags to.
+ *
+ * Returns cost by (service, service_family, line_item_type) for a sidebar
+ * breakdown. These totals reconcile against the cost overview but are
+ * inherently un-taggable at the resource level.
+ */
+export function buildNonResourceCostQuery(
+  params: MissingTagsParams,
+  dataDir: string,
+  dimensions: DimensionsConfig,
+  orgAccountsPath?: string,
+): string {
+  const filterClauses = buildFilterClauses(params.filters, dimensions);
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath);
+
+  const whereConditions = [
+    `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
+    `(line_item_type NOT IN ('Usage', 'DiscountedUsage') OR resource_id IS NULL OR resource_id = '')`,
     ...filterClauses,
   ];
 
   return `
     SELECT
-      account_id,
-      account_name,
-      resource_id,
       service,
       service_family,
+      line_item_type,
       SUM(cost) AS cost
     FROM ${source}
     WHERE ${whereConditions.join(' AND ')}
-    GROUP BY account_id, account_name, resource_id, service, service_family
-    HAVING SUM(cost) >= ${String(params.minCost)}
+    GROUP BY service, service_family, line_item_type
+    HAVING SUM(cost) > 0
     ORDER BY cost DESC
   `.trim();
 }

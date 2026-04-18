@@ -570,7 +570,8 @@ test.describe('Missing Tags', () => {
   test.afterAll(async () => { await app.close(); });
 
   test('shows heading and subtitle', async () => {
-    await expect(page.getByText('Resources without cost allocation tags')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
+    await expect(page.getByText(/without the selected allocation tag/i)).toBeVisible();
   });
 
   test('tag dimension tabs are visible and switchable', async () => {
@@ -619,9 +620,10 @@ test.describe('Missing Tags', () => {
     const hasError = await errorMsg.isVisible().catch(() => false);
 
     if (hasData) {
-      // summary should show cost amount and resource count
-      await expect(page.getByText(/untagged/)).toBeVisible();
-      await expect(page.getByText(/resources/)).toBeVisible();
+      // summary shows the three buckets: actionable / likely not taggable / non-resource
+      await expect(page.getByText('Actionable missing tags')).toBeVisible();
+      await expect(page.getByText('Likely not taggable')).toBeVisible();
+      await expect(page.getByText('Non-resource cost')).toBeVisible();
     } else if (hasError) {
       // error is displayed, that's fine
       await screenshot(page, 'missing-tags-error');

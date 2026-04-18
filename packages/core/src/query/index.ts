@@ -3,6 +3,7 @@ export {
   buildDailyCostsQuery,
   buildTrendQuery,
   buildMissingTagsQuery,
+  buildNonResourceCostQuery,
   buildEntityDetailQuery,
   buildSource,
 } from './builder.js';
