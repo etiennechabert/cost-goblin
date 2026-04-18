@@ -13,6 +13,8 @@ import type {
   TrendRow,
   MissingTagsResult,
   MissingTagRow,
+  MissingTagBucket,
+  NonResourceCostRow,
   EntityDetailResult,
   DailyCost,
   DistributionSlice,
@@ -145,14 +147,23 @@ export function buildTrendResult(rows: RawRow[], deltaThreshold: number, percent
   };
 }
 
-export function buildMissingTagsResult(rows: RawRow[]): MissingTagsResult {
-  let totalUntaggedCost = 0;
+function toMissingTagBucket(v: unknown): MissingTagBucket {
+  return v === 'likely-untaggable' ? 'likely-untaggable' : 'actionable';
+}
+
+export function buildMissingTagsResult(
+  resourceRows: RawRow[],
+  nonResourceRawRows: RawRow[],
+): MissingTagsResult {
   const missingRows: MissingTagRow[] = [];
+  let totalActionableCost = 0;
+  let totalLikelyUntaggableCost = 0;
+  let actionableCount = 0;
+  let likelyUntaggableCount = 0;
 
-  for (const row of rows) {
+  for (const row of resourceRows) {
     const cost = toNum(row['cost']);
-    totalUntaggedCost += cost;
-
+    const bucket = toMissingTagBucket(row['bucket']);
     const closestOwner = typeof row['closest_owner'] === 'string' && row['closest_owner'].length > 0
       ? asEntityRef(row['closest_owner'])
       : null;
@@ -165,13 +176,40 @@ export function buildMissingTagsResult(rows: RawRow[]): MissingTagsResult {
       serviceFamily: toStr(row['service_family']),
       cost: asDollars(cost),
       closestOwner,
+      bucket,
+      categoryTaggedRatio: toNum(row['tagged_ratio']),
+    });
+
+    if (bucket === 'actionable') {
+      totalActionableCost += cost;
+      actionableCount += 1;
+    } else {
+      totalLikelyUntaggableCost += cost;
+      likelyUntaggableCount += 1;
+    }
+  }
+
+  const nonResourceRows: NonResourceCostRow[] = [];
+  let totalNonResourceCost = 0;
+  for (const row of nonResourceRawRows) {
+    const cost = toNum(row['cost']);
+    totalNonResourceCost += cost;
+    nonResourceRows.push({
+      service: toStr(row['service']),
+      serviceFamily: toStr(row['service_family']),
+      lineItemType: toStr(row['line_item_type']),
+      cost: asDollars(cost),
     });
   }
 
   return {
     rows: missingRows,
-    totalUntaggedCost: asDollars(totalUntaggedCost),
-    resourceCount: missingRows.length,
+    totalActionableCost: asDollars(totalActionableCost),
+    totalLikelyUntaggableCost: asDollars(totalLikelyUntaggableCost),
+    totalNonResourceCost: asDollars(totalNonResourceCost),
+    actionableCount,
+    likelyUntaggableCount,
+    nonResourceRows,
   };
 }
 

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildCostQuery, buildDailyCostsQuery, buildMissingTagsQuery, buildEntityDetailQuery, buildSource } from '../query/builder.js';
+import { buildCostQuery, buildDailyCostsQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asTagValue } from '../types/branded.js';
 
@@ -138,6 +138,57 @@ describe('DuckDB query integration', () => {
     const firstRow = rows[0];
     expect(firstRow?.['service']).toBeDefined();
     expect(Number(firstRow?.['cost'])).toBeGreaterThanOrEqual(0);
+  });
+
+  it('classifies missing tags into actionable vs likely-untaggable buckets', async () => {
+    const sql = buildMissingTagsQuery(
+      {
+        dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
+        filters: {},
+        minCost: asDollars(0),
+        tagDimension: asDimensionId('tag_team'),
+      },
+      SYNTHETIC_DIR,
+      dimensions,
+    );
+    const rows = await queryAll(conn, sql);
+    expect(rows.length).toBeGreaterThan(0);
+
+    // Every row carries a bucket and a tagged_ratio.
+    for (const row of rows) {
+      const bucket = String(row['bucket']);
+      expect(['actionable', 'likely-untaggable']).toContain(bucket);
+      const ratio = Number(row['tagged_ratio']);
+      expect(ratio).toBeGreaterThanOrEqual(0);
+      expect(ratio).toBeLessThanOrEqual(1);
+      // Invariant: actionable iff ratio > 0.
+      if (bucket === 'actionable') {
+        expect(ratio).toBeGreaterThan(0);
+      } else {
+        expect(ratio).toBe(0);
+      }
+    }
+  });
+
+  it('non-resource cost query returns rows for non-Usage line items', async () => {
+    const sql = buildNonResourceCostQuery(
+      {
+        dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
+        filters: {},
+        minCost: asDollars(0),
+        tagDimension: asDimensionId('tag_team'),
+      },
+      SYNTHETIC_DIR,
+      dimensions,
+    );
+    const rows = await queryAll(conn, sql);
+    // Fixture may have zero non-Usage lines; just verify the query is valid
+    // and every returned row has the expected shape.
+    for (const row of rows) {
+      expect(typeof row['service']).toBe('string');
+      expect(typeof row['line_item_type']).toBe('string');
+      expect(Number(row['cost'])).toBeGreaterThan(0);
+    }
   });
 
   it('queries entity detail by service', async () => {

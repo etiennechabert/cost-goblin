@@ -4,6 +4,7 @@ import {
   buildDailyCostsQuery,
   buildTrendQuery,
   buildMissingTagsQuery,
+  buildNonResourceCostQuery,
   buildEntityDetailQuery,
   buildSource,
   buildAliasSqlCase,
@@ -146,11 +147,15 @@ export function registerQueryHandlers(app: AppContext): void {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const orgPath = await getOrgAccountsPath();
-    const sql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath);
     logger.info('query:missing-tags', { tagDimension: params.tagDimension });
 
-    const rows = await runQuery(sql);
-    const result = buildMissingTagsResult(rows);
+    const resourceSql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath);
+    const nonResourceSql = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath);
+    const [resourceRows, nonResourceRows] = await Promise.all([
+      runQuery(resourceSql),
+      runQuery(nonResourceSql),
+    ]);
+    const result = buildMissingTagsResult(resourceRows, nonResourceRows);
     return {
       ...result,
       rows: result.rows.map(r => ({

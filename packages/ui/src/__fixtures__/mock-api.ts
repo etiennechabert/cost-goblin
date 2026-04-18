@@ -101,12 +101,19 @@ const trendResult: TrendResult = {
 
 const missingTagsResult: MissingTagsResult = {
   rows: [
-    { accountId: '123456789012', accountName: 'prod-main', resourceId: 'i-0abc123def456gh78', service: 'Amazon EC2', serviceFamily: 'Compute', cost: asDollars(1_200), closestOwner: asEntityRef('platform') },
-    { accountId: '234567890123', accountName: 'prod-data', resourceId: 'arn:aws:rds:us-east-1:234567890123:db:analytics-prod', service: 'Amazon RDS', serviceFamily: 'Database', cost: asDollars(870), closestOwner: asEntityRef('data') },
-    { accountId: '345678901234', accountName: 'staging', resourceId: 'arn:aws:s3:::untagged-bucket-staging', service: 'Amazon S3', serviceFamily: 'Storage', cost: asDollars(340), closestOwner: null },
+    { accountId: '123456789012', accountName: 'prod-main', resourceId: 'i-0abc123def456gh78', service: 'Amazon EC2', serviceFamily: 'Compute', cost: asDollars(1_200), closestOwner: asEntityRef('platform'), bucket: 'actionable', categoryTaggedRatio: 0.82 },
+    { accountId: '234567890123', accountName: 'prod-data', resourceId: 'arn:aws:rds:us-east-1:234567890123:db:analytics-prod', service: 'Amazon RDS', serviceFamily: 'Database', cost: asDollars(870), closestOwner: asEntityRef('data'), bucket: 'actionable', categoryTaggedRatio: 0.65 },
+    { accountId: '345678901234', accountName: 'staging', resourceId: 'arn:aws:s3:::untagged-bucket-staging', service: 'Amazon S3', serviceFamily: 'Storage', cost: asDollars(340), closestOwner: null, bucket: 'likely-untaggable', categoryTaggedRatio: 0 },
   ],
-  totalUntaggedCost: asDollars(2_410),
-  resourceCount: 3,
+  totalActionableCost: asDollars(2_070),
+  totalLikelyUntaggableCost: asDollars(340),
+  totalNonResourceCost: asDollars(150),
+  actionableCount: 2,
+  likelyUntaggableCount: 1,
+  nonResourceRows: [
+    { service: 'Tax', serviceFamily: '', lineItemType: 'Tax', cost: asDollars(95) },
+    { service: 'AWS Support', serviceFamily: '', lineItemType: 'Fee', cost: asDollars(55) },
+  ],
 };
 
 const entityDetailResult: EntityDetailResult = {

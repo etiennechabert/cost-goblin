@@ -44,6 +44,8 @@ export type {
   TrendResult,
   MissingTagsParams,
   MissingTagRow,
+  MissingTagBucket,
+  NonResourceCostRow,
   MissingTagsResult,
   DailyCostsParams,
   DailyCostDay,
