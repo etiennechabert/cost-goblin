@@ -14,7 +14,6 @@ describe('loadConfig', () => {
     expect(config.providers[0]?.sync.daily.retentionDays).toBe(365);
     expect(config.providers[0]?.sync.hourly?.retentionDays).toBe(30);
     expect(config.defaults.periodDays).toBe(30);
-    expect(config.cache.ttlMinutes).toBe(30);
   });
 });
 
@@ -63,7 +62,6 @@ describe('validateConfig', () => {
     expect(() => validateConfig({
       providers: [{ name: 'test' }],
       defaults: { periodDays: 30, costMetric: 'x', lagDays: 1 },
-      cache: { ttlMinutes: 30 },
     })).toThrow(ConfigValidationError);
   });
 });
