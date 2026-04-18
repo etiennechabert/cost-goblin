@@ -4,7 +4,7 @@ import { createS3Handle, parseS3Path } from './s3-client.js';
 import type { S3Handle } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
 import type { DataTier } from '../types/api.js';
-import { parseEtagsJson } from './sync-utils.js';
+import { getRawDirPrefix, parseEtagsJson } from './sync-utils.js';
 
 export type PeriodStatus = 'missing' | 'repartitioned' | 'stale';
 
@@ -90,12 +90,6 @@ const ETAG_FILES: Record<DataTier, string> = {
   'cost-optimization': 'sync-etags-cost-optimization.json',
 };
 
-const TIER_PREFIXES: Record<DataTier, string> = {
-  'daily': 'daily',
-  'hourly': 'hourly',
-  'cost-optimization': 'cost-opt',
-};
-
 export async function getDataInventory(
   bucketPath: string,
   profile: string,
@@ -120,7 +114,7 @@ export async function getDataInventory(
   }
 
   const rawDir = join(dataDir, 'aws', 'raw');
-  const tierPrefix = TIER_PREFIXES[tier];
+  const tierPrefix = getRawDirPrefix(tier);
   const localPeriodList = await listRawPeriods(rawDir, tierPrefix);
   const diskBytes = await getRawTierSize(rawDir, tierPrefix);
   const localPeriods = new Set(localPeriodList);
