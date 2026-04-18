@@ -16,6 +16,3 @@ defaults:
   periodDays: 30
   costMetric: unblended_cost
   lagDays: 1
-
-cache:
-  ttlMinutes: 30

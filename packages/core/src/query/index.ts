@@ -7,5 +7,3 @@ export {
   buildEntityDetailQuery,
   buildSource,
 } from './builder.js';
-
-export { QueryCache } from './cache.js';

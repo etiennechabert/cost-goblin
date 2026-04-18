@@ -155,7 +155,6 @@ const config: CostGoblinConfig = {
     sync: { daily: { bucket: asBucketPath('costgoblin-cur-bucket/daily'), retentionDays: 90 }, intervalMinutes: 60 },
   }],
   defaults: { periodDays: 30, costMetric: 'UnblendedCost', lagDays: 2 },
-  cache: { ttlMinutes: 15 },
 };
 
 const mockDimensions: Dimension[] = [
