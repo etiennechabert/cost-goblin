@@ -1,5 +1,7 @@
 import { parentPort } from 'node:worker_threads';
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
+import { createResourcePool } from './connection-pool.js';
+import type { ResourcePool } from './connection-pool.js';
 
 interface DuckDBModule {
   DuckDBInstance: { create: () => Promise<DuckDBInstance> };
@@ -51,20 +53,36 @@ async function fetchAllRows(conn: DuckDBConnection, sql: string): Promise<Readon
   return rows;
 }
 
-let connectionPromise: Promise<DuckDBConnection> | null = null;
+/**
+ * Pool of DuckDB connections on one DuckDBInstance. A single connection
+ * serializes queries internally — with N connections, independent queries
+ * execute in parallel (bound by DuckDB's own thread scheduling). Queries
+ * arriving while all connections are busy queue FIFO via ResourcePool.
+ *
+ * Size defaults to 4 (matches typical cost-overview fan-out and laptop
+ * core counts). Override with COSTGOBLIN_DUCKDB_POOL_SIZE.
+ */
+function parsePoolSize(): number {
+  const raw = process.env['COSTGOBLIN_DUCKDB_POOL_SIZE'];
+  if (raw === undefined) return 4;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 && n <= 32 ? n : 4;
+}
 
-async function getConnection(): Promise<DuckDBConnection> {
-  if (connectionPromise === null) {
-    connectionPromise = createDuckDB().then(db => db.connect());
+let poolPromise: Promise<ResourcePool<DuckDBConnection>> | null = null;
+
+function getPool(): Promise<ResourcePool<DuckDBConnection>> {
+  if (poolPromise === null) {
+    poolPromise = createDuckDB().then(db => createResourcePool(parsePoolSize(), () => db.connect()));
   }
-  return connectionPromise;
+  return poolPromise;
 }
 
 function send(msg: WorkerResponse): void {
   port.postMessage(msg);
 }
 
-void getConnection().then(() => {
+void getPool().then(() => {
   send({ kind: 'ready' });
 }).catch((err: unknown) => {
   const message = err instanceof Error ? err.message : String(err);
@@ -74,13 +92,16 @@ void getConnection().then(() => {
 });
 
 async function handleRequest(req: WorkerRequest): Promise<void> {
+  const pool = await getPool();
+  const conn = await pool.acquire();
   try {
-    const conn = await getConnection();
     const rows = await fetchAllRows(conn, req.sql);
     send({ kind: 'rows', id: req.id, rows });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     send({ kind: 'error', id: req.id, message });
+  } finally {
+    pool.release(conn);
   }
 }
 
