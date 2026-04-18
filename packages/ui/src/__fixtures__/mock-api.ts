@@ -212,7 +212,6 @@ export class MockCostApi implements CostApi {
   }
   queryEntityDetail(): Promise<EntityDetailResult> { return Promise.resolve(entityDetailResult); }
   getSyncStatus(): Promise<SyncStatus> { return Promise.resolve(syncStatus); }
-  triggerSync(): Promise<void> { return Promise.resolve(); }
   getConfig(): Promise<CostGoblinConfig> { return Promise.resolve(config); }
   getDimensions(): Promise<Dimension[]> { return Promise.resolve(mockDimensions); }
   getOrgTree(): Promise<OrgNode[]> { return Promise.resolve(orgTree); }
@@ -232,6 +231,8 @@ export class MockCostApi implements CostApi {
   writeConfig(): Promise<void> { return Promise.resolve(); }
   getSavingsPreferences(): Promise<{ hiddenActionTypes: readonly string[] }> { return Promise.resolve({ hiddenActionTypes: [] }); }
   saveSavingsPreferences(): Promise<void> { return Promise.resolve(); }
+  getUIPreferences(): Promise<{ theme: 'dark' | 'light' }> { return Promise.resolve({ theme: 'dark' }); }
+  saveUIPreferences(): Promise<void> { return Promise.resolve(); }
   syncOrgAccounts(): Promise<{ accounts: readonly never[]; orgId: string; syncedAt: string }> { return Promise.resolve({ accounts: [], orgId: 'mock', syncedAt: new Date().toISOString() }); }
   getOrgSyncResult(): Promise<null> { return Promise.resolve(null); }
   getOrgSyncProgress(): Promise<null> { return Promise.resolve(null); }

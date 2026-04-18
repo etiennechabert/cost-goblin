@@ -15,7 +15,17 @@ Named after the mythical creatures who guard treasure vaults and account for eve
 - **Free**: Desktop app. Full cost exploration, local data, runs on your machine.
 - **Paid** (deferred): Cloud platform. Automated anomaly detection, collaborative triage, scheduled reports, AI insights, shared dashboards. Requires server infrastructure — that's what the user pays for.
 
-This spec covers the **free desktop app (v1)** only. The architecture is designed so the core logic can be shared with a future web backend.
+This spec covers the **free desktop app** only. The architecture is designed so the core logic can be shared with a future web backend.
+
+### Feature Tiering
+
+This document tags every feature with one of:
+
+- **MVP** — built, shipping today. Behavior must match this spec.
+- **v1** — committed for the next milestone. Design is set, code is partial or planned.
+- **Maybe Later** — designed for, not built. Documented so future work doesn't paint into a corner. May be deferred indefinitely.
+
+When a feature changes tier (MVP → done means it stays MVP; v1 → MVP when shipped; Maybe Later → v1 when prioritized), update this spec in the same change.
 
 ---
 
@@ -26,12 +36,14 @@ This spec covers the **free desktop app (v1)** only. The architecture is designe
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
 | Desktop shell | Electron | Cross-platform desktop app (macOS + Windows) |
-| Frontend | React + TypeScript | Shared UI components |
+| Frontend | React 19 + TypeScript | Shared UI components |
 | Core library | TypeScript (npm package) | DuckDB queries, S3 sync, cost logic, config |
 | Query engine | DuckDB (Node.js bindings) | Analytical queries over local Parquet files |
-| Local state | JSON + YAML files | Config (YAML, user-editable), state (JSON, app-managed) |
+| Local config | YAML files | Organization-shared configuration (versionable in git) |
+| Local preferences | JSON file | Per-user UI state (theme, last view, hidden columns) |
+| App state | JSON files | Sync manifest, telemetry outbox |
 | Data format | Apache Parquet | Cloud billing data stored locally |
-| Auto-update | electron-updater + GitHub Releases | Background update checks, user-controlled restart |
+| AWS | `@aws-sdk/client-s3`, `@aws-sdk/client-organizations` | S3 access + AWS Organizations sync |
 
 ### Monorepo Structure
 
@@ -39,83 +51,126 @@ This spec covers the **free desktop app (v1)** only. The architecture is designe
 costgoblin/
   data/                  # .gitignore'd — real data for development only
     .gitkeep
-    .gitignore           # ignores everything except .gitkeep and .gitignore
+    .gitignore
     raw/                 # real Parquet files (NEVER committed)
   packages/
     core/                # @costgoblin/core — pure TypeScript, no framework dependency
       src/
-        query/           # DuckDB query builder + execution
+        query/           # DuckDB query builder + execution + LRU cache
         sync/            # S3 sync engine + repartitioning
         config/          # YAML config loader + validator
         normalize/       # Tag normalization + alias resolution (query-time)
-        models/          # Cost aggregation, trends, missing tags
+        models/          # Org tree traversal, cost math
         types/           # Shared TypeScript types, branded types
-        __fixtures__/    # Synthetic test data + generator
+        logger/          # Structured logger
+        __fixtures__/    # Synthetic Parquet + config + generator
         __tests__/       # Core logic tests
     desktop/             # Electron shell — imports @costgoblin/core
       src/
-        main/            # Electron main process (DuckDB + S3 sync in worker threads)
-        preload/         # IPC bridge
+        main/            # Electron main process: IPC handlers, DuckDB, S3 sync, AWS Org client, auto-sync
+        preload/         # IPC bridge (contextBridge.exposeInMainWorld)
         renderer/        # React app entry point
     ui/                  # @costgoblin/ui — shared React components
       src/
-        views/           # Full page views (overview, trends, entity detail, etc.)
-        components/      # Reusable chart, table, filter components
+        views/           # Full page views
+        components/      # Reusable chart, table, filter, modal components
         hooks/           # Data fetching hooks against CostApi interface
-        api/             # CostApi interface + DesktopCostApi implementation
-        __fixtures__/    # Mock CostApi + fixture data for component tests
+        api/             # CostApi interface re-export + provider
+        lib/             # Palette, utils, dimension helpers
+        __fixtures__/    # MockCostApi + fixture data
         __tests__/       # Component tests
-    web-backend/         # (Future) Express/Fastify server — imports @costgoblin/core
+    web-backend/         # (Maybe Later) Express/Fastify server — imports @costgoblin/core
 ```
 
 ### Data Access Layer
 
-The frontend codes against an abstract `CostApi` interface. The desktop app implements it via Electron IPC. A future web mode implements it via HTTP.
+The frontend codes against an abstract `CostApi` interface. The desktop app implements it via Electron IPC. A future web mode would implement it via HTTP.
 
 ```typescript
-// packages/ui/src/api/CostApi.ts
 interface CostApi {
-  // Queries
+  // Cost queries
   queryCosts(params: CostQueryParams): Promise<CostResult>;
+  queryDailyCosts(params: DailyCostsParams): Promise<DailyCostsResult>;
   queryTrends(params: TrendQueryParams): Promise<TrendResult>;
   queryMissingTags(params: MissingTagsParams): Promise<MissingTagsResult>;
+  querySavings(): Promise<SavingsResult>;
   queryEntityDetail(params: EntityDetailParams): Promise<EntityDetailResult>;
+  getFilterValues(dimensionId, filters, dateRange?): Promise<{ value, label, count }[]>;
 
   // Sync
-  getSyncStatus(): Promise<SyncStatus>;
+  getSyncStatus(syncId?): Promise<SyncStatus>;
   triggerSync(): Promise<void>;
+  syncPeriods(files, syncId?): Promise<{ filesDownloaded; rowsProcessed }>;
+  cancelSync(syncId?): Promise<void>;
+  getDataInventory(tier?: DataTier): Promise<DataInventoryResult>;
+  deleteLocalPeriod(period, tier?): Promise<void>;
+  openDataFolder(): Promise<void>;
 
-  // Config
+  // Auto-sync
+  getAutoSyncEnabled(): Promise<boolean>;
+  setAutoSyncEnabled(enabled): Promise<void>;
+  getAutoSyncStatus(): Promise<AutoSyncStatus>;
+
+  // AWS Organizations
+  syncOrgAccounts(profile): Promise<OrgSyncResult>;
+  getOrgSyncResult(): Promise<OrgSyncResult | null>;
+  getOrgSyncProgress(): Promise<OrgSyncProgress | null>;
+  getAccountMapping(): Promise<AccountMappingStatus>;
+
+  // Config / dimensions
   getConfig(): Promise<CostGoblinConfig>;
   getDimensions(): Promise<Dimension[]>;
+  getDimensionsConfig(): Promise<DimensionsConfig>;
+  saveDimensionsConfig(config): Promise<void>;
   getOrgTree(): Promise<OrgNode[]>;
+  discoverTagKeys(): Promise<{ tags: TagDiscoveryEntry[]; samplePeriod }>;
+
+  // Setup
+  getSetupStatus(): Promise<{ configured: boolean }>;
+  testConnection(params): Promise<{ ok; error? }>;
+  listAwsProfiles(): Promise<string[]>;
+  listS3Buckets(profile): Promise<{ buckets; error? }>;
+  browseS3(params): Promise<{ prefixes; isCurReport; detectedType; missingColumns }>;
+  scaffoldConfig(): Promise<void>;
+  writeConfig(config): Promise<void>;
+
+  // Savings preferences
+  getSavingsPreferences(): Promise<SavingsPreferences>;
+  saveSavingsPreferences(prefs): Promise<void>;
 }
 
-// packages/desktop/src/main/DesktopCostApi.ts
-class DesktopCostApi implements CostApi {
-  async queryCosts(params) {
-    return ipcRenderer.invoke('query:costs', params);
-  }
-}
-
-// packages/web-backend/src/WebCostApi.ts (future)
-class WebCostApi implements CostApi {
-  async queryCosts(params) {
-    return fetch('/api/costs', { method: 'POST', body: JSON.stringify(params) });
-  }
-}
+// Desktop implementation lives in the preload script via contextBridge.exposeInMainWorld.
+// The renderer never sees ipcRenderer directly.
 ```
 
-### Worker Thread Architecture
+The interface is exported from `@costgoblin/core/browser`. The renderer accesses it through a React context (`useCostApi()`) — never through globals — so component tests can swap in `MockCostApi`.
 
-DuckDB operations and S3 sync run in Electron worker threads to keep the UI responsive.
+### Worker Thread Architecture (v1)
+
+> **Status: v1.** Today, DuckDB and S3 sync run on the Electron main process. Heavy queries can stall IPC responsiveness. Migration to worker threads is a v1 commitment.
+
+Target architecture:
 
 ```
 Main Process
   ├── DuckDB Worker Thread    # All query execution
-  ├── S3 Sync Worker Thread   # Download + incremental sync
+  ├── S3 Sync Worker Thread   # Download + repartition
   └── Window (Renderer)       # React UI
 ```
+
+Constraints:
+- Workers communicate via structured-clone messages typed with the same `CostApi`-adjacent types.
+- DuckDB instance is owned exclusively by its worker. The main process never touches DuckDB directly.
+- Sync worker streams progress events back to main, which forwards to the renderer.
+- Cancellation (`AbortSignal`-style) must work from the renderer down through main into the worker.
+
+### Electron Security
+
+- `contextIsolation: true`
+- `nodeIntegration: false`
+- `sandbox: true` (v1 — currently `false`)
+- Preload uses `contextBridge.exposeInMainWorld` to expose only the typed `CostApi`.
+- Renderer has zero Node imports. No `localStorage`/`sessionStorage` for app data — see Configuration System.
 
 ---
 
@@ -123,17 +178,16 @@ Main Process
 
 ### Source: Cloud Billing Exports
 
-v1 targets **AWS Cost and Usage Reports (CUR 2.0)**, exported as Parquet to S3.
+MVP targets **AWS Cost and Usage Reports (CUR 2.0)**, exported as Parquet to S3.
 
 The architecture supports future providers via a normalization layer:
 
 | Provider | Export Format | Storage | Status |
 |----------|-------------|---------|--------|
-| AWS | CUR 2.0 (Parquet) | S3 | v1 |
-| GCP | BigQuery billing export | BigQuery → Parquet | Future |
-| Azure | Cost Management export | Blob Storage (Parquet/CSV) | Future |
-
-Each provider has a sync module and a normalizer that maps provider-specific columns to CostGoblin's internal schema.
+| AWS | CUR 2.0 (Parquet) | S3 | MVP |
+| AWS | Cost Optimization Hub recommendations (Parquet) | S3 | MVP |
+| GCP | BigQuery billing export | BigQuery → Parquet | Maybe Later |
+| Azure | Cost Management export | Blob Storage (Parquet/CSV) | Maybe Later |
 
 ### CUR 2.0 Report Configuration
 
@@ -142,13 +196,13 @@ When creating the CUR report in the AWS Console (Cost and Usage Reports → Crea
 | Setting | Value |
 |---------|-------|
 | Table name | `CUR 2.0` |
-| Time granularity | `Daily` |
+| Time granularity | `Daily` (or `Hourly` for hourly tier) |
 | Additional content | `Include resource IDs` |
 | Billing view | `Primary View` |
 | Format | `Parquet` |
 | Compression | `Snappy` (default) |
 
-**Required columns** (CostGoblin uses all of these during repartitioning):
+**Required columns:**
 
 | Column | Type | Purpose |
 |--------|------|---------|
@@ -156,19 +210,20 @@ When creating the CUR report in the AWS Console (Cost and Usage Reports → Crea
 | `line_item_usage_account_id` | String | Account dimension |
 | `line_item_usage_account_name` | String | Account display name |
 | `line_item_unblended_cost` | Number | Primary cost metric |
-| `line_item_line_item_type` | String | Charge type (Usage, Fee, Credit, Tax) |
+| `line_item_line_item_type` | String | Charge type |
 | `line_item_line_item_description` | String | Line item description |
 | `line_item_operation` | String | AWS operation |
 | `line_item_usage_type` | String | Usage details |
 | `line_item_usage_amount` | Number | Usage quantity |
-| `line_item_resource_id` | String | Resource ARN (for missing tags analysis) |
-| `product_servicecode` | String | AWS service (e.g. AmazonEC2) |
-| `product_product_family` | String | Service family (e.g. Compute Instance) |
+| `line_item_resource_id` | String | Resource ARN |
+| `product_servicecode` | String | AWS service |
+| `product_product_family` | String | Service family |
 | `product_region_code` | String | AWS region |
-| `pricing_public_on_demand_cost` | Number | On-demand list price (for savings calc) |
+| `pricing_public_on_demand_cost` | Number | List price |
 | `resource_tags` | Map | Tag key-value pairs |
 
-The CUR export in S3 will have this structure:
+CUR export structure in S3:
+
 ```
 s3://bucket/prefix/
   data/
@@ -183,62 +238,63 @@ s3://bucket/prefix/
 
 The user configures AWS credentials and bucket paths. The app syncs Parquet files to local storage.
 
-**Two granularity tiers:**
+**Three data tiers:**
 
 | Tier | Granularity | Default Retention | Use Case |
 |------|------------|-------------------|----------|
-| Daily | 1 row per day per line item | 365 days | Long-term trends, baselines |
-| Hourly | 1 row per hour per line item | 30 days | Short-term drill-down, incident analysis |
+| Daily | 1 row per day per line item | 365 days | Long-term trends |
+| Hourly | 1 row per hour per line item | 30 days | Short-term drill-down |
+| Cost Optimization | One row per recommendation | Latest snapshot | Savings view (RI/SP, rightsizing) |
 
-**Sync behavior (manifest-based):**
-- AWS CUR 2.0 produces a `manifest.json` in each export listing every Parquet file with its content hash
-- Sync always fetches the manifest first (tiny file)
-- Compares against stored manifest from last sync (`state/sync-manifest.json`)
-- Files with changed hashes → re-download. New files → download. Removed files → delete local copy.
-- After download, repartition monthly files to daily Hive-style partitions (see Resolved Design Decisions)
-- Track lineage: which source file produced which daily partitions, so changed months only rewrite affected dates
-- Background sync while app is open (configurable interval, default: every 60 minutes)
-- Manual sync trigger via UI button
-- Progress indicator in UI during sync
+The hourly and cost-optimization tiers are optional. Daily is mandatory.
 
-**Local storage layout (Hive-partitioned after repartition):**
+**Sync behavior (per-period, manifest-aware):**
+- The Sync view computes a per-month inventory from S3 listings (file key + size + content hash).
+- For each missing or stale period, the user (or auto-sync) triggers a per-period download via `syncPeriods()`.
+- Download is delegated to `aws s3 sync` (subprocess), which handles concurrency, retries, and partial-file resume natively.
+- Files land directly in `aws/raw/{tier}-{period}/` — **no repartitioning**, no DuckDB-side rewrite. The downloaded Parquet is the queried Parquet.
+- Per-period etag manifests (`sync-etags-{tier}.json`) record what's locally present so re-sync can skip unchanged files.
+- Tag columns are NOT pre-flattened at sync time. Queries extract from `resource_tags` map and apply aliases via SQL CASE expressions at query time.
+
+**Local storage layout:**
 
 ```
 ~/Library/Application Support/costgoblin/     # macOS
 %APPDATA%/costgoblin/                          # Windows
-  config/                   # YAML — user-editable, source of truth
-    costgoblin.yaml         # Main configuration (providers, sync, defaults)
-    dimensions.yaml         # Dimension + concept definitions, aliases, normalization
-    org-tree.yaml           # Organizational hierarchy
-    views.yaml              # View templates per concept type (optional)
-  state/                    # JSON — app-managed, not user-edited
-    sync-manifest.json      # S3 file hashes + partition lineage
-    preferences.json        # Window size, last period, theme, color palette, UI state
-    telemetry-outbox.json   # Pending telemetry events (auditable by user)
+  config/                   # YAML — organization-shared, versionable
+    costgoblin.yaml         # Providers, sync, defaults
+    dimensions.yaml         # Dimensions + concepts + aliases
+    org-tree.yaml           # Optional organizational hierarchy
+  state/                    # JSON — app-managed
+    sync-manifest.json      # S3 file hashes
+    org-sync-result.json    # AWS Org snapshot
+    preferences.json        # Per-user UI state (theme, palette, hidden cols, auto-sync toggle)
   data/
-    aws/                    # Provider namespace
-      daily/                # Hive-partitioned by date (post-repartition)
-        date=2025-04-01/data.parquet
-        date=2025-04-02/data.parquet
-        ...
-      hourly/               # Hive-partitioned by date (if hourly configured)
-        date=2026-03-15/data.parquet
-        ...
-      staging/              # Raw monthly CUR files (temporary, deleted after repartition)
+    aws/
+      raw/
+        daily-YYYY-MM/                  # One directory per billing period, downloaded as-is from S3
+          *.parquet
+        hourly-YYYY-MM/
+          *.parquet
+        cost-optimization-YYYY-MM/
+          usage_date=YYYY-MM-DD/data.parquet   # Cost-opt is split by export date during sync
+      sync-etags-daily.json             # Per-period file etags for diff
+      sync-etags-hourly.json
+      sync-etags-cost-optimization.json
 ```
 
 **AWS Credentials:**
 
-The app reads from existing AWS configuration, in priority order:
+The app reads from existing AWS configuration in priority order:
 1. AWS profile from `~/.aws/credentials` (user selects profile name in setup)
 2. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
-3. SSO / Identity Center (via AWS SDK's built-in SSO flow)
+3. SSO / Identity Center (via AWS SDK's built-in flow)
 
-No credentials are stored by the app itself — it delegates to the AWS SDK for Node.js.
+No credentials are stored by the app — it delegates to the AWS SDK.
 
 ### Internal Schema
 
-DuckDB queries are written against a normalized internal schema. The normalizer maps provider-specific columns at sync time.
+DuckDB queries run against a normalized internal schema. The normalizer maps provider-specific columns at sync time.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -247,340 +303,404 @@ DuckDB queries are written against a normalized internal schema. The normalizer 
 | `account_id` | `VARCHAR` | Cloud account/project/subscription ID |
 | `account_name` | `VARCHAR` | Friendly account name |
 | `region` | `VARCHAR` | Cloud region |
-| `service` | `VARCHAR` | Cloud service (e.g., AmazonEC2, AmazonRDS) |
+| `service` | `VARCHAR` | Cloud service |
 | `service_family` | `VARCHAR` | Service sub-category |
 | `description` | `VARCHAR` | Line item description |
 | `resource_id` | `VARCHAR` | ARN or resource identifier |
 | `usage_amount` | `DOUBLE` | Quantity of usage |
-| `cost` | `DOUBLE` | Primary cost metric (configurable) |
+| `cost` | `DOUBLE` | Primary cost metric |
 | `list_cost` | `DOUBLE` | Public on-demand price |
 | `line_item_type` | `VARCHAR` | Billing line item type |
 | `usage_type` | `VARCHAR` | Usage type code |
 | `operation` | `VARCHAR` | Operation type |
 | `tag_{name}` | `VARCHAR` | One column per configured tag dimension |
 
-Tags are flattened into top-level columns during normalization, applying aliases and normalization rules (see Configuration).
+Tags are flattened into top-level columns during normalization. **Aliases and normalization rules are applied at query time in SQL** — see Resolved Design Decisions.
 
 ---
 
 ## Configuration System
 
-All configuration lives in YAML files. The app loads them on startup. The UI helps users make changes by showing which file to edit, the proposed content, and a diff view — but the YAML files are the source of truth.
+CostGoblin separates **organization-shared config** (YAML, can be checked into git, the same across teammates) from **per-user preferences** (JSON, machine-local, never shared).
 
-### Main Config: `costgoblin.yaml`
+### Organization Config (YAML)
+
+Lives in `config/`. Edited from the app's Dimensions Editor (see Features). Atomic file writes. **The app is the only writer.** External edits while the app is running will be silently overwritten on the next app-driven save — this is intentional.
+
+#### `costgoblin.yaml`
 
 ```yaml
-# Cloud provider connections
 providers:
   - name: aws-main
     type: aws
     credentials:
-      profile: my-aws-profile          # AWS CLI profile name
+      profile: my-aws-profile
     sync:
       daily:
         bucket: s3://my-cur-bucket/daily/
         retentionDays: 365
-      hourly:
+      hourly:                              # optional
         bucket: s3://my-cur-bucket/hourly/
         retentionDays: 30
-      intervalMinutes: 60               # Background sync interval
+      costOptimization:                    # optional, MVP
+        bucket: s3://my-cur-bucket/cost-opt/
 
-# Query defaults
 defaults:
-  periodDays: 30                        # Default analysis window
-  costMetric: unblended_cost            # Which CUR cost column maps to `cost`
-  lagDays: 1                            # CUR consolidation delay
+  periodDays: 30
+  costMetric: unblended_cost
+  lagDays: 1
 
-# Cache
 cache:
-  ttlMinutes: 30                        # Query result cache TTL
+  ttlMinutes: 30
 ```
 
-### Dimensions: `dimensions.yaml`
+#### `dimensions.yaml`
 
 ```yaml
-# Built-in dimensions (always available, derived from billing data structure)
 builtIn:
   - name: account
     label: "Account"
     field: account_id
     displayField: account_name
-
   - name: region
     label: "Region"
     field: region
-
   - name: service
     label: "Service"
     field: service
-
   - name: service_family
     label: "Service Family"
     field: service_family
 
-# Tag-based dimensions (organization-specific)
 tags:
-  - tagName: "org:team"                 # Actual AWS cost allocation tag name
+  - tagName: "org:team"
     label: "Team"
-    concept: owner                      # Behavioral hook (see Concepts below)
-    normalize: lowercase-kebab          # Normalization rule
+    concept: owner
+    normalize: lowercase-kebab
+    fallbackTag: "team-from-account"      # When tag is missing on the row, fall back to this AWS-Org account tag
+    missingValueTemplate: "no-team-{accountId}"
     aliases:
-      core-banking:
-        - core_banking
-        - corebanking
-        - CoreBanking
-      platform:
-        - platform-team
-        - platform_team
+      core-banking: [core_banking, corebanking, CoreBanking]
+      platform: [platform-team, platform_team]
 
   - tagName: "org:service-name"
     label: "Service"
-    concept: product                    # Behavioral hook
-    separator: "/"                      # payments/api → product hierarchy
+    concept: product
+    separator: "/"
     normalize: lowercase
-    aliases:
-      payments:
-        - payment
-        - pay
 
   - tagName: "org:environment"
     label: "Environment"
-    concept: environment                # Behavioral hook
+    concept: environment
     normalize: lowercase
     aliases:
-      production:
-        - prod
-        - prd
-        - production-eu
-        - production-us
-      staging:
-        - stg
-        - stage
-        - pre-prod
-        - preprod
-      development:
-        - dev
-        - develop
-      sandbox:
-        - sbx
-
-  - tagName: "org:cost-center"
-    label: "Cost Center"
-    # No concept — just a regular groupable dimension
-    normalize: uppercase
+      production: [prod, prd]
+      staging: [stg, stage, pre-prod]
+      development: [dev, develop]
 ```
 
-### Concepts
+#### Concepts
 
 Three behavioral hooks that change how the app treats a dimension:
 
 | Concept | Behavior | Limit |
 |---------|----------|-------|
-| `owner` | Gets the organizational tree. Costs roll up through hierarchy. Future: budget assignment, report recipient. The "who pays" axis. | One dimension only |
-| `product` | Anomaly detection target (future). Cost driver analysis. Supports `separator` for lightweight hierarchy (e.g., `payments/api`). The "what costs" axis. | One dimension only |
-| `environment` | Cross-cutting filter bar on every view. Not a primary grouping dimension. The "where it runs" axis. | One dimension only |
+| `owner` | Gets the organizational tree. Costs roll up through hierarchy. The "who pays" axis. | One dimension only |
+| `product` | Cost driver analysis. Supports `separator` for lightweight hierarchy. The "what costs" axis. | One dimension only |
+| `environment` | Cross-cutting filter chip on every view. Not a primary grouping dimension. | One dimension only |
 
-Dimensions without a concept are regular groupable dimensions — you can slice data by them, drill into them, see breakdowns. They just don't get special UI treatment.
+Dimensions without a concept are regular groupable dimensions.
 
-### Organizational Tree: `org-tree.yaml`
+#### `org-tree.yaml`
 
 Applies to whichever dimension is marked `concept: owner`.
 
 ```yaml
-# Nodes map to tag values. Virtual nodes have no tag value — their cost is the sum of children.
 tree:
-  - name: "Company"                     # Display name
-    virtual: true                       # No tag value — grouping only
+  - name: "Company"
+    virtual: true
     children:
       - name: "Engineering"
         virtual: true
         children:
-          - name: "core-banking"        # Matches tag value after normalization
+          - name: "core-banking"
           - name: "payments"
-          - name: "identity"
           - name: "platform"
-      - name: "Data"
-        virtual: true
-        children:
-          - name: "analytics"
-          - name: "ml-platform"
-      - name: "SRE"                     # Real node (matches tag value) AND has children
+      - name: "SRE"
         children:
           - name: "sre-emea"
           - name: "sre-us"
 ```
 
-**Resolution rules:**
-- A real node (non-virtual) matches a tag value after normalization + alias resolution
-- A virtual node's cost = sum of all descendant real nodes' costs
-- Tag values not appearing in the tree are shown as "unassigned" in the UI
-- If no tree is defined, costs display flat by tag value
+- A real (non-virtual) node matches a tag value after normalization + alias resolution.
+- A virtual node's cost = sum of all descendant real nodes' costs.
+- Tag values not in the tree show as "unassigned."
+- If no tree is defined, costs display flat by tag value.
 
-### In-App Config Editing
+### Per-User Preferences (JSON)
 
-The app does NOT have a built-in YAML editor. Instead, when the user wants to make a config change (e.g., add an alias, modify the tree), the app:
+Lives in `state/preferences.json`. Loaded at app startup. Read/written through IPC.
 
-1. Shows which file needs to change (e.g., `dimensions.yaml`)
-2. Shows the proposed new content
-3. Shows a diff view (before → after)
-4. Provides a "Copy to clipboard" button and opens the file in the system editor
-5. After the file is saved externally, the app detects the change (file watcher) and reloads
+```json
+{
+  "theme": "dark",
+  "colorPalette": "standard",
+  "lastView": "overview",
+  "windowSize": { "width": 1280, "height": 800 },
+  "hiddenColumns": { "savings": ["region"] },
+  "autoSync": true,
+  "savings": { "hiddenActionTypes": ["Rightsize"] }
+}
+```
 
-**Smart suggestions:**
-- On first sync, the app scans all unique tag values and suggests dimension configuration
-- Fuzzy matching detects potential duplicates (e.g., "prod" and "production") and suggests aliases
-- New tag values appearing in subsequent syncs that don't match any known value or alias trigger a notification: "New tag value `staging-2` found for dimension Environment — should this map to an existing value?"
+This file is **per-machine, per-user**. It is not shared across the team. It must not contain organization data.
+
+> **Migration note (v1):** Theme is currently in `localStorage` ([App.tsx](packages/desktop/src/renderer/App.tsx)). Move to `preferences.json` via IPC. The renderer must not use `localStorage` or `sessionStorage` for any application state.
+
+### File Editing Policy
+
+- **Org config** — edited via the Dimensions Editor (see Features). Atomic writes. App is the sole writer at runtime; external edits during runtime will be silently overwritten on the next save. External edits while the app is closed are loaded normally on next startup.
+- **Per-user preferences** — written through IPC handlers in the main process. Atomic writes.
+- **No file watchers.** No file locks. No hot-reload.
+- For shared org config across teammates, the workflow is git: commit YAML changes, others pull and restart the app.
 
 ---
 
-## Features (v1)
+## Features
 
-### Feature 1: Setup Wizard
+### MVP — Shipping Today
+
+#### Feature: Setup Wizard (MVP)
 
 First-run experience that guides the user through initial configuration.
 
 **Flow:**
-1. **Welcome screen** — brief explanation of what CostGoblin does
-2. **Cloud provider** — select AWS (future: GCP, Azure). Enter profile name or credentials.
-3. **S3 buckets** — specify daily and hourly bucket paths. "Test Connection" button.
-4. **Tag discovery** — after test connection, app samples Parquet files and lists all available tags. User selects which tags to track and assigns labels/concepts.
-5. **Alias suggestions** — for each selected tag, show all unique values with fuzzy-match grouping. User confirms or adjusts.
-6. **Initial sync** — full download with progress bar. Can take several minutes for large datasets.
-7. **Ready** — navigate to the cost overview.
+1. **AWS profile selection** — list profiles from `~/.aws/credentials`. User picks one.
+2. **S3 bucket discovery** — list buckets accessible to the selected profile. User picks the CUR bucket.
+3. **Prefix browsing** — browse the bucket's prefixes. The app inspects each prefix and detects whether it looks like a CUR 2.0 export (presence of `manifest.json`, required columns in the Parquet schema). Detected type is shown: `daily`, `hourly`, `cost-optimization`, or `unknown`.
+4. **Tier selection** — user assigns each detected prefix to a tier (daily required; hourly and cost-optimization optional).
+5. **Tag discovery (optional)** — sample a Parquet file to list available tag keys with their coverage. User picks which to track and assigns labels.
+6. **Initial sync** — full download with progress bar. Periods download in parallel within a configurable limit.
+7. **Ready** — navigate to Sync view to confirm data is loaded, then to the Cost Overview.
 
-The wizard writes `costgoblin.yaml` and `dimensions.yaml`. The org tree is optional and can be added later.
+The wizard writes `costgoblin.yaml` and a starter `dimensions.yaml`. The org tree is added later via the Dimensions Editor or by editing YAML.
 
-### Feature 2: Cost Overview Page
+#### Feature: Cost Overview Page (MVP)
 
-The main page showing organization-wide cost data. Registered as the app's home screen.
+The home screen — organization-wide cost data.
 
 **Layout:**
-- Top bar: current period indicator ("Last 30 days, N days lag"), sync status, "Sync Now" button
-- Dimension selector: toggle between any configured dimension (Owner teams, Products, Accounts, Regions, Services, or any tag dimension)
-- Environment filter chips (if environment concept is configured): horizontal bar showing each environment with its cost (e.g., "Production · $14.5k"), clicking filters all views below
-- Sortable table:
-  - Entity name (clickable → drills into entity detail)
-  - Warning icon for unresolved entities (tag values not in catalog/tree)
-  - Total cost
-  - Top N cloud service columns with costs (dynamically determined — e.g., EC2, RDS, CloudWatch)
-- Header row: organization total and per-service totals
-- CSV export button
+- Top bar: current period indicator, sync status, "Sync Now" button.
+- Dimension selector: toggle between any configured dimension.
+- Environment filter chips (when an environment concept is configured).
+- Sortable table with entity rows + cost columns (one per top-N service, plus total).
+- Header row: organization total + per-service totals.
+- CSV export.
 
 **Behavior:**
-- Table sorted by total cost descending by default
-- Service columns are the top N services by total spend across all entities
-- Clicking an entity navigates to its detail view
-- If the owner dimension has an org tree, virtual nodes are shown with rollup costs and a drill-down arrow
+- Default sort: total cost descending.
+- Service columns are the top N services by total spend across all entities.
+- Clicking an entity navigates to its detail view.
+- Virtual org-tree nodes show with rollup costs and a drill-down arrow.
 
-### Feature 3: Cost Trends View
+#### Feature: Cost Trends View (MVP)
 
 Compares costs between the current period and the previous equivalent period.
 
 **Layout:**
-- Filters: Owner dropdown (if configured), dimension toggle, direction toggle (Increases / Savings)
-- Threshold controls: absolute delta slider ($), percentage change slider (%)
-- Summary: total increase/decrease count and dollar amount above thresholds
-- Scatter/bubble visualization: each bubble is an entity with significant cost change, sized by dollar impact
+- Filters: owner dropdown, dimension toggle, direction toggle (Increases / Savings).
+- Threshold controls: absolute delta slider ($), percentage change slider (%).
+- Summary: count and dollar total of items above thresholds.
+- Bubble visualization: each bubble is an entity with significant change, sized by dollar impact.
 
 **Behavior:**
-- Shows only items exceeding BOTH the delta and percentage thresholds
-- Increases: items that cost more vs. previous period
-- Savings: items that cost less
-- Clicking a bubble navigates to entity detail
+- Shows only items exceeding both thresholds.
+- Clicking a bubble navigates to entity detail.
 
-### Feature 4: Missing Tags View
+#### Feature: Missing Tags View (MVP)
 
-Identifies cloud resources that lack cost allocation tags.
+Identifies cloud resources lacking cost-allocation tags.
 
 **Layout:**
-- Filters: Owner dropdown, Account dropdown
-- Threshold control: minimum cost slider ($)
-- Summary: total untagged cost and resource count above threshold
-- Table: Account, closest owner match, Resource ID, Service, Service Family, Cost
+- Filters: owner dropdown, account dropdown.
+- Threshold control: minimum cost slider ($).
+- Summary: total untagged cost + resource count.
+- Table: account, closest owner match, resource ID, service, family, cost.
 
 **Behavior:**
-- Only shows resources above minimum cost threshold
-- Sorted by cost descending
-- "Closest owner match" uses account-level or other available tags to suggest likely ownership
+- Sorted by cost descending.
+- "Closest owner match" infers from account-level metadata when available.
 
-### Feature 5: Entity Detail View
+#### Feature: Entity Detail View (MVP)
 
-Deep-dive into costs for a specific entity (team, product, account, etc.). Reached by clicking any entity name in overview/trends/drill-downs.
+Deep-dive into one entity (team, product, account, etc.). Reached by clicking an entity name anywhere.
 
-**Layout (top to bottom):**
+**Layout:**
+- **Row 1:** Summary card (total + delta vs previous period) + daily histogram with dimension toggle (sub-entities, services).
+- **Row 2:** Environment filter chips (when configured).
+- **Row 3:** Up to three pie/donut charts (accounts, sub-entities, services).
+- **Row 4:** Breakdown table (full line-item detail).
+- **Row 5:** CSV export.
 
-**Row 1: Summary + Daily Histogram**
-- Left card: Total cost for period, percentage change vs. previous period
-- Right card: Stacked bar chart of daily costs, with dimension toggle (by sub-entity, by service) and date range picker
+#### Feature: Granularity Toggle (MVP)
 
-**Row 2: Environment Filter Bar** (if environment concept configured)
-- Chips showing each environment with its cost
-- Clicking filters all views below to that environment only
-
-**Row 3: Distribution Charts**
-- Up to three pie/donut charts depending on context:
-  - Accounts: cost by cloud account
-  - Sub-entities: cost by children (sub-teams for owner, sub-products for product)
-  - Services: cost by cloud service
-- Clicking a slice drills down or navigates to that entity's detail
-
-**Row 4: Breakdown Table**
-- Full line-item detail: sub-entity, service, service family, description, cost (with percentage)
-- Sorted by cost descending
-
-**Row 5: CSV Export**
-
-### Feature 6: Granularity Toggle
-
-For any time-series visualization, the user can switch between daily and hourly granularity.
+For any time-series visualization, switch between daily and hourly granularity when both tiers are configured.
 
 **Behavior:**
-- Daily is the default (365 days available)
-- Hourly is available for the most recent 30 days only
-- When hourly is selected, the date range picker constrains to 7 days max to keep the chart readable
-- Hourly is useful for investigating specific cost spikes
+- Daily is the default (365 days available).
+- Hourly available only if configured. The toggle hides entirely if hourly is not configured (no grayed-out tease).
+- Hourly auto-constrains the date-range picker to 7 days.
 
-### Feature 7: Query Cache
+#### Feature: Query Cache (MVP)
 
-DuckDB queries on local Parquet are fast, but caching avoids redundant scans.
+In-memory LRU cache keyed on query parameters.
 
 **Behavior:**
-- In-memory LRU cache keyed on query parameters (dimension, filters, date range, granularity)
-- Configurable TTL (default: 30 minutes)
-- Cache invalidated automatically after sync completes
-- "Clear Cache" option in app menu for manual invalidation
+- Configurable TTL (default 30 minutes).
+- Invalidated automatically after sync completes.
+- "Clear Cache" option in the app menu.
 
----
+#### Feature: Filter Bar + Entity Pop-up (MVP)
 
-## Features (Deferred — Designed For, Not Built)
+See [Interaction Model](#interaction-model) below.
 
-These features are explicitly NOT in v1 but the architecture accounts for them. They represent the paid tier.
+#### Feature: Dark Mode + Color Palette (MVP)
 
-### Local Budgets (v1.x)
-- Annual budget per owner team, stored in local SQLite
-- Budget vs. actual comparison in entity detail view
-- Uses the `owner` concept dimension
+Dark mode default, light available. Two chart palettes: standard and Okabe-Ito (colorblind-safe). Toggled in the title bar; persisted in `preferences.json` (v1 — currently `localStorage`).
 
-### Automated Anomaly Detection (Paid)
-- Server-side scheduler running statistical analysis on (product × service) combinations
-- Requires the `product` concept dimension
-- P10/P90 bands, rolling averages, potential savings calculation
-- Triage workflow with comments, status, Jira links
+#### Feature: Dimensions Editor (MVP)
 
-### Scheduled Reports (Paid)
-- Monthly budget reports via email (SES)
-- PDF generation stored in S3
-- Requires budgets to be configured
+In-app editor for `dimensions.yaml`. Replaces the spec's earlier "open YAML in your editor" flow.
 
-### Collaborative Features (Paid)
-- Shared baselines, comments, status workflows
-- Shareable links to specific views
-- Team dashboards
+**Layout:**
+- One panel per tag dimension showing tag name, concept, normalize rule, aliases, fallback tag, and missing-value template.
+- "Add tag dimension" picker populated by `discoverTagKeys()` — sampled from the most recent Parquet file with row count, distinct count, and coverage percentage.
+- Aliases edited as plain text (`canonical: alt1, alt2`), parsed into the typed config on save.
+- Fallback-tag picker shows available AWS-Org account tags (from the AWS Organizations sync) so the user can fill missing row-level tags from account-level metadata.
 
-### Multi-Cloud (v2)
-- GCP billing export sync + normalizer
-- Azure cost management export sync + normalizer
-- Unified view across providers
+**Behavior:**
+- Save writes the entire `DimensionsConfig` atomically through `saveDimensionsConfig()`.
+- Query cache invalidates on save.
+- No reload prompt — the new config takes effect immediately for subsequent queries.
+
+#### Feature: AWS Organizations Integration (MVP)
+
+Pulls account/OU/tag metadata from the AWS Organizations API. Used for:
+- Account-name resolution in the UI (no need to memorize 12-digit account IDs).
+- The `fallbackTag` mechanism in dimensions: when a row's owner tag is missing, the matching account-level tag fills in.
+- The Sync view's account-mapping panel.
+
+**Sync behavior:**
+- Triggered manually from the Sync view.
+- Discovers all accounts, OU paths, and tags via `ListAccounts` + `ListOrganizationalUnitsForParent` + `ListTagsForResource`.
+- Stored in `state/org-sync-result.json`.
+- Progress streamed by phase (`accounts`, `ous`, `tags`) and item count.
+- Requires the `organizations:List*` and `organizations:Describe*` IAM permissions on the management or delegated-admin account.
+
+#### Feature: Auto-Sync (MVP)
+
+Background CUR sync while the app is open.
+
+**Behavior:**
+- Toggleable from the Sync view; persisted in `preferences.json`.
+- When enabled, periodically (default 60 minutes — configurable in `costgoblin.yaml`) checks the inventory for missing or stale periods within the retention window and downloads them.
+- Status surfaced in the title bar: `disabled`, `idle`, `checking`, `syncing` (with phase + progress), or `error`.
+- Single-instance gate: only one auto-sync run at a time; manual sync interlocks.
+
+#### Feature: Sync View / Data Inventory (MVP)
+
+Replaces the spec's earlier "sync status indicator." A full view showing:
+- Per-tier table of months (daily, hourly, cost-optimization) with local status (`missing`, `repartitioned`, `stale`).
+- Per-month sync, delete, and inspect actions.
+- Disk usage, oldest/newest period, total remote vs. local sizes.
+- A nav badge on "Sync" shows the count of missing periods within the retention window.
+- AWS Organizations panel (sync, view accounts, browse OU paths, inspect account tags).
+
+#### Feature: Savings View + Cost Optimization Tier (MVP)
+
+Surfaces AWS Cost Optimization Hub recommendations (Reserved Instances, Savings Plans, rightsizing) downloaded from the cost-optimization tier.
+
+**Layout:**
+- Sortable table: account, action type, resource, monthly cost, monthly savings, savings %, effort.
+- Effort-coloured chips (Very Low / Low / Medium / High).
+- Per-row expand panel: parsed recommendation `configuration` and `costCalculation.usages` (e.g., suggested instance config, current usage).
+- "Hide action type" toggles per category (e.g., hide all Rightsize) — persisted in `preferences.json` via `SavingsPreferences`.
+
+**Behavior:**
+- Pulls from the latest cost-optimization Parquet snapshot.
+- Recommendations are read-only — the app does not apply them.
+
+### v1 — Planned Next
+
+#### Worker Threads (v1)
+
+Move DuckDB and S3 sync into Electron worker threads. See [Worker Thread Architecture](#worker-thread-architecture-v1).
+
+#### Move Theme/Palette to `preferences.json` (v1)
+
+Eliminate the renderer's `localStorage` usage. Add IPC handlers `getPreference(key)` / `setPreference(key, value)` and migrate theme + palette + any other UI prefs to the per-user preferences file.
+
+#### Local Budgets (v1)
+
+- Annual budget per owner team, stored in `state/budgets.json`.
+- Budget-vs-actual card in entity detail view for owner entities.
+- Visualization: progress bar with positive/negative coloring.
+- Uses the dimension marked `concept: owner`.
+
+### Maybe Later — Designed For, Not Built
+
+These features are explicitly NOT planned but the architecture accounts for them. They represent the paid tier or future work.
+
+#### View Templates (Maybe Later)
+
+Pluggable widget layouts per concept (`views.yaml`). The default hardcoded layouts are working well; this becomes valuable when users want per-team customization or when we want to ship layouts as templates.
+
+```yaml
+viewTemplates:
+  owner:
+    rows:
+      - widgets:
+          - { type: summary, size: small }
+          - { type: histogram, groupBy: product, size: large }
+      - widgets:
+          - { type: distribution, groupBy: account }
+          - { type: distribution, groupBy: childOwner }
+      - widgets:
+          - { type: table, columns: [product, service, serviceFamily, description, cost] }
+```
+
+#### Smart Alias Suggestions (Maybe Later)
+
+On first sync, fuzzy-match unique tag values to suggest aliases ("prod" + "prd" + "production" → group as `production`). Replaced for now by the manual Dimensions Editor, which works well.
+
+#### Auto-Update via electron-updater (Maybe Later)
+
+Silent background update checks against GitHub Releases. Subtle indicator on the settings icon. User-controlled restart.
+
+#### Telemetry — Opt-in (Maybe Later)
+
+Three channels (usage analytics, crash reporting, performance metrics). All opt-in, defaulted off, fully auditable. Implementations: PostHog (analytics) + Sentry (crashes + performance) with `beforeSend` hooks stripping PII.
+
+Data principles when built:
+- No cost data, tag values, account IDs, team names, or business data ever leaves the machine.
+- Telemetry payloads are logged locally so the user can audit exactly what's sent.
+- All endpoints configurable for self-hosted collectors.
+
+#### Automated Anomaly Detection (Maybe Later — Paid)
+
+Server-side scheduler running statistical analysis on (product × service) combinations. P10/P90 bands, rolling averages, potential savings. Triage workflow with comments, status, Jira links.
+
+#### Scheduled Reports (Maybe Later — Paid)
+
+Monthly budget reports via email. PDF generation stored in S3.
+
+#### Collaborative Features (Maybe Later — Paid)
+
+Shared baselines, comments, status workflows, shareable view links, team dashboards.
+
+#### Multi-Cloud (Maybe Later)
+
+GCP billing export and Azure cost-management export, with normalizers mapping into the internal schema.
 
 ---
 
@@ -588,158 +708,76 @@ These features are explicitly NOT in v1 but the architecture accounts for them. 
 
 ### Global Filter Bar
 
-The filter bar is the single source of truth for the current view state. It sits at the top of every page (overview, detail, trends). Every widget on the page reflects the active filters.
+The filter bar is the single source of truth for the current view state. It sits at the top of every page. Every widget on the page reflects the active filters.
 
 **Layout:**
 ```
 [Account ▾] [Region ▾] [Service ▾] [Svc Family ▾] [Team ▾] [Product ▾] [Env ▾] ... [✕ Clear all]
 ```
 
-- One chip per dimension (both built-in and tag-based)
-- Unset chips show the dimension label, muted style
-- Active chips show the selected value, visually highlighted (filled/colored)
-- Clicking an unset chip opens a dropdown with distinct values for that dimension, sorted by cost descending
-- Dropdown values are computed from the *currently filtered* data — filters cascade (if Team is set to "core-banking", the Service dropdown only shows services core-banking uses)
-- Clicking an active chip allows changing the value or clearing it
-- Environment chips (if environment concept configured) are visually distinct but functionally identical to other filter chips
+- One chip per dimension (built-in or tag-based).
+- Unset chips show the dimension label, muted style.
+- Active chips show the selected value, highlighted.
+- Clicking an unset chip opens a dropdown with distinct values, sorted by cost descending.
+- **Dropdown values cascade**: computed from currently filtered data, so picking Team narrows the Service dropdown.
+- Active chips can change value or clear.
 
 ### Three Ways to Set a Filter
 
-1. **Click a chip** in the filter bar → dropdown → select a value
-2. **Click an element in a widget** (pie slice, histogram bar, bubble) → opens the entity pop-up (see below)
-3. **Click a row in the breakdown table** → sets ALL dimension chips for that row simultaneously
+1. **Click a chip** → dropdown → select.
+2. **Click a widget element** (pie slice, bar segment, bubble) → entity pop-up.
+3. **Click a row in the breakdown table** → set ALL dimension chips for that row at once.
 
-All three methods update the same filter state. The page re-renders to reflect the new filters.
+### Entity Pop-Up
 
-### Entity Pop-Up (Click on Widget Element)
+When a user clicks any widget element, a side panel opens showing:
 
-When a user clicks any interactive element in a widget (pie slice, bar segment, bubble), a side panel or modal opens showing a quick preview of that entity:
+- Entity name + total cost for the period.
+- Mini histogram: daily trend.
+- Top 5 sub-items.
 
-**Pop-up contents:**
-- Entity name and total cost for the current period
-- Mini histogram: daily cost trend for this entity over the period
-- Top 5 breakdown: highest cost sub-items (services for a team, sub-products for a product, etc.)
-
-**Pop-up actions:**
-- **"Set as filter"** — closes the pop-up, sets the corresponding filter chip, entire page updates
-- **"Open full view"** — navigates to the full detail page for that entity
-- **"✕ Close"** — dismisses the pop-up, no change
-
-This pattern means clicking in a widget is never destructive — the user always gets a preview before committing to a filter or navigation change.
+Actions:
+- **"Set as filter"** — closes the pop-up, sets the chip, page updates.
+- **"Open full view"** — navigates to entity detail.
+- **"✕ Close"** — dismisses without changing state.
 
 ### Table Row Click (Precision Zoom)
 
-The breakdown table shows rows that are intersections of multiple dimensions:
-
-```
-core-banking | AmazonEC2 | Compute Instance | m5.xlarge usage | $12,400
-```
-
-Clicking a row sets ALL dimension chips at once for that row's values. The entire page snaps to show that exact cost slice. The histogram shows its trend. Distribution charts show how it breaks down by remaining unfiltered dimensions.
-
-**The power is in zooming back out.** After clicking a row, the user removes individual filter chips to broaden the view. "Is this EC2 spike just core-banking, or all teams?" → remove the Team chip. Investigation flows naturally from specific to broad.
+Breakdown table rows are intersections of multiple dimensions. Clicking a row sets ALL chips at once, snapping the page to that exact slice. The user then removes individual chips to broaden the view ("Is this EC2 spike just core-banking, or all teams?" → remove the Team chip).
 
 ### Table Cell Click
 
-Individual cells in dimension columns are also clickable. Clicking "AmazonEC2" in the service column of a table row opens the entity pop-up for AmazonEC2 (same as clicking it in a pie chart). This allows the user to inspect one dimension value without setting all filters for the row.
+Individual cells in dimension columns open the entity pop-up for that one value (same UX as clicking a pie slice).
 
 ### Default View (Pre-Configuration)
 
 On first launch after sync, before any concepts are configured, the overview page shows:
 
-**Always-available widgets** (work with built-in dimensions only):
-- Summary card: total cost for period + delta vs previous period
-- Histogram: daily cost over time (no stacking — just total)
-- Distribution charts: by Account, by Service, by Region
-- Breakdown table: all line items
+**Always-available widgets** (built-in dimensions only):
+- Summary card.
+- Histogram (no stacking).
+- Distribution charts: account, service, region.
+- Breakdown table.
 
 **Concept widgets (grayed/disabled):**
-Three placeholder widget areas, visually present but dimmed:
+Three placeholder widget areas, visually present but dimmed, each pointing to the Dimensions Editor for activation:
 
-- **Owner widget**: "Configure an ownership dimension to see cost by team. Add `concept: owner` to a tag dimension in `dimensions.yaml`." Clicking shows the config assistant with an example.
-- **Product widget**: "Configure a product dimension to see cost by application or service. Add `concept: product` to a tag dimension."
-- **Environment widget**: "Configure an environment dimension to filter by prod/staging/dev. Add `concept: environment` to a tag dimension."
+- **Owner widget**: "Configure an ownership dimension to see cost by team. Open the Dimensions Editor."
+- **Product widget**: "Configure a product dimension to see cost by application or service."
+- **Environment widget**: "Configure an environment dimension to filter by prod/staging/dev."
 
-As concepts are configured, these widgets activate and replace the placeholder. The app is immediately useful with zero concept configuration, but clearly shows what's unlockable.
-
-### View Templates
-
-Different entity types benefit from different widget layouts. View templates define which widgets appear and how they're configured when viewing a specific concept type.
-
-**Stored in config:** `views.yaml`
-
-```yaml
-viewTemplates:
-  owner:
-    rows:
-      - widgets:
-          - type: summary
-            size: small
-          - type: histogram
-            groupBy: product
-            size: large
-      - widgets:
-          - type: distribution
-            groupBy: account
-          - type: distribution
-            groupBy: childOwner
-          - type: distribution
-            groupBy: service
-      - widgets:
-          - type: table
-            columns: [product, service, serviceFamily, description, cost]
-
-  product:
-    rows:
-      - widgets:
-          - type: summary
-            size: small
-          - type: histogram
-            groupBy: service
-            size: large
-      - widgets:
-          - type: distribution
-            groupBy: account
-          - type: distribution
-            groupBy: region
-          - type: distribution
-            groupBy: serviceFamily
-      - widgets:
-          - type: table
-            columns: [owner, account, service, serviceFamily, description, cost]
-
-  account:
-    rows:
-      - widgets:
-          - type: summary
-            size: small
-          - type: histogram
-            groupBy: owner
-            size: large
-      - widgets:
-          - type: distribution
-            groupBy: owner
-          - type: distribution
-            groupBy: product
-          - type: distribution
-            groupBy: service
-      - widgets:
-          - type: table
-            columns: [owner, product, service, region, cost]
-```
-
-The app ships with sensible default templates. Users can customize via YAML (config assistant helps with changes).
+As concepts are configured, these widgets activate.
 
 ---
 
 ## UI Design Principles
 
-- **Desktop-native feel**: not a web app in a wrapper. Responsive to window resizing, keyboard shortcuts, fast navigation.
-- **Data-dense**: tables and charts should maximize information density. No excessive whitespace or oversized cards.
-- **Progressive disclosure**: overview → click to drill down → click for full detail. Never dump everything on one screen.
-- **Instant feedback**: queries should feel fast (sub-second for cached, 1-3 seconds for uncached on 7GB dataset).
-- **Dark mode default, light mode available**: user toggles in settings. Preference persisted in `preferences.json`.
-- **Colorblind-friendly**: two color palettes available, switchable via a "Toggle Colors" button (same pattern as the terraform-aws-sp-autopilot simulator). Default palette uses standard categorical colors. Alternate palette uses a colorblind-safe palette (Okabe-Ito or similar). The active palette is persisted in preferences.
+- **Desktop-native feel**: not a web app in a wrapper. Window resizing, keyboard shortcuts, fast navigation.
+- **Data-dense**: tables and charts maximize information density. No oversized cards or excessive whitespace.
+- **Progressive disclosure**: overview → drill-down → entity detail. Never dump everything at once.
+- **Instant feedback**: queries should feel fast (sub-second cached, 1–3 seconds uncached on a 7GB dataset).
+- **Dark mode default**, light mode available.
+- **Colorblind-friendly**: two palettes (standard + Okabe-Ito), togglable, persisted in preferences.
 
 ### Frontend Stack
 
@@ -748,76 +786,47 @@ The app ships with sensible default templates. Users can customize via YAML (con
 | React 19 | UI framework |
 | shadcn/ui + Radix primitives | Component library (copy-paste, fully owned) |
 | Tailwind CSS v4 | Styling with design tokens |
-| visx (Airbnb) | Charts — D3 primitives as React components, full visual control |
-| TanStack Table | Headless table with sorting, filtering, virtual scrolling |
-| Framer Motion | Subtle animations — pop-up entrance, filter chip transitions, page crossfades |
+| visx (Airbnb) | Charts — D3 primitives as React components |
+| TanStack Table | Headless table with virtual scrolling (Maybe Later — currently using ad-hoc tables) |
+| Framer Motion | Subtle animations |
 | Lucide React | Icons |
-| class-variance-authority + clsx + tailwind-merge | Style composition utilities |
-
-**Why these choices:**
-- **shadcn/ui** over a prebuilt component library: you own every component, can customize to match the app's exact aesthetic. Produces the clean Linear/Vercel look.
-- **visx** over Recharts: Recharts looks "charty" and is hard to style. visx gives full visual control — charts feel native to the app, not like embedded widgets.
-- **TanStack Table** with virtual scrolling: breakdown tables can have thousands of rows. Only visible rows render.
+| `class-variance-authority` + `clsx` + `tailwind-merge` | Style composition |
 
 ### Color System
 
-**Semantic colors (defined as CSS variables, swap between themes):**
-- `--bg-primary`, `--bg-secondary`, `--bg-tertiary` — page and card backgrounds
-- `--text-primary`, `--text-secondary`, `--text-muted` — text hierarchy
-- `--border-default`, `--border-subtle` — borders and dividers
-- `--accent` — primary action color (teal/emerald family)
-- `--positive` / `--negative` — cost decrease / cost increase
-- `--filter-active` — active filter chip background
+**Semantic colors (CSS variables):**
+- `--bg-primary`, `--bg-secondary`, `--bg-tertiary`
+- `--text-primary`, `--text-secondary`, `--text-muted`
+- `--border`, `--border-subtle`
+- `--accent` (teal/emerald)
+- `--positive` / `--negative`
+- `--warning`
 
-**Chart palettes (two sets, togglable):**
+**Chart palettes:**
 ```typescript
 const PALETTE_STANDARD = [
   '#6366f1', '#06b6d4', '#f59e0b', '#10b981',
   '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6',
 ];
 
-const PALETTE_COLORBLIND = [
+const PALETTE_COLORBLIND = [  // Okabe-Ito
   '#0072B2', '#E69F00', '#009E73', '#CC79A7',
   '#56B4E9', '#D55E00', '#F0E442', '#000000',
-]; // Okabe-Ito palette — distinguishable by all forms of color vision
+];
 ```
-
-### Granularity Toggle
-
-Daily resolution is mandatory. Hourly is optional — depends on config.
-
-**If only daily configured:** No toggle shown anywhere. Histogram header just shows the date range. No mention of hourly — no grayed-out option, no "unlock" prompt. Clean.
-
-**If both configured:** A segmented control on the histogram widget: `[ Daily | Hourly ]`. Switching to Hourly auto-constrains the date range picker to 7 days max (defaulting to most recent 7 days with hourly data). Subtle label: "Hourly data: last 30 days."
-
-**Config detection:**
-```yaml
-# costgoblin.yaml — hourly section is entirely optional
-providers:
-  - name: aws-main
-    sync:
-      daily:
-        bucket: s3://my-cur-bucket/daily/
-        retentionDays: 365
-      # Omit this entire block if you don't have hourly CUR:
-      hourly:
-        bucket: s3://my-cur-bucket/hourly/
-        retentionDays: 30
-```
-
-The core library exposes `getAvailableGranularities(): ('daily' | 'hourly')[]`. The UI conditionally renders the toggle.
 
 ---
 
 ## Setup Requirements for Users
 
-Before using CostGoblin, the user needs:
+Before using CostGoblin:
 
-1. **AWS CUR export configured** — CUR 2.0, Parquet format, exported to S3. The user sets this up in the AWS Billing console.
-2. **Cost allocation tags activated** — in AWS Billing → Cost Allocation Tags. The tags used for dimensions must be activated.
-3. **IAM permissions** — the AWS profile/role used by CostGoblin needs:
-   - `s3:ListBucket`, `s3:GetObject` on the CUR S3 bucket(s)
-   - That's it. No Athena, no Glue, no database. Just S3 read access.
+1. **AWS CUR export configured** — CUR 2.0, Parquet format, exported to S3.
+2. **Cost allocation tags activated** — in AWS Billing → Cost Allocation Tags.
+3. **IAM permissions** — the AWS profile needs:
+   - `s3:ListBucket`, `s3:GetObject` on the CUR bucket(s)
+   - For AWS Organizations sync (optional but recommended): `organizations:List*`, `organizations:Describe*` on the management or delegated-admin account
+   - For Cost Optimization Hub sync (optional): `cost-optimization-hub:List*` (or use the exported Parquet via S3)
 4. **Install CostGoblin** — download the app, run the setup wizard, point it at the bucket.
 
 ---
@@ -826,9 +835,9 @@ Before using CostGoblin, the user needs:
 
 ### TypeScript Strictness
 
-The project uses the strictest possible TypeScript configuration. No escape hatches.
+The strictest possible TypeScript configuration. No escape hatches.
 
-**tsconfig.json (base):**
+**tsconfig base:**
 ```json
 {
   "compilerOptions": {
@@ -846,60 +855,58 @@ The project uses the strictest possible TypeScript configuration. No escape hatc
 ```
 
 **Banned patterns (enforced by ESLint):**
-- `any` type — use `unknown` and narrow, or define a proper type
-- `@ts-ignore` and `@ts-expect-error` — fix the type, not the linter
-- `as` type assertions — use type guards and discriminated unions instead
-- Non-null assertions (`!`) — handle the null case explicitly
-- `eslint-disable` comments — no exceptions, no line-level overrides
-- Implicit `any` in callbacks — all function parameters must be typed
+- `any` type
+- `@ts-ignore` and `@ts-expect-error`
+- `as` type assertions (use type guards / discriminated unions)
+- Non-null assertions (`!`)
+- `eslint-disable` comments
+- Implicit `any` in callbacks
+- `console.log` (use the structured logger)
 
-**Domain types use branded types** to prevent accidental misuse:
+**Domain types use branded types** to prevent misuse:
 
 ```typescript
-// packages/core/src/types/branded.ts
 type Brand<T, B extends string> = T & { readonly __brand: B };
 
 export type DimensionId = Brand<string, 'DimensionId'>;
 export type EntityRef = Brand<string, 'EntityRef'>;
 export type TagValue = Brand<string, 'TagValue'>;
-export type BucketPath = Brand<string, 'BucketPath'>;
 export type Dollars = Brand<number, 'Dollars'>;
+export type DateString = Brand<string, 'DateString'>;
 ```
+
+Brand constructors (`asDimensionId`, `asEntityRef`, etc.) are exported. Internal code should call these — not `as DimensionId`.
 
 **State uses discriminated unions** — no impossible states:
 
 ```typescript
-// Bad — isLoading: true AND data present is representable
-{ isLoading: boolean; error?: Error; data?: CostResult }
-
-// Good — exactly one state at a time
 type QueryState<T> =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'success'; data: T }
-  | { status: 'error'; error: Error }
+  | { status: 'error'; error: Error };
 
-type SyncState =
+type SyncStatus =
   | { status: 'idle'; lastSync: Date | null }
-  | { status: 'syncing'; progress: number; filesTotal: number; filesDone: number }
+  | { status: 'syncing'; phase: SyncPhase; progress: number; filesTotal: number; filesDone: number }
   | { status: 'completed'; lastSync: Date; filesDownloaded: number }
-  | { status: 'failed'; error: Error; lastSync: Date | null }
+  | { status: 'failed'; error: Error; lastSync: Date | null };
 ```
+
+**Wire-data validation:** anything crossing a trust boundary (JSON.parse, IPC, S3 manifest) must be validated by a type guard or codec — no `JSON.parse(x) as T`.
 
 ### Linting
 
-**ESLint with strict configuration:**
-- `@typescript-eslint/strict-type-checked` ruleset
+- `@typescript-eslint/strict-type-checked`
 - `@typescript-eslint/no-explicit-any`: error
 - `@typescript-eslint/no-unsafe-assignment`: error
 - `@typescript-eslint/no-unsafe-member-access`: error
 - `@typescript-eslint/no-non-null-assertion`: error
-- `no-console`: error (use a structured logger)
-- Import sorting and organization enforced
+- `no-console`: error
 
-**Formatting:** Biome or Prettier — configured once, never debated.
+**Formatting:** Biome — configured once, not debated.
 
-**The rule is simple:** if the linter or type checker fights you, the design is wrong. Fix the design, not the tooling.
+**The rule:** if the linter fights you, the design is wrong. Fix the design.
 
 ---
 
@@ -907,157 +914,53 @@ type SyncState =
 
 ### Principles
 
-- Every module is testable in isolation — no test requires Electron, a real S3 bucket, or user interaction
-- Tests run fast — the full suite completes in under 30 seconds
-- Test fixtures are deterministic and committed to the repo
-- The `CostApi` interface is the testing boundary between core and UI
+- Every module is testable in isolation — no test requires Electron, real S3, or user interaction.
+- Full suite under 30 seconds.
+- Test fixtures are deterministic and committed.
+- The `CostApi` interface is the testing boundary between core and UI.
 
 ### Test Fixtures
 
-A fixture generator script creates small, deterministic Parquet files committed to the repo:
-
 ```
 packages/core/src/__fixtures__/
-  generate-fixtures.ts      # Script to regenerate fixtures
-  daily/
-    2026-01.parquet         # ~500 rows, 31 days, 5 teams, 3 envs, 10 services
-    2026-02.parquet         # ~500 rows, same shape
-  hourly/
-    2026-02-15.parquet      # ~200 rows, 24 hours, subset of teams/services
+  generate.ts                  # Reads profile.json, writes synthetic Parquet
+  profile.json                 # Statistical fingerprint of real data (committed)
+  synthetic/
+    aws/
+      raw/
+        daily-2026-01/data.parquet
+        daily-2026-02/data.parquet
+        hourly-2026-02/data.parquet
   config/
-    costgoblin.yaml         # Test config matching fixture data
-    dimensions.yaml         # Dimensions with aliases matching fixture tag values
-    org-tree.yaml           # Small tree for rollup testing
+    costgoblin.yaml
+    dimensions.yaml
+    org-tree.yaml
 ```
 
-Fixture data covers edge cases: missing tags, unknown tag values, multiple accounts, multiple regions, zero-cost rows, negative costs (credits).
+Real company data lives in `data/raw/` — never committed (gitignored + pre-commit guard). The profile is committed; synthetic data is generated deterministically (seeded random) so output stays stable across machines.
 
-### Layer 1: Core Logic (Pure Functions)
+### Layer 1: Core Logic (Vitest)
 
-**Runner:** Vitest
-**Scope:** Config loading, tag normalization, alias resolution, org tree traversal, cost aggregation math, period comparison, threshold filtering
+Pure functions: config loader, tag normalizer, alias resolver, org-tree traversal, cost math, query-builder, cache.
 
-These are pure functions with no I/O. Tests are trivial to write and run in milliseconds.
+### Layer 2: DuckDB Queries (Vitest)
 
-```typescript
-// Example: normalize.test.ts
-describe('normalizeTagValue', () => {
-  it('applies lowercase-kebab normalization', () => {
-    expect(normalizeTagValue('Core_Banking', 'lowercase-kebab')).toBe('core-banking');
-  });
+Real DuckDB queries against the synthetic Parquet fixtures. Shared instance per suite. Tests run in milliseconds.
 
-  it('resolves aliases after normalization', () => {
-    const aliases = { 'core-banking': ['core_banking', 'corebanking'] };
-    expect(resolveAlias('corebanking', 'lowercase', aliases)).toBe('core-banking');
-  });
-});
-```
+### Layer 3: React Components (Vitest + React Testing Library)
 
-### Layer 2: DuckDB Queries
+Components tested against `MockCostApi`. No Electron, no DuckDB, no fs.
 
-**Runner:** Vitest
-**Scope:** Query builder generates correct SQL; queries return expected results against fixture Parquet files
+### Layer 4: Electron E2E (Playwright)
 
-A shared DuckDB instance loads once per test suite. Each test runs a real query against the fixture files. Fixtures are small enough that queries complete in milliseconds.
+Full app launch with `--fixture-mode` pointing at fixture data. Slower (seconds). Run before commits and in CI.
 
-```typescript
-// Example: query.test.ts
-describe('queryCosts', () => {
-  let db: DuckDBInstance;
+### Coverage Floor
 
-  beforeAll(async () => {
-    db = await createDuckDB();
-    // Point at fixture directory
-  });
-
-  it('groups costs by owner dimension', async () => {
-    const result = await queryCosts(db, {
-      groupBy: 'tag_team' as DimensionId,
-      dateRange: { start: '2026-01-01', end: '2026-01-31' },
-      filters: {},
-    });
-    expect(result.rows).toHaveLength(5); // 5 teams in fixture
-    expect(result.rows[0].totalCost).toBeGreaterThan(result.rows[1].totalCost); // sorted desc
-  });
-
-  it('applies filters correctly', async () => {
-    const result = await queryCosts(db, {
-      groupBy: 'service' as DimensionId,
-      dateRange: { start: '2026-01-01', end: '2026-01-31' },
-      filters: { tag_team: 'core-banking' as TagValue },
-    });
-    // All rows should only contain core-banking costs
-    expect(result.totalCost).toBeLessThan(/* unfiltered total */);
-  });
-});
-```
-
-### Layer 3: React Components
-
-**Runner:** Vitest + React Testing Library
-**Scope:** Widget rendering, filter bar interactions, pop-up behavior, view template rendering
-
-Components are tested against a mock `CostApi` that returns typed fixture data. No DuckDB, no Electron, no file system.
-
-```typescript
-// Example: filter-bar.test.tsx
-describe('FilterBar', () => {
-  it('displays all configured dimensions as chips', () => {
-    render(<FilterBar dimensions={mockDimensions} filters={{}} onFilterChange={vi.fn()} />);
-    expect(screen.getByText('Account')).toBeInTheDocument();
-    expect(screen.getByText('Service')).toBeInTheDocument();
-    expect(screen.getByText('Team')).toBeInTheDocument();
-  });
-
-  it('shows active filter value on chip', () => {
-    const filters = { service: 'AmazonEC2' as TagValue };
-    render(<FilterBar dimensions={mockDimensions} filters={filters} onFilterChange={vi.fn()} />);
-    expect(screen.getByText('Service: AmazonEC2')).toBeInTheDocument();
-  });
-
-  it('calls onFilterChange when value selected from dropdown', async () => {
-    const onChange = vi.fn();
-    render(<FilterBar dimensions={mockDimensions} filters={{}} onFilterChange={onChange} />);
-    await userEvent.click(screen.getByText('Service'));
-    await userEvent.click(screen.getByText('AmazonEC2'));
-    expect(onChange).toHaveBeenCalledWith({ service: 'AmazonEC2' });
-  });
-});
-```
-
-```typescript
-// packages/ui/src/__fixtures__/mock-api.ts
-export class MockCostApi implements CostApi {
-  async queryCosts(params: CostQueryParams): Promise<CostResult> {
-    // Return deterministic fixture data matching the params
-    // This is the SAME types as the real API — type safety ensures fidelity
-  }
-}
-```
-
-### Layer 4: Electron Integration
-
-**Runner:** Playwright (Electron mode)
-**Scope:** End-to-end flows — app launch, sync from local fixture directory, navigation, IPC bridge
-
-These tests launch the real Electron app pointed at a fixture data directory (not real S3). They're slower (seconds, not milliseconds) and run less frequently.
-
-```typescript
-// Example: e2e/overview.test.ts
-test('overview page loads and shows cost data', async () => {
-  const app = await electron.launch({ args: ['--fixture-mode'] });
-  const page = await app.firstWindow();
-
-  await expect(page.getByText('Last 30 days')).toBeVisible();
-  await expect(page.getByText('AmazonEC2')).toBeVisible();
-
-  // Click a service in the distribution chart
-  await page.getByText('AmazonEC2').click();
-  // Pop-up should appear
-  await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.getByText('Set as filter')).toBeVisible();
-});
-```
+- **Sync engine** (currently 0 tests) — must reach meaningful coverage in v1.
+- **Config validator** — must cover every error path.
+- **AWS Org client** — at minimum a contract test against a recorded fixture.
+- **UI L3 tests** — must include error states and empty states, not just happy-path renders.
 
 ---
 
@@ -1065,118 +968,38 @@ test('overview page loads and shows cost data', async () => {
 
 ### The Feedback Loop
 
-When building CostGoblin (whether by a human developer or Claude Code), the feedback loop must be fast and reliable. Every code change should be verifiable in under 10 seconds.
-
-**Single verification command:**
+Single verification command:
 
 ```bash
 npm run check
-# Runs in order, fails fast:
-# 1. tsc --noEmit          (~2-3 seconds — type errors)
-# 2. eslint --quiet         (~2-3 seconds — lint violations)
-# 3. vitest run --reporter=verbose  (~3-5 seconds — test failures)
+# 1. tsc --noEmit per package
+# 2. eslint packages/*/src/
+# 3. vitest run
 ```
 
-**Per-package commands (for focused work):**
+Per-package:
 
 ```bash
-# Working on core logic
-cd packages/core
-npm run check              # type + lint + test for core only
-
-# Working on UI components
-cd packages/ui
-npm run check              # type + lint + test for UI only (uses mock API)
-
-# Working on Electron integration
-cd packages/desktop
-npm run check              # type + lint + test for desktop shell
-npm run dev                # launches Electron in dev mode with hot reload
+cd packages/core && npm run check
+cd packages/ui && npm run check
+cd packages/desktop && npm run check && npm run dev
 ```
 
-### Claude Code Development Workflow
+### Workflow
 
-When Claude Code builds a feature, it should follow this sequence:
-
-```
-1. Read the spec section for the feature being built
-2. Write types first (interfaces, branded types, discriminated unions)
-3. Run: tsc --noEmit → fix type errors
-4. Write tests for the expected behavior
-5. Run: vitest run <test-file> → see tests fail (red)
-6. Write the implementation
-7. Run: vitest run <test-file> → see tests pass (green)
-8. Run: npm run check → full verification
-9. If working on UI: npm run dev in desktop/ to visually verify
-```
-
-**Key rules for Claude Code:**
-- NEVER skip step 8. Every change must pass the full check before moving on.
-- NEVER add `@ts-ignore`, `as any`, or `eslint-disable` to make code compile. Fix the actual problem.
-- ALWAYS write tests before or alongside implementation, not after.
-- If a test is hard to write, the code is probably too coupled. Refactor first.
-- Use `vitest run <specific-file>` for fast iteration, `npm run check` for final verification.
-
-### Fixture-Driven Development
-
-For any feature that touches cost data, the development process is:
-
-1. Check if the existing fixture covers the case. If not, extend `generate-fixtures.ts`.
-2. Write a test against the fixture data that describes the expected behavior.
-3. Implement the feature.
-4. Verify with `vitest run`.
-
-This avoids the need for real AWS credentials, real S3 buckets, or large datasets during development. The fixture is the contract.
+1. Read the relevant spec section.
+2. Write types first (interfaces, branded types, discriminated unions).
+3. `tsc --noEmit` → fix type errors.
+4. Write tests for expected behavior.
+5. `vitest run <test-file>` → see them fail.
+6. Implement.
+7. `vitest run <test-file>` → see them pass.
+8. `npm run check` → full verification.
+9. UI work: `npm run dev` for visual verification.
 
 ### Pre-Commit Hook
 
-A Git pre-commit hook runs `npm run check` automatically. Commits are blocked if types, lint, or tests fail. No broken code enters the repository.
-
-```bash
-# .husky/pre-commit
-npm run check
-```
-
----
-
-## Implementation Phases
-
-### Phase 1: Foundation (Weeks 1-3)
-- Monorepo setup (Turborepo or Nx) with shared tsconfig (strict)
-- ESLint + Biome configuration with zero-tolerance rules
-- Vitest setup with fixture generator
-- Core types: branded types, discriminated unions, CostApi interface
-- DuckDB integration in worker thread + query builder with tests
-- S3 sync engine with incremental download + tests against local fixture
-- YAML config loader + validator + tests
-- Tag normalization + alias resolution + tests
-- `npm run check` pipeline working end-to-end
-- Electron shell with React renderer (minimal — just proves the IPC bridge works)
-
-### Phase 2: Core Views (Weeks 4-6)
-- Setup wizard flow
-- Global filter bar (filter state management, cascading dropdowns)
-- Cost overview page with dimension switching
-- Default view with grayed concept widget placeholders
-- Entity pop-up (side panel on widget click)
-- Breakdown table with row-click → set all filters
-- Component tests for all widgets
-- CSV export
-
-### Phase 3: Analysis (Weeks 7-8)
-- Entity detail view with view templates
-- Cost trends view with bubble visualization
-- Missing tags view
-- Hourly granularity toggle
-- Query cache
-
-### Phase 4: Polish (Weeks 9-10)
-- Org tree rollups and drill-down navigation
-- Smart alias suggestions (fuzzy matching on first sync)
-- Config change assistant (diff viewer, file watcher)
-- Dark mode
-- Playwright E2E tests for critical flows
-- Packaging and distribution (electron-builder for macOS DMG + Windows installer)
+`.husky/pre-commit` blocks `data/raw/` files and runs `npm run check`. No broken code enters the repo.
 
 ---
 
@@ -1185,56 +1008,58 @@ npm run check
 ### DuckDB Query Pattern
 
 ```typescript
-// Example: cost by owner for last 30 days
 const sql = `
   SELECT
     tag_team AS entity,
     SUM(cost) AS total_cost,
     SUM(CASE WHEN service = 'AmazonEC2' THEN cost ELSE 0 END) AS ec2_cost,
     SUM(CASE WHEN service = 'AmazonRDS' THEN cost ELSE 0 END) AS rds_cost
-  FROM read_parquet('${dataDir}/aws/daily/**/*.parquet')
+  FROM read_parquet('${dataDir}/aws/raw/daily-*/*.parquet')
   WHERE usage_date BETWEEN ? AND ?
   GROUP BY tag_team
   ORDER BY total_cost DESC
 `;
 ```
 
-DuckDB reads Parquet files natively with glob patterns. No import step, no separate database to maintain.
+DuckDB reads Parquet directly with glob patterns. No import step.
 
-### Org Tree Rollup Pattern
+> **v1 hardening:** the query builder currently interpolates several values into the SQL string. Migrate user-controlled values (date ranges, dimension/tag values, `dataDir`) to `?` parameters where DuckDB supports them; for identifiers that can't be parameterized, validate them against allow-lists derived from the dimensions config.
 
-For virtual nodes, the query expands to include all descendant real nodes:
+### Org Tree Rollup
+
+For virtual nodes, the query expands to all descendant real nodes:
 
 ```typescript
 function getDescendantTagValues(node: OrgNode): string[] {
-  if (!node.virtual && !node.children) return [node.name];
-  return (node.children || []).flatMap(getDescendantTagValues);
+  if (!node.virtual) return [node.name, ...(node.children ?? []).flatMap(getDescendantTagValues)];
+  return (node.children ?? []).flatMap(getDescendantTagValues);
 }
-
-// "Engineering" virtual node → ['core-banking', 'payments', 'identity', 'platform']
-// SQL: WHERE tag_team IN ('core-banking', 'payments', 'identity', 'platform')
 ```
 
 ### Tag Normalization Pipeline
 
-Applied during sync (when writing normalized Parquet) OR at query time:
+Applied at query time (in SQL CASE expressions):
 
 ```
-Raw tag value → lowercase/kebab/etc → alias lookup → final value
-"Core_Banking" → "core_banking" → (alias: core_banking → core-banking) → "core-banking"
-"prod"         → "prod"          → (alias: prod → production)          → "production"
+"Core_Banking" → lowercase-kebab → "core-banking"
+"prod"         → lowercase       → alias lookup → "production"
 ```
+
+When the configured tag is missing on a row and a `fallbackTag` is set, the query joins the AWS-Org account-tags table by `account_id` to fill the value. If still missing, `missingValueTemplate` is used (e.g., `no-team-{accountId}`).
 
 ### Electron IPC Bridge
 
 ```typescript
-// Main process (main/ipc.ts)
-ipcMain.handle('query:costs', async (event, params: CostQueryParams) => {
-  return duckdbWorker.postMessage({ type: 'query:costs', params });
-});
+// preload/preload.ts
+contextBridge.exposeInMainWorld('costgoblin', {
+  queryCosts: (params) => ipcRenderer.invoke('query:costs', params),
+  // ...
+} satisfies CostApi);
 
-// Renderer (via preload)
+// renderer
 const result = await window.costgoblin.queryCosts(params);
+// — but the renderer never reaches for `window.costgoblin` directly;
+//   it uses the `useCostApi()` context so component tests can swap MockCostApi.
 ```
 
 ---
@@ -1243,102 +1068,44 @@ const result = await window.costgoblin.queryCosts(params);
 
 ### Tag Normalization: At Query Time
 
-Tag aliases and normalization rules are applied in SQL WHERE clauses and GROUP BY expressions, not during sync. This means:
-- Sync downloads raw Parquet files as-is from S3 — no transformation step
-- Changing an alias in `dimensions.yaml` takes effect immediately (no re-sync)
-- No doubled storage from maintaining both raw and normalized copies
-- Slight query overhead (CASE/COALESCE expressions) — negligible for DuckDB on local data
+Aliases and normalization rules are applied in SQL WHERE clauses and GROUP BY expressions, not during sync.
 
-### CUR Repartitioning: Monthly → Daily
+- Sync downloads raw Parquet as-is.
+- Changing an alias takes effect on the next query — no re-sync.
+- No doubled storage from maintaining raw + normalized copies.
+- Slight query overhead from CASE/COALESCE — negligible on local DuckDB.
 
-AWS CUR exports to monthly folders. CostGoblin repartitions to daily Hive-style partitioning after sync for query performance.
+### Sync Layout: Per-Period, No Repartitioning
 
-**Why:** DuckDB pushes date filters down to file-level with Hive partitioning. A "last 7 days" query reads ~230MB instead of scanning an entire 7GB monthly file.
+CostGoblin downloads CUR Parquet directly into `aws/raw/{tier}-{period}/` and queries them as-is via `read_parquet('.../raw/daily-*/*.parquet')` glob patterns. No staging, no DuckDB-side rewrite.
 
-**Sync pipeline:**
-1. Download raw monthly Parquet files to a staging directory
-2. Repartition into daily structure using DuckDB:
-   ```sql
-   COPY (
-     SELECT * FROM read_parquet('staging/monthly/*.parquet')
-     WHERE usage_date = '2026-03-15'
-   )
-   TO 'data/daily/date=2026-03-15/data.parquet' (FORMAT PARQUET);
-   ```
-3. Delete staging files after successful repartitioning
-4. Incremental syncs only repartition new/changed months
+**Why no repartitioning:**
+- DuckDB pushes date filters down to row groups within Parquet files via column statistics. For typical monthly files (~1GB), filtering "last 7 days" still reads only the relevant row groups, not the full file.
+- Downloading raw avoids a CPU-heavy repartition step that would otherwise stall the UI on every sync.
+- `aws s3 sync` (subprocess) handles concurrency, retries, partial-file resume, and etag-based incremental updates natively — much better than a hand-rolled S3 client.
+- Tag columns are extracted at query time from `resource_tags` (a Map column), with normalization rules and aliases applied in SQL CASE expressions.
 
-**Local storage (post-repartition):**
-```
-data/
-  aws/
-    daily/
-      date=2026-01-01/data.parquet
-      date=2026-01-02/data.parquet
-      ...
-    hourly/
-      date=2026-03-15/data.parquet
-      date=2026-03-16/data.parquet
-      ...
-    staging/                # temporary, deleted after repartition
-```
+**Legacy:** an older repartitioning path (`runSync` in `sync-engine.ts` + `repartition.ts`) is still wired to the `triggerSync` IPC method but is not used by the Sync view's per-period download flow. **v1 cleanup:** delete the legacy path and replace `triggerSync` with a "sync all missing periods" loop over `syncPeriods`.
 
-### Auto-Update
+### Configuration: App is the Sole Writer
 
-CostGoblin uses `electron-updater` for silent background updates.
+Org-shared YAML and per-user JSON are both written exclusively by the app. No file watcher, no file lock.
 
-**Behavior:**
-- On app launch, check for updates in the background (no blocking UI)
-- If an update is available, download it silently
-- Show a subtle indicator on the settings wheel icon (top right) — a small badge/dot
-- Clicking the settings wheel shows "Update available — restart to apply" with a button
-- User controls when the restart happens — never forced
-- Manual "Check for updates" option in the settings panel
-- Update channel configurable: `stable` (default) or `beta`
+**Why no lock:** OS-level file locks fight too many legitimate workflows — git, backup tools (Time Machine, OneDrive), manual recovery if the app is broken, peeking at YAML in an editor, teammates editing the same file in their own checkout while another teammate runs the app.
 
-### Telemetry
+**Why no watcher:** complicates state management, races with the app's own writes, and the existing in-app editors cover all routine config changes.
 
-All telemetry is opt-in, defaulted to OFF, and can be changed anytime in settings.
+**Operational consequence:** if a user edits config externally while the app is running, those edits will be overwritten on the next app-driven save. External edits while the app is closed are loaded normally on next startup. This is the expected and documented behavior.
 
-**Opt-in UX:**
-- After setup wizard completes, a clear screen: "Help improve CostGoblin"
-- Three bullet points explaining what's collected in plain language
-- Expandable "What exactly do we collect?" detail section
-- Single toggle, defaulted to OFF
-- Settings wheel → Privacy section to change at any time
-- When OFF, zero network calls to any analytics service
+### Worker Threads — Committed for v1
 
-**Three channels:**
+Today, DuckDB and S3 sync run on the Electron main process. v1 moves them into worker threads. The IPC layer abstraction means the renderer is unaffected by the migration; only `packages/desktop/src/main/` changes.
 
-**1. Usage analytics (anonymous, no PII):**
-- Features opened (overview, trends, missing tags, entity detail)
-- Number of dimensions configured, which concepts are active
-- Dataset size (row count bucket: <100k, <1M, <10M, 10M+)
-- Filter interactions per session (count only, not filter values)
-- Session duration
-- Implementation: PostHog (self-hostable, privacy-focused) or lightweight custom endpoint
+### Storage Split: Org Config vs. User Preferences
 
-**2. Crash and error reporting:**
-- Unhandled exceptions with stack traces
-- DuckDB query failures (error message only — NOT the query, which could contain tag values)
-- Sync failures (error type, not credentials or bucket paths)
-- Config validation errors (error type, not config content)
-- Implementation: Sentry with a `beforeSend` hook that strips any potential PII
-- Breadcrumbs: feature navigation trail (what the user was doing before the crash)
-- Environment context: OS, Electron version, app version, DuckDB version
-
-**3. Performance metrics:**
-- App startup time (cold and warm)
-- Query execution time by query type (overview, trends, detail, missing tags)
-- Sync duration and file count
-- Time-to-first-render for each view
-- Repartition duration
-- Implementation: Sentry performance monitoring (transactions + spans) or custom reporter
-
-**Data principles:**
-- No cost data, tag values, account IDs, team names, or any business data ever leaves the machine
-- Telemetry payloads are logged locally (viewable in settings) so the user can audit exactly what's sent
-- All telemetry endpoints are configurable (for orgs that want to self-host the collector)
+- **Org config** (`config/*.yaml`) is shared across teammates via git. Edits go through the Dimensions Editor.
+- **Per-user preferences** (`state/preferences.json`) are machine-local. Edits go through IPC.
+- The renderer must not use `localStorage`/`sessionStorage` for any application state. (v1 cleanup task: migrate the theme toggle.)
 
 ---
 
@@ -1346,71 +1113,49 @@ All telemetry is opt-in, defaulted to OFF, and can be changed anytime in setting
 
 ### Approach: Profile Real Data, Generate Synthetic
 
-During development, the real company dataset is available locally. It is never committed to the repo. Instead, it's used to create realistic synthetic fixtures.
+The real company dataset is available locally during development. It is never committed. Instead, it's used to create realistic synthetic fixtures.
 
-**Directory structure:**
-```
-costgoblin/
-  data/                     # .gitignore'd — real data lives here during development
-    .gitkeep
-    .gitignore              # contains: *\n!.gitkeep\n!.gitignore
-    raw/                    # real Parquet files (NEVER committed)
-  packages/
-    core/
-      src/
-        __fixtures__/
-          generate.ts       # reads real data profile, writes synthetic Parquet
-          profile.json      # statistical profile extracted from real data (committed)
-          synthetic/        # generated Parquet files (committed)
-            daily/
-              date=2026-01-01/data.parquet
-              ...
-            hourly/
-              date=2026-02-15/data.parquet
-          config/           # test config files (committed)
-            costgoblin.yaml
-            dimensions.yaml
-            org-tree.yaml
+**Step 1: Profile** (run once against real data, output committed):
+
+```bash
+npx tsx packages/core/src/__fixtures__/generate.ts --profile
 ```
 
-**Step 1: Profile (run once against real data, output committed):**
-```typescript
-// generate.ts --profile
-// Reads real Parquet, extracts statistical fingerprint:
+Reads real Parquet, extracts a statistical fingerprint:
+```json
 {
   "rowCount": 2400000,
   "dateRange": { "min": "2025-04-01", "max": "2026-03-31" },
   "services": [
-    { "name": "AmazonEC2", "costShare": 0.34, "avgDailyCost": 4200 },
-    { "name": "AmazonRDS", "costShare": 0.22, "avgDailyCost": 2700 },
-    ...
+    { "name": "AmazonEC2", "costShare": 0.34, "avgDailyCost": 4200 }
   ],
   "accounts": { "count": 12, "topBySpend": 5 },
-  "regions": ["eu-central-1", "us-east-1", "eu-west-1"],
+  "regions": ["eu-central-1", "us-east-1"],
   "tags": {
     "team": { "distinct": 15, "missingPercent": 0.08 },
-    "service-name": { "distinct": 42, "missingPercent": 0.12 },
     "environment": { "distinct": 4, "missingPercent": 0.03 }
   },
-  "costDistribution": { "p50": 0.02, "p90": 12.5, "p99": 340.0 },
-  "lineItemTypes": { "Usage": 0.89, "Tax": 0.0, "Fee": 0.06, "Credit": 0.05 }
+  "costDistribution": { "p50": 0.02, "p90": 12.5, "p99": 340.0 }
 }
 ```
 
-**Step 2: Generate (deterministic, reproducible):**
-```typescript
-// generate.ts --generate
-// Uses profile.json to create synthetic Parquet files:
-// - Service names are real (AmazonEC2 is not sensitive)
-// - Account IDs are randomized (111111111111, 222222222222, ...)
-// - Tag values replaced with fictional names (alpha-team, beta-team, ...)
-// - Cost amounts follow same distribution shape with different values
-// - Missing-tag percentage matches real data
-// - ~1000 rows per daily file, ~200 rows per hourly file
-// - Seeded random (same seed = same output = deterministic tests)
+**Step 2: Generate** (deterministic, reproducible):
+
+```bash
+npx tsx packages/core/src/__fixtures__/generate.ts --generate
 ```
 
+Synthetic Parquet:
+- Service names are real (AmazonEC2 is not sensitive).
+- Account IDs randomized (111111111111, 222222222222).
+- Tag values fictional (alpha-team, beta-team).
+- Cost amounts follow the real distribution shape.
+- Missing-tag percentage matches reality.
+- ~1000 rows per daily file, ~200 per hourly.
+- Seeded random — same seed in, same output out.
+
 **Step 3: Protect real data:**
+
 ```gitignore
 # /data/.gitignore
 *
@@ -1418,7 +1163,8 @@ costgoblin/
 !.gitignore
 ```
 
-Pre-commit hook additionally checks that no file from `data/raw/` is staged:
+Pre-commit hook additionally blocks `data/raw/`:
+
 ```bash
 # .husky/pre-commit
 if git diff --cached --name-only | grep -q "^data/raw/"; then

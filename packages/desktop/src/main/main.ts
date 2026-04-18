@@ -42,7 +42,7 @@ async function createWindow(db: DuckDBInstance): Promise<void> {
       preload: join(__dirname, '..', 'preload', 'preload.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -66,24 +66,8 @@ async function createWindow(db: DuckDBInstance): Promise<void> {
   logger.info('Window created');
 }
 
-async function cleanStaging(dataDir: string): Promise<void> {
-  const fs = await import('node:fs/promises');
-  const path = await import('node:path');
-  const stagingDir = path.join(dataDir, 'aws', 'staging');
-  try {
-    await fs.rm(stagingDir, { recursive: true });
-    logger.info('Cleaned leftover staging directory');
-  } catch {
-    // doesn't exist, fine
-  }
-}
-
 async function main(): Promise<void> {
   await app.whenReady();
-
-  const userDataPath = app.getPath('userData');
-  const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
-  await cleanStaging(dataDir);
 
   const db = await createDuckDB();
   logger.info('DuckDB initialized');

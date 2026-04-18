@@ -18,6 +18,10 @@ export interface SavingsPreferences {
   readonly hiddenActionTypes: readonly string[];
 }
 
+export interface UIPreferences {
+  readonly theme: 'dark' | 'light';
+}
+
 export interface OrgAccount {
   readonly id: string;
   readonly name: string;
@@ -77,7 +81,6 @@ export interface CostApi {
   querySavings(): Promise<SavingsResult>;
   queryEntityDetail(params: EntityDetailParams): Promise<EntityDetailResult>;
   getSyncStatus(syncId?: string): Promise<SyncStatus>;
-  triggerSync(): Promise<void>;
   getConfig(): Promise<CostGoblinConfig>;
   getDimensions(): Promise<Dimension[]>;
   getOrgTree(): Promise<OrgNode[]>;
@@ -96,6 +99,8 @@ export interface CostApi {
   scaffoldConfig(): Promise<void>;
   getSavingsPreferences(): Promise<SavingsPreferences>;
   saveSavingsPreferences(prefs: SavingsPreferences): Promise<void>;
+  getUIPreferences(): Promise<UIPreferences>;
+  saveUIPreferences(prefs: UIPreferences): Promise<void>;
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>;
   getDimensionsConfig(): Promise<DimensionsConfig>;
   saveDimensionsConfig(config: DimensionsConfig): Promise<void>;

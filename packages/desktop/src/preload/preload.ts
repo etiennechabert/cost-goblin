@@ -20,6 +20,7 @@ import type {
   DataTier,
   AccountMappingStatus,
   SavingsPreferences,
+  UIPreferences,
   DimensionsConfig,
   OrgSyncResult,
   OrgSyncProgress,
@@ -51,9 +52,6 @@ const api: CostApi = {
   },
   getSyncStatus(syncId?: string): Promise<SyncStatus> {
     return invoke<SyncStatus>('sync:status', syncId);
-  },
-  triggerSync(): Promise<void> {
-    return invoke<undefined>('sync:trigger').then(() => undefined);
   },
   getConfig(): Promise<CostGoblinConfig> {
     return invoke<CostGoblinConfig>('config:get');
@@ -111,6 +109,12 @@ const api: CostApi = {
   },
   saveSavingsPreferences(prefs: SavingsPreferences): Promise<void> {
     return invoke<undefined>('savings:save-preferences', prefs).then(() => undefined);
+  },
+  getUIPreferences(): Promise<UIPreferences> {
+    return invoke<UIPreferences>('ui:get-preferences');
+  },
+  saveUIPreferences(prefs: UIPreferences): Promise<void> {
+    return invoke<undefined>('ui:save-preferences', prefs).then(() => undefined);
   },
   syncOrgAccounts(profile: string): Promise<OrgSyncResult> {
     return invoke<OrgSyncResult>('org:sync-accounts', profile);

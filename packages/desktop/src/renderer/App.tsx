@@ -28,16 +28,6 @@ const RIGHT_NAV: { id: string; label: string }[] = [
   { id: 'sync', label: 'Sync' },
 ];
 
-function getStoredTheme(): 'dark' | 'light' {
-  try {
-    const stored = localStorage.getItem('costgoblin-theme');
-    if (stored === 'light') return 'light';
-  } catch {
-    // localStorage unavailable
-  }
-  return 'dark';
-}
-
 function SunIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -71,7 +61,7 @@ export function App(): React.JSX.Element {
   const api = getApi();
   const [view, setView] = useState<View>({ page: 'overview' });
   const [missingPeriods, setMissingPeriods] = useState(0);
-  const [isDark, setIsDark] = useState(() => getStoredTheme() === 'dark');
+  const [isDark, setIsDark] = useState(true);
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
 
   useEffect(() => {
@@ -81,17 +71,24 @@ export function App(): React.JSX.Element {
   }, [api]);
 
   useEffect(() => {
+    void api.getUIPreferences().then(prefs => {
+      setIsDark(prefs.theme === 'dark');
+    });
+  }, [api]);
+
+  useEffect(() => {
     if (isDark) {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
-    try {
-      localStorage.setItem('costgoblin-theme', isDark ? 'dark' : 'light');
-    } catch {
-      // localStorage unavailable
-    }
   }, [isDark]);
+
+  function handleToggleTheme() {
+    const next = !isDark;
+    setIsDark(next);
+    void api.saveUIPreferences({ theme: next ? 'dark' : 'light' });
+  }
 
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
@@ -123,10 +120,6 @@ export function App(): React.JSX.Element {
 
   function handleBack() {
     setView({ page: 'overview' });
-  }
-
-  function handleToggleTheme() {
-    setIsDark(prev => !prev);
   }
 
   function handleSetupComplete() {
