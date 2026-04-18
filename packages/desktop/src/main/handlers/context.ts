@@ -4,6 +4,7 @@ import {
   loadDimensions,
   loadOrgTree,
   logger,
+  isStringRecord,
 } from '@costgoblin/core';
 import type {
   CostGoblinConfig,
@@ -120,8 +121,21 @@ export function createAppContext(ctx: IpcContext): AppContext {
       // Try to generate from org-accounts.json if it exists
       try {
         const raw = await fs.readFile(path.join(baseDir, 'org-accounts.json'), 'utf-8');
-        const data = JSON.parse(raw) as { accounts: { id: string; tags: Record<string, string> }[] };
-        const tagLookup = data.accounts.map(a => ({ id: a.id, tags: a.tags }));
+        let parsed: unknown;
+        try { parsed = JSON.parse(raw); } catch { return undefined; }
+        if (!isStringRecord(parsed) || !Array.isArray(parsed['accounts'])) return undefined;
+        const tagLookup: { id: string; tags: Record<string, string> }[] = [];
+        for (const acct of parsed['accounts']) {
+          if (!isStringRecord(acct)) continue;
+          const id = acct['id'];
+          const tags = acct['tags'];
+          if (typeof id !== 'string' || !isStringRecord(tags)) continue;
+          const stringTags: Record<string, string> = {};
+          for (const [k, v] of Object.entries(tags)) {
+            if (typeof v === 'string') stringTags[k] = v;
+          }
+          tagLookup.push({ id, tags: stringTags });
+        }
         await fs.writeFile(flatPath, JSON.stringify(tagLookup));
         return flatPath;
       } catch {

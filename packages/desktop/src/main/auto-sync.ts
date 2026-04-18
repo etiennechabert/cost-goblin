@@ -1,4 +1,4 @@
-import { logger } from '@costgoblin/core';
+import { logger, parseJsonObject } from '@costgoblin/core';
 import type { AutoSyncStatus } from '@costgoblin/core';
 
 export interface AutoSyncDeps {
@@ -20,10 +20,7 @@ export async function readAutoSyncEnabled(prefsPath: string): Promise<boolean> {
   const fs = await import('node:fs/promises');
   try {
     const raw = await fs.readFile(prefsPath, 'utf-8');
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed === 'object' && parsed !== null && 'autoSync' in parsed) {
-      return (parsed as Record<string, unknown>)['autoSync'] === true;
-    }
+    return parseJsonObject(raw)?.['autoSync'] === true;
   } catch {
     // file doesn't exist
   }
@@ -35,9 +32,9 @@ export async function writeAutoSyncEnabled(prefsPath: string, enabled: boolean):
   let existing: Record<string, unknown> = {};
   try {
     const raw = await fs.readFile(prefsPath, 'utf-8');
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed === 'object' && parsed !== null) {
-      existing = parsed as Record<string, unknown>;
+    const parsed = parseJsonObject(raw);
+    if (parsed !== null) {
+      existing = { ...parsed };
     }
   } catch { /* */ }
   existing['autoSync'] = enabled;
