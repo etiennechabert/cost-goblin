@@ -4,6 +4,7 @@ import {
   extractPeriod,
   extractPeriodPrefix,
   getEtagFileName,
+  getRawDirPrefix,
   groupByPeriod,
   parseEtagsJson,
 } from '../sync/sync-utils.js';
@@ -83,6 +84,21 @@ describe('getEtagFileName', () => {
 
   it('falls back to the daily filename for unknown tiers', () => {
     expect(getEtagFileName('bogus')).toBe('sync-etags.json');
+  });
+});
+
+describe('getRawDirPrefix', () => {
+  it('returns the per-tier raw directory prefix', () => {
+    // Files for a period are stored at aws/raw/{prefix}-{period}/.
+    // cost-optimization uses 'cost-opt' (not 'cost-optimization') because that's
+    // the directory name selective-sync.ts writes.
+    expect(getRawDirPrefix('daily')).toBe('daily');
+    expect(getRawDirPrefix('hourly')).toBe('hourly');
+    expect(getRawDirPrefix('cost-optimization')).toBe('cost-opt');
+  });
+
+  it('falls back to the daily prefix for unknown tiers', () => {
+    expect(getRawDirPrefix('bogus')).toBe('daily');
   });
 });
 

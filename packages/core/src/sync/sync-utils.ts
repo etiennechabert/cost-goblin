@@ -9,11 +9,29 @@ const TIER_ETAG_FILES: Record<ExpectedDataType, string> = {
   'cost-optimization': 'sync-etags-cost-optimization.json',
 };
 
+const TIER_RAW_PREFIXES: Record<ExpectedDataType, string> = {
+  'daily': 'daily',
+  'hourly': 'hourly',
+  'cost-optimization': 'cost-opt',
+};
+
 export function getEtagFileName(tier: string): string {
   if (tier === 'hourly' || tier === 'cost-optimization' || tier === 'daily') {
     return TIER_ETAG_FILES[tier];
   }
   return TIER_ETAG_FILES['daily'];
+}
+
+/**
+ * Returns the directory-name prefix used under aws/raw/ for a given tier.
+ * Files for a period live under aws/raw/{prefix}-{period}/ — e.g.
+ * aws/raw/daily-2026-04/, aws/raw/cost-opt-2026-04-08/.
+ */
+export function getRawDirPrefix(tier: string): string {
+  if (tier === 'hourly' || tier === 'cost-optimization' || tier === 'daily') {
+    return TIER_RAW_PREFIXES[tier];
+  }
+  return TIER_RAW_PREFIXES['daily'];
 }
 
 export function extractPeriod(key: string): string {

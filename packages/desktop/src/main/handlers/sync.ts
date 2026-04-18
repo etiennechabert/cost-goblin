@@ -1,6 +1,9 @@
 import { ipcMain, shell } from 'electron';
 import {
   getDataInventory,
+  getEtagFileName,
+  getRawDirPrefix,
+  parseEtagsJson,
   syncSelectedFiles,
   logger,
 } from '@costgoblin/core';
@@ -58,17 +61,53 @@ export function registerSyncHandlers(app: AppContext): void {
   ipcMain.handle('data:delete-period', async (_event, period: string, tier: ExpectedDataType = 'daily'): Promise<void> => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const tierDir = path.join(ctx.dataDir, 'aws', tier);
+
+    // Data files for a period live under aws/raw/{prefix}-{period}/.
+    // For cost-optimization the period field is a YYYY-MM-DD (per-day download)
+    // — the directory name is e.g. cost-opt-2026-04-08 — so match on
+    // ${prefix}-${period} OR ${prefix}-${period}-* to cover both cases.
+    const prefix = getRawDirPrefix(tier);
+    const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
+    let removedAny = false;
     try {
-      const entries = await fs.readdir(tierDir);
+      const entries = await fs.readdir(rawDir);
       for (const entry of entries) {
-        if (entry.startsWith(`usage_date=${period}`)) {
-          await fs.rm(path.join(tierDir, entry), { recursive: true });
-          logger.info(`Deleted local partition (${tier}): ${entry}`);
+        if (entry === `${prefix}-${period}` || entry.startsWith(`${prefix}-${period}-`)) {
+          await fs.rm(path.join(rawDir, entry), { recursive: true });
+          logger.info(`Deleted local data (${tier}): ${entry}`);
+          removedAny = true;
         }
       }
     } catch {
-      // dir may not exist
+      // raw dir may not exist
+    }
+
+    // Drop the period from the etag manifest so the inventory marks it
+    // 'missing' on the next refresh — otherwise stale etags can cause the
+    // re-download path to skip files. Keys in the etag map can be the period
+    // itself ('2026-04') or a date within it ('2026-04-08').
+    const etagPath = path.join(ctx.dataDir, getEtagFileName(tier));
+    try {
+      const raw = await fs.readFile(etagPath, 'utf-8');
+      const etags = parseEtagsJson(raw);
+      const kept: Record<string, Record<string, string>> = {};
+      let changed = false;
+      for (const [key, value] of Object.entries(etags)) {
+        if (key === period || key.startsWith(`${period}-`)) {
+          changed = true;
+          continue;
+        }
+        kept[key] = value;
+      }
+      if (changed) {
+        await fs.writeFile(etagPath, JSON.stringify(kept, null, 2));
+      }
+    } catch {
+      // etag file may not exist
+    }
+
+    if (!removedAny) {
+      logger.info(`Delete (${tier}) for ${period}: nothing matched ${prefix}-${period}*`);
     }
   });
 
