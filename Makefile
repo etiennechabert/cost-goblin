@@ -1,4 +1,4 @@
-.PHONY: dev reset test lint help
+.PHONY: dev reset test e2e lint help
 .DEFAULT_GOAL := help
 
 dev: ## Launch Electron in dev mode
@@ -10,6 +10,10 @@ reset: ## Wipe app data and config — next launch shows wizard
 
 test: ## Run vitest
 	npx vitest run
+
+e2e: ## Build the app and run the Playwright E2E suite
+	npm run build --workspace=packages/desktop
+	npx playwright test
 
 lint: ## Run tsc + eslint
 	npx tsc --noEmit -p packages/core/tsconfig.json
