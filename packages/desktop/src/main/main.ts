@@ -6,9 +6,50 @@ import { createDuckDBClient } from './duckdb-client.js';
 import type { DuckDBClient } from './duckdb-client.js';
 import { registerIpcHandlers } from './ipc.js';
 
+// Log level: debug in dev (NODE_ENV=development or electron-vite serving
+// the renderer), or when COSTGOBLIN_LOG_LEVEL=debug. Otherwise info.
+const isDev = process.env['NODE_ENV'] === 'development'
+  || process.env['ELECTRON_RENDERER_URL'] !== undefined;
+const envLevel = process.env['COSTGOBLIN_LOG_LEVEL'];
+if (envLevel === 'debug' || envLevel === 'info' || envLevel === 'warn' || envLevel === 'error') {
+  logger.setLevel(envLevel);
+} else if (isDev) {
+  logger.setLevel('debug');
+}
+
+/**
+ * Format a LogEntry for stdout. Short fields go on the header line
+ * (`key=value  key=value`). Multi-line string fields (SQL, stack traces)
+ * drop to indented blocks below so the header stays scannable and the
+ * multi-line content keeps its shape instead of showing as escaped `\n`.
+ */
+function formatEntry(entry: LogEntry): string {
+  const header = `[${entry.timestamp}] ${entry.level.toUpperCase()} ${entry.message}`;
+  if (entry.context === undefined) return `${header}\n`;
+
+  const inline: string[] = [];
+  const blocks: { key: string; value: string }[] = [];
+
+  for (const [key, value] of Object.entries(entry.context)) {
+    if (typeof value === 'string' && value.includes('\n')) {
+      blocks.push({ key, value });
+    } else if (typeof value === 'string') {
+      inline.push(`${key}=${value}`);
+    } else {
+      inline.push(`${key}=${JSON.stringify(value)}`);
+    }
+  }
+
+  let out = header + (inline.length > 0 ? `  ${inline.join('  ')}` : '');
+  for (const { key, value } of blocks) {
+    const indented = value.split('\n').map(l => `    ${l}`).join('\n');
+    out += `\n  ${key}:\n${indented}`;
+  }
+  return `${out}\n`;
+}
+
 logger.addHandler((entry: LogEntry) => {
-  const line = `[${entry.timestamp}] ${entry.level.toUpperCase()} ${entry.message}\n`;
-  process.stdout.write(line);
+  process.stdout.write(formatEntry(entry));
 });
 
 function resolveConfigPath(base: string, name: string): string {
