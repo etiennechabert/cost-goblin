@@ -6,4 +6,5 @@ export {
   buildNonResourceCostQuery,
   buildEntityDetailQuery,
   buildSource,
+  computePeriodsInRange,
 } from './builder.js';
