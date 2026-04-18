@@ -64,9 +64,17 @@ export function buildSource(dataDir: string, tier: string, dimensions: Dimension
   // usage_date is always DATE so date-range filters work consistently across
   // tiers (BETWEEN against a TIMESTAMP truncates 'YYYY-MM-DD' to midnight and
   // would silently drop ~23h of rows on the end day). For hourly we additionally
-  // expose usage_hour as the original TIMESTAMP for hour-resolution grouping.
+  // expose usage_hour as a standard TIMESTAMP — the source column is TIMESTAMP_NS
+  // (nanoseconds) in CUR and the @duckdb/node-api row converter doesn't know
+  // how to serialize that variant; casting to plain TIMESTAMP fixes it.
+  // usage_date is always DATE so date-range filters work consistently across
+  // tiers (BETWEEN against a TIMESTAMP truncates 'YYYY-MM-DD' to midnight and
+  // would silently drop ~23h of rows on the end day). For hourly we additionally
+  // expose usage_hour as a standard TIMESTAMP — the source column is TIMESTAMP_NS
+  // (nanoseconds) in CUR and the @duckdb/node-api row converter doesn't know
+  // how to serialize that variant; casting to plain TIMESTAMP fixes it.
   const dateExpr = tier === 'hourly'
-    ? 'line_item_usage_start_date::DATE AS usage_date,\n      line_item_usage_start_date AS usage_hour'
+    ? 'line_item_usage_start_date::DATE AS usage_date,\n      line_item_usage_start_date::TIMESTAMP AS usage_hour'
     : 'line_item_usage_start_date::DATE AS usage_date';
 
   const parquetSource = `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`;
