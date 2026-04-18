@@ -262,6 +262,14 @@ function OverviewInner() {
     || pie1Query.status === 'loading'
     || pie3Query.status === 'loading';
 
+  // Surface query errors so corruption / credential issues / etc. don't silently
+  // fall through as $0.00. Picks the first error from the cost queries.
+  const queryError = pie1Query.status === 'error' ? pie1Query.error
+    : pie2Query.status === 'error' ? pie2Query.error
+    : pie3Query.status === 'error' ? pie3Query.error
+    : dailyQuery.status === 'error' ? dailyQuery.error
+    : null;
+
   // Breakdown table data — use the first pie query's rows with service breakdown
   const breakdownRows = pie1Query.status === 'success'
     ? pie1Query.data.rows
@@ -304,6 +312,20 @@ function OverviewInner() {
 
       {/* Filter active banner */}
       <FilterActiveBanner />
+
+      {queryError !== null && (
+        <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
+          <p className="text-sm font-medium text-negative">Query failed: {queryError.message}</p>
+          {(queryError.message.includes("don't know what type") || queryError.message.includes('TProtocolException')) && (
+            <p className="text-xs text-text-secondary mt-1">
+              The Parquet files for this period look corrupt. Open the Sync view, delete the affected period, and re-download.
+            </p>
+          )}
+          {queryError.message.includes('aws sso login') && (
+            <p className="text-xs text-text-secondary mt-1">Refresh after logging in.</p>
+          )}
+        </div>
+      )}
 
       {isLoading && (
         <div className="text-sm text-text-secondary">Loading...</div>
