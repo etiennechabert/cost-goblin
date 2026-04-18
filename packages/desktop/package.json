@@ -4,8 +4,8 @@
   "type": "module",
   "main": "out/main/main.js",
   "scripts": {
-    "build": "electron-vite build --sourcemap && npm run build:worker",
-    "build:worker": "esbuild src/main/duckdb-worker.ts --bundle --platform=node --format=cjs --sourcemap --outfile=out/main/duckdb-worker.js --external:@duckdb/node-api --external:electron",
+    "build": "npm run build:worker && electron-vite build --sourcemap",
+    "build:worker": "esbuild src/main/duckdb-worker.ts --bundle --platform=node --format=cjs --sourcemap --outfile=out/worker/duckdb-worker.cjs --external:@duckdb/node-api --external:electron",
     "check": "tsc --noEmit && eslint src/ && vitest run",
     "test": "vitest run",
     "dev": "npm run build:worker && electron-vite dev"
