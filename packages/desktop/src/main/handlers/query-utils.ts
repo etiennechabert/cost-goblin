@@ -1,4 +1,3 @@
-import type { DuckDBConnection } from '../duckdb-loader.js';
 import {
   asEntityRef,
   asDollars,
@@ -19,8 +18,8 @@ import type {
   DistributionSlice,
   OrgNode,
 } from '@costgoblin/core';
+import type { RawRow } from '../duckdb-client.js';
 
-export type RawRow = Readonly<Record<string, unknown>>;
 export type EffortLevel = 'VeryLow' | 'Low' | 'Medium' | 'High';
 
 const EFFORT_LEVELS = new Set<string>(['VeryLow', 'Low', 'Medium', 'High']);
@@ -42,28 +41,6 @@ export function toStr(v: unknown): string {
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   if (typeof v === 'object' && 'toString' in v) return (v as { toString(): string }).toString();
   return '';
-}
-
-export async function queryAll(conn: DuckDBConnection, sql: string): Promise<RawRow[]> {
-  const result = await conn.run(sql);
-  const cols = result.columnCount;
-  const names: string[] = [];
-  for (let i = 0; i < cols; i++) names.push(result.columnName(i));
-
-  const rows: RawRow[] = [];
-  let chunk = await result.fetchChunk();
-  while (chunk !== null && chunk.rowCount > 0) {
-    for (let r = 0; r < chunk.rowCount; r++) {
-      const row: Record<string, unknown> = {};
-      for (let c = 0; c < cols; c++) {
-        const name = names[c];
-        if (name !== undefined) row[name] = chunk.getColumnVector(c).getItem(r);
-      }
-      rows.push(row);
-    }
-    chunk = await result.fetchChunk();
-  }
-  return rows;
 }
 
 export function isOwnerGroupBy(groupBy: string, dimensions: DimensionsConfig): boolean {
