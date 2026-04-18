@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildCostQuery, buildTrendQuery, buildMissingTagsQuery, buildEntityDetailQuery, buildSource } from '../query/builder.js';
+import { buildCostQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asTagValue } from '../types/branded.js';
 
@@ -86,20 +86,57 @@ describe('buildTrendQuery', () => {
 });
 
 describe('buildMissingTagsQuery', () => {
-  it('filters on NULL or empty tag', () => {
-    const sql = buildMissingTagsQuery(
+  const baseParams = {
+    dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
+    filters: {},
+    minCost: asDollars(50),
+    tagDimension: asDimensionId('tag_org_team'),
+  };
+
+  it('filters to resource-bound Usage lines (excludes Tax / Support / empty resource_id)', () => {
+    const sql = buildMissingTagsQuery(baseParams, '/data', dimensions);
+    expect(sql).toContain("line_item_type IN ('Usage', 'DiscountedUsage')");
+    expect(sql).toContain("resource_id IS NOT NULL AND resource_id != ''");
+  });
+
+  it('computes has_tag per resource and category tagged_ratio', () => {
+    const sql = buildMissingTagsQuery(baseParams, '/data', dimensions);
+    // Resource is tagged if ANY line for it has the tag populated — MAX over a
+    // CASE expression does exactly that.
+    expect(sql).toContain('MAX(CASE WHEN');
+    expect(sql).toContain('AS has_tag');
+    // Category coverage divides tagged cost by total cost.
+    expect(sql).toContain('tagged_ratio');
+    expect(sql).toContain('SUM(CASE WHEN has_tag = 1 THEN cost ELSE 0 END)');
+  });
+
+  it('buckets into actionable (ratio > 0) vs likely-untaggable (ratio = 0)', () => {
+    const sql = buildMissingTagsQuery(baseParams, '/data', dimensions);
+    expect(sql).toContain("WHEN c.tagged_ratio > 0 THEN 'actionable'");
+    expect(sql).toContain("ELSE 'likely-untaggable'");
+  });
+
+  it('applies minCost to the per-resource cost after classification', () => {
+    const sql = buildMissingTagsQuery(baseParams, '/data', dimensions);
+    expect(sql).toContain('r.cost >= 50');
+  });
+});
+
+describe('buildNonResourceCostQuery', () => {
+  it('captures non-Usage lines and Usage lines with no resource_id', () => {
+    const sql = buildNonResourceCostQuery(
       {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
-        minCost: asDollars(50),
+        minCost: asDollars(0),
         tagDimension: asDimensionId('tag_org_team'),
       },
       '/data',
       dimensions,
     );
-    expect(sql).toContain('IS NULL');
-    expect(sql).toContain("= ''");
-    expect(sql).toContain('50');
+    expect(sql).toContain("line_item_type NOT IN ('Usage', 'DiscountedUsage')");
+    expect(sql).toContain("OR resource_id IS NULL OR resource_id = ''");
+    expect(sql).toContain('GROUP BY service, service_family, line_item_type');
   });
 });
 

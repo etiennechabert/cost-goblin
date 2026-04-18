@@ -61,6 +61,17 @@ export interface MissingTagsParams {
   readonly tagDimension: DimensionId;
 }
 
+/**
+ * Classification of an untagged resource line:
+ *   - 'actionable'          → other resources in the same (service, service_family)
+ *                             category ARE tagged, so this one is taggable and
+ *                             missing. The work queue.
+ *   - 'likely-untaggable'   → no resource in the same category has ever been
+ *                             tagged in the dataset. Either AWS doesn't allow
+ *                             it or the org never has. Hidden by default.
+ */
+export type MissingTagBucket = 'actionable' | 'likely-untaggable';
+
 export interface MissingTagRow {
   readonly accountId: string;
   readonly accountName: string;
@@ -69,12 +80,34 @@ export interface MissingTagRow {
   readonly serviceFamily: string;
   readonly cost: Dollars;
   readonly closestOwner: EntityRef | null;
+  readonly bucket: MissingTagBucket;
+  /** Fraction of this resource's category (service, service_family) that IS
+   *  tagged, by cost. 0 for likely-untaggable, >0 for actionable. */
+  readonly categoryTaggedRatio: number;
+}
+
+/** A single service/family slice of cost that is not attributable to a
+ *  resource — tax, support, credits, savings-plan fees, and usage lines with
+ *  no resource_id (e.g. inter-AZ data transfer). Reconciles the missing-tag
+ *  totals against the overall cost. */
+export interface NonResourceCostRow {
+  readonly service: string;
+  readonly serviceFamily: string;
+  readonly lineItemType: string;
+  readonly cost: Dollars;
 }
 
 export interface MissingTagsResult {
   readonly rows: readonly MissingTagRow[];
-  readonly totalUntaggedCost: Dollars;
-  readonly resourceCount: number;
+  /** Cost of actionable untagged resources — the total to chase. */
+  readonly totalActionableCost: Dollars;
+  /** Cost of resources in categories where nothing is ever tagged. */
+  readonly totalLikelyUntaggableCost: Dollars;
+  /** Cost of line items that are not resource-bound (tax, support, etc.). */
+  readonly totalNonResourceCost: Dollars;
+  readonly actionableCount: number;
+  readonly likelyUntaggableCount: number;
+  readonly nonResourceRows: readonly NonResourceCostRow[];
 }
 
 export interface EntityDetailParams {
