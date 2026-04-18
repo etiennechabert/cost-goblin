@@ -61,8 +61,12 @@ export function buildSource(dataDir: string, tier: string, dimensions: Dimension
 
   const tagClause = tagSelects.length > 0 ? `,\n      ${tagSelects.join(',\n      ')}` : '';
 
+  // usage_date is always DATE so date-range filters work consistently across
+  // tiers (BETWEEN against a TIMESTAMP truncates 'YYYY-MM-DD' to midnight and
+  // would silently drop ~23h of rows on the end day). For hourly we additionally
+  // expose usage_hour as the original TIMESTAMP for hour-resolution grouping.
   const dateExpr = tier === 'hourly'
-    ? 'line_item_usage_start_date AS usage_date'
+    ? 'line_item_usage_start_date::DATE AS usage_date,\n      line_item_usage_start_date AS usage_hour'
     : 'line_item_usage_start_date::DATE AS usage_date';
 
   const parquetSource = `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`;
@@ -274,7 +278,7 @@ export function buildDailyCostsQuery(
   ];
 
   const dateExpr = dailyTier === 'hourly'
-    ? "strftime(usage_date, '%Y-%m-%d %H:00')"
+    ? "strftime(usage_hour, '%Y-%m-%d %H:00')"
     : 'usage_date::VARCHAR';
 
   return `
@@ -307,16 +311,22 @@ export function buildEntityDetailQuery(
     ...filterClauses,
   ];
 
+  // Group by hour for hourly tier so the entity detail histogram doesn't
+  // collapse 24 hourly rows into one date row.
+  const groupKey = tier === 'hourly'
+    ? "strftime(usage_hour, '%Y-%m-%d %H:00')"
+    : 'usage_date::VARCHAR';
+
   return `
     SELECT
-      usage_date,
+      ${groupKey} AS usage_date,
       service,
       account_id,
       account_name,
       SUM(cost) AS cost
     FROM ${source}
     WHERE ${whereConditions.join(' AND ')}
-    GROUP BY usage_date, service, account_id, account_name
+    GROUP BY ${groupKey}, service, account_id, account_name
     ORDER BY usage_date, cost DESC
   `.trim();
 }

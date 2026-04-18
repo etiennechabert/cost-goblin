@@ -161,6 +161,56 @@ describe('DuckDB query integration', () => {
     expect(Number(rows[0]?.['cnt'])).toBeGreaterThan(0);
   });
 
+  it('hourly tier exposes both usage_date (DATE) and usage_hour (TIMESTAMP)', async () => {
+    const source = buildSource(SYNTHETIC_DIR, 'hourly', dimensions);
+    const rows = await queryAll(conn, `
+      SELECT typeof(usage_date) AS d_type, typeof(usage_hour) AS h_type
+      FROM ${source} LIMIT 1
+    `);
+    expect(rows[0]?.['d_type']).toBe('DATE');
+    expect(rows[0]?.['h_type']).toBe('TIMESTAMP');
+  });
+
+  it('cost query with hourly granularity returns rows for an end-day-inclusive range', async () => {
+    // Regression: BETWEEN against a TIMESTAMP would truncate the end string to
+    // midnight and silently drop most of the end day. With usage_date as DATE,
+    // the same 'YYYY-MM-DD' end value covers the full day.
+    const sql = buildCostQuery(
+      {
+        groupBy: asDimensionId('service'),
+        dateRange: { start: asDateString('2026-02-01'), end: asDateString('2026-02-28') },
+        filters: {},
+        granularity: 'hourly',
+      },
+      SYNTHETIC_DIR,
+      dimensions,
+    );
+    const rows = await queryAll(conn, sql);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(Number(rows[0]?.['total_cost'])).toBeGreaterThan(0);
+  });
+
+  it('hourly cost query returns the same total as a SUM over the raw hourly source', async () => {
+    const range = { start: asDateString('2026-02-01'), end: asDateString('2026-02-28') } as const;
+    const sql = buildCostQuery(
+      { groupBy: asDimensionId('service'), dateRange: range, filters: {}, granularity: 'hourly' },
+      SYNTHETIC_DIR,
+      dimensions,
+    );
+    const queryTotalRows = await queryAll(conn, `SELECT SUM(total_cost) AS t FROM (${sql})`);
+    const queryTotal = Number(queryTotalRows[0]?.['t'] ?? 0);
+
+    const source = buildSource(SYNTHETIC_DIR, 'hourly', dimensions);
+    const rawRows = await queryAll(conn, `
+      SELECT SUM(cost) AS t FROM ${source}
+      WHERE usage_date BETWEEN '${range.start}' AND '${range.end}'
+    `);
+    const rawTotal = Number(rawRows[0]?.['t'] ?? 0);
+
+    expect(queryTotal).toBeGreaterThan(0);
+    expect(queryTotal).toBeCloseTo(rawTotal, 2);
+  });
+
   it('daily costs query with hourly granularity includes hour in date field', async () => {
     const sql = buildDailyCostsQuery(
       {
