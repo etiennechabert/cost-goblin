@@ -6,9 +6,23 @@ import { createDuckDBClient } from './duckdb-client.js';
 import type { DuckDBClient } from './duckdb-client.js';
 import { registerIpcHandlers } from './ipc.js';
 
+// Log level: debug in dev (NODE_ENV=development or electron-vite serving
+// the renderer), or when COSTGOBLIN_LOG_LEVEL=debug. Otherwise info.
+const isDev = process.env['NODE_ENV'] === 'development'
+  || process.env['ELECTRON_RENDERER_URL'] !== undefined;
+const envLevel = process.env['COSTGOBLIN_LOG_LEVEL'];
+if (envLevel === 'debug' || envLevel === 'info' || envLevel === 'warn' || envLevel === 'error') {
+  logger.setLevel(envLevel);
+} else if (isDev) {
+  logger.setLevel('debug');
+}
+
 logger.addHandler((entry: LogEntry) => {
-  const line = `[${entry.timestamp}] ${entry.level.toUpperCase()} ${entry.message}\n`;
-  process.stdout.write(line);
+  const base = `[${entry.timestamp}] ${entry.level.toUpperCase()} ${entry.message}`;
+  // Inline the structured context as JSON so debug logs (DuckDB queries etc.)
+  // stay greppable on one line.
+  const ctx = entry.context === undefined ? '' : ` ${JSON.stringify(entry.context)}`;
+  process.stdout.write(`${base}${ctx}\n`);
 });
 
 function resolveConfigPath(base: string, name: string): string {
