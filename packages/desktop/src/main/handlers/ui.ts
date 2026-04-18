@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import { parseJsonObject } from '@costgoblin/core';
 import type { UIPreferences } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 
@@ -14,13 +15,9 @@ export function registerUIHandlers(app: AppContext): void {
     const fs = await import('node:fs/promises');
     try {
       const raw = await fs.readFile(await uiPrefsPath(), 'utf-8');
-      const parsed: unknown = JSON.parse(raw);
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        const record: Record<string, unknown> = { ...parsed };
-        const theme = record['theme'];
-        if (theme === 'light' || theme === 'dark') {
-          return { theme };
-        }
+      const theme = parseJsonObject(raw)?.['theme'];
+      if (theme === 'light' || theme === 'dark') {
+        return { theme };
       }
     } catch {
       // file doesn't exist yet

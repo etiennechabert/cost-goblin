@@ -4,6 +4,7 @@ import { createS3Handle, parseS3Path } from './s3-client.js';
 import type { S3Handle } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
 import type { DataTier } from '../types/api.js';
+import { parseEtagsJson } from './sync-utils.js';
 
 export type PeriodStatus = 'missing' | 'repartitioned' | 'stale';
 
@@ -127,7 +128,7 @@ export async function getDataInventory(
   let savedEtags: Record<string, Record<string, string>> = {};
   try {
     const raw = await readFile(join(dataDir, ETAG_FILES[tier]), 'utf-8');
-    savedEtags = JSON.parse(raw) as Record<string, Record<string, string>>;
+    savedEtags = parseEtagsJson(raw);
   } catch {
     // no saved etags yet
   }

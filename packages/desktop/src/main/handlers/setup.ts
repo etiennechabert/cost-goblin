@@ -1,5 +1,5 @@
 import { ipcMain, shell } from 'electron';
-import { logger, parseS3Path } from '@costgoblin/core';
+import { logger, parseS3Path, isStringRecord, parseJsonObject } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 
 export function registerSetupHandlers(app: AppContext): void {
@@ -134,14 +134,13 @@ export function registerSetupHandlers(app: AppContext): void {
             const manifestResponse = await client.send(new GetObjectCommand({ Bucket: params.bucket, Key: manifestKey }));
             const body = await manifestResponse.Body?.transformToString();
             if (body !== undefined) {
-              const manifest: unknown = JSON.parse(body);
-              let columnNames: string[] = [];
-              if (typeof manifest === 'object' && manifest !== null && 'columns' in manifest && Array.isArray((manifest as Record<string, unknown>)['columns'])) {
-                columnNames = ((manifest as Record<string, unknown>)['columns'] as unknown[])
-                  .filter((c): c is Record<string, unknown> => typeof c === 'object' && c !== null)
+              const columns = parseJsonObject(body)?.['columns'];
+              const columnNames: string[] = Array.isArray(columns)
+                ? columns
+                  .filter(isStringRecord)
                   .map(c => typeof c['name'] === 'string' ? c['name'] : '')
-                  .filter(n => n.length > 0);
-              }
+                  .filter(n => n.length > 0)
+                : [];
 
               if (columnNames.includes('recommendation_id') || columnNames.includes('estimated_monthly_savings')) {
                 detectedType = 'cost-optimization';
@@ -178,25 +177,23 @@ export function registerSetupHandlers(app: AppContext): void {
     const configDir = path.dirname(ctx.configPath);
     await fs.mkdir(configDir, { recursive: true });
 
-    let existing: Record<string, unknown> = {};
+    let existing: Readonly<Record<string, unknown>> = {};
     try {
       const raw = await fs.readFile(ctx.configPath, 'utf-8');
       const parsed: unknown = parseYaml(raw);
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        existing = parsed as Record<string, unknown>;
+      if (isStringRecord(parsed)) {
+        existing = parsed;
       }
     } catch {
       // no existing config
     }
 
-    const existingProviders: Record<string, unknown>[] = Array.isArray(existing['providers'])
-      ? existing['providers'].filter((p): p is Record<string, unknown> => typeof p === 'object' && p !== null)
+    const existingProviders: Readonly<Record<string, unknown>>[] = Array.isArray(existing['providers'])
+      ? existing['providers'].filter(isStringRecord)
       : [];
     const existingProvider = existingProviders[0] ?? {};
     const rawSync = existingProvider['sync'];
-    const existingSync: Record<string, unknown> = typeof rawSync === 'object' && rawSync !== null && !Array.isArray(rawSync)
-      ? rawSync as Record<string, unknown>
-      : {};
+    const existingSync: Readonly<Record<string, unknown>> = isStringRecord(rawSync) ? rawSync : {};
 
     const sync: Record<string, unknown> = { ...existingSync, intervalMinutes: 60 };
 

@@ -5,8 +5,16 @@ import { logger } from '../logger/logger.js';
 import { parseS3Path } from './s3-client.js';
 import type { ProgressCallback } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
+import {
+  type ExpectedDataType,
+  extractDate,
+  extractPeriodPrefix,
+  getEtagFileName,
+  groupByPeriod,
+  parseEtagsJson,
+} from './sync-utils.js';
 
-export type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
+export type { ExpectedDataType };
 
 export interface SelectiveSyncOptions {
   readonly bucketPath: string;
@@ -16,45 +24,6 @@ export interface SelectiveSyncOptions {
   readonly files: readonly ManifestFileEntry[];
   readonly onProgress?: ProgressCallback | undefined;
   readonly signal?: AbortSignal | undefined;
-}
-
-const ETAG_FILES: Record<string, string> = {
-  'daily': 'sync-etags.json',
-  'hourly': 'sync-etags-hourly.json',
-  'cost-optimization': 'sync-etags-cost-optimization.json',
-};
-
-function extractPeriod(key: string): string {
-  const billingMatch = /BILLING_PERIOD=(\d{4}-\d{2})/.exec(key);
-  if (billingMatch?.[1] !== undefined) return billingMatch[1];
-  const dateMatch = /date=(\d{4}-\d{2})-\d{2}/.exec(key);
-  return dateMatch?.[1] ?? 'unknown';
-}
-
-function extractPeriodPrefix(key: string): string {
-  const billingMatch = /^(.*BILLING_PERIOD=\d{4}-\d{2}\/)/.exec(key);
-  if (billingMatch?.[1] !== undefined) return billingMatch[1];
-  const dateMatch = /^(.*date=\d{4}-\d{2}-\d{2}\/)/.exec(key);
-  return dateMatch?.[1] ?? '';
-}
-
-function extractDate(key: string): string | undefined {
-  const match = /date=(\d{4}-\d{2}-\d{2})/.exec(key);
-  return match?.[1];
-}
-
-function groupByPeriod(files: readonly ManifestFileEntry[]): Map<string, ManifestFileEntry[]> {
-  const groups = new Map<string, ManifestFileEntry[]>();
-  for (const file of files) {
-    const period = extractPeriod(file.key);
-    const existing = groups.get(period);
-    if (existing !== undefined) {
-      existing.push(file);
-    } else {
-      groups.set(period, [file]);
-    }
-  }
-  return groups;
 }
 
 function runAwsS3Sync(options: {
@@ -128,12 +97,11 @@ async function saveEtags(
   period: string,
   periodFiles: readonly ManifestFileEntry[],
 ): Promise<void> {
-  const etagFile = ETAG_FILES[tier] ?? 'sync-etags.json';
-  const etagPath = join(dataDir, etagFile);
+  const etagPath = join(dataDir, getEtagFileName(tier));
   let savedEtags: Record<string, Record<string, string>> = {};
   try {
     const raw = await readFile(etagPath, 'utf-8');
-    savedEtags = JSON.parse(raw) as Record<string, Record<string, string>>;
+    savedEtags = parseEtagsJson(raw);
   } catch {
     // first time
   }
