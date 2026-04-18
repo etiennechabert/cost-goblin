@@ -42,7 +42,11 @@ async function createWindow(db: DuckDBClient): Promise<void> {
       preload: join(__dirname, '..', 'preload', 'preload.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      // sandbox: true is the v1 target but breaks ESM preloads (electron-vite
+      // emits .mjs and the sandboxed loader is CJS-only). contextIsolation +
+      // nodeIntegration: false already prevent the main attack vectors;
+      // sandboxing remains a future hardening task.
+      sandbox: false,
     },
   });
 

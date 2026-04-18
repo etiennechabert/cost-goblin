@@ -168,7 +168,7 @@ Constraints:
 
 - `contextIsolation: true`
 - `nodeIntegration: false`
-- `sandbox: true` (v1 — currently `false`)
+- `sandbox: false` — target is `true` (v1) but blocked on tooling: `electron-vite` emits an ESM (`.mjs`) preload, and Electron's sandboxed loader is CJS-only. Switching requires either replacing the preload build with esbuild (which gets clobbered every time `electron-vite dev` rebuilds) or upstream electron-vite support for CJS preload output. The two flags above already prevent the main attack vectors; sandboxing is defense-in-depth on top.
 - Preload uses `contextBridge.exposeInMainWorld` to expose only the typed `CostApi`.
 - Renderer has zero Node imports. No `localStorage`/`sessionStorage` for app data — see Configuration System.
 
