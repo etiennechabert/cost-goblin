@@ -1,4 +1,5 @@
 import { Worker } from 'node:worker_threads';
+import { logger } from '@costgoblin/core';
 
 export type RawRow = Readonly<Record<string, unknown>>;
 
@@ -85,8 +86,31 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
     runQuery(sql: string): Promise<RawRow[]> {
       if (fatalError !== null) return Promise.reject(fatalError);
       const id = nextId++;
+      const startedAt = Date.now();
+      const startedAtIso = new Date(startedAt).toISOString();
       return new Promise<RawRow[]>((resolve, reject) => {
-        pending.set(id, { resolve, reject });
+        pending.set(id, {
+          resolve: (rows) => {
+            logger.debug('duckdb:query', {
+              id,
+              startedAt: startedAtIso,
+              durationMs: Date.now() - startedAt,
+              rows: rows.length,
+              sql,
+            });
+            resolve(rows);
+          },
+          reject: (err) => {
+            logger.debug('duckdb:query-failed', {
+              id,
+              startedAt: startedAtIso,
+              durationMs: Date.now() - startedAt,
+              error: err.message,
+              sql,
+            });
+            reject(err);
+          },
+        });
         worker.postMessage({ kind: 'query', id, sql });
       });
     },
