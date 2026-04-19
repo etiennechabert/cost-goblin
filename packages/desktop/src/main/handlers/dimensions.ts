@@ -145,7 +145,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
   // Distinct values + cost for a built-in column — powers the preview on the
   // built-in editor ("Service has 120 distinct values, top 20 by cost are...").
   // Scans the most recent daily period so the preview loads fast.
-  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> => {
+  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> => {
     // Whitelist columns we know are safe to embed in SQL. These match the
     // aliases emitted by buildSource so the query plans identically to what
     // the rest of the app does.
@@ -200,12 +200,28 @@ export function registerDimensionsHandlers(app: AppContext): void {
         values = values.map(v => ({ value: orgMap.get(v.value) ?? v.value, cost: v.cost }));
       }
     }
-    // Region: always-on friendly-name resolution from region-names.json. No
-    // opt needed — codes not in the map fall through unchanged.
+    // Region: facet the preview by the dim the user is editing.
+    //   - region (with useRegionNames=true): long names from SSM
+    //   - region_country: ISO country code
+    //   - region_continent: AWS geo bucket
+    //   - anything else: raw codes fall through
+    // Rows with an empty value for the requested facet get collapsed together
+    // so the preview chips match what the live query will produce.
     if (field === 'region') {
       const regionMap = await getRegionMap();
-      if (regionMap.size > 0) {
-        values = values.map(v => ({ value: regionMap.get(v.value) ?? v.value, cost: v.cost }));
+      const pick: ((info: { longName: string; country: string; continent: string }) => string) | null =
+        opts?.dimName === 'region_country' ? (i) => i.country
+          : opts?.dimName === 'region_continent' ? (i) => i.continent
+            : opts?.useRegionNames === true ? (i) => i.longName
+              : null;
+      if (pick !== null && regionMap.size > 0) {
+        const merged = new Map<string, number>();
+        for (const v of values) {
+          const info = regionMap.get(v.value);
+          const label = info === undefined ? v.value : (pick(info).length > 0 ? pick(info) : v.value);
+          merged.set(label, (merged.get(label) ?? 0) + v.cost);
+        }
+        values = [...merged.entries()].map(([value, cost]) => ({ value, cost })).sort((a, b) => b.cost - a.cost);
       }
     }
     // Apply the same display-time transforms the live queries use. Order

@@ -59,6 +59,10 @@ export interface BuiltInDimension {
    *  trailing " production" or a common org prefix. Invalid patterns are
    *  silently skipped; result is whitespace-collapsed and trimmed. */
   readonly nameStripPatterns?: readonly string[] | undefined;
+  /** Region-specific: when true, resolve raw region codes (eu-central-1) to
+   *  friendly names (Europe (Frankfurt)) via the SSM global-infrastructure
+   *  snapshot. No-op if the snapshot hasn't been synced. */
+  readonly useRegionNames?: boolean | undefined;
 }
 
 export interface TagDimension {

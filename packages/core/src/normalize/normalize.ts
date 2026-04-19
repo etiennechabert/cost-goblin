@@ -50,22 +50,43 @@ export function resolveAlias(
   return normalizedValue;
 }
 
-/** Stuffs an SSM-derived region name map into the Region built-in's aliases.
- *  Reuses the existing alias machinery (SQL CASE, JS resolveAlias, filter
- *  expansion) so cost queries, filter dropdowns, and entity drill-ins all
- *  pick up friendly names without separate plumbing.
+/** Per-region metadata extracted from the SSM global-infrastructure namespace.
+ *  Shared shape for alias injection across the Region, Country, and Continent
+ *  built-ins. */
+export interface RegionEnrichment {
+  readonly longName: string;
+  readonly country: string;
+  readonly continent: string;
+}
+
+/** Injects SSM-derived aliases into the Region-family built-ins, so the same
+ *  raw `region` column powers three distinct groupings:
+ *   - `region`           + useRegionNames   → long names ("Europe (Frankfurt)")
+ *   - `region_country`   → ISO country codes ("DE")
+ *   - `region_continent` → AWS geo buckets ("EU")
+ *
+ *  Reuses the alias machinery (SQL CASE, resolveAlias, filter expansion) so
+ *  cost queries, filter dropdowns, and entity drill-ins pick up enriched
+ *  labels without separate plumbing.
  *
  *  User-defined aliases take precedence: if a region code is already covered
- *  by a user alias entry, we don't add a region-map entry that would compete.
- *  Codes not in the map fall through unchanged (alias CASE has no WHEN for
- *  them, so the ELSE branch returns the raw code). */
+ *  by a user alias entry, we don't add an SSM-sourced entry that would
+ *  compete. Codes with an empty value for the requested field are left alone
+ *  so the raw code surfaces (better than collapsing everything unknown into
+ *  a single bucket). */
 export function applyRegionFriendlyNames(
   dims: import('../types/config.js').DimensionsConfig,
-  regionMap: ReadonlyMap<string, string>,
+  regionMap: ReadonlyMap<string, RegionEnrichment>,
 ): import('../types/config.js').DimensionsConfig {
   if (regionMap.size === 0) return dims;
   const builtIn = dims.builtIn.map(d => {
     if (d.field !== 'region') return d;
+    const pick: ((e: RegionEnrichment) => string) | null =
+      d.name === 'region_country' ? (e) => e.country
+        : d.name === 'region_continent' ? (e) => e.continent
+          : d.useRegionNames === true ? (e) => e.longName
+            : null;
+    if (pick === null) return d;
     const userAliases = d.aliases ?? {};
     const userCovered = new Set<string>();
     for (const list of Object.values(userAliases)) {
@@ -75,10 +96,12 @@ export function applyRegionFriendlyNames(
     for (const [canonical, list] of Object.entries(userAliases)) {
       merged[canonical] = [...list];
     }
-    for (const [code, name] of regionMap) {
+    for (const [code, info] of regionMap) {
       if (userCovered.has(code)) continue;
-      const existing = merged[name];
-      if (existing === undefined) merged[name] = [code];
+      const label = pick(info);
+      if (label.length === 0) continue;
+      const existing = merged[label];
+      if (existing === undefined) merged[label] = [code];
       else existing.push(code);
     }
     return { ...d, aliases: merged };

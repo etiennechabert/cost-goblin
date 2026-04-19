@@ -146,8 +146,8 @@ const api: CostApi = {
   getOrgSyncProgress(): Promise<OrgSyncProgress | null> {
     return invoke<OrgSyncProgress | null>('org:get-progress');
   },
-  getRegionNamesInfo(): Promise<{ count: number; syncedAt: string; lastError: string | null } | null> {
-    return invoke<{ count: number; syncedAt: string; lastError: string | null } | null>('org:get-region-names-info');
+  getRegionNamesInfo(): Promise<{ count: number; syncedAt: string; lastError: string | null; regions: Record<string, { longName: string; country: string; continent: string }> } | null> {
+    return invoke<{ count: number; syncedAt: string; lastError: string | null; regions: Record<string, { longName: string; country: string; continent: string }> } | null>('org:get-region-names-info');
   },
   clearOrgData(): Promise<void> {
     return invoke<undefined>('org:clear-data').then(() => undefined);
@@ -158,7 +158,7 @@ const api: CostApi = {
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> {
     return invoke<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>('dimensions:discover-tags');
   },
-  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> {
+  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> {
     return invoke<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }>('dimensions:discover-column-values', field, opts);
   },
   getDimensionsConfig(): Promise<DimensionsConfig> {

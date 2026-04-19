@@ -10,13 +10,16 @@ type SyncState =
 
 /** Cached SSM Parameter Store data — lives separately from the AWS Org sync
  *  conceptually (different API, different IAM perms) so it gets its own UI
- *  block + own re-sync action. Right now the only thing we cache is region
- *  long names; geographic / country fields would slot in here too. */
+ *  block + own re-sync action. We cache per-region metadata published under
+ *  /aws/service/global-infrastructure: longName, geolocationCountry,
+ *  geolocationRegion. */
 export function SsmParameterSection({ profile }: Readonly<{ profile: string | null }>) {
   const api = useCostApi();
   const [refreshKey, setRefreshKey] = useState(0);
   const infoQuery = useQuery(() => api.getRegionNamesInfo(), [refreshKey]);
   const [syncState, setSyncState] = useState<SyncState>({ status: 'idle' });
+  const [expanded, setExpanded] = useState(false);
+  const [regionSearch, setRegionSearch] = useState('');
 
   const info = infoQuery.status === 'success' ? infoQuery.data : null;
 
@@ -33,24 +36,43 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
     }
   }
 
-  // Source-of-truth for the dot color and the "have we got data" check.
   const hasData = info !== null && info.count > 0;
   const hasError = info?.lastError !== null && info?.lastError !== undefined;
+
+  const regionEntries = info !== null
+    ? Object.entries(info.regions).sort(([a], [b]) => a.localeCompare(b))
+    : [];
+  const needle = regionSearch.toLowerCase();
+  const filteredRegions = regionSearch.length > 0
+    ? regionEntries.filter(([code, r]) =>
+      code.toLowerCase().includes(needle) ||
+      r.longName.toLowerCase().includes(needle) ||
+      r.country.toLowerCase().includes(needle) ||
+      r.continent.toLowerCase().includes(needle))
+    : regionEntries;
 
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-3">
-        <div className={[
-          'h-2 w-2 rounded-full',
-          hasData ? 'bg-accent' : hasError ? 'bg-negative' : 'bg-text-muted',
-        ].join(' ')} />
-        <span className="text-sm font-medium text-text-primary">SSM Parameter Store</span>
+        <button
+          type="button"
+          onClick={() => { if (hasData) setExpanded(v => !v); }}
+          disabled={!hasData}
+          className="flex items-center gap-2 flex-1 text-left hover:bg-bg-tertiary/30 transition-colors rounded -mx-1 px-1 disabled:hover:bg-transparent disabled:cursor-default"
+        >
+          <div className={[
+            'h-2 w-2 rounded-full',
+            hasData ? 'bg-accent' : hasError ? 'bg-negative' : 'bg-text-muted',
+          ].join(' ')} />
+          <span className="text-sm font-medium text-text-primary">SSM Parameter Store</span>
+          {hasData && <span className="text-text-muted ml-auto text-xs">{expanded ? '▾' : '▸'}</span>}
+        </button>
         {profile !== null && (
           <button
             type="button"
             onClick={() => { void handleSync(); }}
             disabled={syncState.status === 'syncing'}
-            className="ml-auto text-xs text-text-muted hover:text-accent transition-colors disabled:opacity-50"
+            className="text-xs text-text-muted hover:text-accent transition-colors disabled:opacity-50"
             title={hasData ? 'Re-sync SSM region names' : 'Fetch SSM region names'}
           >
             {hasData ? '↻' : 'Sync'}
@@ -72,7 +94,7 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
           {hasData ? (
             <>
               <span className="text-accent">✓</span>
-              <span className="text-text-secondary">{String(info.count)} region friendly names</span>
+              <span className="text-text-secondary">{String(info.count)} regions enriched with longName + country + continent</span>
               {info.syncedAt.length > 0 && (
                 <span className="text-text-muted ml-auto">
                   Synced {new Date(info.syncedAt).toLocaleString()}
@@ -81,9 +103,9 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
             </>
           ) : hasError ? (
             <>
-              <span className="text-negative">✗</span>
-              <span className="text-negative" title={info.lastError ?? undefined}>
-                Last sync failed: {(info.lastError ?? '').length > 100 ? `${(info.lastError ?? '').slice(0, 100)}…` : (info.lastError ?? '')}
+              <span className="text-negative shrink-0">✗</span>
+              <span className="text-negative break-words">
+                Last sync failed: {info.lastError ?? ''}
               </span>
             </>
           ) : (
@@ -94,6 +116,45 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
           )}
         </li>
       </ul>
+
+      {expanded && hasData && (
+        <div className="border-t border-border">
+          <div className="flex items-center justify-between px-4 py-2">
+            <span className="text-[10px] text-text-muted">
+              From /aws/service/global-infrastructure/regions
+            </span>
+            <input
+              type="text"
+              placeholder="Search regions..."
+              value={regionSearch}
+              onChange={e => { setRegionSearch(e.target.value); }}
+              className="w-48 rounded border border-border bg-bg-primary px-2 py-1 text-[10px] text-text-primary outline-none focus:border-accent"
+            />
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-text-muted sticky top-0 bg-bg-secondary">
+                  <th className="px-4 py-2 font-medium">Region Code</th>
+                  <th className="px-4 py-2 font-medium">Friendly Name</th>
+                  <th className="px-4 py-2 font-medium">Country</th>
+                  <th className="px-4 py-2 font-medium">Continent</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-subtle">
+                {filteredRegions.map(([code, r]) => (
+                  <tr key={code} className="hover:bg-bg-tertiary/20">
+                    <td className="px-4 py-1.5 font-mono text-text-secondary">{code}</td>
+                    <td className="px-4 py-1.5 text-text-primary">{r.longName}</td>
+                    <td className="px-4 py-1.5 text-text-muted font-mono">{r.country.length > 0 ? r.country : '—'}</td>
+                    <td className="px-4 py-1.5 text-text-muted">{r.continent.length > 0 ? r.continent : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

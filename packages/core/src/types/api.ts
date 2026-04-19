@@ -132,7 +132,7 @@ export interface CostApi {
   setOptimizeEnabled(enabled: boolean): Promise<void>;
   clearSidecars(): Promise<{ removed: number; requeued: number }>;
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>;
-  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }>;
+  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }>;
   getDimensionsConfig(): Promise<DimensionsConfig>;
   saveDimensionsConfig(config: DimensionsConfig): Promise<void>;
   getAutoSyncEnabled(): Promise<boolean>;
@@ -141,11 +141,13 @@ export interface CostApi {
   syncOrgAccounts(profile: string): Promise<OrgSyncResult>;
   getOrgSyncResult(): Promise<OrgSyncResult | null>;
   getOrgSyncProgress(): Promise<OrgSyncProgress | null>;
-  /** Region-name cache info (count of resolved long-names + last sync time).
+  /** Region-name cache info (count of resolved long-names + last sync time +
+   *  the full per-region metadata map so the UI can display it in an expanded
+   *  view and surface extra dimensions like country/continent).
    *  Populated as a side-effect of syncOrgAccounts. Returns null when no
    *  sync has ever been attempted; when the SSM step failed, returns
    *  count=0 with lastError set so the UI can explain why. */
-  getRegionNamesInfo(): Promise<{ count: number; syncedAt: string; lastError: string | null } | null>;
+  getRegionNamesInfo(): Promise<{ count: number; syncedAt: string; lastError: string | null; regions: Record<string, { longName: string; country: string; continent: string }> } | null>;
   /** Delete every file produced by the AWS Org sync (accounts, account-tag
    *  lookup, region-name cache). Idempotent. */
   clearOrgData(): Promise<void>;

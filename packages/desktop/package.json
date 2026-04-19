@@ -17,6 +17,7 @@
     "@costgoblin/core": "*",
     "@costgoblin/ui": "*",
     "@duckdb/node-api": "^1.5.0-r.1",
+    "@smithy/shared-ini-file-loader": "^4.4.9",
     "yaml": "^2.7.0"
   },
   "devDependencies": {

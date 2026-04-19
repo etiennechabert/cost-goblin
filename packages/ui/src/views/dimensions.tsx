@@ -30,15 +30,22 @@ interface EditingBuiltIn {
   aliases: string;
   useOrgAccounts: boolean;
   nameStripPatterns: string;
+  useRegionNames: boolean;
 }
 
 function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
-  dim: { field: string; editing: EditingBuiltIn };
+  dim: { name: string; field: string; editing: EditingBuiltIn };
   onSave: (edited: EditingBuiltIn) => void;
   onCancel: () => void;
 }>): React.JSX.Element {
   const isAccountDim = dim.field === 'account_id';
-  const isRegionDim = dim.field === 'region';
+  // Three dims share field='region' — distinguish by name so only the Region
+  // dim gets the longName toggle, while Country/Continent are pure derived
+  // views with no user toggle (SSM data is either there or not).
+  const isRegionDim = dim.name === 'region';
+  const isRegionCountryDim = dim.name === 'region_country';
+  const isRegionContinentDim = dim.name === 'region_continent';
+  const isAnyRegionDim = dim.field === 'region';
   // AWS-controlled values arrive in a single canonical form — normalize/strip
   // would only chip at the labels users already recognize. Aliases stay
   // visible since folding "AmazonEC2 → EC2" is a reasonable user choice.
@@ -51,8 +58,8 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
   // side-effects of the org sync on the Sync tab — without them the dim's
   // values render as raw codes / IDs.
   const regionInfoQuery = useQuery(
-    () => isRegionDim ? api.getRegionNamesInfo() : Promise.resolve(null),
-    [isRegionDim],
+    () => isAnyRegionDim ? api.getRegionNamesInfo() : Promise.resolve(null),
+    [isAnyRegionDim],
   );
   const orgQuery = useQuery(
     () => isAccountDim ? api.getOrgSyncResult() : Promise.resolve(null),
@@ -80,9 +87,10 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
       {
         ...(normalize !== undefined ? { normalize } : {}),
         ...(isAccountDim ? { useOrgAccounts: state.useOrgAccounts, nameStripPatterns: stripPatternList } : {}),
+        ...(isAnyRegionDim ? { dimName: dim.name, useRegionNames: state.useRegionNames } : {}),
       },
     ),
-    [dim.field, isAccountDim, state.useOrgAccounts, stripPatternsKey, normalize],
+    [dim.field, dim.name, isAccountDim, isAnyRegionDim, state.useOrgAccounts, state.useRegionNames, stripPatternsKey, normalize],
   );
 
   useEffect(() => {
@@ -135,6 +143,32 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
       <DimensionToggle enabled={state.useOrgAccounts} onToggle={() => { setState(s => ({ ...s, useOrgAccounts: !s.useOrgAccounts })); }} />
     </label>
   );
+  // Region equivalent of the org toggle. Disabled (and forced-off in preview)
+  // when the SSM region snapshot isn't present — the toggle's whole point is
+  // to swap raw codes for the SSM-sourced friendly names, so without data
+  // it's a no-op. We gate on query.status so we don't flash a disabled toggle
+  // while the info is still loading.
+  const regionInfoLoaded = regionInfoQuery.status === 'success';
+  const regionDataAvailable = regionInfoLoaded && regionInfoQuery.data !== null && regionInfoQuery.data.count > 0;
+  const regionToggleField = (
+    <label className={['flex items-center justify-between rounded border border-border bg-bg-primary px-3 py-2 h-full', regionDataAvailable ? '' : 'opacity-60'].join(' ')}>
+      <div className="flex flex-col gap-0.5 min-w-0 pr-3">
+        <span className="text-sm text-text-primary">Resolve codes via SSM region names</span>
+        <span className="text-[11px] text-text-muted leading-tight">
+          {regionDataAvailable
+            ? 'Use friendly names (e.g. "Europe (Frankfurt)") from the SSM snapshot.'
+            : 'Sync SSM Parameter Store from Data Management to enable.'}
+        </span>
+      </div>
+      <DimensionToggle
+        enabled={state.useRegionNames && regionDataAvailable}
+        onToggle={() => {
+          if (!regionDataAvailable) return;
+          setState(s => ({ ...s, useRegionNames: !s.useRegionNames }));
+        }}
+      />
+    </label>
+  );
   const normalizationField = (
     <label className="flex flex-col gap-1">
       <span className="text-xs text-text-muted">Normalization</span>
@@ -181,8 +215,14 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
   //     sync. Warn when toggle is on but the sync result file is missing.
   const regionInfo = regionInfoQuery.status === 'success' ? regionInfoQuery.data : null;
   const orgInfo = orgQuery.status === 'success' ? orgQuery.data : null;
+  // Warn when the user's editing a dim that needs SSM data but the snapshot
+  // isn't there. Region: only when the friendly-names toggle is on (off is a
+  // valid state — raw codes). Country/Continent: always, since these dims
+  // are defined entirely in terms of SSM enrichment and collapse to raw
+  // codes otherwise.
+  const wantsRegionEnrichment = (isRegionDim && state.useRegionNames) || isRegionCountryDim || isRegionContinentDim;
   const regionWarning: { kind: 'missing' | 'error'; message?: string } | null =
-    isRegionDim && regionInfoQuery.status === 'success'
+    wantsRegionEnrichment && regionInfoQuery.status === 'success'
       ? regionInfo === null
         ? { kind: 'missing' }
         : regionInfo.lastError !== null
@@ -210,8 +250,8 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
           ) : (
             <p className="text-text-secondary">
               Region values will display as raw codes (e.g. <span className="font-mono">eu-central-1</span>).
-              Run the AWS Organization sync from the <span className="font-medium">Sync</span> tab to fetch the
-              friendly names from SSM Parameter Store.
+              Sync the <span className="font-medium">SSM Parameter Store</span> section on Data Management to
+              fetch the friendly names.
             </p>
           )}
         </div>
@@ -227,7 +267,7 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
       )}
       {showTransforms && (
         <div className="grid grid-cols-2 gap-4 items-stretch">
-          {isAccountDim ? orgToggleField : <div />}
+          {isAccountDim ? orgToggleField : isRegionDim ? regionToggleField : <div />}
           {normalizationField}
         </div>
       )}
@@ -787,6 +827,7 @@ export function DimensionsView() {
         ...(aliases !== undefined ? { aliases } : {}),
         ...(edited.useOrgAccounts ? { useOrgAccounts: true as const } : {}),
         ...(nameStripPatterns.length > 0 ? { nameStripPatterns } : {}),
+        ...(edited.useRegionNames ? { useRegionNames: true as const } : {}),
       };
     });
     await api.saveDimensionsConfig({ ...config, builtIn });
@@ -954,6 +995,7 @@ export function DimensionsView() {
                 <BuiltInEditor
                   key={d.name}
                   dim={{
+                    name: d.name,
                     field: d.field,
                     editing: {
                       label: d.label,
@@ -962,6 +1004,7 @@ export function DimensionsView() {
                       aliases: aliasesToText(d.aliases),
                       useOrgAccounts: d.useOrgAccounts === true,
                       nameStripPatterns: d.nameStripPatterns?.join('\n') ?? '',
+                      useRegionNames: d.useRegionNames === true,
                     },
                   }}
                   onSave={(edited) => { void handleSaveBuiltIn(idx, edited); }}

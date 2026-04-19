@@ -138,7 +138,7 @@ export function registerOrgHandlers(app: AppContext): void {
     invalidateDimensions();
   });
 
-  ipcMain.handle('org:get-region-names-info', async (): Promise<{ count: number; syncedAt: string; lastError: string | null } | null> => {
+  ipcMain.handle('org:get-region-names-info', async (): Promise<{ count: number; syncedAt: string; lastError: string | null; regions: Record<string, { longName: string; country: string; continent: string }> } | null> => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
     try {
@@ -148,11 +148,20 @@ export function registerOrgHandlers(app: AppContext): void {
       const regions = parsed['regions'];
       const syncedAt = parsed['syncedAt'];
       if (!isStringRecord(regions) || typeof syncedAt !== 'string') return null;
-      return { count: Object.keys(regions).length, syncedAt, lastError: lastRegionSyncError };
+      const out: Record<string, { longName: string; country: string; continent: string }> = {};
+      for (const [code, info] of Object.entries(regions)) {
+        if (!isStringRecord(info)) continue;
+        const longName = info['longName'];
+        if (typeof longName !== 'string' || longName.length === 0) continue;
+        const country = typeof info['country'] === 'string' ? info['country'] : '';
+        const continent = typeof info['continent'] === 'string' ? info['continent'] : '';
+        out[code] = { longName, country, continent };
+      }
+      return { count: Object.keys(out).length, syncedAt, lastError: lastRegionSyncError, regions: out };
     } catch {
       // No file yet, but we may still know why from the most recent attempt.
       if (lastRegionSyncError !== null) {
-        return { count: 0, syncedAt: '', lastError: lastRegionSyncError };
+        return { count: 0, syncedAt: '', lastError: lastRegionSyncError, regions: {} };
       }
       return null;
     }
