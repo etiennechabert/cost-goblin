@@ -4,6 +4,7 @@ import type { DimensionsConfig, TagDimension, ConceptType, NormalizationRule } f
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
+import { ConfirmModal } from '../components/confirm-modal.js';
 
 type DragGroup = 'builtIn' | 'tag';
 interface DragRef { type: DragGroup; idx: number }
@@ -44,6 +45,13 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
   const showTransforms = !TRANSFORM_FREE_FIELDS.has(dim.field);
   const api = useCostApi();
   const [state, setState] = useState(dim.editing);
+  const initialRef = useRef(dim.editing);
+  const [discardConfirm, setDiscardConfirm] = useState(false);
+  const isDirty = JSON.stringify(state) !== JSON.stringify(initialRef.current);
+  function requestCancel(): void {
+    if (isDirty) setDiscardConfirm(true);
+    else onCancel();
+  }
   const containerRef = useRef<HTMLDivElement | null>(null);
   // Parse the textarea once per render — empty lines and trailing whitespace
   // are dropped so a stray Enter doesn't make the regex .replace() a no-op.
@@ -69,11 +77,16 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
       if (containerRef.current === null) return;
       if (!(e.target instanceof Node)) return;
       if (containerRef.current.contains(e.target)) return;
-      onCancel();
+      // Don't dismiss while the discard-confirm modal is open — the modal
+      // lives outside the editor's DOM tree and would otherwise count as
+      // an outside click.
+      if (discardConfirm) return;
+      if (isDirty) setDiscardConfirm(true);
+      else onCancel();
     }
     document.addEventListener('mousedown', onDocClick);
     return () => { document.removeEventListener('mousedown', onDocClick); };
-  }, [onCancel]);
+  }, [onCancel, isDirty, discardConfirm]);
 
   const preview = valuesQuery.status === 'success' ? valuesQuery.data : null;
 
@@ -191,13 +204,24 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
           </button>
           <button
             type="button"
-            onClick={onCancel}
+            onClick={requestCancel}
             className="rounded-md px-4 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors"
           >
             Cancel
           </button>
         </div>
       </div>
+      {discardConfirm && (
+        <ConfirmModal
+          title="Discard unsaved changes?"
+          message="You have edits that haven't been saved. Closing the editor will discard them."
+          confirmLabel="Discard"
+          cancelLabel="Keep editing"
+          destructive
+          onConfirm={() => { setDiscardConfirm(false); onCancel(); }}
+          onCancel={() => { setDiscardConfirm(false); }}
+        />
+      )}
     </div>
   );
 }
@@ -268,22 +292,32 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   orgAccounts: readonly { tags: Readonly<Record<string, string>> }[];
 }>) {
   const [state, setState] = useState(tag);
+  const initialRef = useRef(tag);
+  const [discardConfirm, setDiscardConfirm] = useState(false);
+  const isDirty = JSON.stringify(state) !== JSON.stringify(initialRef.current);
+  function requestCancel(): void {
+    if (isDirty) setDiscardConfirm(true);
+    else onCancel();
+  }
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   // Click outside the editor panel closes it (matches the collapse-on-outside
   // pattern the rest of the app uses for popovers). A native 'click' listener
   // on document fires after onClick handlers, so clicks on Save/Cancel/Remove
-  // inside the panel still work as expected.
+  // inside the panel still work as expected. When the form is dirty we
+  // intercept and route through the discard-confirm modal instead.
   useEffect(() => {
     function onDocClick(e: MouseEvent): void {
       if (containerRef.current === null) return;
       if (!(e.target instanceof Node)) return;
       if (containerRef.current.contains(e.target)) return;
-      onCancel();
+      if (discardConfirm) return;
+      if (isDirty) setDiscardConfirm(true);
+      else onCancel();
     }
     document.addEventListener('mousedown', onDocClick);
     return () => { document.removeEventListener('mousedown', onDocClick); };
-  }, [onCancel]);
+  }, [onCancel, isDirty, discardConfirm]);
 
   const tagOptions = state.tagName.length > 0 && !availableTags.includes(state.tagName)
     ? [state.tagName, ...availableTags]
@@ -569,7 +603,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           <button type="button" onClick={() => { onSave(state); }} className="rounded-md bg-accent px-4 py-1.5 text-xs font-medium text-white hover:bg-accent-hover transition-colors">
             Save
           </button>
-          <button type="button" onClick={onCancel} className="rounded-md px-4 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary transition-colors">
+          <button type="button" onClick={requestCancel} className="rounded-md px-4 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary transition-colors">
             Cancel
           </button>
         </div>
@@ -579,6 +613,17 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           </button>
         )}
       </div>
+      {discardConfirm && (
+        <ConfirmModal
+          title="Discard unsaved changes?"
+          message="You have edits that haven't been saved. Closing the editor will discard them."
+          confirmLabel="Discard"
+          cancelLabel="Keep editing"
+          destructive
+          onConfirm={() => { setDiscardConfirm(false); onCancel(); }}
+          onCancel={() => { setDiscardConfirm(false); }}
+        />
+      )}
     </div>
   );
 }
