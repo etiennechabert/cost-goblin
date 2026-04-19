@@ -827,7 +827,10 @@ export function DimensionsView() {
         ...(aliases !== undefined ? { aliases } : {}),
         ...(edited.useOrgAccounts ? { useOrgAccounts: true as const } : {}),
         ...(nameStripPatterns.length > 0 ? { nameStripPatterns } : {}),
-        ...(edited.useRegionNames ? { useRegionNames: true as const } : {}),
+        // Only the Region dim surfaces a useRegionNames toggle — write it
+        // explicitly (both true AND false) so toggling off sticks past the
+        // mergeDefaultBuiltIns backfill that would otherwise re-enable it.
+        ...(d.name === 'region' ? { useRegionNames: edited.useRegionNames } : {}),
       };
     });
     await api.saveDimensionsConfig({ ...config, builtIn });

@@ -269,6 +269,11 @@ export function registerDimensionsHandlers(app: AppContext): void {
         ...(d.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(d.aliases).map(([k, v]) => [k, [...v]])) }),
         ...(d.useOrgAccounts === true ? { useOrgAccounts: true } : {}),
         ...(d.nameStripPatterns !== undefined && d.nameStripPatterns.length > 0 ? { nameStripPatterns: [...d.nameStripPatterns] } : {}),
+        // Persist useRegionNames whenever the user has set it explicitly
+        // (either value), so toggling off sticks past a reload. Leaving it
+        // unset lets mergeDefaultBuiltIns backfill `true` for the Region dim
+        // on legacy configs — we only want that for first-time migration.
+        ...(d.useRegionNames === undefined ? {} : { useRegionNames: d.useRegionNames }),
         ...(d.enabled === false ? { enabled: false } : {}),
       })),
       tags: config.tags.map(t => ({

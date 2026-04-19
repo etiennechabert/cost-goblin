@@ -61,7 +61,10 @@ function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
       const def = defaultsByName.get(next.name);
       if (def?.description !== undefined) next = { ...next, description: def.description };
     }
-    if (next.field === 'region' && next.useRegionNames === undefined) {
+    // Only the plain Region dim — Country/Continent share field='region' but
+    // their own enrichment branches by name, so useRegionNames would be a
+    // meaningless setting on them (and would pollute the saved YAML).
+    if (next.name === 'region' && next.useRegionNames === undefined) {
       next = { ...next, useRegionNames: true };
     }
     return next;
