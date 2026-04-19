@@ -43,9 +43,16 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
     .map(l => l.trim())
     .filter(l => l.length > 0);
   const stripPatternsKey = stripPatternList.join('\u0001');
+  const normalize: NormalizationRule | undefined = state.normalize.length > 0 ? state.normalize as NormalizationRule : undefined;
   const valuesQuery = useQuery(
-    () => api.discoverColumnValues(dim.field, isAccountDim ? { useOrgAccounts: state.useOrgAccounts, nameStripPatterns: stripPatternList } : undefined),
-    [dim.field, isAccountDim, state.useOrgAccounts, stripPatternsKey],
+    () => api.discoverColumnValues(
+      dim.field,
+      {
+        ...(normalize !== undefined ? { normalize } : {}),
+        ...(isAccountDim ? { useOrgAccounts: state.useOrgAccounts, nameStripPatterns: stripPatternList } : {}),
+      },
+    ),
+    [dim.field, isAccountDim, state.useOrgAccounts, stripPatternsKey, normalize],
   );
 
   useEffect(() => {

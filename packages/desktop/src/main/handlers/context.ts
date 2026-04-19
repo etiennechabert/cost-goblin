@@ -1,6 +1,7 @@
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import {
   asDimensionId,
+  applyNormalizationRule,
   applyStripPatterns,
   loadConfig,
   loadDimensions,
@@ -177,12 +178,19 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const primary = preferOrg ? await fromOrg() : await fromCsv();
     const raw = primary.size > 0 ? primary : (preferOrg ? await fromCsv() : await fromOrg());
 
-    // Apply user-defined regex strip patterns to every resolved name. Done
-    // once here so every downstream caller (queries, preview, sidecars) sees
-    // the cleaned name without re-implementing the rule.
+    // Apply the dim's display-time transforms (normalize then strip) to every
+    // resolved name. Done once here so every downstream caller — queries,
+    // preview, sidecars — sees the cleaned name without re-implementing the
+    // rule. Order matches the preview handler.
     const patterns = accountDim?.nameStripPatterns;
-    const map = patterns !== undefined && patterns.length > 0
-      ? new Map([...raw].map(([id, name]) => [id, applyStripPatterns(name, patterns)]))
+    const normalize = accountDim?.normalize;
+    const map = (normalize !== undefined || (patterns !== undefined && patterns.length > 0))
+      ? new Map([...raw].map(([id, name]) => {
+          let v = name;
+          if (normalize !== undefined) v = applyNormalizationRule(v, normalize);
+          if (patterns !== undefined && patterns.length > 0) v = applyStripPatterns(v, patterns);
+          return [id, v];
+        }))
       : raw;
 
     if (map.size > 0) {

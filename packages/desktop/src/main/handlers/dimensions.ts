@@ -1,8 +1,8 @@
 import { ipcMain } from 'electron';
 import { join } from 'node:path';
 import { readdir } from 'node:fs/promises';
-import { applyStripPatterns, getRawDirPrefix, isStringRecord, logger } from '@costgoblin/core';
-import type { DimensionsConfig, TagDimension } from '@costgoblin/core';
+import { applyNormalizationRule, applyStripPatterns, getRawDirPrefix, isStringRecord, logger } from '@costgoblin/core';
+import type { DimensionsConfig, NormalizationRule, TagDimension } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import { toNum, toStr } from './query-utils.js';
 import { removeAllSidecars } from '../optimize.js';
@@ -145,7 +145,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
   // Distinct values + cost for a built-in column — powers the preview on the
   // built-in editor ("Service has 120 distinct values, top 20 by cost are...").
   // Scans the most recent daily period so the preview loads fast.
-  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean; nameStripPatterns?: readonly string[] }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> => {
+  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> => {
     // Whitelist columns we know are safe to embed in SQL. These match the
     // aliases emitted by buildSource so the query plans identically to what
     // the rest of the app does.
@@ -200,11 +200,21 @@ export function registerDimensionsHandlers(app: AppContext): void {
         values = values.map(v => ({ value: orgMap.get(v.value) ?? v.value, cost: v.cost }));
       }
     }
-    // Strip patterns apply to whatever name we ended up with — useful even if
-    // the user wants to scrub raw IDs (rare) but mostly meaningful when paired
-    // with the org-data toggle above.
-    if (field === 'account_id' && opts?.nameStripPatterns !== undefined && opts.nameStripPatterns.length > 0) {
-      values = values.map(v => ({ value: applyStripPatterns(v.value, opts.nameStripPatterns), cost: v.cost }));
+    // Apply the same display-time transforms the live queries use. Order
+    // matches getAccountMap (and the table renderer): normalize → strip. After
+    // either runs, we re-aggregate by the resulting key so two raw values that
+    // collapse to the same display value don't show up as duplicate chips.
+    const stripPatterns = field === 'account_id' ? opts?.nameStripPatterns : undefined;
+    const normalize = opts?.normalize;
+    if (normalize !== undefined || (stripPatterns !== undefined && stripPatterns.length > 0)) {
+      const merged = new Map<string, number>();
+      for (const v of values) {
+        let key = v.value;
+        if (normalize !== undefined) key = applyNormalizationRule(key, normalize);
+        if (stripPatterns !== undefined && stripPatterns.length > 0) key = applyStripPatterns(key, stripPatterns);
+        merged.set(key, (merged.get(key) ?? 0) + v.cost);
+      }
+      values = [...merged.entries()].map(([value, cost]) => ({ value, cost })).sort((a, b) => b.cost - a.cost);
     }
 
     return { values, distinctCount, period: latest.replace(/^daily-/, '') };

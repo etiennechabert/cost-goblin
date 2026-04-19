@@ -1,4 +1,4 @@
-import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, OrgNode, TagDimension } from './config.js';
+import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, NormalizationRule, OrgNode, TagDimension } from './config.js';
 import type {
   CostQueryParams,
   CostResult,
@@ -132,7 +132,7 @@ export interface CostApi {
   setOptimizeEnabled(enabled: boolean): Promise<void>;
   clearSidecars(): Promise<{ removed: number; requeued: number }>;
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>;
-  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; nameStripPatterns?: readonly string[] }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }>;
+  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }>;
   getDimensionsConfig(): Promise<DimensionsConfig>;
   saveDimensionsConfig(config: DimensionsConfig): Promise<void>;
   getAutoSyncEnabled(): Promise<boolean>;
