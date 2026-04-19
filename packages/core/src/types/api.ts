@@ -18,6 +18,31 @@ export interface SavingsPreferences {
   readonly hiddenActionTypes: readonly string[];
 }
 
+/** Stages a file moves through as it's optimized (sort → sidecars). */
+export type FileActivityStage =
+  | 'downloaded'
+  | 'sorting'
+  | 'sorted'
+  | 'building-sidecar'
+  | 'complete'
+  | 'failed';
+
+/** Single entry in the rolling file-activity feed shown under the Sync view. */
+export interface FileActivityEvent {
+  readonly timestamp: string;
+  readonly rawPath: string;
+  readonly relName: string;
+  readonly stage: FileActivityStage;
+  readonly tagKey?: string | undefined;
+  readonly durationMs?: number | undefined;
+  readonly error?: string | undefined;
+}
+
+export interface OptimizeStatus {
+  readonly queued: number;
+  readonly running: boolean;
+}
+
 export interface UIPreferences {
   readonly theme: 'dark' | 'light';
 }
@@ -101,6 +126,11 @@ export interface CostApi {
   saveSavingsPreferences(prefs: SavingsPreferences): Promise<void>;
   getUIPreferences(): Promise<UIPreferences>;
   saveUIPreferences(prefs: UIPreferences): Promise<void>;
+  getFileActivity(sinceIso?: string): Promise<FileActivityEvent[]>;
+  getOptimizeStatus(): Promise<OptimizeStatus>;
+  getOptimizeEnabled(): Promise<boolean>;
+  setOptimizeEnabled(enabled: boolean): Promise<void>;
+  clearSidecars(): Promise<{ removed: number; requeued: number }>;
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>;
   getDimensionsConfig(): Promise<DimensionsConfig>;
   saveDimensionsConfig(config: DimensionsConfig): Promise<void>;

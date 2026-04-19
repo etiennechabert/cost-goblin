@@ -67,7 +67,7 @@ export function MissingTags() {
   const api = useCostApi();
   const dimensionsQuery = useQuery(() => api.getDimensions(), []);
 
-  const [minCost, setMinCost] = useState(50);
+  const [minCost, setMinCost] = useState(0);
   const [selectedTag, setSelectedTag] = useState<DimensionId | null>(null);
   const [showLikelyUntaggable, setShowLikelyUntaggable] = useState(false);
   const [nonResourceExpanded, setNonResourceExpanded] = useState(false);
