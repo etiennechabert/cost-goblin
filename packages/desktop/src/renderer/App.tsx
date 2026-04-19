@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { CostOverview, CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostApiProvider, SetupWizard, ErrorBoundary, SyncActivityIndicator } from '@costgoblin/ui';
-import type { CostApi } from '@costgoblin/core/browser';
+import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostApiProvider, SetupWizard, ErrorBoundary, SyncActivityIndicator, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor } from '@costgoblin/ui';
+import type { CostApi, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
 
 function getApi(): CostApi {
   return globalThis.costgoblin;
@@ -8,16 +8,16 @@ function getApi(): CostApi {
 
 type View =
   | { page: 'setup' }
-  | { page: 'overview' }
+  | { page: 'custom'; viewId: string }
   | { page: 'trends' }
   | { page: 'missing-tags' }
   | { page: 'savings' }
   | { page: 'dimensions' }
+  | { page: 'views-editor' }
   | { page: 'sync' }
   | { page: 'entity-detail'; entity: string; dimension: string };
 
-const LEFT_NAV: { id: string; label: string }[] = [
-  { id: 'overview', label: 'Overview' },
+const STATIC_LEFT_NAV: { id: string; label: string }[] = [
   { id: 'trends', label: 'Trends' },
   { id: 'missing-tags', label: 'Missing Tags' },
   { id: 'savings', label: 'Savings' },
@@ -25,6 +25,7 @@ const LEFT_NAV: { id: string; label: string }[] = [
 
 const RIGHT_NAV: { id: string; label: string }[] = [
   { id: 'dimensions', label: 'Dimensions' },
+  { id: 'views-editor', label: 'Views' },
   { id: 'sync', label: 'Sync' },
 ];
 
@@ -57,12 +58,15 @@ type SetupCheck =
   | { status: 'needs-setup' }
   | { status: 'ready' };
 
+const FALLBACK_VIEWS: ViewsConfig = { views: [OVERVIEW_SEED_VIEW] };
+
 export function App(): React.JSX.Element {
   const api = getApi();
-  const [view, setView] = useState<View>({ page: 'overview' });
+  const [view, setView] = useState<View>({ page: 'custom', viewId: 'overview' });
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [isDark, setIsDark] = useState(true);
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
+  const [viewsConfig, setViewsConfig] = useState(FALLBACK_VIEWS);
 
   useEffect(() => {
     void api.getSetupStatus().then(({ configured }) => {
@@ -75,6 +79,20 @@ export function App(): React.JSX.Element {
       setIsDark(prefs.theme === 'dark');
     });
   }, [api]);
+
+  useEffect(() => {
+    if (setupCheck.status !== 'ready') return;
+    // Read views.yaml. The handler seeds it lazily on first access so this
+    // call also bootstraps the file for new installations.
+    api.getViewsConfig()
+      .then((cfg) => {
+        if (cfg.views.length > 0) setViewsConfig(cfg);
+      })
+      .catch(() => {
+        // Keep fallback — ensures Cost Overview always renders even if YAML
+        // parsing fails (corrupted file, schema migration in progress).
+      });
+  }, [api, setupCheck]);
 
   useEffect(() => {
     if (isDark) {
@@ -105,12 +123,16 @@ export function App(): React.JSX.Element {
 
   function handleNavClick(id: string) {
     switch (id) {
-      case 'overview': setView({ page: 'overview' }); break;
       case 'trends': setView({ page: 'trends' }); break;
       case 'missing-tags': setView({ page: 'missing-tags' }); break;
       case 'savings': setView({ page: 'savings' }); break;
       case 'dimensions': setView({ page: 'dimensions' }); break;
+      case 'views-editor': setView({ page: 'views-editor' }); break;
       case 'sync': setView({ page: 'sync' }); break;
+      default:
+        // Anything else is a custom view id (every nav left-nav entry that
+        // isn't one of the well-known static pages above).
+        setView({ page: 'custom', viewId: id });
     }
   }
 
@@ -119,7 +141,7 @@ export function App(): React.JSX.Element {
   }
 
   function handleBack() {
-    setView({ page: 'overview' });
+    setView({ page: 'custom', viewId: 'overview' });
   }
 
   function handleSetupComplete() {
@@ -143,6 +165,27 @@ export function App(): React.JSX.Element {
     );
   }
 
+  // User-defined views populate the left nav before the static analytical
+  // views (Trends / Missing Tags / Savings).
+  const customNav: { id: string; label: string }[] = viewsConfig.views.map(v => ({ id: v.id, label: v.name }));
+  const leftNav = [...customNav, ...STATIC_LEFT_NAV];
+
+  function activeNavId(): string | null {
+    if (view.page === 'custom') return view.viewId;
+    if (view.page === 'trends') return 'trends';
+    if (view.page === 'missing-tags') return 'missing-tags';
+    if (view.page === 'savings') return 'savings';
+    if (view.page === 'dimensions') return 'dimensions';
+    if (view.page === 'views-editor') return 'views-editor';
+    if (view.page === 'sync') return 'sync';
+    return null;
+  }
+  const active = activeNavId();
+
+  function findViewSpec(id: string): ViewSpec | null {
+    return viewsConfig.views.find(v => v.id === id) ?? null;
+  }
+
   return (
     <ErrorBoundary>
     <CostApiProvider value={api}>
@@ -155,14 +198,14 @@ export function App(): React.JSX.Element {
           </div>
           <nav className="flex items-center justify-between px-4 pb-2">
             <div className="flex items-center gap-1">
-              {LEFT_NAV.map((item) => (
+              {leftNav.map((item) => (
                 <button
                   key={item.id}
                   type="button"
                   onClick={() => { handleNavClick(item.id); }}
                   className={[
                     'px-3 py-1.5 text-sm font-medium rounded-md transition-colors [-webkit-app-region:no-drag]',
-                    view.page === item.id
+                    active === item.id
                       ? 'bg-bg-tertiary text-text-primary'
                       : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
                   ].join(' ')}
@@ -187,7 +230,7 @@ export function App(): React.JSX.Element {
                   onClick={() => { handleNavClick(item.id); }}
                   className={[
                     'relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-2',
-                    view.page === item.id
+                    active === item.id
                       ? 'bg-bg-tertiary text-text-primary'
                       : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
                   ].join(' ')}
@@ -206,11 +249,15 @@ export function App(): React.JSX.Element {
         </div>
 
         {/* View content */}
-        {view.page === 'overview' && <CostOverview />}
+        {view.page === 'custom' && (() => {
+          const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
+          return <CustomView spec={spec} headerSubtitle="Cloud spending visibility" onEntityClick={handleEntityClick} />;
+        })()}
         {view.page === 'trends' && <CostTrends onEntityClick={handleEntityClick} />}
         {view.page === 'missing-tags' && <MissingTags />}
         {view.page === 'savings' && <Savings />}
         {view.page === 'dimensions' && <DimensionsView />}
+        {view.page === 'views-editor' && <ViewsEditor />}
         <div className={view.page === 'sync' ? '' : 'hidden'}>
           <DataManagement />
         </div>

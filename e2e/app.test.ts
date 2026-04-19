@@ -101,7 +101,7 @@ test.describe('App shell', () => {
   });
 
   test('shows all navigation buttons', async () => {
-    for (const label of ['Overview', 'Trends', 'Missing Tags', 'Savings', 'Dimensions', 'Sync']) {
+    for (const label of ['Cost Overview', 'Trends', 'Missing Tags', 'Savings', 'Dimensions', 'Views', 'Sync']) {
       await expect(page.getByRole('button', { name: label })).toBeVisible();
     }
   });
@@ -127,7 +127,7 @@ test.describe('App shell', () => {
 
   test('navigating between all views changes active content', async () => {
     const views = [
-      { button: 'Overview', heading: 'Cost Overview' },
+      { button: 'Cost Overview', heading: 'Cost Overview' },
       { button: 'Trends', heading: 'Cost Trends' },
       { button: 'Missing Tags', heading: 'Missing Tags' },
       { button: 'Savings', heading: 'Savings Opportunities' },
@@ -143,7 +143,7 @@ test.describe('App shell', () => {
     }
 
     // go back to overview for subsequent tests
-    await page.getByRole('button', { name: 'Overview' }).click();
+    await page.getByRole('button', { name: 'Cost Overview' }).click();
     await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
   });
 });
@@ -1127,6 +1127,46 @@ test.describe('Dimensions', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Views editor — user-built dashboards
+// ---------------------------------------------------------------------------
+test.describe('Views editor', () => {
+  let app: ElectronApplication;
+  let page: Page;
+
+  test.beforeAll(async () => {
+    app = await launchApp();
+    page = await app.firstWindow();
+    await expect(page).toHaveTitle('CostGoblin');
+    await page.getByRole('button', { name: 'Views' }).click();
+    await expect(page.getByRole('heading', { name: 'Views', exact: true })).toBeVisible();
+    await waitForQuerySettle(page);
+  });
+
+  test.afterAll(async () => { await app.close(); });
+
+  test('shows the heading and seed view in the left pane', async () => {
+    await expect(page.getByText('Compose dashboards from the widget library')).toBeVisible();
+    // seed view name appears in the left pane
+    await expect(page.getByText('Cost Overview').first()).toBeVisible();
+  });
+
+  test('save button is disabled when nothing has changed', async () => {
+    const saveBtn = page.getByRole('button', { name: /Saved|Save changes/ });
+    await expect(saveBtn).toBeVisible();
+  });
+
+  test('clicking + New view creates a draft view', async () => {
+    await page.getByRole('button', { name: '+ New view' }).click();
+    await expect(page.getByText('New view').first()).toBeVisible();
+    await screenshot(page, 'views-editor-new');
+  });
+
+  test('Reset to defaults button is present', async () => {
+    await expect(page.getByRole('button', { name: 'Reset to defaults' })).toBeVisible();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Cross-view navigation — full user journey
 // ---------------------------------------------------------------------------
 test.describe('Full user journey', () => {
@@ -1171,14 +1211,14 @@ test.describe('Full user journey', () => {
     await expect(page.getByRole('heading', { name: 'Data Management' })).toBeVisible();
 
     // 7. Back to Overview
-    await page.getByRole('button', { name: 'Overview' }).click();
+    await page.getByRole('button', { name: 'Cost Overview' }).click();
     await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
 
     await screenshot(page, 'journey-complete');
   });
 
   test('rapid navigation between views does not crash', async () => {
-    const views = ['Trends', 'Overview', 'Missing Tags', 'Savings', 'Dimensions', 'Sync', 'Overview', 'Trends', 'Missing Tags'];
+    const views = ['Trends', 'Cost Overview', 'Missing Tags', 'Savings', 'Dimensions', 'Sync', 'Cost Overview', 'Trends', 'Missing Tags'];
     for (const view of views) {
       await page.getByRole('button', { name: view }).click();
     }

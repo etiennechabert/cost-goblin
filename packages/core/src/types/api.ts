@@ -1,4 +1,5 @@
 import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, NormalizationRule, OrgNode, TagDimension } from './config.js';
+import type { ViewsConfig } from './views.js';
 import type {
   CostQueryParams,
   CostResult,
@@ -135,6 +136,11 @@ export interface CostApi {
   discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }>;
   getDimensionsConfig(): Promise<DimensionsConfig>;
   saveDimensionsConfig(config: DimensionsConfig): Promise<void>;
+  /** User-defined dashboard views. Read-modify-write through `saveViewsConfig`.
+   *  `resetViewsConfig` overwrites the file with the seed (Cost Overview) view. */
+  getViewsConfig(): Promise<ViewsConfig>;
+  saveViewsConfig(config: ViewsConfig): Promise<void>;
+  resetViewsConfig(): Promise<ViewsConfig>;
   getAutoSyncEnabled(): Promise<boolean>;
   setAutoSyncEnabled(enabled: boolean): Promise<void>;
   getAutoSyncStatus(): Promise<AutoSyncStatus>;
