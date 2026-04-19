@@ -59,6 +59,17 @@ export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
     ],
   },
   {
+    id: 'builtin:bundled-discount',
+    name: 'Bundled discount',
+    description:
+      'Negative discount line items applied automatically by AWS bundle pricing rules (e.g. support-tier bundle credits). Like EDP, standalone — not paired with a specific usage row. Toggle on to see pre-bundle cost.',
+    enabled: false,
+    builtIn: true,
+    conditions: [
+      { dimensionId: asDimensionId('line_item_type'), values: ['BundledDiscount'] },
+    ],
+  },
+  {
     id: 'builtin:commitment-covered-usage',
     name: 'RI & SP covered usage',
     description:
