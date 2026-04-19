@@ -43,6 +43,8 @@ export interface BuiltInDimension {
   readonly label: string;
   readonly field: string;
   readonly displayField?: string | undefined;
+  /** Hidden from selectors/filter bar when false. Default true. */
+  readonly enabled?: boolean | undefined;
 }
 
 export interface TagDimension {
@@ -54,6 +56,8 @@ export interface TagDimension {
   readonly aliases?: Readonly<Record<string, readonly string[]>> | undefined;
   readonly accountTagFallback?: string | undefined;
   readonly missingValueTemplate?: string | undefined;
+  /** Hidden from selectors/filter bar when false. Default true. */
+  readonly enabled?: boolean | undefined;
 }
 
 export interface DimensionsConfig {
