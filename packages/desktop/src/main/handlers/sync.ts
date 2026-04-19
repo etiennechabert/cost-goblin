@@ -56,6 +56,41 @@ export function registerSyncHandlers(app: AppContext): void {
     if (enabled) optimizeQueue.kick();
   });
 
+  ipcMain.handle('optimize:clear-sidecars', async (): Promise<{ removed: number; requeued: number }> => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const columnsRoot = path.join(ctx.dataDir, 'aws', 'columns');
+    let removed = 0;
+    try {
+      const periods = await fs.readdir(columnsRoot);
+      for (const periodDir of periods) {
+        await fs.rm(path.join(columnsRoot, periodDir), { recursive: true, force: true });
+        removed += 1;
+      }
+    } catch { /* columns dir doesn't exist yet */ }
+
+    // Re-enqueue every raw daily + hourly file so the optimizer rebuilds
+    // sidecars. Sort markers stay — we only nuked derived tag data.
+    const rawRoot = path.join(ctx.dataDir, 'aws', 'raw');
+    let requeued = 0;
+    try {
+      const entries = await fs.readdir(rawRoot);
+      for (const entry of entries) {
+        if (!entry.startsWith('daily-') && !entry.startsWith('hourly-')) continue;
+        const full = path.join(rawRoot, entry);
+        const files = await fs.readdir(full);
+        for (const f of files) {
+          if (f.endsWith('.parquet')) {
+            optimizeQueue.enqueue(path.join(full, f));
+            requeued += 1;
+          }
+        }
+      }
+    } catch { /* raw dir doesn't exist yet */ }
+    logger.info(`optimize:clear-sidecars — removed ${String(removed)} period dirs, re-enqueued ${String(requeued)} files`);
+    return { removed, requeued };
+  });
+
   ipcMain.handle('sync:status', (_event, syncId: string = 'default'): SyncStatus => {
     return state.syncStatuses[syncId] ?? { status: 'idle', lastSync: null };
   });

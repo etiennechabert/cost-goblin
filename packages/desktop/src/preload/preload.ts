@@ -130,6 +130,9 @@ const api: CostApi = {
   setOptimizeEnabled(enabled: boolean): Promise<void> {
     return invoke<undefined>('optimize:set-enabled', enabled).then(() => undefined);
   },
+  clearSidecars(): Promise<{ removed: number; requeued: number }> {
+    return invoke<{ removed: number; requeued: number }>('optimize:clear-sidecars');
+  },
   syncOrgAccounts(profile: string): Promise<OrgSyncResult> {
     return invoke<OrgSyncResult>('org:sync-accounts', profile);
   },

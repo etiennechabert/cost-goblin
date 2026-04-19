@@ -130,6 +130,7 @@ export interface CostApi {
   getOptimizeStatus(): Promise<OptimizeStatus>;
   getOptimizeEnabled(): Promise<boolean>;
   setOptimizeEnabled(enabled: boolean): Promise<void>;
+  clearSidecars(): Promise<{ removed: number; requeued: number }>;
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>;
   getDimensionsConfig(): Promise<DimensionsConfig>;
   saveDimensionsConfig(config: DimensionsConfig): Promise<void>;

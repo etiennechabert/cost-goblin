@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { FileActivityEvent, FileActivityStage, OptimizeStatus } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { ConfirmModal } from '../components/confirm-modal.js';
 
 type FilterMode = 'active' | 'all' | 'failed';
 
@@ -65,6 +66,8 @@ export function RecentFileActivity() {
   const [enabledLoaded, setEnabledLoaded] = useState(false);
   const [filter, setFilter] = useState<FilterMode>('active');
   const [now, setNow] = useState(Date.now());
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   useEffect(() => {
     void api.getOptimizeEnabled().then(v => { setEnabled(v); setEnabledLoaded(true); });
@@ -96,6 +99,12 @@ export function RecentFileActivity() {
     void api.setOptimizeEnabled(next);
   }
 
+  function handleClearSidecars(): void {
+    setClearing(true);
+    setConfirmClear(false);
+    void api.clearSidecars().finally(() => { setClearing(false); });
+  }
+
   const latest = latestPerFile(events);
   const filtered = latest.filter(e => {
     if (filter === 'failed') return e.stage === 'failed';
@@ -123,6 +132,15 @@ export function RecentFileActivity() {
           <p className="text-xs text-text-muted mt-1">{stateLine}</p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => { setConfirmClear(true); }}
+            disabled={clearing || status.running}
+            title={status.running ? 'Pause the optimizer first.' : 'Delete generated sidecars and rebuild them from scratch.'}
+            className="rounded-md border border-border bg-bg-tertiary/30 px-2.5 py-1 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/60 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {clearing ? 'Clearing…' : 'Clear sidecars'}
+          </button>
           <label className="flex items-center gap-2 cursor-pointer select-none">
             <span className="text-xs text-text-secondary">{enabled ? 'Enabled' : 'Paused'}</span>
             <button
@@ -195,6 +213,16 @@ export function RecentFileActivity() {
             </div>
           ))}
         </div>
+      )}
+
+      {confirmClear && (
+        <ConfirmModal
+          title="Clear sidecars"
+          message="Delete every generated sidecar Parquet and rebuild from the raw files. Raw data and sort markers are kept — this only wipes the pre-computed tag columns. Takes a few seconds per file."
+          confirmLabel="Clear and rebuild"
+          onConfirm={handleClearSidecars}
+          onCancel={() => { setConfirmClear(false); }}
+        />
       )}
     </div>
   );
