@@ -33,6 +33,9 @@ export function DataManagement() {
   }
   const [showDeleteAll, setShowDeleteAll] = useState(false);
   const [configureSource, setConfigureSource] = useState<'daily' | 'hourly' | 'costOptimization' | null>(null);
+  // Independent flag for the full re-run-from-scratch wizard so we don't have
+  // to overload configureSource with a sentinel value.
+  const [showFullWizard, setShowFullWizard] = useState(false);
   const [optimizerBusy, setOptimizerBusy] = useState(false);
 
   useEffect(() => {
@@ -364,6 +367,14 @@ export function DataManagement() {
           </div>
           <button
             type="button"
+            onClick={() => { setShowFullWizard(true); }}
+            className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors"
+            title="Re-run the setup wizard — useful for switching AWS profile or reconfiguring buckets"
+          >
+            Re-run Setup
+          </button>
+          <button
+            type="button"
             onClick={() => { setShowDeleteAll(true); }}
             disabled={optimizerBusy}
             title={deleteDisabledTitle}
@@ -493,6 +504,19 @@ export function DataManagement() {
               source={configureSource}
               profile={awsProfile}
               onComplete={() => { setConfigureSource(null); setConfigRefreshKey(k => k + 1); setDailyRefreshKey(k => k + 1); setHourlyRefreshKey(k => k + 1); setCostOptRefreshKey(k => k + 1); }}
+            />
+          </div>
+        </div>
+      )}
+
+      {showFullWizard && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) setShowFullWizard(false); }} aria-hidden="true">
+          <div className="relative">
+            <button type="button" onClick={() => { setShowFullWizard(false); }} className="absolute -top-2 -right-2 z-10 rounded-full bg-bg-tertiary border border-border w-7 h-7 flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-bg-secondary transition-colors" title="Close">
+              &#10005;
+            </button>
+            <SetupWizard
+              onComplete={() => { setShowFullWizard(false); setConfigRefreshKey(k => k + 1); setDailyRefreshKey(k => k + 1); setHourlyRefreshKey(k => k + 1); setCostOptRefreshKey(k => k + 1); }}
             />
           </div>
         </div>
