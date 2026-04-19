@@ -62,6 +62,31 @@ export interface CostScopeDailyRow {
   readonly excludedCost: number;
 }
 
+/** A single billing line item from the preview window, surfaced in the raw
+ *  inspection table. `excluded` indicates whether the current exclusion
+ *  rules would drop this row. `cost` reflects the chosen cost metric.
+ *  `tags` carries the row's value for every configured tag dimension so the
+ *  UI can render an arbitrary number of tag columns without adding new
+ *  fields. */
+export interface CostScopeSampleRow {
+  readonly date: string;
+  readonly accountId: string;
+  readonly accountName: string;
+  readonly region: string;
+  readonly service: string;
+  readonly serviceFamily: string;
+  readonly lineItemType: string;
+  readonly operation: string;
+  readonly usageType: string;
+  readonly description: string;
+  readonly resourceId: string;
+  readonly usageAmount: number;
+  readonly cost: number;
+  readonly listCost: number;
+  readonly excluded: boolean;
+  readonly tags: Readonly<Record<string, string>>;
+}
+
 export interface CostScopePreviewResult {
   readonly windowDays: number;
   readonly startDate: string;
@@ -76,4 +101,14 @@ export interface CostScopePreviewResult {
   /** Daily breakdown for the window — one entry per day. Empty when no
    *  months in range are on disk yet. */
   readonly dailyTotals: readonly CostScopeDailyRow[];
+  /** Top-|cost| line items in the window, sorted by absolute cost desc so
+   *  the largest credits/refunds and the largest charges sit at the top.
+   *  Capped so the IPC payload stays bounded. */
+  readonly sampleRows: readonly CostScopeSampleRow[];
+  /** Total underlying line-item count in the window (before the sample cap).
+   *  Lets the UI say "showing 500 of 128,902 rows" honestly. */
+  readonly sampleTotalRowCount: number;
+  /** Names of configured tag dimensions in the order the UI should render
+   *  them as columns. Extracted from dimensions config at query time. */
+  readonly tagColumns: readonly { readonly id: string; readonly label: string }[];
 }

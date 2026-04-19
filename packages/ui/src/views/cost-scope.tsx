@@ -4,6 +4,7 @@ import type {
   CostScopeConfig,
   CostScopeDailyRow,
   CostScopePreviewResult,
+  CostScopeSampleRow,
   ExclusionCondition,
   ExclusionRule,
   Dimension,
@@ -283,6 +284,126 @@ function PreviewHistogram({ days, height = 120 }: PreviewHistogramProps) {
       })}
     </div>
   );
+}
+
+interface SampleRowsTableProps {
+  readonly rows: readonly CostScopeSampleRow[];
+  readonly tagColumns: readonly { readonly id: string; readonly label: string }[];
+  readonly totalRowCount: number;
+  readonly hasEnabledRules: boolean;
+}
+
+/** Signed-dollar formatter — keeps the sign so credits/refunds read as
+ *  clearly negative rather than showing as absolute dollars. */
+function formatSignedDollars(n: number): string {
+  if (n < 0) return `-${formatDollars(-n)}`;
+  return formatDollars(n);
+}
+
+/** Dense inspection table: raw line items in the preview window, sorted
+ *  by absolute cost so the largest charges and the largest credits/refunds
+ *  sit at the top. Horizontal scroll + sticky header + vertical scroll;
+ *  rendered as a plain table rather than TanStack because sort/pagination
+ *  are server-side and there's no interaction beyond "look". */
+function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules }: SampleRowsTableProps): React.JSX.Element {
+  if (rows.length === 0) {
+    return (
+      <div className="text-xs text-text-muted py-4 text-center">
+        No line items in the window — sync data to populate.
+      </div>
+    );
+  }
+  const showing = rows.length;
+  const capped = totalRowCount > showing;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between text-xs text-text-muted">
+        <span>
+          Top <span className="text-text-secondary tabular-nums">{showing.toLocaleString()}</span>
+          {capped && (
+            <> of <span className="text-text-secondary tabular-nums">{totalRowCount.toLocaleString()}</span></>
+          )}
+          {' '}rows, sorted by |cost| desc.
+        </span>
+        <span>
+          {hasEnabledRules && (
+            <>
+              <span className="inline-block w-2 h-2 rounded-sm bg-negative/40 mr-1 align-middle" />
+              highlighted rows are excluded
+            </>
+          )}
+        </span>
+      </div>
+      <div className="border border-border rounded-md overflow-auto max-h-[480px]">
+        <table className="text-[11px] w-full border-collapse">
+          <thead className="sticky top-0 z-10 bg-bg-tertiary/95 backdrop-blur-sm">
+            <tr className="text-left text-text-secondary">
+              <Th>Date</Th>
+              <Th>Account</Th>
+              <Th>Region</Th>
+              <Th>Service</Th>
+              <Th>Family</Th>
+              <Th>Line type</Th>
+              <Th>Operation</Th>
+              <Th>Usage type</Th>
+              <Th>Resource</Th>
+              <Th align="right">Usage</Th>
+              <Th align="right">Cost</Th>
+              <Th align="right">List</Th>
+              {tagColumns.map(t => <Th key={t.id}>{t.label}</Th>)}
+              <Th>Description</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr
+                key={`${String(i)}-${r.resourceId}`}
+                className={`border-t border-border/40 ${r.excluded ? 'bg-negative/5 text-text-muted' : 'hover:bg-bg-tertiary/30'}`}
+              >
+                <Td mono>{r.date}</Td>
+                <Td title={r.accountId}>{r.accountName.length > 0 ? r.accountName : r.accountId}</Td>
+                <Td mono>{r.region}</Td>
+                <Td>{r.service}</Td>
+                <Td>{r.serviceFamily}</Td>
+                <Td>{r.lineItemType}</Td>
+                <Td>{r.operation}</Td>
+                <Td mono>{r.usageType}</Td>
+                <Td mono truncate title={r.resourceId}>{r.resourceId}</Td>
+                <Td align="right" mono>{r.usageAmount === 0 ? '' : r.usageAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}</Td>
+                <Td align="right" mono className={r.cost < 0 ? 'text-warning' : ''}>{formatSignedDollars(r.cost)}</Td>
+                <Td align="right" mono>{formatSignedDollars(r.listCost)}</Td>
+                {tagColumns.map(t => <Td key={t.id}>{r.tags[t.id] ?? ''}</Td>)}
+                <Td truncate title={r.description}>{r.description}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function Th({ children, align = 'left' }: { children: React.ReactNode; align?: 'left' | 'right' }): React.JSX.Element {
+  return <th className={`px-2 py-1.5 font-medium whitespace-nowrap ${align === 'right' ? 'text-right' : ''}`}>{children}</th>;
+}
+
+function Td({ children, align = 'left', mono, truncate, className, title }: {
+  children: React.ReactNode;
+  align?: 'left' | 'right';
+  mono?: boolean;
+  truncate?: boolean;
+  className?: string;
+  title?: string;
+}): React.JSX.Element {
+  const classes = [
+    'px-2 py-1 whitespace-nowrap',
+    align === 'right' ? 'text-right' : '',
+    mono === true ? 'tabular-nums font-mono' : '',
+    truncate === true ? 'max-w-[260px] overflow-hidden text-ellipsis' : '',
+    className ?? '',
+  ].filter(c => c.length > 0).join(' ');
+  return <td className={classes} title={title}>{children}</td>;
 }
 
 /** A draft is saveable iff every enabled rule has at least one condition and
@@ -598,6 +719,19 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules 
               <span>{result.endDate}</span>
             </div>
           )}
+        </div>
+
+        {/* Raw line items */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-text-secondary">Line items</span>
+          </div>
+          <SampleRowsTable
+            rows={result?.sampleRows ?? []}
+            tagColumns={result?.tagColumns ?? []}
+            totalRowCount={result?.sampleTotalRowCount ?? 0}
+            hasEnabledRules={hasEnabledRules}
+          />
         </div>
       </CardContent>
     </Card>

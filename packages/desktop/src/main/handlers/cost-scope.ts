@@ -15,8 +15,11 @@ import type {
   CostScopeDailyRow,
   CostScopePreviewResult,
   CostScopePreviewRow,
+  CostScopeSampleRow,
   DimensionsConfig,
 } from '@costgoblin/core';
+
+const SAMPLE_ROW_LIMIT = 500;
 import { listLocalMonths } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import { toNum } from './query-utils.js';
@@ -89,6 +92,9 @@ export function registerCostScopeHandlers(app: AppContext): void {
       unscopedTotalCost: 0,
       scopedTotalCost: 0,
       dailyTotals: [],
+      sampleRows: [],
+      sampleTotalRowCount: 0,
+      tagColumns: [],
     };
 
     const available = await listLocalMonths(ctx.dataDir, 'daily');
@@ -214,6 +220,84 @@ export function registerCostScopeHandlers(app: AppContext): void {
       // were computed in their own try-blocks so they stand on their own.
     }
 
+    // Top-|cost| raw line items for the inspection table. One column per
+    // configured tag dim so the UI can render arbitrary tag columns without
+    // bespoke per-tag wiring. Cap at SAMPLE_ROW_LIMIT — the payload is
+    // transient, but the IPC boundary should stay bounded.
+    const tagColumns = dimensions.tags.map(t => ({
+      id: `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`,
+      label: t.label,
+    }));
+    const tagSelectSql = tagColumns.length > 0
+      ? tagColumns.map(t => `COALESCE(${t.id}, '') AS ${t.id}`).join(',\n          ')
+      : null;
+
+    let sampleRows: readonly CostScopeSampleRow[] = [];
+    let sampleTotalRowCount = 0;
+    try {
+      const countRows = await runQuery(`
+        SELECT CAST(COUNT(*) AS DOUBLE) AS n
+        FROM ${source}
+        WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+      `.trim());
+      sampleTotalRowCount = toNum(countRows[0]?.['n']);
+
+      const sampleSql = `
+        SELECT
+          usage_date::VARCHAR AS usage_date,
+          account_id,
+          account_name,
+          region,
+          service,
+          service_family,
+          line_item_type,
+          operation,
+          usage_type,
+          description,
+          resource_id,
+          CAST(COALESCE(usage_amount, 0) AS DOUBLE) AS usage_amount,
+          CAST(COALESCE(cost, 0) AS DOUBLE) AS cost,
+          CAST(COALESCE(list_cost, 0) AS DOUBLE) AS list_cost,
+          CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END AS excluded${tagSelectSql === null ? '' : `,\n          ${tagSelectSql}`}
+        FROM ${source}
+        WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+        ORDER BY ABS(cost) DESC
+        LIMIT ${String(SAMPLE_ROW_LIMIT)}
+      `.trim();
+      const rows = await runQuery(sampleSql);
+      sampleRows = rows.map(r => {
+        const tags: Record<string, string> = {};
+        for (const t of tagColumns) {
+          const v = r[t.id];
+          tags[t.id] = typeof v === 'string' ? v : '';
+        }
+        const rawDate = r['usage_date'];
+        const date = typeof rawDate === 'string'
+          ? rawDate
+          : rawDate instanceof Date ? rawDate.toISOString().slice(0, 10) : '';
+        return {
+          date,
+          accountId: typeof r['account_id'] === 'string' ? r['account_id'] : '',
+          accountName: typeof r['account_name'] === 'string' ? r['account_name'] : '',
+          region: typeof r['region'] === 'string' ? r['region'] : '',
+          service: typeof r['service'] === 'string' ? r['service'] : '',
+          serviceFamily: typeof r['service_family'] === 'string' ? r['service_family'] : '',
+          lineItemType: typeof r['line_item_type'] === 'string' ? r['line_item_type'] : '',
+          operation: typeof r['operation'] === 'string' ? r['operation'] : '',
+          usageType: typeof r['usage_type'] === 'string' ? r['usage_type'] : '',
+          description: typeof r['description'] === 'string' ? r['description'] : '',
+          resourceId: typeof r['resource_id'] === 'string' ? r['resource_id'] : '',
+          usageAmount: toNum(r['usage_amount']),
+          cost: toNum(r['cost']),
+          listCost: toNum(r['list_cost']),
+          excluded: toNum(r['excluded']) === 1,
+          tags,
+        };
+      });
+    } catch {
+      // Sample is a best-effort inspection; fall through with empty rows.
+    }
+
     return {
       windowDays,
       startDate: startStr,
@@ -223,6 +307,9 @@ export function registerCostScopeHandlers(app: AppContext): void {
       unscopedTotalCost,
       scopedTotalCost,
       dailyTotals,
+      sampleRows,
+      sampleTotalRowCount,
+      tagColumns,
     };
   });
 

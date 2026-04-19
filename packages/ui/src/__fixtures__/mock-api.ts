@@ -278,6 +278,9 @@ export class MockCostApi implements CostApi {
       unscopedTotalCost: 0,
       scopedTotalCost: 0,
       dailyTotals: [],
+      sampleRows: [],
+      sampleTotalRowCount: 0,
+      tagColumns: [],
     });
   }
   revealCostScopeFolder(): Promise<void> { return Promise.resolve(); }

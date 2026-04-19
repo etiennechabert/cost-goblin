@@ -84,5 +84,6 @@ export type {
   CostScopeDailyRow,
   CostScopePreviewRow,
   CostScopePreviewResult,
+  CostScopeSampleRow,
 } from './cost-scope.js';
 export { COST_METRICS } from './cost-scope.js';
