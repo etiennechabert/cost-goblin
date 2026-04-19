@@ -141,6 +141,8 @@ export interface CostApi {
   getViewsConfig(): Promise<ViewsConfig>;
   saveViewsConfig(config: ViewsConfig): Promise<void>;
   resetViewsConfig(): Promise<ViewsConfig>;
+  /** Reveal `views.yaml` in the OS file manager (Finder / Explorer). */
+  revealViewsFolder(): Promise<void>;
   getAutoSyncEnabled(): Promise<boolean>;
   setAutoSyncEnabled(enabled: boolean): Promise<void>;
   getAutoSyncStatus(): Promise<AutoSyncStatus>;

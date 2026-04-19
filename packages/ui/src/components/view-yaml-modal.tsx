@@ -18,10 +18,21 @@ interface ImportProps {
 
 type ViewYamlModalProps = ExportProps | ImportProps;
 
+/** Strip `builtIn: true` so exports round-trip as custom views. Otherwise
+ *  re-importing a built-in export creates a second undeletable view. */
+function asCustomView(v: ViewSpec): ViewSpec {
+  return {
+    id: v.id,
+    name: v.name,
+    rows: v.rows,
+    ...(v.icon !== undefined ? { icon: v.icon } : {}),
+  };
+}
+
 export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
   const closeRef = useRef<HTMLButtonElement>(null);
   const [text, setText] = useState(() =>
-    props.mode === 'export' ? stringify(viewToYaml(props.view)) : '',
+    props.mode === 'export' ? stringify(viewToYaml(asCustomView(props.view))) : '',
   );
   const [copied, setCopied] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -60,7 +71,9 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
         setImportError(`A view with id "${first.id}" already exists. Rename it in the YAML before importing.`);
         return;
       }
-      props.onImport(first);
+      // Always land imports as custom views — hand-edited YAML with
+      // `builtIn: true` would otherwise create an undeletable duplicate.
+      props.onImport(asCustomView(first));
     } catch (err: unknown) {
       setImportError(err instanceof ConfigValidationError ? err.message : err instanceof Error ? err.message : String(err));
     }
