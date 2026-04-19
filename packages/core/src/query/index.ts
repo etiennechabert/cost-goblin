@@ -8,3 +8,5 @@ export {
   buildSource,
   computePeriodsInRange,
 } from './builder.js';
+
+export type { SidecarPlan } from './builder.js';

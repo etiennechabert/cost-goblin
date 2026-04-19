@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CostOverview, CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostApiProvider, SetupWizard, ErrorBoundary } from '@costgoblin/ui';
+import { CostOverview, CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostApiProvider, SetupWizard, ErrorBoundary, SyncActivityIndicator } from '@costgoblin/ui';
 import type { CostApi } from '@costgoblin/core/browser';
 
 function getApi(): CostApi {
@@ -186,13 +186,14 @@ export function App(): React.JSX.Element {
                   type="button"
                   onClick={() => { handleNavClick(item.id); }}
                   className={[
-                    'relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
+                    'relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-2',
                     view.page === item.id
                       ? 'bg-bg-tertiary text-text-primary'
                       : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
                   ].join(' ')}
                 >
                   {item.label}
+                  {item.id === 'sync' && <SyncActivityIndicator />}
                   {item.id === 'sync' && missingPeriods > 0 && view.page !== 'sync' && (
                     <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-bg-primary">
                       {String(missingPeriods)}

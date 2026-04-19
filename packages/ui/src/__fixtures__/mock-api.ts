@@ -239,6 +239,10 @@ export class MockCostApi implements CostApi {
   saveSavingsPreferences(): Promise<void> { return Promise.resolve(); }
   getUIPreferences(): Promise<{ theme: 'dark' | 'light' }> { return Promise.resolve({ theme: 'dark' }); }
   saveUIPreferences(): Promise<void> { return Promise.resolve(); }
+  getFileActivity(): Promise<[]> { return Promise.resolve([]); }
+  getOptimizeStatus(): Promise<{ queued: number; running: boolean }> { return Promise.resolve({ queued: 0, running: false }); }
+  getOptimizeEnabled(): Promise<boolean> { return Promise.resolve(true); }
+  setOptimizeEnabled(): Promise<void> { return Promise.resolve(); }
   syncOrgAccounts(): Promise<{ accounts: readonly never[]; orgId: string; syncedAt: string }> { return Promise.resolve({ accounts: [], orgId: 'mock', syncedAt: new Date().toISOString() }); }
   getOrgSyncResult(): Promise<null> { return Promise.resolve(null); }
   getOrgSyncProgress(): Promise<null> { return Promise.resolve(null); }
