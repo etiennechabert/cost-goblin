@@ -178,10 +178,14 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const primary = preferOrg ? await fromOrg() : await fromCsv();
     const raw = primary.size > 0 ? primary : (preferOrg ? await fromCsv() : await fromOrg());
 
-    // Apply the dim's display-time transforms (normalize then strip) to every
-    // resolved name. Done once here so every downstream caller — queries,
-    // preview, sidecars — sees the cleaned name without re-implementing the
-    // rule. Order matches the preview handler.
+    // Apply the dim's display-time transforms to every resolved name. Done
+    // once here so every downstream caller — queries, preview, sidecars —
+    // sees the cleaned name without re-implementing the rule.
+    //
+    // Order matches the editor's visual top-down flow: normalize first, then
+    // strip. Users writing strip patterns under kebab/snake normalization
+    // need to anchor against the post-normalize form (e.g. '-production$'
+    // rather than '\s+production$').
     const patterns = accountDim?.nameStripPatterns;
     const normalize = accountDim?.normalize;
     const map = (normalize !== undefined || (patterns !== undefined && patterns.length > 0))

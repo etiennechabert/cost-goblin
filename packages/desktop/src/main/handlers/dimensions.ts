@@ -201,9 +201,9 @@ export function registerDimensionsHandlers(app: AppContext): void {
       }
     }
     // Apply the same display-time transforms the live queries use. Order
-    // matches getAccountMap (and the table renderer): normalize → strip. After
-    // either runs, we re-aggregate by the resulting key so two raw values that
-    // collapse to the same display value don't show up as duplicate chips.
+    // matches the editor's visual top-down flow: normalize first, then strip.
+    // After either runs, re-aggregate by the resulting key so two raw values
+    // that collapse to the same display value don't show up as duplicate chips.
     const stripPatterns = field === 'account_id' ? opts?.nameStripPatterns : undefined;
     const normalize = opts?.normalize;
     if (normalize !== undefined || (stripPatterns !== undefined && stripPatterns.length > 0)) {
