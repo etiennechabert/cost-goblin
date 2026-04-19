@@ -9,6 +9,7 @@ import {
   buildSource,
   buildRuleMatchExpr,
   computePeriodsInRange,
+  logger,
 } from '@costgoblin/core';
 import type {
   CostScopeConfig,
@@ -215,9 +216,10 @@ export function registerCostScopeHandlers(app: AppContext): void {
           excludedCost: toNum(r['excluded_cost']),
         };
       });
-    } catch {
+    } catch (err) {
       // Data-dir transient error — fall through with zeros. Per-rule totals
       // were computed in their own try-blocks so they stand on their own.
+      logger.warn(`cost-scope: daily/totals query failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // Top-|cost| raw line items for the inspection table. One column per
@@ -242,25 +244,39 @@ export function registerCostScopeHandlers(app: AppContext): void {
       `.trim());
       sampleTotalRowCount = toNum(countRows[0]?.['n']);
 
+      // CAST numerics to DOUBLE so DECIMAL-typed CUR columns come back as
+      // plain numbers — bare references to source.cost would return a
+      // DuckDBDecimalValue object and toNum would yield 0 for every row,
+      // producing a table full of blank numbers. Columns are projected out
+      // of a CTE so the outer ORDER BY ABS(cost) unambiguously references
+      // the source's cost column (not a shadowed output alias).
       const sampleSql = `
+        WITH scoped AS (
+          SELECT
+            usage_date,
+            account_id,
+            account_name,
+            region,
+            service,
+            service_family,
+            line_item_type,
+            operation,
+            usage_type,
+            description,
+            resource_id,
+            CAST(usage_amount AS DOUBLE) AS usage_amount,
+            CAST(cost AS DOUBLE) AS cost,
+            CAST(list_cost AS DOUBLE) AS list_cost,
+            CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END AS excluded${tagSelectSql === null ? '' : `,\n            ${tagSelectSql}`}
+          FROM ${source}
+          WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+        )
         SELECT
           usage_date::VARCHAR AS usage_date,
-          account_id,
-          account_name,
-          region,
-          service,
-          service_family,
-          line_item_type,
-          operation,
-          usage_type,
-          description,
-          resource_id,
-          CAST(COALESCE(usage_amount, 0) AS DOUBLE) AS usage_amount,
-          CAST(COALESCE(cost, 0) AS DOUBLE) AS cost,
-          CAST(COALESCE(list_cost, 0) AS DOUBLE) AS list_cost,
-          CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END AS excluded${tagSelectSql === null ? '' : `,\n          ${tagSelectSql}`}
-        FROM ${source}
-        WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+          account_id, account_name, region, service, service_family,
+          line_item_type, operation, usage_type, description, resource_id,
+          usage_amount, cost, list_cost, excluded${tagSelectSql === null ? '' : ',\n          ' + tagColumns.map(t => t.id).join(', ')}
+        FROM scoped
         ORDER BY ABS(cost) DESC
         LIMIT ${String(SAMPLE_ROW_LIMIT)}
       `.trim();
@@ -294,7 +310,8 @@ export function registerCostScopeHandlers(app: AppContext): void {
           tags,
         };
       });
-    } catch {
+    } catch (err) {
+      logger.warn(`cost-scope: sample-rows query failed: ${err instanceof Error ? err.message : String(err)}`);
       // Sample is a best-effort inspection; fall through with empty rows.
     }
 
