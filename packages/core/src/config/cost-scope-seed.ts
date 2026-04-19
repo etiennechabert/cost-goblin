@@ -6,11 +6,20 @@ export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
     id: 'builtin:aws-premium-support',
     name: 'AWS Premium Support',
     description:
-      'AWS Enterprise / Business / Developer support subscription fees. Usually a flat line item outside per-resource usage.',
+      'AWS Enterprise / Business / Developer support subscription fees. Flat-rate monthly billing outside per-resource usage.',
     enabled: false,
     builtIn: true,
     conditions: [
-      { dimensionId: asDimensionId('service_family'), values: ['Support'] },
+      {
+        // Match by service code, not service_family. `Support` as a
+        // product_family groups in things some users don't consider
+        // premium support (e.g. some training / API-call support lines),
+        // and isn't populated consistently across CUR revisions. The
+        // three AWSSupport* service codes are the authoritative
+        // premium-support line items.
+        dimensionId: asDimensionId('service'),
+        values: ['AWSSupportEnterprise', 'AWSSupportBusiness', 'AWSSupportDeveloper'],
+      },
     ],
   },
   {
