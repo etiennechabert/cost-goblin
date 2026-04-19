@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { GripVertical } from 'lucide-react';
+import { ChevronUp, ChevronDown, GripVertical } from 'lucide-react';
 import type { DimensionsConfig, TagDimension, ConceptType, NormalizationRule } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -783,6 +783,33 @@ export function DimensionsView() {
     );
   }
 
+  function ReorderArrows({ type, idx, total }: { type: DragGroup; idx: number; total: number }): React.JSX.Element {
+    const canUp = idx > 0;
+    const canDown = idx < total - 1;
+    return (
+      <div className="flex flex-col -space-y-1">
+        <button
+          type="button"
+          disabled={!canUp}
+          onClick={(e) => { e.stopPropagation(); void applyReorder(type, idx, idx - 1); }}
+          title="Move up"
+          className="flex items-center justify-center text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          <ChevronUp size={14} />
+        </button>
+        <button
+          type="button"
+          disabled={!canDown}
+          onClick={(e) => { e.stopPropagation(); void applyReorder(type, idx, idx + 1); }}
+          title="Move down"
+          className="flex items-center justify-center text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          <ChevronDown size={14} />
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-6 p-6">
       <div>
@@ -862,6 +889,7 @@ export function DimensionsView() {
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="text-[10px] text-text-muted uppercase tracking-wider">Built-in</span>
                   <DimensionToggle enabled={isOn} onToggle={() => { void toggleBuiltInEnabled(idx); }} />
+                  <ReorderArrows type="builtIn" idx={idx} total={config.builtIn.length} />
                   <GripHandle attrs={dnd.grip} />
                 </div>
               </div>
@@ -934,6 +962,7 @@ export function DimensionsView() {
                       Edit →
                     </button>
                     <DimensionToggle enabled={isOn} onToggle={() => { void toggleTagEnabled(idx); }} />
+                    <ReorderArrows type="tag" idx={idx} total={config.tags.length} />
                     <GripHandle attrs={dnd.grip} />
                   </div>
                 </div>
