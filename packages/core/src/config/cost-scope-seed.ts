@@ -58,6 +58,20 @@ export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
       { dimensionId: asDimensionId('line_item_type'), values: ['EdpDiscount'] },
     ],
   },
+  {
+    id: 'builtin:commitment-covered-usage',
+    name: 'RI & SP covered usage',
+    description:
+      'Usage already covered by a Reserved Instance (DiscountedUsage) or Savings Plan (SavingsPlanCoveredUsage paired with SavingsPlanNegation). Toggle on to isolate on-demand spend — the workloads NOT yet covered by a commitment. SP negation is bundled so its discount does not leak when the usage it offsets is removed.',
+    enabled: false,
+    builtIn: true,
+    conditions: [
+      {
+        dimensionId: asDimensionId('line_item_type'),
+        values: ['DiscountedUsage', 'SavingsPlanCoveredUsage', 'SavingsPlanNegation'],
+      },
+    ],
+  },
 ];
 
 export const DEFAULT_COST_SCOPE: CostScopeConfig = {
