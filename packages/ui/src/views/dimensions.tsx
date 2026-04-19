@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { GripVertical } from 'lucide-react';
 import type { DimensionsConfig, TagDimension, ConceptType, NormalizationRule } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
+
+type DragGroup = 'builtIn' | 'tag';
+interface DragRef { type: DragGroup; idx: number }
 
 const CONCEPTS: { value: ConceptType; label: string }[] = [
   { value: 'owner', label: 'Owner (team)' },
@@ -587,6 +591,12 @@ export function DimensionsView() {
   const [hiddenAccountCols, setHiddenAccountCols] = useState(new Set<string>());
   const [addingNew, setAddingNew] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Drag-to-reorder state. `armed` flips draggable=true on a row only after
+  // the user mousedowns its grip handle, so clicks elsewhere don't accidentally
+  // start a drag. `from`/`over` drive the visual feedback during the drag.
+  const [armed, setArmed] = useState<DragRef | null>(null);
+  const [dragFrom, setDragFrom] = useState<DragRef | null>(null);
+  const [dragOver, setDragOver] = useState<DragRef | null>(null);
   const tagsQuery = useQuery(() => api.discoverTagKeys(), []);
   const configQuery = useQuery(() => api.getDimensionsConfig(), [refreshKey]);
   const orgQuery = useQuery(() => api.getOrgSyncResult(), []);
@@ -703,6 +713,76 @@ export function DimensionsView() {
   // Quick-add a discovered tag as a dimension
   const [quickAddState, setQuickAddState] = useState<EditingTag | null>(null);
 
+  async function applyReorder(type: DragGroup, fromIdx: number, toIdx: number) {
+    if (config === null || fromIdx === toIdx) return;
+    if (type === 'builtIn') {
+      const builtIn = [...config.builtIn];
+      const moved = builtIn.splice(fromIdx, 1)[0];
+      if (moved === undefined) return;
+      builtIn.splice(toIdx, 0, moved);
+      await api.saveDimensionsConfig({ ...config, builtIn });
+    } else {
+      const tags = [...config.tags];
+      const moved = tags.splice(fromIdx, 1)[0];
+      if (moved === undefined) return;
+      tags.splice(toIdx, 0, moved);
+      await api.saveDimensionsConfig({ ...config, tags });
+    }
+    setRefreshKey(k => k + 1);
+  }
+
+  // One factory per row: returns the drag/drop attrs for the row container and
+  // the mousedown attr for the grip handle. Centralizes the "only allow drag
+  // when grip was pressed" + "only accept drop within the same group" rules so
+  // the row JSX stays light.
+  function dragProps(type: DragGroup, idx: number): { row: React.HTMLAttributes<HTMLDivElement> & { draggable: boolean }; grip: React.HTMLAttributes<HTMLButtonElement> } {
+    const isArmed = armed?.type === type && armed.idx === idx;
+    const isFrom = dragFrom?.type === type && dragFrom.idx === idx;
+    const isOver = dragOver?.type === type && dragOver.idx === idx && !isFrom;
+    return {
+      row: {
+        draggable: isArmed,
+        onDragStart: (e) => {
+          setDragFrom({ type, idx });
+          e.dataTransfer.effectAllowed = 'move';
+          // Required for Firefox to actually start the drag.
+          e.dataTransfer.setData('text/plain', `${type}:${String(idx)}`);
+        },
+        onDragEnd: () => { setArmed(null); setDragFrom(null); setDragOver(null); },
+        onDragOver: (e) => {
+          if (dragFrom?.type !== type) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          setDragOver({ type, idx });
+        },
+        onDragLeave: () => { setDragOver(curr => (curr?.type === type && curr.idx === idx ? null : curr)); },
+        onDrop: (e) => {
+          e.preventDefault();
+          if (dragFrom?.type === type) void applyReorder(type, dragFrom.idx, idx);
+          setArmed(null); setDragFrom(null); setDragOver(null);
+        },
+        style: isFrom ? { opacity: 0.4 } : isOver ? { boxShadow: 'inset 0 2px 0 var(--color-accent, #34d399)' } : undefined,
+      },
+      grip: {
+        onMouseDown: () => { setArmed({ type, idx }); },
+        onMouseUp: () => { setArmed(curr => (curr?.type === type && curr.idx === idx ? null : curr)); },
+      },
+    };
+  }
+
+  function GripHandle({ attrs }: { attrs: React.HTMLAttributes<HTMLButtonElement> }): React.JSX.Element {
+    return (
+      <button
+        type="button"
+        {...attrs}
+        title="Drag to reorder"
+        className="flex items-center justify-center text-text-muted hover:text-text-primary cursor-grab active:cursor-grabbing"
+      >
+        <GripVertical size={16} />
+      </button>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-6 p-6">
       <div>
@@ -747,9 +827,11 @@ export function DimensionsView() {
                 />
               );
             }
+            const dnd = dragProps('builtIn', idx);
             return (
               <div
                 key={d.name}
+                {...dnd.row}
                 className={[
                   'rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors',
                   isOn ? '' : 'opacity-50',
@@ -780,6 +862,7 @@ export function DimensionsView() {
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="text-[10px] text-text-muted uppercase tracking-wider">Built-in</span>
                   <DimensionToggle enabled={isOn} onToggle={() => { void toggleBuiltInEnabled(idx); }} />
+                  <GripHandle attrs={dnd.grip} />
                 </div>
               </div>
             );
@@ -788,6 +871,7 @@ export function DimensionsView() {
           {/* Tag dimensions (editable) */}
           {config.tags.map((tag, idx) => {
             const isOn = tag.enabled !== false;
+            const dnd = dragProps('tag', idx);
             return (
             <div key={tag.tagName} className={isOn ? '' : 'opacity-50'}>
               {editingIdx === idx ? (
@@ -810,7 +894,7 @@ export function DimensionsView() {
                   orgAccounts={orgData?.accounts ?? []}
                 />
               ) : (
-                <div className="w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors">
+                <div {...dnd.row} className="w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors">
                   <button
                     type="button"
                     onClick={() => { setEditingIdx(idx); setAddingNew(false); }}
@@ -850,6 +934,7 @@ export function DimensionsView() {
                       Edit →
                     </button>
                     <DimensionToggle enabled={isOn} onToggle={() => { void toggleTagEnabled(idx); }} />
+                    <GripHandle attrs={dnd.grip} />
                   </div>
                 </div>
               )}
