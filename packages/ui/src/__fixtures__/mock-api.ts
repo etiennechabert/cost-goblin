@@ -20,6 +20,7 @@ import type {
   TrendResult,
   CostGoblinConfig,
   DimensionsConfig,
+  ViewsConfig,
 } from '@costgoblin/core/browser';
 
 const costResult: CostResult = {
@@ -258,4 +259,32 @@ export class MockCostApi implements CostApi {
   getAutoSyncEnabled(): Promise<boolean> { return Promise.resolve(false); }
   setAutoSyncEnabled(): Promise<void> { return Promise.resolve(); }
   getAutoSyncStatus(): Promise<{ state: 'disabled' }> { return Promise.resolve({ state: 'disabled' }); }
+  getViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
+  saveViewsConfig(): Promise<void> { return Promise.resolve(); }
+  resetViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
 }
+
+const MOCK_VIEWS_CONFIG: ViewsConfig = {
+  views: [
+    {
+      id: 'overview',
+      name: 'Cost Overview',
+      builtIn: true,
+      rows: [
+        {
+          widgets: [
+            { id: 'm-summary', type: 'summary', size: 'small', metric: 'total' },
+            { id: 'm-hist', type: 'stackedBar', size: 'large', groupBy: asDimensionId('service') },
+          ],
+        },
+        {
+          widgets: [
+            { id: 'm-pie-account', type: 'pie', size: 'medium', groupBy: asDimensionId('account') },
+            { id: 'm-pie-region', type: 'pie', size: 'medium', groupBy: asDimensionId('region') },
+            { id: 'm-pie-service', type: 'pie', size: 'medium', groupBy: asDimensionId('service'), drillable: true },
+          ],
+        },
+      ],
+    },
+  ],
+};

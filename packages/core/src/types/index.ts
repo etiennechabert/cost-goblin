@@ -60,3 +60,18 @@ export type {
 } from './query.js';
 
 export type { Dimension, CostApi, DataInventoryResult, DataTier, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, FileActivityEvent, FileActivityStage, OptimizeStatus } from './api.js';
+
+export type {
+  WidgetId,
+  ViewId,
+  WidgetSize,
+  WidgetFilterOverlay,
+  SummaryMetric,
+  TableColumn,
+  WidgetSpec,
+  WidgetType,
+  ViewRow,
+  ViewSpec,
+  ViewsConfig,
+} from './views.js';
+export { OVERVIEW_SEED_VIEW, SEED_VIEWS_CONFIG } from './seed-views.js';

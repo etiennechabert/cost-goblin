@@ -7,6 +7,7 @@ import {
   loadConfig,
   loadDimensions,
   loadOrgTree,
+  loadViews,
   logger,
   isStringRecord,
 } from '@costgoblin/core';
@@ -17,6 +18,7 @@ import type {
   OrgNode,
   RegionEnrichment,
   SyncStatus,
+  ViewsConfig,
 } from '@costgoblin/core';
 
 const DEFAULT_BUILT_INS: readonly BuiltInDimension[] = [
@@ -89,6 +91,7 @@ export interface IpcContext {
   readonly configPath: string;
   readonly dimensionsPath: string;
   readonly orgTreePath: string;
+  readonly viewsPath: string;
   readonly dataDir: string;
 }
 
@@ -100,6 +103,7 @@ export interface AppState {
   config: CostGoblinConfig | null;
   dimensions: DimensionsConfig | null;
   orgTree: OrgTreeConfig | null;
+  views: ViewsConfig | null;
   syncStatuses: Record<string, SyncStatus>;
   accountMap: Map<string, string> | null;
   regionMap: Map<string, RegionEnrichment> | null;
@@ -119,12 +123,14 @@ export interface AppContext {
    *  SSM-derived friendly names mixed in. Use this in every query handler. */
   readonly getQueryDimensions: () => Promise<DimensionsConfig>;
   readonly getOrgTreeConfig: () => Promise<OrgTreeConfig>;
+  readonly getViews: () => Promise<ViewsConfig>;
   readonly getAccountMap: () => Promise<Map<string, string>>;
   readonly getRegionMap: () => Promise<Map<string, RegionEnrichment>>;
   readonly getOrgAccountsPath: () => Promise<string | undefined>;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly invalidateConfig: () => void;
   readonly invalidateDimensions: () => void;
+  readonly invalidateViews: () => void;
 }
 
 export function createAppContext(ctx: IpcContext): AppContext {
@@ -132,6 +138,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     config: null,
     dimensions: null,
     orgTree: null,
+    views: null,
     syncStatuses: {},
     accountMap: null,
     regionMap: null,
@@ -161,6 +168,13 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const orgTree = await loadOrgTree(ctx.orgTreePath);
     state.orgTree = orgTree;
     return orgTree;
+  }
+
+  async function getViews(): Promise<ViewsConfig> {
+    if (state.views !== null) return state.views;
+    const views = await loadViews(ctx.viewsPath);
+    state.views = views;
+    return views;
   }
 
   async function getAccountMap(): Promise<Map<string, string>> {
@@ -348,12 +362,14 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getDimensions,
     getQueryDimensions,
     getOrgTreeConfig,
+    getViews,
     getAccountMap,
     getRegionMap,
     getOrgAccountsPath,
     runQuery: (sql: string) => ctx.db.runQuery(sql),
     invalidateConfig: () => { state.config = null; },
     invalidateDimensions: () => { state.dimensions = null; state.accountMap = null; state.regionMap = null; },
+    invalidateViews: () => { state.views = null; },
   };
 }
 

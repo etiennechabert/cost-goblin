@@ -27,10 +27,22 @@ export { SummaryCard } from './components/summary-card.js';
 export { DimensionSelector } from './components/dimension-selector.js';
 export { PieChart } from './components/pie-chart.js';
 export { StackedBarChart } from './components/stacked-bar-chart.js';
+export { TopNBarChart } from './components/top-n-bar-chart.js';
+export { LineChart } from './components/line-chart.js';
+export { TreemapChart } from './components/treemap-chart.js';
+export { HeatmapChart } from './components/heatmap-chart.js';
 export { FilterActiveBanner } from './components/filter-active-banner.js';
 export { CoinRainLoader } from './components/coin-rain-loader.js';
 export { useCostFocus, useCostFocusDispatch, useCostFocusReducer, CostFocusProvider, CostFocusDispatchProvider } from './hooks/use-cost-focus.js';
 
+export { WIDGET_REGISTRY, WIDGET_CATALOG } from './widgets/registry.js';
+export type { WidgetCatalogEntry } from './widgets/registry.js';
+export { widgetFlexBasis } from './widgets/widget.js';
+export type { WidgetCommonProps, WidgetComponent } from './widgets/widget.js';
+
+export { CustomView } from './views/custom-view.js';
+export { OVERVIEW_SEED_VIEW } from './views/seed-views.js';
+export { ViewsEditor } from './views/views-editor.js';
 export { CostOverview } from './views/cost-overview.js';
 export { CostTrends } from './views/cost-trends.js';
 export { MissingTags } from './views/missing-tags.js';

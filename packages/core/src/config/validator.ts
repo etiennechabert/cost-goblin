@@ -18,25 +18,25 @@ export class ConfigValidationError extends Error {
   }
 }
 
-function assertObject(value: unknown, context: string): asserts value is Record<string, unknown> {
+export function assertObject(value: unknown, context: string): asserts value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new ConfigValidationError(`${context} must be an object`);
   }
 }
 
-function assertArray(value: unknown, context: string): asserts value is unknown[] {
+export function assertArray(value: unknown, context: string): asserts value is unknown[] {
   if (!Array.isArray(value)) {
     throw new ConfigValidationError(`${context} must be an array`);
   }
 }
 
-function assertString(value: unknown, context: string): asserts value is string {
+export function assertString(value: unknown, context: string): asserts value is string {
   if (typeof value !== 'string') {
     throw new ConfigValidationError(`${context} must be a string`);
   }
 }
 
-function assertNumber(value: unknown, context: string): asserts value is number {
+export function assertNumber(value: unknown, context: string): asserts value is number {
   if (typeof value !== 'number') {
     throw new ConfigValidationError(`${context} must be a number`);
   }

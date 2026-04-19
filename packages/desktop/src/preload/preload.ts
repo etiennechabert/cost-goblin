@@ -28,6 +28,7 @@ import type {
   AutoSyncStatus,
   FileActivityEvent,
   OptimizeStatus,
+  ViewsConfig,
 } from '@costgoblin/core';
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -175,6 +176,15 @@ const api: CostApi = {
   },
   getAutoSyncStatus(): Promise<AutoSyncStatus> {
     return invoke<AutoSyncStatus>('auto-sync:get-status');
+  },
+  getViewsConfig(): Promise<ViewsConfig> {
+    return invoke<ViewsConfig>('views:get-config');
+  },
+  saveViewsConfig(config: ViewsConfig): Promise<void> {
+    return invoke<undefined>('views:save-config', config).then(() => undefined);
+  },
+  resetViewsConfig(): Promise<ViewsConfig> {
+    return invoke<ViewsConfig>('views:reset-defaults');
   },
 };
 
