@@ -262,6 +262,14 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
         <div className="flex items-center gap-2">
           <button
             type="button"
+            onClick={() => { void api.revealViewsFolder(); }}
+            className="px-3 py-1.5 text-sm rounded-md border border-border text-text-secondary hover:text-text-primary"
+            title="Open views.yaml location in Finder"
+          >
+            Open folder
+          </button>
+          <button
+            type="button"
             onClick={() => { setModal({ mode: 'import' }); }}
             disabled={saving}
             className="px-3 py-1.5 text-sm rounded-md border border-border text-text-secondary hover:text-text-primary disabled:opacity-50"
