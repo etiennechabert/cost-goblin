@@ -800,7 +800,7 @@ export function CostScopeView(): React.JSX.Element {
                         Degraded → falls back to Unblended because your CUR export doesn't include
                         <code className="mx-1 text-[11px]">reservation_effective_cost</code>
                         /
-                        <code className="mx-1 text-[11px]">savings_plan_effective_cost</code>.
+                        <code className="mx-1 text-[11px]">savings_plan_savings_plan_effective_cost</code>.
                         Enable <em>Include Resource IDs</em> on your CUR report in AWS Billing to get
                         an accurate amortized view (takes one billing cycle to land).
                       </div>

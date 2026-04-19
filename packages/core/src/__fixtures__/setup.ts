@@ -130,7 +130,7 @@ export async function setup(): Promise<void> {
       line_item_blended_cost DOUBLE,
       pricing_public_on_demand_cost DOUBLE,
       reservation_effective_cost DOUBLE,
-      savings_plan_effective_cost DOUBLE,
+      savings_plan_savings_plan_effective_cost DOUBLE,
       line_item_line_item_type VARCHAR,
       line_item_operation VARCHAR,
       line_item_usage_type VARCHAR,

@@ -37,16 +37,18 @@ export function costExprFor(
       }
       return `COALESCE(${prefix}line_item_unblended_cost, 0)`;
     case 'amortized': {
-      // Covered usage rows carry a reservation_effective_cost or
-      // savings_plan_effective_cost; non-covered rows fall back to
-      // unblended. Effective-cost columns only ship when the CUR has
-      // "Include Resource IDs" enabled — detect presence and only
-      // reference those we actually have. If neither is available,
-      // amortized degrades to unblended (unavoidable — no way to
-      // recover amortization from data we weren't given).
+      // Covered usage rows carry a reservation_effective_cost
+      // (RI-covered) or savings_plan_savings_plan_effective_cost
+      // (SP-covered — the double prefix is AWS's snake_case conversion
+      // of savingsPlan/SavingsPlanEffectiveCost); non-covered rows
+      // fall back to unblended. Effective-cost columns only ship when
+      // the CUR has "Include Resource IDs" enabled — detect presence
+      // and only reference those we actually have. If neither is
+      // available, amortized degrades to unblended (unavoidable — no
+      // way to recover amortization from data we weren't given).
       const parts: string[] = [];
       if (has('reservation_effective_cost')) parts.push(`${prefix}reservation_effective_cost`);
-      if (has('savings_plan_effective_cost')) parts.push(`${prefix}savings_plan_effective_cost`);
+      if (has('savings_plan_savings_plan_effective_cost')) parts.push(`${prefix}savings_plan_savings_plan_effective_cost`);
       parts.push(`${prefix}line_item_unblended_cost`);
       return `COALESCE(${parts.join(', ')}, 0)`;
     }

@@ -136,8 +136,8 @@ export interface AppContext {
   /** Columns present in the user's CUR parquet files for the given tier.
    *  CUR exports vary by version and by "Include Resource IDs" / "Include
    *  Net Columns" settings — not every export has
-   *  reservation_effective_cost, savings_plan_effective_cost, or
-   *  line_item_net_*. Cached per-tier for the session; invalidated on
+   *  reservation_effective_cost, savings_plan_savings_plan_effective_cost,
+   *  or line_item_net_*. Cached per-tier for the session; invalidated on
    *  explicit reset via invalidateColumnCache. */
   readonly getAvailableColumns: (tier: 'daily' | 'hourly') => Promise<ReadonlySet<string>>;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
@@ -366,10 +366,11 @@ export function createAppContext(ctx: IpcContext): AppContext {
 
   // Probe parquet columns once per tier and cache. Used to gate
   // optional cost columns (reservation_effective_cost,
-  // savings_plan_effective_cost, etc.) that ship only when the user's
-  // CUR has "Include Resource IDs" enabled. Without the probe, every
-  // query that references those columns errors out for CURs that omit
-  // them — even though we could degrade to unblended.
+  // savings_plan_savings_plan_effective_cost, etc.) that ship only
+  // when the user's CUR has "Include Resource IDs" enabled. Without
+  // the probe, every query that references those columns errors out
+  // for CURs that omit them — even though we could degrade to
+  // unblended.
   const columnCache = new Map<string, Promise<ReadonlySet<string>>>();
 
   async function getAvailableColumns(tier: 'daily' | 'hourly'): Promise<ReadonlySet<string>> {

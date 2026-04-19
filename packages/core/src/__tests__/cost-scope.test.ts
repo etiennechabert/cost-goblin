@@ -59,7 +59,7 @@ describe('cost metric column selection', () => {
   it('falls back through effective cost → unblended when metric is amortized', () => {
     const sql = buildQuery({ costMetric: 'amortized', rules: [] });
     // Amortized layers effective-cost columns over unblended via COALESCE.
-    expect(sql).toMatch(/COALESCE\(reservation_effective_cost, savings_plan_effective_cost, line_item_unblended_cost, 0\) AS cost/);
+    expect(sql).toMatch(/COALESCE\(reservation_effective_cost, savings_plan_savings_plan_effective_cost, line_item_unblended_cost, 0\) AS cost/);
   });
 });
 

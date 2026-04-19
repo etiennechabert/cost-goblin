@@ -92,10 +92,11 @@ export interface CostScopeSampleRow {
  *  effective-cost columns"). The probe runs once per tier, cached for
  *  the session. */
 export interface CostScopeCapabilities {
-  /** `reservation_effective_cost` AND `savings_plan_effective_cost` are
-   *  both present. Required for an accurate Amortized metric; when
-   *  missing we degrade to Unblended. Both columns ship only when the
-   *  CUR has "Include Resource IDs" enabled. */
+  /** `reservation_effective_cost` AND
+   *  `savings_plan_savings_plan_effective_cost` are both present.
+   *  Required for an accurate Amortized metric; when missing we
+   *  degrade to Unblended. Both columns ship only when the CUR has
+   *  "Include Resource IDs" enabled. */
   readonly hasEffectiveCostColumns: boolean;
   /** `line_item_blended_cost` is present. Usually true, but some CUR
    *  configurations omit it — when missing we degrade Blended to

@@ -36,8 +36,8 @@ If you don't have a CUR report yet, create one in the [AWS Console](https://docs
 | `line_item_usage_start_date` | Date partitioning |
 | `line_item_usage_account_id` | Account dimension |
 | `line_item_usage_account_name` | Account display name |
-| `line_item_unblended_cost` | Primary cost metric |
-| `line_item_line_item_type` | Charge type (Usage/Fee/Credit/Tax) |
+| `line_item_unblended_cost` | Primary cost metric (Unblended) |
+| `line_item_line_item_type` | Charge type (Usage/Fee/Credit/Tax) — drives Cost Scope exclusion rules |
 | `line_item_line_item_description` | Line item description |
 | `line_item_operation` | AWS operation |
 | `line_item_usage_type` | Usage details |
@@ -48,6 +48,20 @@ If you don't have a CUR report yet, create one in the [AWS Console](https://docs
 | `product_region_code` | AWS region |
 | `pricing_public_on_demand_cost` | On-demand list price |
 | `resource_tags` | Tag key-value pairs |
+
+**Optional cost-metric columns** — enable these to unlock the full Cost Scope metric picker:
+
+| Column | Unlocks | Notes |
+|--------|---------|-------|
+| `line_item_blended_cost` | **Blended** metric | Usually shipped by default; absent only in stripped-down exports. If missing, Blended silently falls back to Unblended. |
+| `reservation_effective_cost` | **Amortized** metric (RI portion) | Ships only when **Include Resource IDs** is enabled on the CUR report. |
+| `savings_plan_savings_plan_effective_cost` | **Amortized** metric (SP portion) | Ships only with **Include Resource IDs**. Note the double prefix — AWS's snake_case conversion of `savingsPlan/SavingsPlanEffectiveCost`. |
+
+The app probes your parquet schema on first launch and shows a warning in the Cost Scope view if Amortized is degraded — no error, but the view falls back to Unblended for rows that would otherwise carry an effective-cost value.
+
+**How to enable `Include Resource IDs`:**
+
+AWS Billing → Cost and Usage Reports → your report → **Edit** → check *Include resource IDs*. CUR reports are immutable, so the edit typically requires creating a new report pointed at the same (or a fresh) S3 prefix. Allow one billing cycle for the columns to appear in the data.
 
 The S3 export should look like:
 ```
