@@ -68,71 +68,90 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
 
   const preview = valuesQuery.status === 'success' ? valuesQuery.data : null;
 
+  const labelField = (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-text-muted">Display Label</span>
+      <input
+        type="text"
+        value={state.label}
+        onChange={e => { setState(s => ({ ...s, label: e.target.value })); }}
+        className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+      />
+    </label>
+  );
+  const descriptionField = (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-text-muted">Description</span>
+      <input
+        type="text"
+        value={state.description}
+        onChange={e => { setState(s => ({ ...s, description: e.target.value })); }}
+        className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+        placeholder="What does this dimension represent?"
+      />
+    </label>
+  );
+  const orgToggleField = (
+    <label className="flex items-center justify-between rounded border border-border bg-bg-primary px-3 py-2 h-full">
+      <div className="flex flex-col gap-0.5 min-w-0 pr-3">
+        <span className="text-sm text-text-primary">Resolve names via org-data</span>
+        <span className="text-[11px] text-text-muted leading-tight">Use friendly names from the Organizations sync.</span>
+      </div>
+      <DimensionToggle enabled={state.useOrgAccounts} onToggle={() => { setState(s => ({ ...s, useOrgAccounts: !s.useOrgAccounts })); }} />
+    </label>
+  );
+  const normalizationField = (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-text-muted">Normalization</span>
+      <select
+        value={state.normalize}
+        onChange={e => { setState(s => ({ ...s, normalize: e.target.value })); }}
+        className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+      >
+        <option value="">None</option>
+        {NORMALIZE_RULES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+      </select>
+    </label>
+  );
+  const stripPatternsField = (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-text-muted">Name strip patterns (one regex per line)</span>
+      <textarea
+        value={state.nameStripPatterns}
+        onChange={e => { setState(s => ({ ...s, nameStripPatterns: e.target.value })); }}
+        rows={3}
+        className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary outline-none focus:border-accent"
+        placeholder={'\\s+(production|staging|sandbox)$\n^DiBa Cards '}
+      />
+    </label>
+  );
+  const aliasField = (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-text-muted">Alias Rules (canonical: alias1, alias2)</span>
+      <textarea
+        value={state.aliases}
+        onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
+        rows={3}
+        className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary outline-none focus:border-accent"
+        placeholder="EC2: AmazonEC2, EC2-Instance"
+      />
+    </label>
+  );
+
   return (
     <div ref={containerRef} className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-4">
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-text-muted">Display Label</span>
-          <input
-            type="text"
-            value={state.label}
-            onChange={e => { setState(s => ({ ...s, label: e.target.value })); }}
-            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-text-muted">Normalization</span>
-          <select
-            value={state.normalize}
-            onChange={e => { setState(s => ({ ...s, normalize: e.target.value })); }}
-            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
-          >
-            <option value="">None</option>
-            {NORMALIZE_RULES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-          </select>
-        </label>
+        {labelField}
+        {descriptionField}
       </div>
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-text-muted">Description</span>
-        <input
-          type="text"
-          value={state.description}
-          onChange={e => { setState(s => ({ ...s, description: e.target.value })); }}
-          className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
-          placeholder="What does this dimension represent?"
-        />
-      </label>
-      {isAccountDim && (
-        <label className="flex items-center justify-between rounded border border-border bg-bg-primary px-3 py-2">
-          <div className="flex flex-col gap-0.5">
-            <span className="text-sm text-text-primary">Resolve names via org-data</span>
-            <span className="text-[11px] text-text-muted">Display friendly account names from the Organizations sync instead of raw account IDs.</span>
-          </div>
-          <DimensionToggle enabled={state.useOrgAccounts} onToggle={() => { setState(s => ({ ...s, useOrgAccounts: !s.useOrgAccounts })); }} />
-        </label>
-      )}
-      {isAccountDim && (
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-text-muted">Name strip patterns (one regex per line, applied to resolved names)</span>
-          <textarea
-            value={state.nameStripPatterns}
-            onChange={e => { setState(s => ({ ...s, nameStripPatterns: e.target.value })); }}
-            rows={3}
-            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary outline-none focus:border-accent"
-            placeholder={'\\s+(production|staging|sandbox)$\n^DiBa Cards '}
-          />
-        </label>
-      )}
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-text-muted">Alias Rules (canonical: alias1, alias2)</span>
-        <textarea
-          value={state.aliases}
-          onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
-          rows={3}
-          className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary outline-none focus:border-accent"
-          placeholder="EC2: AmazonEC2, EC2-Instance"
-        />
-      </label>
+      <div className="grid grid-cols-2 gap-4 items-stretch">
+        {isAccountDim ? orgToggleField : <div />}
+        {normalizationField}
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        {isAccountDim ? stripPatternsField : <div />}
+        {aliasField}
+      </div>
       {preview !== null && (
         <div className="flex flex-col gap-2">
           <span className="text-xs text-text-muted">
