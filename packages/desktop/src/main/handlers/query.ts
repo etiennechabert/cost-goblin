@@ -36,11 +36,14 @@ import type { AppContext } from './context.js';
 import type { RawRow } from '../duckdb-client.js';
 import {
   applyOrgTreeRollup,
+  buildAccountReverseMap,
   buildCostResult,
   buildEntityDetailResult,
   buildMissingTagsResult,
   buildTrendResult,
   isOwnerGroupBy,
+  mergeCostRowsByEntity,
+  mergeTrendRowsByEntity,
   resolveEntityName,
   toEffort,
   toNum,
@@ -92,20 +95,24 @@ export function registerQueryHandlers(app: AppContext): void {
   ipcMain.handle('query:costs', async (_event, params: CostQueryParams): Promise<CostResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
+    const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const { available, plan, empty } = await planQuery(tier, params.dateRange);
     if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
-    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available, plan);
+    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available, plan, accountReverseMap);
     logger.info('query:costs', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
     let result = buildCostResult(rows, params.dateRange);
 
     if (params.groupBy === 'account' || params.groupBy === 'account_id') {
+      // Resolve raw account_id → display name, then merge any rows whose
+      // resolved name collides (strip patterns / normalize on the Account dim
+      // can intentionally collapse N ids into one logical entity).
       result = {
         ...result,
-        rows: result.rows.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) })),
+        rows: mergeCostRowsByEntity(result.rows.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) }))),
       };
     }
 
@@ -121,11 +128,13 @@ export function registerQueryHandlers(app: AppContext): void {
 
   ipcMain.handle('query:daily-costs', async (_event, params: DailyCostsParams): Promise<DailyCostsResult> => {
     const dimensions = await getDimensions();
+    const accountMap = await getAccountMap();
+    const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const { available, plan, empty } = await planQuery(tier, params.dateRange);
     if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
-    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available, plan);
+    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap);
     logger.info('query:daily-costs', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -176,10 +185,11 @@ export function registerQueryHandlers(app: AppContext): void {
   ipcMain.handle('query:trends', async (_event, params: TrendQueryParams): Promise<TrendResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
+    const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
     const { available, plan, empty } = await planQuery('daily', params.dateRange);
     if (empty) return { increases: [], savings: [], totalIncrease: asDollars(0), totalSavings: asDollars(0) };
-    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath, available, plan);
+    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap);
     logger.info('query:trends', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -187,8 +197,8 @@ export function registerQueryHandlers(app: AppContext): void {
     if (params.groupBy === 'account' || params.groupBy === 'account_id') {
       return {
         ...result,
-        increases: result.increases.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) })),
-        savings: result.savings.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) })),
+        increases: mergeTrendRowsByEntity(result.increases.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) }))),
+        savings: mergeTrendRowsByEntity(result.savings.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) }))),
       };
     }
     return result;
@@ -197,6 +207,7 @@ export function registerQueryHandlers(app: AppContext): void {
   ipcMain.handle('query:missing-tags', async (_event, params: MissingTagsParams): Promise<MissingTagsResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
+    const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
     logger.info('query:missing-tags', { tagDimension: params.tagDimension });
 
@@ -212,8 +223,8 @@ export function registerQueryHandlers(app: AppContext): void {
         nonResourceRows: [],
       };
     }
-    const resourceSql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath, available, plan);
-    const nonResourceSql = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath, available, plan);
+    const resourceSql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap);
+    const nonResourceSql = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap);
     const [resourceRows, nonResourceRows] = await Promise.all([
       runQuery(resourceSql),
       runQuery(nonResourceSql),
@@ -295,6 +306,7 @@ export function registerQueryHandlers(app: AppContext): void {
   ipcMain.handle('query:entity-detail', async (_event, params: EntityDetailParams): Promise<EntityDetailResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
+    const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const { available, plan, empty } = await planQuery(tier, params.dateRange);
@@ -310,7 +322,7 @@ export function registerQueryHandlers(app: AppContext): void {
         bySubEntity: [],
       };
     }
-    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available, plan);
+    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap);
     logger.info('query:entity-detail', { entity: params.entity });
 
     const rows = await runQuery(sql);
@@ -327,6 +339,7 @@ export function registerQueryHandlers(app: AppContext): void {
   ipcMain.handle('query:filter-values', async (_event, dimensionId: string, filterEntries: Record<string, string>, dateRange?: { start: string; end: string }): Promise<{ value: string; label: string; count: number }[]> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
+    const accountReverseMap = buildAccountReverseMap(accountMap);
 
     const builtIn = dimensions.builtIn.find(d => d.name === dimensionId);
     const tag = dimensions.tags.find(d => `tag_${d.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === dimensionId);
@@ -345,6 +358,16 @@ export function registerQueryHandlers(app: AppContext): void {
       let ffExpr = ff;
       if (ft !== undefined) {
         ffExpr = buildAliasSqlCase(ff, ft);
+      }
+      // Account filters carry display names that may collapse N ids — same
+      // expansion the SQL builder does in buildFilterClauses.
+      if (ff === 'account_id') {
+        const ids = accountReverseMap.get(value);
+        if (ids !== undefined && ids.length > 0) {
+          const list = ids.map(id => `'${id.replaceAll("'", "''")}'`).join(', ');
+          whereClauses.push(`${ff} IN (${list})`);
+          continue;
+        }
       }
       whereClauses.push(`${ffExpr} = '${value.replaceAll("'", "''")}'`);
     }
@@ -369,11 +392,25 @@ export function registerQueryHandlers(app: AppContext): void {
     `;
 
     const rows = await runQuery(sql);
+    const isAccountDim = dimensionId === 'account' || dimensionId === 'account_id';
+    if (isAccountDim) {
+      // Roll N raw ids that resolve to the same display name into one entry —
+      // value AND label are the display name so the picker shows a single row
+      // and downstream filter matching uses the same display name (which the
+      // SQL builder expands back to all underlying ids).
+      const merged = new Map<string, number>();
+      for (const r of rows) {
+        const rawVal = toStr(r['val']);
+        const name = accountMap.get(rawVal) ?? rawVal;
+        merged.set(name, (merged.get(name) ?? 0) + toNum(r['total_cost']));
+      }
+      return [...merged.entries()]
+        .map(([name, cost]) => ({ value: name, label: name, count: cost }))
+        .sort((a, b) => b.count - a.count);
+    }
     return rows.map(r => {
       const rawVal = toStr(r['val']);
-      const isAccountDim = dimensionId === 'account' || dimensionId === 'account_id';
-      const label = isAccountDim ? (accountMap.get(rawVal) ?? rawVal) : rawVal;
-      return { value: rawVal, label, count: toNum(r['total_cost']) };
+      return { value: rawVal, label: rawVal, count: toNum(r['total_cost']) };
     });
   });
 }
