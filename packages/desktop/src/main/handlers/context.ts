@@ -2,6 +2,7 @@ import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import {
   asDimensionId,
   applyNormalizationRule,
+  applyRegionFriendlyNames,
   applyStripPatterns,
   loadConfig,
   loadDimensions,
@@ -81,6 +82,7 @@ export interface AppState {
   orgTree: OrgTreeConfig | null;
   syncStatuses: Record<string, SyncStatus>;
   accountMap: Map<string, string> | null;
+  regionMap: Map<string, string> | null;
 }
 
 export interface AppContext {
@@ -89,9 +91,16 @@ export interface AppContext {
   readonly activity: FileActivityLog;
   readonly optimizeQueue: OptimizeQueue;
   readonly getConfig: () => Promise<CostGoblinConfig>;
+  /** Raw user-facing dimensions config — used by the editor IPC handlers
+   *  (the alias textarea must show ONLY user aliases, not the SSM-derived
+   *  region name entries we splice in for queries). */
   readonly getDimensions: () => Promise<DimensionsConfig>;
+  /** Dimensions enriched for query-time use: Region's aliases get the
+   *  SSM-derived friendly names mixed in. Use this in every query handler. */
+  readonly getQueryDimensions: () => Promise<DimensionsConfig>;
   readonly getOrgTreeConfig: () => Promise<OrgTreeConfig>;
   readonly getAccountMap: () => Promise<Map<string, string>>;
+  readonly getRegionMap: () => Promise<Map<string, string>>;
   readonly getOrgAccountsPath: () => Promise<string | undefined>;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly invalidateConfig: () => void;
@@ -105,6 +114,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     orgTree: null,
     syncStatuses: {},
     accountMap: null,
+    regionMap: null,
   };
 
   async function getConfig(): Promise<CostGoblinConfig> {
@@ -254,6 +264,32 @@ export function createAppContext(ctx: IpcContext): AppContext {
     }
   }
 
+  async function getRegionMap(): Promise<Map<string, string>> {
+    // SSM-derived region-name lookup. Mirrors the org sync's caching pattern:
+    // read once, hold for the session, drop on dimensions invalidation.
+    if (state.regionMap !== null) return state.regionMap;
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const map = new Map<string, string>();
+    try {
+      const raw = await fs.readFile(path.join(path.dirname(ctx.dataDir), 'region-names.json'), 'utf-8');
+      const parsed: unknown = JSON.parse(raw);
+      if (isStringRecord(parsed) && isStringRecord(parsed['regions'])) {
+        for (const [code, name] of Object.entries(parsed['regions'])) {
+          if (typeof name === 'string' && name.length > 0) map.set(code, name);
+        }
+      }
+    } catch { /* no region sync yet */ }
+    state.regionMap = map;
+    return map;
+  }
+
+  async function getQueryDimensions(): Promise<DimensionsConfig> {
+    const dims = await getDimensions();
+    const regionMap = await getRegionMap();
+    return applyRegionFriendlyNames(dims, regionMap);
+  }
+
   const activity = new FileActivityLog();
   async function prefsPath(): Promise<string> {
     const path = await import('node:path');
@@ -274,12 +310,14 @@ export function createAppContext(ctx: IpcContext): AppContext {
     optimizeQueue,
     getConfig,
     getDimensions,
+    getQueryDimensions,
     getOrgTreeConfig,
     getAccountMap,
+    getRegionMap,
     getOrgAccountsPath,
     runQuery: (sql: string) => ctx.db.runQuery(sql),
     invalidateConfig: () => { state.config = null; },
-    invalidateDimensions: () => { state.dimensions = null; state.accountMap = null; },
+    invalidateDimensions: () => { state.dimensions = null; state.accountMap = null; state.regionMap = null; },
   };
 }
 

@@ -63,7 +63,7 @@ async function listRawFilesForTier(dataDir: string, tier: 'daily' | 'hourly'): P
 }
 
 export function registerDimensionsHandlers(app: AppContext): void {
-  const { ctx, getConfig, getDimensions, invalidateDimensions, runQuery, optimizeQueue } = app;
+  const { ctx, getConfig, getDimensions, getRegionMap, invalidateDimensions, runQuery, optimizeQueue } = app;
 
   ipcMain.handle('dimensions:discover-tags', async (): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> => {
     const config = await getConfig();
@@ -198,6 +198,14 @@ export function registerDimensionsHandlers(app: AppContext): void {
       const orgMap = await loadOrgAccountsMap(ctx.dataDir);
       if (orgMap.size > 0) {
         values = values.map(v => ({ value: orgMap.get(v.value) ?? v.value, cost: v.cost }));
+      }
+    }
+    // Region: always-on friendly-name resolution from region-names.json. No
+    // opt needed — codes not in the map fall through unchanged.
+    if (field === 'region') {
+      const regionMap = await getRegionMap();
+      if (regionMap.size > 0) {
+        values = values.map(v => ({ value: regionMap.get(v.value) ?? v.value, cost: v.cost }));
       }
     }
     // Apply the same display-time transforms the live queries use. Order

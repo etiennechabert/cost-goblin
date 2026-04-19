@@ -50,6 +50,42 @@ export function resolveAlias(
   return normalizedValue;
 }
 
+/** Stuffs an SSM-derived region name map into the Region built-in's aliases.
+ *  Reuses the existing alias machinery (SQL CASE, JS resolveAlias, filter
+ *  expansion) so cost queries, filter dropdowns, and entity drill-ins all
+ *  pick up friendly names without separate plumbing.
+ *
+ *  User-defined aliases take precedence: if a region code is already covered
+ *  by a user alias entry, we don't add a region-map entry that would compete.
+ *  Codes not in the map fall through unchanged (alias CASE has no WHEN for
+ *  them, so the ELSE branch returns the raw code). */
+export function applyRegionFriendlyNames(
+  dims: import('../types/config.js').DimensionsConfig,
+  regionMap: ReadonlyMap<string, string>,
+): import('../types/config.js').DimensionsConfig {
+  if (regionMap.size === 0) return dims;
+  const builtIn = dims.builtIn.map(d => {
+    if (d.field !== 'region') return d;
+    const userAliases = d.aliases ?? {};
+    const userCovered = new Set<string>();
+    for (const list of Object.values(userAliases)) {
+      for (const a of list) userCovered.add(a);
+    }
+    const merged: Record<string, string[]> = {};
+    for (const [canonical, list] of Object.entries(userAliases)) {
+      merged[canonical] = [...list];
+    }
+    for (const [code, name] of regionMap) {
+      if (userCovered.has(code)) continue;
+      const existing = merged[name];
+      if (existing === undefined) merged[name] = [code];
+      else existing.push(code);
+    }
+    return { ...d, aliases: merged };
+  });
+  return { ...dims, builtIn };
+}
+
 export function applyStripPatterns(value: string, patterns: readonly string[] | undefined): string {
   if (patterns === undefined || patterns.length === 0) return value;
   let result = value;

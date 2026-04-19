@@ -1,7 +1,8 @@
 import { ipcMain } from 'electron';
-import { isStringRecord } from '@costgoblin/core';
+import { isStringRecord, logger } from '@costgoblin/core';
 import type { OrgSyncResult, OrgSyncProgress, OrgAccount } from '@costgoblin/core';
 import { syncOrgAccounts } from '../aws-org-client.js';
+import { syncRegionNames } from '../aws-ssm-client.js';
 import type { AppContext } from './context.js';
 
 function isOrgAccount(v: unknown): v is OrgAccount {
@@ -47,6 +48,17 @@ export function registerOrgHandlers(app: AppContext): void {
       const path = await import('node:path');
       const tagLookup = result.accounts.map(a => ({ id: a.id, tags: a.tags }));
       await fs.writeFile(path.join(path.dirname(ctx.dataDir), 'org-account-tags.json'), JSON.stringify(tagLookup));
+
+      // Piggyback the SSM region-name sync onto the existing org-sync flow.
+      // Failures here are non-fatal — region names are a display nicety and
+      // the user has already paid the auth cost for the org sync.
+      try {
+        const regionMap = await syncRegionNames(profile);
+        await fs.writeFile(path.join(path.dirname(ctx.dataDir), 'region-names.json'), JSON.stringify(regionMap, null, 2));
+      } catch (err: unknown) {
+        logger.info(`Region-name sync failed (non-fatal): ${String(err)}`);
+      }
+
       orgSyncProgress = null;
       return result;
     } catch (err: unknown) {

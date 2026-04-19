@@ -51,7 +51,7 @@ import {
 } from './query-utils.js';
 
 export function registerQueryHandlers(app: AppContext): void {
-  const { ctx, getDimensions, getAccountMap, getOrgAccountsPath, getOrgTreeConfig, getConfig, runQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getOrgAccountsPath, getOrgTreeConfig, getConfig, runQuery } = app;
 
   // Intersect the query's date range with the months actually on disk so
   // buildSource only globs directories that exist — DuckDB errors on empty
@@ -345,8 +345,13 @@ export function registerQueryHandlers(app: AppContext): void {
     const tag = dimensions.tags.find(d => `tag_${d.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === dimensionId);
 
     const field = builtIn === undefined ? dimensionId : builtIn.field;
+    // Apply alias/normalize CASE for both built-ins and tags so the SQL
+    // returns the same display values the cost queries see — including the
+    // SSM-derived friendly region names spliced into Region's aliases.
     let fieldExpr = field;
-    if (tag !== undefined) {
+    if (builtIn !== undefined) {
+      fieldExpr = buildAliasSqlCase(field, builtIn);
+    } else if (tag !== undefined) {
       fieldExpr = buildAliasSqlCase(field, tag);
     }
 
@@ -356,7 +361,9 @@ export function registerQueryHandlers(app: AppContext): void {
       const ft = dimensions.tags.find(d => `tag_${d.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === key);
       const ff = fb === undefined ? key : fb.field;
       let ffExpr = ff;
-      if (ft !== undefined) {
+      if (fb !== undefined) {
+        ffExpr = buildAliasSqlCase(ff, fb);
+      } else if (ft !== undefined) {
         ffExpr = buildAliasSqlCase(ff, ft);
       }
       // Account filters carry display names that may collapse N ids — same

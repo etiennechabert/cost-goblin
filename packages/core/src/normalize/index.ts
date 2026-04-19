@@ -5,4 +5,5 @@ export {
   normalizeAndResolve,
   buildAliasSqlCase,
   applyStripPatterns,
+  applyRegionFriendlyNames,
 } from './normalize.js';
