@@ -630,7 +630,62 @@ Surfaces AWS Cost Optimization Hub recommendations (Reserved Instances, Savings 
 - Pulls from the latest cost-optimization Parquet snapshot.
 - Recommendations are read-only — the app does not apply them.
 
+#### Dimensions System: Competitive Position (MVP retrospective)
+
+Honest assessment of where the dimensions system sits vs. Vantage, CloudZero, Cloudability (Apptio), Finout, Kubecost, and AWS Cost Explorer. Drives the v1 and Maybe-Later items below.
+
+**Where we're strong:**
+- Per-dim normalization + aliases applied at query time — no sync latency, no re-materialization. Cleaner than Cost Explorer.
+- `accountTagFallback` (resource missing a tag borrows the account's tag) surfaced as first-class; large tools don't expose this.
+- Regex strip patterns + AWS-Org tag picker for account display names give real ownership of the Org's metadata.
+- Local-first DuckDB: speed, privacy, no per-seat SaaS pricing.
+
+**Where the gaps are, ranked by leverage:**
+1. **No rule-based virtual dimensions.** Competitors let users compose `Team = first-non-empty(tag:team, account_tag:sb:team, regex(resource_name, ...))`. We have the ingredients (aliases, fallback, strip patterns) but not a rule engine. Highest-leverage next feature — see Virtual Dimensions below.
+2. **No shared-cost allocation.** NAT, cross-AZ, SPs/RIs, tax, support — enterprise FinOps can't adopt without "split 50/30/20 by usage across these teams". See Shared-Cost Allocation below.
+3. **No K8s allocation.** EKS → namespace/pod/team is its own sub-market (Kubecost). Orthogonal but often bundled.
+4. **Single-cloud.** Positions us but ceilings adoption. Already tracked under Multi-Cloud.
+
+**Where we're too complex / speculative:**
+- `concept` field (owner/product/environment) is metadata that doesn't drive behavior anywhere. Either wire it to Local Budgets + View Templates or drop it.
+- `useOrgAccounts` + `accountNameFromTag` overlap after the Name-source picker shipped; the former is vestigial. Remove on the next dim refactor.
+- `BuiltInDimension` and `TagDimension` are two codepaths with parallel editors and save paths. Unifying into a single `Dimension` with a source-type discriminated union scales better once virtual dims land.
+
 ### v1 — Planned Next
+
+#### Virtual Dimensions / Rule-Based Derivation (v1)
+
+Compose a dimension's value from ordered rules instead of a single source. The evaluator picks the first rule that yields a non-empty value; existing `tagName` + `accountTagFallback` + `missingValueTemplate` become sugar for a 3-rule definition.
+
+**Rule types (initial set):**
+- `tag(name)` — resource tag from the CUR.
+- `account_tag(name)` — account-level tag from the AWS Org sync.
+- `regex(field, pattern, replacement)` — extract from `resource_id`, `usage_type`, `account_name`, etc.
+- `literal(value)` — constant, useful as a catch-all.
+- `dim(name)` — reference another dim's resolved value (enables composition).
+
+**YAML sketch:**
+
+```yaml
+tags:
+  - label: Team
+    concept: owner
+    rules:
+      - { type: tag, name: team }
+      - { type: account_tag, name: sb:team }
+      - { type: regex, field: line_item_resource_id, pattern: '^arn:aws:[^:]+:[^:]+:[^:]+:(analytics|platform|data)-', replacement: '$1' }
+      - { type: literal, value: unassigned }
+```
+
+**Editor:** a draggable rule list per dim; preview shows cumulative coverage after each rule so the user can tell which rules are pulling weight.
+
+**Migration:** auto-rewrite legacy `tagName`/`accountTagFallback`/`missingValueTemplate` into rule form on first save. Reader keeps parsing both shapes for one version.
+
+#### Dimensions Codepath Unification (v1)
+
+Collapse `BuiltInDimension` and `TagDimension` into a single `Dimension` with a source-type discriminator. Drop `useOrgAccounts` (superseded by `accountNameFromTag` + the implicit "org-sync" source after the Name-source picker landed). Decide `concept`'s fate in one of two directions:
+- **Wire it up:** drive Local Budgets (owner), View Templates (per-concept layouts), and entity-detail framing.
+- **Remove it:** delete the field from `TagDimension` and the editor if the above features don't land.
 
 #### Worker Threads (v1)
 
@@ -685,6 +740,21 @@ Data principles when built:
 - No cost data, tag values, account IDs, team names, or business data ever leaves the machine.
 - Telemetry payloads are logged locally so the user can audit exactly what's sent.
 - All endpoints configurable for self-hosted collectors.
+
+#### Shared-Cost Allocation (Maybe Later — Paid)
+
+Split a cost bucket across dimensions by a user-chosen weight. Table stakes for enterprise FinOps — NAT gateways, cross-AZ data transfer, SPs/RIs, tax, support, and shared services can't be cleanly attributed without this.
+
+**Scope (initial):**
+- **Target selector:** filter expression over any dim (e.g., `service = "EC2 - Other" AND usage_type ~ "NatGateway"`).
+- **Split strategies:** equal across a target dim, proportional-by-cost of a scoped reference query, manual percentages, usage-weighted (e.g., by EKS namespace CPU-hours).
+- **Output:** synthesized row set that replaces the original rows in aggregations at the query layer, not at sync time.
+
+**Integration:** allocation rules become part of the query cache signature. Rule list edited alongside dimensions, but stored as a separate `allocations.yaml` to keep concerns apart.
+
+#### Kubernetes Cost Allocation (Maybe Later)
+
+Decompose EKS cluster bills (EC2, EBS, load balancers, cross-AZ data transfer) into namespace/pod/team using `kube-state-metrics` + `node-exporter` snapshots. Joins on `(cluster_arn, timestamp)` against the CUR. Separate ingestion path; new Parquet tier. Prerequisite: Virtual Dimensions (rules needed to map namespaces to teams).
 
 #### Automated Anomaly Detection (Maybe Later — Paid)
 
