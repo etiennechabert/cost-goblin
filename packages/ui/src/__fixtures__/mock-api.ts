@@ -262,6 +262,7 @@ export class MockCostApi implements CostApi {
   getViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
   saveViewsConfig(): Promise<void> { return Promise.resolve(); }
   resetViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
+  revealViewsFolder(): Promise<void> { return Promise.resolve(); }
 }
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {
