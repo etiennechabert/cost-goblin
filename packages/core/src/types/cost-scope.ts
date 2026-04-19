@@ -1,11 +1,20 @@
 import type { DimensionId } from './branded.js';
 
-/** Which Parquet cost column backs the `cost` alias in every query.
- *  Extend the switch in packages/core/src/query/cost-metric.ts when adding
- *  new metrics (amortized, net_*). */
-export type CostMetric = 'unblended' | 'blended' | 'list';
+/** Which cost perspective backs the `cost` alias in every query.
+ *  - `unblended`  — what you were actually billed; upfront RI/SP fees land
+ *                   as a lump in their month.
+ *  - `blended`    — consolidated-billing blended rate (weighted average of
+ *                   usage rates across the accounts in the org). Reporting
+ *                   construct; makes linked-account costs comparable.
+ *  - `amortized`  — spreads RI/SP upfront payments over their term and uses
+ *                   effective cost for covered usage. Best for run-rate and
+ *                   forecasting.
+ *  The SQL expression that each value resolves to lives in
+ *  packages/core/src/query/cost-metric.ts. Net-of-credits is a separate
+ *  axis we haven't shipped yet; see `costPerspective` below when it lands. */
+export type CostMetric = 'unblended' | 'blended' | 'amortized';
 
-export const COST_METRICS: readonly CostMetric[] = ['unblended', 'blended', 'list'] as const;
+export const COST_METRICS: readonly CostMetric[] = ['unblended', 'blended', 'amortized'] as const;
 
 /** One AND-ed condition inside an exclusion rule. Matches when the row's
  *  value for `dimensionId` is in `values` (OR within values). Empty `values`
@@ -43,10 +52,28 @@ export interface CostScopePreviewRow {
   readonly excludedRows: number;
 }
 
+/** One day of the preview histogram. `keptCost` is what survives the enabled
+ *  exclusion rules under the chosen metric. `excludedCost` is what the same
+ *  rules removed. They sum to the pre-exclusion total for that day under the
+ *  chosen metric — useful for showing the "bite" as a stacked bar. */
+export interface CostScopeDailyRow {
+  readonly date: string;
+  readonly keptCost: number;
+  readonly excludedCost: number;
+}
+
 export interface CostScopePreviewResult {
   readonly windowDays: number;
   readonly startDate: string;
   readonly endDate: string;
   readonly perRule: readonly CostScopePreviewRow[];
   readonly combined: { readonly excludedCost: number; readonly excludedRows: number };
+  /** Total cost over the window under the chosen metric, with no exclusions
+   *  applied. Lets the UI show a "base" figure for comparison. */
+  readonly unscopedTotalCost: number;
+  /** Total under the chosen metric AND the enabled exclusion rules. */
+  readonly scopedTotalCost: number;
+  /** Daily breakdown for the window — one entry per day. Empty when no
+   *  months in range are on disk yet. */
+  readonly dailyTotals: readonly CostScopeDailyRow[];
 }

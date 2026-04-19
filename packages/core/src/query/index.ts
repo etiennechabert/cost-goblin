@@ -12,4 +12,4 @@ export {
 
 export type { SidecarPlan } from './builder.js';
 
-export { costColumnFor } from './cost-metric.js';
+export { costExprFor } from './cost-metric.js';

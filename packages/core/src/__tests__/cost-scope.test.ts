@@ -40,26 +40,26 @@ function buildQuery(costScope?: CostScopeConfig): string {
 describe('cost metric column selection', () => {
   it('defaults to unblended when no costScope given', () => {
     const sql = buildQuery();
-    expect(sql).toContain('line_item_unblended_cost');
+    // `AS cost` alias is backed by unblended; pricing_public_on_demand_cost
+    // still appears as `AS list_cost` which is a separate column.
+    expect(sql).toMatch(/COALESCE\(line_item_unblended_cost, 0\) AS cost/);
   });
 
   it('uses unblended when metric is unblended', () => {
     const sql = buildQuery({ costMetric: 'unblended', rules: [] });
-    expect(sql).toContain('line_item_unblended_cost');
+    expect(sql).toMatch(/COALESCE\(line_item_unblended_cost, 0\) AS cost/);
     expect(sql).not.toContain('line_item_blended_cost');
   });
 
   it('uses blended when metric is blended', () => {
     const sql = buildQuery({ costMetric: 'blended', rules: [] });
-    expect(sql).toContain('line_item_blended_cost');
-    expect(sql).not.toContain('line_item_unblended_cost, 0) AS cost');
+    expect(sql).toMatch(/COALESCE\(line_item_blended_cost, 0\) AS cost/);
   });
 
-  it('uses pricing_public_on_demand_cost when metric is list', () => {
-    const sql = buildQuery({ costMetric: 'list', rules: [] });
-    // list metric picks pricing_public_on_demand_cost as the cost alias
-    // (list_cost still appears as a separate column, so we check the AS cost alias position)
-    expect(sql).toMatch(/pricing_public_on_demand_cost, 0\) AS cost/);
+  it('falls back through effective cost → unblended when metric is amortized', () => {
+    const sql = buildQuery({ costMetric: 'amortized', rules: [] });
+    // Amortized layers effective-cost columns over unblended via COALESCE.
+    expect(sql).toMatch(/COALESCE\(reservation_effective_cost, savings_plan_effective_cost, line_item_unblended_cost, 0\) AS cost/);
   });
 });
 

@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type {
   CostMetric,
   CostScopeConfig,
+  CostScopeDailyRow,
   CostScopePreviewResult,
   ExclusionCondition,
   ExclusionRule,
@@ -14,9 +15,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.
 import { Button } from '../components/ui/button.js';
 
 const METRIC_LABELS: Record<CostMetric, { label: string; description: string }> = {
-  unblended: { label: 'Unblended', description: 'What you actually paid — the default for most analyses.' },
-  blended: { label: 'Blended', description: 'Org-averaged per-hour rate, smoothing RI/SP discounts across accounts.' },
-  list: { label: 'List price', description: 'On-demand list price before any discounts — useful for "what-if" comparisons.' },
+  unblended: {
+    label: 'Unblended',
+    description: 'Cost as billed each day. Upfront RI/SP fees land as a lump on their purchase day; RI/SP-covered usage shows the discounted rate. Default.',
+  },
+  blended: {
+    label: 'Blended',
+    description: 'Consolidated-billing rate — each linked account is charged the org-wide weighted average for the same usage type. Accounting construct for per-account comparisons; not what you actually pay.',
+  },
+  amortized: {
+    label: 'Amortized',
+    description: 'Spreads RI/SP purchases over the commitment term and uses effective cost for covered usage. Smooths the bursts in Unblended; best for run-rate and forecasting.',
+  },
 };
 
 function formatExcluded(cost: number, rows: number): string {
@@ -228,6 +238,50 @@ function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDel
         </button>
       </CardContent>
     </Card>
+  );
+}
+
+interface PreviewHistogramProps {
+  readonly days: readonly CostScopeDailyRow[];
+  readonly height?: number;
+}
+
+/** Compact stacked bar chart for the Cost Scope preview. Each day shows
+ *  `kept` (solid accent) over `excluded` (muted). Purpose-built rather than
+ *  reusing the dashboard's StackedBarChart because that component is tied
+ *  to the Groups/Products/Services tab model. */
+function PreviewHistogram({ days, height = 120 }: PreviewHistogramProps) {
+  const maxTotal = days.reduce((m, d) => Math.max(m, d.keptCost + d.excludedCost), 0);
+  if (days.length === 0 || maxTotal === 0) {
+    return (
+      <div className="h-[120px] flex items-center justify-center text-xs text-text-muted">
+        No data in the last 30 days.
+      </div>
+    );
+  }
+  // Render as flex-bars so we don't have to measure container width — each
+  // day takes an equal share, heights are proportional to maxTotal.
+  return (
+    <div className="flex items-end gap-px" style={{ height }}>
+      {days.map(d => {
+        const total = d.keptCost + d.excludedCost;
+        const totalPct = (total / maxTotal) * 100;
+        const keptPct = total > 0 ? (d.keptCost / total) * 100 : 0;
+        return (
+          <div
+            key={d.date}
+            className="flex-1 flex flex-col justify-end min-w-0 group relative"
+            style={{ height: '100%' }}
+            title={`${d.date}\nkept: ${formatDollars(d.keptCost)}\nexcluded: ${formatDollars(d.excludedCost)}`}
+          >
+            <div className="flex flex-col" style={{ height: `${String(totalPct)}%` }}>
+              <div className="bg-negative/40 w-full" style={{ height: `${String(100 - keptPct)}%` }} />
+              <div className="bg-accent w-full" style={{ height: `${String(keptPct)}%` }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -475,13 +529,87 @@ export function CostScopeView(): React.JSX.Element {
         ))}
       </div>
 
-      {/* Combined preview */}
-      {enabledRules.length > 0 && (
-        <div className="rounded-lg border border-border bg-bg-secondary px-4 py-3 flex items-center justify-between">
-          <span className="text-sm text-text-secondary">Total excluded (last 30 days, union of all enabled rules)</span>
-          <span className="text-sm font-medium text-text-primary">{combinedText}</span>
+      {/* Preview */}
+      <PreviewPanel preview={preview} loading={preview.loading} combinedText={combinedText} metric={draft.costMetric} hasEnabledRules={enabledRules.length > 0} />
+    </div>
+  );
+}
+
+interface PreviewPanelProps {
+  readonly preview: PreviewState;
+  readonly loading: boolean;
+  readonly combinedText: string;
+  readonly metric: CostMetric;
+  readonly hasEnabledRules: boolean;
+}
+
+function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules }: PreviewPanelProps): React.JSX.Element {
+  const result = preview.result;
+  const metricLabel = METRIC_LABELS[metric].label;
+  const excludedPct = useMemo(() => {
+    if (result === null || result.unscopedTotalCost <= 0) return 0;
+    return ((result.unscopedTotalCost - result.scopedTotalCost) / result.unscopedTotalCost) * 100;
+  }, [result]);
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">Preview</CardTitle>
+          <span className="text-xs text-text-muted">Last 30 days · {metricLabel}</span>
         </div>
-      )}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Summary row */}
+        <div className="grid grid-cols-3 gap-3">
+          <SummaryTile
+            label="Unscoped total"
+            value={result !== null ? formatDollars(result.unscopedTotalCost) : loading ? '…' : '—'}
+            hint={`Raw ${metricLabel.toLowerCase()} over the window`}
+          />
+          <SummaryTile
+            label="After scope"
+            value={result !== null ? formatDollars(result.scopedTotalCost) : loading ? '…' : '—'}
+            hint={hasEnabledRules ? `${excludedPct.toFixed(1)}% excluded` : 'No rules enabled'}
+            emphasis
+          />
+          <SummaryTile
+            label="Excluded"
+            value={hasEnabledRules ? combinedText : '—'}
+            hint={hasEnabledRules ? 'Union of enabled rules' : 'Toggle a rule above'}
+          />
+        </div>
+
+        {/* Histogram */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-text-secondary">Daily cost</span>
+            <div className="flex items-center gap-3 text-xs text-text-muted">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-accent inline-block" /> kept</span>
+              {hasEnabledRules && (
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-negative/40 inline-block" /> excluded</span>
+              )}
+            </div>
+          </div>
+          <PreviewHistogram days={result?.dailyTotals ?? []} />
+          {result !== null && result.dailyTotals.length > 0 && (
+            <div className="flex justify-between text-[10px] text-text-muted mt-1">
+              <span>{result.startDate}</span>
+              <span>{result.endDate}</span>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SummaryTile({ label, value, hint, emphasis }: { label: string; value: string; hint: string; emphasis?: boolean }): React.JSX.Element {
+  return (
+    <div className={`rounded-md border border-border px-3 py-2 ${emphasis ? 'bg-bg-tertiary/40' : 'bg-bg-secondary/60'}`}>
+      <div className="text-[10px] uppercase tracking-wide text-text-muted">{label}</div>
+      <div className={`text-sm font-semibold tabular-nums ${emphasis ? 'text-text-primary' : 'text-text-secondary'}`}>{value}</div>
+      <div className="text-[10px] text-text-muted mt-0.5">{hint}</div>
     </div>
   );
 }

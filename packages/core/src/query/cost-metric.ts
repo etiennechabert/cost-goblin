@@ -1,17 +1,27 @@
 import type { CostMetric } from '../types/cost-scope.js';
 
-const COLUMN_BY_METRIC: Readonly<Record<CostMetric, string>> = {
-  unblended: 'line_item_unblended_cost',
-  blended: 'line_item_blended_cost',
-  list: 'pricing_public_on_demand_cost',
-  // TODO: amortized / net_* — need CUR column presence detection first,
-  // and a decision on how to handle RI/SP effective cost columns that
-  // some users won't have in their export. Keep that work out of the
-  // critical path for MVP.
-};
-
-/** Raw Parquet column name for a metric. Used only by buildSource to pick
- *  which column becomes the `cost` alias. */
-export function costColumnFor(metric: CostMetric): string {
-  return COLUMN_BY_METRIC[metric];
+/** SQL expression that becomes the `cost` alias in buildSource. A function
+ *  rather than a column name so amortized can fold RI/SP effective-cost
+ *  columns together via COALESCE — those columns exist only when the CUR
+ *  includes resource IDs. Expression is COALESCE-wrapped so a null falls
+ *  through to 0, matching the legacy `COALESCE(col, 0) AS cost` shape.
+ *
+ *  `prefix` is the table qualifier ('cur.' when the source JOINs org
+ *  accounts, '' otherwise) — mirrors what buildSource already does for
+ *  other column references. */
+export function costExprFor(metric: CostMetric, prefix: string): string {
+  switch (metric) {
+    case 'unblended':
+      return `COALESCE(${prefix}line_item_unblended_cost, 0)`;
+    case 'blended':
+      return `COALESCE(${prefix}line_item_blended_cost, 0)`;
+    case 'amortized':
+      // Covered usage rows carry a reservation_effective_cost or
+      // savings_plan_effective_cost; non-covered rows fall back to the
+      // unblended amount. Upfront RIFee / SavingsPlanUpfrontFee line items
+      // are typically excluded from an amortized view via an exclusion
+      // rule — the default built-in "RI & Savings Plan purchases" handles
+      // that when enabled.
+      return `COALESCE(${prefix}reservation_effective_cost, ${prefix}savings_plan_effective_cost, ${prefix}line_item_unblended_cost, 0)`;
+  }
 }

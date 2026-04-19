@@ -275,6 +275,9 @@ export class MockCostApi implements CostApi {
       endDate: '2026-04-18',
       perRule: [],
       combined: { excludedCost: 0, excludedRows: 0 },
+      unscopedTotalCost: 0,
+      scopedTotalCost: 0,
+      dailyTotals: [],
     });
   }
   revealCostScopeFolder(): Promise<void> { return Promise.resolve(); }

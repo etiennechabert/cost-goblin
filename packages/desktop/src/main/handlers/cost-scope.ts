@@ -12,13 +12,13 @@ import {
 } from '@costgoblin/core';
 import type {
   CostScopeConfig,
+  CostScopeDailyRow,
   CostScopePreviewResult,
   CostScopePreviewRow,
   DimensionsConfig,
 } from '@costgoblin/core';
 import { listLocalMonths } from '@costgoblin/core';
 import type { AppContext } from './context.js';
-import { costColumnFor } from '@costgoblin/core';
 import { toNum } from './query-utils.js';
 
 // Every rule's dimensionId must resolve to a known built-in or tag dimension.
@@ -86,6 +86,9 @@ export function registerCostScopeHandlers(app: AppContext): void {
       endDate: endStr,
       perRule: enabledRules.map(r => ({ ruleId: r.id, excludedCost: 0, excludedRows: 0 })),
       combined: { excludedCost: 0, excludedRows: 0 },
+      unscopedTotalCost: 0,
+      scopedTotalCost: 0,
+      dailyTotals: [],
     };
 
     const available = await listLocalMonths(ctx.dataDir, 'daily');
@@ -95,8 +98,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
 
     const dimensions = await getQueryDimensions();
     const orgPath = await getOrgAccountsPath();
-    const costColumn = costColumnFor(config.costMetric);
-    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods, undefined, costColumn);
+    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods, undefined, config.costMetric);
 
     const perRule: CostScopePreviewRow[] = [];
 
@@ -160,7 +162,68 @@ export function registerCostScopeHandlers(app: AppContext): void {
       }
     }
 
-    return { windowDays, startDate: startStr, endDate: endStr, perRule, combined };
+    // Build the `excluded` predicate (OR of every enabled rule's match expr)
+    // for the daily breakdown + totals. If no rules or no expressible rules,
+    // `excludedPredicate` is the literal `FALSE` — nothing excluded — which
+    // keeps the SQL uniform and lets the kept/excluded split still work.
+    const matchExprs = enabledRules
+      .map(r => buildRuleMatchExpr(r, dimensions))
+      .filter((e): e is string => e !== null);
+    const excludedPredicate = matchExprs.length > 0
+      ? matchExprs.map(e => `(${e})`).join(' OR ')
+      : 'FALSE';
+
+    let unscopedTotalCost = 0;
+    let scopedTotalCost = 0;
+    let dailyTotals: readonly CostScopeDailyRow[] = [];
+    try {
+      const totalsSql = `
+        SELECT
+          CAST(COALESCE(SUM(cost), 0) AS DOUBLE) AS unscoped_total,
+          CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 0 ELSE cost END), 0) AS DOUBLE) AS scoped_total
+        FROM ${source}
+        WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+      `.trim();
+      const totalsRows = await runQuery(totalsSql);
+      const t = totalsRows[0];
+      unscopedTotalCost = toNum(t?.['unscoped_total']);
+      scopedTotalCost = toNum(t?.['scoped_total']);
+
+      const dailySql = `
+        SELECT
+          usage_date::VARCHAR AS date,
+          CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 0 ELSE cost END), 0) AS DOUBLE) AS kept_cost,
+          CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN cost ELSE 0 END), 0) AS DOUBLE) AS excluded_cost
+        FROM ${source}
+        WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+        GROUP BY usage_date
+        ORDER BY usage_date
+      `.trim();
+      const dailyRows = await runQuery(dailySql);
+      dailyTotals = dailyRows.map(r => {
+        const raw = r['date'];
+        const date = typeof raw === 'string' ? raw : raw instanceof Date ? raw.toISOString().slice(0, 10) : '';
+        return {
+          date,
+          keptCost: toNum(r['kept_cost']),
+          excludedCost: toNum(r['excluded_cost']),
+        };
+      });
+    } catch {
+      // Data-dir transient error — fall through with zeros. Per-rule totals
+      // were computed in their own try-blocks so they stand on their own.
+    }
+
+    return {
+      windowDays,
+      startDate: startStr,
+      endDate: endStr,
+      perRule,
+      combined,
+      unscopedTotalCost,
+      scopedTotalCost,
+      dailyTotals,
+    };
   });
 
   ipcMain.handle('cost-scope:reveal-folder', (): void => {

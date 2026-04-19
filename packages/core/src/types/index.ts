@@ -81,6 +81,7 @@ export type {
   CostScopeConfig,
   ExclusionRule,
   ExclusionCondition,
+  CostScopeDailyRow,
   CostScopePreviewRow,
   CostScopePreviewResult,
 } from './cost-scope.js';
