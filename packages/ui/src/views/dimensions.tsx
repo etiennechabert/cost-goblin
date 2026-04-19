@@ -18,6 +18,131 @@ const NORMALIZE_RULES: { value: NormalizationRule; label: string }[] = [
   { value: 'camelCase', label: 'camelCase' },
 ];
 
+interface EditingBuiltIn {
+  label: string;
+  description: string;
+  normalize: string;
+  aliases: string;
+  useOrgAccounts: boolean;
+}
+
+function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
+  dim: { field: string; editing: EditingBuiltIn };
+  onSave: (edited: EditingBuiltIn) => void;
+  onCancel: () => void;
+}>): React.JSX.Element {
+  const isAccountDim = dim.field === 'account_id';
+  const api = useCostApi();
+  const [state, setState] = useState(dim.editing);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const valuesQuery = useQuery(
+    () => api.discoverColumnValues(dim.field, isAccountDim ? { useOrgAccounts: state.useOrgAccounts } : undefined),
+    [dim.field, isAccountDim, state.useOrgAccounts],
+  );
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent): void {
+      if (containerRef.current === null) return;
+      if (!(e.target instanceof Node)) return;
+      if (containerRef.current.contains(e.target)) return;
+      onCancel();
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => { document.removeEventListener('mousedown', onDocClick); };
+  }, [onCancel]);
+
+  const preview = valuesQuery.status === 'success' ? valuesQuery.data : null;
+
+  return (
+    <div ref={containerRef} className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
+      <div className="grid grid-cols-2 gap-4">
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-text-muted">Display Label</span>
+          <input
+            type="text"
+            value={state.label}
+            onChange={e => { setState(s => ({ ...s, label: e.target.value })); }}
+            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-text-muted">Normalization</span>
+          <select
+            value={state.normalize}
+            onChange={e => { setState(s => ({ ...s, normalize: e.target.value })); }}
+            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+          >
+            <option value="">None</option>
+            {NORMALIZE_RULES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+          </select>
+        </label>
+      </div>
+      <label className="flex flex-col gap-1">
+        <span className="text-xs text-text-muted">Description</span>
+        <input
+          type="text"
+          value={state.description}
+          onChange={e => { setState(s => ({ ...s, description: e.target.value })); }}
+          className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+          placeholder="What does this dimension represent?"
+        />
+      </label>
+      {isAccountDim && (
+        <label className="flex items-center justify-between rounded border border-border bg-bg-primary px-3 py-2">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-sm text-text-primary">Resolve names via org-data</span>
+            <span className="text-[11px] text-text-muted">Display friendly account names from the Organizations sync instead of raw account IDs.</span>
+          </div>
+          <DimensionToggle enabled={state.useOrgAccounts} onToggle={() => { setState(s => ({ ...s, useOrgAccounts: !s.useOrgAccounts })); }} />
+        </label>
+      )}
+      <label className="flex flex-col gap-1">
+        <span className="text-xs text-text-muted">Alias Rules (canonical: alias1, alias2)</span>
+        <textarea
+          value={state.aliases}
+          onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
+          rows={3}
+          className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary outline-none focus:border-accent"
+          placeholder="EC2: AmazonEC2, EC2-Instance"
+        />
+      </label>
+      {preview !== null && (
+        <div className="flex flex-col gap-2">
+          <span className="text-xs text-text-muted">
+            Preview — {String(preview.distinctCount)} distinct values
+            {preview.period.length > 0 ? ` (from ${preview.period})` : ''}
+          </span>
+          <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
+            {preview.values.slice(0, 60).map(v => (
+              <span key={v.value} className="rounded border border-border bg-bg-primary px-2 py-0.5 text-[11px] text-text-secondary font-mono">
+                {v.value}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="flex items-center justify-between pt-2">
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => { onSave(state); }}
+            className="rounded-md bg-accent px-4 py-1.5 text-xs font-medium text-bg-primary hover:bg-accent/90 transition-colors"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-md px-4 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DimensionToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }): React.JSX.Element {
   return (
     <button
@@ -402,6 +527,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
 export function DimensionsView() {
   const api = useCostApi();
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editingBuiltInIdx, setEditingBuiltInIdx] = useState<number | null>(null);
   const [hiddenResourceCols, setHiddenResourceCols] = useState(new Set<string>());
   const [hiddenAccountCols, setHiddenAccountCols] = useState(new Set<string>());
   const [addingNew, setAddingNew] = useState(false);
@@ -464,6 +590,30 @@ export function DimensionsView() {
     setRefreshKey(k => k + 1);
   }
 
+  async function handleSaveBuiltIn(idx: number, edited: EditingBuiltIn) {
+    if (config === null) return;
+    const builtIn = config.builtIn.map((d, i) => {
+      if (i !== idx) return d;
+      const description = edited.description.trim();
+      const normalize = edited.normalize.length > 0 ? edited.normalize as NormalizationRule : undefined;
+      const aliases = textToAliases(edited.aliases);
+      return {
+        name: d.name,
+        label: edited.label.length > 0 ? edited.label : d.label,
+        field: d.field,
+        ...(d.displayField === undefined ? {} : { displayField: d.displayField }),
+        ...(d.enabled === false ? { enabled: false as const } : {}),
+        ...(description.length > 0 ? { description } : {}),
+        ...(normalize !== undefined ? { normalize } : {}),
+        ...(aliases !== undefined ? { aliases } : {}),
+        ...(edited.useOrgAccounts ? { useOrgAccounts: true as const } : {}),
+      };
+    });
+    await api.saveDimensionsConfig({ ...config, builtIn });
+    setEditingBuiltInIdx(null);
+    setRefreshKey(k => k + 1);
+  }
+
   async function toggleBuiltInEnabled(idx: number) {
     if (config === null) return;
     const builtIn = config.builtIn.map((d, i) => {
@@ -517,22 +667,56 @@ export function DimensionsView() {
           {/* Built-in dimensions */}
           {config.builtIn.map((d, idx) => {
             const isOn = d.enabled !== false;
+            if (editingBuiltInIdx === idx) {
+              return (
+                <BuiltInEditor
+                  key={d.name}
+                  dim={{
+                    field: d.field,
+                    editing: {
+                      label: d.label,
+                      description: d.description ?? '',
+                      normalize: d.normalize ?? '',
+                      aliases: aliasesToText(d.aliases),
+                      useOrgAccounts: d.useOrgAccounts === true,
+                    },
+                  }}
+                  onSave={(edited) => { void handleSaveBuiltIn(idx, edited); }}
+                  onCancel={() => { setEditingBuiltInIdx(null); }}
+                />
+              );
+            }
             return (
               <div
                 key={d.name}
                 className={[
-                  'rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between',
+                  'rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors',
                   isOn ? '' : 'opacity-50',
                 ].join(' ')}
               >
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-medium text-text-primary">{d.label}</span>
-                  <span className="text-xs text-text-muted font-mono">{d.field}</span>
-                  {d.displayField !== undefined && (
-                    <span className="text-[10px] text-text-muted">display: {d.displayField}</span>
+                <button
+                  type="button"
+                  onClick={() => { setEditingBuiltInIdx(idx); setEditingIdx(null); setAddingNew(false); }}
+                  className="flex flex-col gap-1 text-left flex-1 min-w-0"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-medium text-text-primary">{d.label}</span>
+                    <span className="text-xs text-text-muted font-mono">{d.field}</span>
+                    {d.displayField !== undefined && (
+                      <span className="text-[10px] text-text-muted">display: {d.displayField}</span>
+                    )}
+                    {d.normalize !== undefined && (
+                      <span className="text-[10px] text-text-muted">{d.normalize}</span>
+                    )}
+                    {d.aliases !== undefined && (
+                      <span className="text-[10px] text-text-muted">{String(Object.keys(d.aliases).length)} alias rules</span>
+                    )}
+                  </div>
+                  {d.description !== undefined && (
+                    <span className="text-[11px] text-text-muted leading-snug">{d.description}</span>
                   )}
-                </div>
-                <div className="flex items-center gap-3">
+                </button>
+                <div className="flex items-center gap-3 shrink-0">
                   <span className="text-[10px] text-text-muted uppercase tracking-wider">Built-in</span>
                   <DimensionToggle enabled={isOn} onToggle={() => { void toggleBuiltInEnabled(idx); }} />
                 </div>
@@ -569,26 +753,31 @@ export function DimensionsView() {
                   <button
                     type="button"
                     onClick={() => { setEditingIdx(idx); setAddingNew(false); }}
-                    className="flex items-center gap-3 text-left flex-1 min-w-0"
+                    className="flex flex-col gap-1 text-left flex-1 min-w-0"
                   >
-                    <span className="text-sm font-medium text-text-primary">{tag.label}</span>
-                    <span className="text-xs text-text-muted font-mono">tag:{tag.tagName}</span>
-                    {tag.concept !== undefined && (
-                      <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
-                        {tag.concept}
-                      </span>
-                    )}
-                    {tag.normalize !== undefined && (
-                      <span className="text-[10px] text-text-muted">{tag.normalize}</span>
-                    )}
-                    {tag.aliases !== undefined && (
-                      <span className="text-[10px] text-text-muted">{String(Object.keys(tag.aliases).length)} alias rules</span>
-                    )}
-                    {tag.accountTagFallback !== undefined && (
-                      <span className="text-[10px] text-text-muted">fallback: {tag.accountTagFallback}</span>
-                    )}
-                    {tag.missingValueTemplate !== undefined && (
-                      <span className="text-[10px] text-text-muted font-mono">missing: {tag.missingValueTemplate}</span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm font-medium text-text-primary">{tag.label}</span>
+                      <span className="text-xs text-text-muted font-mono">tag:{tag.tagName}</span>
+                      {tag.concept !== undefined && (
+                        <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
+                          {tag.concept}
+                        </span>
+                      )}
+                      {tag.normalize !== undefined && (
+                        <span className="text-[10px] text-text-muted">{tag.normalize}</span>
+                      )}
+                      {tag.aliases !== undefined && (
+                        <span className="text-[10px] text-text-muted">{String(Object.keys(tag.aliases).length)} alias rules</span>
+                      )}
+                      {tag.accountTagFallback !== undefined && (
+                        <span className="text-[10px] text-text-muted">fallback: {tag.accountTagFallback}</span>
+                      )}
+                      {tag.missingValueTemplate !== undefined && (
+                        <span className="text-[10px] text-text-muted font-mono">missing: {tag.missingValueTemplate}</span>
+                      )}
+                    </div>
+                    {tag.description !== undefined && (
+                      <span className="text-[11px] text-text-muted leading-snug">{tag.description}</span>
                     )}
                   </button>
                   <div className="flex items-center gap-3 shrink-0">

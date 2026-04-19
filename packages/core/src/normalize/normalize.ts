@@ -56,9 +56,14 @@ export function normalizeAndResolve(value: string, dimension: TagDimension): Tag
   return asTagValue(resolved);
 }
 
+interface NormalizableDimension {
+  readonly normalize?: NormalizationRule | undefined;
+  readonly aliases?: Readonly<Record<string, readonly string[]>> | undefined;
+}
+
 export function buildAliasSqlCase(
   fieldExpr: string,
-  dimension: TagDimension,
+  dimension: NormalizableDimension,
 ): string {
   const cases: string[] = [];
 
