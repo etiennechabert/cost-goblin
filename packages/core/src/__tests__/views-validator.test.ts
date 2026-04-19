@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { validateViews } from '../config/views-validator.js';
 import { ConfigValidationError } from '../config/validator.js';
+import { asDimensionId } from '../types/branded.js';
 
 describe('validateViews', () => {
   it('parses a valid views config', () => {
@@ -83,8 +84,29 @@ describe('validateViews', () => {
     const w = cfg.views[0]?.rows[0]?.widgets[0];
     expect(w?.filters).toBeDefined();
     if (w?.type === 'pie') {
-      expect(w.filters?.['account' as keyof typeof w.filters]).toBe('111111111111');
+      const accountDim = asDimensionId('account');
+      expect(w.filters?.[accountDim]).toBe('111111111111');
     }
+  });
+
+  it('rejects duplicate widget ids within a view', () => {
+    expect(() => validateViews({
+      views: [{
+        id: 'v', name: 'V', rows: [
+          { widgets: [{ id: 'dup', type: 'summary', size: 'small' }] },
+          { widgets: [{ id: 'dup', type: 'summary', size: 'small' }] },
+        ],
+      }],
+    })).toThrow(/duplicate widget id/);
+  });
+
+  it('rejects duplicate view ids', () => {
+    expect(() => validateViews({
+      views: [
+        { id: 'same', name: 'A', rows: [{ widgets: [{ id: 'w1', type: 'summary', size: 'small' }] }] },
+        { id: 'same', name: 'B', rows: [{ widgets: [{ id: 'w2', type: 'summary', size: 'small' }] }] },
+      ],
+    })).toThrow(/duplicate view id/);
   });
 
   it('rejects views payload with no views key', () => {

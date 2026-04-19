@@ -86,7 +86,15 @@ export function App(): React.JSX.Element {
     // call also bootstraps the file for new installations.
     api.getViewsConfig()
       .then((cfg) => {
-        if (cfg.views.length > 0) setViewsConfig(cfg);
+        if (cfg.views.length > 0) {
+          setViewsConfig(cfg);
+          setView(prev => {
+            if (prev.page !== 'custom') return prev;
+            const exists = cfg.views.some(v => v.id === prev.viewId);
+            const firstId = cfg.views[0]?.id;
+            return exists || firstId === undefined ? prev : { page: 'custom', viewId: firstId };
+          });
+        }
       })
       .catch(() => {
         // Keep fallback — ensures Cost Overview always renders even if YAML
@@ -141,7 +149,8 @@ export function App(): React.JSX.Element {
   }
 
   function handleBack() {
-    setView({ page: 'custom', viewId: 'overview' });
+    const firstId = viewsConfig.views[0]?.id ?? OVERVIEW_SEED_VIEW.id;
+    setView({ page: 'custom', viewId: firstId });
   }
 
   function handleSetupComplete() {
@@ -257,7 +266,7 @@ export function App(): React.JSX.Element {
         {view.page === 'missing-tags' && <MissingTags />}
         {view.page === 'savings' && <Savings />}
         {view.page === 'dimensions' && <DimensionsView />}
-        {view.page === 'views-editor' && <ViewsEditor />}
+        {view.page === 'views-editor' && <ViewsEditor onConfigPersisted={setViewsConfig} />}
         <div className={view.page === 'sync' ? '' : 'hidden'}>
           <DataManagement />
         </div>

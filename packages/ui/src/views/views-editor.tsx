@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
-import { asDimensionId } from '@costgoblin/core/browser';
+import { asDimensionId, SEED_VIEWS_CONFIG } from '@costgoblin/core/browser';
 import type {
   Dimension,
   ViewSpec,
@@ -10,6 +10,7 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { CustomView } from './custom-view.js';
 import { WidgetInspector } from '../components/widget-inspector.js';
+import { ViewYamlModal } from '../components/view-yaml-modal.js';
 import { WIDGET_CATALOG } from '../widgets/registry.js';
 import { getDimensionId } from '../lib/dimensions.js';
 
@@ -49,7 +50,13 @@ interface EditorState {
   readonly dirty: boolean;
 }
 
-export function ViewsEditor(): React.JSX.Element {
+interface ViewsEditorProps {
+  /** Called whenever the persisted config changes (save / reset) so the host
+   *  app can refresh its left nav without waiting for a restart. */
+  readonly onConfigPersisted?: ((cfg: ViewsConfig) => void) | undefined;
+}
+
+export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React.JSX.Element {
   const api = useCostApi();
   const idGenRef = useRef({ count: 0 });
   const idGen = idGenRef.current;
@@ -61,6 +68,7 @@ export function ViewsEditor(): React.JSX.Element {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modal, setModal] = useState<{ mode: 'export' | 'import' } | null>(null);
 
   const dimensionsQuery = useQuery(() => api.getDimensions(), [api]);
   const dimensions: readonly Dimension[] = dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
@@ -202,6 +210,7 @@ export function ViewsEditor(): React.JSX.Element {
     try {
       await api.saveViewsConfig(state.config);
       setState(prev => ({ ...prev, dirty: false }));
+      onConfigPersisted?.(state.config);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -210,11 +219,32 @@ export function ViewsEditor(): React.JSX.Element {
   }
 
   async function handleReset(): Promise<void> {
-    if (!window.confirm('Reset to default views? This will discard all custom views and unsaved changes.')) return;
+    if (!window.confirm('Reset built-in views to defaults? Your custom views will be kept (delete them manually to fully reset).')) return;
+    // Client-side merge: built-ins from seed replace any current same-id built-in,
+    // custom (non-builtIn) views in the editor are preserved in place. Missing
+    // built-ins are prepended.
+    const seedById = new Map(SEED_VIEWS_CONFIG.views.map(v => [v.id, v]));
+    const seenSeedIds = new Set<string>();
+    const replaced: ViewSpec[] = state.config.views.map(v => {
+      const seed = seedById.get(v.id);
+      if (seed !== undefined && seed.builtIn === true) {
+        seenSeedIds.add(v.id);
+        return seed;
+      }
+      return v;
+    });
+    const missing = SEED_VIEWS_CONFIG.views.filter(v => v.builtIn === true && !seenSeedIds.has(v.id));
+    const newConfig: ViewsConfig = { views: [...missing, ...replaced] };
+
     setSaving(true);
+    setError(null);
     try {
-      const cfg = await api.resetViewsConfig();
-      setState({ config: cfg, selectedViewId: cfg.views[0]?.id ?? null, dirty: false });
+      await api.saveViewsConfig(newConfig);
+      const keepSelected = state.selectedViewId !== null
+        && newConfig.views.some(v => v.id === state.selectedViewId);
+      const newSelectedId = keepSelected ? state.selectedViewId : (newConfig.views[0]?.id ?? null);
+      setState({ config: newConfig, selectedViewId: newSelectedId, dirty: false });
+      onConfigPersisted?.(newConfig);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -232,11 +262,27 @@ export function ViewsEditor(): React.JSX.Element {
         <div className="flex items-center gap-2">
           <button
             type="button"
+            onClick={() => { setModal({ mode: 'import' }); }}
+            disabled={saving}
+            className="px-3 py-1.5 text-sm rounded-md border border-border text-text-secondary hover:text-text-primary disabled:opacity-50"
+          >
+            Import
+          </button>
+          <button
+            type="button"
+            onClick={() => { if (selectedView !== null) setModal({ mode: 'export' }); }}
+            disabled={saving || selectedView === null}
+            className="px-3 py-1.5 text-sm rounded-md border border-border text-text-secondary hover:text-text-primary disabled:opacity-50"
+          >
+            Export
+          </button>
+          <button
+            type="button"
             onClick={() => { void handleReset(); }}
             disabled={saving}
             className="px-3 py-1.5 text-sm rounded-md border border-border text-text-secondary hover:text-text-primary disabled:opacity-50"
           >
-            Reset to defaults
+            Reset built-ins
           </button>
           <button
             type="button"
@@ -255,7 +301,7 @@ export function ViewsEditor(): React.JSX.Element {
         </div>
       )}
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: '240px 1fr' }}>
+      <div className="grid gap-4" style={{ gridTemplateColumns: '240px minmax(0, 1fr)' }}>
         {/* Left pane: view list */}
         <div className="flex flex-col gap-1 rounded-lg border border-border bg-bg-secondary/30 p-2">
           {state.config.views.map((v, i) => {
@@ -415,6 +461,25 @@ export function ViewsEditor(): React.JSX.Element {
           )}
         </div>
       </div>
+
+      {modal !== null && modal.mode === 'export' && selectedView !== null && (
+        <ViewYamlModal
+          mode="export"
+          view={selectedView}
+          onClose={() => { setModal(null); }}
+        />
+      )}
+      {modal !== null && modal.mode === 'import' && (
+        <ViewYamlModal
+          mode="import"
+          existingIds={new Set(state.config.views.map(v => v.id))}
+          onClose={() => { setModal(null); }}
+          onImport={(view) => {
+            updateConfig({ views: [...state.config.views, view] }, view.id);
+            setModal(null);
+          }}
+        />
+      )}
     </div>
   );
 }

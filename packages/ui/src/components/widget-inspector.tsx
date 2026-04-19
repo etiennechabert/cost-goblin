@@ -19,6 +19,37 @@ const SIZES: readonly { value: WidgetSize; label: string }[] = [
   { value: 'full', label: 'Full' },
 ];
 
+function stripTitle(w: WidgetSpec): WidgetSpec {
+  const common = {
+    id: w.id,
+    size: w.size,
+    ...(w.filters !== undefined ? { filters: w.filters } : {}),
+  };
+  switch (w.type) {
+    case 'summary':
+      return { ...common, type: w.type, ...(w.metric !== undefined ? { metric: w.metric } : {}) };
+    case 'pie':
+      return { ...common, type: w.type, groupBy: w.groupBy, ...(w.drillable !== undefined ? { drillable: w.drillable } : {}) };
+    case 'stackedBar':
+    case 'bubble':
+      return { ...common, type: w.type, groupBy: w.groupBy };
+    case 'treemap':
+      return { ...common, type: w.type, groupBy: w.groupBy, ...(w.drillTo !== undefined ? { drillTo: w.drillTo } : {}) };
+    case 'line':
+    case 'topNBar':
+    case 'heatmap':
+      return { ...common, type: w.type, groupBy: w.groupBy, ...(w.topN !== undefined ? { topN: w.topN } : {}) };
+    case 'table':
+      return {
+        ...common,
+        type: w.type,
+        groupBy: w.groupBy,
+        ...(w.topN !== undefined ? { topN: w.topN } : {}),
+        ...(w.columns !== undefined ? { columns: w.columns } : {}),
+      };
+  }
+}
+
 function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: string): WidgetSpec {
   const base = { id: prev.id, size: prev.size, ...(prev.title !== undefined ? { title: prev.title } : {}) };
   const existingGroupBy = 'groupBy' in prev ? prev.groupBy : asDimensionId(fallbackDim);
@@ -58,16 +89,16 @@ export function WidgetInspector({
 
   function setTitle(title: string) {
     if (title === '') {
-      const next = { ...widget };
-      delete (next as { title?: string }).title;
-      onChange(next);
+      onChange(stripTitle(widget));
     } else {
       onChange({ ...widget, title });
     }
   }
 
-  function setType(type: WidgetType) {
-    onChange(defaultSpecForType(type, widget, fallbackDim));
+  function setType(value: string) {
+    const match = WIDGET_CATALOG.find(c => c.type === value);
+    if (match === undefined) return;
+    onChange(defaultSpecForType(match.type, widget, fallbackDim));
   }
 
   function setGroupBy(value: string) {
@@ -86,7 +117,7 @@ export function WidgetInspector({
       <div className="flex items-center justify-between gap-2">
         <select
           value={widget.type}
-          onChange={(e) => { setType(e.target.value as WidgetType); }}
+          onChange={(e) => { setType(e.target.value); }}
           className="bg-transparent border border-border rounded px-2 py-1 text-text-primary text-xs"
         >
           {WIDGET_CATALOG.map(c => (

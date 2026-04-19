@@ -25,7 +25,6 @@
     "@visx/event": "^4.0.1-alpha.0",
     "@visx/grid": "^4.0.1-alpha.0",
     "@visx/group": "^4.0.1-alpha.0",
-    "@visx/heatmap": "^4.0.1-alpha.0",
     "@visx/hierarchy": "^4.0.1-alpha.0",
     "@visx/responsive": "^4.0.1-alpha.0",
     "@visx/scale": "^4.0.1-alpha.0",
@@ -36,7 +35,8 @@
     "lucide-react": "^0.500.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "tailwind-merge": "^3.0.0"
+    "tailwind-merge": "^3.0.0",
+    "yaml": "^2.7.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.0.0",

@@ -12,18 +12,18 @@ export interface TopNBar {
 }
 
 interface TopNBarChartProps {
-  data: readonly TopNBar[];
-  title: string;
-  subtitle?: string;
-  topN?: number;
-  onBarClick?: (name: string) => void;
-  onBarHover?: (name: string | null) => void;
-  externalHoveredName?: string | null;
-  collapsed?: boolean;
-  onExpandToggle?: () => void;
-  dimensions?: readonly Dimension[] | undefined;
-  activeDimensionId?: string | undefined;
-  onDimensionChange?: ((dimId: string) => void) | undefined;
+  readonly data: readonly TopNBar[];
+  readonly title: string;
+  readonly subtitle?: string | undefined;
+  readonly topN?: number | undefined;
+  readonly onBarClick?: ((name: string) => void) | undefined;
+  readonly onBarHover?: ((name: string | null) => void) | undefined;
+  readonly externalHoveredName?: string | null | undefined;
+  readonly collapsed?: boolean | undefined;
+  readonly onExpandToggle?: (() => void) | undefined;
+  readonly dimensions?: readonly Dimension[] | undefined;
+  readonly activeDimensionId?: string | undefined;
+  readonly onDimensionChange?: ((dimId: string) => void) | undefined;
 }
 
 const ROW_HEIGHT = 24;

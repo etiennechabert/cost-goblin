@@ -18,34 +18,32 @@ import {
   assertString,
 } from './validator.js';
 
-const WIDGET_TYPES: ReadonlySet<WidgetType> = new Set([
+const WIDGET_TYPES: readonly WidgetType[] = [
   'summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table',
-]);
+];
 
-const WIDGET_SIZES: ReadonlySet<WidgetSize> = new Set(['small', 'medium', 'large', 'full']);
+const WIDGET_SIZES: readonly WidgetSize[] = ['small', 'medium', 'large', 'full'];
 
-const SUMMARY_METRICS: ReadonlySet<SummaryMetric> = new Set([
-  'total', 'delta', 'topEntity', 'entityCount',
-]);
+const SUMMARY_METRICS: readonly SummaryMetric[] = ['total', 'delta', 'topEntity', 'entityCount'];
 
-const TABLE_COLUMNS: ReadonlySet<TableColumn> = new Set([
+const TABLE_COLUMNS: readonly TableColumn[] = [
   'entity', 'service', 'serviceFamily', 'cost', 'percentage',
-]);
+];
 
 function isWidgetType(s: string): s is WidgetType {
-  return (WIDGET_TYPES as ReadonlySet<string>).has(s);
+  return WIDGET_TYPES.some(t => t === s);
 }
 
 function isWidgetSize(s: string): s is WidgetSize {
-  return (WIDGET_SIZES as ReadonlySet<string>).has(s);
+  return WIDGET_SIZES.some(t => t === s);
 }
 
 function isSummaryMetric(s: string): s is SummaryMetric {
-  return (SUMMARY_METRICS as ReadonlySet<string>).has(s);
+  return SUMMARY_METRICS.some(t => t === s);
 }
 
 function isTableColumn(s: string): s is TableColumn {
-  return (TABLE_COLUMNS as ReadonlySet<string>).has(s);
+  return TABLE_COLUMNS.some(t => t === s);
 }
 
 function validateFilters(raw: unknown, ctx: string): WidgetFilterOverlay | undefined {
@@ -65,13 +63,13 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
   assertString(raw['type'], `${ctx}.type`);
   if (!isWidgetType(raw['type'])) {
     throw new ConfigValidationError(
-      `${ctx}.type must be one of: ${[...WIDGET_TYPES].join(', ')} (got ${raw['type']})`,
+      `${ctx}.type must be one of: ${WIDGET_TYPES.join(', ')} (got ${raw['type']})`,
     );
   }
   assertString(raw['size'], `${ctx}.size`);
   if (!isWidgetSize(raw['size'])) {
     throw new ConfigValidationError(
-      `${ctx}.size must be one of: ${[...WIDGET_SIZES].join(', ')} (got ${raw['size']})`,
+      `${ctx}.size must be one of: ${WIDGET_SIZES.join(', ')} (got ${raw['size']})`,
     );
   }
 
@@ -95,7 +93,7 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
         assertString(raw['metric'], `${ctx}.metric`);
         if (!isSummaryMetric(raw['metric'])) {
           throw new ConfigValidationError(
-            `${ctx}.metric must be one of: ${[...SUMMARY_METRICS].join(', ')}`,
+            `${ctx}.metric must be one of: ${SUMMARY_METRICS.join(', ')}`,
           );
         }
         metric = raw['metric'];
@@ -155,7 +153,7 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
           assertString(c, `${ctx}.columns[${String(i)}]`);
           if (!isTableColumn(c)) {
             throw new ConfigValidationError(
-              `${ctx}.columns[${String(i)}] must be one of: ${[...TABLE_COLUMNS].join(', ')}`,
+              `${ctx}.columns[${String(i)}] must be one of: ${TABLE_COLUMNS.join(', ')}`,
             );
           }
           return c;
@@ -192,6 +190,16 @@ function validateView(raw: unknown, ctx: string): ViewSpec {
     return { widgets };
   });
 
+  const seenIds = new Set<string>();
+  for (const row of rows) {
+    for (const w of row.widgets) {
+      if (seenIds.has(w.id)) {
+        throw new ConfigValidationError(`${ctx}: duplicate widget id "${w.id}"`);
+      }
+      seenIds.add(w.id);
+    }
+  }
+
   return {
     id: raw['id'],
     name: raw['name'],
@@ -205,5 +213,12 @@ export function validateViews(raw: unknown): ViewsConfig {
   assertObject(raw, 'views config');
   assertArray(raw['views'], 'views');
   const views = raw['views'].map((v, i) => validateView(v, `views[${String(i)}]`));
+  const seenViewIds = new Set<string>();
+  for (const v of views) {
+    if (seenViewIds.has(v.id)) {
+      throw new ConfigValidationError(`duplicate view id "${v.id}"`);
+    }
+    seenViewIds.add(v.id);
+  }
   return { views };
 }

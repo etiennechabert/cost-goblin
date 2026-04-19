@@ -43,8 +43,14 @@ describe('ViewsEditor', () => {
     expect(screen.getAllByText('New view').length).toBeGreaterThan(0);
   });
 
-  it('shows the Reset to defaults button', () => {
+  it('shows the Reset built-ins button', () => {
     renderEditor();
-    expect(screen.getByText('Reset to defaults')).toBeDefined();
+    expect(screen.getByText('Reset built-ins')).toBeDefined();
+  });
+
+  it('shows the Export and Import buttons', () => {
+    renderEditor();
+    expect(screen.getByText('Export')).toBeDefined();
+    expect(screen.getByText('Import')).toBeDefined();
   });
 });

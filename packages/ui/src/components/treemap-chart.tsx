@@ -85,7 +85,7 @@ function TreemapInner({
                         y={14}
                         fontSize={11}
                         fontWeight={600}
-                        fill="#0a0a0a"
+                        fill="var(--color-bg-primary)"
                         pointerEvents="none"
                       >
                         {name.length > Math.floor(w / 7) ? `${name.slice(0, Math.floor(w / 7) - 1)}…` : name}
@@ -95,7 +95,7 @@ function TreemapInner({
                           x={6}
                           y={28}
                           fontSize={10}
-                          fill="#0a0a0a"
+                          fill="var(--color-bg-primary)"
                           fillOpacity={0.85}
                           pointerEvents="none"
                         >
@@ -123,7 +123,7 @@ export function TreemapChart({ data, title, subtitle, height = 320, onCellClick 
           {subtitle !== undefined && <span className="text-[11px] text-text-muted">{subtitle}</span>}
         </div>
       )}
-      <div className="flex-1">
+      <div className="flex-1 min-h-0">
         <ParentSize>
           {({ width, height: h }) => (
             <TreemapInner

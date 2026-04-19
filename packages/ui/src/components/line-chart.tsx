@@ -37,18 +37,14 @@ interface TooltipPayload {
   readonly entries: readonly { readonly name: string; readonly cost: number; readonly color: string }[];
 }
 
-function LineChartInner({
-  series,
-  width,
-  height,
-  onSeriesClick,
-}: LineChartProps & { readonly width: number; readonly height: number }) {
-  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
-  const visible = useMemo(
-    () => series.filter(s => !hidden.has(s.name)),
-    [series, hidden],
-  );
+interface LineSvgProps {
+  readonly series: readonly LineSeries[];
+  readonly visible: readonly LineSeries[];
+  readonly width: number;
+  readonly height: number;
+}
 
+function LineSvg({ series, visible, width, height }: LineSvgProps) {
   const {
     showTooltip, hideTooltip, tooltipData, tooltipLeft, tooltipTop, tooltipOpen,
   } = useTooltip<TooltipPayload>();
@@ -85,6 +81,12 @@ function LineChartInner({
     nice: true,
   }), [maxY, innerH]);
 
+  const seriesColorIndex = useMemo(() => {
+    const m = new Map<string, number>();
+    series.forEach((s, i) => m.set(s.name, i));
+    return m;
+  }, [series]);
+
   const handleMove = useCallback((event: React.MouseEvent<SVGRectElement>) => {
     const point = localPoint(event);
     if (point === null) return;
@@ -101,9 +103,10 @@ function LineChartInner({
       }
     }
     const entries = visible
-      .map((s, i) => {
+      .map((s) => {
         const p = s.points.find(x2 => x2.date === nearest);
-        const color = PALETTE_STANDARD[i % PALETTE_STANDARD.length] ?? '#999';
+        const colorIdx = seriesColorIndex.get(s.name) ?? 0;
+        const color = PALETTE_STANDARD[colorIdx % PALETTE_STANDARD.length] ?? '#999';
         return p !== undefined ? { name: s.name, cost: p.cost, color } : null;
       })
       .filter((e): e is { name: string; cost: number; color: string } => e !== null);
@@ -112,19 +115,10 @@ function LineChartInner({
       tooltipLeft: point.x,
       tooltipTop: point.y,
     });
-  }, [innerW, sortedDates, visible, xScale, showTooltip]);
-
-  function toggle(name: string) {
-    setHidden(prev => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-  }
+  }, [innerW, sortedDates, visible, xScale, showTooltip, seriesColorIndex]);
 
   return (
-    <div className="relative">
+    <div className="relative" style={{ width, height }}>
       <svg width={width} height={height}>
         <Group left={MARGIN.left} top={MARGIN.top}>
           <GridRows
@@ -165,12 +159,13 @@ function LineChartInner({
               dy: '0.33em',
             })}
           />
-          {visible.map((s, i) => {
-            const color = PALETTE_STANDARD[i % PALETTE_STANDARD.length] ?? '#999';
+          {visible.map((s) => {
+            const colorIdx = seriesColorIndex.get(s.name) ?? 0;
+            const color = PALETTE_STANDARD[colorIdx % PALETTE_STANDARD.length] ?? '#999';
             return (
               <LinePath<LineSeriesPoint>
                 key={s.name}
-                data={s.points as LineSeriesPoint[]}
+                data={[...s.points]}
                 x={(d) => xScale(new Date(d.date))}
                 y={(d) => yScale(d.cost)}
                 stroke={color}
@@ -203,10 +198,47 @@ function LineChartInner({
           </div>
         </TooltipWithBounds>
       )}
+    </div>
+  );
+}
 
-      <div className="mt-2 flex flex-wrap gap-2">
-        {series.map((s, i) => {
-          const color = PALETTE_STANDARD[i % PALETTE_STANDARD.length] ?? '#999';
+export function LineChart({ series, title, subtitle, height = 320, onSeriesClick }: LineChartProps) {
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
+  const visible = useMemo(
+    () => series.filter(s => !hidden.has(s.name)),
+    [series, hidden],
+  );
+
+  function toggle(name: string) {
+    setHidden(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col" style={{ height }}>
+      {(title !== undefined || subtitle !== undefined) && (
+        <div className="flex items-center justify-between mb-2">
+          {title !== undefined && <h3 className="text-sm font-medium text-text-secondary">{title}</h3>}
+          {subtitle !== undefined && <span className="text-[11px] text-text-muted">{subtitle}</span>}
+        </div>
+      )}
+      <div className="flex-1 min-h-0">
+        <ParentSize>
+          {({ width, height: h }) => (
+            width > 10 && h > 10 ? (
+              <LineSvg series={series} visible={visible} width={width} height={h} />
+            ) : null
+          )}
+        </ParentSize>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2 shrink-0">
+        {series.map((s) => {
+          const colorIdx = series.findIndex(x => x.name === s.name);
+          const color = PALETTE_STANDARD[colorIdx % PALETTE_STANDARD.length] ?? '#999';
           const off = hidden.has(s.name);
           return (
             <button
@@ -226,35 +258,6 @@ function LineChartInner({
             </button>
           );
         })}
-      </div>
-    </div>
-  );
-}
-
-export function LineChart({ series, title, subtitle, height = 320, onSeriesClick }: LineChartProps) {
-  return (
-    <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col" style={{ height }}>
-      {(title !== undefined || subtitle !== undefined) && (
-        <div className="flex items-center justify-between mb-2">
-          {title !== undefined && <h3 className="text-sm font-medium text-text-secondary">{title}</h3>}
-          {subtitle !== undefined && <span className="text-[11px] text-text-muted">{subtitle}</span>}
-        </div>
-      )}
-      <div className="flex-1">
-        <ParentSize>
-          {({ width, height: h }) => (
-            width > 10 && h > 10 ? (
-              <LineChartInner
-                series={series}
-                title={title}
-                subtitle={subtitle}
-                width={width}
-                height={h}
-                onSeriesClick={onSeriesClick}
-              />
-            ) : null
-          )}
-        </ParentSize>
       </div>
     </div>
   );
