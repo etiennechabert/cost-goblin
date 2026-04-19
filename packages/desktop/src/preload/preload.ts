@@ -22,6 +22,7 @@ import type {
   SavingsPreferences,
   UIPreferences,
   DimensionsConfig,
+  NormalizationRule,
   OrgSyncResult,
   OrgSyncProgress,
   AutoSyncStatus,
@@ -106,6 +107,9 @@ const api: CostApi = {
   writeConfig(config: { providerName: string; profile: string; dailyBucket: string; retentionDays?: number | undefined; hourlyBucket?: string | undefined; costOptBucket?: string | undefined; tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined }): Promise<void> {
     return invoke<undefined>('setup:write-config', config).then(() => undefined);
   },
+  updateAwsProfile(profile: string): Promise<void> {
+    return invoke<undefined>('config:update-aws-profile', profile).then(() => undefined);
+  },
   getSavingsPreferences(): Promise<SavingsPreferences> {
     return invoke<SavingsPreferences>('savings:get-preferences');
   },
@@ -142,10 +146,19 @@ const api: CostApi = {
   getOrgSyncProgress(): Promise<OrgSyncProgress | null> {
     return invoke<OrgSyncProgress | null>('org:get-progress');
   },
+  getRegionNamesInfo(): Promise<{ count: number; syncedAt: string; lastError: string | null; regions: Record<string, { longName: string; country: string; continent: string }> } | null> {
+    return invoke<{ count: number; syncedAt: string; lastError: string | null; regions: Record<string, { longName: string; country: string; continent: string }> } | null>('org:get-region-names-info');
+  },
+  clearOrgData(): Promise<void> {
+    return invoke<undefined>('org:clear-data').then(() => undefined);
+  },
+  syncRegionNames(profile: string): Promise<{ count: number; syncedAt: string }> {
+    return invoke<{ count: number; syncedAt: string }>('ssm:sync-region-names', profile);
+  },
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> {
     return invoke<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>('dimensions:discover-tags');
   },
-  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> {
+  discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> {
     return invoke<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }>('dimensions:discover-column-values', field, opts);
   },
   getDimensionsConfig(): Promise<DimensionsConfig> {

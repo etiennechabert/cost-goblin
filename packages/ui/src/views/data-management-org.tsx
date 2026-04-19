@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
+import { ConfirmModal } from '../components/confirm-modal.js';
 
 type OrgSyncState =
   | { status: 'idle' }
@@ -8,15 +9,40 @@ type OrgSyncState =
   | { status: 'done'; count: number }
   | { status: 'error'; message: string };
 
+// Map the backend's terse phase keys to user-facing sentences. The 'tags'
+// phase iterates ListTagsForResource per account (so total = account count,
+// NOT the eventual number of distinct tag keys — that's discovered after).
+function phaseLabel(phase: string, total: number): string {
+  switch (phase) {
+    case 'accounts': return 'Listing accounts';
+    case 'ous':      return 'Discovering organizational units';
+    case 'tags':     return total > 0 ? 'Fetching tags from each account' : 'Fetching tags';
+    case 'regions':  return 'Fetching region friendly names from SSM';
+    default:         return phase;
+  }
+}
+
 export function OrgAccountsSection({ profile }: Readonly<{ profile: string | null }>) {
   const api = useCostApi();
-  const orgQuery = useQuery(() => api.getOrgSyncResult(), []);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const orgQuery = useQuery(() => api.getOrgSyncResult(), [refreshKey]);
+  const regionInfoQuery = useQuery(() => api.getRegionNamesInfo(), [refreshKey]);
   const [expanded, setExpanded] = useState(false);
   const [syncState, setSyncState] = useState<OrgSyncState>({ status: 'idle' });
   const [accountSearch, setAccountSearch] = useState('');
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
 
   const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
+  const regionInfo = regionInfoQuery.status === 'success' ? regionInfoQuery.data : null;
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+
+  async function handleClear(): Promise<void> {
+    setShowClearConfirm(false);
+    setSelectedAccountId(null);
+    setExpanded(false);
+    await api.clearOrgData();
+    setRefreshKey(k => k + 1);
+  }
   const selectedAccount = orgData !== null && selectedAccountId !== null
     ? orgData.accounts.find(a => a.id === selectedAccountId) ?? null
     : null;
@@ -37,6 +63,10 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
       const result = await api.syncOrgAccounts(profile);
       clearInterval(pollInterval);
       setSyncState({ status: 'done', count: result.accounts.length });
+      // Force the org + region-names queries to re-fetch so the bullet list
+      // reflects the new data without waiting for the user to navigate away
+      // and back.
+      setRefreshKey(k => k + 1);
     } catch (err: unknown) {
       clearInterval(pollInterval);
       setSyncState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
@@ -46,6 +76,11 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
   const allTagKeys = orgData !== null
     ? [...new Set(orgData.accounts.flatMap(a => Object.keys(a.tags)))].sort()
     : [];
+  // OU count is derivable from the per-account ouPath. Distinct non-empty
+  // paths approximate the number of OUs the user has placed accounts into.
+  const ouCount = orgData !== null
+    ? new Set(orgData.accounts.map(a => a.ouPath).filter(p => p.length > 0)).size
+    : 0;
 
   const filteredAccounts = orgData !== null && accountSearch.length > 0
     ? orgData.accounts.filter(a =>
@@ -114,8 +149,6 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
         >
           <div className="h-2 w-2 rounded-full bg-accent" />
           <span className="text-sm font-medium text-text-primary">AWS Organization</span>
-          <span className="text-xs text-text-secondary">{String(orgData.accounts.length)} accounts</span>
-          <span className="text-xs text-text-muted">{String(allTagKeys.length)} tag keys</span>
           <span className="text-text-muted ml-auto text-xs">{expanded ? '▾' : '▸'}</span>
         </button>
         {profile !== null && (
@@ -129,13 +162,22 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
             ↻
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => { setShowClearConfirm(true); }}
+          disabled={syncState.status === 'syncing'}
+          className="text-xs text-text-muted hover:text-negative transition-colors disabled:opacity-50"
+          title="Delete all org-sync data (accounts, account tags, region names)"
+        >
+          Clear
+        </button>
       </div>
 
       {syncState.status === 'syncing' && (
         <div className="px-4 pb-2">
           <div className="flex items-center gap-2 text-xs text-accent">
             <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
-            <span className="capitalize">{syncState.phase}</span>
+            <span>{phaseLabel(syncState.phase, syncState.total)}</span>
             {syncState.total > 0 && <span>— {String(syncState.done)}/{String(syncState.total)}</span>}
           </div>
         </div>
@@ -143,6 +185,41 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
 
       {expanded && (
         <div className="border-t border-border">
+          {/* What got pulled in the last successful sync. Region names are
+              sourced from the SSM piggyback step; missing means insufficient
+              permissions or sync hasn't run since the feature was added. */}
+          <ul className="px-4 pt-3 pb-1 flex flex-col gap-1 text-xs">
+            <li className="flex items-center gap-2 text-text-secondary">
+              <span className="text-accent">✓</span>
+              <span>{String(orgData.accounts.length)} accounts</span>
+            </li>
+            <li className="flex items-center gap-2 text-text-secondary">
+              <span className="text-accent">✓</span>
+              <span>{String(ouCount)} organizational units</span>
+            </li>
+            <li className="flex items-center gap-2 text-text-secondary">
+              <span className="text-accent">✓</span>
+              <span>{String(allTagKeys.length)} tag keys (across all accounts, used as fallback when resources are under-tagged)</span>
+            </li>
+            <li className="flex items-center gap-2">
+              {regionInfo !== null && regionInfo.count > 0 ? (
+                <>
+                  <span className="text-accent">✓</span>
+                  <span className="text-text-secondary">{String(regionInfo.count)} region friendly names</span>
+                </>
+              ) : regionInfo?.lastError !== undefined && regionInfo.lastError !== null ? (
+                <>
+                  <span className="text-negative">✗</span>
+                  <span className="text-negative" title={regionInfo.lastError}>region friendly names — {regionInfo.lastError}</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-text-muted">○</span>
+                  <span className="text-text-muted">region friendly names not synced (re-sync to populate)</span>
+                </>
+              )}
+            </li>
+          </ul>
           <div className="flex items-center justify-between px-4 py-2">
             <span className="text-[10px] text-text-muted">
               Synced {new Date(orgData.syncedAt).toLocaleDateString()} · Org {orgData.orgId}
@@ -248,6 +325,18 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
             </div>
           )}
         </div>
+      )}
+
+      {showClearConfirm && (
+        <ConfirmModal
+          title="Clear AWS Org sync data?"
+          message="Removes locally cached accounts, account-tag lookups, and SSM region names. Your CUR data is untouched. Re-sync any time to repopulate."
+          confirmLabel="Clear"
+          cancelLabel="Cancel"
+          destructive
+          onConfirm={() => { void handleClear(); }}
+          onCancel={() => { setShowClearConfirm(false); }}
+        />
       )}
     </div>
   );

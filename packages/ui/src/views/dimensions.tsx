@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
+import { ChevronUp, ChevronDown, GripVertical } from 'lucide-react';
 import type { DimensionsConfig, TagDimension, ConceptType, NormalizationRule } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
+import { ConfirmModal } from '../components/confirm-modal.js';
+
+type DragGroup = 'builtIn' | 'tag';
+interface DragRef { type: DragGroup; idx: number }
 
 const CONCEPTS: { value: ConceptType; label: string }[] = [
   { value: 'owner', label: 'Owner (team)' },
@@ -24,20 +29,68 @@ interface EditingBuiltIn {
   normalize: string;
   aliases: string;
   useOrgAccounts: boolean;
+  nameStripPatterns: string;
+  useRegionNames: boolean;
 }
 
 function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
-  dim: { field: string; editing: EditingBuiltIn };
+  dim: { name: string; field: string; editing: EditingBuiltIn };
   onSave: (edited: EditingBuiltIn) => void;
   onCancel: () => void;
 }>): React.JSX.Element {
   const isAccountDim = dim.field === 'account_id';
+  // Three dims share field='region' — distinguish by name so only the Region
+  // dim gets the longName toggle, while Country/Continent are pure derived
+  // views with no user toggle (SSM data is either there or not).
+  const isRegionDim = dim.name === 'region';
+  const isRegionCountryDim = dim.name === 'region_country';
+  const isRegionContinentDim = dim.name === 'region_continent';
+  const isAnyRegionDim = dim.field === 'region';
+  // AWS-controlled values arrive in a single canonical form — normalize/strip
+  // would only chip at the labels users already recognize. Aliases stay
+  // visible since folding "AmazonEC2 → EC2" is a reasonable user choice.
+  const TRANSFORM_FREE_FIELDS = new Set(['service', 'service_family']);
+  const showTransforms = !TRANSFORM_FREE_FIELDS.has(dim.field);
   const api = useCostApi();
   const [state, setState] = useState(dim.editing);
+  // Surface missing enrichment data: Region needs SSM region-names sync,
+  // Account (with org-data toggle) needs the AWS Org sync. Both ship as
+  // side-effects of the org sync on the Sync tab — without them the dim's
+  // values render as raw codes / IDs.
+  const regionInfoQuery = useQuery(
+    () => isAnyRegionDim ? api.getRegionNamesInfo() : Promise.resolve(null),
+    [isAnyRegionDim],
+  );
+  const orgQuery = useQuery(
+    () => isAccountDim ? api.getOrgSyncResult() : Promise.resolve(null),
+    [isAccountDim],
+  );
+  const initialRef = useRef(dim.editing);
+  const [discardConfirm, setDiscardConfirm] = useState(false);
+  const isDirty = JSON.stringify(state) !== JSON.stringify(initialRef.current);
+  function requestCancel(): void {
+    if (isDirty) setDiscardConfirm(true);
+    else onCancel();
+  }
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // Parse the textarea once per render — empty lines and trailing whitespace
+  // are dropped so a stray Enter doesn't make the regex .replace() a no-op.
+  const stripPatternList = state.nameStripPatterns
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+  const stripPatternsKey = stripPatternList.join('\u0001');
+  const normalize: NormalizationRule | undefined = state.normalize.length > 0 ? state.normalize as NormalizationRule : undefined;
   const valuesQuery = useQuery(
-    () => api.discoverColumnValues(dim.field, isAccountDim ? { useOrgAccounts: state.useOrgAccounts } : undefined),
-    [dim.field, isAccountDim, state.useOrgAccounts],
+    () => api.discoverColumnValues(
+      dim.field,
+      {
+        ...(normalize !== undefined ? { normalize } : {}),
+        ...(isAccountDim ? { useOrgAccounts: state.useOrgAccounts, nameStripPatterns: stripPatternList } : {}),
+        ...(isAnyRegionDim ? { dimName: dim.name, useRegionNames: state.useRegionNames } : {}),
+      },
+    ),
+    [dim.field, dim.name, isAccountDim, isAnyRegionDim, state.useOrgAccounts, state.useRegionNames, stripPatternsKey, normalize],
   );
 
   useEffect(() => {
@@ -45,67 +98,185 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
       if (containerRef.current === null) return;
       if (!(e.target instanceof Node)) return;
       if (containerRef.current.contains(e.target)) return;
-      onCancel();
+      // Don't dismiss while the discard-confirm modal is open — the modal
+      // lives outside the editor's DOM tree and would otherwise count as
+      // an outside click.
+      if (discardConfirm) return;
+      if (isDirty) setDiscardConfirm(true);
+      else onCancel();
     }
     document.addEventListener('mousedown', onDocClick);
     return () => { document.removeEventListener('mousedown', onDocClick); };
-  }, [onCancel]);
+  }, [onCancel, isDirty, discardConfirm]);
 
   const preview = valuesQuery.status === 'success' ? valuesQuery.data : null;
+
+  const labelField = (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-text-muted">Display Label</span>
+      <input
+        type="text"
+        value={state.label}
+        onChange={e => { setState(s => ({ ...s, label: e.target.value })); }}
+        className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+      />
+    </label>
+  );
+  const descriptionField = (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-text-muted">Description</span>
+      <input
+        type="text"
+        value={state.description}
+        onChange={e => { setState(s => ({ ...s, description: e.target.value })); }}
+        className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+        placeholder="What does this dimension represent?"
+      />
+    </label>
+  );
+  const orgToggleField = (
+    <label className="flex items-center justify-between rounded border border-border bg-bg-primary px-3 py-2 h-full">
+      <div className="flex flex-col gap-0.5 min-w-0 pr-3">
+        <span className="text-sm text-text-primary">Resolve names via org-data</span>
+        <span className="text-[11px] text-text-muted leading-tight">Use friendly names from the Organizations sync.</span>
+      </div>
+      <DimensionToggle enabled={state.useOrgAccounts} onToggle={() => { setState(s => ({ ...s, useOrgAccounts: !s.useOrgAccounts })); }} />
+    </label>
+  );
+  // Region equivalent of the org toggle. Disabled (and forced-off in preview)
+  // when the SSM region snapshot isn't present — the toggle's whole point is
+  // to swap raw codes for the SSM-sourced friendly names, so without data
+  // it's a no-op. We gate on query.status so we don't flash a disabled toggle
+  // while the info is still loading.
+  const regionInfoLoaded = regionInfoQuery.status === 'success';
+  const regionDataAvailable = regionInfoLoaded && regionInfoQuery.data !== null && regionInfoQuery.data.count > 0;
+  const regionToggleField = (
+    <label className={['flex items-center justify-between rounded border border-border bg-bg-primary px-3 py-2 h-full', regionDataAvailable ? '' : 'opacity-60'].join(' ')}>
+      <div className="flex flex-col gap-0.5 min-w-0 pr-3">
+        <span className="text-sm text-text-primary">Resolve codes via SSM region names</span>
+        <span className="text-[11px] text-text-muted leading-tight">
+          {regionDataAvailable
+            ? 'Use friendly names (e.g. "Europe (Frankfurt)") from the SSM snapshot.'
+            : 'Sync SSM Parameter Store from Data Management to enable.'}
+        </span>
+      </div>
+      <DimensionToggle
+        enabled={state.useRegionNames && regionDataAvailable}
+        onToggle={() => {
+          if (!regionDataAvailable) return;
+          setState(s => ({ ...s, useRegionNames: !s.useRegionNames }));
+        }}
+      />
+    </label>
+  );
+  const normalizationField = (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-text-muted">Normalization</span>
+      <select
+        value={state.normalize}
+        onChange={e => { setState(s => ({ ...s, normalize: e.target.value })); }}
+        className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+      >
+        <option value="">None</option>
+        {NORMALIZE_RULES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+      </select>
+    </label>
+  );
+  const stripPatternsField = (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-text-muted">Name strip patterns (one regex per line)</span>
+      <textarea
+        value={state.nameStripPatterns}
+        onChange={e => { setState(s => ({ ...s, nameStripPatterns: e.target.value })); }}
+        rows={3}
+        className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary outline-none focus:border-accent"
+        placeholder={'\\s+(production|staging|sandbox)$\n^DiBa Cards '}
+      />
+    </label>
+  );
+  const aliasField = (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs text-text-muted">Alias Rules (canonical: alias1, alias2)</span>
+      <textarea
+        value={state.aliases}
+        onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
+        rows={3}
+        className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary outline-none focus:border-accent"
+        placeholder="EC2: AmazonEC2, EC2-Instance"
+      />
+    </label>
+  );
+
+  // Compute enrichment-data warnings:
+  //   - Region dim ships raw codes ('eu-central-1') unless region-names.json
+  //     was synced from SSM. Warn either way: missing entirely, or last
+  //     attempt errored (typically: profile lacks ssm:GetParametersByPath).
+  //   - Account dim's org-data toggle resolves IDs → names from the AWS Org
+  //     sync. Warn when toggle is on but the sync result file is missing.
+  const regionInfo = regionInfoQuery.status === 'success' ? regionInfoQuery.data : null;
+  const orgInfo = orgQuery.status === 'success' ? orgQuery.data : null;
+  // Warn when the user's editing a dim that needs SSM data but the snapshot
+  // isn't there. Region: only when the friendly-names toggle is on (off is a
+  // valid state — raw codes). Country/Continent: always, since these dims
+  // are defined entirely in terms of SSM enrichment and collapse to raw
+  // codes otherwise.
+  const wantsRegionEnrichment = (isRegionDim && state.useRegionNames) || isRegionCountryDim || isRegionContinentDim;
+  const regionWarning: { kind: 'missing' | 'error'; message?: string } | null =
+    wantsRegionEnrichment && regionInfoQuery.status === 'success'
+      ? regionInfo === null
+        ? { kind: 'missing' }
+        : regionInfo.lastError !== null
+          ? { kind: 'error', message: regionInfo.lastError }
+          : regionInfo.count === 0
+            ? { kind: 'missing' }
+            : null
+      : null;
+  const accountWarning: boolean =
+    isAccountDim && state.useOrgAccounts && orgQuery.status === 'success' && orgInfo === null;
 
   return (
     <div ref={containerRef} className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-4">
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-text-muted">Display Label</span>
-          <input
-            type="text"
-            value={state.label}
-            onChange={e => { setState(s => ({ ...s, label: e.target.value })); }}
-            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
-          />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-text-muted">Normalization</span>
-          <select
-            value={state.normalize}
-            onChange={e => { setState(s => ({ ...s, normalize: e.target.value })); }}
-            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
-          >
-            <option value="">None</option>
-            {NORMALIZE_RULES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-          </select>
-        </label>
+        {labelField}
+        {descriptionField}
       </div>
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-text-muted">Description</span>
-        <input
-          type="text"
-          value={state.description}
-          onChange={e => { setState(s => ({ ...s, description: e.target.value })); }}
-          className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
-          placeholder="What does this dimension represent?"
-        />
-      </label>
-      {isAccountDim && (
-        <label className="flex items-center justify-between rounded border border-border bg-bg-primary px-3 py-2">
-          <div className="flex flex-col gap-0.5">
-            <span className="text-sm text-text-primary">Resolve names via org-data</span>
-            <span className="text-[11px] text-text-muted">Display friendly account names from the Organizations sync instead of raw account IDs.</span>
-          </div>
-          <DimensionToggle enabled={state.useOrgAccounts} onToggle={() => { setState(s => ({ ...s, useOrgAccounts: !s.useOrgAccounts })); }} />
-        </label>
+      {regionWarning !== null && (
+        <div className="rounded-md border border-warning/50 bg-warning-muted px-3 py-2 text-xs flex flex-col gap-1">
+          <p className="font-medium text-warning">Region friendly names not available</p>
+          {regionWarning.kind === 'error' ? (
+            <p className="text-text-secondary">
+              Last sync attempt failed: <span className="font-mono text-text-primary">{regionWarning.message}</span>
+            </p>
+          ) : (
+            <p className="text-text-secondary">
+              Region values will display as raw codes (e.g. <span className="font-mono">eu-central-1</span>).
+              Sync the <span className="font-medium">SSM Parameter Store</span> section on Data Management to
+              fetch the friendly names.
+            </p>
+          )}
+        </div>
       )}
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-text-muted">Alias Rules (canonical: alias1, alias2)</span>
-        <textarea
-          value={state.aliases}
-          onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
-          rows={3}
-          className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary outline-none focus:border-accent"
-          placeholder="EC2: AmazonEC2, EC2-Instance"
-        />
-      </label>
+      {accountWarning && (
+        <div className="rounded-md border border-warning/50 bg-warning-muted px-3 py-2 text-xs flex flex-col gap-1">
+          <p className="font-medium text-warning">Org-data not synced</p>
+          <p className="text-text-secondary">
+            The "Resolve names via org-data" toggle is on but no AWS Organization sync has run yet —
+            account values will display as raw 12-digit IDs. Run the sync from the <span className="font-medium">Sync</span> tab to populate.
+          </p>
+        </div>
+      )}
+      {showTransforms && (
+        <div className="grid grid-cols-2 gap-4 items-stretch">
+          {isAccountDim ? orgToggleField : isRegionDim ? regionToggleField : <div />}
+          {normalizationField}
+        </div>
+      )}
+      {showTransforms ? (
+        <div className="grid grid-cols-2 gap-4">
+          {isAccountDim ? stripPatternsField : <div />}
+          {aliasField}
+        </div>
+      ) : aliasField}
       {preview !== null && (
         <div className="flex flex-col gap-2">
           <span className="text-xs text-text-muted">
@@ -132,13 +303,24 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
           </button>
           <button
             type="button"
-            onClick={onCancel}
+            onClick={requestCancel}
             className="rounded-md px-4 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors"
           >
             Cancel
           </button>
         </div>
       </div>
+      {discardConfirm && (
+        <ConfirmModal
+          title="Discard unsaved changes?"
+          message="You have edits that haven't been saved. Closing the editor will discard them."
+          confirmLabel="Discard"
+          cancelLabel="Keep editing"
+          destructive
+          onConfirm={() => { setDiscardConfirm(false); onCancel(); }}
+          onCancel={() => { setDiscardConfirm(false); }}
+        />
+      )}
     </div>
   );
 }
@@ -209,22 +391,32 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   orgAccounts: readonly { tags: Readonly<Record<string, string>> }[];
 }>) {
   const [state, setState] = useState(tag);
+  const initialRef = useRef(tag);
+  const [discardConfirm, setDiscardConfirm] = useState(false);
+  const isDirty = JSON.stringify(state) !== JSON.stringify(initialRef.current);
+  function requestCancel(): void {
+    if (isDirty) setDiscardConfirm(true);
+    else onCancel();
+  }
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   // Click outside the editor panel closes it (matches the collapse-on-outside
   // pattern the rest of the app uses for popovers). A native 'click' listener
   // on document fires after onClick handlers, so clicks on Save/Cancel/Remove
-  // inside the panel still work as expected.
+  // inside the panel still work as expected. When the form is dirty we
+  // intercept and route through the discard-confirm modal instead.
   useEffect(() => {
     function onDocClick(e: MouseEvent): void {
       if (containerRef.current === null) return;
       if (!(e.target instanceof Node)) return;
       if (containerRef.current.contains(e.target)) return;
-      onCancel();
+      if (discardConfirm) return;
+      if (isDirty) setDiscardConfirm(true);
+      else onCancel();
     }
     document.addEventListener('mousedown', onDocClick);
     return () => { document.removeEventListener('mousedown', onDocClick); };
-  }, [onCancel]);
+  }, [onCancel, isDirty, discardConfirm]);
 
   const tagOptions = state.tagName.length > 0 && !availableTags.includes(state.tagName)
     ? [state.tagName, ...availableTags]
@@ -510,7 +702,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           <button type="button" onClick={() => { onSave(state); }} className="rounded-md bg-accent px-4 py-1.5 text-xs font-medium text-white hover:bg-accent-hover transition-colors">
             Save
           </button>
-          <button type="button" onClick={onCancel} className="rounded-md px-4 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary transition-colors">
+          <button type="button" onClick={requestCancel} className="rounded-md px-4 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary transition-colors">
             Cancel
           </button>
         </div>
@@ -520,6 +712,17 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           </button>
         )}
       </div>
+      {discardConfirm && (
+        <ConfirmModal
+          title="Discard unsaved changes?"
+          message="You have edits that haven't been saved. Closing the editor will discard them."
+          confirmLabel="Discard"
+          cancelLabel="Keep editing"
+          destructive
+          onConfirm={() => { setDiscardConfirm(false); onCancel(); }}
+          onCancel={() => { setDiscardConfirm(false); }}
+        />
+      )}
     </div>
   );
 }
@@ -532,6 +735,12 @@ export function DimensionsView() {
   const [hiddenAccountCols, setHiddenAccountCols] = useState(new Set<string>());
   const [addingNew, setAddingNew] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Drag-to-reorder state. `armed` flips draggable=true on a row only after
+  // the user mousedowns its grip handle, so clicks elsewhere don't accidentally
+  // start a drag. `from`/`over` drive the visual feedback during the drag.
+  const [armed, setArmed] = useState<DragRef | null>(null);
+  const [dragFrom, setDragFrom] = useState<DragRef | null>(null);
+  const [dragOver, setDragOver] = useState<DragRef | null>(null);
   const tagsQuery = useQuery(() => api.discoverTagKeys(), []);
   const configQuery = useQuery(() => api.getDimensionsConfig(), [refreshKey]);
   const orgQuery = useQuery(() => api.getOrgSyncResult(), []);
@@ -539,7 +748,13 @@ export function DimensionsView() {
   const tagsResult = tagsQuery.status === 'success' ? tagsQuery.data : null;
   const discoveredTags = tagsResult?.tags ?? [];
   const samplePeriod = tagsResult?.samplePeriod ?? '';
-  const config: DimensionsConfig | null = configQuery.status === 'success' ? configQuery.data : null;
+  // Keep the last good config visible while a refetch is in flight — useQuery
+  // resets to status=loading on every dep change, which would otherwise blank
+  // the dimensions list for a frame after every reorder/toggle/save.
+  const [config, setConfig] = useState<DimensionsConfig | null>(null);
+  useEffect(() => {
+    if (configQuery.status === 'success') setConfig(configQuery.data);
+  }, [configQuery]);
   const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
 
   // Account tag keys from org sync
@@ -597,6 +812,10 @@ export function DimensionsView() {
       const description = edited.description.trim();
       const normalize = edited.normalize.length > 0 ? edited.normalize as NormalizationRule : undefined;
       const aliases = textToAliases(edited.aliases);
+      const nameStripPatterns = edited.nameStripPatterns
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0);
       return {
         name: d.name,
         label: edited.label.length > 0 ? edited.label : d.label,
@@ -607,6 +826,11 @@ export function DimensionsView() {
         ...(normalize !== undefined ? { normalize } : {}),
         ...(aliases !== undefined ? { aliases } : {}),
         ...(edited.useOrgAccounts ? { useOrgAccounts: true as const } : {}),
+        ...(nameStripPatterns.length > 0 ? { nameStripPatterns } : {}),
+        // Only the Region dim surfaces a useRegionNames toggle — write it
+        // explicitly (both true AND false) so toggling off sticks past the
+        // mergeDefaultBuiltIns backfill that would otherwise re-enable it.
+        ...(d.name === 'region' ? { useRegionNames: edited.useRegionNames } : {}),
       };
     });
     await api.saveDimensionsConfig({ ...config, builtIn });
@@ -614,7 +838,15 @@ export function DimensionsView() {
     setRefreshKey(k => k + 1);
   }
 
-  async function toggleBuiltInEnabled(idx: number) {
+  // Optimistic save: paint the new config locally first, then persist in the
+  // background. Skips the refetch — local state is already correct, and the
+  // backend write is the source of truth for the next mount.
+  function applyOptimistic(next: DimensionsConfig): void {
+    setConfig(next);
+    void api.saveDimensionsConfig(next);
+  }
+
+  function toggleBuiltInEnabled(idx: number): void {
     if (config === null) return;
     const builtIn = config.builtIn.map((d, i) => {
       if (i !== idx) return d;
@@ -623,11 +855,10 @@ export function DimensionsView() {
       delete (rest as { enabled?: boolean }).enabled;
       return nextEnabled === undefined ? rest : { ...rest, enabled: nextEnabled };
     });
-    await api.saveDimensionsConfig({ ...config, builtIn });
-    setRefreshKey(k => k + 1);
+    applyOptimistic({ ...config, builtIn });
   }
 
-  async function toggleTagEnabled(idx: number) {
+  function toggleTagEnabled(idx: number): void {
     if (config === null) return;
     const tags = config.tags.map((t, i) => {
       if (i !== idx) return t;
@@ -636,12 +867,107 @@ export function DimensionsView() {
       delete (rest as { enabled?: boolean }).enabled;
       return nextEnabled === undefined ? rest : { ...rest, enabled: nextEnabled };
     });
-    await api.saveDimensionsConfig({ ...config, tags });
-    setRefreshKey(k => k + 1);
+    applyOptimistic({ ...config, tags });
   }
 
   // Quick-add a discovered tag as a dimension
   const [quickAddState, setQuickAddState] = useState<EditingTag | null>(null);
+
+  function applyReorder(type: DragGroup, fromIdx: number, toIdx: number): void {
+    if (config === null || fromIdx === toIdx) return;
+    if (type === 'builtIn') {
+      const builtIn = [...config.builtIn];
+      const moved = builtIn.splice(fromIdx, 1)[0];
+      if (moved === undefined) return;
+      builtIn.splice(toIdx, 0, moved);
+      applyOptimistic({ ...config, builtIn });
+    } else {
+      const tags = [...config.tags];
+      const moved = tags.splice(fromIdx, 1)[0];
+      if (moved === undefined) return;
+      tags.splice(toIdx, 0, moved);
+      applyOptimistic({ ...config, tags });
+    }
+  }
+
+  // One factory per row: returns the drag/drop attrs for the row container and
+  // the mousedown attr for the grip handle. Centralizes the "only allow drag
+  // when grip was pressed" + "only accept drop within the same group" rules so
+  // the row JSX stays light.
+  function dragProps(type: DragGroup, idx: number): { row: React.HTMLAttributes<HTMLDivElement> & { draggable: boolean }; grip: React.HTMLAttributes<HTMLButtonElement> } {
+    const isArmed = armed?.type === type && armed.idx === idx;
+    const isFrom = dragFrom?.type === type && dragFrom.idx === idx;
+    const isOver = dragOver?.type === type && dragOver.idx === idx && !isFrom;
+    return {
+      row: {
+        draggable: isArmed,
+        onDragStart: (e) => {
+          setDragFrom({ type, idx });
+          e.dataTransfer.effectAllowed = 'move';
+          // Required for Firefox to actually start the drag.
+          e.dataTransfer.setData('text/plain', `${type}:${String(idx)}`);
+        },
+        onDragEnd: () => { setArmed(null); setDragFrom(null); setDragOver(null); },
+        onDragOver: (e) => {
+          if (dragFrom?.type !== type) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          setDragOver({ type, idx });
+        },
+        onDragLeave: () => { setDragOver(curr => (curr?.type === type && curr.idx === idx ? null : curr)); },
+        onDrop: (e) => {
+          e.preventDefault();
+          if (dragFrom?.type === type) applyReorder(type, dragFrom.idx, idx);
+          setArmed(null); setDragFrom(null); setDragOver(null);
+        },
+        style: isFrom ? { opacity: 0.4 } : isOver ? { boxShadow: 'inset 0 2px 0 var(--color-accent, #34d399)' } : undefined,
+      },
+      grip: {
+        onMouseDown: () => { setArmed({ type, idx }); },
+        onMouseUp: () => { setArmed(curr => (curr?.type === type && curr.idx === idx ? null : curr)); },
+      },
+    };
+  }
+
+  function GripHandle({ attrs }: { attrs: React.HTMLAttributes<HTMLButtonElement> }): React.JSX.Element {
+    return (
+      <button
+        type="button"
+        {...attrs}
+        title="Drag to reorder"
+        className="flex items-center justify-center text-text-muted hover:text-text-primary cursor-grab active:cursor-grabbing"
+      >
+        <GripVertical size={16} />
+      </button>
+    );
+  }
+
+  function ReorderArrows({ type, idx, total }: { type: DragGroup; idx: number; total: number }): React.JSX.Element {
+    const canUp = idx > 0;
+    const canDown = idx < total - 1;
+    return (
+      <div className="flex flex-col -space-y-1">
+        <button
+          type="button"
+          disabled={!canUp}
+          onClick={(e) => { e.stopPropagation(); applyReorder(type, idx, idx - 1); }}
+          title="Move up"
+          className="flex items-center justify-center text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          <ChevronUp size={14} />
+        </button>
+        <button
+          type="button"
+          disabled={!canDown}
+          onClick={(e) => { e.stopPropagation(); applyReorder(type, idx, idx + 1); }}
+          title="Move down"
+          className="flex items-center justify-center text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          <ChevronDown size={14} />
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -672,6 +998,7 @@ export function DimensionsView() {
                 <BuiltInEditor
                   key={d.name}
                   dim={{
+                    name: d.name,
                     field: d.field,
                     editing: {
                       label: d.label,
@@ -679,6 +1006,8 @@ export function DimensionsView() {
                       normalize: d.normalize ?? '',
                       aliases: aliasesToText(d.aliases),
                       useOrgAccounts: d.useOrgAccounts === true,
+                      nameStripPatterns: d.nameStripPatterns?.join('\n') ?? '',
+                      useRegionNames: d.useRegionNames === true,
                     },
                   }}
                   onSave={(edited) => { void handleSaveBuiltIn(idx, edited); }}
@@ -686,9 +1015,11 @@ export function DimensionsView() {
                 />
               );
             }
+            const dnd = dragProps('builtIn', idx);
             return (
               <div
                 key={d.name}
+                {...dnd.row}
                 className={[
                   'rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors',
                   isOn ? '' : 'opacity-50',
@@ -718,7 +1049,9 @@ export function DimensionsView() {
                 </button>
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="text-[10px] text-text-muted uppercase tracking-wider">Built-in</span>
-                  <DimensionToggle enabled={isOn} onToggle={() => { void toggleBuiltInEnabled(idx); }} />
+                  <DimensionToggle enabled={isOn} onToggle={() => { toggleBuiltInEnabled(idx); }} />
+                  <ReorderArrows type="builtIn" idx={idx} total={config.builtIn.length} />
+                  <GripHandle attrs={dnd.grip} />
                 </div>
               </div>
             );
@@ -727,6 +1060,7 @@ export function DimensionsView() {
           {/* Tag dimensions (editable) */}
           {config.tags.map((tag, idx) => {
             const isOn = tag.enabled !== false;
+            const dnd = dragProps('tag', idx);
             return (
             <div key={tag.tagName} className={isOn ? '' : 'opacity-50'}>
               {editingIdx === idx ? (
@@ -749,7 +1083,7 @@ export function DimensionsView() {
                   orgAccounts={orgData?.accounts ?? []}
                 />
               ) : (
-                <div className="w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors">
+                <div {...dnd.row} className="w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors">
                   <button
                     type="button"
                     onClick={() => { setEditingIdx(idx); setAddingNew(false); }}
@@ -788,7 +1122,9 @@ export function DimensionsView() {
                     >
                       Edit →
                     </button>
-                    <DimensionToggle enabled={isOn} onToggle={() => { void toggleTagEnabled(idx); }} />
+                    <DimensionToggle enabled={isOn} onToggle={() => { toggleTagEnabled(idx); }} />
+                    <ReorderArrows type="tag" idx={idx} total={config.tags.length} />
+                    <GripHandle attrs={dnd.grip} />
                   </div>
                 </div>
               )}

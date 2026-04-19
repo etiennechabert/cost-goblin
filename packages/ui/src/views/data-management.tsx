@@ -5,6 +5,7 @@ import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { SetupWizard } from './setup-wizard.js';
 import { OrgAccountsSection } from './data-management-org.js';
+import { SsmParameterSection } from './data-management-ssm.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
 import { RecentFileActivity } from './recent-file-activity.js';
 
@@ -33,6 +34,12 @@ export function DataManagement() {
   }
   const [showDeleteAll, setShowDeleteAll] = useState(false);
   const [configureSource, setConfigureSource] = useState<'daily' | 'hourly' | 'costOptimization' | null>(null);
+  // Lightweight profile-only swap: a tiny modal that lists ~/.aws profiles
+  // and rewrites only credentials.profile in costgoblin.yaml. Useful when
+  // the current role lacks an IAM permission (e.g. ssm:GetParametersByPath)
+  // and the user wants to retry with a different role without redoing the
+  // bucket setup.
+  const [showProfileSwap, setShowProfileSwap] = useState(false);
   const [optimizerBusy, setOptimizerBusy] = useState(false);
 
   useEffect(() => {
@@ -364,6 +371,14 @@ export function DataManagement() {
           </div>
           <button
             type="button"
+            onClick={() => { setShowProfileSwap(true); }}
+            className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors"
+            title={awsProfile === null ? 'Pick the AWS profile to use' : `Currently using profile: ${awsProfile}`}
+          >
+            Change AWS Profile
+          </button>
+          <button
+            type="button"
             onClick={() => { setShowDeleteAll(true); }}
             disabled={optimizerBusy}
             title={deleteDisabledTitle}
@@ -382,6 +397,9 @@ export function DataManagement() {
 
       {/* Account mapping */}
       <OrgAccountsSection profile={awsProfile} />
+
+      {/* SSM Parameter Store enrichment data — independent of Org sync */}
+      <SsmParameterSection profile={awsProfile} />
 
       {inventoryQuery.status === 'loading' && (
         <div className="rounded-xl border border-border bg-bg-secondary/50 p-12 text-center text-text-secondary">
@@ -497,6 +515,103 @@ export function DataManagement() {
           </div>
         </div>
       )}
+
+      {showProfileSwap && (
+        <ProfileSwapModal
+          currentProfile={awsProfile}
+          onClose={() => { setShowProfileSwap(false); }}
+          onSaved={() => { setShowProfileSwap(false); setConfigRefreshKey(k => k + 1); setDailyRefreshKey(k => k + 1); setHourlyRefreshKey(k => k + 1); setCostOptRefreshKey(k => k + 1); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ProfileSwapModal({ currentProfile, onClose, onSaved }: Readonly<{
+  currentProfile: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}>) {
+  const api = useCostApi();
+  const profilesQuery = useQuery(() => api.listAwsProfiles(), []);
+  const [selected, setSelected] = useState(currentProfile ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const profiles = profilesQuery.status === 'success' ? profilesQuery.data : [];
+
+  async function handleSave(): Promise<void> {
+    if (selected.length === 0 || selected === currentProfile) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await api.updateAwsProfile(selected);
+      onSaved();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} aria-hidden="true">
+      <div className="relative rounded-xl border border-border bg-bg-secondary p-6 shadow-2xl max-w-md w-full">
+        <h3 className="text-base font-semibold text-text-primary">Change AWS Profile</h3>
+        <p className="text-xs text-text-muted mt-1">
+          Buckets and other config stay as-is — this only swaps the profile used to talk to AWS.
+        </p>
+
+        {profilesQuery.status === 'loading' && (
+          <p className="text-sm text-text-secondary mt-4">Loading profiles…</p>
+        )}
+        {profilesQuery.status === 'error' && (
+          <p className="text-sm text-negative mt-4">{profilesQuery.error.message}</p>
+        )}
+        {profilesQuery.status === 'success' && profiles.length === 0 && (
+          <p className="text-sm text-warning mt-4">No AWS profiles found in ~/.aws.</p>
+        )}
+        {profilesQuery.status === 'success' && profiles.length > 0 && (
+          <div className="mt-4 flex flex-col gap-2 max-h-64 overflow-y-auto">
+            {profiles.map(p => (
+              <label key={p} className="flex items-center gap-2 rounded border border-border bg-bg-primary px-3 py-2 cursor-pointer hover:border-accent">
+                <input
+                  type="radio"
+                  name="profile"
+                  value={p}
+                  checked={selected === p}
+                  onChange={() => { setSelected(p); }}
+                />
+                <span className="text-sm text-text-primary">{p}</span>
+                {p === currentProfile && (
+                  <span className="ml-auto text-[10px] text-text-muted uppercase tracking-wider">Current</span>
+                )}
+              </label>
+            ))}
+          </div>
+        )}
+
+        {error !== null && (
+          <p className="text-xs text-negative mt-3">{error}</p>
+        )}
+
+        <div className="flex items-center justify-end gap-2 mt-5">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary hover:bg-bg-tertiary transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => { void handleSave(); }}
+            disabled={saving || selected.length === 0 || selected === currentProfile}
+            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
