@@ -155,6 +155,9 @@ export interface CostApi {
     costOptBucket?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
   }): Promise<void>;
+  /** Swap the AWS profile used to talk to AWS, leaving bucket paths and
+   *  every other config field untouched. */
+  updateAwsProfile(profile: string): Promise<void>;
 }
 
 export interface AccountMappingEntry {

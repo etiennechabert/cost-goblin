@@ -235,6 +235,7 @@ export class MockCostApi implements CostApi {
   browseS3(): Promise<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }> { return Promise.resolve({ prefixes: ['data', 'metadata'], isCurReport: true, detectedType: 'daily', missingColumns: [] }); }
   scaffoldConfig(): Promise<void> { return Promise.resolve(); }
   writeConfig(): Promise<void> { return Promise.resolve(); }
+  updateAwsProfile(): Promise<void> { return Promise.resolve(); }
   getSavingsPreferences(): Promise<{ hiddenActionTypes: readonly string[] }> { return Promise.resolve({ hiddenActionTypes: [] }); }
   saveSavingsPreferences(): Promise<void> { return Promise.resolve(); }
   getUIPreferences(): Promise<{ theme: 'dark' | 'light' }> { return Promise.resolve({ theme: 'dark' }); }

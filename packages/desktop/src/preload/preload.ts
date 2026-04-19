@@ -107,6 +107,9 @@ const api: CostApi = {
   writeConfig(config: { providerName: string; profile: string; dailyBucket: string; retentionDays?: number | undefined; hourlyBucket?: string | undefined; costOptBucket?: string | undefined; tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined }): Promise<void> {
     return invoke<undefined>('setup:write-config', config).then(() => undefined);
   },
+  updateAwsProfile(profile: string): Promise<void> {
+    return invoke<undefined>('config:update-aws-profile', profile).then(() => undefined);
+  },
   getSavingsPreferences(): Promise<SavingsPreferences> {
     return invoke<SavingsPreferences>('savings:get-preferences');
   },
