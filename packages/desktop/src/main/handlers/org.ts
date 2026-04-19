@@ -31,7 +31,7 @@ function decodeOrgSyncResult(raw: string): OrgSyncResult | null {
 }
 
 export function registerOrgHandlers(app: AppContext): void {
-  const { ctx } = app;
+  const { ctx, invalidateDimensions } = app;
   let orgSyncProgress: OrgSyncProgress | null = null;
   // Latest result of the SSM region-name sync. Lets the UI tell the user why
   // region friendly names didn't populate (typically: missing IAM permission)
@@ -89,6 +89,30 @@ export function registerOrgHandlers(app: AppContext): void {
 
   ipcMain.handle('org:get-progress', (): OrgSyncProgress | null => {
     return orgSyncProgress;
+  });
+
+  ipcMain.handle('org:clear-data', async (): Promise<void> => {
+    // Wipes everything the org sync produced — accounts, the flat tag
+    // lookup used for resource-tag fallback, and the SSM region-name cache.
+    // Each unlink swallows ENOENT so the call is idempotent (clicking twice
+    // doesn't error). The next sync re-creates whichever files succeed.
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const baseDir = path.dirname(ctx.dataDir);
+    const files = ['org-accounts.json', 'org-account-tags.json', 'region-names.json'];
+    for (const f of files) {
+      try {
+        await fs.unlink(path.join(baseDir, f));
+        logger.info(`Cleared ${f}`);
+      } catch (err: unknown) {
+        const e = err as { code?: string };
+        if (e.code !== 'ENOENT') logger.info(`Failed to clear ${f}: ${String(err)}`);
+      }
+    }
+    lastRegionSyncError = null;
+    // Drop the cached id→name + region maps so subsequent queries re-load
+    // (they'll find nothing and treat all values as raw).
+    invalidateDimensions();
   });
 
   ipcMain.handle('org:get-region-names-info', async (): Promise<{ count: number; syncedAt: string; lastError: string | null } | null> => {

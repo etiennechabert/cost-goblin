@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
+import { ConfirmModal } from '../components/confirm-modal.js';
 
 type OrgSyncState =
   | { status: 'idle' }
@@ -33,6 +34,15 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
 
   const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
   const regionInfo = regionInfoQuery.status === 'success' ? regionInfoQuery.data : null;
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+
+  async function handleClear(): Promise<void> {
+    setShowClearConfirm(false);
+    setSelectedAccountId(null);
+    setExpanded(false);
+    await api.clearOrgData();
+    setRefreshKey(k => k + 1);
+  }
   const selectedAccount = orgData !== null && selectedAccountId !== null
     ? orgData.accounts.find(a => a.id === selectedAccountId) ?? null
     : null;
@@ -152,6 +162,15 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
             ↻
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => { setShowClearConfirm(true); }}
+          disabled={syncState.status === 'syncing'}
+          className="text-xs text-text-muted hover:text-negative transition-colors disabled:opacity-50"
+          title="Delete all org-sync data (accounts, account tags, region names)"
+        >
+          Clear
+        </button>
       </div>
 
       {syncState.status === 'syncing' && (
@@ -306,6 +325,18 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
             </div>
           )}
         </div>
+      )}
+
+      {showClearConfirm && (
+        <ConfirmModal
+          title="Clear AWS Org sync data?"
+          message="Removes locally cached accounts, account-tag lookups, and SSM region names. Your CUR data is untouched. Re-sync any time to repopulate."
+          confirmLabel="Clear"
+          cancelLabel="Cancel"
+          destructive
+          onConfirm={() => { void handleClear(); }}
+          onCancel={() => { setShowClearConfirm(false); }}
+        />
       )}
     </div>
   );

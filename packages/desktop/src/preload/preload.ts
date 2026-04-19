@@ -149,6 +149,9 @@ const api: CostApi = {
   getRegionNamesInfo(): Promise<{ count: number; syncedAt: string; lastError: string | null } | null> {
     return invoke<{ count: number; syncedAt: string; lastError: string | null } | null>('org:get-region-names-info');
   },
+  clearOrgData(): Promise<void> {
+    return invoke<undefined>('org:clear-data').then(() => undefined);
+  },
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> {
     return invoke<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>('dimensions:discover-tags');
   },

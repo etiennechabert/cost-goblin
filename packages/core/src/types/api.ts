@@ -146,6 +146,9 @@ export interface CostApi {
    *  sync has ever been attempted; when the SSM step failed, returns
    *  count=0 with lastError set so the UI can explain why. */
   getRegionNamesInfo(): Promise<{ count: number; syncedAt: string; lastError: string | null } | null>;
+  /** Delete every file produced by the AWS Org sync (accounts, account-tag
+   *  lookup, region-name cache). Idempotent. */
+  clearOrgData(): Promise<void>;
   writeConfig(config: {
     providerName: string;
     profile: string;

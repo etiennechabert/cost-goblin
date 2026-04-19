@@ -249,6 +249,7 @@ export class MockCostApi implements CostApi {
   getOrgSyncResult(): Promise<null> { return Promise.resolve(null); }
   getOrgSyncProgress(): Promise<null> { return Promise.resolve(null); }
   getRegionNamesInfo(): Promise<null> { return Promise.resolve(null); }
+  clearOrgData(): Promise<void> { return Promise.resolve(); }
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> { return Promise.resolve({ tags: [{ key: 'team', sampleValues: ['platform', 'payments'], rowCount: 500, distinctCount: 8, coveragePct: 45 }, { key: 'environment', sampleValues: ['production', 'staging'], rowCount: 400, distinctCount: 4, coveragePct: 36 }], samplePeriod: '2026-04' }); }
   discoverColumnValues(): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> { return Promise.resolve({ values: [{ value: 'Usage', cost: 12345 }, { value: 'Tax', cost: 234 }, { value: 'Credit', cost: -100 }], distinctCount: 3, period: '2026-04' }); }
   getDimensionsConfig(): Promise<DimensionsConfig> { return Promise.resolve({ builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name' }], tags: [{ tagName: 'team', label: 'Team', concept: 'owner' as const }] }); }
