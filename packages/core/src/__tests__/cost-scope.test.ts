@@ -214,6 +214,54 @@ describe('exclusion clauses', () => {
     expect(sql).not.toContain('nonexistent_dim');
   });
 
+  it('applies the target dim normalize + alias to rule values', () => {
+    // User normalises line_item_type to lowercase and aliases 'rifee' to
+    // include 'reserved_instance_fee'. The built-in rule still stores the
+    // raw CUR codes ('RIFee'); at SQL-build time those should be
+    // normalised+alias-resolved to match the column's transformed output.
+    const dimsWithNormalize: DimensionsConfig = {
+      builtIn: [
+        ...dimensions.builtIn.filter(d => d.name !== 'line_item_type'),
+        {
+          name: asDimensionId('line_item_type'),
+          label: 'Line Item Type',
+          field: 'line_item_type',
+          normalize: 'lowercase',
+          aliases: { rifee: ['reserved_instance_fee'] },
+        },
+      ],
+      tags: dimensions.tags,
+    };
+    const sql = buildCostQuery(
+      baseParams,
+      '/data',
+      dimsWithNormalize,
+      5,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        costMetric: 'unblended',
+        rules: [
+          {
+            id: 'test',
+            name: 'Test',
+            enabled: true,
+            builtIn: false,
+            conditions: [{ dimensionId: asDimensionId('line_item_type'), values: ['RIFee', 'Tax'] }],
+          },
+        ],
+      },
+    );
+    // Values become 'rifee' (lowercase + alias canonicalises to itself) and
+    // 'tax' (lowercase). The raw 'RIFee' / 'Tax' must not appear in the
+    // IN-list — that would never match the LOWER(...) column.
+    expect(sql).toContain("IN ('rifee', 'tax')");
+    expect(sql).not.toContain("'RIFee'");
+    expect(sql).not.toContain("'Tax'");
+  });
+
   it('partially applies a rule when only some conditions are resolvable', () => {
     const sql = buildQuery({
       costMetric: 'unblended',

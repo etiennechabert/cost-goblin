@@ -1,8 +1,8 @@
-import type { DimensionsConfig, TagDimension } from '../types/config.js';
+import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
 import type { CostQueryParams, DailyCostsParams, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import type { DimensionId } from '../types/branded.js';
 import type { CostMetric, CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
-import { buildAliasSqlCase } from '../normalize/normalize.js';
+import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor } from './cost-metric.js';
 
 /**
@@ -55,6 +55,11 @@ export function computePeriodsInRange(dateRange: { readonly start: string; reado
 interface ResolvedDimension {
   readonly fieldExpr: string;
   readonly rawField: string;
+  /** The backing dim, when the id resolves to a known built-in or tag.
+   *  Carries `normalize` and `aliases` so callers that compare literal
+   *  values against the CASE-wrapped field expression can apply the
+   *  same transformation to their values and stay in agreement. */
+  readonly dim: BuiltInDimension | TagDimension | null;
 }
 
 function tryResolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): ResolvedDimension | null {
@@ -63,16 +68,28 @@ function tryResolveField(dimensionId: DimensionId, dimensions: DimensionsConfig)
     // Built-ins now support normalize + aliases just like tags; apply them at
     // query time via the same CASE/LOWER(...) machinery.
     const fieldExpr = buildAliasSqlCase(builtIn.field, builtIn);
-    return { fieldExpr, rawField: builtIn.field };
+    return { fieldExpr, rawField: builtIn.field, dim: builtIn };
   }
 
   const tag = dimensions.tags.find(d => `tag_${d.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === dimensionId);
   if (tag !== undefined) {
     const rawField = `tag_${tag.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`;
-    return { fieldExpr: buildAliasSqlCase(rawField, tag), rawField };
+    return { fieldExpr: buildAliasSqlCase(rawField, tag), rawField, dim: tag };
   }
 
   return null;
+}
+
+/** Apply the same normalize + alias transformation that `buildAliasSqlCase`
+ *  bakes into the field expression, but to a literal value on the JS side.
+ *  Required when the SQL compares a normalized/alias-resolved column
+ *  against hard-coded values like the built-in rules' service codes — the
+ *  values need to be moved into the same namespace as the column output or
+ *  the match will silently miss. */
+function normalizeRuleValue(value: string, dim: BuiltInDimension | TagDimension | null): string {
+  if (dim === null) return value;
+  const normalized = normalizeTagValue(value, dim.normalize);
+  return resolveAlias(normalized, dim.aliases);
 }
 
 function resolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): ResolvedDimension {
@@ -82,7 +99,7 @@ function resolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): R
   // validated the id exists. For exclusion rules we go through
   // tryResolveField directly so a stale reference doesn't emit a bogus
   // column name that would crash every query.
-  return { fieldExpr: dimensionId, rawField: dimensionId };
+  return { fieldExpr: dimensionId, rawField: dimensionId, dim: null };
 }
 
 function buildFilterClauses(
@@ -148,7 +165,15 @@ export function buildRuleMatchExpr(
         continue;
       }
     }
-    const list = cond.values.map(v => `'${v.replaceAll("'", "''")}'`).join(', ');
+    // Apply the dim's normalize + alias transformation to each value so
+    // rule conditions stay correct when the user normalises the target
+    // dimension (e.g. a lowercase rule on `line_item_type` would otherwise
+    // turn 'RIFee' in the built-in rule into a silent no-match). The
+    // field expression already bakes in the same transformation.
+    const list = cond.values
+      .map(v => normalizeRuleValue(v, resolved.dim))
+      .map(v => `'${v.replaceAll("'", "''")}'`)
+      .join(', ');
     conditionSqls.push(`${resolved.fieldExpr} IN (${list})`);
   }
   if (conditionSqls.length === 0) return null;

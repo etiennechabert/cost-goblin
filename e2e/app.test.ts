@@ -1227,8 +1227,10 @@ test.describe('Cost Scope', () => {
     await expect(page.locator('input[type="radio"][value="amortized"]')).toBeVisible();
     await expect(page.locator('input[type="radio"][value="list"]')).toHaveCount(0);
 
-    // Unblended should be selected by default
-    await expect(page.locator('input[type="radio"][value="unblended"]')).toBeChecked();
+    // Exactly one metric radio is selected — the specific one depends on
+    // what the user has saved to cost-scope.yaml, so we don't assume a
+    // default beyond "something is checked".
+    await expect(page.locator('input[type="radio"][name="costMetric"]:checked')).toHaveCount(1);
     await screenshot(page, 'cost-scope-metric');
   });
 

@@ -80,7 +80,12 @@ function ConditionRow({ condition, dimensions, suggestions, onUpdate, onRemove, 
     onUpdate({ dimensionId: condition.dimensionId, values });
   }
 
-  const enabledDims = dimensions.filter(d => d.enabled !== false);
+  // Show ALL dims in the rule picker, not just `enabled !== false` ones.
+  // `enabled=false` is a UX preference for hiding a dim from normal
+  // group-by / filter pickers; exclusion rules should still be able to
+  // target its column (critical for the built-ins that reference
+  // line_item_type even when the user has hidden that dim). Disabled dims
+  // get a "(hidden)" suffix so it's clear they're not in normal rotation.
   const currentDimId = String(condition.dimensionId);
   const inputBorder = invalid ? 'border-negative' : 'border-border';
 
@@ -92,9 +97,10 @@ function ConditionRow({ condition, dimensions, suggestions, onUpdate, onRemove, 
         onChange={handleDimChange}
       >
         {currentDimId.length === 0 && <option value="">— pick dimension —</option>}
-        {enabledDims.map(d => {
+        {dimensions.map(d => {
           const id = dimIdFor(d);
-          return <option key={id} value={id}>{d.label}</option>;
+          const hidden = d.enabled === false;
+          return <option key={id} value={id}>{hidden ? `${d.label} (hidden)` : d.label}</option>;
         })}
       </select>
       <div className="flex-1 flex flex-col gap-1">
