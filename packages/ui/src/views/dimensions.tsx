@@ -325,6 +325,36 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
   );
 }
 
+/** Collapsible container for the diagnostic pivot tables at the bottom of
+ *  the Dimensions view. The caller decides what to render inside — this
+ *  component only owns the header + expand/collapse affordance. */
+function DebugPanel({ title, subtitle, expanded, onToggle, children }: Readonly<{
+  title: string;
+  subtitle: string;
+  expanded: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}>): React.JSX.Element {
+  return (
+    <div className="rounded-xl border border-border bg-bg-secondary/30 overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-bg-tertiary/30 transition-colors"
+      >
+        <span className="text-text-muted text-xs">{expanded ? '▾' : '▸'}</span>
+        <span className="text-sm font-medium text-text-primary">{title}</span>
+        <span className="text-[11px] text-text-muted">{subtitle}</span>
+      </button>
+      {expanded && (
+        <div className="px-5 pb-4 pt-1">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DimensionToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }): React.JSX.Element {
   return (
     <button
@@ -735,19 +765,30 @@ export function DimensionsView() {
   const [hiddenAccountCols, setHiddenAccountCols] = useState(new Set<string>());
   const [addingNew, setAddingNew] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Debug-panel expansion state. Collapsed by default — the two tag pivot
+  // tables are exploratory, not primary content.
+  const [resourceTagsExpanded, setResourceTagsExpanded] = useState(false);
+  const [accountTagsExpanded, setAccountTagsExpanded] = useState(false);
   // Drag-to-reorder state. `armed` flips draggable=true on a row only after
   // the user mousedowns its grip handle, so clicks elsewhere don't accidentally
   // start a drag. `from`/`over` drive the visual feedback during the drag.
   const [armed, setArmed] = useState<DragRef | null>(null);
   const [dragFrom, setDragFrom] = useState<DragRef | null>(null);
   const [dragOver, setDragOver] = useState<DragRef | null>(null);
-  const tagsQuery = useQuery(() => api.discoverTagKeys(), []);
+  // Lazy-load the tag-discovery scan — it hits DuckDB. Fires when the user
+  // opens Add Dimension (needs unmapped-tag suggestions), expands Resource
+  // Tags, or edits a tag dim (TagEditor needs context for suggestions).
+  const needsTagDiscovery = addingNew || resourceTagsExpanded || editingIdx !== null;
+  const tagsQuery = useQuery(
+    () => needsTagDiscovery ? api.discoverTagKeys() : Promise.resolve(null),
+    [needsTagDiscovery],
+  );
   const configQuery = useQuery(() => api.getDimensionsConfig(), [refreshKey]);
   const orgQuery = useQuery(() => api.getOrgSyncResult(), []);
 
   const tagsResult = tagsQuery.status === 'success' ? tagsQuery.data : null;
   const discoveredTags = tagsResult?.tags ?? [];
-  const samplePeriod = tagsResult?.samplePeriod ?? '';
+
   // Keep the last good config visible while a refetch is in flight — useQuery
   // resets to status=loading on every dep change, which would otherwise blank
   // the dimensions list for a frame after every reorder/toggle/save.
@@ -890,6 +931,24 @@ export function DimensionsView() {
     }
   }
 
+  // Reorder only within the enabled subset: "move up" on an enabled item
+  // hops past any disabled items above it to the next enabled neighbor.
+  // Disabled items keep their relative positions, so re-enabling later
+  // restores their order rather than bunching them at the bottom.
+  function reorderWithinEnabled(type: DragGroup, fromFullIdx: number, direction: 'up' | 'down'): void {
+    if (config === null) return;
+    const arr: readonly { readonly enabled?: boolean | undefined }[] = type === 'builtIn' ? config.builtIn : config.tags;
+    if (direction === 'up') {
+      for (let i = fromFullIdx - 1; i >= 0; i--) {
+        if (arr[i]?.enabled !== false) { applyReorder(type, fromFullIdx, i); return; }
+      }
+    } else {
+      for (let i = fromFullIdx + 1; i < arr.length; i++) {
+        if (arr[i]?.enabled !== false) { applyReorder(type, fromFullIdx, i); return; }
+      }
+    }
+  }
+
   // One factory per row: returns the drag/drop attrs for the row container and
   // the mousedown attr for the grip handle. Centralizes the "only allow drag
   // when grip was pressed" + "only accept drop within the same group" rules so
@@ -942,15 +1001,27 @@ export function DimensionsView() {
     );
   }
 
-  function ReorderArrows({ type, idx, total }: { type: DragGroup; idx: number; total: number }): React.JSX.Element {
-    const canUp = idx > 0;
-    const canDown = idx < total - 1;
+  function ReorderArrows({ type, idx }: { type: DragGroup; idx: number; direction?: string }): React.JSX.Element {
+    // Disable the arrow when there's no enabled neighbor to swap with in
+    // that direction — without this the user could click Up on the topmost
+    // enabled item and nothing would visibly happen (the disabled items
+    // above would silently shuffle instead).
+    const arr: readonly { readonly enabled?: boolean | undefined }[] =
+      config === null ? [] : type === 'builtIn' ? config.builtIn : config.tags;
+    let canUp = false;
+    for (let i = idx - 1; i >= 0; i--) {
+      if (arr[i]?.enabled !== false) { canUp = true; break; }
+    }
+    let canDown = false;
+    for (let i = idx + 1; i < arr.length; i++) {
+      if (arr[i]?.enabled !== false) { canDown = true; break; }
+    }
     return (
       <div className="flex flex-col -space-y-1">
         <button
           type="button"
           disabled={!canUp}
-          onClick={(e) => { e.stopPropagation(); applyReorder(type, idx, idx - 1); }}
+          onClick={(e) => { e.stopPropagation(); reorderWithinEnabled(type, idx, 'up'); }}
           title="Move up"
           className="flex items-center justify-center text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed"
         >
@@ -959,7 +1030,7 @@ export function DimensionsView() {
         <button
           type="button"
           disabled={!canDown}
-          onClick={(e) => { e.stopPropagation(); applyReorder(type, idx, idx + 1); }}
+          onClick={(e) => { e.stopPropagation(); reorderWithinEnabled(type, idx, 'down'); }}
           title="Move down"
           className="flex items-center justify-center text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed"
         >
@@ -969,30 +1040,110 @@ export function DimensionsView() {
     );
   }
 
+  // Build enabled-dim rows with their original full-array indices preserved —
+  // the reorder machinery operates on the full array, so we pair each visible
+  // card with its index in config.builtIn / config.tags.
+  const enabledBuiltIns = config === null ? [] : config.builtIn
+    .map((d, idx) => ({ d, idx }))
+    .filter(({ d }) => d.enabled !== false);
+  const enabledTags = config === null ? [] : config.tags
+    .map((t, idx) => ({ t, idx }))
+    .filter(({ t }) => t.enabled !== false);
+
+  function pillClass(enabled: boolean): string {
+    return [
+      'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+      enabled
+        ? 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20'
+        : 'border-border bg-bg-tertiary/20 text-text-muted hover:border-text-muted hover:text-text-secondary',
+    ].join(' ');
+  }
+
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-8 p-6">
       <div>
         <h2 className="text-xl font-semibold text-text-primary">Dimensions</h2>
         <p className="text-sm text-text-secondary mt-1">Map tags to cost allocation dimensions</p>
       </div>
 
-      {/* Current dimension mappings */}
+      {/* SECTION 1 — Available dimensions as toggleable pills. Two rows: the
+          fixed set of built-ins, then the user-defined tag dims with an
+          inline + Add pill at the end. */}
       {config !== null && (
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-text-secondary">Active Dimensions</h3>
-            <button
-              type="button"
-              onClick={() => { setAddingNew(true); setEditingIdx(null); setQuickAddState(null); }}
-              className="rounded-md border border-accent/50 bg-accent/10 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
-            >
-              + Add Dimension
-            </button>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider">Built-in dimensions</h3>
+            <div className="flex flex-wrap gap-1.5">
+              {config.builtIn.map((d, idx) => {
+                const isOn = d.enabled !== false;
+                return (
+                  <button
+                    key={d.name}
+                    type="button"
+                    onClick={() => { toggleBuiltInEnabled(idx); }}
+                    title={isOn ? 'Click to disable' : 'Click to enable'}
+                    className={pillClass(isOn)}
+                  >
+                    {d.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider">Custom tag dimensions</h3>
+            <div className="flex flex-wrap gap-1.5">
+              {config.tags.map((tag, idx) => {
+                const isOn = tag.enabled !== false;
+                return (
+                  <button
+                    key={tag.tagName}
+                    type="button"
+                    onClick={() => { toggleTagEnabled(idx); }}
+                    title={isOn ? 'Click to disable' : 'Click to enable'}
+                    className={pillClass(isOn)}
+                  >
+                    {tag.label}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => { setAddingNew(true); setEditingIdx(null); setEditingBuiltInIdx(null); setQuickAddState(null); }}
+                className="rounded-full border border-dashed border-accent/50 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/10 transition-colors"
+              >
+                + Add
+              </button>
+            </div>
           </div>
 
-          {/* Built-in dimensions */}
-          {config.builtIn.map((d, idx) => {
-            const isOn = d.enabled !== false;
+          {/* New-tag-dim form appears inline right after the pill rows so the
+              user sees where the new pill will land. */}
+          {addingNew && (
+            <TagEditor
+              tag={quickAddState ?? { tagName: '', label: '', concept: '', normalize: '', aliases: '', fallbackTag: undefined, missingValueTemplate: '' }}
+              onSave={(edited) => { void handleAddTag(edited); }}
+              onCancel={() => { setAddingNew(false); setQuickAddState(null); }}
+              onRemove={undefined}
+              availableTags={unmappedTagKeys}
+              discoveredTags={discoveredTags}
+              accountTagKeys={accountTagKeys}
+              orgAccounts={orgData?.accounts ?? []}
+            />
+          )}
+        </div>
+      )}
+
+      {/* SECTION 2 — The enabled dim list. Click to expand into the editor,
+          reorder with arrows / drag-grip. Built-ins come first, then tags. */}
+      {config !== null && (enabledBuiltIns.length > 0 || enabledTags.length > 0) && (
+        <div className="flex flex-col gap-3">
+          <h3 className="text-sm font-medium text-text-secondary">
+            Enabled dimensions
+            <span className="text-text-muted ml-2 font-normal text-xs">click to configure · drag or use arrows to reorder</span>
+          </h3>
+
+          {enabledBuiltIns.map(({ d, idx }) => {
             if (editingBuiltInIdx === idx) {
               return (
                 <BuiltInEditor
@@ -1020,10 +1171,7 @@ export function DimensionsView() {
               <div
                 key={d.name}
                 {...dnd.row}
-                className={[
-                  'rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors',
-                  isOn ? '' : 'opacity-50',
-                ].join(' ')}
+                className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors"
               >
                 <button
                   type="button"
@@ -1043,28 +1191,25 @@ export function DimensionsView() {
                       <span className="text-[10px] text-text-muted">{String(Object.keys(d.aliases).length)} alias rules</span>
                     )}
                   </div>
-                  {d.description !== undefined && (
+                  {d.description !== undefined && d.description.length > 0 && (
                     <span className="text-[11px] text-text-muted leading-snug">{d.description}</span>
                   )}
                 </button>
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="text-[10px] text-text-muted uppercase tracking-wider">Built-in</span>
-                  <DimensionToggle enabled={isOn} onToggle={() => { toggleBuiltInEnabled(idx); }} />
-                  <ReorderArrows type="builtIn" idx={idx} total={config.builtIn.length} />
+                  <ReorderArrows type="builtIn" idx={idx} direction="builtInEnabled" />
                   <GripHandle attrs={dnd.grip} />
                 </div>
               </div>
             );
           })}
 
-          {/* Tag dimensions (editable) */}
-          {config.tags.map((tag, idx) => {
-            const isOn = tag.enabled !== false;
+          {enabledTags.map(({ t: tag, idx }) => {
             const dnd = dragProps('tag', idx);
-            return (
-            <div key={tag.tagName} className={isOn ? '' : 'opacity-50'}>
-              {editingIdx === idx ? (
+            if (editingIdx === idx) {
+              return (
                 <TagEditor
+                  key={tag.tagName}
                   tag={{
                     tagName: tag.tagName,
                     label: tag.label,
@@ -1082,236 +1227,226 @@ export function DimensionsView() {
                   accountTagKeys={accountTagKeys}
                   orgAccounts={orgData?.accounts ?? []}
                 />
-              ) : (
-                <div {...dnd.row} className="w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors">
-                  <button
-                    type="button"
-                    onClick={() => { setEditingIdx(idx); setAddingNew(false); }}
-                    className="flex flex-col gap-1 text-left flex-1 min-w-0"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-medium text-text-primary">{tag.label}</span>
-                      <span className="text-xs text-text-muted font-mono">tag:{tag.tagName}</span>
-                      {tag.concept !== undefined && (
-                        <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
-                          {tag.concept}
-                        </span>
-                      )}
-                      {tag.normalize !== undefined && (
-                        <span className="text-[10px] text-text-muted">{tag.normalize}</span>
-                      )}
-                      {tag.aliases !== undefined && (
-                        <span className="text-[10px] text-text-muted">{String(Object.keys(tag.aliases).length)} alias rules</span>
-                      )}
-                      {tag.accountTagFallback !== undefined && (
-                        <span className="text-[10px] text-text-muted">fallback: {tag.accountTagFallback}</span>
-                      )}
-                      {tag.missingValueTemplate !== undefined && (
-                        <span className="text-[10px] text-text-muted font-mono">missing: {tag.missingValueTemplate}</span>
-                      )}
-                    </div>
-                    {tag.description !== undefined && (
-                      <span className="text-[11px] text-text-muted leading-snug">{tag.description}</span>
+              );
+            }
+            return (
+              <div key={tag.tagName} {...dnd.row} className="w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors">
+                <button
+                  type="button"
+                  onClick={() => { setEditingIdx(idx); setAddingNew(false); setEditingBuiltInIdx(null); }}
+                  className="flex flex-col gap-1 text-left flex-1 min-w-0"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-medium text-text-primary">{tag.label}</span>
+                    <span className="text-xs text-text-muted font-mono">tag:{tag.tagName}</span>
+                    {tag.concept !== undefined && (
+                      <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
+                        {tag.concept}
+                      </span>
                     )}
-                  </button>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => { setEditingIdx(idx); setAddingNew(false); }}
-                      className="text-xs text-text-muted hover:text-text-primary"
-                    >
-                      Edit →
-                    </button>
-                    <DimensionToggle enabled={isOn} onToggle={() => { toggleTagEnabled(idx); }} />
-                    <ReorderArrows type="tag" idx={idx} total={config.tags.length} />
-                    <GripHandle attrs={dnd.grip} />
+                    {tag.normalize !== undefined && (
+                      <span className="text-[10px] text-text-muted">{tag.normalize}</span>
+                    )}
+                    {tag.aliases !== undefined && (
+                      <span className="text-[10px] text-text-muted">{String(Object.keys(tag.aliases).length)} alias rules</span>
+                    )}
+                    {tag.accountTagFallback !== undefined && (
+                      <span className="text-[10px] text-text-muted">fallback: {tag.accountTagFallback}</span>
+                    )}
+                    {tag.missingValueTemplate !== undefined && (
+                      <span className="text-[10px] text-text-muted font-mono">missing: {tag.missingValueTemplate}</span>
+                    )}
                   </div>
+                  {tag.description !== undefined && tag.description.length > 0 && (
+                    <span className="text-[11px] text-text-muted leading-snug">{tag.description}</span>
+                  )}
+                </button>
+                <div className="flex items-center gap-3 shrink-0">
+                  <ReorderArrows type="tag" idx={idx} direction="tagEnabled" />
+                  <GripHandle attrs={dnd.grip} />
                 </div>
-              )}
-            </div>
+              </div>
             );
           })}
-
-          {/* Add new dimension form */}
-          {addingNew && (
-            <TagEditor
-              tag={quickAddState ?? { tagName: '', label: '', concept: '', normalize: '', aliases: '', fallbackTag: undefined, missingValueTemplate: '' }}
-              onSave={(edited) => { void handleAddTag(edited); }}
-              onCancel={() => { setAddingNew(false); setQuickAddState(null); }}
-              onRemove={undefined}
-              availableTags={unmappedTagKeys}
-              discoveredTags={discoveredTags}
-              accountTagKeys={accountTagKeys}
-              orgAccounts={orgData?.accounts ?? []}
-            />
-          )}
         </div>
       )}
 
-      {/* Resource tags pivot table */}
-      {tagsQuery.status === 'loading' && (
+      {/* SECTION 3 — Debug panels, collapsed by default. Firing the resource-
+          tags DuckDB scan is expensive, so we only kick it off when the
+          user expands this panel (or opens Add Dimension / the tag editor —
+          both need the discovered-tag list for suggestions). */}
+      {config !== null && (
         <div className="flex flex-col gap-3">
-          <h3 className="text-sm font-medium text-text-secondary">Resource Tags</h3>
-          <div className="rounded-xl border border-border bg-bg-secondary/50 p-8 text-center">
-            <CoinRainLoader height={80} count={4} />
-            <p className="text-xs text-text-muted mt-2">Scanning billing data for tags...</p>
-          </div>
-        </div>
-      )}
-      {tagsQuery.status === 'error' && (
-        <div className="flex flex-col gap-3">
-          <h3 className="text-sm font-medium text-text-secondary">Resource Tags</h3>
-          <div className="rounded-xl border border-negative/50 bg-negative-muted p-4 text-sm text-negative">
-            {tagsQuery.error.message}
-          </div>
-        </div>
-      )}
-      {discoveredTags.length > 0 && (() => {
-        const visibleTags = discoveredTags.filter(t => !hiddenResourceCols.has(t.key));
-        return (
-        <div className="flex flex-col gap-3">
-          <h3 className="text-sm font-medium text-text-secondary">
-            Resource Tags
-            <span className="text-text-muted ml-1">({String(discoveredTags.length)} keys{samplePeriod.length > 0 ? ` · sampled from ${samplePeriod}` : ''})</span>
-          </h3>
-          <div className="flex flex-wrap gap-1.5">
-            {[...discoveredTags].sort((a, b) => {
-              const aHidden = hiddenResourceCols.has(a.key) ? 1 : 0;
-              const bHidden = hiddenResourceCols.has(b.key) ? 1 : 0;
-              return aHidden - bHidden;
-            }).map(t => {
-              const hidden = hiddenResourceCols.has(t.key);
+          <h3 className="text-sm font-medium text-text-secondary">Debug info</h3>
+
+          <DebugPanel
+            title="Resource Tags"
+            subtitle={tagsQuery.status === 'success' && tagsQuery.data !== null ? `${String(tagsQuery.data.tags.length)} keys${tagsQuery.data.samplePeriod.length > 0 ? ` · sampled from ${tagsQuery.data.samplePeriod}` : ''}` : 'Tag keys discovered by scanning the latest CUR period'}
+            expanded={resourceTagsExpanded}
+            onToggle={() => { setResourceTagsExpanded(v => !v); }}
+          >
+            {tagsQuery.status === 'loading' && (
+              <div className="rounded-xl border border-border bg-bg-secondary/50 p-8 text-center">
+                <CoinRainLoader height={80} count={4} />
+                <p className="text-xs text-text-muted mt-2">Scanning billing data for tags...</p>
+              </div>
+            )}
+            {tagsQuery.status === 'error' && (
+              <div className="rounded-xl border border-negative/50 bg-negative-muted p-4 text-sm text-negative">
+                {tagsQuery.error.message}
+              </div>
+            )}
+            {tagsQuery.status === 'success' && discoveredTags.length > 0 && (() => {
+              const visibleTags = discoveredTags.filter(t => !hiddenResourceCols.has(t.key));
               return (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => { setHiddenResourceCols(prev => { const next = new Set(prev); if (hidden) { next.delete(t.key); } else { next.add(t.key); } return next; }); }}
-                  className={[
-                    'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
-                    hidden
-                      ? 'border-border bg-bg-tertiary/20 text-text-muted line-through'
-                      : 'border-accent/40 bg-accent/10 text-accent',
-                  ].join(' ')}
-                >
-                  {t.key}
-                </button>
-              );
-            })}
-          </div>
-          {visibleTags.length > 0 && (
-            <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-auto max-h-96">
-              <table className="text-xs">
-                <thead>
-                  <tr className="border-b border-border text-left text-text-muted sticky top-0 bg-bg-secondary z-10">
-                    {visibleTags.map(t => (
-                      <th key={t.key} className="px-3 py-2 font-medium whitespace-nowrap">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="font-mono">{t.key}</span>
-                          <span className="text-[9px] text-text-muted font-normal">{String(t.coveragePct)}% · {String(t.distinctCount)} values</span>
-                        </div>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {Array.from({ length: Math.max(...visibleTags.map(t => t.sampleValues.length), 0) }, (_, rowIdx) => (
-                    <tr key={rowIdx} className="border-b border-border-subtle">
-                      {visibleTags.map(t => (
-                        <td key={t.key} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
-                          {t.sampleValues[rowIdx] ?? ''}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-        );
-      })()}
-
-      {/* Account tags pivot table */}
-      {accountTagKeys.length > 0 && orgData !== null && (() => {
-        const visibleKeys = accountTagKeys.filter(k => !hiddenAccountCols.has(k));
-        return (
-        <div className="flex flex-col gap-3">
-          <h3 className="text-sm font-medium text-text-secondary">
-            Account Tags
-            <span className="text-text-muted ml-1">({String(accountTagKeys.length)} keys)</span>
-          </h3>
-          <div className="flex flex-wrap gap-1.5">
-            {[...accountTagKeys].sort((a, b) => {
-              const aH = hiddenAccountCols.has(a) ? 1 : 0;
-              const bH = hiddenAccountCols.has(b) ? 1 : 0;
-              return aH - bH;
-            }).map(key => {
-              const hidden = hiddenAccountCols.has(key);
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => { setHiddenAccountCols(prev => { const next = new Set(prev); if (hidden) { next.delete(key); } else { next.add(key); } return next; }); }}
-                  className={[
-                    'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
-                    hidden
-                      ? 'border-border bg-bg-tertiary/20 text-text-muted line-through'
-                      : 'border-accent/40 bg-accent/10 text-accent',
-                  ].join(' ')}
-                >
-                  {key}
-                </button>
-              );
-            })}
-          </div>
-          {visibleKeys.length > 0 && (
-            <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-auto max-h-96">
-              <table className="text-xs">
-                <thead>
-                  <tr className="border-b border-border text-left text-text-muted sticky top-0 bg-bg-secondary z-10">
-                    {visibleKeys.map(key => {
-                      const count = orgData.accounts.filter(a => a.tags[key] !== undefined && a.tags[key] !== '').length;
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {[...discoveredTags].sort((a, b) => {
+                      const aHidden = hiddenResourceCols.has(a.key) ? 1 : 0;
+                      const bHidden = hiddenResourceCols.has(b.key) ? 1 : 0;
+                      return aHidden - bHidden;
+                    }).map(t => {
+                      const hidden = hiddenResourceCols.has(t.key);
                       return (
-                        <th key={key} className="px-3 py-2 font-medium whitespace-nowrap">
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-mono">{key}</span>
-                            <span className="text-[9px] text-text-muted font-normal">{String(count)}/{String(orgData.accounts.length)} accts</span>
-                          </div>
-                        </th>
+                        <button
+                          key={t.key}
+                          type="button"
+                          onClick={() => { setHiddenResourceCols(prev => { const next = new Set(prev); if (hidden) { next.delete(t.key); } else { next.add(t.key); } return next; }); }}
+                          className={[
+                            'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
+                            hidden
+                              ? 'border-border bg-bg-tertiary/20 text-text-muted line-through'
+                              : 'border-accent/40 bg-accent/10 text-accent',
+                          ].join(' ')}
+                        >
+                          {t.key}
+                        </button>
                       );
                     })}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(() => {
-                    const columnValues = visibleKeys.map(key => {
-                      const counts = new Map<string, number>();
-                      for (const acct of orgData.accounts) {
-                        const val = acct.tags[key];
-                        if (val !== undefined && val.length > 0) {
-                          counts.set(val, (counts.get(val) ?? 0) + 1);
-                        }
-                      }
-                      return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([v, c]) => `${v} (${String(c)})`);
-                    });
-                    const maxRows = Math.max(...columnValues.map(c => c.length), 0);
-                    return Array.from({ length: Math.min(maxRows, 15) }, (_, rowIdx) => (
-                      <tr key={rowIdx} className="border-b border-border-subtle">
-                        {columnValues.map((vals, colIdx) => (
-                          <td key={visibleKeys[colIdx]} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
-                            {vals[rowIdx] ?? ''}
-                          </td>
-                        ))}
-                      </tr>
-                    ));
-                  })()}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </div>
+                  {visibleTags.length > 0 && (
+                    <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-auto max-h-96">
+                      <table className="text-xs">
+                        <thead>
+                          <tr className="border-b border-border text-left text-text-muted sticky top-0 bg-bg-secondary z-10">
+                            {visibleTags.map(t => (
+                              <th key={t.key} className="px-3 py-2 font-medium whitespace-nowrap">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-mono">{t.key}</span>
+                                  <span className="text-[9px] text-text-muted font-normal">{String(t.coveragePct)}% · {String(t.distinctCount)} values</span>
+                                </div>
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Array.from({ length: Math.max(...visibleTags.map(t => t.sampleValues.length), 0) }, (_, rowIdx) => (
+                            <tr key={rowIdx} className="border-b border-border-subtle">
+                              {visibleTags.map(t => (
+                                <td key={t.key} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
+                                  {t.sampleValues[rowIdx] ?? ''}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </DebugPanel>
+
+          <DebugPanel
+            title="Account Tags"
+            subtitle={orgData !== null ? `${String(accountTagKeys.length)} keys · across ${String(orgData.accounts.length)} accounts` : 'Requires an AWS Organization sync'}
+            expanded={accountTagsExpanded}
+            onToggle={() => { setAccountTagsExpanded(v => !v); }}
+          >
+            {orgData === null ? (
+              <p className="text-xs text-text-muted">No Organization sync data yet. Run it from Data Management to populate account-level tags.</p>
+            ) : accountTagKeys.length === 0 ? (
+              <p className="text-xs text-text-muted">No tags found on any accounts.</p>
+            ) : (() => {
+              const visibleKeys = accountTagKeys.filter(k => !hiddenAccountCols.has(k));
+              return (
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {[...accountTagKeys].sort((a, b) => {
+                      const aH = hiddenAccountCols.has(a) ? 1 : 0;
+                      const bH = hiddenAccountCols.has(b) ? 1 : 0;
+                      return aH - bH;
+                    }).map(key => {
+                      const hidden = hiddenAccountCols.has(key);
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => { setHiddenAccountCols(prev => { const next = new Set(prev); if (hidden) { next.delete(key); } else { next.add(key); } return next; }); }}
+                          className={[
+                            'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
+                            hidden
+                              ? 'border-border bg-bg-tertiary/20 text-text-muted line-through'
+                              : 'border-accent/40 bg-accent/10 text-accent',
+                          ].join(' ')}
+                        >
+                          {key}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {visibleKeys.length > 0 && (
+                    <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-auto max-h-96">
+                      <table className="text-xs">
+                        <thead>
+                          <tr className="border-b border-border text-left text-text-muted sticky top-0 bg-bg-secondary z-10">
+                            {visibleKeys.map(key => {
+                              const count = orgData.accounts.filter(a => a.tags[key] !== undefined && a.tags[key] !== '').length;
+                              return (
+                                <th key={key} className="px-3 py-2 font-medium whitespace-nowrap">
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="font-mono">{key}</span>
+                                    <span className="text-[9px] text-text-muted font-normal">{String(count)}/{String(orgData.accounts.length)} accts</span>
+                                  </div>
+                                </th>
+                              );
+                            })}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            const columnValues = visibleKeys.map(key => {
+                              const counts = new Map<string, number>();
+                              for (const acct of orgData.accounts) {
+                                const val = acct.tags[key];
+                                if (val !== undefined && val.length > 0) {
+                                  counts.set(val, (counts.get(val) ?? 0) + 1);
+                                }
+                              }
+                              return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([v, c]) => `${v} (${String(c)})`);
+                            });
+                            const maxRows = Math.max(...columnValues.map(c => c.length), 0);
+                            return Array.from({ length: Math.min(maxRows, 15) }, (_, rowIdx) => (
+                              <tr key={rowIdx} className="border-b border-border-subtle">
+                                {columnValues.map((vals, colIdx) => (
+                                  <td key={visibleKeys[colIdx]} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
+                                    {vals[rowIdx] ?? ''}
+                                  </td>
+                                ))}
+                              </tr>
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </DebugPanel>
         </div>
-        );
-      })()}
+      )}
     </div>
   );
 }
