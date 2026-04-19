@@ -8,12 +8,15 @@ import {
   loadDimensions,
   loadOrgTree,
   loadViews,
+  loadCostScope,
+  mergeBuiltInExclusionRules,
   logger,
   isStringRecord,
 } from '@costgoblin/core';
 import type {
   BuiltInDimension,
   CostGoblinConfig,
+  CostScopeConfig,
   DimensionsConfig,
   OrgNode,
   RegionEnrichment,
@@ -92,6 +95,7 @@ export interface IpcContext {
   readonly dimensionsPath: string;
   readonly orgTreePath: string;
   readonly viewsPath: string;
+  readonly costScopePath: string;
   readonly dataDir: string;
 }
 
@@ -104,6 +108,7 @@ export interface AppState {
   dimensions: DimensionsConfig | null;
   orgTree: OrgTreeConfig | null;
   views: ViewsConfig | null;
+  costScope: CostScopeConfig | null;
   syncStatuses: Record<string, SyncStatus>;
   accountMap: Map<string, string> | null;
   regionMap: Map<string, RegionEnrichment> | null;
@@ -124,6 +129,7 @@ export interface AppContext {
   readonly getQueryDimensions: () => Promise<DimensionsConfig>;
   readonly getOrgTreeConfig: () => Promise<OrgTreeConfig>;
   readonly getViews: () => Promise<ViewsConfig>;
+  readonly getCostScope: () => Promise<CostScopeConfig>;
   readonly getAccountMap: () => Promise<Map<string, string>>;
   readonly getRegionMap: () => Promise<Map<string, RegionEnrichment>>;
   readonly getOrgAccountsPath: () => Promise<string | undefined>;
@@ -131,6 +137,7 @@ export interface AppContext {
   readonly invalidateConfig: () => void;
   readonly invalidateDimensions: () => void;
   readonly invalidateViews: () => void;
+  readonly invalidateCostScope: () => void;
 }
 
 export function createAppContext(ctx: IpcContext): AppContext {
@@ -139,6 +146,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     dimensions: null,
     orgTree: null,
     views: null,
+    costScope: null,
     syncStatuses: {},
     accountMap: null,
     regionMap: null,
@@ -175,6 +183,14 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const views = await loadViews(ctx.viewsPath);
     state.views = views;
     return views;
+  }
+
+  async function getCostScope(): Promise<CostScopeConfig> {
+    if (state.costScope !== null) return state.costScope;
+    const loaded = await loadCostScope(ctx.costScopePath);
+    const merged = mergeBuiltInExclusionRules(loaded);
+    state.costScope = merged;
+    return merged;
   }
 
   async function getAccountMap(): Promise<Map<string, string>> {
@@ -363,6 +379,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getQueryDimensions,
     getOrgTreeConfig,
     getViews,
+    getCostScope,
     getAccountMap,
     getRegionMap,
     getOrgAccountsPath,
@@ -370,6 +387,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     invalidateConfig: () => { state.config = null; },
     invalidateDimensions: () => { state.dimensions = null; state.accountMap = null; state.regionMap = null; },
     invalidateViews: () => { state.views = null; },
+    invalidateCostScope: () => { state.costScope = null; },
   };
 }
 

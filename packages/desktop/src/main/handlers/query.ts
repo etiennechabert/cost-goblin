@@ -51,7 +51,7 @@ import {
 } from './query-utils.js';
 
 export function registerQueryHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getOrgAccountsPath, getOrgTreeConfig, getConfig, runQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getOrgAccountsPath, getOrgTreeConfig, getConfig, getCostScope, runQuery } = app;
 
   // Intersect the query's date range with the months actually on disk so
   // buildSource only globs directories that exist — DuckDB errors on empty
@@ -97,10 +97,11 @@ export function registerQueryHandlers(app: AppContext): void {
     const accountMap = await getAccountMap();
     const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
+    const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const { available, plan, empty } = await planQuery(tier, params.dateRange);
     if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
-    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available, plan, accountReverseMap);
+    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available, plan, accountReverseMap, costScope);
     logger.info('query:costs', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -131,10 +132,11 @@ export function registerQueryHandlers(app: AppContext): void {
     const accountMap = await getAccountMap();
     const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
+    const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const { available, plan, empty } = await planQuery(tier, params.dateRange);
     if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
-    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap);
+    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope);
     logger.info('query:daily-costs', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -187,9 +189,10 @@ export function registerQueryHandlers(app: AppContext): void {
     const accountMap = await getAccountMap();
     const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
+    const costScope = await getCostScope().catch(() => undefined);
     const { available, plan, empty } = await planQuery('daily', params.dateRange);
     if (empty) return { increases: [], savings: [], totalIncrease: asDollars(0), totalSavings: asDollars(0) };
-    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap);
+    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope);
     logger.info('query:trends', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -209,6 +212,7 @@ export function registerQueryHandlers(app: AppContext): void {
     const accountMap = await getAccountMap();
     const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
+    const costScope = await getCostScope().catch(() => undefined);
     logger.info('query:missing-tags', { tagDimension: params.tagDimension });
 
     const { available, plan, empty } = await planQuery('daily', params.dateRange);
@@ -223,8 +227,8 @@ export function registerQueryHandlers(app: AppContext): void {
         nonResourceRows: [],
       };
     }
-    const resourceSql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap);
-    const nonResourceSql = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap);
+    const resourceSql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope);
+    const nonResourceSql = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope);
     const [resourceRows, nonResourceRows] = await Promise.all([
       runQuery(resourceSql),
       runQuery(nonResourceSql),
@@ -308,6 +312,7 @@ export function registerQueryHandlers(app: AppContext): void {
     const accountMap = await getAccountMap();
     const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
+    const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const { available, plan, empty } = await planQuery(tier, params.dateRange);
     if (empty) {
@@ -322,7 +327,7 @@ export function registerQueryHandlers(app: AppContext): void {
         bySubEntity: [],
       };
     }
-    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap);
+    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope);
     logger.info('query:entity-detail', { entity: params.entity });
 
     const rows = await runQuery(sql);

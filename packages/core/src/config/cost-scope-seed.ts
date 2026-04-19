@@ -1,0 +1,45 @@
+import { asDimensionId } from '../types/branded.js';
+import type { CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
+
+export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
+  {
+    id: 'builtin:aws-premium-support',
+    name: 'AWS Premium Support',
+    description:
+      'AWS Enterprise / Business / Developer support subscription fees. Usually a flat line item outside per-resource usage.',
+    enabled: false,
+    builtIn: true,
+    conditions: [
+      { dimensionId: asDimensionId('service_family'), values: ['Support'] },
+    ],
+  },
+  {
+    id: 'builtin:ri-sp-purchases',
+    name: 'RI & Savings Plan purchases',
+    description:
+      'Upfront and recurring fees for Reserved Instances and Savings Plans. Usage covered by them still appears as DiscountedUsage and is not affected by this rule.',
+    enabled: false,
+    builtIn: true,
+    conditions: [
+      {
+        dimensionId: asDimensionId('line_item_type'),
+        values: ['RIFee', 'SavingsPlanRecurringFee', 'SavingsPlanUpfrontFee'],
+      },
+    ],
+  },
+];
+
+export const DEFAULT_COST_SCOPE: CostScopeConfig = {
+  costMetric: 'unblended',
+  rules: BUILTIN_EXCLUSION_RULES,
+};
+
+/** Merge shipped built-in rules into a loaded config. Mirrors
+ *  mergeDefaultBuiltIns for dimensions: preserve user edits on existing
+ *  built-ins, add any that are missing. User rules are untouched. */
+export function mergeBuiltInExclusionRules(loaded: CostScopeConfig): CostScopeConfig {
+  const loadedById = new Map(loaded.rules.map(r => [r.id, r]));
+  const missingBuiltins = BUILTIN_EXCLUSION_RULES.filter(b => !loadedById.has(b.id));
+  if (missingBuiltins.length === 0) return loaded;
+  return { ...loaded, rules: [...loaded.rules, ...missingBuiltins] };
+}

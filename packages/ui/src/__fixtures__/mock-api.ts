@@ -21,7 +21,10 @@ import type {
   CostGoblinConfig,
   DimensionsConfig,
   ViewsConfig,
+  CostScopeConfig,
+  CostScopePreviewResult,
 } from '@costgoblin/core/browser';
+import { DEFAULT_COST_SCOPE } from '@costgoblin/core/browser';
 
 const costResult: CostResult = {
   rows: [
@@ -263,6 +266,18 @@ export class MockCostApi implements CostApi {
   saveViewsConfig(): Promise<void> { return Promise.resolve(); }
   resetViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
   revealViewsFolder(): Promise<void> { return Promise.resolve(); }
+  getCostScope(): Promise<CostScopeConfig> { return Promise.resolve(DEFAULT_COST_SCOPE); }
+  saveCostScope(): Promise<void> { return Promise.resolve(); }
+  previewCostScope(): Promise<CostScopePreviewResult> {
+    return Promise.resolve({
+      windowDays: 30,
+      startDate: '2026-03-20',
+      endDate: '2026-04-18',
+      perRule: [],
+      combined: { excludedCost: 0, excludedRows: 0 },
+    });
+  }
+  revealCostScopeFolder(): Promise<void> { return Promise.resolve(); }
 }
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {

@@ -29,6 +29,8 @@ import type {
   FileActivityEvent,
   OptimizeStatus,
   ViewsConfig,
+  CostScopeConfig,
+  CostScopePreviewResult,
 } from '@costgoblin/core';
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -188,6 +190,18 @@ const api: CostApi = {
   },
   revealViewsFolder(): Promise<void> {
     return invoke<undefined>('views:reveal-folder').then(() => undefined);
+  },
+  getCostScope(): Promise<CostScopeConfig> {
+    return invoke<CostScopeConfig>('cost-scope:get-config');
+  },
+  saveCostScope(config: CostScopeConfig): Promise<void> {
+    return invoke<undefined>('cost-scope:save-config', config).then(() => undefined);
+  },
+  previewCostScope(config: CostScopeConfig): Promise<CostScopePreviewResult> {
+    return invoke<CostScopePreviewResult>('cost-scope:preview', config);
+  },
+  revealCostScopeFolder(): Promise<void> {
+    return invoke<undefined>('cost-scope:reveal-folder').then(() => undefined);
   },
 };
 

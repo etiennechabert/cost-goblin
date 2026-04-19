@@ -1,5 +1,6 @@
 import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, NormalizationRule, OrgNode, TagDimension } from './config.js';
 import type { ViewsConfig } from './views.js';
+import type { CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
 import type {
   CostQueryParams,
   CostResult,
@@ -143,6 +144,10 @@ export interface CostApi {
   resetViewsConfig(): Promise<ViewsConfig>;
   /** Reveal `views.yaml` in the OS file manager (Finder / Explorer). */
   revealViewsFolder(): Promise<void>;
+  getCostScope(): Promise<CostScopeConfig>;
+  saveCostScope(config: CostScopeConfig): Promise<void>;
+  previewCostScope(config: CostScopeConfig): Promise<CostScopePreviewResult>;
+  revealCostScopeFolder(): Promise<void>;
   getAutoSyncEnabled(): Promise<boolean>;
   setAutoSyncEnabled(enabled: boolean): Promise<void>;
   getAutoSyncStatus(): Promise<AutoSyncStatus>;
