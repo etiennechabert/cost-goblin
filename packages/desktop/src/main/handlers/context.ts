@@ -73,7 +73,11 @@ function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
   const missing = DEFAULT_BUILT_INS.filter(d => !have.has(d.name));
   const changed = backfilled.some((d, i) => d !== loaded.builtIn[i]);
   if (missing.length === 0 && !changed) return loaded;
-  return { builtIn: [...backfilled, ...missing], tags: loaded.tags };
+  return {
+    builtIn: [...backfilled, ...missing],
+    tags: loaded.tags,
+    ...(loaded.order !== undefined ? { order: loaded.order } : {}),
+  };
 }
 import { FileActivityLog } from '../file-activity.js';
 import { createOptimizeQueue } from '../optimize-queue.js';
