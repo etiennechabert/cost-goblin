@@ -604,7 +604,13 @@ export function DimensionsView() {
   const tagsResult = tagsQuery.status === 'success' ? tagsQuery.data : null;
   const discoveredTags = tagsResult?.tags ?? [];
   const samplePeriod = tagsResult?.samplePeriod ?? '';
-  const config: DimensionsConfig | null = configQuery.status === 'success' ? configQuery.data : null;
+  // Keep the last good config visible while a refetch is in flight — useQuery
+  // resets to status=loading on every dep change, which would otherwise blank
+  // the dimensions list for a frame after every reorder/toggle/save.
+  const [config, setConfig] = useState<DimensionsConfig | null>(null);
+  useEffect(() => {
+    if (configQuery.status === 'success') setConfig(configQuery.data);
+  }, [configQuery]);
   const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
 
   // Account tag keys from org sync
