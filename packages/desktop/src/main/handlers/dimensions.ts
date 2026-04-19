@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { join } from 'node:path';
 import { readdir } from 'node:fs/promises';
-import { getRawDirPrefix, logger } from '@costgoblin/core';
+import { getRawDirPrefix, isStringRecord, logger } from '@costgoblin/core';
 import type { DimensionsConfig, TagDimension } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import { toNum, toStr } from './query-utils.js';
@@ -17,6 +17,29 @@ function tagFingerprint(tag: TagDimension): string {
     fallback: tag.accountTagFallback ?? null,
     template: tag.missingValueTemplate ?? null,
   });
+}
+
+/** One-shot read of org-accounts.json → id→name map. No caching here (the
+ *  preview handler wants fresh data on every toggle change). */
+async function loadOrgAccountsMap(dataDir: string): Promise<Map<string, string>> {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const map = new Map<string, string>();
+  try {
+    const raw = await fs.readFile(path.join(path.dirname(dataDir), 'org-accounts.json'), 'utf-8');
+    const parsed: unknown = JSON.parse(raw);
+    if (isStringRecord(parsed) && Array.isArray(parsed['accounts'])) {
+      for (const acct of parsed['accounts']) {
+        if (!isStringRecord(acct)) continue;
+        const id = acct['id'];
+        const name = acct['name'];
+        if (typeof id === 'string' && typeof name === 'string' && id.length > 0 && name.length > 0) {
+          map.set(id, name);
+        }
+      }
+    }
+  } catch { /* no org sync */ }
+  return map;
 }
 
 /** Snapshot of existing raw files for a tier, used to enqueue regen jobs. */
@@ -122,7 +145,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
   // Distinct values + cost for a built-in column — powers the preview on the
   // built-in editor ("Service has 120 distinct values, top 20 by cost are...").
   // Scans the most recent daily period so the preview loads fast.
-  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> => {
+  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> => {
     // Whitelist columns we know are safe to embed in SQL. These match the
     // aliases emitted by buildSource so the query plans identically to what
     // the rest of the app does.
@@ -153,6 +176,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
       usage_type: 'line_item_usage_type',
     };
     const col = RAW_COL[field] ?? field;
+
     const distinctSql = `SELECT COUNT(DISTINCT ${col}) AS n FROM ${source} WHERE ${col} IS NOT NULL AND ${col} != ''`;
     const valuesSql = `
       SELECT ${col} AS val, SUM(line_item_unblended_cost) AS cost
@@ -164,7 +188,19 @@ export function registerDimensionsHandlers(app: AppContext): void {
     `;
     const [distinctRows, valueRows] = await Promise.all([runQuery(distinctSql), runQuery(valuesSql)]);
     const distinctCount = distinctRows[0] !== undefined ? toNum(distinctRows[0]['n']) : 0;
-    const values = valueRows.map(r => ({ value: toStr(r['val']), cost: toNum(r['cost']) }));
+    let values = valueRows.map(r => ({ value: toStr(r['val']), cost: toNum(r['cost']) }));
+
+    // Account-specific: map each id to its org-data name for the preview. We
+    // read org-accounts.json fresh every call so the preview reflects the
+    // toggle before the config is saved (otherwise the cached accountMap
+    // might be from the wrong source).
+    if (field === 'account_id' && opts?.useOrgAccounts === true) {
+      const orgMap = await loadOrgAccountsMap(ctx.dataDir);
+      if (orgMap.size > 0) {
+        values = values.map(v => ({ value: orgMap.get(v.value) ?? v.value, cost: v.cost }));
+      }
+    }
+
     return { values, distinctCount, period: latest.replace(/^daily-/, '') };
   });
 

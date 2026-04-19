@@ -35,7 +35,10 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
   const api = useCostApi();
   const [state, setState] = useState(dim.editing);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const valuesQuery = useQuery(() => api.discoverColumnValues(dim.field), [dim.field]);
+  const valuesQuery = useQuery(
+    () => api.discoverColumnValues(dim.field, isAccountDim ? { useOrgAccounts: state.useOrgAccounts } : undefined),
+    [dim.field, isAccountDim, state.useOrgAccounts],
+  );
 
   useEffect(() => {
     function onDocClick(e: MouseEvent): void {
