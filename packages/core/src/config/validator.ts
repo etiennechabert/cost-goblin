@@ -219,7 +219,16 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
     };
   });
 
-  return { builtIn, tags };
+  let order: string[] | undefined;
+  if (raw['order'] !== undefined) {
+    assertArray(raw['order'], 'order');
+    order = raw['order'].map((v, i) => {
+      assertString(v, `order[${String(i)}]`);
+      return v;
+    });
+  }
+
+  return { builtIn, tags, ...(order !== undefined ? { order } : {}) };
 }
 
 function validateOrgNode(raw: unknown, path: string): OrgNode {

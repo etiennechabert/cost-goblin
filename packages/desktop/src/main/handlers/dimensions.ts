@@ -288,6 +288,10 @@ export function registerDimensionsHandlers(app: AppContext): void {
         ...(t.description === undefined ? {} : { description: t.description }),
         ...(t.enabled === false ? { enabled: false } : {}),
       })),
+      // `order` lets the user interleave built-ins and tags freely in the
+      // Dimensions view. Only written when set — absence means "use the
+      // default built-ins-first-then-tags order in the UI".
+      ...(config.order !== undefined ? { order: [...config.order] } : {}),
     });
     await fs.writeFile(ctx.dimensionsPath, output);
     invalidateDimensions();

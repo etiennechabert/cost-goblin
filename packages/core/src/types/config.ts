@@ -83,6 +83,14 @@ export interface TagDimension {
 export interface DimensionsConfig {
   readonly builtIn: readonly BuiltInDimension[];
   readonly tags: readonly TagDimension[];
+  /** Unified display order for the Dimensions view and any UI that lists
+   *  enabled dims. Each entry is a stable ID: `builtin:<name>` for a
+   *  built-in dim or `tag:<tagName>` for a tag dim. Only enabled dims
+   *  should appear here — disabling removes, re-enabling appends at the
+   *  end. When undefined (legacy configs), the UI falls back to
+   *  built-ins-first-then-tags. Downstream consumers (query builder,
+   *  filter resolution) look dims up by name and don't consult this. */
+  readonly order?: readonly string[] | undefined;
 }
 
 export interface OrgNode {
