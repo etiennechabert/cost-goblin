@@ -227,6 +227,7 @@ export function registerSetupHandlers(app: AppContext): void {
         field: 'account_id',
         displayField: 'account_name',
         description: 'AWS account the cost was charged to. Main axis for org/team-level rollups.',
+        useOrgAccounts: true,
       },
       {
         name: 'region',

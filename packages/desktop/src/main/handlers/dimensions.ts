@@ -191,6 +191,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
         ...(d.description === undefined ? {} : { description: d.description }),
         ...(d.normalize === undefined ? {} : { normalize: d.normalize }),
         ...(d.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(d.aliases).map(([k, v]) => [k, [...v]])) }),
+        ...(d.useOrgAccounts === true ? { useOrgAccounts: true } : {}),
         ...(d.enabled === false ? { enabled: false } : {}),
       })),
       tags: config.tags.map(t => ({

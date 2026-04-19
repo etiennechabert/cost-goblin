@@ -124,6 +124,7 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
     const displayField = dim['displayField'] !== undefined ? (assertString(dim['displayField'], `${ctx}.displayField`), dim['displayField']) : undefined;
     const enabled = dim['enabled'] === false ? false : undefined;
     const description = dim['description'] !== undefined ? (assertString(dim['description'], `${ctx}.description`), dim['description']) : undefined;
+    const useOrgAccounts = dim['useOrgAccounts'] === true ? true : undefined;
     const normalize = dim['normalize'] !== undefined ? (() => {
       assertString(dim['normalize'], `${ctx}.normalize`);
       if (!isValidNormalizationRule(dim['normalize'])) {
@@ -153,6 +154,7 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
       ...(description !== undefined ? { description } : {}),
       ...(normalize !== undefined ? { normalize } : {}),
       ...(aliases !== undefined ? { aliases } : {}),
+      ...(useOrgAccounts === true ? { useOrgAccounts } : {}),
     };
   });
 

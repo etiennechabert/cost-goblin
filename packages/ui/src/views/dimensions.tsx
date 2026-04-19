@@ -23,6 +23,7 @@ interface EditingBuiltIn {
   description: string;
   normalize: string;
   aliases: string;
+  useOrgAccounts: boolean;
 }
 
 function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
@@ -30,6 +31,7 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
   onSave: (edited: EditingBuiltIn) => void;
   onCancel: () => void;
 }>): React.JSX.Element {
+  const isAccountDim = dim.field === 'account_id';
   const api = useCostApi();
   const [state, setState] = useState(dim.editing);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -82,6 +84,15 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
           placeholder="What does this dimension represent?"
         />
       </label>
+      {isAccountDim && (
+        <label className="flex items-center justify-between rounded border border-border bg-bg-primary px-3 py-2">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-sm text-text-primary">Resolve names via org-data</span>
+            <span className="text-[11px] text-text-muted">Display friendly account names from the Organizations sync instead of raw account IDs.</span>
+          </div>
+          <DimensionToggle enabled={state.useOrgAccounts} onToggle={() => { setState(s => ({ ...s, useOrgAccounts: !s.useOrgAccounts })); }} />
+        </label>
+      )}
       <label className="flex flex-col gap-1">
         <span className="text-xs text-text-muted">Alias Rules (canonical: alias1, alias2)</span>
         <textarea
@@ -592,6 +603,7 @@ export function DimensionsView() {
         ...(description.length > 0 ? { description } : {}),
         ...(normalize !== undefined ? { normalize } : {}),
         ...(aliases !== undefined ? { aliases } : {}),
+        ...(edited.useOrgAccounts ? { useOrgAccounts: true as const } : {}),
       };
     });
     await api.saveDimensionsConfig({ ...config, builtIn });
@@ -663,6 +675,7 @@ export function DimensionsView() {
                       description: d.description ?? '',
                       normalize: d.normalize ?? '',
                       aliases: aliasesToText(d.aliases),
+                      useOrgAccounts: d.useOrgAccounts === true,
                     },
                   }}
                   onSave={(edited) => { void handleSaveBuiltIn(idx, edited); }}

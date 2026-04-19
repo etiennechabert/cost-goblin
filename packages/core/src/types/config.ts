@@ -51,6 +51,9 @@ export interface BuiltInDimension {
   readonly normalize?: NormalizationRule | undefined;
   /** Canonical → raw values mapping, applied at query time. */
   readonly aliases?: Readonly<Record<string, readonly string[]>> | undefined;
+  /** Account-specific: when true, resolve id→name via org-accounts.json
+   *  (AWS Organizations sync) instead of the legacy CSV mapping. */
+  readonly useOrgAccounts?: boolean | undefined;
 }
 
 export interface TagDimension {
