@@ -71,7 +71,7 @@ export type AutoSyncStatus =
   | { readonly state: 'error'; readonly message: string; readonly lastRun: string | null };
 
 export interface OrgSyncProgress {
-  readonly phase: 'accounts' | 'ous' | 'tags';
+  readonly phase: 'accounts' | 'ous' | 'tags' | 'regions';
   readonly done: number;
   readonly total: number;
 }
@@ -142,9 +142,10 @@ export interface CostApi {
   getOrgSyncResult(): Promise<OrgSyncResult | null>;
   getOrgSyncProgress(): Promise<OrgSyncProgress | null>;
   /** Region-name cache info (count of resolved long-names + last sync time).
-   *  Populated as a side-effect of syncOrgAccounts; null if sync hasn't run
-   *  or the SSM step failed (insufficient permissions, etc). */
-  getRegionNamesInfo(): Promise<{ count: number; syncedAt: string } | null>;
+   *  Populated as a side-effect of syncOrgAccounts. Returns null when no
+   *  sync has ever been attempted; when the SSM step failed, returns
+   *  count=0 with lastError set so the UI can explain why. */
+  getRegionNamesInfo(): Promise<{ count: number; syncedAt: string; lastError: string | null } | null>;
   writeConfig(config: {
     providerName: string;
     profile: string;

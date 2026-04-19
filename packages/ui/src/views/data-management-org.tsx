@@ -8,6 +8,19 @@ type OrgSyncState =
   | { status: 'done'; count: number }
   | { status: 'error'; message: string };
 
+// Map the backend's terse phase keys to user-facing sentences. The 'tags'
+// phase iterates ListTagsForResource per account (so total = account count,
+// NOT the eventual number of distinct tag keys — that's discovered after).
+function phaseLabel(phase: string, total: number): string {
+  switch (phase) {
+    case 'accounts': return 'Listing accounts';
+    case 'ous':      return 'Discovering organizational units';
+    case 'tags':     return total > 0 ? 'Fetching tags from each account' : 'Fetching tags';
+    case 'regions':  return 'Fetching region friendly names from SSM';
+    default:         return phase;
+  }
+}
+
 export function OrgAccountsSection({ profile }: Readonly<{ profile: string | null }>) {
   const api = useCostApi();
   const [refreshKey, setRefreshKey] = useState(0);
@@ -141,42 +154,11 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
         )}
       </div>
 
-      {/* What got pulled in the last successful sync. Region names are sourced
-          from the SSM piggyback step; missing means insufficient permissions
-          or sync hasn't run since the feature was added. */}
-      <ul className="px-4 pb-3 flex flex-col gap-1 text-xs">
-        <li className="flex items-center gap-2 text-text-secondary">
-          <span className="text-accent">✓</span>
-          <span>{String(orgData.accounts.length)} accounts</span>
-        </li>
-        <li className="flex items-center gap-2 text-text-secondary">
-          <span className="text-accent">✓</span>
-          <span>{String(ouCount)} organizational units</span>
-        </li>
-        <li className="flex items-center gap-2 text-text-secondary">
-          <span className="text-accent">✓</span>
-          <span>{String(allTagKeys.length)} tag keys</span>
-        </li>
-        <li className="flex items-center gap-2">
-          {regionInfo !== null ? (
-            <>
-              <span className="text-accent">✓</span>
-              <span className="text-text-secondary">{String(regionInfo.count)} region friendly names</span>
-            </>
-          ) : (
-            <>
-              <span className="text-text-muted">○</span>
-              <span className="text-text-muted">region friendly names not synced (re-sync to populate)</span>
-            </>
-          )}
-        </li>
-      </ul>
-
       {syncState.status === 'syncing' && (
         <div className="px-4 pb-2">
           <div className="flex items-center gap-2 text-xs text-accent">
             <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
-            <span className="capitalize">{syncState.phase}</span>
+            <span>{phaseLabel(syncState.phase, syncState.total)}</span>
             {syncState.total > 0 && <span>— {String(syncState.done)}/{String(syncState.total)}</span>}
           </div>
         </div>
@@ -184,6 +166,41 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
 
       {expanded && (
         <div className="border-t border-border">
+          {/* What got pulled in the last successful sync. Region names are
+              sourced from the SSM piggyback step; missing means insufficient
+              permissions or sync hasn't run since the feature was added. */}
+          <ul className="px-4 pt-3 pb-1 flex flex-col gap-1 text-xs">
+            <li className="flex items-center gap-2 text-text-secondary">
+              <span className="text-accent">✓</span>
+              <span>{String(orgData.accounts.length)} accounts</span>
+            </li>
+            <li className="flex items-center gap-2 text-text-secondary">
+              <span className="text-accent">✓</span>
+              <span>{String(ouCount)} organizational units</span>
+            </li>
+            <li className="flex items-center gap-2 text-text-secondary">
+              <span className="text-accent">✓</span>
+              <span>{String(allTagKeys.length)} tag keys (across all accounts, used as fallback when resources are under-tagged)</span>
+            </li>
+            <li className="flex items-center gap-2">
+              {regionInfo !== null && regionInfo.count > 0 ? (
+                <>
+                  <span className="text-accent">✓</span>
+                  <span className="text-text-secondary">{String(regionInfo.count)} region friendly names</span>
+                </>
+              ) : regionInfo?.lastError !== undefined && regionInfo.lastError !== null ? (
+                <>
+                  <span className="text-negative">✗</span>
+                  <span className="text-negative" title={regionInfo.lastError}>region friendly names — {regionInfo.lastError}</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-text-muted">○</span>
+                  <span className="text-text-muted">region friendly names not synced (re-sync to populate)</span>
+                </>
+              )}
+            </li>
+          </ul>
           <div className="flex items-center justify-between px-4 py-2">
             <span className="text-[10px] text-text-muted">
               Synced {new Date(orgData.syncedAt).toLocaleDateString()} · Org {orgData.orgId}

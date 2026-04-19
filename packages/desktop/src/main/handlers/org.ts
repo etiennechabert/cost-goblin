@@ -33,6 +33,10 @@ function decodeOrgSyncResult(raw: string): OrgSyncResult | null {
 export function registerOrgHandlers(app: AppContext): void {
   const { ctx } = app;
   let orgSyncProgress: OrgSyncProgress | null = null;
+  // Latest result of the SSM region-name sync. Lets the UI tell the user why
+  // region friendly names didn't populate (typically: missing IAM permission)
+  // instead of the silent "not synced" we showed before.
+  let lastRegionSyncError: string | null = null;
 
   async function orgResultPath(): Promise<string> {
     const path = await import('node:path');
@@ -51,12 +55,18 @@ export function registerOrgHandlers(app: AppContext): void {
 
       // Piggyback the SSM region-name sync onto the existing org-sync flow.
       // Failures here are non-fatal — region names are a display nicety and
-      // the user has already paid the auth cost for the org sync.
+      // the user has already paid the auth cost for the org sync. Capture
+      // the error so the UI can hint at the cause (most often: profile
+      // lacks ssm:GetParametersByPath).
+      orgSyncProgress = { phase: 'regions', done: 0, total: 0 };
       try {
         const regionMap = await syncRegionNames(profile);
         await fs.writeFile(path.join(path.dirname(ctx.dataDir), 'region-names.json'), JSON.stringify(regionMap, null, 2));
+        lastRegionSyncError = null;
       } catch (err: unknown) {
-        logger.info(`Region-name sync failed (non-fatal): ${String(err)}`);
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.info(`Region-name sync failed (non-fatal): ${msg}`);
+        lastRegionSyncError = msg;
       }
 
       orgSyncProgress = null;
@@ -81,7 +91,7 @@ export function registerOrgHandlers(app: AppContext): void {
     return orgSyncProgress;
   });
 
-  ipcMain.handle('org:get-region-names-info', async (): Promise<{ count: number; syncedAt: string } | null> => {
+  ipcMain.handle('org:get-region-names-info', async (): Promise<{ count: number; syncedAt: string; lastError: string | null } | null> => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
     try {
@@ -91,8 +101,12 @@ export function registerOrgHandlers(app: AppContext): void {
       const regions = parsed['regions'];
       const syncedAt = parsed['syncedAt'];
       if (!isStringRecord(regions) || typeof syncedAt !== 'string') return null;
-      return { count: Object.keys(regions).length, syncedAt };
+      return { count: Object.keys(regions).length, syncedAt, lastError: lastRegionSyncError };
     } catch {
+      // No file yet, but we may still know why from the most recent attempt.
+      if (lastRegionSyncError !== null) {
+        return { count: 0, syncedAt: '', lastError: lastRegionSyncError };
+      }
       return null;
     }
   });
