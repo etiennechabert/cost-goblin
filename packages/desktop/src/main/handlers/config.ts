@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { asDimensionId } from '@costgoblin/core';
+import { asDimensionId, isStringRecord, logger } from '@costgoblin/core';
 import type {
   CostGoblinConfig,
   Dimension,
@@ -8,7 +8,7 @@ import type {
 import type { AppContext } from './context.js';
 
 export function registerConfigHandlers(app: AppContext): void {
-  const { getConfig, getDimensions, getOrgTreeConfig } = app;
+  const { ctx, getConfig, getDimensions, getOrgTreeConfig, invalidateConfig } = app;
 
   ipcMain.handle('config:get', async (): Promise<CostGoblinConfig> => {
     return getConfig();
@@ -43,5 +43,28 @@ export function registerConfigHandlers(app: AppContext): void {
   ipcMain.handle('config:org-tree', async (): Promise<OrgNode[]> => {
     const orgTree = await getOrgTreeConfig();
     return [...orgTree.tree];
+  });
+
+  // Surgical update: rewrite ONLY the first provider's credentials.profile,
+  // leaving every other YAML field (buckets, retention, defaults, etc.)
+  // untouched. The full setup wizard already covers re-doing buckets too —
+  // this is the "I just want to swap to a profile with different IAM perms"
+  // shortcut.
+  ipcMain.handle('config:update-aws-profile', async (_event, profile: string): Promise<void> => {
+    const fs = await import('node:fs/promises');
+    const { stringify, parse: parseYaml } = await import('yaml');
+    const raw = await fs.readFile(ctx.configPath, 'utf-8');
+    const parsed: unknown = parseYaml(raw);
+    if (!isStringRecord(parsed)) throw new Error('Config file is not a YAML object');
+    const providersRaw: unknown = parsed['providers'];
+    if (!Array.isArray(providersRaw) || providersRaw.length === 0) throw new Error('No providers configured');
+    const providers: unknown[] = providersRaw;
+    const first = providers[0];
+    if (!isStringRecord(first)) throw new Error('First provider entry is not an object');
+    const credentials = isStringRecord(first['credentials']) ? first['credentials'] : {};
+    const updated = { ...parsed, providers: [{ ...first, credentials: { ...credentials, profile } }, ...providers.slice(1)] };
+    await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
+    invalidateConfig();
+    logger.info(`Updated AWS profile to ${profile}`);
   });
 }

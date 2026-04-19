@@ -1,6 +1,9 @@
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import {
   asDimensionId,
+  applyNormalizationRule,
+  applyRegionFriendlyNames,
+  applyStripPatterns,
   loadConfig,
   loadDimensions,
   loadOrgTree,
@@ -12,33 +15,64 @@ import type {
   CostGoblinConfig,
   DimensionsConfig,
   OrgNode,
+  RegionEnrichment,
   SyncStatus,
 } from '@costgoblin/core';
 
 const DEFAULT_BUILT_INS: readonly BuiltInDimension[] = [
   { name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name', description: 'AWS account the cost was charged to. Main axis for org/team-level rollups.', useOrgAccounts: true },
-  { name: asDimensionId('region'), label: 'Region', field: 'region', description: 'AWS region where the resource ran. Useful for spotting unintended multi-region sprawl.' },
-  { name: asDimensionId('service'), label: 'Service', field: 'service', description: 'AWS service code (EC2, S3, RDS, etc.) — the broadest "what cost me this?" view.' },
-  { name: asDimensionId('service_family'), label: 'Service Family', field: 'service_family', description: 'Higher-level product category (Compute, Storage, Database). Good for exec summaries.' },
+  { name: asDimensionId('region'), label: 'Region', field: 'region', description: 'AWS region where the resource ran. Useful for spotting unintended multi-region sprawl.', useRegionNames: true },
+  // Two pure-enrichment dims derived from the same `region` column: Country
+  // and Continent group multiple regions into geo buckets via SSM metadata.
+  // Off by default — not everyone needs geo rollups, and without an SSM sync
+  // they'd just mirror the Region dim.
+  { name: asDimensionId('region_country'), label: 'Country', field: 'region', description: 'ISO country code derived from the region (DE, US, IE). Useful for data-residency and geo chargeback.', enabled: false },
+  { name: asDimensionId('region_continent'), label: 'Continent', field: 'region', description: 'AWS geographic bucket (EU, NA, AS) derived from the region. Useful for continent-level summaries.', enabled: false },
+  { name: asDimensionId('service'), label: 'AWS Service', field: 'service', description: 'AWS service code (EC2, S3, RDS, etc.) — the broadest "what cost me this?" view.' },
+  { name: asDimensionId('service_family'), label: 'Service Category', field: 'service_family', description: 'Higher-level product category (Compute, Storage, Database). Good for exec summaries.' },
   { name: asDimensionId('line_item_type'), label: 'Line Item Type', field: 'line_item_type', description: 'Usage vs Tax vs Credit vs Discount. Filter this to isolate real usage from billing adjustments.' },
   { name: asDimensionId('usage_type'), label: 'Usage Type', field: 'usage_type', description: 'Fine-grained usage string like USE2-BoxUsage:t3.medium. Use for instance/storage-tier breakdowns.', enabled: false },
   { name: asDimensionId('operation'), label: 'Operation', field: 'operation', description: 'API operation billed for (RunInstances, GetObject). Useful for API-level cost attribution.', enabled: false },
 ];
+
+/** Renames we want propagated to existing configs. Only overrides the stored
+ *  label when it still matches the previous default — if the user had typed
+ *  their own label we leave it alone. */
+const LEGACY_LABEL_RENAMES: Record<string, { from: string; to: string }> = {
+  service: { from: 'Service', to: 'AWS Service' },
+  service_family: { from: 'Service Family', to: 'Service Category' },
+};
 
 function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
   const defaultsByName = new Map(DEFAULT_BUILT_INS.map(d => [d.name, d]));
   // Backfill description on existing entries for any default whose config
   // predates the description field. User-set fields (label, aliases, etc.)
   // are kept — we only fill a missing description.
+  // Also backfill useRegionNames=true on the Region dim so pre-existing
+  // configs don't regress from friendly names back to raw codes now that the
+  // alias injection is gated on this flag.
   const backfilled = loaded.builtIn.map(d => {
-    if (d.description !== undefined) return d;
-    const def = defaultsByName.get(d.name);
-    if (def?.description === undefined) return d;
-    return { ...d, description: def.description };
+    let next = d;
+    const rename = LEGACY_LABEL_RENAMES[d.name];
+    if (rename !== undefined && next.label === rename.from) {
+      next = { ...next, label: rename.to };
+    }
+    if (next.description === undefined) {
+      const def = defaultsByName.get(next.name);
+      if (def?.description !== undefined) next = { ...next, description: def.description };
+    }
+    // Only the plain Region dim — Country/Continent share field='region' but
+    // their own enrichment branches by name, so useRegionNames would be a
+    // meaningless setting on them (and would pollute the saved YAML).
+    if (next.name === 'region' && next.useRegionNames === undefined) {
+      next = { ...next, useRegionNames: true };
+    }
+    return next;
   });
   const have = new Set(backfilled.map(d => d.name));
   const missing = DEFAULT_BUILT_INS.filter(d => !have.has(d.name));
-  if (missing.length === 0 && backfilled === loaded.builtIn) return loaded;
+  const changed = backfilled.some((d, i) => d !== loaded.builtIn[i]);
+  if (missing.length === 0 && !changed) return loaded;
   return { builtIn: [...backfilled, ...missing], tags: loaded.tags };
 }
 import { FileActivityLog } from '../file-activity.js';
@@ -64,6 +98,7 @@ export interface AppState {
   orgTree: OrgTreeConfig | null;
   syncStatuses: Record<string, SyncStatus>;
   accountMap: Map<string, string> | null;
+  regionMap: Map<string, RegionEnrichment> | null;
 }
 
 export interface AppContext {
@@ -72,9 +107,16 @@ export interface AppContext {
   readonly activity: FileActivityLog;
   readonly optimizeQueue: OptimizeQueue;
   readonly getConfig: () => Promise<CostGoblinConfig>;
+  /** Raw user-facing dimensions config — used by the editor IPC handlers
+   *  (the alias textarea must show ONLY user aliases, not the SSM-derived
+   *  region name entries we splice in for queries). */
   readonly getDimensions: () => Promise<DimensionsConfig>;
+  /** Dimensions enriched for query-time use: Region's aliases get the
+   *  SSM-derived friendly names mixed in. Use this in every query handler. */
+  readonly getQueryDimensions: () => Promise<DimensionsConfig>;
   readonly getOrgTreeConfig: () => Promise<OrgTreeConfig>;
   readonly getAccountMap: () => Promise<Map<string, string>>;
+  readonly getRegionMap: () => Promise<Map<string, RegionEnrichment>>;
   readonly getOrgAccountsPath: () => Promise<string | undefined>;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly invalidateConfig: () => void;
@@ -88,6 +130,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     orgTree: null,
     syncStatuses: {},
     accountMap: null,
+    regionMap: null,
   };
 
   async function getConfig(): Promise<CostGoblinConfig> {
@@ -174,7 +217,27 @@ export function createAppContext(ctx: IpcContext): AppContext {
     }
 
     const primary = preferOrg ? await fromOrg() : await fromCsv();
-    const map = primary.size > 0 ? primary : (preferOrg ? await fromCsv() : await fromOrg());
+    const raw = primary.size > 0 ? primary : (preferOrg ? await fromCsv() : await fromOrg());
+
+    // Apply the dim's display-time transforms to every resolved name. Done
+    // once here so every downstream caller — queries, preview, sidecars —
+    // sees the cleaned name without re-implementing the rule.
+    //
+    // Order matches the editor's visual top-down flow: normalize first, then
+    // strip. Users writing strip patterns under kebab/snake normalization
+    // need to anchor against the post-normalize form (e.g. '-production$'
+    // rather than '\s+production$').
+    const patterns = accountDim?.nameStripPatterns;
+    const normalize = accountDim?.normalize;
+    const map = (normalize !== undefined || (patterns !== undefined && patterns.length > 0))
+      ? new Map([...raw].map(([id, name]) => {
+          let v = name;
+          if (normalize !== undefined) v = applyNormalizationRule(v, normalize);
+          if (patterns !== undefined && patterns.length > 0) v = applyStripPatterns(v, patterns);
+          return [id, v];
+        }))
+      : raw;
+
     if (map.size > 0) {
       logger.info(`Loaded account mapping (${preferOrg ? 'org-data' : 'csv'} preferred): ${String(map.size)} accounts`);
     }
@@ -217,6 +280,39 @@ export function createAppContext(ctx: IpcContext): AppContext {
     }
   }
 
+  async function getRegionMap(): Promise<Map<string, RegionEnrichment>> {
+    // SSM-derived per-region metadata. Mirrors the org sync's caching pattern:
+    // read once, hold for the session, drop on dimensions invalidation.
+    // The map feeds applyRegionFriendlyNames which picks longName, country,
+    // or continent per dim based on the dim's name.
+    if (state.regionMap !== null) return state.regionMap;
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const map = new Map<string, RegionEnrichment>();
+    try {
+      const raw = await fs.readFile(path.join(path.dirname(ctx.dataDir), 'region-names.json'), 'utf-8');
+      const parsed: unknown = JSON.parse(raw);
+      if (isStringRecord(parsed) && isStringRecord(parsed['regions'])) {
+        for (const [code, info] of Object.entries(parsed['regions'])) {
+          if (!isStringRecord(info)) continue;
+          const longName = info['longName'];
+          if (typeof longName !== 'string' || longName.length === 0) continue;
+          const country = typeof info['country'] === 'string' ? info['country'] : '';
+          const continent = typeof info['continent'] === 'string' ? info['continent'] : '';
+          map.set(code, { longName, country, continent });
+        }
+      }
+    } catch { /* no region sync yet */ }
+    state.regionMap = map;
+    return map;
+  }
+
+  async function getQueryDimensions(): Promise<DimensionsConfig> {
+    const dims = await getDimensions();
+    const regionMap = await getRegionMap();
+    return applyRegionFriendlyNames(dims, regionMap);
+  }
+
   const activity = new FileActivityLog();
   async function prefsPath(): Promise<string> {
     const path = await import('node:path');
@@ -237,12 +333,14 @@ export function createAppContext(ctx: IpcContext): AppContext {
     optimizeQueue,
     getConfig,
     getDimensions,
+    getQueryDimensions,
     getOrgTreeConfig,
     getAccountMap,
+    getRegionMap,
     getOrgAccountsPath,
     runQuery: (sql: string) => ctx.db.runQuery(sql),
     invalidateConfig: () => { state.config = null; },
-    invalidateDimensions: () => { state.dimensions = null; state.accountMap = null; },
+    invalidateDimensions: () => { state.dimensions = null; state.accountMap = null; state.regionMap = null; },
   };
 }
 

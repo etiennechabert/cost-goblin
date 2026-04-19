@@ -50,6 +50,77 @@ export function resolveAlias(
   return normalizedValue;
 }
 
+/** Per-region metadata extracted from the SSM global-infrastructure namespace.
+ *  Shared shape for alias injection across the Region, Country, and Continent
+ *  built-ins. */
+export interface RegionEnrichment {
+  readonly longName: string;
+  readonly country: string;
+  readonly continent: string;
+}
+
+/** Injects SSM-derived aliases into the Region-family built-ins, so the same
+ *  raw `region` column powers three distinct groupings:
+ *   - `region`           + useRegionNames   → long names ("Europe (Frankfurt)")
+ *   - `region_country`   → ISO country codes ("DE")
+ *   - `region_continent` → AWS geo buckets ("EU")
+ *
+ *  Reuses the alias machinery (SQL CASE, resolveAlias, filter expansion) so
+ *  cost queries, filter dropdowns, and entity drill-ins pick up enriched
+ *  labels without separate plumbing.
+ *
+ *  User-defined aliases take precedence: if a region code is already covered
+ *  by a user alias entry, we don't add an SSM-sourced entry that would
+ *  compete. Codes with an empty value for the requested field are left alone
+ *  so the raw code surfaces (better than collapsing everything unknown into
+ *  a single bucket). */
+export function applyRegionFriendlyNames(
+  dims: import('../types/config.js').DimensionsConfig,
+  regionMap: ReadonlyMap<string, RegionEnrichment>,
+): import('../types/config.js').DimensionsConfig {
+  if (regionMap.size === 0) return dims;
+  const builtIn = dims.builtIn.map(d => {
+    if (d.field !== 'region') return d;
+    const pick: ((e: RegionEnrichment) => string) | null =
+      d.name === 'region_country' ? (e) => e.country
+        : d.name === 'region_continent' ? (e) => e.continent
+          : d.useRegionNames === true ? (e) => e.longName
+            : null;
+    if (pick === null) return d;
+    const userAliases = d.aliases ?? {};
+    const userCovered = new Set<string>();
+    for (const list of Object.values(userAliases)) {
+      for (const a of list) userCovered.add(a);
+    }
+    const merged: Record<string, string[]> = {};
+    for (const [canonical, list] of Object.entries(userAliases)) {
+      merged[canonical] = [...list];
+    }
+    for (const [code, info] of regionMap) {
+      if (userCovered.has(code)) continue;
+      const label = pick(info);
+      if (label.length === 0) continue;
+      const existing = merged[label];
+      if (existing === undefined) merged[label] = [code];
+      else existing.push(code);
+    }
+    return { ...d, aliases: merged };
+  });
+  return { ...dims, builtIn };
+}
+
+export function applyStripPatterns(value: string, patterns: readonly string[] | undefined): string {
+  if (patterns === undefined || patterns.length === 0) return value;
+  let result = value;
+  for (const p of patterns) {
+    if (p.length === 0) continue;
+    try {
+      result = result.replace(new RegExp(p, 'g'), '');
+    } catch { /* invalid regex — skip silently so a typo doesn't blow up resolution */ }
+  }
+  return result.replace(/\s+/g, ' ').trim();
+}
+
 export function normalizeAndResolve(value: string, dimension: TagDimension): TagValue {
   const normalized = normalizeTagValue(value, dimension.normalize);
   const resolved = resolveAlias(normalized, dimension.aliases);

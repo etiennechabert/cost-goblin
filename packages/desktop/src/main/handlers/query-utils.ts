@@ -56,6 +56,71 @@ export function resolveEntityName(entity: string, accountMap: Map<string, string
   return mapped === undefined ? entity : mapped;
 }
 
+/** Reverse view of the id→name account map. When the user's strip/normalize
+ *  rules collapse multiple ids to the same display name, the reverse map
+ *  groups them so a single filter or rollup can target all underlying ids. */
+export function buildAccountReverseMap(accountMap: Map<string, string>): Map<string, readonly string[]> {
+  const reverse = new Map<string, string[]>();
+  for (const [id, name] of accountMap) {
+    const ids = reverse.get(name);
+    if (ids === undefined) reverse.set(name, [id]);
+    else ids.push(id);
+  }
+  return reverse;
+}
+
+/** Sums two CostRows assumed to share the same entity. Service breakdowns
+ *  are merged additively; isVirtual is preserved if either side has it. */
+export function mergeCostRowsByEntity(rows: readonly CostRow[]): CostRow[] {
+  const map = new Map<string, { totalCost: number; serviceCosts: Record<string, number>; isVirtual: boolean }>();
+  for (const r of rows) {
+    const key = r.entity as string;
+    const existing = map.get(key);
+    if (existing === undefined) {
+      const serviceCosts: Record<string, number> = {};
+      for (const [svc, cost] of Object.entries(r.serviceCosts)) serviceCosts[svc] = cost;
+      map.set(key, { totalCost: r.totalCost, serviceCosts, isVirtual: r.isVirtual === true });
+    } else {
+      existing.totalCost += r.totalCost;
+      for (const [svc, cost] of Object.entries(r.serviceCosts)) {
+        existing.serviceCosts[svc] = (existing.serviceCosts[svc] ?? 0) + cost;
+      }
+      if (r.isVirtual === true) existing.isVirtual = true;
+    }
+  }
+  return [...map.entries()].map(([entity, d]) => ({
+    entity: asEntityRef(entity),
+    totalCost: asDollars(d.totalCost),
+    serviceCosts: Object.fromEntries(Object.entries(d.serviceCosts).map(([k, v]) => [k, asDollars(v)])),
+    ...(d.isVirtual ? { isVirtual: true as const } : {}),
+  })).sort((a, b) => b.totalCost - a.totalCost);
+}
+
+/** Sum delta + costs for trend rows sharing the same entity, then recompute
+ *  percentChange against the merged previous total (avoids averaging
+ *  percentages, which would lie when one merged side is much larger). */
+export function mergeTrendRowsByEntity(rows: readonly TrendRow[]): TrendRow[] {
+  const map = new Map<string, { currentCost: number; previousCost: number; delta: number }>();
+  for (const r of rows) {
+    const key = r.entity as string;
+    const existing = map.get(key);
+    if (existing === undefined) {
+      map.set(key, { currentCost: r.currentCost, previousCost: r.previousCost, delta: r.delta });
+    } else {
+      existing.currentCost += r.currentCost;
+      existing.previousCost += r.previousCost;
+      existing.delta += r.delta;
+    }
+  }
+  return [...map.entries()].map(([entity, d]) => ({
+    entity: asEntityRef(entity),
+    currentCost: asDollars(d.currentCost),
+    previousCost: asDollars(d.previousCost),
+    delta: asDollars(d.delta),
+    percentChange: d.previousCost === 0 ? (d.currentCost === 0 ? 0 : 100) : (d.delta / d.previousCost) * 100,
+  })).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+}
+
 export function buildCostResult(rows: RawRow[], dateRange: DateRange): CostResult {
   const entityMap = new Map<string, { totalCost: number; serviceCosts: Record<string, number> }>();
   const serviceTotals = new Map<string, number>();

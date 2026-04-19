@@ -1,8 +1,8 @@
 import { ipcMain } from 'electron';
 import { join } from 'node:path';
 import { readdir } from 'node:fs/promises';
-import { getRawDirPrefix, isStringRecord, logger } from '@costgoblin/core';
-import type { DimensionsConfig, TagDimension } from '@costgoblin/core';
+import { applyNormalizationRule, applyStripPatterns, getRawDirPrefix, isStringRecord, logger } from '@costgoblin/core';
+import type { DimensionsConfig, NormalizationRule, TagDimension } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import { toNum, toStr } from './query-utils.js';
 import { removeAllSidecars } from '../optimize.js';
@@ -63,7 +63,7 @@ async function listRawFilesForTier(dataDir: string, tier: 'daily' | 'hourly'): P
 }
 
 export function registerDimensionsHandlers(app: AppContext): void {
-  const { ctx, getConfig, getDimensions, invalidateDimensions, runQuery, optimizeQueue } = app;
+  const { ctx, getConfig, getDimensions, getRegionMap, invalidateDimensions, runQuery, optimizeQueue } = app;
 
   ipcMain.handle('dimensions:discover-tags', async (): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> => {
     const config = await getConfig();
@@ -145,7 +145,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
   // Distinct values + cost for a built-in column — powers the preview on the
   // built-in editor ("Service has 120 distinct values, top 20 by cost are...").
   // Scans the most recent daily period so the preview loads fast.
-  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> => {
+  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> => {
     // Whitelist columns we know are safe to embed in SQL. These match the
     // aliases emitted by buildSource so the query plans identically to what
     // the rest of the app does.
@@ -200,6 +200,46 @@ export function registerDimensionsHandlers(app: AppContext): void {
         values = values.map(v => ({ value: orgMap.get(v.value) ?? v.value, cost: v.cost }));
       }
     }
+    // Region: facet the preview by the dim the user is editing.
+    //   - region (with useRegionNames=true): long names from SSM
+    //   - region_country: ISO country code
+    //   - region_continent: AWS geo bucket
+    //   - anything else: raw codes fall through
+    // Rows with an empty value for the requested facet get collapsed together
+    // so the preview chips match what the live query will produce.
+    if (field === 'region') {
+      const regionMap = await getRegionMap();
+      const pick: ((info: { longName: string; country: string; continent: string }) => string) | null =
+        opts?.dimName === 'region_country' ? (i) => i.country
+          : opts?.dimName === 'region_continent' ? (i) => i.continent
+            : opts?.useRegionNames === true ? (i) => i.longName
+              : null;
+      if (pick !== null && regionMap.size > 0) {
+        const merged = new Map<string, number>();
+        for (const v of values) {
+          const info = regionMap.get(v.value);
+          const label = info === undefined ? v.value : (pick(info).length > 0 ? pick(info) : v.value);
+          merged.set(label, (merged.get(label) ?? 0) + v.cost);
+        }
+        values = [...merged.entries()].map(([value, cost]) => ({ value, cost })).sort((a, b) => b.cost - a.cost);
+      }
+    }
+    // Apply the same display-time transforms the live queries use. Order
+    // matches the editor's visual top-down flow: normalize first, then strip.
+    // After either runs, re-aggregate by the resulting key so two raw values
+    // that collapse to the same display value don't show up as duplicate chips.
+    const stripPatterns = field === 'account_id' ? opts?.nameStripPatterns : undefined;
+    const normalize = opts?.normalize;
+    if (normalize !== undefined || (stripPatterns !== undefined && stripPatterns.length > 0)) {
+      const merged = new Map<string, number>();
+      for (const v of values) {
+        let key = v.value;
+        if (normalize !== undefined) key = applyNormalizationRule(key, normalize);
+        if (stripPatterns !== undefined && stripPatterns.length > 0) key = applyStripPatterns(key, stripPatterns);
+        merged.set(key, (merged.get(key) ?? 0) + v.cost);
+      }
+      values = [...merged.entries()].map(([value, cost]) => ({ value, cost })).sort((a, b) => b.cost - a.cost);
+    }
 
     return { values, distinctCount, period: latest.replace(/^daily-/, '') };
   });
@@ -228,6 +268,12 @@ export function registerDimensionsHandlers(app: AppContext): void {
         ...(d.normalize === undefined ? {} : { normalize: d.normalize }),
         ...(d.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(d.aliases).map(([k, v]) => [k, [...v]])) }),
         ...(d.useOrgAccounts === true ? { useOrgAccounts: true } : {}),
+        ...(d.nameStripPatterns !== undefined && d.nameStripPatterns.length > 0 ? { nameStripPatterns: [...d.nameStripPatterns] } : {}),
+        // Persist useRegionNames whenever the user has set it explicitly
+        // (either value), so toggling off sticks past a reload. Leaving it
+        // unset lets mergeDefaultBuiltIns backfill `true` for the Region dim
+        // on legacy configs — we only want that for first-time migration.
+        ...(d.useRegionNames === undefined ? {} : { useRegionNames: d.useRegionNames }),
         ...(d.enabled === false ? { enabled: false } : {}),
       })),
       tags: config.tags.map(t => ({

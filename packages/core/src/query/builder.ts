@@ -73,11 +73,27 @@ function resolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): R
   return { fieldExpr: dimensionId, rawField: dimensionId };
 }
 
-function buildFilterClauses(filters: FilterMap, dimensions: DimensionsConfig): string[] {
+function buildFilterClauses(
+  filters: FilterMap,
+  dimensions: DimensionsConfig,
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
+): string[] {
   const clauses: string[] = [];
   for (const [dimId, value] of Object.entries(filters)) {
     if (value === undefined) continue;
     const resolved = resolveField(dimId as DimensionId, dimensions);
+    // Account dim with display-name collisions: the user picks "sre default"
+    // in the filter dropdown, but that collapses N underlying ids. Match any
+    // of them with an IN clause. Falls through to '=' when the value isn't a
+    // known display name (raw id, or no map provided).
+    if (resolved.rawField === 'account_id' && accountReverseMap !== undefined) {
+      const ids = accountReverseMap.get(String(value));
+      if (ids !== undefined && ids.length > 0) {
+        const list = ids.map(id => `'${id.replaceAll("'", "''")}'`).join(', ');
+        clauses.push(`${resolved.rawField} IN (${list})`);
+        continue;
+      }
+    }
     clauses.push(`${resolved.fieldExpr} = '${String(value).replaceAll("'", "''")}'`);
   }
   return clauses;
@@ -266,9 +282,10 @@ export function buildCostQuery(
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
   sidecarPlan?: SidecarPlan,
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions);
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
   const costTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const source = buildSource(dataDir, costTier, dimensions, orgAccountsPath, periods, sidecarPlan);
@@ -334,9 +351,10 @@ export function buildTrendQuery(
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
   sidecarPlan?: SidecarPlan,
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions);
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
 
   const startDate = params.dateRange.start;
   const endDate = params.dateRange.end;
@@ -421,9 +439,10 @@ export function buildMissingTagsQuery(
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
   sidecarPlan?: SidecarPlan,
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
 ): string {
   const tagResolved = resolveField(params.tagDimension, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions);
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan);
 
@@ -495,8 +514,9 @@ export function buildNonResourceCostQuery(
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
   sidecarPlan?: SidecarPlan,
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
 ): string {
-  const filterClauses = buildFilterClauses(params.filters, dimensions);
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan);
 
@@ -527,9 +547,10 @@ export function buildDailyCostsQuery(
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
   sidecarPlan?: SidecarPlan,
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions);
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
   const dailyTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const source = buildSource(dataDir, dailyTier, dimensions, orgAccountsPath, periods, sidecarPlan);
@@ -562,17 +583,32 @@ export function buildEntityDetailQuery(
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
   sidecarPlan?: SidecarPlan,
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
 ): string {
   const dimResolved = resolveField(params.dimension, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions);
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
   const granularity = params.granularity ?? 'daily';
   const tier = granularity === 'hourly' ? 'hourly' : 'daily';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const source = buildSource(dataDir, tier, dimensions, orgAccountsPath, periods, sidecarPlan);
 
+  // Same display-name collision treatment for the entity selector itself: if
+  // the user clicked into "sre default" we need to match every underlying id,
+  // not just one.
+  const entityClause = (() => {
+    if (dimResolved.rawField === 'account_id' && accountReverseMap !== undefined) {
+      const ids = accountReverseMap.get(String(params.entity));
+      if (ids !== undefined && ids.length > 0) {
+        const list = ids.map(id => `'${id.replaceAll("'", "''")}'`).join(', ');
+        return `${dimResolved.rawField} IN (${list})`;
+      }
+    }
+    return `${dimResolved.fieldExpr} = '${String(params.entity).replaceAll("'", "''")}'`;
+  })();
+
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
-    `${dimResolved.fieldExpr} = '${String(params.entity).replaceAll("'", "''")}'`,
+    entityClause,
     ...filterClauses,
   ];
 
