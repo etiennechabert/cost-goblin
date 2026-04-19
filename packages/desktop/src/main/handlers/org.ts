@@ -91,6 +91,29 @@ export function registerOrgHandlers(app: AppContext): void {
     return orgSyncProgress;
   });
 
+  // Standalone SSM resync — same syncRegionNames(), same destination file,
+  // but doesn't drag the org sync along. Lets the user fix a transient SSM
+  // failure (perm denied, network blip) without redoing the slow per-account
+  // tag fetch loop. lastRegionSyncError mirrors the merged sync's tracking.
+  ipcMain.handle('ssm:sync-region-names', async (_event, profile: string): Promise<{ count: number; syncedAt: string }> => {
+    orgSyncProgress = { phase: 'regions', done: 0, total: 0 };
+    try {
+      const regionMap = await syncRegionNames(profile);
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
+      await fs.writeFile(path.join(path.dirname(ctx.dataDir), 'region-names.json'), JSON.stringify(regionMap, null, 2));
+      lastRegionSyncError = null;
+      invalidateDimensions();
+      orgSyncProgress = null;
+      return { count: Object.keys(regionMap.regions).length, syncedAt: regionMap.syncedAt };
+    } catch (err: unknown) {
+      orgSyncProgress = null;
+      const msg = err instanceof Error ? err.message : String(err);
+      lastRegionSyncError = msg;
+      throw err;
+    }
+  });
+
   ipcMain.handle('org:clear-data', async (): Promise<void> => {
     // Wipes everything the org sync produced — accounts, the flat tag
     // lookup used for resource-tag fallback, and the SSM region-name cache.

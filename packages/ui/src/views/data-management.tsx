@@ -5,6 +5,7 @@ import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { SetupWizard } from './setup-wizard.js';
 import { OrgAccountsSection } from './data-management-org.js';
+import { SsmParameterSection } from './data-management-ssm.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
 import { RecentFileActivity } from './recent-file-activity.js';
 
@@ -396,6 +397,9 @@ export function DataManagement() {
 
       {/* Account mapping */}
       <OrgAccountsSection profile={awsProfile} />
+
+      {/* SSM Parameter Store enrichment data — independent of Org sync */}
+      <SsmParameterSection profile={awsProfile} />
 
       {inventoryQuery.status === 'loading' && (
         <div className="rounded-xl border border-border bg-bg-secondary/50 p-12 text-center text-text-secondary">

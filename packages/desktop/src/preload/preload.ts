@@ -152,6 +152,9 @@ const api: CostApi = {
   clearOrgData(): Promise<void> {
     return invoke<undefined>('org:clear-data').then(() => undefined);
   },
+  syncRegionNames(profile: string): Promise<{ count: number; syncedAt: string }> {
+    return invoke<{ count: number; syncedAt: string }>('ssm:sync-region-names', profile);
+  },
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> {
     return invoke<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>('dimensions:discover-tags');
   },

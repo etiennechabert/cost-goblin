@@ -149,6 +149,9 @@ export interface CostApi {
   /** Delete every file produced by the AWS Org sync (accounts, account-tag
    *  lookup, region-name cache). Idempotent. */
   clearOrgData(): Promise<void>;
+  /** Re-fetch only the SSM region-name cache, without re-running the slow
+   *  per-account org sync. Surfaces errors directly to the caller. */
+  syncRegionNames(profile: string): Promise<{ count: number; syncedAt: string }>;
   writeConfig(config: {
     providerName: string;
     profile: string;
