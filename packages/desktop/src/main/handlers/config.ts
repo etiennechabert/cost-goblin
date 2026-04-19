@@ -16,20 +16,27 @@ export function registerConfigHandlers(app: AppContext): void {
 
   ipcMain.handle('config:dimensions', async (): Promise<Dimension[]> => {
     const dimensions = await getDimensions();
-    const builtIn: Dimension[] = dimensions.builtIn.map(d => ({
-      name: asDimensionId(d.name),
-      label: d.label,
-      field: d.field,
-      ...(d.displayField === undefined ? {} : { displayField: d.displayField }),
-    }));
-    const tags: Dimension[] = dimensions.tags.map(d => ({
-      tagName: d.tagName,
-      label: d.label,
-      ...(d.concept === undefined ? {} : { concept: d.concept }),
-      ...(d.normalize === undefined ? {} : { normalize: d.normalize }),
-      ...(d.separator === undefined ? {} : { separator: d.separator }),
-      ...(d.aliases === undefined ? {} : { aliases: d.aliases }),
-    }));
+    // Disabled dims are hidden from the group-by selectors and filter bar.
+    // They remain in the raw DimensionsConfig (loaded by the Dimensions view)
+    // so the user can still see and re-enable them.
+    const builtIn: Dimension[] = dimensions.builtIn
+      .filter(d => d.enabled !== false)
+      .map(d => ({
+        name: asDimensionId(d.name),
+        label: d.label,
+        field: d.field,
+        ...(d.displayField === undefined ? {} : { displayField: d.displayField }),
+      }));
+    const tags: Dimension[] = dimensions.tags
+      .filter(d => d.enabled !== false)
+      .map(d => ({
+        tagName: d.tagName,
+        label: d.label,
+        ...(d.concept === undefined ? {} : { concept: d.concept }),
+        ...(d.normalize === undefined ? {} : { normalize: d.normalize }),
+        ...(d.separator === undefined ? {} : { separator: d.separator }),
+        ...(d.aliases === undefined ? {} : { aliases: d.aliases }),
+      }));
     return [...builtIn, ...tags];
   });
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { DimensionsConfig, TagDimension, ConceptType, NormalizationRule } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -17,6 +17,29 @@ const NORMALIZE_RULES: { value: NormalizationRule; label: string }[] = [
   { value: 'lowercase-underscore', label: 'snake_case (a_b_c)' },
   { value: 'camelCase', label: 'camelCase' },
 ];
+
+function DimensionToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      onClick={(e) => { e.stopPropagation(); onToggle(); }}
+      title={enabled ? 'Hide from selectors and filters' : 'Show in selectors and filters'}
+      className={[
+        'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors',
+        enabled ? 'bg-accent' : 'bg-bg-tertiary border border-border',
+      ].join(' ')}
+    >
+      <span
+        className={[
+          'inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform',
+          enabled ? 'translate-x-[18px]' : 'translate-x-[3px]',
+        ].join(' ')}
+      />
+    </button>
+  );
+}
 
 interface EditingTag {
   tagName: string;
@@ -61,6 +84,22 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   orgAccounts: readonly { tags: Readonly<Record<string, string>> }[];
 }>) {
   const [state, setState] = useState(tag);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Click outside the editor panel closes it (matches the collapse-on-outside
+  // pattern the rest of the app uses for popovers). A native 'click' listener
+  // on document fires after onClick handlers, so clicks on Save/Cancel/Remove
+  // inside the panel still work as expected.
+  useEffect(() => {
+    function onDocClick(e: MouseEvent): void {
+      if (containerRef.current === null) return;
+      if (!(e.target instanceof Node)) return;
+      if (containerRef.current.contains(e.target)) return;
+      onCancel();
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => { document.removeEventListener('mousedown', onDocClick); };
+  }, [onCancel]);
 
   const tagOptions = state.tagName.length > 0 && !availableTags.includes(state.tagName)
     ? [state.tagName, ...availableTags]
@@ -81,7 +120,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   })();
 
   return (
-    <div className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
+    <div ref={containerRef} className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
       {/* Row 1: Concept + Display Label + Normalization */}
       <div className="grid grid-cols-3 gap-4">
         <label className="flex flex-col gap-1">
@@ -425,6 +464,32 @@ export function DimensionsView() {
     setRefreshKey(k => k + 1);
   }
 
+  async function toggleBuiltInEnabled(idx: number) {
+    if (config === null) return;
+    const builtIn = config.builtIn.map((d, i) => {
+      if (i !== idx) return d;
+      const nextEnabled = d.enabled === false ? undefined : false;
+      const rest = { ...d };
+      delete (rest as { enabled?: boolean }).enabled;
+      return nextEnabled === undefined ? rest : { ...rest, enabled: nextEnabled };
+    });
+    await api.saveDimensionsConfig({ ...config, builtIn });
+    setRefreshKey(k => k + 1);
+  }
+
+  async function toggleTagEnabled(idx: number) {
+    if (config === null) return;
+    const tags = config.tags.map((t, i) => {
+      if (i !== idx) return t;
+      const nextEnabled = t.enabled === false ? undefined : false;
+      const rest = { ...t };
+      delete (rest as { enabled?: boolean }).enabled;
+      return nextEnabled === undefined ? rest : { ...rest, enabled: nextEnabled };
+    });
+    await api.saveDimensionsConfig({ ...config, tags });
+    setRefreshKey(k => k + 1);
+  }
+
   // Quick-add a discovered tag as a dimension
   const [quickAddState, setQuickAddState] = useState<EditingTag | null>(null);
 
@@ -449,23 +514,37 @@ export function DimensionsView() {
             </button>
           </div>
 
-          {/* Built-in dimensions (read-only) */}
-          {config.builtIn.map(d => (
-            <div key={d.name} className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-medium text-text-primary">{d.label}</span>
-                <span className="text-xs text-text-muted font-mono">{d.field}</span>
-                {d.displayField !== undefined && (
-                  <span className="text-[10px] text-text-muted">display: {d.displayField}</span>
-                )}
+          {/* Built-in dimensions */}
+          {config.builtIn.map((d, idx) => {
+            const isOn = d.enabled !== false;
+            return (
+              <div
+                key={d.name}
+                className={[
+                  'rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between',
+                  isOn ? '' : 'opacity-50',
+                ].join(' ')}
+              >
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-medium text-text-primary">{d.label}</span>
+                  <span className="text-xs text-text-muted font-mono">{d.field}</span>
+                  {d.displayField !== undefined && (
+                    <span className="text-[10px] text-text-muted">display: {d.displayField}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] text-text-muted uppercase tracking-wider">Built-in</span>
+                  <DimensionToggle enabled={isOn} onToggle={() => { void toggleBuiltInEnabled(idx); }} />
+                </div>
               </div>
-              <span className="text-[10px] text-text-muted uppercase tracking-wider">Built-in</span>
-            </div>
-          ))}
+            );
+          })}
 
           {/* Tag dimensions (editable) */}
-          {config.tags.map((tag, idx) => (
-            <div key={tag.tagName}>
+          {config.tags.map((tag, idx) => {
+            const isOn = tag.enabled !== false;
+            return (
+            <div key={tag.tagName} className={isOn ? '' : 'opacity-50'}>
               {editingIdx === idx ? (
                 <TagEditor
                   tag={{
@@ -486,12 +565,12 @@ export function DimensionsView() {
                   orgAccounts={orgData?.accounts ?? []}
                 />
               ) : (
-                <button
-                  type="button"
-                  onClick={() => { setEditingIdx(idx); setAddingNew(false); }}
-                  className="w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between text-left hover:bg-bg-tertiary/30 transition-colors"
-                >
-                  <div className="flex items-center gap-3">
+                <div className="w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors">
+                  <button
+                    type="button"
+                    onClick={() => { setEditingIdx(idx); setAddingNew(false); }}
+                    className="flex items-center gap-3 text-left flex-1 min-w-0"
+                  >
                     <span className="text-sm font-medium text-text-primary">{tag.label}</span>
                     <span className="text-xs text-text-muted font-mono">tag:{tag.tagName}</span>
                     {tag.concept !== undefined && (
@@ -511,12 +590,22 @@ export function DimensionsView() {
                     {tag.missingValueTemplate !== undefined && (
                       <span className="text-[10px] text-text-muted font-mono">missing: {tag.missingValueTemplate}</span>
                     )}
+                  </button>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => { setEditingIdx(idx); setAddingNew(false); }}
+                      className="text-xs text-text-muted hover:text-text-primary"
+                    >
+                      Edit →
+                    </button>
+                    <DimensionToggle enabled={isOn} onToggle={() => { void toggleTagEnabled(idx); }} />
                   </div>
-                  <span className="text-xs text-text-muted">Edit →</span>
-                </button>
+                </div>
               )}
             </div>
-          ))}
+            );
+          })}
 
           {/* Add new dimension form */}
           {addingNew && (
