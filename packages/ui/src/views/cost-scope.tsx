@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type {
   CostMetric,
+  CostPerspective,
   CostScopeCapabilities,
   CostScopeConfig,
   CostScopeDailyRow,
@@ -600,7 +601,7 @@ export function CostScopeView(): React.JSX.Element {
     void api.getCostScopeCapabilities().then(setCapabilities).catch(() => {
       // capabilities are advisory — if the probe fails, assume
       // everything is present (matches legacy behaviour).
-      setCapabilities({ hasEffectiveCostColumns: true, hasBlendedColumn: true });
+      setCapabilities({ hasEffectiveCostColumns: true, hasBlendedColumn: true, hasNetColumns: true });
     });
   }, [api]);
 
@@ -659,6 +660,19 @@ export function CostScopeView(): React.JSX.Element {
 
   function handleMetricChange(metric: CostMetric) {
     updateDraft({ ...draft, costMetric: metric });
+  }
+
+  function handlePerspectiveChange(perspective: CostPerspective) {
+    // Omit the field entirely when 'gross' so we serialise the default
+    // cleanly — exactOptionalPropertyTypes forbids writing `undefined`
+    // to an optional property, so destructure the old value out.
+    if (perspective === 'gross') {
+      const { costPerspective: _omit, ...rest } = draft;
+      void _omit;
+      updateDraft(rest);
+      return;
+    }
+    updateDraft({ ...draft, costPerspective: perspective });
   }
 
   function updateRule(index: number, next: ExclusionRule) {
@@ -814,6 +828,49 @@ export function CostScopeView(): React.JSX.Element {
                   </div>
                 </label>
               ))}
+
+              {/* Gross vs Net toggle — orthogonal to the metric axis.
+                  Disabled when the net columns aren't available, with a
+                  warning explaining the CUR-side fix. */}
+              <div className="pt-2 mt-2 border-t border-border">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-text-primary">Perspective</div>
+                    <div className="text-xs text-text-muted mt-0.5">
+                      Net applies credits, refunds, and promotional discounts on top of the chosen metric.
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary/30 p-0.5 shrink-0">
+                    {(['gross', 'net'] as const).map(perspective => {
+                      const disabled = perspective === 'net' && capabilities !== null && !capabilities.hasNetColumns;
+                      const active = (draft.costPerspective ?? 'gross') === perspective;
+                      return (
+                        <button
+                          key={perspective}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => { handlePerspectiveChange(perspective); }}
+                          className={[
+                            'px-3 py-1 text-xs rounded-md transition-colors capitalize',
+                            active ? 'bg-accent text-bg-primary' : 'text-text-secondary hover:text-text-primary',
+                            disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer',
+                          ].join(' ')}
+                          title={disabled ? 'Requires line_item_net_unblended_cost — enable "Include Net Columns" on the CUR report.' : undefined}
+                        >
+                          {perspective}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                {(draft.costPerspective ?? 'gross') === 'net' && capabilities !== null && !capabilities.hasNetColumns && (
+                  <div className="mt-2 text-xs text-warning">
+                    Degraded → falls back to Gross because your CUR export doesn't include
+                    <code className="mx-1 text-[11px]">line_item_net_unblended_cost</code>.
+                    Enable <em>Include Net Columns</em> on your CUR report in AWS Billing.
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
 

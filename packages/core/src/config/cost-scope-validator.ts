@@ -2,14 +2,19 @@ import { assertArray, assertObject, assertString, ConfigValidationError } from '
 import { asDimensionId } from '../types/branded.js';
 import type {
   CostMetric,
+  CostPerspective,
   CostScopeConfig,
   ExclusionCondition,
   ExclusionRule,
 } from '../types/cost-scope.js';
-import { COST_METRICS } from '../types/cost-scope.js';
+import { COST_METRICS, COST_PERSPECTIVES } from '../types/cost-scope.js';
 
 function isCostMetric(v: string): v is CostMetric {
   return (COST_METRICS as readonly string[]).includes(v);
+}
+
+function isCostPerspective(v: string): v is CostPerspective {
+  return (COST_PERSPECTIVES as readonly string[]).includes(v);
 }
 
 function validateCondition(raw: unknown, ctx: string): ExclusionCondition {
@@ -61,7 +66,23 @@ export function validateCostScope(raw: unknown): CostScopeConfig {
       `costScope.costMetric must be one of: ${COST_METRICS.join(', ')}`,
     );
   }
+  // costPerspective is optional — missing key defaults to 'gross' so older
+  // on-disk configs keep working unchanged.
+  let costPerspective: CostPerspective | undefined;
+  if (raw['costPerspective'] !== undefined) {
+    assertString(raw['costPerspective'], 'costScope.costPerspective');
+    if (!isCostPerspective(raw['costPerspective'])) {
+      throw new ConfigValidationError(
+        `costScope.costPerspective must be one of: ${COST_PERSPECTIVES.join(', ')}`,
+      );
+    }
+    costPerspective = raw['costPerspective'];
+  }
   assertArray(raw['rules'], 'costScope.rules');
   const rules = raw['rules'].map((r, i) => validateRule(r, `costScope.rules[${String(i)}]`));
-  return { costMetric: raw['costMetric'], rules };
+  return {
+    costMetric: raw['costMetric'],
+    ...(costPerspective !== undefined ? { costPerspective } : {}),
+    rules,
+  };
 }

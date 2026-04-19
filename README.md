@@ -49,19 +49,25 @@ If you don't have a CUR report yet, create one in the [AWS Console](https://docs
 | `pricing_public_on_demand_cost` | On-demand list price |
 | `resource_tags` | Tag key-value pairs |
 
-**Optional cost-metric columns** — enable these to unlock the full Cost Scope metric picker:
+**Optional cost-metric columns** — enable these to unlock the full Cost Scope metric + perspective picker:
 
-| Column | Unlocks | Notes |
-|--------|---------|-------|
-| `line_item_blended_cost` | **Blended** metric | Usually shipped by default; absent only in stripped-down exports. If missing, Blended silently falls back to Unblended. |
-| `reservation_effective_cost` | **Amortized** metric (RI portion) | Ships only when **Include Resource IDs** is enabled on the CUR report. |
-| `savings_plan_savings_plan_effective_cost` | **Amortized** metric (SP portion) | Ships only with **Include Resource IDs**. Note the double prefix — AWS's snake_case conversion of `savingsPlan/SavingsPlanEffectiveCost`. |
+| Column | Unlocks | Requires |
+|--------|---------|----------|
+| `line_item_blended_cost` | **Blended** metric | Usually shipped by default. |
+| `reservation_effective_cost` | **Amortized** metric (RI portion) | *Include resource IDs* |
+| `savings_plan_savings_plan_effective_cost` | **Amortized** metric (SP portion) | *Include resource IDs*. Note the double prefix — AWS's snake_case conversion of `savingsPlan/SavingsPlanEffectiveCost`. |
+| `line_item_net_unblended_cost` | **Net** perspective toggle | *Include net columns* |
+| `reservation_net_effective_cost` | **Net + Amortized** (RI portion) | *Include resource IDs* AND *Include net columns* |
+| `savings_plan_net_savings_plan_effective_cost` | **Net + Amortized** (SP portion) | *Include resource IDs* AND *Include net columns* |
 
-The app probes your parquet schema on first launch and shows a warning in the Cost Scope view if Amortized is degraded — no error, but the view falls back to Unblended for rows that would otherwise carry an effective-cost value.
+The app probes your parquet schema on first launch and shows warnings in the Cost Scope view when a metric or perspective is degraded — no errors, the view silently falls back to the closest available column.
 
-**How to enable `Include Resource IDs`:**
+**Recommended: enable BOTH settings on your CUR report.** Without them the Amortized metric and Net perspective both fall back to Unblended-gross:
 
-AWS Billing → Cost and Usage Reports → your report → **Edit** → check *Include resource IDs*. CUR reports are immutable, so the edit typically requires creating a new report pointed at the same (or a fresh) S3 prefix. Allow one billing cycle for the columns to appear in the data.
+1. AWS Billing → **Cost and Usage Reports** → your report → **Edit**
+2. Check *Include resource IDs* and *Include net columns*
+3. CUR reports are immutable, so the edit typically requires creating a new report pointed at the same (or a fresh) S3 prefix
+4. Allow one billing cycle for the new columns to appear in the data
 
 The S3 export should look like:
 ```

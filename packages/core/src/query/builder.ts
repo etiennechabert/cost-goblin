@@ -1,7 +1,7 @@
 import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
 import type { CostQueryParams, DailyCostsParams, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import type { DimensionId } from '../types/branded.js';
-import type { CostMetric, CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
+import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor } from './cost-metric.js';
 
@@ -208,8 +208,8 @@ function quoteList(paths: readonly string[]): string {
  * Drops the org-accounts JOIN entirely — fallback logic was baked into each
  * sidecar column at generation time.
  */
-function buildSourceFromSidecars(tier: string, dimensions: DimensionsConfig, plan: SidecarPlan, costMetric: CostMetric, availableColumns?: ReadonlySet<string>): string {
-  const costExpr = costExprFor(costMetric, 'cur.', availableColumns);
+function buildSourceFromSidecars(tier: string, dimensions: DimensionsConfig, plan: SidecarPlan, costMetric: CostMetric, availableColumns?: ReadonlySet<string>, costPerspective?: CostPerspective): string {
+  const costExpr = costExprFor(costMetric, 'cur.', costPerspective, availableColumns);
   const rawList = quoteList(plan.rawFiles);
   const sidecarList = quoteList(plan.sidecarFiles);
 
@@ -267,9 +267,10 @@ export function buildSource(
   sidecarPlan?: SidecarPlan,
   costMetric: CostMetric = 'unblended',
   availableColumns?: ReadonlySet<string>,
+  costPerspective?: CostPerspective,
 ): string {
   if (sidecarPlan !== undefined) {
-    return buildSourceFromSidecars(tier, dimensions, sidecarPlan, costMetric, availableColumns);
+    return buildSourceFromSidecars(tier, dimensions, sidecarPlan, costMetric, availableColumns, costPerspective);
   }
   const hasFallbacks = dimensions.tags.some(t => t.accountTagFallback !== undefined);
   const needsOrgJoin = hasFallbacks && orgAccountsPath !== undefined;
@@ -338,7 +339,7 @@ export function buildSource(
     : parquetSource;
 
   const tablePrefix = needsOrgJoin ? 'cur.' : '';
-  const costExpr = costExprFor(costMetric, tablePrefix, availableColumns);
+  const costExpr = costExprFor(costMetric, tablePrefix, costPerspective, availableColumns);
 
   return `(
     SELECT
@@ -392,9 +393,10 @@ export function buildCostQuery(
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
   const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
   const costTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, costTier, dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns);
+  const source = buildSource(dataDir, costTier, dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -466,6 +468,7 @@ export function buildTrendQuery(
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
   const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
 
   const startDate = params.dateRange.start;
   const endDate = params.dateRange.end;
@@ -483,7 +486,7 @@ export function buildTrendQuery(
   const previousPeriods = computePeriodsInRange({ start: prevStartIso, end: prevEndIso });
   const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
   const periods = availablePeriods === undefined ? required : required.filter(p => availablePeriods.includes(p));
-  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns);
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
 
   const allFilterClauses = [...filterClauses, ...exclusionClauses];
   const filterWhere = allFilterClauses.length > 0 ? ` AND ${allFilterClauses.join(' AND ')}` : '';
@@ -559,8 +562,9 @@ export function buildMissingTagsQuery(
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
   const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns);
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
 
   // Date + user filters apply to the resource aggregation.
   const whereConditions = [
@@ -638,8 +642,9 @@ export function buildNonResourceCostQuery(
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
   const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns);
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -677,9 +682,10 @@ export function buildDailyCostsQuery(
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
   const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
   const dailyTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, dailyTier, dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns);
+  const source = buildSource(dataDir, dailyTier, dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -718,10 +724,11 @@ export function buildEntityDetailQuery(
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
   const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
   const granularity = params.granularity ?? 'daily';
   const tier = granularity === 'hourly' ? 'hourly' : 'daily';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, tier, dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns);
+  const source = buildSource(dataDir, tier, dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
 
   // Same display-name collision treatment for the entity selector itself: if
   // the user clicked into "sre default" we need to match every underlying id,

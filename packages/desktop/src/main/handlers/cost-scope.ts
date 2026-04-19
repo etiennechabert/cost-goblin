@@ -123,7 +123,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
     } catch {
       sidecarPlan = undefined;
     }
-    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods, sidecarPlan, config.costMetric, availableColumns);
+    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods, sidecarPlan, config.costMetric, availableColumns, config.costPerspective);
 
     // Pre-compute each rule's positive match expression once — used to
     // build the `excluded` predicate for the main aggregate query, each
@@ -324,6 +324,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
       hasEffectiveCostColumns:
         cols.has('reservation_effective_cost') && cols.has('savings_plan_savings_plan_effective_cost'),
       hasBlendedColumn: cols.has('line_item_blended_cost'),
+      hasNetColumns: cols.has('line_item_net_unblended_cost'),
     };
   });
 

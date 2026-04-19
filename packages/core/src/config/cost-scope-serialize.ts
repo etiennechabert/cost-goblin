@@ -12,6 +12,7 @@ interface YamlRule {
 
 export interface YamlCostScope {
   costMetric: string;
+  costPerspective?: string;
   rules: YamlRule[];
 }
 
@@ -31,5 +32,13 @@ function ruleToYaml(r: ExclusionRule): YamlRule {
 }
 
 export function costScopeToYaml(cfg: CostScopeConfig): YamlCostScope {
-  return { costMetric: cfg.costMetric, rules: cfg.rules.map(ruleToYaml) };
+  return {
+    costMetric: cfg.costMetric,
+    // Only emit when non-default — keeps legacy YAMLs from churning
+    // when the serializer round-trips them.
+    ...(cfg.costPerspective !== undefined && cfg.costPerspective !== 'gross'
+      ? { costPerspective: cfg.costPerspective }
+      : {}),
+    rules: cfg.rules.map(ruleToYaml),
+  };
 }

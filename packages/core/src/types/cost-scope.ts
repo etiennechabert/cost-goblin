@@ -16,6 +16,15 @@ export type CostMetric = 'unblended' | 'blended' | 'amortized';
 
 export const COST_METRICS: readonly CostMetric[] = ['unblended', 'blended', 'amortized'] as const;
 
+/** Whether the cost column should be the as-billed ("gross") value or the
+ *  post-credit/refund ("net") value. Orthogonal to the metric axis —
+ *  every metric has a net variant in CUR when "Include Net Columns" is
+ *  enabled on the report. When net columns are missing, the expression
+ *  falls back to the gross column for that metric. */
+export type CostPerspective = 'gross' | 'net';
+
+export const COST_PERSPECTIVES: readonly CostPerspective[] = ['gross', 'net'] as const;
+
 /** One AND-ed condition inside an exclusion rule. Matches when the row's
  *  value for `dimensionId` is in `values` (OR within values). Empty `values`
  *  is invalid — reject it in the validator. */
@@ -43,6 +52,9 @@ export interface ExclusionRule {
 
 export interface CostScopeConfig {
   readonly costMetric: CostMetric;
+  /** Optional. Defaults to 'gross' when omitted (back-compat with
+   *  earlier on-disk configs that predate the perspective axis). */
+  readonly costPerspective?: CostPerspective;
   readonly rules: readonly ExclusionRule[];
 }
 
@@ -102,6 +114,10 @@ export interface CostScopeCapabilities {
    *  configurations omit it — when missing we degrade Blended to
    *  Unblended. */
   readonly hasBlendedColumn: boolean;
+  /** `line_item_net_unblended_cost` is present. Ships only when the
+   *  CUR has "Include Net Columns" enabled. Without it, the Net
+   *  perspective toggle falls back to Gross. */
+  readonly hasNetColumns: boolean;
 }
 
 export interface CostScopePreviewResult {
