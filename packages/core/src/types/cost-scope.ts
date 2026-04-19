@@ -87,6 +87,22 @@ export interface CostScopeSampleRow {
   readonly tags: Readonly<Record<string, string>>;
 }
 
+/** Which optional CUR columns exist in the user's export. Drives UI
+ *  warnings (e.g. "Amortized is degraded — your CUR lacks the
+ *  effective-cost columns"). The probe runs once per tier, cached for
+ *  the session. */
+export interface CostScopeCapabilities {
+  /** `reservation_effective_cost` AND `savings_plan_effective_cost` are
+   *  both present. Required for an accurate Amortized metric; when
+   *  missing we degrade to Unblended. Both columns ship only when the
+   *  CUR has "Include Resource IDs" enabled. */
+  readonly hasEffectiveCostColumns: boolean;
+  /** `line_item_blended_cost` is present. Usually true, but some CUR
+   *  configurations omit it — when missing we degrade Blended to
+   *  Unblended. */
+  readonly hasBlendedColumn: boolean;
+}
+
 export interface CostScopePreviewResult {
   readonly windowDays: number;
   readonly startDate: string;

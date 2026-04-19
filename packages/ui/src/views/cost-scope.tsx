@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type {
   CostMetric,
+  CostScopeCapabilities,
   CostScopeConfig,
   CostScopeDailyRow,
   CostScopePreviewResult,
@@ -583,6 +584,7 @@ export function CostScopeView(): React.JSX.Element {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [suggestionsByDim, setSuggestionsByDim] = useState(new Map<string, readonly string[]>());
+  const [capabilities, setCapabilities] = useState<CostScopeCapabilities | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
@@ -595,6 +597,11 @@ export function CostScopeView(): React.JSX.Element {
       setSaved(cfg);
     });
     void api.getDimensions().then(setDimensions);
+    void api.getCostScopeCapabilities().then(setCapabilities).catch(() => {
+      // capabilities are advisory — if the probe fails, assume
+      // everything is present (matches legacy behaviour).
+      setCapabilities({ hasEffectiveCostColumns: true, hasBlendedColumn: true });
+    });
   }, [api]);
 
   // Pre-fetch filter-value suggestions once per enabled dim so every
@@ -788,6 +795,22 @@ export function CostScopeView(): React.JSX.Element {
                   <div>
                     <span className="text-sm font-medium text-text-primary">{METRIC_LABELS[metric].label}</span>
                     <span className="ml-2 text-xs text-text-muted">{METRIC_LABELS[metric].description}</span>
+                    {metric === 'amortized' && capabilities !== null && !capabilities.hasEffectiveCostColumns && (
+                      <div className="mt-1 text-xs text-warning">
+                        Degraded → falls back to Unblended because your CUR export doesn't include
+                        <code className="mx-1 text-[11px]">reservation_effective_cost</code>
+                        /
+                        <code className="mx-1 text-[11px]">savings_plan_effective_cost</code>.
+                        Enable <em>Include Resource IDs</em> on your CUR report in AWS Billing to get
+                        an accurate amortized view (takes one billing cycle to land).
+                      </div>
+                    )}
+                    {metric === 'blended' && capabilities !== null && !capabilities.hasBlendedColumn && (
+                      <div className="mt-1 text-xs text-warning">
+                        Degraded → falls back to Unblended because your CUR export doesn't include
+                        <code className="mx-1 text-[11px]">line_item_blended_cost</code>.
+                      </div>
+                    )}
                   </div>
                 </label>
               ))}

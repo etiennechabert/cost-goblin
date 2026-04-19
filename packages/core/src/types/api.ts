@@ -1,6 +1,6 @@
 import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, NormalizationRule, OrgNode, TagDimension } from './config.js';
 import type { ViewsConfig } from './views.js';
-import type { CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
+import type { CostScopeCapabilities, CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
 import type {
   CostQueryParams,
   CostResult,
@@ -147,6 +147,9 @@ export interface CostApi {
   getCostScope(): Promise<CostScopeConfig>;
   saveCostScope(config: CostScopeConfig): Promise<void>;
   previewCostScope(config: CostScopeConfig): Promise<CostScopePreviewResult>;
+  /** Which optional CUR columns exist — drives UI warnings (e.g.
+   *  degraded Amortized when effective-cost columns are missing). */
+  getCostScopeCapabilities(): Promise<CostScopeCapabilities>;
   revealCostScopeFolder(): Promise<void>;
   getAutoSyncEnabled(): Promise<boolean>;
   setAutoSyncEnabled(enabled: boolean): Promise<void>;

@@ -78,6 +78,7 @@ export { OVERVIEW_SEED_VIEW, SEED_VIEWS_CONFIG } from './seed-views.js';
 
 export type {
   CostMetric,
+  CostScopeCapabilities,
   CostScopeConfig,
   ExclusionRule,
   ExclusionCondition,

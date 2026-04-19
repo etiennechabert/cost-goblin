@@ -52,7 +52,7 @@ import {
 } from './query-utils.js';
 
 export function registerQueryHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getOrgAccountsPath, getOrgTreeConfig, getConfig, getCostScope, runQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getOrgAccountsPath, getOrgTreeConfig, getConfig, getCostScope, getAvailableColumns, runQuery } = app;
 
   // Intersect the query's date range with the months actually on disk so
   // buildSource only globs directories that exist — DuckDB errors on empty
@@ -100,9 +100,10 @@ export function registerQueryHandlers(app: AppContext): void {
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
+    const availableColumns = await getAvailableColumns(tier);
     const { available, plan, empty } = await planQuery(tier, params.dateRange);
     if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
-    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available, plan, accountReverseMap, costScope);
+    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available, plan, accountReverseMap, costScope, availableColumns);
     logger.info('query:costs', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -135,9 +136,10 @@ export function registerQueryHandlers(app: AppContext): void {
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
+    const availableColumns = await getAvailableColumns(tier);
     const { available, plan, empty } = await planQuery(tier, params.dateRange);
     if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
-    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope);
+    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope, availableColumns);
     logger.info('query:daily-costs', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -191,9 +193,10 @@ export function registerQueryHandlers(app: AppContext): void {
     const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
+    const availableColumns = await getAvailableColumns('daily');
     const { available, plan, empty } = await planQuery('daily', params.dateRange);
     if (empty) return { increases: [], savings: [], totalIncrease: asDollars(0), totalSavings: asDollars(0) };
-    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope);
+    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope, availableColumns);
     logger.info('query:trends', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -214,6 +217,7 @@ export function registerQueryHandlers(app: AppContext): void {
     const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
+    const availableColumns = await getAvailableColumns('daily');
     logger.info('query:missing-tags', { tagDimension: params.tagDimension });
 
     const { available, plan, empty } = await planQuery('daily', params.dateRange);
@@ -228,8 +232,8 @@ export function registerQueryHandlers(app: AppContext): void {
         nonResourceRows: [],
       };
     }
-    const resourceSql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope);
-    const nonResourceSql = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope);
+    const resourceSql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope, availableColumns);
+    const nonResourceSql = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope, availableColumns);
     const [resourceRows, nonResourceRows] = await Promise.all([
       runQuery(resourceSql),
       runQuery(nonResourceSql),
@@ -315,6 +319,7 @@ export function registerQueryHandlers(app: AppContext): void {
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
+    const availableColumns = await getAvailableColumns(tier);
     const { available, plan, empty } = await planQuery(tier, params.dateRange);
     if (empty) {
       return {
@@ -328,7 +333,7 @@ export function registerQueryHandlers(app: AppContext): void {
         bySubEntity: [],
       };
     }
-    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope);
+    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available, plan, accountReverseMap, costScope, availableColumns);
     logger.info('query:entity-detail', { entity: params.entity });
 
     const rows = await runQuery(sql);
@@ -413,7 +418,12 @@ export function registerQueryHandlers(app: AppContext): void {
 
     const orgPath = await getOrgAccountsPath();
     const periods = dateRange === undefined ? undefined : computePeriodsInRange(dateRange);
-    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods);
+    const availableColumns = await getAvailableColumns('daily');
+    // filter-values doesn't need a specific metric — just needs source
+    // with the fewest column constraints. Pass 'unblended' (always
+    // present) plus the probed column set so the source query doesn't
+    // reference missing columns.
+    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods, undefined, 'unblended', availableColumns);
     const sql = `
       SELECT ${fieldExpr} AS val, SUM(cost) AS total_cost
       FROM ${source}

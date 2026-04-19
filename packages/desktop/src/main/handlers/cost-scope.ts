@@ -13,6 +13,7 @@ import {
   listLocalMonths,
 } from '@costgoblin/core';
 import type {
+  CostScopeCapabilities,
   CostScopeConfig,
   CostScopeDailyRow,
   CostScopePreviewResult,
@@ -52,7 +53,7 @@ function isEnoent(err: unknown): boolean {
 }
 
 export function registerCostScopeHandlers(app: AppContext): void {
-  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, runQuery } = app;
+  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, getAvailableColumns, runQuery } = app;
 
   ipcMain.handle('cost-scope:get-config', async (): Promise<CostScopeConfig> => {
     try {
@@ -107,6 +108,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
 
     const dimensions = await getQueryDimensions();
     const orgPath = await getOrgAccountsPath();
+    const availableColumns = await getAvailableColumns('daily');
 
     // Optimised source — positional JOIN against pre-built sidecars when
     // every parquet file in the window has a fresh sidecar for every
@@ -121,7 +123,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
     } catch {
       sidecarPlan = undefined;
     }
-    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods, sidecarPlan, config.costMetric);
+    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods, sidecarPlan, config.costMetric, availableColumns);
 
     // Pre-compute each rule's positive match expression once — used to
     // build the `excluded` predicate for the main aggregate query, each
@@ -313,6 +315,15 @@ export function registerCostScopeHandlers(app: AppContext): void {
       sampleRows,
       sampleTotalRowCount,
       tagColumns,
+    };
+  });
+
+  ipcMain.handle('cost-scope:get-capabilities', async (): Promise<CostScopeCapabilities> => {
+    const cols = await getAvailableColumns('daily');
+    return {
+      hasEffectiveCostColumns:
+        cols.has('reservation_effective_cost') && cols.has('savings_plan_effective_cost'),
+      hasBlendedColumn: cols.has('line_item_blended_cost'),
     };
   });
 

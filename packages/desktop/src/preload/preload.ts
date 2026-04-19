@@ -29,6 +29,7 @@ import type {
   FileActivityEvent,
   OptimizeStatus,
   ViewsConfig,
+  CostScopeCapabilities,
   CostScopeConfig,
   CostScopePreviewResult,
 } from '@costgoblin/core';
@@ -199,6 +200,9 @@ const api: CostApi = {
   },
   previewCostScope(config: CostScopeConfig): Promise<CostScopePreviewResult> {
     return invoke<CostScopePreviewResult>('cost-scope:preview', config);
+  },
+  getCostScopeCapabilities(): Promise<CostScopeCapabilities> {
+    return invoke<CostScopeCapabilities>('cost-scope:get-capabilities');
   },
   revealCostScopeFolder(): Promise<void> {
     return invoke<undefined>('cost-scope:reveal-folder').then(() => undefined);

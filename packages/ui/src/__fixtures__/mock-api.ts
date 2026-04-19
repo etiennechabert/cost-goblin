@@ -21,6 +21,7 @@ import type {
   CostGoblinConfig,
   DimensionsConfig,
   ViewsConfig,
+  CostScopeCapabilities,
   CostScopeConfig,
   CostScopePreviewResult,
 } from '@costgoblin/core/browser';
@@ -282,6 +283,9 @@ export class MockCostApi implements CostApi {
       sampleTotalRowCount: 0,
       tagColumns: [],
     });
+  }
+  getCostScopeCapabilities(): Promise<CostScopeCapabilities> {
+    return Promise.resolve({ hasEffectiveCostColumns: true, hasBlendedColumn: true });
   }
   revealCostScopeFolder(): Promise<void> { return Promise.resolve(); }
 }
