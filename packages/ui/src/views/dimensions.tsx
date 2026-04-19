@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { DimensionsConfig, TagDimension, ConceptType, NormalizationRule } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -84,6 +84,22 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   orgAccounts: readonly { tags: Readonly<Record<string, string>> }[];
 }>) {
   const [state, setState] = useState(tag);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Click outside the editor panel closes it (matches the collapse-on-outside
+  // pattern the rest of the app uses for popovers). A native 'click' listener
+  // on document fires after onClick handlers, so clicks on Save/Cancel/Remove
+  // inside the panel still work as expected.
+  useEffect(() => {
+    function onDocClick(e: MouseEvent): void {
+      if (containerRef.current === null) return;
+      if (!(e.target instanceof Node)) return;
+      if (containerRef.current.contains(e.target)) return;
+      onCancel();
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => { document.removeEventListener('mousedown', onDocClick); };
+  }, [onCancel]);
 
   const tagOptions = state.tagName.length > 0 && !availableTags.includes(state.tagName)
     ? [state.tagName, ...availableTags]
@@ -104,7 +120,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   })();
 
   return (
-    <div className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
+    <div ref={containerRef} className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
       {/* Row 1: Concept + Display Label + Normalization */}
       <div className="grid grid-cols-3 gap-4">
         <label className="flex flex-col gap-1">
