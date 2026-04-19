@@ -26,10 +26,20 @@ const DEFAULT_BUILT_INS: readonly BuiltInDimension[] = [
 ];
 
 function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
-  const have = new Set(loaded.builtIn.map(d => d.name));
+  const defaultsByName = new Map(DEFAULT_BUILT_INS.map(d => [d.name, d]));
+  // Backfill description on existing entries for any default whose config
+  // predates the description field. User-set fields (label, aliases, etc.)
+  // are kept — we only fill a missing description.
+  const backfilled = loaded.builtIn.map(d => {
+    if (d.description !== undefined) return d;
+    const def = defaultsByName.get(d.name);
+    if (def?.description === undefined) return d;
+    return { ...d, description: def.description };
+  });
+  const have = new Set(backfilled.map(d => d.name));
   const missing = DEFAULT_BUILT_INS.filter(d => !have.has(d.name));
-  if (missing.length === 0) return loaded;
-  return { builtIn: [...loaded.builtIn, ...missing], tags: loaded.tags };
+  if (missing.length === 0 && backfilled === loaded.builtIn) return loaded;
+  return { builtIn: [...backfilled, ...missing], tags: loaded.tags };
 }
 import { FileActivityLog } from '../file-activity.js';
 import { createOptimizeQueue } from '../optimize-queue.js';
@@ -110,7 +120,10 @@ export function createAppContext(ctx: IpcContext): AppContext {
     if (state.accountMap !== null) return state.accountMap;
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const rawDir = path.join(path.dirname(ctx.dataDir), 'raw');
+    const baseDir = path.dirname(ctx.dataDir);
+
+    // Primary: an account-mapping CSV placed under raw/ (legacy path).
+    const rawDir = path.join(baseDir, 'raw');
     try {
       const entries = await fs.readdir(rawDir);
       const csvFile = entries.find(e => e.toLowerCase().endsWith('.csv') && e.toLowerCase().includes('account'));
@@ -128,13 +141,36 @@ export function createAppContext(ctx: IpcContext): AppContext {
             map.set(accountId, name);
           }
         }
-        state.accountMap = map;
-        logger.info(`Loaded account mapping: ${String(map.size)} accounts`);
-        return map;
+        if (map.size > 0) {
+          state.accountMap = map;
+          logger.info(`Loaded account mapping from CSV: ${String(map.size)} accounts`);
+          return map;
+        }
       }
-    } catch {
-      // no mapping file
-    }
+    } catch { /* no raw dir */ }
+
+    // Fallback: the AWS Organizations sync (Sync view → org) writes org-accounts.json
+    // with {id, name} per account. Use it for id→name resolution when the
+    // legacy CSV isn't present.
+    try {
+      const raw = await fs.readFile(path.join(baseDir, 'org-accounts.json'), 'utf-8');
+      const parsed: unknown = JSON.parse(raw);
+      const map = new Map<string, string>();
+      if (isStringRecord(parsed) && Array.isArray(parsed['accounts'])) {
+        for (const acct of parsed['accounts']) {
+          if (!isStringRecord(acct)) continue;
+          const id = acct['id'];
+          const name = acct['name'];
+          if (typeof id === 'string' && typeof name === 'string' && id.length > 0 && name.length > 0) {
+            map.set(id, name);
+          }
+        }
+      }
+      state.accountMap = map;
+      if (map.size > 0) logger.info(`Loaded account mapping from org-accounts.json: ${String(map.size)} accounts`);
+      return map;
+    } catch { /* no org sync yet */ }
+
     state.accountMap = new Map();
     return state.accountMap;
   }
