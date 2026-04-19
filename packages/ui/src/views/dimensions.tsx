@@ -79,14 +79,18 @@ interface EditingBuiltIn {
   normalize: string;
   aliases: string;
   useOrgAccounts: boolean;
+  /** Empty string = use the account's Name field. Non-empty = use this
+   *  account-level tag from the AWS Org sync. */
+  accountNameFromTag: string;
   nameStripPatterns: string;
   useRegionNames: boolean;
 }
 
-function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
+function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
   dim: { name: string; field: string; editing: EditingBuiltIn };
   onSave: (edited: EditingBuiltIn) => void;
   onCancel: () => void;
+  accountTagKeys: readonly string[];
 }>): React.JSX.Element {
   const isAccountDim = dim.field === 'account_id';
   // Three dims share field='region' — distinguish by name so only the Region
@@ -136,11 +140,18 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
       dim.field,
       {
         ...(normalize !== undefined ? { normalize } : {}),
-        ...(isAccountDim ? { useOrgAccounts: state.useOrgAccounts, nameStripPatterns: stripPatternList } : {}),
+        ...(isAccountDim ? {
+          // Both "Account Name" and "Account Tag" are org-sync-sourced, so
+          // the preview always wants useOrgAccounts=true regardless of any
+          // legacy value on the saved dim.
+          useOrgAccounts: true,
+          nameStripPatterns: stripPatternList,
+          ...(state.accountNameFromTag.length > 0 ? { accountNameFromTag: state.accountNameFromTag } : {}),
+        } : {}),
         ...(isAnyRegionDim ? { dimName: dim.name, useRegionNames: state.useRegionNames } : {}),
       },
     ),
-    [dim.field, dim.name, isAccountDim, isAnyRegionDim, state.useOrgAccounts, state.useRegionNames, stripPatternsKey, normalize],
+    [dim.field, dim.name, isAccountDim, isAnyRegionDim, state.useOrgAccounts, state.useRegionNames, state.accountNameFromTag, stripPatternsKey, normalize],
   );
 
   useEffect(() => {
@@ -184,14 +195,51 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
       />
     </label>
   );
-  const orgToggleField = (
-    <label className="flex items-center justify-between rounded border border-border bg-bg-primary px-3 py-2 h-full">
-      <div className="flex flex-col gap-0.5 min-w-0 pr-3">
-        <span className="text-sm text-text-primary">Resolve names via org-data</span>
-        <span className="text-[11px] text-text-muted leading-tight">Use friendly names from the Organizations sync.</span>
-      </div>
-      <DimensionToggle enabled={state.useOrgAccounts} onToggle={() => { setState(s => ({ ...s, useOrgAccounts: !s.useOrgAccounts })); }} />
-    </label>
+  // Account-name source is always the AWS Org sync — the user picks between
+  // the account's Name field and any account-level tag. When the tag key is
+  // unknown (no sync data) we still let the user pre-select it from the
+  // saved value, but the dropdown won't have suggestions.
+  const nameSource: 'name' | 'tag' = state.accountNameFromTag.length > 0 ? 'tag' : 'name';
+  const tagKeyOptions = state.accountNameFromTag.length > 0 && !accountTagKeys.includes(state.accountNameFromTag)
+    ? [state.accountNameFromTag, ...accountTagKeys]
+    : [...accountTagKeys];
+  const nameSourceField = (
+    <div className="flex flex-col gap-2">
+      <label className="flex flex-col gap-1">
+        <span className="text-xs text-text-muted">Name source (from org-sync)</span>
+        <select
+          value={nameSource}
+          onChange={e => {
+            const v = e.target.value;
+            if (v === 'name') setState(s => ({ ...s, accountNameFromTag: '' }));
+            else setState(s => ({ ...s, accountNameFromTag: s.accountNameFromTag.length > 0 ? s.accountNameFromTag : (accountTagKeys[0] ?? '') }));
+          }}
+          className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+        >
+          <option value="name">Account Name</option>
+          <option value="tag">Account Tag</option>
+        </select>
+      </label>
+      {nameSource === 'tag' && (
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-text-muted">Tag key</span>
+          <select
+            value={state.accountNameFromTag}
+            onChange={e => { setState(s => ({ ...s, accountNameFromTag: e.target.value })); }}
+            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+          >
+            {tagKeyOptions.length === 0 ? (
+              <option value="">No account tags synced</option>
+            ) : (
+              <>
+                {state.accountNameFromTag.length === 0 && <option value="">Select a tag...</option>}
+                {tagKeyOptions.map(t => <option key={t} value={t}>{t}</option>)}
+              </>
+            )}
+          </select>
+        </label>
+      )}
+    </div>
   );
   // Region equivalent of the org toggle. Disabled (and forced-off in preview)
   // when the SSM region snapshot isn't present — the toggle's whole point is
@@ -281,8 +329,10 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
             ? { kind: 'missing' }
             : null
       : null;
+  // Both "Account Name" and "Account Tag" sources resolve via the Org sync,
+  // so if it hasn't run yet the dim will display raw 12-digit IDs regardless.
   const accountWarning: boolean =
-    isAccountDim && state.useOrgAccounts && orgQuery.status === 'success' && orgInfo === null;
+    isAccountDim && orgQuery.status === 'success' && orgInfo === null;
 
   return (
     <div ref={containerRef} className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
@@ -310,14 +360,14 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
         <div className="rounded-md border border-warning/50 bg-warning-muted px-3 py-2 text-xs flex flex-col gap-1">
           <p className="font-medium text-warning">Org-data not synced</p>
           <p className="text-text-secondary">
-            The "Resolve names via org-data" toggle is on but no AWS Organization sync has run yet —
+            Account names and tags come from the AWS Organization sync, which hasn't run yet —
             account values will display as raw 12-digit IDs. Run the sync from the <span className="font-medium">Sync</span> tab to populate.
           </p>
         </div>
       )}
       {showTransforms && (
         <div className="grid grid-cols-2 gap-4 items-stretch">
-          {isAccountDim ? orgToggleField : isRegionDim ? regionToggleField : <div />}
+          {isAccountDim ? nameSourceField : isRegionDim ? regionToggleField : <div />}
           {normalizationField}
         </div>
       )}
@@ -920,7 +970,12 @@ export function DimensionsView() {
         ...(description.length > 0 ? { description } : {}),
         ...(normalize !== undefined ? { normalize } : {}),
         ...(aliases !== undefined ? { aliases } : {}),
-        ...(edited.useOrgAccounts ? { useOrgAccounts: true as const } : {}),
+        // The account dim's picker always implies org-sync (both sources come
+        // from it); force useOrgAccounts=true so legacy configs that had it
+        // off get migrated the first time the dim is saved.
+        ...(d.field === 'account_id' ? { useOrgAccounts: true as const }
+          : edited.useOrgAccounts ? { useOrgAccounts: true as const } : {}),
+        ...(edited.accountNameFromTag.length > 0 ? { accountNameFromTag: edited.accountNameFromTag } : {}),
         ...(nameStripPatterns.length > 0 ? { nameStripPatterns } : {}),
         // Only the Region dim surfaces a useRegionNames toggle — write it
         // explicitly (both true AND false) so toggling off sticks past the
@@ -1197,12 +1252,14 @@ export function DimensionsView() {
                         normalize: d.normalize ?? '',
                         aliases: aliasesToText(d.aliases),
                         useOrgAccounts: d.useOrgAccounts === true,
+                        accountNameFromTag: d.accountNameFromTag ?? '',
                         nameStripPatterns: d.nameStripPatterns?.join('\n') ?? '',
                         useRegionNames: d.useRegionNames === true,
                       },
                     }}
                     onSave={(edited) => { void handleSaveBuiltIn(row.idx, edited); }}
                     onCancel={() => { setEditingBuiltInIdx(null); }}
+                    accountTagKeys={accountTagKeys}
                   />
                 );
               }

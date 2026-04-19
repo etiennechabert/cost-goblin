@@ -165,11 +165,14 @@ export function createAppContext(ctx: IpcContext): AppContext {
 
   async function getAccountMap(): Promise<Map<string, string>> {
     // Returns the Account id→name map the handlers should use for display
-    // resolution. Source depends on the Account dim's `useOrgAccounts` flag:
-    //   - true  : org-accounts.json (AWS Organizations sync)
-    //   - false : the legacy account-mapping CSV under raw/
-    // Both are optional — if the preferred source is missing we fall through
-    // to the other one before giving up and returning an empty map.
+    // resolution. Source depends on the Account dim's config:
+    //   - useOrgAccounts=true + accountNameFromTag set  : org-sync tag value
+    //   - useOrgAccounts=true                           : org-sync Name field
+    //   - otherwise                                     : legacy account CSV
+    // Both org and CSV are optional — if the preferred source is missing we
+    // fall through to the other one before giving up and returning an empty
+    // map. Tag-based names silently fall back to the Name field for accounts
+    // that don't carry the tag.
     if (state.accountMap !== null) return state.accountMap;
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
@@ -178,6 +181,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const dimensions = await getDimensions();
     const accountDim = dimensions.builtIn.find(d => d.field === 'account_id');
     const preferOrg = accountDim?.useOrgAccounts === true;
+    const tagKey = accountDim?.accountNameFromTag;
 
     async function fromOrg(): Promise<Map<string, string>> {
       const map = new Map<string, string>();
@@ -189,9 +193,14 @@ export function createAppContext(ctx: IpcContext): AppContext {
             if (!isStringRecord(acct)) continue;
             const id = acct['id'];
             const name = acct['name'];
-            if (typeof id === 'string' && typeof name === 'string' && id.length > 0 && name.length > 0) {
-              map.set(id, name);
+            if (typeof id !== 'string' || id.length === 0) continue;
+            let resolved: string | undefined;
+            if (tagKey !== undefined && tagKey.length > 0 && isStringRecord(acct['tags'])) {
+              const tagVal = acct['tags'][tagKey];
+              if (typeof tagVal === 'string' && tagVal.length > 0) resolved = tagVal;
             }
+            if (resolved === undefined && typeof name === 'string' && name.length > 0) resolved = name;
+            if (resolved !== undefined) map.set(id, resolved);
           }
         }
       } catch { /* no org sync */ }

@@ -20,8 +20,11 @@ function tagFingerprint(tag: TagDimension): string {
 }
 
 /** One-shot read of org-accounts.json → id→name map. No caching here (the
- *  preview handler wants fresh data on every toggle change). */
-async function loadOrgAccountsMap(dataDir: string): Promise<Map<string, string>> {
+ *  preview handler wants fresh data on every toggle change). When tagKey is
+ *  set, the "name" for each account is the value of that account-level tag;
+ *  accounts missing the tag fall back to the account's Name field so the
+ *  preview never drops rows. */
+async function loadOrgAccountsMap(dataDir: string, tagKey?: string): Promise<Map<string, string>> {
   const fs = await import('node:fs/promises');
   const path = await import('node:path');
   const map = new Map<string, string>();
@@ -33,9 +36,14 @@ async function loadOrgAccountsMap(dataDir: string): Promise<Map<string, string>>
         if (!isStringRecord(acct)) continue;
         const id = acct['id'];
         const name = acct['name'];
-        if (typeof id === 'string' && typeof name === 'string' && id.length > 0 && name.length > 0) {
-          map.set(id, name);
+        if (typeof id !== 'string' || id.length === 0) continue;
+        let resolved: string | undefined;
+        if (tagKey !== undefined && tagKey.length > 0 && isStringRecord(acct['tags'])) {
+          const tagVal = acct['tags'][tagKey];
+          if (typeof tagVal === 'string' && tagVal.length > 0) resolved = tagVal;
         }
+        if (resolved === undefined && typeof name === 'string' && name.length > 0) resolved = name;
+        if (resolved !== undefined) map.set(id, resolved);
       }
     }
   } catch { /* no org sync */ }
@@ -145,7 +153,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
   // Distinct values + cost for a built-in column — powers the preview on the
   // built-in editor ("Service has 120 distinct values, top 20 by cost are...").
   // Scans the most recent daily period so the preview loads fast.
-  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> => {
+  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> => {
     // Whitelist columns we know are safe to embed in SQL. These match the
     // aliases emitted by buildSource so the query plans identically to what
     // the rest of the app does.
@@ -195,7 +203,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     // toggle before the config is saved (otherwise the cached accountMap
     // might be from the wrong source).
     if (field === 'account_id' && opts?.useOrgAccounts === true) {
-      const orgMap = await loadOrgAccountsMap(ctx.dataDir);
+      const orgMap = await loadOrgAccountsMap(ctx.dataDir, opts.accountNameFromTag);
       if (orgMap.size > 0) {
         values = values.map(v => ({ value: orgMap.get(v.value) ?? v.value, cost: v.cost }));
       }
@@ -268,6 +276,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
         ...(d.normalize === undefined ? {} : { normalize: d.normalize }),
         ...(d.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(d.aliases).map(([k, v]) => [k, [...v]])) }),
         ...(d.useOrgAccounts === true ? { useOrgAccounts: true } : {}),
+        ...(typeof d.accountNameFromTag === 'string' && d.accountNameFromTag.length > 0 ? { accountNameFromTag: d.accountNameFromTag } : {}),
         ...(d.nameStripPatterns !== undefined && d.nameStripPatterns.length > 0 ? { nameStripPatterns: [...d.nameStripPatterns] } : {}),
         // Persist useRegionNames whenever the user has set it explicitly
         // (either value), so toggling off sticks past a reload. Leaving it
