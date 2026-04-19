@@ -80,4 +80,20 @@ export function registerOrgHandlers(app: AppContext): void {
   ipcMain.handle('org:get-progress', (): OrgSyncProgress | null => {
     return orgSyncProgress;
   });
+
+  ipcMain.handle('org:get-region-names-info', async (): Promise<{ count: number; syncedAt: string } | null> => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    try {
+      const raw = await fs.readFile(path.join(path.dirname(ctx.dataDir), 'region-names.json'), 'utf-8');
+      const parsed: unknown = JSON.parse(raw);
+      if (!isStringRecord(parsed)) return null;
+      const regions = parsed['regions'];
+      const syncedAt = parsed['syncedAt'];
+      if (!isStringRecord(regions) || typeof syncedAt !== 'string') return null;
+      return { count: Object.keys(regions).length, syncedAt };
+    } catch {
+      return null;
+    }
+  });
 }

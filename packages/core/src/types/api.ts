@@ -141,6 +141,10 @@ export interface CostApi {
   syncOrgAccounts(profile: string): Promise<OrgSyncResult>;
   getOrgSyncResult(): Promise<OrgSyncResult | null>;
   getOrgSyncProgress(): Promise<OrgSyncProgress | null>;
+  /** Region-name cache info (count of resolved long-names + last sync time).
+   *  Populated as a side-effect of syncOrgAccounts; null if sync hasn't run
+   *  or the SSM step failed (insufficient permissions, etc). */
+  getRegionNamesInfo(): Promise<{ count: number; syncedAt: string } | null>;
   writeConfig(config: {
     providerName: string;
     profile: string;

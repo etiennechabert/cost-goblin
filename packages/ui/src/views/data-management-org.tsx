@@ -10,13 +10,16 @@ type OrgSyncState =
 
 export function OrgAccountsSection({ profile }: Readonly<{ profile: string | null }>) {
   const api = useCostApi();
-  const orgQuery = useQuery(() => api.getOrgSyncResult(), []);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const orgQuery = useQuery(() => api.getOrgSyncResult(), [refreshKey]);
+  const regionInfoQuery = useQuery(() => api.getRegionNamesInfo(), [refreshKey]);
   const [expanded, setExpanded] = useState(false);
   const [syncState, setSyncState] = useState<OrgSyncState>({ status: 'idle' });
   const [accountSearch, setAccountSearch] = useState('');
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
 
   const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
+  const regionInfo = regionInfoQuery.status === 'success' ? regionInfoQuery.data : null;
   const selectedAccount = orgData !== null && selectedAccountId !== null
     ? orgData.accounts.find(a => a.id === selectedAccountId) ?? null
     : null;
@@ -37,6 +40,10 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
       const result = await api.syncOrgAccounts(profile);
       clearInterval(pollInterval);
       setSyncState({ status: 'done', count: result.accounts.length });
+      // Force the org + region-names queries to re-fetch so the bullet list
+      // reflects the new data without waiting for the user to navigate away
+      // and back.
+      setRefreshKey(k => k + 1);
     } catch (err: unknown) {
       clearInterval(pollInterval);
       setSyncState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
@@ -46,6 +53,11 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
   const allTagKeys = orgData !== null
     ? [...new Set(orgData.accounts.flatMap(a => Object.keys(a.tags)))].sort()
     : [];
+  // OU count is derivable from the per-account ouPath. Distinct non-empty
+  // paths approximate the number of OUs the user has placed accounts into.
+  const ouCount = orgData !== null
+    ? new Set(orgData.accounts.map(a => a.ouPath).filter(p => p.length > 0)).size
+    : 0;
 
   const filteredAccounts = orgData !== null && accountSearch.length > 0
     ? orgData.accounts.filter(a =>
@@ -114,8 +126,6 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
         >
           <div className="h-2 w-2 rounded-full bg-accent" />
           <span className="text-sm font-medium text-text-primary">AWS Organization</span>
-          <span className="text-xs text-text-secondary">{String(orgData.accounts.length)} accounts</span>
-          <span className="text-xs text-text-muted">{String(allTagKeys.length)} tag keys</span>
           <span className="text-text-muted ml-auto text-xs">{expanded ? '▾' : '▸'}</span>
         </button>
         {profile !== null && (
@@ -130,6 +140,37 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
           </button>
         )}
       </div>
+
+      {/* What got pulled in the last successful sync. Region names are sourced
+          from the SSM piggyback step; missing means insufficient permissions
+          or sync hasn't run since the feature was added. */}
+      <ul className="px-4 pb-3 flex flex-col gap-1 text-xs">
+        <li className="flex items-center gap-2 text-text-secondary">
+          <span className="text-accent">✓</span>
+          <span>{String(orgData.accounts.length)} accounts</span>
+        </li>
+        <li className="flex items-center gap-2 text-text-secondary">
+          <span className="text-accent">✓</span>
+          <span>{String(ouCount)} organizational units</span>
+        </li>
+        <li className="flex items-center gap-2 text-text-secondary">
+          <span className="text-accent">✓</span>
+          <span>{String(allTagKeys.length)} tag keys</span>
+        </li>
+        <li className="flex items-center gap-2">
+          {regionInfo !== null ? (
+            <>
+              <span className="text-accent">✓</span>
+              <span className="text-text-secondary">{String(regionInfo.count)} region friendly names</span>
+            </>
+          ) : (
+            <>
+              <span className="text-text-muted">○</span>
+              <span className="text-text-muted">region friendly names not synced (re-sync to populate)</span>
+            </>
+          )}
+        </li>
+      </ul>
 
       {syncState.status === 'syncing' && (
         <div className="px-4 pb-2">

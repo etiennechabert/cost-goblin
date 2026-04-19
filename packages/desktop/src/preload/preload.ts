@@ -143,6 +143,9 @@ const api: CostApi = {
   getOrgSyncProgress(): Promise<OrgSyncProgress | null> {
     return invoke<OrgSyncProgress | null>('org:get-progress');
   },
+  getRegionNamesInfo(): Promise<{ count: number; syncedAt: string } | null> {
+    return invoke<{ count: number; syncedAt: string } | null>('org:get-region-names-info');
+  },
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> {
     return invoke<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>('dimensions:discover-tags');
   },
