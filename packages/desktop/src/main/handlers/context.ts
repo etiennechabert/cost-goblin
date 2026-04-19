@@ -1,6 +1,7 @@
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import {
   asDimensionId,
+  applyStripPatterns,
   loadConfig,
   loadDimensions,
   loadOrgTree,
@@ -174,7 +175,16 @@ export function createAppContext(ctx: IpcContext): AppContext {
     }
 
     const primary = preferOrg ? await fromOrg() : await fromCsv();
-    const map = primary.size > 0 ? primary : (preferOrg ? await fromCsv() : await fromOrg());
+    const raw = primary.size > 0 ? primary : (preferOrg ? await fromCsv() : await fromOrg());
+
+    // Apply user-defined regex strip patterns to every resolved name. Done
+    // once here so every downstream caller (queries, preview, sidecars) sees
+    // the cleaned name without re-implementing the rule.
+    const patterns = accountDim?.nameStripPatterns;
+    const map = patterns !== undefined && patterns.length > 0
+      ? new Map([...raw].map(([id, name]) => [id, applyStripPatterns(name, patterns)]))
+      : raw;
+
     if (map.size > 0) {
       logger.info(`Loaded account mapping (${preferOrg ? 'org-data' : 'csv'} preferred): ${String(map.size)} accounts`);
     }

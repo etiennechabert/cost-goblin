@@ -4,4 +4,5 @@ export {
   resolveAlias,
   normalizeAndResolve,
   buildAliasSqlCase,
+  applyStripPatterns,
 } from './normalize.js';

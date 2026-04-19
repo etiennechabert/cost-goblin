@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { join } from 'node:path';
 import { readdir } from 'node:fs/promises';
-import { getRawDirPrefix, isStringRecord, logger } from '@costgoblin/core';
+import { applyStripPatterns, getRawDirPrefix, isStringRecord, logger } from '@costgoblin/core';
 import type { DimensionsConfig, TagDimension } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import { toNum, toStr } from './query-utils.js';
@@ -145,7 +145,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
   // Distinct values + cost for a built-in column — powers the preview on the
   // built-in editor ("Service has 120 distinct values, top 20 by cost are...").
   // Scans the most recent daily period so the preview loads fast.
-  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> => {
+  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string, opts?: { useOrgAccounts?: boolean; nameStripPatterns?: readonly string[] }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> => {
     // Whitelist columns we know are safe to embed in SQL. These match the
     // aliases emitted by buildSource so the query plans identically to what
     // the rest of the app does.
@@ -200,6 +200,12 @@ export function registerDimensionsHandlers(app: AppContext): void {
         values = values.map(v => ({ value: orgMap.get(v.value) ?? v.value, cost: v.cost }));
       }
     }
+    // Strip patterns apply to whatever name we ended up with — useful even if
+    // the user wants to scrub raw IDs (rare) but mostly meaningful when paired
+    // with the org-data toggle above.
+    if (field === 'account_id' && opts?.nameStripPatterns !== undefined && opts.nameStripPatterns.length > 0) {
+      values = values.map(v => ({ value: applyStripPatterns(v.value, opts.nameStripPatterns), cost: v.cost }));
+    }
 
     return { values, distinctCount, period: latest.replace(/^daily-/, '') };
   });
@@ -228,6 +234,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
         ...(d.normalize === undefined ? {} : { normalize: d.normalize }),
         ...(d.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(d.aliases).map(([k, v]) => [k, [...v]])) }),
         ...(d.useOrgAccounts === true ? { useOrgAccounts: true } : {}),
+        ...(d.nameStripPatterns !== undefined && d.nameStripPatterns.length > 0 ? { nameStripPatterns: [...d.nameStripPatterns] } : {}),
         ...(d.enabled === false ? { enabled: false } : {}),
       })),
       tags: config.tags.map(t => ({

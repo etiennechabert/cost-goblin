@@ -50,6 +50,18 @@ export function resolveAlias(
   return normalizedValue;
 }
 
+export function applyStripPatterns(value: string, patterns: readonly string[] | undefined): string {
+  if (patterns === undefined || patterns.length === 0) return value;
+  let result = value;
+  for (const p of patterns) {
+    if (p.length === 0) continue;
+    try {
+      result = result.replace(new RegExp(p, 'g'), '');
+    } catch { /* invalid regex — skip silently so a typo doesn't blow up resolution */ }
+  }
+  return result.replace(/\s+/g, ' ').trim();
+}
+
 export function normalizeAndResolve(value: string, dimension: TagDimension): TagValue {
   const normalized = normalizeTagValue(value, dimension.normalize);
   const resolved = resolveAlias(normalized, dimension.aliases);

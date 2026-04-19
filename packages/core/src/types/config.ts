@@ -54,6 +54,11 @@ export interface BuiltInDimension {
   /** Account-specific: when true, resolve id→name via org-accounts.json
    *  (AWS Organizations sync) instead of the legacy CSV mapping. */
   readonly useOrgAccounts?: boolean | undefined;
+  /** Account-specific: regexes (one per array entry) applied to each resolved
+   *  name with empty-string replacement. Lets the user strip noise like
+   *  trailing " production" or a common org prefix. Invalid patterns are
+   *  silently skipped; result is whitespace-collapsed and trimmed. */
+  readonly nameStripPatterns?: readonly string[] | undefined;
 }
 
 export interface TagDimension {

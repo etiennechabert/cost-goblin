@@ -24,6 +24,7 @@ interface EditingBuiltIn {
   normalize: string;
   aliases: string;
   useOrgAccounts: boolean;
+  nameStripPatterns: string;
 }
 
 function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
@@ -35,9 +36,16 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
   const api = useCostApi();
   const [state, setState] = useState(dim.editing);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // Parse the textarea once per render — empty lines and trailing whitespace
+  // are dropped so a stray Enter doesn't make the regex .replace() a no-op.
+  const stripPatternList = state.nameStripPatterns
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+  const stripPatternsKey = stripPatternList.join('\u0001');
   const valuesQuery = useQuery(
-    () => api.discoverColumnValues(dim.field, isAccountDim ? { useOrgAccounts: state.useOrgAccounts } : undefined),
-    [dim.field, isAccountDim, state.useOrgAccounts],
+    () => api.discoverColumnValues(dim.field, isAccountDim ? { useOrgAccounts: state.useOrgAccounts, nameStripPatterns: stripPatternList } : undefined),
+    [dim.field, isAccountDim, state.useOrgAccounts, stripPatternsKey],
   );
 
   useEffect(() => {
@@ -94,6 +102,18 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
             <span className="text-[11px] text-text-muted">Display friendly account names from the Organizations sync instead of raw account IDs.</span>
           </div>
           <DimensionToggle enabled={state.useOrgAccounts} onToggle={() => { setState(s => ({ ...s, useOrgAccounts: !s.useOrgAccounts })); }} />
+        </label>
+      )}
+      {isAccountDim && (
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-text-muted">Name strip patterns (one regex per line, applied to resolved names)</span>
+          <textarea
+            value={state.nameStripPatterns}
+            onChange={e => { setState(s => ({ ...s, nameStripPatterns: e.target.value })); }}
+            rows={3}
+            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary outline-none focus:border-accent"
+            placeholder={'\\s+(production|staging|sandbox)$\n^DiBa Cards '}
+          />
         </label>
       )}
       <label className="flex flex-col gap-1">
@@ -597,6 +617,10 @@ export function DimensionsView() {
       const description = edited.description.trim();
       const normalize = edited.normalize.length > 0 ? edited.normalize as NormalizationRule : undefined;
       const aliases = textToAliases(edited.aliases);
+      const nameStripPatterns = edited.nameStripPatterns
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0);
       return {
         name: d.name,
         label: edited.label.length > 0 ? edited.label : d.label,
@@ -607,6 +631,7 @@ export function DimensionsView() {
         ...(normalize !== undefined ? { normalize } : {}),
         ...(aliases !== undefined ? { aliases } : {}),
         ...(edited.useOrgAccounts ? { useOrgAccounts: true as const } : {}),
+        ...(nameStripPatterns.length > 0 ? { nameStripPatterns } : {}),
       };
     });
     await api.saveDimensionsConfig({ ...config, builtIn });
@@ -679,6 +704,7 @@ export function DimensionsView() {
                       normalize: d.normalize ?? '',
                       aliases: aliasesToText(d.aliases),
                       useOrgAccounts: d.useOrgAccounts === true,
+                      nameStripPatterns: d.nameStripPatterns?.join('\n') ?? '',
                     },
                   }}
                   onSave={(edited) => { void handleSaveBuiltIn(idx, edited); }}
