@@ -690,7 +690,15 @@ export function DimensionsView() {
     setRefreshKey(k => k + 1);
   }
 
-  async function toggleBuiltInEnabled(idx: number) {
+  // Optimistic save: paint the new config locally first, then persist in the
+  // background. Skips the refetch — local state is already correct, and the
+  // backend write is the source of truth for the next mount.
+  function applyOptimistic(next: DimensionsConfig): void {
+    setConfig(next);
+    void api.saveDimensionsConfig(next);
+  }
+
+  function toggleBuiltInEnabled(idx: number): void {
     if (config === null) return;
     const builtIn = config.builtIn.map((d, i) => {
       if (i !== idx) return d;
@@ -699,11 +707,10 @@ export function DimensionsView() {
       delete (rest as { enabled?: boolean }).enabled;
       return nextEnabled === undefined ? rest : { ...rest, enabled: nextEnabled };
     });
-    await api.saveDimensionsConfig({ ...config, builtIn });
-    setRefreshKey(k => k + 1);
+    applyOptimistic({ ...config, builtIn });
   }
 
-  async function toggleTagEnabled(idx: number) {
+  function toggleTagEnabled(idx: number): void {
     if (config === null) return;
     const tags = config.tags.map((t, i) => {
       if (i !== idx) return t;
@@ -712,29 +719,27 @@ export function DimensionsView() {
       delete (rest as { enabled?: boolean }).enabled;
       return nextEnabled === undefined ? rest : { ...rest, enabled: nextEnabled };
     });
-    await api.saveDimensionsConfig({ ...config, tags });
-    setRefreshKey(k => k + 1);
+    applyOptimistic({ ...config, tags });
   }
 
   // Quick-add a discovered tag as a dimension
   const [quickAddState, setQuickAddState] = useState<EditingTag | null>(null);
 
-  async function applyReorder(type: DragGroup, fromIdx: number, toIdx: number) {
+  function applyReorder(type: DragGroup, fromIdx: number, toIdx: number): void {
     if (config === null || fromIdx === toIdx) return;
     if (type === 'builtIn') {
       const builtIn = [...config.builtIn];
       const moved = builtIn.splice(fromIdx, 1)[0];
       if (moved === undefined) return;
       builtIn.splice(toIdx, 0, moved);
-      await api.saveDimensionsConfig({ ...config, builtIn });
+      applyOptimistic({ ...config, builtIn });
     } else {
       const tags = [...config.tags];
       const moved = tags.splice(fromIdx, 1)[0];
       if (moved === undefined) return;
       tags.splice(toIdx, 0, moved);
-      await api.saveDimensionsConfig({ ...config, tags });
+      applyOptimistic({ ...config, tags });
     }
-    setRefreshKey(k => k + 1);
   }
 
   // One factory per row: returns the drag/drop attrs for the row container and
@@ -764,7 +769,7 @@ export function DimensionsView() {
         onDragLeave: () => { setDragOver(curr => (curr?.type === type && curr.idx === idx ? null : curr)); },
         onDrop: (e) => {
           e.preventDefault();
-          if (dragFrom?.type === type) void applyReorder(type, dragFrom.idx, idx);
+          if (dragFrom?.type === type) applyReorder(type, dragFrom.idx, idx);
           setArmed(null); setDragFrom(null); setDragOver(null);
         },
         style: isFrom ? { opacity: 0.4 } : isOver ? { boxShadow: 'inset 0 2px 0 var(--color-accent, #34d399)' } : undefined,
@@ -797,7 +802,7 @@ export function DimensionsView() {
         <button
           type="button"
           disabled={!canUp}
-          onClick={(e) => { e.stopPropagation(); void applyReorder(type, idx, idx - 1); }}
+          onClick={(e) => { e.stopPropagation(); applyReorder(type, idx, idx - 1); }}
           title="Move up"
           className="flex items-center justify-center text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed"
         >
@@ -806,7 +811,7 @@ export function DimensionsView() {
         <button
           type="button"
           disabled={!canDown}
-          onClick={(e) => { e.stopPropagation(); void applyReorder(type, idx, idx + 1); }}
+          onClick={(e) => { e.stopPropagation(); applyReorder(type, idx, idx + 1); }}
           title="Move down"
           className="flex items-center justify-center text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed"
         >
@@ -894,7 +899,7 @@ export function DimensionsView() {
                 </button>
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="text-[10px] text-text-muted uppercase tracking-wider">Built-in</span>
-                  <DimensionToggle enabled={isOn} onToggle={() => { void toggleBuiltInEnabled(idx); }} />
+                  <DimensionToggle enabled={isOn} onToggle={() => { toggleBuiltInEnabled(idx); }} />
                   <ReorderArrows type="builtIn" idx={idx} total={config.builtIn.length} />
                   <GripHandle attrs={dnd.grip} />
                 </div>
@@ -967,7 +972,7 @@ export function DimensionsView() {
                     >
                       Edit →
                     </button>
-                    <DimensionToggle enabled={isOn} onToggle={() => { void toggleTagEnabled(idx); }} />
+                    <DimensionToggle enabled={isOn} onToggle={() => { toggleTagEnabled(idx); }} />
                     <ReorderArrows type="tag" idx={idx} total={config.tags.length} />
                     <GripHandle attrs={dnd.grip} />
                   </div>
