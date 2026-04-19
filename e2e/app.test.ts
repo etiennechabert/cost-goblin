@@ -71,6 +71,26 @@ async function waitForQuerySettle(page: Page): Promise<void> {
   await assertNoReactCrash(page);
 }
 
+/** Wait for the Cost Scope preview to finish its debounced first load. The
+ *  preview effect debounces 300ms and then runs several IPC queries
+ *  serially (per-rule + totals + daily + sample + count). Polling for the
+ *  in-header "loading…" marker to disappear is the only reliable settle
+ *  signal — waitForQuerySettle's generic "Loading" check doesn't fire here
+ *  because the preview uses its own marker to stay scoped to this view. */
+async function waitForCostScopePreview(page: Page): Promise<void> {
+  // The marker only appears once the first debounce fires (~300ms). Give
+  // it a little room to show up before checking for its disappearance.
+  await page.waitForTimeout(400);
+  const marker = page.getByTestId('preview-loading');
+  try {
+    await expect(marker).toBeHidden({ timeout: LOAD_TIMEOUT });
+  } catch {
+    // Marker may have finished before we attached the locator; that's fine.
+  }
+  await page.waitForTimeout(200);
+  await assertNoReactCrash(page);
+}
+
 async function hasVisibleData(page: Page): Promise<boolean> {
   // Check if there are any table rows with dollar amounts
   const dollarCells = page.locator('.tabular-nums');
@@ -101,7 +121,7 @@ test.describe('App shell', () => {
   });
 
   test('shows all navigation buttons', async () => {
-    for (const label of ['Cost Overview', 'Trends', 'Missing Tags', 'Savings', 'Dimensions', 'Views', 'Sync']) {
+    for (const label of ['Cost Overview', 'Trends', 'Missing Tags', 'Savings', 'Cost Scope', 'Dimensions', 'Views', 'Sync']) {
       await expect(page.getByRole('button', { name: label })).toBeVisible();
     }
   });
@@ -131,19 +151,24 @@ test.describe('App shell', () => {
       { button: 'Trends', heading: 'Cost Trends' },
       { button: 'Missing Tags', heading: 'Missing Tags' },
       { button: 'Savings', heading: 'Savings Opportunities' },
+      { button: 'Cost Scope', heading: 'Cost Scope' },
       { button: 'Dimensions', heading: 'Dimensions' },
       { button: 'Sync', heading: 'Data Management' },
     ];
 
     for (const { button, heading } of views) {
-      await page.getByRole('button', { name: button }).click();
+      // Nav buttons are matched with exact:true — some views (Dimensions'
+      // account-tags card, for example) render buttons whose accessible
+      // names contain "Sync" as a substring, which otherwise resolves
+      // to multiple elements and fails strict mode.
+      await page.getByRole('button', { name: button, exact: true }).first().click();
       await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible({ timeout: 5000 });
       await page.waitForTimeout(500);
       await assertNoReactCrash(page);
     }
 
     // go back to overview for subsequent tests
-    await page.getByRole('button', { name: 'Cost Overview' }).click();
+    await page.getByRole('button', { name: 'Cost Overview', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
   });
 });
@@ -1168,6 +1193,167 @@ test.describe('Views editor', () => {
   test('Export and Import buttons are present', async () => {
     await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Import', exact: true })).toBeVisible();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cost Scope — metric picker, exclusion rules, preview histogram + table
+// ---------------------------------------------------------------------------
+test.describe('Cost Scope', () => {
+  let app: ElectronApplication;
+  let page: Page;
+
+  test.beforeAll(async () => {
+    app = await launchApp();
+    page = await app.firstWindow();
+    await expect(page).toHaveTitle('CostGoblin');
+    await page.getByRole('button', { name: 'Cost Scope' }).click();
+    await expect(page.getByRole('heading', { name: 'Cost Scope' })).toBeVisible();
+    await waitForCostScopePreview(page);
+  });
+
+  test.afterAll(async () => { await app.close(); });
+
+  test('shows heading and intro copy', async () => {
+    await expect(page.getByText(/Define what counts as cost/)).toBeVisible();
+  });
+
+  test('cost metric picker lists Unblended, Blended, Amortized (no List)', async () => {
+    await expect(page.getByRole('heading', { name: 'Cost metric' })).toBeVisible();
+    // Check the actual radio values, which are unique — the labels repeat
+    // in adjacent description copy so role/name queries are ambiguous.
+    await expect(page.locator('input[type="radio"][value="unblended"]')).toBeVisible();
+    await expect(page.locator('input[type="radio"][value="blended"]')).toBeVisible();
+    await expect(page.locator('input[type="radio"][value="amortized"]')).toBeVisible();
+    await expect(page.locator('input[type="radio"][value="list"]')).toHaveCount(0);
+
+    // Unblended should be selected by default
+    await expect(page.locator('input[type="radio"][value="unblended"]')).toBeChecked();
+    await screenshot(page, 'cost-scope-metric');
+  });
+
+  test('exclusion rules section lists both built-in rules', async () => {
+    await expect(page.getByRole('heading', { name: 'Exclusion rules' })).toBeVisible();
+    // Rule names are rendered in inputs (they're editable).
+    await expect(page.locator('input[value="AWS Premium Support"]')).toBeVisible();
+    await expect(page.locator('input[value="RI & Savings Plan purchases"]')).toBeVisible();
+    // Built-in pill appears next to each
+    const builtInPills = page.getByText('built-in', { exact: true });
+    expect(await builtInPills.count()).toBeGreaterThanOrEqual(2);
+  });
+
+  test('preview card renders summary tiles + histogram + line-items table', async () => {
+    // Scroll to the Preview card (it's below a potentially tall rules list)
+    const card = page.getByTestId('cost-scope-preview');
+    await card.scrollIntoViewIfNeeded();
+    await expect(card).toBeVisible();
+    await expect(card.getByRole('heading', { name: 'Preview' })).toBeVisible();
+
+    // Summary tiles — scope to the card so headings/body copy elsewhere
+    // (e.g. "Rows matching any enabled rule are excluded") don't collide.
+    await expect(card.getByText('Unscoped total', { exact: true })).toBeVisible();
+    await expect(card.getByText('After scope', { exact: true })).toBeVisible();
+    await expect(card.getByText('Excluded', { exact: true })).toBeVisible();
+
+    // Daily cost label appears only when the histogram is rendered
+    await expect(card.getByText('Daily cost', { exact: true })).toBeVisible();
+
+    // Line items label + the table itself
+    await expect(card.getByText('Line items', { exact: true })).toBeVisible();
+
+    await screenshot(page, 'cost-scope-preview');
+  });
+
+  test('preview histogram has at least one bar when data exists', async () => {
+    // Each day is a flex-1 div with role="generic"; look for ones inside the
+    // preview histogram container — they live under the "Daily cost" label.
+    const previewCard = page.locator('div').filter({ has: page.getByRole('heading', { name: 'Preview' }) }).first();
+    const dayBars = previewCard.locator('div[title*="kept:"]');
+    const count = await dayBars.count();
+
+    if (count === 0) {
+      // No data synced at all — acceptable state; verify the empty-state
+      // message is shown.
+      await expect(page.getByText(/No data in the last 30 days/)).toBeVisible();
+    } else {
+      // When data is present, at least one bar should carry a tooltip.
+      expect(count).toBeGreaterThan(0);
+      await dayBars.first().hover();
+      await screenshot(page, 'cost-scope-histogram-hover');
+    }
+  });
+
+  test('line-items table renders rows when data exists', async () => {
+    // Scope to the table inside the preview card.
+    const previewCard = page.locator('div').filter({ has: page.getByRole('heading', { name: 'Preview' }) }).first();
+    const table = previewCard.locator('table');
+    const tableVisible = await table.isVisible().catch(() => false);
+
+    if (!tableVisible) {
+      // No data in the window — verify the empty message is shown instead.
+      await expect(page.getByText(/No line items in the window/)).toBeVisible();
+      return;
+    }
+
+    // Header columns we expect to see
+    for (const header of ['Date', 'Account', 'Region', 'Service', 'Cost', 'List']) {
+      await expect(table.getByRole('columnheader', { name: header, exact: true })).toBeVisible();
+    }
+
+    // At least one data row
+    const rows = table.locator('tbody tr');
+    const rowCount = await rows.count();
+    expect(rowCount).toBeGreaterThan(0);
+
+    // The first-row cost cell (second column — Date, Cost, ...) should be
+    // a formatted dollar string. Absolute-value sort means the top row
+    // could be a credit/refund, so we don't assert sign.
+    const firstCostCell = rows.first().locator('td').nth(1);
+    const costText = await firstCostCell.textContent();
+    expect(costText).toContain('$');
+
+    // "Top N of M rows" count line is visible
+    await expect(page.getByText(/rows, sorted by \|cost\| desc/)).toBeVisible();
+
+    await screenshot(page, 'cost-scope-table');
+  });
+
+  test('toggling a built-in rule updates the save button + preview state', async () => {
+    // The first rule card is AWS Premium Support (seed order). Its
+    // enable/disable switch is the first role=switch on the page.
+    const toggle = page.getByRole('switch').first();
+    await expect(toggle).toBeVisible();
+
+    const wasChecked = (await toggle.getAttribute('aria-checked')) === 'true';
+    await toggle.click();
+    const nowChecked = (await toggle.getAttribute('aria-checked')) === 'true';
+    expect(nowChecked).toBe(!wasChecked);
+
+    // Save button should appear now (draft is dirty)
+    await expect(page.getByRole('button', { name: /Save/ })).toBeVisible();
+
+    // Cancel to keep the saved state untouched
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(toggle).toHaveAttribute('aria-checked', wasChecked ? 'true' : 'false');
+  });
+
+  test('rule name and description fields are editable', async () => {
+    // Find the first rule's name input — it's the input currently showing the
+    // built-in name. Add a suffix, verify Save appears, Cancel reverts.
+    const nameInput = page.locator('input[value="AWS Premium Support"]');
+    await nameInput.fill('AWS Premium Support (edited)');
+    await expect(page.getByRole('button', { name: /Save/ })).toBeVisible();
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.locator('input[value="AWS Premium Support"]')).toBeVisible();
+
+    // Description textarea: fill, expect Save button, revert.
+    const descBox = page.locator('textarea[placeholder^="Optional description"]').first();
+    await expect(descBox).toBeVisible();
+    const before = await descBox.inputValue();
+    await descBox.fill(`${before} [edit]`);
+    await expect(page.getByRole('button', { name: /Save/ })).toBeVisible();
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(descBox).toHaveValue(before);
   });
 });
 

@@ -150,6 +150,16 @@ function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDel
     onUpdate({ ...rule, name });
   }
 
+  function setDescription(description: string) {
+    // Empty string collapses to undefined so the serializer omits the key
+    // entirely — a YAML with `description:` and no value is noisier than
+    // no key at all. Same treatment the validator gives it on load.
+    onUpdate({
+      ...rule,
+      ...(description.length > 0 ? { description } : { description: undefined }),
+    });
+  }
+
   function updateCondition(index: number, next: ExclusionCondition) {
     const conditions = rule.conditions.map((c, i) => i === index ? next : c);
     onUpdate({ ...rule, conditions });
@@ -183,9 +193,17 @@ function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDel
             role="switch"
             aria-checked={rule.enabled}
             onClick={() => { setEnabled(!rule.enabled); }}
-            className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${rule.enabled ? 'bg-accent' : 'bg-bg-tertiary border border-border'}`}
+            className={[
+              'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors',
+              rule.enabled ? 'bg-accent' : 'bg-bg-tertiary border border-border',
+            ].join(' ')}
           >
-            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${rule.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            <span
+              className={[
+                'inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform',
+                rule.enabled ? 'translate-x-[18px]' : 'translate-x-[3px]',
+              ].join(' ')}
+            />
           </button>
           <input
             className="flex-1 bg-transparent font-semibold text-text-primary text-sm focus:outline-none border-b border-transparent focus:border-border"
@@ -212,9 +230,13 @@ function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDel
         </div>
       </CardHeader>
       <CardContent className="space-y-2 pt-0">
-        {rule.description !== undefined && rule.description.length > 0 && (
-          <p className="text-xs text-text-muted">{rule.description}</p>
-        )}
+        <textarea
+          className="w-full rounded border border-border bg-bg-secondary text-text-muted text-xs px-2 py-1 resize-y min-h-[2rem] focus:outline-none focus:border-accent/50"
+          placeholder="Optional description — what this rule excludes and why."
+          value={rule.description ?? ''}
+          onChange={e => { setDescription(e.target.value); }}
+          rows={Math.max(2, Math.min(5, Math.ceil((rule.description ?? '').length / 80) + 1))}
+        />
         <div className="text-xs font-medium text-text-secondary mb-1">Conditions (AND)</div>
         <div className="space-y-2">
           {rule.conditions.map((cond, i) => (
@@ -244,6 +266,8 @@ function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDel
 
 interface PreviewHistogramProps {
   readonly days: readonly CostScopeDailyRow[];
+  readonly loading: boolean;
+  readonly hasResult: boolean;
   readonly height?: number;
 }
 
@@ -251,11 +275,27 @@ interface PreviewHistogramProps {
  *  `kept` (solid accent) over `excluded` (muted). Purpose-built rather than
  *  reusing the dashboard's StackedBarChart because that component is tied
  *  to the Groups/Products/Services tab model. */
-function PreviewHistogram({ days, height = 120 }: PreviewHistogramProps) {
+function PreviewHistogram({ days, loading, hasResult, height = 120 }: PreviewHistogramProps) {
+  if (loading && !hasResult) {
+    // Initial load — show an explicit label so tests / users can tell
+    // "loading" apart from "no data". Once a result arrives we keep
+    // rendering it even while the next debounce is in-flight (below).
+    return (
+      <div
+        data-testid="preview-histogram-loading"
+        className="h-[120px] flex items-center justify-center text-xs text-text-muted"
+      >
+        Loading preview…
+      </div>
+    );
+  }
   const maxTotal = days.reduce((m, d) => Math.max(m, d.keptCost + d.excludedCost), 0);
   if (days.length === 0 || maxTotal === 0) {
     return (
-      <div className="h-[120px] flex items-center justify-center text-xs text-text-muted">
+      <div
+        data-testid="preview-histogram-empty"
+        className="h-[120px] flex items-center justify-center text-xs text-text-muted"
+      >
         No data in the last 30 days.
       </div>
     );
@@ -291,6 +331,8 @@ interface SampleRowsTableProps {
   readonly tagColumns: readonly { readonly id: string; readonly label: string }[];
   readonly totalRowCount: number;
   readonly hasEnabledRules: boolean;
+  readonly loading: boolean;
+  readonly hasResult: boolean;
 }
 
 /** Signed-dollar formatter — keeps the sign so credits/refunds read as
@@ -305,10 +347,17 @@ function formatSignedDollars(n: number): string {
  *  sit at the top. Horizontal scroll + sticky header + vertical scroll;
  *  rendered as a plain table rather than TanStack because sort/pagination
  *  are server-side and there's no interaction beyond "look". */
-function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules }: SampleRowsTableProps): React.JSX.Element {
+function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loading, hasResult }: SampleRowsTableProps): React.JSX.Element {
+  if (loading && !hasResult) {
+    return (
+      <div data-testid="preview-table-loading" className="text-xs text-text-muted py-4 text-center">
+        Loading preview…
+      </div>
+    );
+  }
   if (rows.length === 0) {
     return (
-      <div className="text-xs text-text-muted py-4 text-center">
+      <div data-testid="preview-table-empty" className="text-xs text-text-muted py-4 text-center">
         No line items in the window — sync data to populate.
       </div>
     );
@@ -337,21 +386,27 @@ function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules }: S
       </div>
       <div className="border border-border rounded-md overflow-auto max-h-[480px]">
         <table className="text-[11px] w-full border-collapse">
+          {/* Column order prioritises what the user is scanning for:
+              Date → Cost → List (the two $$ fields sit together and stay on
+              screen without horizontal scroll) → Service & Account (the
+              two main "who/what" anchors) → Line type → then the long-tail
+              metadata (region, family, usage type, operation, usage,
+              tags, resource id, description) */}
           <thead className="sticky top-0 z-10 bg-bg-tertiary/95 backdrop-blur-sm">
             <tr className="text-left text-text-secondary">
               <Th>Date</Th>
-              <Th>Account</Th>
-              <Th>Region</Th>
-              <Th>Service</Th>
-              <Th>Family</Th>
-              <Th>Line type</Th>
-              <Th>Operation</Th>
-              <Th>Usage type</Th>
-              <Th>Resource</Th>
-              <Th align="right">Usage</Th>
               <Th align="right">Cost</Th>
               <Th align="right">List</Th>
+              <Th>Service</Th>
+              <Th>Account</Th>
+              <Th>Line type</Th>
+              <Th>Region</Th>
+              <Th>Family</Th>
+              <Th>Usage type</Th>
+              <Th>Operation</Th>
+              <Th align="right">Usage</Th>
               {tagColumns.map(t => <Th key={t.id}>{t.label}</Th>)}
+              <Th>Resource</Th>
               <Th>Description</Th>
             </tr>
           </thead>
@@ -362,18 +417,18 @@ function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules }: S
                 className={`border-t border-border/40 ${r.excluded ? 'bg-negative/5 text-text-muted' : 'hover:bg-bg-tertiary/30'}`}
               >
                 <Td mono>{r.date}</Td>
-                <Td title={r.accountId}>{r.accountName.length > 0 ? r.accountName : r.accountId}</Td>
-                <Td mono>{r.region}</Td>
-                <Td>{r.service}</Td>
-                <Td>{r.serviceFamily}</Td>
-                <Td>{r.lineItemType}</Td>
-                <Td>{r.operation}</Td>
-                <Td mono>{r.usageType}</Td>
-                <Td mono truncate title={r.resourceId}>{r.resourceId}</Td>
-                <Td align="right" mono>{r.usageAmount === 0 ? '' : r.usageAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}</Td>
                 <Td align="right" mono className={r.cost < 0 ? 'text-warning' : ''}>{formatSignedDollars(r.cost)}</Td>
                 <Td align="right" mono>{formatSignedDollars(r.listCost)}</Td>
+                <Td>{r.service}</Td>
+                <Td title={r.accountId}>{r.accountName.length > 0 ? r.accountName : r.accountId}</Td>
+                <Td>{r.lineItemType}</Td>
+                <Td mono>{r.region}</Td>
+                <Td>{r.serviceFamily}</Td>
+                <Td mono>{r.usageType}</Td>
+                <Td>{r.operation}</Td>
+                <Td align="right" mono>{r.usageAmount === 0 ? '' : r.usageAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}</Td>
                 {tagColumns.map(t => <Td key={t.id}>{r.tags[t.id] ?? ''}</Td>)}
+                <Td mono truncate title={r.resourceId}>{r.resourceId}</Td>
                 <Td truncate title={r.description}>{r.description}</Td>
               </tr>
             ))}
@@ -673,11 +728,19 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules 
   }, [result]);
 
   return (
-    <Card>
+    <Card data-testid="cost-scope-preview">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base">Preview</CardTitle>
-          <span className="text-xs text-text-muted">Last 30 days · {metricLabel}</span>
+          <span className="text-xs text-text-muted">
+            Last 30 days · {metricLabel}
+            {loading && (
+              <>
+                {' · '}
+                <span data-testid="preview-loading" className="text-accent">loading…</span>
+              </>
+            )}
+          </span>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -712,7 +775,11 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules 
               )}
             </div>
           </div>
-          <PreviewHistogram days={result?.dailyTotals ?? []} />
+          <PreviewHistogram
+            days={result?.dailyTotals ?? []}
+            loading={loading}
+            hasResult={result !== null}
+          />
           {result !== null && result.dailyTotals.length > 0 && (
             <div className="flex justify-between text-[10px] text-text-muted mt-1">
               <span>{result.startDate}</span>
@@ -731,6 +798,8 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules 
             tagColumns={result?.tagColumns ?? []}
             totalRowCount={result?.sampleTotalRowCount ?? 0}
             hasEnabledRules={hasEnabledRules}
+            loading={loading}
+            hasResult={result !== null}
           />
         </div>
       </CardContent>
