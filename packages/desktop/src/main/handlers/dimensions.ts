@@ -139,6 +139,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
         label: d.label,
         field: d.field,
         ...(d.displayField === undefined ? {} : { displayField: d.displayField }),
+        ...(d.enabled === false ? { enabled: false } : {}),
       })),
       tags: config.tags.map(t => ({
         tagName: t.tagName,
@@ -149,6 +150,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
         ...(t.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(t.aliases).map(([k, v]) => [k, [...v]])) }),
         ...(t.accountTagFallback === undefined ? {} : { accountTagFallback: t.accountTagFallback }),
         ...(t.missingValueTemplate === undefined ? {} : { missingValueTemplate: t.missingValueTemplate }),
+        ...(t.enabled === false ? { enabled: false } : {}),
       })),
     });
     await fs.writeFile(ctx.dimensionsPath, output);

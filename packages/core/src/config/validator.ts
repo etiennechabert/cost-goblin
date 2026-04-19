@@ -122,11 +122,13 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
     assertString(dim['label'], `${ctx}.label`);
     assertString(dim['field'], `${ctx}.field`);
     const displayField = dim['displayField'] !== undefined ? (assertString(dim['displayField'], `${ctx}.displayField`), dim['displayField']) : undefined;
+    const enabled = dim['enabled'] === false ? false : undefined;
     return {
       name: asDimensionId(dim['name']),
       label: dim['label'],
       field: dim['field'],
       ...(displayField !== undefined ? { displayField } : {}),
+      ...(enabled === false ? { enabled } : {}),
     };
   });
 
@@ -168,6 +170,7 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
       }
     }
 
+    const enabled = tag['enabled'] === false ? false : undefined;
     return {
       tagName: tag['tagName'],
       label: tag['label'],
@@ -177,6 +180,7 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
       ...(aliases !== undefined ? { aliases } : {}),
       ...(typeof tag['accountTagFallback'] === 'string' ? { accountTagFallback: tag['accountTagFallback'] } : {}),
       ...(typeof tag['missingValueTemplate'] === 'string' ? { missingValueTemplate: tag['missingValueTemplate'] } : {}),
+      ...(enabled === false ? { enabled } : {}),
     };
   });
 
