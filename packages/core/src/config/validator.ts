@@ -125,6 +125,9 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
     const enabled = dim['enabled'] === false ? false : undefined;
     const description = dim['description'] !== undefined ? (assertString(dim['description'], `${ctx}.description`), dim['description']) : undefined;
     const useOrgAccounts = dim['useOrgAccounts'] === true ? true : undefined;
+    const accountNameFromTag = typeof dim['accountNameFromTag'] === 'string' && dim['accountNameFromTag'].length > 0
+      ? dim['accountNameFromTag']
+      : undefined;
     let nameStripPatterns: string[] | undefined;
     if (dim['nameStripPatterns'] !== undefined) {
       assertArray(dim['nameStripPatterns'], `${ctx}.nameStripPatterns`);
@@ -163,6 +166,7 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
       ...(normalize !== undefined ? { normalize } : {}),
       ...(aliases !== undefined ? { aliases } : {}),
       ...(useOrgAccounts === true ? { useOrgAccounts } : {}),
+      ...(accountNameFromTag !== undefined ? { accountNameFromTag } : {}),
       ...(nameStripPatterns !== undefined && nameStripPatterns.length > 0 ? { nameStripPatterns } : {}),
     };
   });
