@@ -9,7 +9,7 @@ import type {
   ExclusionRule,
   Dimension,
 } from '@costgoblin/core/browser';
-import { COST_METRICS, DEFAULT_COST_SCOPE, asDimensionId } from '@costgoblin/core/browser';
+import { BUILTIN_EXCLUSION_RULES, COST_METRICS, DEFAULT_COST_SCOPE, asDimensionId } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
@@ -141,7 +141,36 @@ interface CostScopePreviewRow {
   excludedRows: number;
 }
 
+/** For a built-in rule, returns the shipped seed version (name, description,
+ *  conditions) so the UI can offer a "Reset" affordance when the user has
+ *  drifted from it. Returns null for user rules. */
+function seedForBuiltIn(rule: ExclusionRule): ExclusionRule | null {
+  if (!rule.builtIn) return null;
+  return BUILTIN_EXCLUSION_RULES.find(s => s.id === rule.id) ?? null;
+}
+
+/** True if any editable field of a built-in rule differs from its seed.
+ *  `enabled` is deliberately excluded from the check — toggling a built-in
+ *  on/off is expected, not a "drift" we want to offer resetting. */
+function builtInDiverges(rule: ExclusionRule, seed: ExclusionRule): boolean {
+  if (rule.name !== seed.name) return true;
+  if ((rule.description ?? '') !== (seed.description ?? '')) return true;
+  // Conditions: compare as JSON — the arrays are small and order-sensitive
+  // by design (the UI preserves condition order on save).
+  if (JSON.stringify(rule.conditions) !== JSON.stringify(seed.conditions)) return true;
+  return false;
+}
+
 function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDelete }: RuleCardProps) {
+  const seed = seedForBuiltIn(rule);
+  const diverged = seed !== null && builtInDiverges(rule, seed);
+
+  function resetToSeed() {
+    if (seed === null) return;
+    // Preserve the user's enabled choice; everything else reverts.
+    onUpdate({ ...seed, enabled: rule.enabled });
+  }
+
   function setEnabled(enabled: boolean) {
     onUpdate({ ...rule, enabled });
   }
@@ -223,9 +252,21 @@ function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDel
             </button>
           )}
           {rule.builtIn && (
-            <span className="text-xs text-text-muted shrink-0 px-1" title="Built-in rules can be disabled but not deleted">
-              built-in
-            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              {diverged && (
+                <button
+                  type="button"
+                  className="text-xs text-text-muted hover:text-text-primary underline decoration-dotted"
+                  onClick={resetToSeed}
+                  title="Restore this rule's name, description, and conditions to the shipped defaults. Your enable/disable choice is kept."
+                >
+                  Reset
+                </button>
+              )}
+              <span className="text-xs text-text-muted px-1" title="Built-in rules can be disabled but not deleted">
+                built-in
+              </span>
+            </div>
           )}
         </div>
       </CardHeader>
@@ -348,6 +389,8 @@ function formatSignedDollars(n: number): string {
  *  rendered as a plain table rather than TanStack because sort/pagination
  *  are server-side and there's no interaction beyond "look". */
 function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loading, hasResult }: SampleRowsTableProps): React.JSX.Element {
+  const [hideExcluded, setHideExcluded] = useState(false);
+
   if (loading && !hasResult) {
     return (
       <div data-testid="preview-table-loading" className="text-xs text-text-muted py-4 text-center">
@@ -362,25 +405,46 @@ function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loa
       </div>
     );
   }
-  const showing = rows.length;
-  const capped = totalRowCount > showing;
+
+  // When the user hides excluded rows, we drop them locally instead of
+  // re-querying — the top-500 sample already mixes kept + excluded, so
+  // filtering here is instant and stays honest about what the server
+  // returned. The counts below reflect the filtered count.
+  const visibleRows = hideExcluded ? rows.filter(r => !r.excluded) : rows;
+  const excludedInSample = rows.filter(r => r.excluded).length;
+  const showing = visibleRows.length;
+  const capped = totalRowCount > rows.length;
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between text-xs text-text-muted">
-        <span>
+      <div className="flex items-center justify-between text-xs text-text-muted gap-4">
+        <span className="min-w-0">
           Top <span className="text-text-secondary tabular-nums">{showing.toLocaleString()}</span>
-          {capped && (
+          {capped && !hideExcluded && (
             <> of <span className="text-text-secondary tabular-nums">{totalRowCount.toLocaleString()}</span></>
+          )}
+          {hideExcluded && excludedInSample > 0 && (
+            <> (<span className="tabular-nums">{excludedInSample.toLocaleString()}</span> excluded rows hidden)</>
           )}
           {' '}rows, sorted by |cost| desc.
         </span>
-        <span>
-          {hasEnabledRules && (
-            <>
+        <span className="flex items-center gap-3 shrink-0">
+          {hasEnabledRules && excludedInSample > 0 && (
+            <label className="flex items-center gap-1.5 cursor-pointer select-none hover:text-text-secondary">
+              <input
+                type="checkbox"
+                className="accent-accent"
+                checked={hideExcluded}
+                onChange={e => { setHideExcluded(e.target.checked); }}
+              />
+              Hide excluded
+            </label>
+          )}
+          {hasEnabledRules && !hideExcluded && (
+            <span>
               <span className="inline-block w-2 h-2 rounded-sm bg-negative/40 mr-1 align-middle" />
-              highlighted rows are excluded
-            </>
+              excluded
+            </span>
           )}
         </span>
       </div>
@@ -411,7 +475,7 @@ function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loa
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {visibleRows.map((r, i) => (
               <tr
                 key={`${String(i)}-${r.resourceId}`}
                 className={`border-t border-border/40 ${r.excluded ? 'bg-negative/5 text-text-muted' : 'hover:bg-bg-tertiary/30'}`}
