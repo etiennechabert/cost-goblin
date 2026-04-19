@@ -1,2 +1,4 @@
-export { loadConfig, loadDimensions, loadOrgTree } from './loader.js';
+export { loadConfig, loadDimensions, loadOrgTree, loadViews } from './loader.js';
 export { validateConfig, validateDimensions, validateOrgTree, ConfigValidationError } from './validator.js';
+export { validateViews } from './views-validator.js';
+export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './views-serialize.js';

@@ -3,25 +3,16 @@ import { Group } from '@visx/group';
 import { scaleLinear, scaleSqrt } from '@visx/scale';
 import { AxisBottom, AxisLeft } from '@visx/axis';
 import { GridRows, GridColumns } from '@visx/grid';
-import { useTooltip, TooltipWithBounds, defaultStyles } from '@visx/tooltip';
+import { useTooltip, TooltipWithBounds } from '@visx/tooltip';
 import { localPoint } from '@visx/event';
 import { ParentSize } from '@visx/responsive';
 import type { TrendRow, EntityRef } from '@costgoblin/core/browser';
+import { TOOLTIP_STYLES } from '../lib/tooltip-styles.js';
 import { formatDollars, formatPercent } from './format.js';
 
 const MARGIN = { top: 20, right: 30, bottom: 50, left: 70 };
 const MIN_RADIUS = 4;
 const MAX_RADIUS = 40;
-
-const tooltipStyles = {
-  ...defaultStyles,
-  backgroundColor: 'var(--color-bg-secondary)',
-  color: 'var(--color-text-primary)',
-  border: '1px solid var(--color-border)',
-  borderRadius: '8px',
-  fontSize: '13px',
-  padding: '8px 12px',
-};
 
 interface BubbleChartProps {
   readonly data: readonly TrendRow[];
@@ -196,7 +187,7 @@ function BubbleChartInner({
         <TooltipWithBounds
           left={tooltipLeft}
           top={tooltipTop}
-          style={tooltipStyles}
+          style={TOOLTIP_STYLES}
         >
           <div className="flex flex-col gap-1">
             <span className="font-medium text-text-primary">{tooltipData.entity}</span>
