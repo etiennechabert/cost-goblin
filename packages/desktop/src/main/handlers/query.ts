@@ -8,6 +8,7 @@ import {
   buildEntityDetailQuery,
   buildSource,
   buildAliasSqlCase,
+  buildRuleMatchExpr,
   computePeriodsInRange,
   listLocalMonths,
   logger,
@@ -341,10 +342,18 @@ export function registerQueryHandlers(app: AppContext): void {
     };
   });
 
-  ipcMain.handle('query:filter-values', async (_event, dimensionId: string, filterEntries: Record<string, string>, dateRange?: { start: string; end: string }): Promise<{ value: string; label: string; count: number }[]> => {
+  ipcMain.handle('query:filter-values', async (_event, dimensionId: string, filterEntries: Record<string, string>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }): Promise<{ value: string; label: string; count: number }[]> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const accountReverseMap = buildAccountReverseMap(accountMap);
+    // Honour the cost-scope exclusions here too — a user who has
+    // excluded Tax / RI purchases doesn't want those values showing up
+    // in filter dropdowns either. The Cost Scope editor sets
+    // bypassCostScope=true so its rule-condition autocomplete still
+    // sees every available value when composing new rules.
+    const costScope = opts?.bypassCostScope === true
+      ? undefined
+      : await getCostScope().catch(() => undefined);
 
     const builtIn = dimensions.builtIn.find(d => d.name === dimensionId);
     const tag = dimensions.tags.find(d => `tag_${d.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === dimensionId);
@@ -386,6 +395,18 @@ export function registerQueryHandlers(app: AppContext): void {
 
     if (dateRange !== undefined) {
       whereClauses.push(`usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}'`);
+    }
+
+    if (costScope !== undefined) {
+      // NOT (rule_match) per enabled rule — same shape buildExclusionClauses
+      // emits for the main query builders. Apply the dim's reverse map
+      // (account collapse) when the condition targets account_id.
+      for (const rule of costScope.rules) {
+        if (!rule.enabled) continue;
+        const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
+        if (matchExpr === null) continue;
+        whereClauses.push(`NOT (${matchExpr})`);
+      }
     }
 
     const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';

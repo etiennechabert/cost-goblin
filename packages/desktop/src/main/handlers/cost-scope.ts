@@ -179,6 +179,11 @@ export function registerCostScopeHandlers(app: AppContext): void {
     // CAST numerics to DOUBLE inside the CTE so DECIMAL-typed CUR columns
     // come back as plain numbers — bare source.cost would return a
     // DuckDBDecimalValue object and toNum would yield 0 for every row.
+    // Partition-rank the rows so we always return up to SAMPLE_ROW_LIMIT
+    // from EACH bucket (kept vs excluded) rather than top-|cost| of the
+    // combined set. Otherwise a few very large excluded rows (tax, EDP
+    // discount, RI upfront) eat the whole limit and the table looks
+    // empty when the user toggles "Hide excluded" on.
     const tagSelectSql = tagColumns.length > 0
       ? tagColumns.map(t => `COALESCE(${t.id}, '') AS ${t.id}`).join(',\n          ')
       : null;
@@ -194,15 +199,20 @@ export function registerCostScopeHandlers(app: AppContext): void {
           CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END AS excluded${tagSelectSql === null ? '' : `,\n          ${tagSelectSql}`}
         FROM ${source}
         WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+      ),
+      ranked AS (
+        SELECT *,
+          ROW_NUMBER() OVER (PARTITION BY excluded ORDER BY ABS(cost) DESC) AS rn
+        FROM scoped
       )
       SELECT
         usage_date::VARCHAR AS usage_date,
         account_id, account_name, region, service, service_family,
         line_item_type, operation, usage_type, description, resource_id,
         usage_amount, cost, list_cost, excluded${tagSelectSql === null ? '' : ',\n        ' + tagColumns.map(t => t.id).join(', ')}
-      FROM scoped
-      ORDER BY ABS(cost) DESC
-      LIMIT ${String(SAMPLE_ROW_LIMIT)}
+      FROM ranked
+      WHERE rn <= ${String(SAMPLE_ROW_LIMIT)}
+      ORDER BY excluded ASC, ABS(cost) DESC
     `.trim();
 
     // Run all three in parallel. The DuckDB worker pool (default size 4)

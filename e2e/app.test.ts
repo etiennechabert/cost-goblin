@@ -1322,8 +1322,8 @@ test.describe('Cost Scope', () => {
     const costText = await firstCostCell.textContent();
     expect(costText).toContain('$');
 
-    // "Top N of M rows" count line is visible
-    await expect(page.getByText(/rows, sorted by \|cost\| desc/)).toBeVisible();
+    // Count summary line is visible
+    await expect(lineItemsCard.getByText(/sorted by \|cost\| desc/)).toBeVisible();
 
     await screenshot(page, 'cost-scope-table');
   });

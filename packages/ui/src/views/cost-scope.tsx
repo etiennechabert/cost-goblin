@@ -395,7 +395,10 @@ function formatSignedDollars(n: number): string {
  *  rendered as a plain table rather than TanStack because sort/pagination
  *  are server-side and there's no interaction beyond "look". */
 function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loading, hasResult }: SampleRowsTableProps): React.JSX.Element {
-  const [hideExcluded, setHideExcluded] = useState(false);
+  // Default on: most of the time the user wants to inspect what made it
+  // *into* scope, not what was carved out. The handler returns up to N
+  // kept + N excluded so flipping this off still shows something useful.
+  const [hideExcluded, setHideExcluded] = useState(true);
 
   if (loading && !hasResult) {
     return (
@@ -411,28 +414,47 @@ function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loa
       </div>
     );
   }
+  const keptCount = rows.length - rows.filter(r => r.excluded).length;
+  // If the user has "Hide excluded" on but every sampled row is excluded,
+  // the table body would render empty with no hint why. Flip the toggle
+  // implicitly (on the display only) by falling back to showing
+  // excluded rows with a callout, so the table is never blank when we
+  // know there IS data.
+  const showEmptyKeptBanner = hideExcluded && keptCount === 0;
 
-  // When the user hides excluded rows, we drop them locally instead of
-  // re-querying — the top-500 sample already mixes kept + excluded, so
-  // filtering here is instant and stays honest about what the server
-  // returned. The counts below reflect the filtered count.
-  const visibleRows = hideExcluded ? rows.filter(r => !r.excluded) : rows;
+  // When hiding excluded, drop client-side — the handler returns top-N
+  // of each bucket (kept + excluded) so flipping shows rows instantly
+  // without a re-query. Fall back to excluded rows if kept is empty
+  // (showEmptyKeptBanner) so the table is never blank.
+  const visibleRows = hideExcluded && keptCount > 0
+    ? rows.filter(r => !r.excluded)
+    : rows;
+  const keptInSample = rows.length - rows.filter(r => r.excluded).length;
   const excludedInSample = rows.filter(r => r.excluded).length;
   const showing = visibleRows.length;
-  const capped = totalRowCount > rows.length;
 
   return (
     <div className="space-y-2">
+      {showEmptyKeptBanner && (
+        <div className="rounded-md border border-warning/40 bg-warning/5 text-xs text-text-secondary px-3 py-2">
+          Every row in the top-{String(rows.length)} sample is excluded by the
+          active rules — showing excluded rows so the table isn't blank.
+        </div>
+      )}
       <div className="flex items-center justify-between text-xs text-text-muted gap-4">
         <span className="min-w-0">
           Top <span className="text-text-secondary tabular-nums">{showing.toLocaleString()}</span>
-          {capped && !hideExcluded && (
-            <> of <span className="text-text-secondary tabular-nums">{totalRowCount.toLocaleString()}</span></>
-          )}
+          {' '}rows
           {hideExcluded && excludedInSample > 0 && (
-            <> (<span className="tabular-nums">{excludedInSample.toLocaleString()}</span> excluded rows hidden)</>
+            <> (<span className="tabular-nums">{excludedInSample.toLocaleString()}</span> excluded hidden)</>
           )}
-          {' '}rows, sorted by |cost| desc.
+          {!hideExcluded && excludedInSample > 0 && keptInSample > 0 && (
+            <> (<span className="tabular-nums">{keptInSample.toLocaleString()}</span> kept + <span className="tabular-nums">{excludedInSample.toLocaleString()}</span> excluded)</>
+          )}
+          {totalRowCount > rows.length && (
+            <> of <span className="text-text-secondary tabular-nums">{totalRowCount.toLocaleString()}</span> in window</>
+          )}
+          , sorted by |cost| desc.
         </span>
         <span className="flex items-center gap-3 shrink-0">
           {hasEnabledRules && excludedInSample > 0 && (
@@ -586,7 +608,12 @@ export function CostScopeView(): React.JSX.Element {
       await Promise.all(enabled.map(async d => {
         const id = dimIdFor(d);
         try {
-          const vals = await api.getFilterValues(id, {});
+          // bypassCostScope: users composing an exclusion rule need to
+          // see every value a dim can take, including ones the saved
+          // cost-scope rules already exclude. Otherwise once Tax is
+          // excluded globally, the autocomplete in a new rule can't
+          // suggest 'Tax' for them to add to a second rule.
+          const vals = await api.getFilterValues(id, {}, undefined, { bypassCostScope: true });
           next.set(id, vals.map(v => v.value));
         } catch {
           next.set(id, []);

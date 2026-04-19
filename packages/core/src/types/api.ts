@@ -114,7 +114,7 @@ export interface CostApi {
   getDataInventory(tier?: DataTier): Promise<DataInventoryResult>;
   syncPeriods(files: readonly { key: string; contentHash: string; size: number }[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }>;
   cancelSync(syncId?: string): Promise<void>;
-  getFilterValues(dimensionId: string, filters: Record<string, string>, dateRange?: { start: string; end: string }): Promise<{ value: string; label: string; count: number }[]>;
+  getFilterValues(dimensionId: string, filters: Record<string, string>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }): Promise<{ value: string; label: string; count: number }[]>;
   deleteLocalPeriod(period: string, tier?: DataTier): Promise<void>;
   openDataFolder(): Promise<void>;
   getAccountMapping(): Promise<AccountMappingStatus>;
