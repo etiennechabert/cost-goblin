@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
 import { writeFile } from 'node:fs/promises';
 import { stringify } from 'yaml';
 import { SEED_VIEWS_CONFIG, validateViews, viewsConfigToYaml } from '@costgoblin/core';
@@ -30,5 +30,9 @@ export function registerViewsHandlers(app: AppContext): void {
     await writeFile(ctx.viewsPath, stringify(viewsConfigToYaml(SEED_VIEWS_CONFIG)));
     invalidateViews();
     return SEED_VIEWS_CONFIG;
+  });
+
+  ipcMain.handle('views:reveal-folder', (): void => {
+    shell.showItemInFolder(ctx.viewsPath);
   });
 }

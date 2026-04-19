@@ -186,6 +186,9 @@ const api: CostApi = {
   resetViewsConfig(): Promise<ViewsConfig> {
     return invoke<ViewsConfig>('views:reset-defaults');
   },
+  revealViewsFolder(): Promise<void> {
+    return invoke<undefined>('views:reveal-folder').then(() => undefined);
+  },
 };
 
 contextBridge.exposeInMainWorld('costgoblin', api);
