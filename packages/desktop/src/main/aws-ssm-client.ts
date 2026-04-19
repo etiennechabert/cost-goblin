@@ -20,9 +20,13 @@ async function getSsmModule(): Promise<typeof import('@aws-sdk/client-ssm')> {
 export async function syncRegionNames(profile: string): Promise<RegionNameMap> {
   const { SSMClient, GetParametersByPathCommand, GetParametersCommand } = await getSsmModule();
 
-  // SSM is regional but the global-infrastructure namespace is the same
-  // everywhere. us-east-1 is universally reachable.
-  const config = profile === 'default' ? { region: 'us-east-1' } : { profile, region: 'us-east-1' };
+  // SSM is regional but the global-infrastructure namespace is mirrored to
+  // every region. We deliberately don't hardcode a region here — many SCPs
+  // explicitly deny SSM in regions the org doesn't use (commonly us-east-1
+  // for non-US-based shops), and the AWS SDK's default region resolution
+  // (env vars → profile config → IMDS) lands on a region the user already
+  // proved they have access to.
+  const config = profile === 'default' ? {} : { profile };
   const client = new SSMClient(config);
 
   // 1. List all region codes.
