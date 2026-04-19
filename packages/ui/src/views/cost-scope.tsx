@@ -611,9 +611,20 @@ export function CostScopeView(): React.JSX.Element {
     return preview.result?.perRule.find(p => p.ruleId === ruleId);
   }
 
+  const preview_ = (
+    <PreviewPanel
+      preview={preview}
+      loading={preview.loading}
+      combinedText={combinedText}
+      metric={draft.costMetric}
+      hasEnabledRules={enabledRules.length > 0}
+    />
+  );
+
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
-      {/* Header */}
+    <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+      {/* Header — full width above the two-column grid so Save/Cancel
+          stay easy to reach regardless of scroll position. */}
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-text-primary">Cost Scope</h1>
@@ -653,60 +664,80 @@ export function CostScopeView(): React.JSX.Element {
         </div>
       </div>
 
-      {/* Cost metric */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Cost metric</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {COST_METRICS.map(metric => (
-            <label key={metric} className="flex items-start gap-3 cursor-pointer group">
-              <input
-                type="radio"
-                name="costMetric"
-                value={metric}
-                checked={draft.costMetric === metric}
-                onChange={() => { handleMetricChange(metric); }}
-                className="mt-0.5 accent-accent"
-              />
-              <div>
-                <span className="text-sm font-medium text-text-primary">{METRIC_LABELS[metric].label}</span>
-                <span className="ml-2 text-xs text-text-muted">{METRIC_LABELS[metric].description}</span>
-              </div>
-            </label>
-          ))}
-        </CardContent>
-      </Card>
+      {/* Two-column grid on wide screens: config on the left (metric + rules),
+          sticky Preview floating on the right so the user always sees the
+          effect of a toggle without scrolling. On narrow screens the grid
+          collapses to a single column — `order` keeps the preview ABOVE
+          the rules there so it's still the first thing in the viewport,
+          without rendering the component twice in the DOM. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px] gap-6 items-start">
+        <div className="space-y-6 min-w-0 order-2 lg:order-1">
+          {/* Cost metric */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Cost metric</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {COST_METRICS.map(metric => (
+                <label key={metric} className="flex items-start gap-3 cursor-pointer group">
+                  <input
+                    type="radio"
+                    name="costMetric"
+                    value={metric}
+                    checked={draft.costMetric === metric}
+                    onChange={() => { handleMetricChange(metric); }}
+                    className="mt-0.5 accent-accent"
+                  />
+                  <div>
+                    <span className="text-sm font-medium text-text-primary">{METRIC_LABELS[metric].label}</span>
+                    <span className="ml-2 text-xs text-text-muted">{METRIC_LABELS[metric].description}</span>
+                  </div>
+                </label>
+              ))}
+            </CardContent>
+          </Card>
 
-      {/* Exclusion rules */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-semibold text-text-primary">Exclusion rules</h2>
-            <p className="text-xs text-text-muted mt-0.5">Rows matching any enabled rule are excluded from every query.</p>
+          {/* Exclusion rules */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-text-primary">Exclusion rules</h2>
+                <p className="text-xs text-text-muted mt-0.5">Rows matching any enabled rule are excluded from every query.</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={addRule}>Add rule</Button>
+            </div>
+
+            {draft.rules.length === 0 && (
+              <p className="text-sm text-text-muted py-4 text-center">No rules defined.</p>
+            )}
+
+            {draft.rules.map((rule, i) => (
+              <RuleCard
+                key={rule.id}
+                rule={rule}
+                preview={getPreviewRow(rule.id)}
+                dimensions={dimensions}
+                suggestionsByDim={suggestionsByDim}
+                onUpdate={next => { updateRule(i, next); }}
+                onDelete={() => { deleteRule(i); }}
+              />
+            ))}
           </div>
-          <Button variant="outline" size="sm" onClick={addRule}>Add rule</Button>
         </div>
 
-        {draft.rules.length === 0 && (
-          <p className="text-sm text-text-muted py-4 text-center">No rules defined.</p>
-        )}
-
-        {draft.rules.map((rule, i) => (
-          <RuleCard
-            key={rule.id}
-            rule={rule}
-            preview={getPreviewRow(rule.id)}
-            dimensions={dimensions}
-            suggestionsByDim={suggestionsByDim}
-            onUpdate={next => { updateRule(i, next); }}
-            onDelete={() => { deleteRule(i); }}
-          />
-        ))}
+        {/* Sticky preview — on lg+ floats as a sidebar; on narrow screens
+            `order-1` puts it above the rules in the stacked layout. top-24
+            clears the app's sticky nav bar (h-10 title + ~34px button row +
+            pb-2 padding ≈ 82px); max-h bounds the panel. */}
+        <aside className="order-1 lg:order-2 lg:sticky lg:top-24 lg:self-start lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto">
+          {preview_}
+        </aside>
       </div>
 
-      {/* Preview */}
-      <PreviewPanel preview={preview} loading={preview.loading} combinedText={combinedText} metric={draft.costMetric} hasEnabledRules={enabledRules.length > 0} />
+      {/* Line items — full-width card below so the ~14-col table keeps its
+          horizontal budget. Separate card lets the sticky preview above
+          stay compact. */}
+      <LineItemsCard preview={preview} loading={preview.loading} hasEnabledRules={enabledRules.length > 0} />
     </div>
   );
 }
@@ -719,6 +750,11 @@ interface PreviewPanelProps {
   readonly hasEnabledRules: boolean;
 }
 
+/** Compact "always-visible" preview rendered in the sticky right column on
+ *  wide screens, and inline (full width) on narrow screens. Holds the
+ *  summary tiles + histogram — just enough to see the effect of rule
+ *  toggles while scrolling through a long rules list. The detailed line-
+ *  items table lives in its own full-width card below. */
 function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules }: PreviewPanelProps): React.JSX.Element {
   const result = preview.result;
   const metricLabel = METRIC_LABELS[metric].label;
@@ -728,9 +764,9 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules 
   }, [result]);
 
   return (
-    <Card data-testid="cost-scope-preview">
+    <Card data-testid="cost-scope-preview" className="shadow-lg @container">
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-base">Preview</CardTitle>
           <span className="text-xs text-text-muted">
             Last 30 days · {metricLabel}
@@ -744,8 +780,9 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules 
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Summary row */}
-        <div className="grid grid-cols-3 gap-3">
+        {/* Summary tiles — single column on narrow container (sticky right
+            panel is ~400px wide), expand to 3 cols when there's room. */}
+        <div className="grid grid-cols-1 @md:grid-cols-3 gap-2">
           <SummaryTile
             label="Unscoped total"
             value={result !== null ? formatDollars(result.unscopedTotalCost) : loading ? '…' : '—'}
@@ -760,7 +797,7 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules 
           <SummaryTile
             label="Excluded"
             value={hasEnabledRules ? combinedText : '—'}
-            hint={hasEnabledRules ? 'Union of enabled rules' : 'Toggle a rule above'}
+            hint={hasEnabledRules ? 'Union of enabled rules' : 'Toggle a rule'}
           />
         </div>
 
@@ -787,21 +824,36 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules 
             </div>
           )}
         </div>
+      </CardContent>
+    </Card>
+  );
+}
 
-        {/* Raw line items */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-medium text-text-secondary">Line items</span>
-          </div>
-          <SampleRowsTable
-            rows={result?.sampleRows ?? []}
-            tagColumns={result?.tagColumns ?? []}
-            totalRowCount={result?.sampleTotalRowCount ?? 0}
-            hasEnabledRules={hasEnabledRules}
-            loading={loading}
-            hasResult={result !== null}
-          />
-        </div>
+interface LineItemsCardProps {
+  readonly preview: PreviewState;
+  readonly loading: boolean;
+  readonly hasEnabledRules: boolean;
+}
+
+/** Full-width card holding the raw line-items inspection table. Separated
+ *  from PreviewPanel so the sticky summary stays compact and this stays
+ *  wide enough to show the ~14-column table without horizontal scroll. */
+function LineItemsCard({ preview, loading, hasEnabledRules }: LineItemsCardProps): React.JSX.Element {
+  const result = preview.result;
+  return (
+    <Card data-testid="cost-scope-line-items">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Line items</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <SampleRowsTable
+          rows={result?.sampleRows ?? []}
+          tagColumns={result?.tagColumns ?? []}
+          totalRowCount={result?.sampleTotalRowCount ?? 0}
+          hasEnabledRules={hasEnabledRules}
+          loading={loading}
+          hasResult={result !== null}
+        />
       </CardContent>
     </Card>
   );

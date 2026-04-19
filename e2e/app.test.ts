@@ -1242,39 +1242,46 @@ test.describe('Cost Scope', () => {
     expect(await builtInPills.count()).toBeGreaterThanOrEqual(2);
   });
 
-  test('preview card renders summary tiles + histogram + line-items table', async () => {
-    // Scroll to the Preview card (it's below a potentially tall rules list)
+  test('preview card renders summary tiles + histogram', async () => {
+    // Preview is sticky on the right column at lg+; scrollIntoView just
+    // ensures it's reachable regardless of breakpoint.
     const card = page.getByTestId('cost-scope-preview');
     await card.scrollIntoViewIfNeeded();
     await expect(card).toBeVisible();
     await expect(card.getByRole('heading', { name: 'Preview' })).toBeVisible();
 
-    // Summary tiles — scope to the card so headings/body copy elsewhere
-    // (e.g. "Rows matching any enabled rule are excluded") don't collide.
-    await expect(card.getByText('Unscoped total', { exact: true })).toBeVisible();
-    await expect(card.getByText('After scope', { exact: true })).toBeVisible();
-    await expect(card.getByText('Excluded', { exact: true })).toBeVisible();
+    // Summary tiles — scope to the card so "Rows matching any enabled rule
+    // are excluded" in the rules section header doesn't collide. At lg+ the
+    // card also appears twice (hidden mobile copy + sticky aside), so we
+    // use `.first()` on the match.
+    await expect(card.getByText('Unscoped total', { exact: true }).first()).toBeVisible();
+    await expect(card.getByText('After scope', { exact: true }).first()).toBeVisible();
+    await expect(card.getByText('Excluded', { exact: true }).first()).toBeVisible();
 
     // Daily cost label appears only when the histogram is rendered
-    await expect(card.getByText('Daily cost', { exact: true })).toBeVisible();
-
-    // Line items label + the table itself
-    await expect(card.getByText('Line items', { exact: true })).toBeVisible();
+    await expect(card.getByText('Daily cost', { exact: true }).first()).toBeVisible();
 
     await screenshot(page, 'cost-scope-preview');
   });
 
+  test('line-items card has its own heading + table', async () => {
+    const card = page.getByTestId('cost-scope-line-items');
+    await card.scrollIntoViewIfNeeded();
+    await expect(card).toBeVisible();
+    await expect(card.getByRole('heading', { name: 'Line items' })).toBeVisible();
+  });
+
   test('preview histogram has at least one bar when data exists', async () => {
-    // Each day is a flex-1 div with role="generic"; look for ones inside the
-    // preview histogram container — they live under the "Daily cost" label.
-    const previewCard = page.locator('div').filter({ has: page.getByRole('heading', { name: 'Preview' }) }).first();
+    // The preview card renders twice on lg+ (mobile fallback hidden, sticky
+    // aside visible). .first() targets whichever the page put first in DOM.
+    const previewCard = page.getByTestId('cost-scope-preview').first();
     const dayBars = previewCard.locator('div[title*="kept:"]');
     const count = await dayBars.count();
 
     if (count === 0) {
       // No data synced at all — acceptable state; verify the empty-state
-      // message is shown.
-      await expect(page.getByText(/No data in the last 30 days/)).toBeVisible();
+      // message is shown inside the preview card.
+      await expect(previewCard.getByText(/No data in the last 30 days/)).toBeVisible();
     } else {
       // When data is present, at least one bar should carry a tooltip.
       expect(count).toBeGreaterThan(0);
@@ -1284,9 +1291,10 @@ test.describe('Cost Scope', () => {
   });
 
   test('line-items table renders rows when data exists', async () => {
-    // Scope to the table inside the preview card.
-    const previewCard = page.locator('div').filter({ has: page.getByRole('heading', { name: 'Preview' }) }).first();
-    const table = previewCard.locator('table');
+    // Scope to the table inside the line-items card.
+    const lineItemsCard = page.getByTestId('cost-scope-line-items');
+    await lineItemsCard.scrollIntoViewIfNeeded();
+    const table = lineItemsCard.locator('table');
     const tableVisible = await table.isVisible().catch(() => false);
 
     if (!tableVisible) {

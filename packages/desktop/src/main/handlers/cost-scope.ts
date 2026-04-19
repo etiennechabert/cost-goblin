@@ -10,6 +10,7 @@ import {
   buildRuleMatchExpr,
   computePeriodsInRange,
   logger,
+  listLocalMonths,
 } from '@costgoblin/core';
 import type {
   CostScopeConfig,
@@ -18,12 +19,13 @@ import type {
   CostScopePreviewRow,
   CostScopeSampleRow,
   DimensionsConfig,
+  SidecarPlan,
 } from '@costgoblin/core';
-
-const SAMPLE_ROW_LIMIT = 500;
-import { listLocalMonths } from '@costgoblin/core';
+import { resolveSidecarPlan } from '../optimize.js';
 import type { AppContext } from './context.js';
 import { toNum } from './query-utils.js';
+
+const SAMPLE_ROW_LIMIT = 500;
 
 // Every rule's dimensionId must resolve to a known built-in or tag dimension.
 // Dangling references silently become a bogus column reference in SQL, which
@@ -105,183 +107,158 @@ export function registerCostScopeHandlers(app: AppContext): void {
 
     const dimensions = await getQueryDimensions();
     const orgPath = await getOrgAccountsPath();
-    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods, undefined, config.costMetric);
 
-    const perRule: CostScopePreviewRow[] = [];
-
-    for (const rule of enabledRules) {
-      const matchExpr = buildRuleMatchExpr(rule, dimensions);
-      if (matchExpr === null) {
-        perRule.push({ ruleId: rule.id, excludedCost: 0, excludedRows: 0 });
-        continue;
-      }
-      // CAST both aggregates to DOUBLE so the Node binding returns plain
-      // numbers — SUM over DECIMAL (CUR 2.0) comes back as a Decimal object
-      // and COUNT(*) as a BigInt, neither of which pass a `typeof === 'number'`
-      // check. toNum handles the BigInt fallback for safety.
-      const sql = `
-        SELECT
-          CAST(COALESCE(SUM(cost), 0) AS DOUBLE) AS excluded_cost,
-          CAST(COUNT(*) AS DOUBLE) AS excluded_rows
-        FROM ${source}
-        WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
-          AND (${matchExpr})
-      `.trim();
-      try {
-        const rows = await runQuery(sql);
-        const row = rows[0];
-        perRule.push({
-          ruleId: rule.id,
-          excludedCost: toNum(row?.['excluded_cost']),
-          excludedRows: toNum(row?.['excluded_rows']),
-        });
-      } catch {
-        perRule.push({ ruleId: rule.id, excludedCost: 0, excludedRows: 0 });
-      }
+    // Optimised source — positional JOIN against pre-built sidecars when
+    // every parquet file in the window has a fresh sidecar for every
+    // configured tag dim. Falls back to element_at() otherwise. The sample
+    // query is the expensive one (it materialises tag columns for up to
+    // 500 rows), so skipping element_at in favour of a column scan makes
+    // the whole preview noticeably faster for tag-heavy configs.
+    let sidecarPlan: SidecarPlan | undefined;
+    try {
+      const resolved = await resolveSidecarPlan(ctx.dataDir, 'daily', periods, dimensions.tags);
+      sidecarPlan = resolved ?? undefined;
+    } catch {
+      sidecarPlan = undefined;
     }
+    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods, sidecarPlan, config.costMetric);
 
-    let combined = { excludedCost: 0, excludedRows: 0 };
-    if (enabledRules.length > 0) {
-      const matchExprs = enabledRules
-        .map(r => buildRuleMatchExpr(r, dimensions))
-        .filter((e): e is string => e !== null);
-
-      if (matchExprs.length > 0) {
-        const combinedExpr = matchExprs.map(e => `(${e})`).join(' OR ');
-        const combinedSql = `
-          SELECT
-            CAST(COALESCE(SUM(cost), 0) AS DOUBLE) AS excluded_cost,
-            CAST(COUNT(*) AS DOUBLE) AS excluded_rows
-          FROM ${source}
-          WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
-            AND (${combinedExpr})
-        `.trim();
-        try {
-          const rows = await runQuery(combinedSql);
-          const row = rows[0];
-          combined = {
-            excludedCost: toNum(row?.['excluded_cost']),
-            excludedRows: toNum(row?.['excluded_rows']),
-          };
-        } catch {
-          // empty data dir — return zeros
-        }
-      }
-    }
-
-    // Build the `excluded` predicate (OR of every enabled rule's match expr)
-    // for the daily breakdown + totals. If no rules or no expressible rules,
-    // `excludedPredicate` is the literal `FALSE` — nothing excluded — which
-    // keeps the SQL uniform and lets the kept/excluded split still work.
-    const matchExprs = enabledRules
-      .map(r => buildRuleMatchExpr(r, dimensions))
-      .filter((e): e is string => e !== null);
-    const excludedPredicate = matchExprs.length > 0
-      ? matchExprs.map(e => `(${e})`).join(' OR ')
+    // Pre-compute each rule's positive match expression once — used to
+    // build the `excluded` predicate for the main aggregate query, each
+    // per-rule tally, the daily breakdown, and the sample row flag. Rules
+    // whose expression is null (all conditions empty) are treated as
+    // no-ops and don't appear in the SQL at all.
+    const ruleExprs: { readonly rule: typeof enabledRules[number]; readonly expr: string | null }[] =
+      enabledRules.map(rule => ({ rule, expr: buildRuleMatchExpr(rule, dimensions) }));
+    const liveExprs = ruleExprs.filter(e => e.expr !== null).map(e => e.expr as string);
+    const excludedPredicate = liveExprs.length > 0
+      ? liveExprs.map(e => `(${e})`).join(' OR ')
       : 'FALSE';
 
-    let unscopedTotalCost = 0;
-    let scopedTotalCost = 0;
-    let dailyTotals: readonly CostScopeDailyRow[] = [];
-    try {
-      const totalsSql = `
-        SELECT
-          CAST(COALESCE(SUM(cost), 0) AS DOUBLE) AS unscoped_total,
-          CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 0 ELSE cost END), 0) AS DOUBLE) AS scoped_total
-        FROM ${source}
-        WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
-      `.trim();
-      const totalsRows = await runQuery(totalsSql);
-      const t = totalsRows[0];
-      unscopedTotalCost = toNum(t?.['unscoped_total']);
-      scopedTotalCost = toNum(t?.['scoped_total']);
-
-      const dailySql = `
-        SELECT
-          usage_date::VARCHAR AS date,
-          CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 0 ELSE cost END), 0) AS DOUBLE) AS kept_cost,
-          CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN cost ELSE 0 END), 0) AS DOUBLE) AS excluded_cost
-        FROM ${source}
-        WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
-        GROUP BY usage_date
-        ORDER BY usage_date
-      `.trim();
-      const dailyRows = await runQuery(dailySql);
-      dailyTotals = dailyRows.map(r => {
-        const raw = r['date'];
-        const date = typeof raw === 'string' ? raw : raw instanceof Date ? raw.toISOString().slice(0, 10) : '';
-        return {
-          date,
-          keptCost: toNum(r['kept_cost']),
-          excludedCost: toNum(r['excluded_cost']),
-        };
-      });
-    } catch (err) {
-      // Data-dir transient error — fall through with zeros. Per-rule totals
-      // were computed in their own try-blocks so they stand on their own.
-      logger.warn(`cost-scope: daily/totals query failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    // Top-|cost| raw line items for the inspection table. One column per
-    // configured tag dim so the UI can render arbitrary tag columns without
-    // bespoke per-tag wiring. Cap at SAMPLE_ROW_LIMIT — the payload is
-    // transient, but the IPC boundary should stay bounded.
     const tagColumns = dimensions.tags.map(t => ({
       id: `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`,
       label: t.label,
     }));
+
+    // === Query 1: every aggregate in one scan ===
+    // Merges what used to be 5 separate queries (per-rule + combined +
+    // unscoped total + scoped total + total row count) into a single pass.
+    // DuckDB evaluates each SUM(CASE...) during the same scan, so the cost
+    // is roughly one full scan regardless of how many rules are enabled.
+    const ruleAggSelects = ruleExprs.map((entry, i) => {
+      if (entry.expr === null) return `CAST(0 AS DOUBLE) AS rule_${String(i)}_cost,
+          CAST(0 AS DOUBLE) AS rule_${String(i)}_rows`;
+      return `CAST(COALESCE(SUM(CASE WHEN (${entry.expr}) THEN cost ELSE 0 END), 0) AS DOUBLE) AS rule_${String(i)}_cost,
+          CAST(COALESCE(SUM(CASE WHEN (${entry.expr}) THEN 1 ELSE 0 END), 0) AS DOUBLE) AS rule_${String(i)}_rows`;
+    }).join(',\n          ');
+
+    const aggSql = `
+      SELECT
+        CAST(COALESCE(SUM(cost), 0) AS DOUBLE) AS unscoped_total,
+        CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 0 ELSE cost END), 0) AS DOUBLE) AS scoped_total,
+        CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN cost ELSE 0 END), 0) AS DOUBLE) AS combined_excluded_cost,
+        CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END), 0) AS DOUBLE) AS combined_excluded_rows,
+        CAST(COUNT(*) AS DOUBLE) AS total_rows${ruleAggSelects.length > 0 ? `,\n          ${ruleAggSelects}` : ''}
+      FROM ${source}
+      WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+    `.trim();
+
+    // === Query 2: daily breakdown (separate because GROUP BY) ===
+    const dailySql = `
+      SELECT
+        usage_date::VARCHAR AS date,
+        CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN 0 ELSE cost END), 0) AS DOUBLE) AS kept_cost,
+        CAST(COALESCE(SUM(CASE WHEN (${excludedPredicate}) THEN cost ELSE 0 END), 0) AS DOUBLE) AS excluded_cost
+      FROM ${source}
+      WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+      GROUP BY usage_date
+      ORDER BY usage_date
+    `.trim();
+
+    // === Query 3: top-|cost| sample rows (separate because ORDER BY LIMIT) ===
+    // CAST numerics to DOUBLE inside the CTE so DECIMAL-typed CUR columns
+    // come back as plain numbers — bare source.cost would return a
+    // DuckDBDecimalValue object and toNum would yield 0 for every row.
     const tagSelectSql = tagColumns.length > 0
       ? tagColumns.map(t => `COALESCE(${t.id}, '') AS ${t.id}`).join(',\n          ')
       : null;
-
-    let sampleRows: readonly CostScopeSampleRow[] = [];
-    let sampleTotalRowCount = 0;
-    try {
-      const countRows = await runQuery(`
-        SELECT CAST(COUNT(*) AS DOUBLE) AS n
-        FROM ${source}
-        WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
-      `.trim());
-      sampleTotalRowCount = toNum(countRows[0]?.['n']);
-
-      // CAST numerics to DOUBLE so DECIMAL-typed CUR columns come back as
-      // plain numbers — bare references to source.cost would return a
-      // DuckDBDecimalValue object and toNum would yield 0 for every row,
-      // producing a table full of blank numbers. Columns are projected out
-      // of a CTE so the outer ORDER BY ABS(cost) unambiguously references
-      // the source's cost column (not a shadowed output alias).
-      const sampleSql = `
-        WITH scoped AS (
-          SELECT
-            usage_date,
-            account_id,
-            account_name,
-            region,
-            service,
-            service_family,
-            line_item_type,
-            operation,
-            usage_type,
-            description,
-            resource_id,
-            CAST(usage_amount AS DOUBLE) AS usage_amount,
-            CAST(cost AS DOUBLE) AS cost,
-            CAST(list_cost AS DOUBLE) AS list_cost,
-            CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END AS excluded${tagSelectSql === null ? '' : `,\n            ${tagSelectSql}`}
-          FROM ${source}
-          WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
-        )
+    const sampleSql = `
+      WITH scoped AS (
         SELECT
-          usage_date::VARCHAR AS usage_date,
+          usage_date,
           account_id, account_name, region, service, service_family,
           line_item_type, operation, usage_type, description, resource_id,
-          usage_amount, cost, list_cost, excluded${tagSelectSql === null ? '' : ',\n          ' + tagColumns.map(t => t.id).join(', ')}
-        FROM scoped
-        ORDER BY ABS(cost) DESC
-        LIMIT ${String(SAMPLE_ROW_LIMIT)}
-      `.trim();
-      const rows = await runQuery(sampleSql);
-      sampleRows = rows.map(r => {
+          CAST(usage_amount AS DOUBLE) AS usage_amount,
+          CAST(cost AS DOUBLE) AS cost,
+          CAST(list_cost AS DOUBLE) AS list_cost,
+          CASE WHEN (${excludedPredicate}) THEN 1 ELSE 0 END AS excluded${tagSelectSql === null ? '' : `,\n          ${tagSelectSql}`}
+        FROM ${source}
+        WHERE usage_date BETWEEN '${startStr}' AND '${endStr}'
+      )
+      SELECT
+        usage_date::VARCHAR AS usage_date,
+        account_id, account_name, region, service, service_family,
+        line_item_type, operation, usage_type, description, resource_id,
+        usage_amount, cost, list_cost, excluded${tagSelectSql === null ? '' : ',\n        ' + tagColumns.map(t => t.id).join(', ')}
+      FROM scoped
+      ORDER BY ABS(cost) DESC
+      LIMIT ${String(SAMPLE_ROW_LIMIT)}
+    `.trim();
+
+    // Run all three in parallel. The DuckDB worker pool (default size 4)
+    // lets independent queries execute concurrently. `allSettled` so one
+    // failing query doesn't drop the other two's results.
+    const [aggResult, dailyResult, sampleResult] = await Promise.allSettled([
+      runQuery(aggSql),
+      runQuery(dailySql),
+      runQuery(sampleSql),
+    ]);
+
+    // Agg → totals + per-rule + combined
+    let unscopedTotalCost = 0;
+    let scopedTotalCost = 0;
+    let sampleTotalRowCount = 0;
+    let combined = { excludedCost: 0, excludedRows: 0 };
+    const perRule: CostScopePreviewRow[] = ruleExprs.map(e => ({
+      ruleId: e.rule.id, excludedCost: 0, excludedRows: 0,
+    }));
+    if (aggResult.status === 'fulfilled') {
+      const row = aggResult.value[0];
+      unscopedTotalCost = toNum(row?.['unscoped_total']);
+      scopedTotalCost = toNum(row?.['scoped_total']);
+      sampleTotalRowCount = toNum(row?.['total_rows']);
+      combined = {
+        excludedCost: toNum(row?.['combined_excluded_cost']),
+        excludedRows: toNum(row?.['combined_excluded_rows']),
+      };
+      for (let i = 0; i < ruleExprs.length; i++) {
+        const entry = ruleExprs[i];
+        const prev = perRule[i];
+        if (entry === undefined || prev === undefined) continue;
+        perRule[i] = {
+          ruleId: entry.rule.id,
+          excludedCost: toNum(row?.[`rule_${String(i)}_cost`]),
+          excludedRows: toNum(row?.[`rule_${String(i)}_rows`]),
+        };
+      }
+    } else {
+      logger.warn(`cost-scope: agg query failed: ${aggResult.reason instanceof Error ? aggResult.reason.message : String(aggResult.reason)}`);
+    }
+
+    let dailyTotals: readonly CostScopeDailyRow[] = [];
+    if (dailyResult.status === 'fulfilled') {
+      dailyTotals = dailyResult.value.map(r => {
+        const raw = r['date'];
+        const date = typeof raw === 'string' ? raw : raw instanceof Date ? raw.toISOString().slice(0, 10) : '';
+        return { date, keptCost: toNum(r['kept_cost']), excludedCost: toNum(r['excluded_cost']) };
+      });
+    } else {
+      logger.warn(`cost-scope: daily query failed: ${dailyResult.reason instanceof Error ? dailyResult.reason.message : String(dailyResult.reason)}`);
+    }
+
+    let sampleRows: readonly CostScopeSampleRow[] = [];
+    if (sampleResult.status === 'fulfilled') {
+      sampleRows = sampleResult.value.map(r => {
         const tags: Record<string, string> = {};
         for (const t of tagColumns) {
           const v = r[t.id];
@@ -310,9 +287,8 @@ export function registerCostScopeHandlers(app: AppContext): void {
           tags,
         };
       });
-    } catch (err) {
-      logger.warn(`cost-scope: sample-rows query failed: ${err instanceof Error ? err.message : String(err)}`);
-      // Sample is a best-effort inspection; fall through with empty rows.
+    } else {
+      logger.warn(`cost-scope: sample query failed: ${sampleResult.reason instanceof Error ? sampleResult.reason.message : String(sampleResult.reason)}`);
     }
 
     return {
