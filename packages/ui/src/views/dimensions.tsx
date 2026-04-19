@@ -33,6 +33,11 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
   onCancel: () => void;
 }>): React.JSX.Element {
   const isAccountDim = dim.field === 'account_id';
+  // AWS-controlled values arrive in a single canonical form — normalize/strip
+  // would only chip at the labels users already recognize. Aliases stay
+  // visible since folding "AmazonEC2 → EC2" is a reasonable user choice.
+  const TRANSFORM_FREE_FIELDS = new Set(['service', 'service_family']);
+  const showTransforms = !TRANSFORM_FREE_FIELDS.has(dim.field);
   const api = useCostApi();
   const [state, setState] = useState(dim.editing);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -144,14 +149,18 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
         {labelField}
         {descriptionField}
       </div>
-      <div className="grid grid-cols-2 gap-4 items-stretch">
-        {isAccountDim ? orgToggleField : <div />}
-        {normalizationField}
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        {isAccountDim ? stripPatternsField : <div />}
-        {aliasField}
-      </div>
+      {showTransforms && (
+        <div className="grid grid-cols-2 gap-4 items-stretch">
+          {isAccountDim ? orgToggleField : <div />}
+          {normalizationField}
+        </div>
+      )}
+      {showTransforms ? (
+        <div className="grid grid-cols-2 gap-4">
+          {isAccountDim ? stripPatternsField : <div />}
+          {aliasField}
+        </div>
+      ) : aliasField}
       {preview !== null && (
         <div className="flex flex-col gap-2">
           <span className="text-xs text-text-muted">
