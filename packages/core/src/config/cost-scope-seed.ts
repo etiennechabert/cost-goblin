@@ -17,13 +17,13 @@ export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
     id: 'builtin:ri-sp-purchases',
     name: 'RI & Savings Plan purchases',
     description:
-      'Upfront and recurring fees for Reserved Instances and Savings Plans. Usage covered by them still appears as DiscountedUsage and is not affected by this rule.',
+      'Upfront/recurring fees for Reserved Instances and Savings Plans, plus SP negation adjustments. RI/SP-covered usage still appears under DiscountedUsage / SavingsPlanCoveredUsage and is not affected by this rule.',
     enabled: false,
     builtIn: true,
     conditions: [
       {
         dimensionId: asDimensionId('line_item_type'),
-        values: ['RIFee', 'SavingsPlanRecurringFee', 'SavingsPlanUpfrontFee'],
+        values: ['RIFee', 'SavingsPlanRecurringFee', 'SavingsPlanUpfrontFee', 'SavingsPlanNegation'],
       },
     ],
   },
@@ -36,6 +36,17 @@ export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
     builtIn: true,
     conditions: [
       { dimensionId: asDimensionId('line_item_type'), values: ['Tax'] },
+    ],
+  },
+  {
+    id: 'builtin:edp-discount',
+    name: 'EDP discount',
+    description:
+      'Negative line items from the AWS Enterprise Discount Program (contractual volume discount). Toggle on to view gross / pre-negotiation cost; leave off to see the effective bill after the EDP credit.',
+    enabled: false,
+    builtIn: true,
+    conditions: [
+      { dimensionId: asDimensionId('line_item_type'), values: ['EdpDiscount'] },
     ],
   },
 ];
