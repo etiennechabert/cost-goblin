@@ -1,13 +1,63 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronUp, ChevronDown, GripVertical } from 'lucide-react';
-import type { DimensionsConfig, TagDimension, ConceptType, NormalizationRule } from '@costgoblin/core/browser';
+import type { BuiltInDimension, DimensionsConfig, TagDimension, ConceptType, NormalizationRule } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 
-type DragGroup = 'builtIn' | 'tag';
-interface DragRef { type: DragGroup; idx: number }
+/** Drag/drop is now indexed by position in the unified `order` array,
+ *  not by (type, index) into the split built-in/tag arrays. Keeps a single
+ *  reorder space so a tag can be dropped above a built-in and vice-versa. */
+interface DragRef { orderIdx: number }
+
+/** Stable identifiers for the unified `order` array in DimensionsConfig.
+ *  A built-in is keyed by its name; a tag is keyed by its tagName. The
+ *  `builtin:`/`tag:` prefix avoids any chance of collision if a user names
+ *  a tag after a built-in. Keep in sync with the YAML schema. */
+function builtInKey(name: string): string { return `builtin:${name}`; }
+function tagKey(tagName: string): string { return `tag:${tagName}`; }
+
+/** Default order for configs that predate the `order` field: built-ins
+ *  first in config order, then tags. Restricted to enabled items only —
+ *  disabled dims aren't part of the unified ordering. */
+function defaultOrder(config: DimensionsConfig): string[] {
+  const keys: string[] = [];
+  for (const d of config.builtIn) {
+    if (d.enabled !== false) keys.push(builtInKey(d.name));
+  }
+  for (const t of config.tags) {
+    if (t.enabled !== false) keys.push(tagKey(t.tagName));
+  }
+  return keys;
+}
+
+/** Normalize the current `order` against the live config: drop entries
+ *  pointing at disabled/removed dims, append any newly-enabled dims at
+ *  the end so they show up without requiring an explicit write. */
+function reconcileOrder(config: DimensionsConfig): string[] {
+  const valid = new Set<string>();
+  for (const d of config.builtIn) {
+    if (d.enabled !== false) valid.add(builtInKey(d.name));
+  }
+  for (const t of config.tags) {
+    if (t.enabled !== false) valid.add(tagKey(t.tagName));
+  }
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const key of config.order ?? defaultOrder(config)) {
+    if (valid.has(key) && !seen.has(key)) { out.push(key); seen.add(key); }
+  }
+  for (const d of config.builtIn) {
+    const k = builtInKey(d.name);
+    if (d.enabled !== false && !seen.has(k)) { out.push(k); seen.add(k); }
+  }
+  for (const t of config.tags) {
+    const k = tagKey(t.tagName);
+    if (t.enabled !== false && !seen.has(k)) { out.push(k); seen.add(k); }
+  }
+  return out;
+}
 
 const CONCEPTS: { value: ConceptType; label: string }[] = [
   { value: 'owner', label: 'Owner (team)' },
@@ -825,7 +875,8 @@ export function DimensionsView() {
     if (config === null) return;
     const tags = [...config.tags];
     tags[idx] = editingToTagDimension(editing);
-    await api.saveDimensionsConfig({ ...config, tags });
+    const next = { ...config, tags, order: reconcileOrder({ ...config, tags }) };
+    await api.saveDimensionsConfig(next);
     setEditingIdx(null);
     setRefreshKey(k => k + 1);
   }
@@ -833,7 +884,9 @@ export function DimensionsView() {
   async function handleAddTag(editing: EditingTag) {
     if (config === null) return;
     const newTag = editingToTagDimension(editing);
-    await api.saveDimensionsConfig({ ...config, tags: [...config.tags, newTag] });
+    const tags = [...config.tags, newTag];
+    const next = { ...config, tags, order: reconcileOrder({ ...config, tags }) };
+    await api.saveDimensionsConfig(next);
     setAddingNew(false);
     setRefreshKey(k => k + 1);
   }
@@ -841,7 +894,8 @@ export function DimensionsView() {
   async function handleRemoveTag(idx: number) {
     if (config === null) return;
     const tags = config.tags.filter((_, i) => i !== idx);
-    await api.saveDimensionsConfig({ ...config, tags });
+    const next = { ...config, tags, order: reconcileOrder({ ...config, tags }) };
+    await api.saveDimensionsConfig(next);
     setEditingIdx(null);
     setRefreshKey(k => k + 1);
   }
@@ -874,17 +928,20 @@ export function DimensionsView() {
         ...(d.name === 'region' ? { useRegionNames: edited.useRegionNames } : {}),
       };
     });
-    await api.saveDimensionsConfig({ ...config, builtIn });
+    const next = { ...config, builtIn, order: reconcileOrder({ ...config, builtIn }) };
+    await api.saveDimensionsConfig(next);
     setEditingBuiltInIdx(null);
     setRefreshKey(k => k + 1);
   }
 
   // Optimistic save: paint the new config locally first, then persist in the
-  // background. Skips the refetch — local state is already correct, and the
-  // backend write is the source of truth for the next mount.
+  // background. Always writes a reconciled `order` so the YAML is in sync
+  // with the visible list (entries for disabled dims are dropped; newly-
+  // enabled dims are appended).
   function applyOptimistic(next: DimensionsConfig): void {
-    setConfig(next);
-    void api.saveDimensionsConfig(next);
+    const reconciled = { ...next, order: reconcileOrder(next) };
+    setConfig(reconciled);
+    void api.saveDimensionsConfig(reconciled);
   }
 
   function toggleBuiltInEnabled(idx: number): void {
@@ -914,76 +971,48 @@ export function DimensionsView() {
   // Quick-add a discovered tag as a dimension
   const [quickAddState, setQuickAddState] = useState<EditingTag | null>(null);
 
-  function applyReorder(type: DragGroup, fromIdx: number, toIdx: number): void {
+  /** Reorder the unified `order` array: move the entry at fromIdx to toIdx. */
+  function applyReorder(fromIdx: number, toIdx: number): void {
     if (config === null || fromIdx === toIdx) return;
-    if (type === 'builtIn') {
-      const builtIn = [...config.builtIn];
-      const moved = builtIn.splice(fromIdx, 1)[0];
-      if (moved === undefined) return;
-      builtIn.splice(toIdx, 0, moved);
-      applyOptimistic({ ...config, builtIn });
-    } else {
-      const tags = [...config.tags];
-      const moved = tags.splice(fromIdx, 1)[0];
-      if (moved === undefined) return;
-      tags.splice(toIdx, 0, moved);
-      applyOptimistic({ ...config, tags });
-    }
+    const order = [...reconcileOrder(config)];
+    const moved = order.splice(fromIdx, 1)[0];
+    if (moved === undefined) return;
+    order.splice(toIdx, 0, moved);
+    applyOptimistic({ ...config, order });
   }
 
-  // Reorder only within the enabled subset: "move up" on an enabled item
-  // hops past any disabled items above it to the next enabled neighbor.
-  // Disabled items keep their relative positions, so re-enabling later
-  // restores their order rather than bunching them at the bottom.
-  function reorderWithinEnabled(type: DragGroup, fromFullIdx: number, direction: 'up' | 'down'): void {
-    if (config === null) return;
-    const arr: readonly { readonly enabled?: boolean | undefined }[] = type === 'builtIn' ? config.builtIn : config.tags;
-    if (direction === 'up') {
-      for (let i = fromFullIdx - 1; i >= 0; i--) {
-        if (arr[i]?.enabled !== false) { applyReorder(type, fromFullIdx, i); return; }
-      }
-    } else {
-      for (let i = fromFullIdx + 1; i < arr.length; i++) {
-        if (arr[i]?.enabled !== false) { applyReorder(type, fromFullIdx, i); return; }
-      }
-    }
-  }
-
-  // One factory per row: returns the drag/drop attrs for the row container and
-  // the mousedown attr for the grip handle. Centralizes the "only allow drag
-  // when grip was pressed" + "only accept drop within the same group" rules so
-  // the row JSX stays light.
-  function dragProps(type: DragGroup, idx: number): { row: React.HTMLAttributes<HTMLDivElement> & { draggable: boolean }; grip: React.HTMLAttributes<HTMLButtonElement> } {
-    const isArmed = armed?.type === type && armed.idx === idx;
-    const isFrom = dragFrom?.type === type && dragFrom.idx === idx;
-    const isOver = dragOver?.type === type && dragOver.idx === idx && !isFrom;
+  /** Drag/drop attrs for a row. Single unified-order index — no separate
+   *  built-in vs tag spaces, so any card can be dropped on any other. */
+  function dragProps(orderIdx: number): { row: React.HTMLAttributes<HTMLDivElement> & { draggable: boolean }; grip: React.HTMLAttributes<HTMLButtonElement> } {
+    const isArmed = armed?.orderIdx === orderIdx;
+    const isFrom = dragFrom?.orderIdx === orderIdx;
+    const isOver = dragOver?.orderIdx === orderIdx && !isFrom;
     return {
       row: {
         draggable: isArmed,
         onDragStart: (e) => {
-          setDragFrom({ type, idx });
+          setDragFrom({ orderIdx });
           e.dataTransfer.effectAllowed = 'move';
-          // Required for Firefox to actually start the drag.
-          e.dataTransfer.setData('text/plain', `${type}:${String(idx)}`);
+          e.dataTransfer.setData('text/plain', String(orderIdx));
         },
         onDragEnd: () => { setArmed(null); setDragFrom(null); setDragOver(null); },
         onDragOver: (e) => {
-          if (dragFrom?.type !== type) return;
+          if (dragFrom === null) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = 'move';
-          setDragOver({ type, idx });
+          setDragOver({ orderIdx });
         },
-        onDragLeave: () => { setDragOver(curr => (curr?.type === type && curr.idx === idx ? null : curr)); },
+        onDragLeave: () => { setDragOver(curr => (curr?.orderIdx === orderIdx ? null : curr)); },
         onDrop: (e) => {
           e.preventDefault();
-          if (dragFrom?.type === type) applyReorder(type, dragFrom.idx, idx);
+          if (dragFrom !== null) applyReorder(dragFrom.orderIdx, orderIdx);
           setArmed(null); setDragFrom(null); setDragOver(null);
         },
         style: isFrom ? { opacity: 0.4 } : isOver ? { boxShadow: 'inset 0 2px 0 var(--color-accent, #34d399)' } : undefined,
       },
       grip: {
-        onMouseDown: () => { setArmed({ type, idx }); },
-        onMouseUp: () => { setArmed(curr => (curr?.type === type && curr.idx === idx ? null : curr)); },
+        onMouseDown: () => { setArmed({ orderIdx }); },
+        onMouseUp: () => { setArmed(curr => (curr?.orderIdx === orderIdx ? null : curr)); },
       },
     };
   }
@@ -1001,27 +1030,15 @@ export function DimensionsView() {
     );
   }
 
-  function ReorderArrows({ type, idx }: { type: DragGroup; idx: number; direction?: string }): React.JSX.Element {
-    // Disable the arrow when there's no enabled neighbor to swap with in
-    // that direction — without this the user could click Up on the topmost
-    // enabled item and nothing would visibly happen (the disabled items
-    // above would silently shuffle instead).
-    const arr: readonly { readonly enabled?: boolean | undefined }[] =
-      config === null ? [] : type === 'builtIn' ? config.builtIn : config.tags;
-    let canUp = false;
-    for (let i = idx - 1; i >= 0; i--) {
-      if (arr[i]?.enabled !== false) { canUp = true; break; }
-    }
-    let canDown = false;
-    for (let i = idx + 1; i < arr.length; i++) {
-      if (arr[i]?.enabled !== false) { canDown = true; break; }
-    }
+  function ReorderArrows({ orderIdx, total }: { orderIdx: number; total: number }): React.JSX.Element {
+    const canUp = orderIdx > 0;
+    const canDown = orderIdx < total - 1;
     return (
       <div className="flex flex-col -space-y-1">
         <button
           type="button"
           disabled={!canUp}
-          onClick={(e) => { e.stopPropagation(); reorderWithinEnabled(type, idx, 'up'); }}
+          onClick={(e) => { e.stopPropagation(); applyReorder(orderIdx, orderIdx - 1); }}
           title="Move up"
           className="flex items-center justify-center text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed"
         >
@@ -1030,7 +1047,7 @@ export function DimensionsView() {
         <button
           type="button"
           disabled={!canDown}
-          onClick={(e) => { e.stopPropagation(); reorderWithinEnabled(type, idx, 'down'); }}
+          onClick={(e) => { e.stopPropagation(); applyReorder(orderIdx, orderIdx + 1); }}
           title="Move down"
           className="flex items-center justify-center text-text-muted hover:text-text-primary disabled:opacity-30 disabled:cursor-not-allowed"
         >
@@ -1040,15 +1057,31 @@ export function DimensionsView() {
     );
   }
 
-  // Build enabled-dim rows with their original full-array indices preserved —
-  // the reorder machinery operates on the full array, so we pair each visible
-  // card with its index in config.builtIn / config.tags.
-  const enabledBuiltIns = config === null ? [] : config.builtIn
-    .map((d, idx) => ({ d, idx }))
-    .filter(({ d }) => d.enabled !== false);
-  const enabledTags = config === null ? [] : config.tags
-    .map((t, idx) => ({ t, idx }))
-    .filter(({ t }) => t.enabled !== false);
+  // Resolve the unified display order into concrete row descriptors. Each
+  // entry carries its key (for React), its full-array index (for handlers
+  // that still take a typed idx like editingBuiltInIdx / editingIdx), and
+  // the dim object itself.
+  type OrderedRow =
+    | { kind: 'builtIn'; key: string; idx: number; dim: BuiltInDimension }
+    | { kind: 'tag'; key: string; idx: number; dim: TagDimension };
+  const orderedRows: OrderedRow[] = (() => {
+    if (config === null) return [];
+    const rows: OrderedRow[] = [];
+    for (const key of reconcileOrder(config)) {
+      if (key.startsWith('builtin:')) {
+        const name = key.slice('builtin:'.length);
+        const idx = config.builtIn.findIndex(d => d.name === name);
+        const dim = idx >= 0 ? config.builtIn[idx] : undefined;
+        if (dim !== undefined) rows.push({ kind: 'builtIn', key, idx, dim });
+      } else if (key.startsWith('tag:')) {
+        const tagName = key.slice('tag:'.length);
+        const idx = config.tags.findIndex(t => t.tagName === tagName);
+        const dim = idx >= 0 ? config.tags[idx] : undefined;
+        if (dim !== undefined) rows.push({ kind: 'tag', key, idx, dim });
+      }
+    }
+    return rows;
+  })();
 
   function pillClass(enabled: boolean): string {
     return [
@@ -1134,82 +1167,87 @@ export function DimensionsView() {
         </div>
       )}
 
-      {/* SECTION 2 — The enabled dim list. Click to expand into the editor,
-          reorder with arrows / drag-grip. Built-ins come first, then tags. */}
-      {config !== null && (enabledBuiltIns.length > 0 || enabledTags.length > 0) && (
+      {/* SECTION 2 — Unified enabled-dim list. Built-ins and tag dims live
+          in the same ordered list so the user can interleave them freely
+          (drag, arrows, or the + Add pill above). Each row clicks open to
+          its type-specific editor. */}
+      {config !== null && orderedRows.length > 0 && (
         <div className="flex flex-col gap-3">
           <h3 className="text-sm font-medium text-text-secondary">
             Enabled dimensions
             <span className="text-text-muted ml-2 font-normal text-xs">click to configure · drag or use arrows to reorder</span>
           </h3>
 
-          {enabledBuiltIns.map(({ d, idx }) => {
-            if (editingBuiltInIdx === idx) {
+          {orderedRows.map((row, orderIdx) => {
+            const dnd = dragProps(orderIdx);
+            const arrows = <ReorderArrows orderIdx={orderIdx} total={orderedRows.length} />;
+
+            if (row.kind === 'builtIn') {
+              const d = row.dim;
+              if (editingBuiltInIdx === row.idx) {
+                return (
+                  <BuiltInEditor
+                    key={row.key}
+                    dim={{
+                      name: d.name,
+                      field: d.field,
+                      editing: {
+                        label: d.label,
+                        description: d.description ?? '',
+                        normalize: d.normalize ?? '',
+                        aliases: aliasesToText(d.aliases),
+                        useOrgAccounts: d.useOrgAccounts === true,
+                        nameStripPatterns: d.nameStripPatterns?.join('\n') ?? '',
+                        useRegionNames: d.useRegionNames === true,
+                      },
+                    }}
+                    onSave={(edited) => { void handleSaveBuiltIn(row.idx, edited); }}
+                    onCancel={() => { setEditingBuiltInIdx(null); }}
+                  />
+                );
+              }
               return (
-                <BuiltInEditor
-                  key={d.name}
-                  dim={{
-                    name: d.name,
-                    field: d.field,
-                    editing: {
-                      label: d.label,
-                      description: d.description ?? '',
-                      normalize: d.normalize ?? '',
-                      aliases: aliasesToText(d.aliases),
-                      useOrgAccounts: d.useOrgAccounts === true,
-                      nameStripPatterns: d.nameStripPatterns?.join('\n') ?? '',
-                      useRegionNames: d.useRegionNames === true,
-                    },
-                  }}
-                  onSave={(edited) => { void handleSaveBuiltIn(idx, edited); }}
-                  onCancel={() => { setEditingBuiltInIdx(null); }}
-                />
+                <div
+                  key={row.key}
+                  {...dnd.row}
+                  className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors"
+                >
+                  <button
+                    type="button"
+                    onClick={() => { setEditingBuiltInIdx(row.idx); setEditingIdx(null); setAddingNew(false); }}
+                    className="flex flex-col gap-1 text-left flex-1 min-w-0"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm font-medium text-text-primary">{d.label}</span>
+                      <span className="text-xs text-text-muted font-mono">{d.field}</span>
+                      {d.displayField !== undefined && (
+                        <span className="text-[10px] text-text-muted">display: {d.displayField}</span>
+                      )}
+                      {d.normalize !== undefined && (
+                        <span className="text-[10px] text-text-muted">{d.normalize}</span>
+                      )}
+                      {d.aliases !== undefined && (
+                        <span className="text-[10px] text-text-muted">{String(Object.keys(d.aliases).length)} alias rules</span>
+                      )}
+                    </div>
+                    {d.description !== undefined && d.description.length > 0 && (
+                      <span className="text-[11px] text-text-muted leading-snug">{d.description}</span>
+                    )}
+                  </button>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="text-[10px] text-text-muted uppercase tracking-wider">Built-in</span>
+                    {arrows}
+                    <GripHandle attrs={dnd.grip} />
+                  </div>
+                </div>
               );
             }
-            const dnd = dragProps('builtIn', idx);
-            return (
-              <div
-                key={d.name}
-                {...dnd.row}
-                className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors"
-              >
-                <button
-                  type="button"
-                  onClick={() => { setEditingBuiltInIdx(idx); setEditingIdx(null); setAddingNew(false); }}
-                  className="flex flex-col gap-1 text-left flex-1 min-w-0"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-text-primary">{d.label}</span>
-                    <span className="text-xs text-text-muted font-mono">{d.field}</span>
-                    {d.displayField !== undefined && (
-                      <span className="text-[10px] text-text-muted">display: {d.displayField}</span>
-                    )}
-                    {d.normalize !== undefined && (
-                      <span className="text-[10px] text-text-muted">{d.normalize}</span>
-                    )}
-                    {d.aliases !== undefined && (
-                      <span className="text-[10px] text-text-muted">{String(Object.keys(d.aliases).length)} alias rules</span>
-                    )}
-                  </div>
-                  {d.description !== undefined && d.description.length > 0 && (
-                    <span className="text-[11px] text-text-muted leading-snug">{d.description}</span>
-                  )}
-                </button>
-                <div className="flex items-center gap-3 shrink-0">
-                  <span className="text-[10px] text-text-muted uppercase tracking-wider">Built-in</span>
-                  <ReorderArrows type="builtIn" idx={idx} direction="builtInEnabled" />
-                  <GripHandle attrs={dnd.grip} />
-                </div>
-              </div>
-            );
-          })}
 
-          {enabledTags.map(({ t: tag, idx }) => {
-            const dnd = dragProps('tag', idx);
-            if (editingIdx === idx) {
+            const tag = row.dim;
+            if (editingIdx === row.idx) {
               return (
                 <TagEditor
-                  key={tag.tagName}
+                  key={row.key}
                   tag={{
                     tagName: tag.tagName,
                     label: tag.label,
@@ -1219,9 +1257,9 @@ export function DimensionsView() {
                     fallbackTag: tag.accountTagFallback,
                     missingValueTemplate: tag.missingValueTemplate ?? '',
                   }}
-                  onSave={(edited) => { void handleSaveTag(idx, edited); }}
+                  onSave={(edited) => { void handleSaveTag(row.idx, edited); }}
                   onCancel={() => { setEditingIdx(null); }}
-                  onRemove={() => { void handleRemoveTag(idx); }}
+                  onRemove={() => { void handleRemoveTag(row.idx); }}
                   availableTags={unmappedTagKeys}
                   discoveredTags={discoveredTags}
                   accountTagKeys={accountTagKeys}
@@ -1230,10 +1268,10 @@ export function DimensionsView() {
               );
             }
             return (
-              <div key={tag.tagName} {...dnd.row} className="w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors">
+              <div key={row.key} {...dnd.row} className="w-full rounded-xl border border-border bg-bg-secondary/50 px-5 py-3 flex items-center justify-between hover:bg-bg-tertiary/30 transition-colors">
                 <button
                   type="button"
-                  onClick={() => { setEditingIdx(idx); setAddingNew(false); setEditingBuiltInIdx(null); }}
+                  onClick={() => { setEditingIdx(row.idx); setAddingNew(false); setEditingBuiltInIdx(null); }}
                   className="flex flex-col gap-1 text-left flex-1 min-w-0"
                 >
                   <div className="flex items-center gap-3">
@@ -1262,7 +1300,7 @@ export function DimensionsView() {
                   )}
                 </button>
                 <div className="flex items-center gap-3 shrink-0">
-                  <ReorderArrows type="tag" idx={idx} direction="tagEnabled" />
+                  {arrows}
                   <GripHandle attrs={dnd.grip} />
                 </div>
               </div>
