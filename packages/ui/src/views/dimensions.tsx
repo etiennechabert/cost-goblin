@@ -38,6 +38,7 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
   onCancel: () => void;
 }>): React.JSX.Element {
   const isAccountDim = dim.field === 'account_id';
+  const isRegionDim = dim.field === 'region';
   // AWS-controlled values arrive in a single canonical form — normalize/strip
   // would only chip at the labels users already recognize. Aliases stay
   // visible since folding "AmazonEC2 → EC2" is a reasonable user choice.
@@ -45,6 +46,18 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
   const showTransforms = !TRANSFORM_FREE_FIELDS.has(dim.field);
   const api = useCostApi();
   const [state, setState] = useState(dim.editing);
+  // Surface missing enrichment data: Region needs SSM region-names sync,
+  // Account (with org-data toggle) needs the AWS Org sync. Both ship as
+  // side-effects of the org sync on the Sync tab — without them the dim's
+  // values render as raw codes / IDs.
+  const regionInfoQuery = useQuery(
+    () => isRegionDim ? api.getRegionNamesInfo() : Promise.resolve(null),
+    [isRegionDim],
+  );
+  const orgQuery = useQuery(
+    () => isAccountDim ? api.getOrgSyncResult() : Promise.resolve(null),
+    [isAccountDim],
+  );
   const initialRef = useRef(dim.editing);
   const [discardConfirm, setDiscardConfirm] = useState(false);
   const isDirty = JSON.stringify(state) !== JSON.stringify(initialRef.current);
@@ -160,12 +173,58 @@ function BuiltInEditor({ dim, onSave, onCancel }: Readonly<{
     </label>
   );
 
+  // Compute enrichment-data warnings:
+  //   - Region dim ships raw codes ('eu-central-1') unless region-names.json
+  //     was synced from SSM. Warn either way: missing entirely, or last
+  //     attempt errored (typically: profile lacks ssm:GetParametersByPath).
+  //   - Account dim's org-data toggle resolves IDs → names from the AWS Org
+  //     sync. Warn when toggle is on but the sync result file is missing.
+  const regionInfo = regionInfoQuery.status === 'success' ? regionInfoQuery.data : null;
+  const orgInfo = orgQuery.status === 'success' ? orgQuery.data : null;
+  const regionWarning: { kind: 'missing' | 'error'; message?: string } | null =
+    isRegionDim && regionInfoQuery.status === 'success'
+      ? regionInfo === null
+        ? { kind: 'missing' }
+        : regionInfo.lastError !== null
+          ? { kind: 'error', message: regionInfo.lastError }
+          : regionInfo.count === 0
+            ? { kind: 'missing' }
+            : null
+      : null;
+  const accountWarning: boolean =
+    isAccountDim && state.useOrgAccounts && orgQuery.status === 'success' && orgInfo === null;
+
   return (
     <div ref={containerRef} className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-4">
         {labelField}
         {descriptionField}
       </div>
+      {regionWarning !== null && (
+        <div className="rounded-md border border-warning/50 bg-warning-muted px-3 py-2 text-xs flex flex-col gap-1">
+          <p className="font-medium text-warning">Region friendly names not available</p>
+          {regionWarning.kind === 'error' ? (
+            <p className="text-text-secondary">
+              Last sync attempt failed: <span className="font-mono text-text-primary">{regionWarning.message}</span>
+            </p>
+          ) : (
+            <p className="text-text-secondary">
+              Region values will display as raw codes (e.g. <span className="font-mono">eu-central-1</span>).
+              Run the AWS Organization sync from the <span className="font-medium">Sync</span> tab to fetch the
+              friendly names from SSM Parameter Store.
+            </p>
+          )}
+        </div>
+      )}
+      {accountWarning && (
+        <div className="rounded-md border border-warning/50 bg-warning-muted px-3 py-2 text-xs flex flex-col gap-1">
+          <p className="font-medium text-warning">Org-data not synced</p>
+          <p className="text-text-secondary">
+            The "Resolve names via org-data" toggle is on but no AWS Organization sync has run yet —
+            account values will display as raw 12-digit IDs. Run the sync from the <span className="font-medium">Sync</span> tab to populate.
+          </p>
+        </div>
+      )}
       {showTransforms && (
         <div className="grid grid-cols-2 gap-4 items-stretch">
           {isAccountDim ? orgToggleField : <div />}
