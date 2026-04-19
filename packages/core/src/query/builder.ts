@@ -58,7 +58,10 @@ interface ResolvedDimension {
 function resolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): ResolvedDimension {
   const builtIn = dimensions.builtIn.find(d => d.name === dimensionId);
   if (builtIn !== undefined) {
-    return { fieldExpr: builtIn.field, rawField: builtIn.field };
+    // Built-ins now support normalize + aliases just like tags; apply them at
+    // query time via the same CASE/LOWER(...) machinery.
+    const fieldExpr = buildAliasSqlCase(builtIn.field, builtIn);
+    return { fieldExpr, rawField: builtIn.field };
   }
 
   const tag = dimensions.tags.find(d => `tag_${d.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === dimensionId);

@@ -1,5 +1,6 @@
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import {
+  asDimensionId,
   loadConfig,
   loadDimensions,
   loadOrgTree,
@@ -7,11 +8,39 @@ import {
   isStringRecord,
 } from '@costgoblin/core';
 import type {
+  BuiltInDimension,
   CostGoblinConfig,
   DimensionsConfig,
   OrgNode,
   SyncStatus,
 } from '@costgoblin/core';
+
+const DEFAULT_BUILT_INS: readonly BuiltInDimension[] = [
+  { name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name', description: 'AWS account the cost was charged to. Main axis for org/team-level rollups.', useOrgAccounts: true },
+  { name: asDimensionId('region'), label: 'Region', field: 'region', description: 'AWS region where the resource ran. Useful for spotting unintended multi-region sprawl.' },
+  { name: asDimensionId('service'), label: 'Service', field: 'service', description: 'AWS service code (EC2, S3, RDS, etc.) — the broadest "what cost me this?" view.' },
+  { name: asDimensionId('service_family'), label: 'Service Family', field: 'service_family', description: 'Higher-level product category (Compute, Storage, Database). Good for exec summaries.' },
+  { name: asDimensionId('line_item_type'), label: 'Line Item Type', field: 'line_item_type', description: 'Usage vs Tax vs Credit vs Discount. Filter this to isolate real usage from billing adjustments.' },
+  { name: asDimensionId('usage_type'), label: 'Usage Type', field: 'usage_type', description: 'Fine-grained usage string like USE2-BoxUsage:t3.medium. Use for instance/storage-tier breakdowns.', enabled: false },
+  { name: asDimensionId('operation'), label: 'Operation', field: 'operation', description: 'API operation billed for (RunInstances, GetObject). Useful for API-level cost attribution.', enabled: false },
+];
+
+function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
+  const defaultsByName = new Map(DEFAULT_BUILT_INS.map(d => [d.name, d]));
+  // Backfill description on existing entries for any default whose config
+  // predates the description field. User-set fields (label, aliases, etc.)
+  // are kept — we only fill a missing description.
+  const backfilled = loaded.builtIn.map(d => {
+    if (d.description !== undefined) return d;
+    const def = defaultsByName.get(d.name);
+    if (def?.description === undefined) return d;
+    return { ...d, description: def.description };
+  });
+  const have = new Set(backfilled.map(d => d.name));
+  const missing = DEFAULT_BUILT_INS.filter(d => !have.has(d.name));
+  if (missing.length === 0 && backfilled === loaded.builtIn) return loaded;
+  return { builtIn: [...backfilled, ...missing], tags: loaded.tags };
+}
 import { FileActivityLog } from '../file-activity.js';
 import { createOptimizeQueue } from '../optimize-queue.js';
 import type { OptimizeQueue } from '../optimize-queue.js';
@@ -71,8 +100,13 @@ export function createAppContext(ctx: IpcContext): AppContext {
   async function getDimensions(): Promise<DimensionsConfig> {
     if (state.dimensions !== null) return state.dimensions;
     const dimensions = await loadDimensions(ctx.dimensionsPath);
-    state.dimensions = dimensions;
-    return dimensions;
+    // Fill in any missing default built-ins for users whose dimensions.yaml
+    // predates them. Existing entries are kept intact — we only add, never
+    // modify. The additions are in-memory; the next dimensions:save-config
+    // persists them to disk.
+    const merged = mergeDefaultBuiltIns(dimensions);
+    state.dimensions = merged;
+    return merged;
   }
 
   async function getOrgTreeConfig(): Promise<OrgTreeConfig> {
@@ -83,36 +117,69 @@ export function createAppContext(ctx: IpcContext): AppContext {
   }
 
   async function getAccountMap(): Promise<Map<string, string>> {
+    // Returns the Account id→name map the handlers should use for display
+    // resolution. Source depends on the Account dim's `useOrgAccounts` flag:
+    //   - true  : org-accounts.json (AWS Organizations sync)
+    //   - false : the legacy account-mapping CSV under raw/
+    // Both are optional — if the preferred source is missing we fall through
+    // to the other one before giving up and returning an empty map.
     if (state.accountMap !== null) return state.accountMap;
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const rawDir = path.join(path.dirname(ctx.dataDir), 'raw');
-    try {
-      const entries = await fs.readdir(rawDir);
-      const csvFile = entries.find(e => e.toLowerCase().endsWith('.csv') && e.toLowerCase().includes('account'));
-      if (csvFile !== undefined) {
-        const content = await fs.readFile(path.join(rawDir, csvFile), 'utf-8');
-        const lines = content.split('\n').filter(l => l.trim().length > 0);
-        const map = new Map<string, string>();
-        for (let i = 1; i < lines.length; i++) {
-          const line = lines[i];
-          if (line === undefined) continue;
-          const cols = line.split(',').map(c => c.replace(/^"|"$/g, '').trim());
-          const accountId = cols[0] ?? '';
-          const name = cols[4] ?? '';
-          if (accountId.length > 0 && name.length > 0) {
-            map.set(accountId, name);
+    const baseDir = path.dirname(ctx.dataDir);
+
+    const dimensions = await getDimensions();
+    const accountDim = dimensions.builtIn.find(d => d.field === 'account_id');
+    const preferOrg = accountDim?.useOrgAccounts === true;
+
+    async function fromOrg(): Promise<Map<string, string>> {
+      const map = new Map<string, string>();
+      try {
+        const raw = await fs.readFile(path.join(baseDir, 'org-accounts.json'), 'utf-8');
+        const parsed: unknown = JSON.parse(raw);
+        if (isStringRecord(parsed) && Array.isArray(parsed['accounts'])) {
+          for (const acct of parsed['accounts']) {
+            if (!isStringRecord(acct)) continue;
+            const id = acct['id'];
+            const name = acct['name'];
+            if (typeof id === 'string' && typeof name === 'string' && id.length > 0 && name.length > 0) {
+              map.set(id, name);
+            }
           }
         }
-        state.accountMap = map;
-        logger.info(`Loaded account mapping: ${String(map.size)} accounts`);
-        return map;
-      }
-    } catch {
-      // no mapping file
+      } catch { /* no org sync */ }
+      return map;
     }
-    state.accountMap = new Map();
-    return state.accountMap;
+
+    async function fromCsv(): Promise<Map<string, string>> {
+      const map = new Map<string, string>();
+      try {
+        const rawDir = path.join(baseDir, 'raw');
+        const entries = await fs.readdir(rawDir);
+        const csvFile = entries.find(e => e.toLowerCase().endsWith('.csv') && e.toLowerCase().includes('account'));
+        if (csvFile !== undefined) {
+          const content = await fs.readFile(path.join(rawDir, csvFile), 'utf-8');
+          const lines = content.split('\n').filter(l => l.trim().length > 0);
+          for (let i = 1; i < lines.length; i++) {
+            const line = lines[i];
+            if (line === undefined) continue;
+            const cols = line.split(',').map(c => c.replace(/^"|"$/g, '').trim());
+            const id = cols[0] ?? '';
+            const name = cols[4] ?? '';
+            if (id.length > 0 && name.length > 0) map.set(id, name);
+          }
+        }
+      } catch { /* no raw dir */ }
+      return map;
+    }
+
+    const primary = preferOrg ? await fromOrg() : await fromCsv();
+    const map = primary.size > 0 ? primary : (preferOrg ? await fromCsv() : await fromOrg());
+    if (map.size > 0) {
+      logger.info(`Loaded account mapping (${preferOrg ? 'org-data' : 'csv'} preferred): ${String(map.size)} accounts`);
+    }
+    state.accountMap = map;
+    return map;
   }
 
   async function getOrgAccountsPath(): Promise<string | undefined> {
@@ -175,7 +242,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getOrgAccountsPath,
     runQuery: (sql: string) => ctx.db.runQuery(sql),
     invalidateConfig: () => { state.config = null; },
-    invalidateDimensions: () => { state.dimensions = null; },
+    invalidateDimensions: () => { state.dimensions = null; state.accountMap = null; },
   };
 }
 

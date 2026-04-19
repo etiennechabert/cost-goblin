@@ -45,6 +45,15 @@ export interface BuiltInDimension {
   readonly displayField?: string | undefined;
   /** Hidden from selectors/filter bar when false. Default true. */
   readonly enabled?: boolean | undefined;
+  /** Short user-facing explanation shown on the Dimensions view. */
+  readonly description?: string | undefined;
+  /** Applied to field values at query time (same as tags). */
+  readonly normalize?: NormalizationRule | undefined;
+  /** Canonical → raw values mapping, applied at query time. */
+  readonly aliases?: Readonly<Record<string, readonly string[]>> | undefined;
+  /** Account-specific: when true, resolve id→name via org-accounts.json
+   *  (AWS Organizations sync) instead of the legacy CSV mapping. */
+  readonly useOrgAccounts?: boolean | undefined;
 }
 
 export interface TagDimension {
@@ -58,6 +67,8 @@ export interface TagDimension {
   readonly missingValueTemplate?: string | undefined;
   /** Hidden from selectors/filter bar when false. Default true. */
   readonly enabled?: boolean | undefined;
+  /** Short user-facing explanation shown on the Dimensions view. */
+  readonly description?: string | undefined;
 }
 
 export interface DimensionsConfig {
