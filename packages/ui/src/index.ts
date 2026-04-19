@@ -19,6 +19,7 @@ export { EntityPopup } from './components/entity-popup.js';
 export { ConfirmModal } from './components/confirm-modal.js';
 export { CsvExport } from './components/csv-export.js';
 export { SyncStatusIndicator } from './components/sync-status.js';
+export { SyncActivityIndicator } from './components/sync-activity-indicator.js';
 export { formatDollars, formatPercent, formatDate } from './components/format.js';
 export { FilterBar } from './components/filter-bar.js';
 export { EnvironmentBar } from './components/environment-bar.js';

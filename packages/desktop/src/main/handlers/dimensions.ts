@@ -1,10 +1,46 @@
 import { ipcMain } from 'electron';
-import type { DimensionsConfig } from '@costgoblin/core';
+import { join } from 'node:path';
+import { readdir } from 'node:fs/promises';
+import { getRawDirPrefix, logger } from '@costgoblin/core';
+import type { DimensionsConfig, TagDimension } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import { toNum, toStr } from './query-utils.js';
+import { removeAllSidecars } from '../optimize.js';
+
+/** Returns a hash-like fingerprint of the fields that affect sidecar output
+ *  for a tag. Aliases are excluded (they apply at query time, not at sidecar
+ *  generation). When this fingerprint changes for a tag, its sidecars are
+ *  stale and must be regenerated. */
+function tagFingerprint(tag: TagDimension): string {
+  return JSON.stringify({
+    tagName: tag.tagName,
+    fallback: tag.accountTagFallback ?? null,
+    template: tag.missingValueTemplate ?? null,
+  });
+}
+
+/** Snapshot of existing raw files for a tier, used to enqueue regen jobs. */
+async function listRawFilesForTier(dataDir: string, tier: 'daily' | 'hourly'): Promise<string[]> {
+  const prefix = getRawDirPrefix(tier);
+  const rawDir = join(dataDir, 'aws', 'raw');
+  const paths: string[] = [];
+  try {
+    const periods = await readdir(rawDir);
+    for (const periodDir of periods) {
+      if (!periodDir.startsWith(`${prefix}-`)) continue;
+      try {
+        const files = await readdir(join(rawDir, periodDir));
+        for (const f of files) {
+          if (f.endsWith('.parquet')) paths.push(join(rawDir, periodDir, f));
+        }
+      } catch { /* vanished */ }
+    }
+  } catch { /* raw dir doesn't exist yet */ }
+  return paths;
+}
 
 export function registerDimensionsHandlers(app: AppContext): void {
-  const { ctx, getConfig, getDimensions, invalidateDimensions, runQuery } = app;
+  const { ctx, getConfig, getDimensions, invalidateDimensions, runQuery, optimizeQueue } = app;
 
   ipcMain.handle('dimensions:discover-tags', async (): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> => {
     const config = await getConfig();
@@ -86,6 +122,17 @@ export function registerDimensionsHandlers(app: AppContext): void {
   ipcMain.handle('dimensions:save-config', async (_event, config: DimensionsConfig): Promise<void> => {
     const yaml = await import('yaml');
     const fs = await import('node:fs/promises');
+
+    // Diff the old config against the incoming one to decide which sidecars
+    // need to be removed (tags dropped or meaningfully changed) and which raw
+    // files need re-optimization (added tags, or changed-fingerprint tags).
+    let previousTags: readonly TagDimension[] = [];
+    try {
+      previousTags = (await getDimensions()).tags;
+    } catch {
+      // First-time save or config file missing — treat as no previous tags.
+    }
+
     const output = yaml.stringify({
       builtIn: config.builtIn.map(d => ({
         name: d.name,
@@ -106,5 +153,32 @@ export function registerDimensionsHandlers(app: AppContext): void {
     });
     await fs.writeFile(ctx.dimensionsPath, output);
     invalidateDimensions();
+
+    // Sidecar housekeeping: wide combined-sidecar design means ANY storage-
+    // affecting tag change invalidates the whole sidecar file. Alias-only edits
+    // apply at query time and don't touch disk.
+    const prevByName = new Map(previousTags.map(t => [t.tagName, t]));
+    const nextByName = new Map(config.tags.map(t => [t.tagName, t]));
+    const columnsRoot = join(ctx.dataDir, 'aws', 'columns');
+
+    let needsRegen = false;
+    for (const [name, prev] of prevByName) {
+      const next = nextByName.get(name);
+      if (next === undefined || tagFingerprint(prev) !== tagFingerprint(next)) { needsRegen = true; break; }
+    }
+    if (!needsRegen) {
+      for (const name of nextByName.keys()) {
+        if (!prevByName.has(name)) { needsRegen = true; break; }
+      }
+    }
+
+    if (needsRegen) {
+      const removed = await removeAllSidecars(columnsRoot);
+      if (removed > 0) logger.info(`dimensions: removed ${String(removed)} stale sidecar(s)`);
+      const daily = await listRawFilesForTier(ctx.dataDir, 'daily');
+      const hourly = await listRawFilesForTier(ctx.dataDir, 'hourly');
+      for (const p of [...daily, ...hourly]) optimizeQueue.enqueue(p);
+      logger.info(`dimensions: enqueued ${String(daily.length + hourly.length)} files for sidecar regen`);
+    }
   });
 }

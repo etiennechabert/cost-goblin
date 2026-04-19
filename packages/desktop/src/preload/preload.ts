@@ -25,6 +25,8 @@ import type {
   OrgSyncResult,
   OrgSyncProgress,
   AutoSyncStatus,
+  FileActivityEvent,
+  OptimizeStatus,
 } from '@costgoblin/core';
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -115,6 +117,21 @@ const api: CostApi = {
   },
   saveUIPreferences(prefs: UIPreferences): Promise<void> {
     return invoke<undefined>('ui:save-preferences', prefs).then(() => undefined);
+  },
+  getFileActivity(sinceIso?: string): Promise<FileActivityEvent[]> {
+    return invoke<FileActivityEvent[]>('sync:get-file-activity', sinceIso);
+  },
+  getOptimizeStatus(): Promise<OptimizeStatus> {
+    return invoke<OptimizeStatus>('sync:get-optimize-status');
+  },
+  getOptimizeEnabled(): Promise<boolean> {
+    return invoke<boolean>('optimize:get-enabled');
+  },
+  setOptimizeEnabled(enabled: boolean): Promise<void> {
+    return invoke<undefined>('optimize:set-enabled', enabled).then(() => undefined);
+  },
+  clearSidecars(): Promise<{ removed: number; requeued: number }> {
+    return invoke<{ removed: number; requeued: number }>('optimize:clear-sidecars');
   },
   syncOrgAccounts(profile: string): Promise<OrgSyncResult> {
     return invoke<OrgSyncResult>('org:sync-accounts', profile);

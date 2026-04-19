@@ -6,6 +6,7 @@ import { ConfirmModal } from '../components/confirm-modal.js';
 import { SetupWizard } from './setup-wizard.js';
 import { OrgAccountsSection } from './data-management-org.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
+import { RecentFileActivity } from './recent-file-activity.js';
 
 export function DataManagement() {
   const api = useCostApi();
@@ -32,6 +33,27 @@ export function DataManagement() {
   }
   const [showDeleteAll, setShowDeleteAll] = useState(false);
   const [configureSource, setConfigureSource] = useState<'daily' | 'hourly' | 'costOptimization' | null>(null);
+  const [optimizerBusy, setOptimizerBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function tick(): Promise<void> {
+      try {
+        const s = await api.getOptimizeStatus();
+        // Only block deletes while workers are actually touching files.
+        // A paused optimizer with a pending queue is safe — if the user
+        // deletes a queued file, the worker will just skip it on resume.
+        if (!cancelled) setOptimizerBusy(s.running);
+      } catch { /* transient */ }
+    }
+    void tick();
+    const timer = setInterval(() => { void tick(); }, 1500);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [api]);
+
+  const deleteDisabledTitle = optimizerBusy
+    ? 'Optimizer is running — pause it on the Local optimizer panel to delete data.'
+    : undefined;
 
   const inventory: DataInventoryResult | null =
     inventoryQuery.status === 'success' ? inventoryQuery.data : null;
@@ -111,9 +133,20 @@ export function DataManagement() {
   }
 
   function handleDeleteAll() {
-    const local = inventory?.periods.filter(p => p.localStatus === 'repartitioned') ?? [];
-    const promises = local.map(p => api.deleteLocalPeriod(p.period, 'daily'));
-    void Promise.all(promises).then(() => { setDailyRefreshKey(k => k + 1); setShowDeleteAll(false); }).catch(() => { /* deletion best-effort */ });
+    const daily = (inventory?.periods ?? []).filter(p => p.localStatus === 'repartitioned');
+    const hourly = (hourlyInventory?.periods ?? []).filter(p => p.localStatus === 'repartitioned');
+    const costOpt = (costOptInventory?.periods ?? []).filter(p => p.localStatus === 'repartitioned');
+    const promises: Promise<void>[] = [
+      ...daily.map(p => api.deleteLocalPeriod(p.period, 'daily')),
+      ...hourly.map(p => api.deleteLocalPeriod(p.period, 'hourly')),
+      ...costOpt.map(p => api.deleteLocalPeriod(p.period, 'cost-optimization')),
+    ];
+    void Promise.all(promises).then(() => {
+      setDailyRefreshKey(k => k + 1);
+      setHourlyRefreshKey(k => k + 1);
+      setCostOptRefreshKey(k => k + 1);
+      setShowDeleteAll(false);
+    }).catch(() => { /* deletion best-effort */ });
   }
 
   const isNotConfigured = configQuery.status === 'error' || (configQuery.status === 'success' && config === null);
@@ -329,7 +362,13 @@ export function DataManagement() {
               <span className={['absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', autoSync ? 'translate-x-4' : 'translate-x-0'].join(' ')} />
             </button>
           </div>
-          <button type="button" onClick={() => { setShowDeleteAll(true); }} className="rounded-md border border-negative/50 bg-negative-muted px-3 py-1.5 text-xs font-medium text-negative hover:bg-negative-muted hover:text-negative transition-colors">
+          <button
+            type="button"
+            onClick={() => { setShowDeleteAll(true); }}
+            disabled={optimizerBusy}
+            title={deleteDisabledTitle}
+            className="rounded-md border border-negative/50 bg-negative-muted px-3 py-1.5 text-xs font-medium text-negative hover:bg-negative-muted hover:text-negative transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
             Delete All Data
           </button>
           <button type="button" onClick={() => { void api.openDataFolder(); }} className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors">
@@ -381,6 +420,8 @@ export function DataManagement() {
             syncState={dailySyncState}
             onCancelSync={() => { void api.cancelSync('daily'); setDailySyncState({ status: 'idle' }); }}
             onConfigure={() => { setConfigureSource('daily'); }}
+            deleteDisabled={optimizerBusy}
+            deleteDisabledTitle={deleteDisabledTitle}
           />
           <TierPanel
             title="Hourly"
@@ -401,6 +442,8 @@ export function DataManagement() {
             syncState={hourlySyncState}
             onCancelSync={() => { void api.cancelSync('hourly'); setHourlySyncState({ status: 'idle' }); }}
             onConfigure={() => { setConfigureSource('hourly'); }}
+            deleteDisabled={optimizerBusy}
+            deleteDisabledTitle={deleteDisabledTitle}
           />
           <TierPanel
             title="Cost Optimization"
@@ -421,9 +464,13 @@ export function DataManagement() {
             syncState={costOptSyncState}
             onCancelSync={() => { void api.cancelSync('cost-optimization'); setCostOptSyncState({ status: 'idle' }); }}
             onConfigure={() => { setConfigureSource('costOptimization'); }}
+            deleteDisabled={optimizerBusy}
+            deleteDisabledTitle={deleteDisabledTitle}
           />
         </div>
       )}
+
+      <RecentFileActivity />
 
       {showDeleteAll && (
         <ConfirmModal

@@ -24,6 +24,12 @@ export interface SelectiveSyncOptions {
   readonly files: readonly ManifestFileEntry[];
   readonly onProgress?: ProgressCallback | undefined;
   readonly signal?: AbortSignal | undefined;
+  /**
+   * Called as each file finishes downloading, with the local path. Used by
+   * the desktop handler to enqueue post-download optimization (sort + sidecar
+   * generation) in parallel with ongoing downloads of other files.
+   */
+  readonly onFileDownloaded?: ((localPath: string) => void) | undefined;
 }
 
 function runAwsS3Sync(options: {
@@ -246,6 +252,14 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
         logger.info(`[aws] ${line}`);
         if (line.startsWith('download:')) {
           globalFilesDone++;
+          // Extract the local path from `download: s3://bucket/key to /local/path`.
+          // Kicks off optimize in parallel with the next download.
+          if (options.onFileDownloaded !== undefined) {
+            const match = / to (.+)$/.exec(line);
+            if (match?.[1] !== undefined) {
+              options.onFileDownloaded(match[1]);
+            }
+          }
         }
         if (onProgress !== undefined) {
           onProgress({

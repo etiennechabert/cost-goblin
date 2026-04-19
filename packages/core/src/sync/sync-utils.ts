@@ -47,11 +47,20 @@ export async function listLocalMonths(dataDir: string, tier: string): Promise<st
   const rawDir = path.join(dataDir, 'aws', 'raw');
   try {
     const entries = await fs.readdir(rawDir);
-    const months = entries
-      .filter(e => e.startsWith(`${prefix}-`))
-      .map(e => e.slice(prefix.length + 1).slice(0, 7))
-      .filter(p => /^\d{4}-\d{2}$/.test(p));
-    return [...new Set(months)].sort((a, b) => a.localeCompare(b));
+    const months = new Set<string>();
+    for (const entry of entries) {
+      if (!entry.startsWith(`${prefix}-`)) continue;
+      const period = entry.slice(prefix.length + 1).slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(period)) continue;
+      // Must contain at least one .parquet — otherwise DuckDB errors on the
+      // glob. Empty dirs can linger after interrupted downloads or partial
+      // deletes; silently skip them.
+      try {
+        const files = await fs.readdir(path.join(rawDir, entry));
+        if (files.some(f => f.endsWith('.parquet'))) months.add(period);
+      } catch { /* dir vanished mid-scan */ }
+    }
+    return [...months].sort((a, b) => a.localeCompare(b));
   } catch {
     return [];
   }

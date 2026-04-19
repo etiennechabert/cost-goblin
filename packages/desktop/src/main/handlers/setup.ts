@@ -204,7 +204,7 @@ export function registerSetupHandlers(app: AppContext): void {
       sync['hourly'] = { bucket: wizardConfig.hourlyBucket, retentionDays: 30 };
     }
     if (wizardConfig.costOptBucket !== undefined && wizardConfig.costOptBucket.length > 0) {
-      sync['costOptimization'] = { bucket: wizardConfig.costOptBucket, retentionDays: 90 };
+      sync['costOptimization'] = { bucket: wizardConfig.costOptBucket, retentionDays: 30 };
     }
 
     const costgoblinYaml = {

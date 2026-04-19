@@ -15,6 +15,8 @@ import {
   asDollars,
   asDateString,
 } from '@costgoblin/core';
+import type { SidecarPlan } from '@costgoblin/core';
+import { resolveSidecarPlan } from '../optimize.js';
 import type {
   CostQueryParams,
   CostResult,
@@ -56,13 +58,45 @@ export function registerQueryHandlers(app: AppContext): void {
     return listLocalMonths(ctx.dataDir, tier);
   }
 
+  /**
+   * Given a date range + tier, resolve the optimized-query plan:
+   *   - availablePeriods: months actually on disk (required for glob safety)
+   *   - sidecarPlan: the POSITIONAL JOIN plan iff every file in the requested
+   *     periods is fully optimized (sorted + sidecars fresh for every
+   *     configured tag). Null means fall back to element_at.
+   *
+   * Logs the chosen mode for visibility. Also emits a timing note on the
+   * debug logger so the query-log lines tell you which path was used.
+   */
+  async function planQuery(
+    tier: 'daily' | 'hourly',
+    dateRange: { readonly start: string; readonly end: string },
+  ): Promise<{ available: string[]; plan: SidecarPlan | undefined; empty: boolean }> {
+    const available = await availableMonths(tier);
+    const required = computePeriodsInRange(dateRange);
+    const usePeriods = required.filter(p => available.includes(p));
+    // No overlap between requested range and on-disk data — caller must
+    // short-circuit, otherwise the builder falls back to a full wildcard
+    // and DuckDB errors on an empty aws/raw/ or zero-match glob.
+    if (usePeriods.length === 0) {
+      logger.debug('query:plan', { tier, mode: 'empty', requestedMonths: required.length, availableMonths: available.length });
+      return { available, plan: undefined, empty: true };
+    }
+    const dimensions = await getDimensions();
+    const resolved = await resolveSidecarPlan(ctx.dataDir, tier, usePeriods, dimensions.tags);
+    const plan = resolved === null ? undefined : resolved;
+    logger.debug('query:plan', { tier, mode: plan === undefined ? 'element_at' : 'sidecar', periods: usePeriods.length });
+    return { available, plan, empty: false };
+  }
+
   ipcMain.handle('query:costs', async (_event, params: CostQueryParams): Promise<CostResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const orgPath = await getOrgAccountsPath();
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
-    const available = await availableMonths(tier);
-    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available);
+    const { available, plan, empty } = await planQuery(tier, params.dateRange);
+    if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
+    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available, plan);
     logger.info('query:costs', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -89,8 +123,9 @@ export function registerQueryHandlers(app: AppContext): void {
     const dimensions = await getDimensions();
     const orgPath = await getOrgAccountsPath();
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
-    const available = await availableMonths(tier);
-    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available);
+    const { available, plan, empty } = await planQuery(tier, params.dateRange);
+    if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
+    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available, plan);
     logger.info('query:daily-costs', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -142,8 +177,9 @@ export function registerQueryHandlers(app: AppContext): void {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const orgPath = await getOrgAccountsPath();
-    const available = await availableMonths('daily');
-    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath, available);
+    const { available, plan, empty } = await planQuery('daily', params.dateRange);
+    if (empty) return { increases: [], savings: [], totalIncrease: asDollars(0), totalSavings: asDollars(0) };
+    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath, available, plan);
     logger.info('query:trends', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -164,9 +200,20 @@ export function registerQueryHandlers(app: AppContext): void {
     const orgPath = await getOrgAccountsPath();
     logger.info('query:missing-tags', { tagDimension: params.tagDimension });
 
-    const available = await availableMonths('daily');
-    const resourceSql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath, available);
-    const nonResourceSql = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath, available);
+    const { available, plan, empty } = await planQuery('daily', params.dateRange);
+    if (empty) {
+      return {
+        rows: [],
+        totalActionableCost: asDollars(0),
+        totalLikelyUntaggableCost: asDollars(0),
+        totalNonResourceCost: asDollars(0),
+        actionableCount: 0,
+        likelyUntaggableCount: 0,
+        nonResourceRows: [],
+      };
+    }
+    const resourceSql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath, available, plan);
+    const nonResourceSql = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath, available, plan);
     const [resourceRows, nonResourceRows] = await Promise.all([
       runQuery(resourceSql),
       runQuery(nonResourceSql),
@@ -250,8 +297,20 @@ export function registerQueryHandlers(app: AppContext): void {
     const accountMap = await getAccountMap();
     const orgPath = await getOrgAccountsPath();
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
-    const available = await availableMonths(tier);
-    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available);
+    const { available, plan, empty } = await planQuery(tier, params.dateRange);
+    if (empty) {
+      return {
+        entity: params.entity,
+        totalCost: asDollars(0),
+        previousCost: asDollars(0),
+        percentChange: 0,
+        dailyCosts: [],
+        byAccount: [],
+        byService: [],
+        bySubEntity: [],
+      };
+    }
+    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available, plan);
     logger.info('query:entity-detail', { entity: params.entity });
 
     const rows = await runQuery(sql);

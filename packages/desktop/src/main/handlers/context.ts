@@ -12,6 +12,10 @@ import type {
   OrgNode,
   SyncStatus,
 } from '@costgoblin/core';
+import { FileActivityLog } from '../file-activity.js';
+import { createOptimizeQueue } from '../optimize-queue.js';
+import type { OptimizeQueue } from '../optimize-queue.js';
+import { readOptimizeEnabled } from '../optimize-enabled.js';
 
 export interface IpcContext {
   readonly db: DuckDBClient;
@@ -36,6 +40,8 @@ export interface AppState {
 export interface AppContext {
   readonly ctx: IpcContext;
   readonly state: AppState;
+  readonly activity: FileActivityLog;
+  readonly optimizeQueue: OptimizeQueue;
   readonly getConfig: () => Promise<CostGoblinConfig>;
   readonly getDimensions: () => Promise<DimensionsConfig>;
   readonly getOrgTreeConfig: () => Promise<OrgTreeConfig>;
@@ -144,9 +150,24 @@ export function createAppContext(ctx: IpcContext): AppContext {
     }
   }
 
+  const activity = new FileActivityLog();
+  async function prefsPath(): Promise<string> {
+    const path = await import('node:path');
+    return path.join(path.dirname(ctx.dataDir), 'app-preferences.json');
+  }
+  const optimizeQueue = createOptimizeQueue({
+    client: ctx.db,
+    activity,
+    getTags: async () => (await getDimensions()).tags,
+    getOrgAccountsPath,
+    isEnabled: async () => readOptimizeEnabled(await prefsPath()),
+  });
+
   return {
     ctx,
     state,
+    activity,
+    optimizeQueue,
     getConfig,
     getDimensions,
     getOrgTreeConfig,

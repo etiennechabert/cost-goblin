@@ -40,9 +40,9 @@ describe('MissingTags', () => {
     });
   });
 
-  it('has min cost filter input', () => {
+  it('has min cost filter input defaulting to 0 (show everything)', () => {
     renderMissingTags();
-    const input = screen.getByDisplayValue('50');
+    const input = screen.getByDisplayValue('0');
     expect(input).toBeDefined();
   });
 });
