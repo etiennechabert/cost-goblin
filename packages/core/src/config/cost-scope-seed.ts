@@ -27,6 +27,17 @@ export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
       },
     ],
   },
+  {
+    id: 'builtin:tax',
+    name: 'Tax',
+    description:
+      'VAT / GST / sales-tax line items. Toggle on to compare pre-tax run-rate across regions or exclude tax from forecasts; leave off to see the all-in bill.',
+    enabled: false,
+    builtIn: true,
+    conditions: [
+      { dimensionId: asDimensionId('line_item_type'), values: ['Tax'] },
+    ],
+  },
 ];
 
 export const DEFAULT_COST_SCOPE: CostScopeConfig = {
