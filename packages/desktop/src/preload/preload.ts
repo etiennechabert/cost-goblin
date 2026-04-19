@@ -145,6 +145,9 @@ const api: CostApi = {
   discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> {
     return invoke<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }>('dimensions:discover-tags');
   },
+  discoverColumnValues(field: string): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> {
+    return invoke<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }>('dimensions:discover-column-values', field);
+  },
   getDimensionsConfig(): Promise<DimensionsConfig> {
     return invoke<DimensionsConfig>('dimensions:get-config');
   },

@@ -119,6 +119,55 @@ export function registerDimensionsHandlers(app: AppContext): void {
     return getDimensions();
   });
 
+  // Distinct values + cost for a built-in column — powers the preview on the
+  // built-in editor ("Service has 120 distinct values, top 20 by cost are...").
+  // Scans the most recent daily period so the preview loads fast.
+  ipcMain.handle('dimensions:discover-column-values', async (_event, field: string): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> => {
+    // Whitelist columns we know are safe to embed in SQL. These match the
+    // aliases emitted by buildSource so the query plans identically to what
+    // the rest of the app does.
+    const ALLOWED = new Set(['account_id', 'account_name', 'region', 'service', 'service_family', 'line_item_type', 'operation', 'usage_type']);
+    if (!ALLOWED.has(field)) return { values: [], distinctCount: 0, period: '' };
+
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
+    let dirs: string[] = [];
+    try {
+      dirs = (await fs.readdir(rawDir)).filter(d => d.startsWith('daily-')).sort();
+    } catch { /* no data */ }
+    const latest = dirs.at(-1);
+    if (latest === undefined) return { values: [], distinctCount: 0, period: '' };
+
+    const source = `read_parquet('${ctx.dataDir}/aws/raw/${latest}/*.parquet')`;
+    // The raw CUR columns aren't aliased — we need to map the UI-facing field
+    // back to the underlying column.
+    const RAW_COL: Record<string, string> = {
+      account_id: 'line_item_usage_account_id',
+      account_name: 'line_item_usage_account_name',
+      region: 'product_region_code',
+      service: 'product_servicecode',
+      service_family: 'product_product_family',
+      line_item_type: 'line_item_line_item_type',
+      operation: 'line_item_operation',
+      usage_type: 'line_item_usage_type',
+    };
+    const col = RAW_COL[field] ?? field;
+    const distinctSql = `SELECT COUNT(DISTINCT ${col}) AS n FROM ${source} WHERE ${col} IS NOT NULL AND ${col} != ''`;
+    const valuesSql = `
+      SELECT ${col} AS val, SUM(line_item_unblended_cost) AS cost
+      FROM ${source}
+      WHERE ${col} IS NOT NULL AND ${col} != ''
+      GROUP BY val
+      ORDER BY cost DESC
+      LIMIT 200
+    `;
+    const [distinctRows, valueRows] = await Promise.all([runQuery(distinctSql), runQuery(valuesSql)]);
+    const distinctCount = distinctRows[0] !== undefined ? toNum(distinctRows[0]['n']) : 0;
+    const values = valueRows.map(r => ({ value: toStr(r['val']), cost: toNum(r['cost']) }));
+    return { values, distinctCount, period: latest.replace(/^daily-/, '') };
+  });
+
   ipcMain.handle('dimensions:save-config', async (_event, config: DimensionsConfig): Promise<void> => {
     const yaml = await import('yaml');
     const fs = await import('node:fs/promises');
@@ -139,6 +188,9 @@ export function registerDimensionsHandlers(app: AppContext): void {
         label: d.label,
         field: d.field,
         ...(d.displayField === undefined ? {} : { displayField: d.displayField }),
+        ...(d.description === undefined ? {} : { description: d.description }),
+        ...(d.normalize === undefined ? {} : { normalize: d.normalize }),
+        ...(d.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(d.aliases).map(([k, v]) => [k, [...v]])) }),
         ...(d.enabled === false ? { enabled: false } : {}),
       })),
       tags: config.tags.map(t => ({
@@ -150,6 +202,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
         ...(t.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(t.aliases).map(([k, v]) => [k, [...v]])) }),
         ...(t.accountTagFallback === undefined ? {} : { accountTagFallback: t.accountTagFallback }),
         ...(t.missingValueTemplate === undefined ? {} : { missingValueTemplate: t.missingValueTemplate }),
+        ...(t.description === undefined ? {} : { description: t.description }),
         ...(t.enabled === false ? { enabled: false } : {}),
       })),
     });

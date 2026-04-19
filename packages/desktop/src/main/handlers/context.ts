@@ -1,5 +1,6 @@
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import {
+  asDimensionId,
   loadConfig,
   loadDimensions,
   loadOrgTree,
@@ -7,11 +8,29 @@ import {
   isStringRecord,
 } from '@costgoblin/core';
 import type {
+  BuiltInDimension,
   CostGoblinConfig,
   DimensionsConfig,
   OrgNode,
   SyncStatus,
 } from '@costgoblin/core';
+
+const DEFAULT_BUILT_INS: readonly BuiltInDimension[] = [
+  { name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name', description: 'AWS account the cost was charged to. Main axis for org/team-level rollups.' },
+  { name: asDimensionId('region'), label: 'Region', field: 'region', description: 'AWS region where the resource ran. Useful for spotting unintended multi-region sprawl.' },
+  { name: asDimensionId('service'), label: 'Service', field: 'service', description: 'AWS service code (EC2, S3, RDS, etc.) — the broadest "what cost me this?" view.' },
+  { name: asDimensionId('service_family'), label: 'Service Family', field: 'service_family', description: 'Higher-level product category (Compute, Storage, Database). Good for exec summaries.' },
+  { name: asDimensionId('line_item_type'), label: 'Line Item Type', field: 'line_item_type', description: 'Usage vs Tax vs Credit vs Discount. Filter this to isolate real usage from billing adjustments.' },
+  { name: asDimensionId('usage_type'), label: 'Usage Type', field: 'usage_type', description: 'Fine-grained usage string like USE2-BoxUsage:t3.medium. Use for instance/storage-tier breakdowns.', enabled: false },
+  { name: asDimensionId('operation'), label: 'Operation', field: 'operation', description: 'API operation billed for (RunInstances, GetObject). Useful for API-level cost attribution.', enabled: false },
+];
+
+function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
+  const have = new Set(loaded.builtIn.map(d => d.name));
+  const missing = DEFAULT_BUILT_INS.filter(d => !have.has(d.name));
+  if (missing.length === 0) return loaded;
+  return { builtIn: [...loaded.builtIn, ...missing], tags: loaded.tags };
+}
 import { FileActivityLog } from '../file-activity.js';
 import { createOptimizeQueue } from '../optimize-queue.js';
 import type { OptimizeQueue } from '../optimize-queue.js';
@@ -71,8 +90,13 @@ export function createAppContext(ctx: IpcContext): AppContext {
   async function getDimensions(): Promise<DimensionsConfig> {
     if (state.dimensions !== null) return state.dimensions;
     const dimensions = await loadDimensions(ctx.dimensionsPath);
-    state.dimensions = dimensions;
-    return dimensions;
+    // Fill in any missing default built-ins for users whose dimensions.yaml
+    // predates them. Existing entries are kept intact — we only add, never
+    // modify. The additions are in-memory; the next dimensions:save-config
+    // persists them to disk.
+    const merged = mergeDefaultBuiltIns(dimensions);
+    state.dimensions = merged;
+    return merged;
   }
 
   async function getOrgTreeConfig(): Promise<OrgTreeConfig> {

@@ -221,10 +221,51 @@ export function registerSetupHandlers(app: AppContext): void {
     await fs.writeFile(ctx.configPath, stringify(costgoblinYaml), 'utf-8');
 
     const builtInDimensions = [
-      { name: 'account', label: 'Account', field: 'account_id', displayField: 'account_name' },
-      { name: 'region', label: 'Region', field: 'region' },
-      { name: 'service', label: 'Service', field: 'service' },
-      { name: 'service_family', label: 'Service Family', field: 'service_family' },
+      {
+        name: 'account',
+        label: 'Account',
+        field: 'account_id',
+        displayField: 'account_name',
+        description: 'AWS account the cost was charged to. Main axis for org/team-level rollups.',
+      },
+      {
+        name: 'region',
+        label: 'Region',
+        field: 'region',
+        description: 'AWS region where the resource ran. Useful for spotting unintended multi-region sprawl.',
+      },
+      {
+        name: 'service',
+        label: 'Service',
+        field: 'service',
+        description: "AWS service code (EC2, S3, RDS, etc.) — the broadest \"what cost me this?\" view.",
+      },
+      {
+        name: 'service_family',
+        label: 'Service Family',
+        field: 'service_family',
+        description: 'Higher-level product category (Compute, Storage, Database). Good for exec summaries.',
+      },
+      {
+        name: 'line_item_type',
+        label: 'Line Item Type',
+        field: 'line_item_type',
+        description: 'Usage vs Tax vs Credit vs Discount. Filter this to isolate real usage from billing adjustments.',
+      },
+      {
+        name: 'usage_type',
+        label: 'Usage Type',
+        field: 'usage_type',
+        description: 'Fine-grained usage string like USE2-BoxUsage:t3.medium. Use for instance/storage-tier breakdowns.',
+        enabled: false,
+      },
+      {
+        name: 'operation',
+        label: 'Operation',
+        field: 'operation',
+        description: 'API operation billed for (RunInstances, GetObject). Useful for API-level cost attribution.',
+        enabled: false,
+      },
     ];
 
     const tagDimensions = (wizardConfig.tags ?? []).map(t => ({

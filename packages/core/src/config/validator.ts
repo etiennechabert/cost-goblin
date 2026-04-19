@@ -123,12 +123,36 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
     assertString(dim['field'], `${ctx}.field`);
     const displayField = dim['displayField'] !== undefined ? (assertString(dim['displayField'], `${ctx}.displayField`), dim['displayField']) : undefined;
     const enabled = dim['enabled'] === false ? false : undefined;
+    const description = dim['description'] !== undefined ? (assertString(dim['description'], `${ctx}.description`), dim['description']) : undefined;
+    const normalize = dim['normalize'] !== undefined ? (() => {
+      assertString(dim['normalize'], `${ctx}.normalize`);
+      if (!isValidNormalizationRule(dim['normalize'])) {
+        throw new ConfigValidationError(`${ctx}.normalize must be 'lowercase', 'uppercase', 'lowercase-kebab', 'lowercase-underscore', or 'camelCase'`);
+      }
+      return dim['normalize'];
+    })() : undefined;
+    let aliases: Record<string, string[]> | undefined;
+    if (dim['aliases'] !== undefined) {
+      assertObject(dim['aliases'], `${ctx}.aliases`);
+      const aliasObj = dim['aliases'];
+      aliases = {};
+      for (const [key, value] of Object.entries(aliasObj)) {
+        assertArray(value, `${ctx}.aliases.${key}`);
+        aliases[key] = value.map((v, j) => {
+          assertString(v, `${ctx}.aliases.${key}[${String(j)}]`);
+          return v;
+        });
+      }
+    }
     return {
       name: asDimensionId(dim['name']),
       label: dim['label'],
       field: dim['field'],
       ...(displayField !== undefined ? { displayField } : {}),
       ...(enabled === false ? { enabled } : {}),
+      ...(description !== undefined ? { description } : {}),
+      ...(normalize !== undefined ? { normalize } : {}),
+      ...(aliases !== undefined ? { aliases } : {}),
     };
   });
 
