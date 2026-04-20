@@ -25,12 +25,19 @@ export function DataManagement() {
   const [hourlySyncState, setHourlySyncState] = useState<SyncState>({ status: 'idle' });
   const [costOptSyncState, setCostOptSyncState] = useState<SyncState>({ status: 'idle' });
   const autoSyncQuery = useQuery(() => api.getAutoSyncEnabled(), []);
+  const autoSyncIntervalQuery = useQuery(() => api.getAutoSyncIntervalMinutes(), []);
   const [autoSync, setAutoSync] = useState(false);
   const [autoSyncLoaded, setAutoSyncLoaded] = useState(false);
+  const [autoSyncInterval, setAutoSyncIntervalState] = useState(24 * 60);
+  const [autoSyncIntervalLoaded, setAutoSyncIntervalLoaded] = useState(false);
 
   if (!autoSyncLoaded && autoSyncQuery.status === 'success') {
     setAutoSyncLoaded(true);
     setAutoSync(autoSyncQuery.data);
+  }
+  if (!autoSyncIntervalLoaded && autoSyncIntervalQuery.status === 'success') {
+    setAutoSyncIntervalLoaded(true);
+    setAutoSyncIntervalState(autoSyncIntervalQuery.data);
   }
   const [showDeleteAll, setShowDeleteAll] = useState(false);
   const [configureSource, setConfigureSource] = useState<'daily' | 'hourly' | 'costOptimization' | null>(null);
@@ -368,6 +375,25 @@ export function DataManagement() {
             >
               <span className={['absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', autoSync ? 'translate-x-4' : 'translate-x-0'].join(' ')} />
             </button>
+            <select
+              value={String(autoSyncInterval)}
+              disabled={!autoSync}
+              onChange={e => {
+                const next = Number(e.target.value);
+                setAutoSyncIntervalState(next);
+                void api.setAutoSyncIntervalMinutes(next);
+              }}
+              title="How often auto-sync runs. Keep this at least a day unless you're debugging — each run hits S3."
+              className="rounded-md border border-border bg-bg-tertiary/50 px-2 py-1 text-xs text-text-secondary disabled:opacity-40"
+            >
+              <option value="60">Every hour</option>
+              <option value="180">Every 3 hours</option>
+              <option value="360">Every 6 hours</option>
+              <option value="720">Every 12 hours</option>
+              <option value="1440">Once a day</option>
+              <option value="4320">Every 3 days</option>
+              <option value="10080">Once a week</option>
+            </select>
           </div>
           <button
             type="button"

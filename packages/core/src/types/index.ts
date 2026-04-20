@@ -89,3 +89,20 @@ export type {
   CostScopeSampleRow,
 } from './cost-scope.js';
 export { COST_METRICS, COST_PERSPECTIVES } from './cost-scope.js';
+
+export type {
+  ExplorerFilterMap,
+  ExplorerSort,
+  ExplorerSortDirection,
+  ExplorerBaseParams,
+  ExplorerOverviewParams,
+  ExplorerRowsParams,
+  ExplorerDailyRow,
+  ExplorerSampleRow,
+  ExplorerOverviewResult,
+  ExplorerRowsResult,
+  ExplorerTagColumn,
+  ExplorerFilterValue,
+  ExplorerFilterValuesParams,
+  ExplorerPreferences,
+} from './explorer.js';

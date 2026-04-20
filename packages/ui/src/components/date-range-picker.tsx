@@ -30,13 +30,17 @@ interface DateRangePickerProps {
   value: DateRange;
   granularity: Granularity;
   onChange: (range: DateRange, granularity: Granularity) => void;
+  /** Hide the "Hourly" preset row. Used by views that only query the
+   *  daily tier (Explorer), where offering hourly presets would lead to
+   *  empty result sets. */
+  hideHourly?: boolean;
 }
 
 export function getDefaultDateRange(): DateRange {
   return { start: daysAgo(31), end: daysAgo(1) };
 }
 
-export function DateRangePicker({ value, granularity, onChange }: DateRangePickerProps) {
+export function DateRangePicker({ value, granularity, onChange, hideHourly }: DateRangePickerProps) {
   const [showCustom, setShowCustom] = useState(false);
   const yesterday = daysAgo(1);
 
@@ -91,6 +95,7 @@ export function DateRangePicker({ value, granularity, onChange }: DateRangePicke
       </div>
 
       {/* Hourly row */}
+      {hideHourly !== true && (
       <div className="flex items-center gap-0.5 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
         <span className="text-[10px] text-text-muted px-1.5">Hourly</span>
         {HOURLY_PRESETS.map(preset => (
@@ -109,6 +114,7 @@ export function DateRangePicker({ value, granularity, onChange }: DateRangePicke
           </button>
         ))}
       </div>
+      )}
 
       {/* Custom date inputs */}
       {showCustom && (

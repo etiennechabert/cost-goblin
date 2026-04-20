@@ -24,6 +24,9 @@ import type {
   CostScopeCapabilities,
   CostScopeConfig,
   CostScopePreviewResult,
+  ExplorerFilterValue,
+  ExplorerOverviewResult,
+  ExplorerRowsResult,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE } from '@costgoblin/core/browser';
 
@@ -262,6 +265,8 @@ export class MockCostApi implements CostApi {
   saveDimensionsConfig(): Promise<void> { return Promise.resolve(); }
   getAutoSyncEnabled(): Promise<boolean> { return Promise.resolve(false); }
   setAutoSyncEnabled(): Promise<void> { return Promise.resolve(); }
+  getAutoSyncIntervalMinutes(): Promise<number> { return Promise.resolve(24 * 60); }
+  setAutoSyncIntervalMinutes(): Promise<void> { return Promise.resolve(); }
   getAutoSyncStatus(): Promise<{ state: 'disabled' }> { return Promise.resolve({ state: 'disabled' }); }
   getViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
   saveViewsConfig(): Promise<void> { return Promise.resolve(); }
@@ -288,6 +293,60 @@ export class MockCostApi implements CostApi {
     return Promise.resolve({ hasEffectiveCostColumns: true, hasBlendedColumn: true, hasNetColumns: true });
   }
   revealCostScopeFolder(): Promise<void> { return Promise.resolve(); }
+  queryExplorerOverview(): Promise<ExplorerOverviewResult> {
+    const today = new Date();
+    const end = today.toISOString().slice(0, 10);
+    const start = new Date(today.getTime() - 29 * 86400_000).toISOString().slice(0, 10);
+    const dailyTotals = Array.from({ length: 30 }, (_, i) => {
+      const d = new Date(today.getTime() - (29 - i) * 86400_000);
+      return {
+        date: d.toISOString().slice(0, 10),
+        cost: 3_500 + Math.sin(i / 3) * 400 + Math.random() * 300,
+        rows: 1_800 + Math.floor(Math.random() * 400),
+      };
+    });
+    return Promise.resolve({
+      windowDays: 30,
+      startDate: start,
+      endDate: end,
+      dailyTotals,
+      totalRows: 54_012,
+      totalCost: dailyTotals.reduce((s, d) => s + d.cost, 0),
+      tagColumns: [
+        { id: 'tag_team', label: 'Team' },
+        { id: 'tag_env', label: 'Environment' },
+      ],
+    });
+  }
+  queryExplorerRows(): Promise<ExplorerRowsResult> {
+    const today = new Date();
+    const end = today.toISOString().slice(0, 10);
+    const start = new Date(today.getTime() - 29 * 86400_000).toISOString().slice(0, 10);
+    const mockRows = [
+      { date: end, hour: '', accountId: '111', accountName: 'prod-main', region: 'eu-central-1', service: 'Amazon EC2', serviceFamily: 'Compute', lineItemType: 'Usage', operation: 'RunInstances', usageType: 'EUC1-BoxUsage:t3.medium', description: '$0.0464 per On Demand Linux t3.medium Instance Hour', resourceId: 'i-0abc', usageAmount: 24, cost: 1_180.5, listCost: 1_200, tags: { tag_team: 'platform', tag_env: 'prod' } },
+      { date: end, hour: '', accountId: '222', accountName: 'staging', region: 'us-east-1', service: 'Amazon RDS', serviceFamily: 'Database', lineItemType: 'Usage', operation: 'CreateDBInstance', usageType: 'RDS:db.t4g.micro', description: 'Aurora MySQL db.t4g.micro', resourceId: 'arn:rds:...', usageAmount: 12, cost: 420, listCost: 500, tags: { tag_team: 'data', tag_env: 'staging' } },
+      { date: start, hour: '', accountId: '111', accountName: 'prod-main', region: 'eu-central-1', service: 'Amazon S3', serviceFamily: 'Storage', lineItemType: 'Usage', operation: 'PutObject', usageType: 'EUC1-Requests-Tier1', description: 'PUT requests', resourceId: 'arn:s3:::...', usageAmount: 12_000, cost: 3.6, listCost: 3.6, tags: { tag_team: 'platform', tag_env: 'prod' } },
+    ];
+    return Promise.resolve({
+      sampleRows: mockRows,
+      tagColumns: [
+        { id: 'tag_team', label: 'Team' },
+        { id: 'tag_env', label: 'Environment' },
+      ],
+    });
+  }
+  getExplorerFilterValues(): Promise<ExplorerFilterValue[]> {
+    return Promise.resolve([
+      { value: 'Amazon EC2', label: 'Amazon EC2', cost: 18_000, rows: 8_400 },
+      { value: 'Amazon RDS', label: 'Amazon RDS', cost: 9_500, rows: 3_200 },
+      { value: 'Amazon S3', label: 'Amazon S3', cost: 6_200, rows: 12_800 },
+      { value: 'AWS Lambda', label: 'AWS Lambda', cost: 4_100, rows: 1_200 },
+    ]);
+  }
+  getExplorerPreferences(): Promise<{ hiddenColumns: readonly string[]; columnOrder: readonly string[] }> {
+    return Promise.resolve({ hiddenColumns: [], columnOrder: [] });
+  }
+  saveExplorerPreferences(): Promise<void> { return Promise.resolve(); }
 }
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {

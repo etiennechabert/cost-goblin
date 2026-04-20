@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronUp, ChevronDown, GripVertical } from 'lucide-react';
 import type { BuiltInDimension, DimensionsConfig, TagDimension, ConceptType, NormalizationRule } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { useQuery } from '../hooks/use-query.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
@@ -122,6 +123,7 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
   const initialRef = useRef(dim.editing);
   const [discardConfirm, setDiscardConfirm] = useState(false);
   const isDirty = JSON.stringify(state) !== JSON.stringify(initialRef.current);
+  useUnsavedChanges(isDirty, 'Dimension editor');
   function requestCancel(): void {
     if (isDirty) setDiscardConfirm(true);
     else onCancel();
@@ -524,6 +526,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   const initialRef = useRef(tag);
   const [discardConfirm, setDiscardConfirm] = useState(false);
   const isDirty = JSON.stringify(state) !== JSON.stringify(initialRef.current);
+  useUnsavedChanges(isDirty, 'Tag editor');
   function requestCancel(): void {
     if (isDirty) setDiscardConfirm(true);
     else onCancel();

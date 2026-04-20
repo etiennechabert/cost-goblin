@@ -7,6 +7,8 @@ import {
   getAutoSyncStatus,
   readAutoSyncEnabled,
   writeAutoSyncEnabled,
+  readAutoSyncIntervalMinutes,
+  writeAutoSyncIntervalMinutes,
 } from '../auto-sync.js';
 import type { AppContext } from './context.js';
 
@@ -75,11 +77,30 @@ export function registerAutoSyncHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('auto-sync:set-enabled', async (_event, enabled: boolean): Promise<void> => {
-    await writeAutoSyncEnabled(await autoSyncPrefsPath(), enabled);
+    const prefsPath = await autoSyncPrefsPath();
+    await writeAutoSyncEnabled(prefsPath, enabled);
     if (enabled) {
-      startAutoSync(buildAutoSyncDeps(), 60);
+      const minutes = await readAutoSyncIntervalMinutes(prefsPath);
+      startAutoSync(buildAutoSyncDeps(), minutes);
     } else {
       stopAutoSync();
+    }
+  });
+
+  ipcMain.handle('auto-sync:get-interval', async (): Promise<number> => {
+    return readAutoSyncIntervalMinutes(await autoSyncPrefsPath());
+  });
+
+  ipcMain.handle('auto-sync:set-interval', async (_event, minutes: number): Promise<void> => {
+    const prefsPath = await autoSyncPrefsPath();
+    await writeAutoSyncIntervalMinutes(prefsPath, minutes);
+    // Only restart the scheduler if auto-sync is actually on — otherwise
+    // saving the preference is enough; the new interval will be picked up
+    // next time the user flips the toggle.
+    const enabled = await readAutoSyncEnabled(prefsPath);
+    if (enabled) {
+      const stored = await readAutoSyncIntervalMinutes(prefsPath);
+      startAutoSync(buildAutoSyncDeps(), stored);
     }
   });
 
@@ -91,7 +112,8 @@ export function registerAutoSyncHandlers(app: AppContext): void {
   void autoSyncPrefsPath().then(async (prefsPath) => {
     const enabled = await readAutoSyncEnabled(prefsPath);
     if (enabled) {
-      startAutoSync(buildAutoSyncDeps(), 60);
+      const minutes = await readAutoSyncIntervalMinutes(prefsPath);
+      startAutoSync(buildAutoSyncDeps(), minutes);
     }
   }).catch(() => { /* auto-sync startup failure is non-fatal */ });
 }

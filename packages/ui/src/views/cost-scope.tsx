@@ -14,6 +14,7 @@ import type {
 } from '@costgoblin/core/browser';
 import { BUILTIN_EXCLUSION_RULES, COST_METRICS, DEFAULT_COST_SCOPE, asDimensionId } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
@@ -586,6 +587,7 @@ export function CostScopeView(): React.JSX.Element {
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   const draftError = describeDraftError(draft);
   const canSave = dirty && draftError === null && !saving;
+  useUnsavedChanges(dirty, 'Cost Scope');
 
   useEffect(() => {
     void api.getCostScope().then(cfg => {
@@ -931,6 +933,13 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules 
     return ((result.unscopedTotalCost - result.scopedTotalCost) / result.unscopedTotalCost) * 100;
   }, [result]);
 
+  // The handler returns a zero-filled result when there are no periods on
+  // disk — showing "$0.00 · 0.0% excluded" in that state looks like a
+  // real answer. Collapse both "no result yet" and "handler returned
+  // zeros" into a single "no data" rendering that matches the histogram.
+  const hasData = result !== null && result.dailyTotals.length > 0;
+  const placeholder = loading ? '…' : '—';
+
   return (
     <Card data-testid="cost-scope-preview" className="shadow-lg @container">
       <CardHeader className="pb-3">
@@ -953,19 +962,19 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules 
         <div className="grid grid-cols-1 @md:grid-cols-3 gap-2">
           <SummaryTile
             label="Unscoped total"
-            value={result !== null ? formatDollars(result.unscopedTotalCost) : loading ? '…' : '—'}
+            value={hasData ? formatDollars(result.unscopedTotalCost) : placeholder}
             hint={`Raw ${metricLabel.toLowerCase()} over the window`}
           />
           <SummaryTile
             label="After scope"
-            value={result !== null ? formatDollars(result.scopedTotalCost) : loading ? '…' : '—'}
-            hint={hasEnabledRules ? `${excludedPct.toFixed(1)}% excluded` : 'No rules enabled'}
+            value={hasData ? formatDollars(result.scopedTotalCost) : placeholder}
+            hint={!hasData ? '' : hasEnabledRules ? `${excludedPct.toFixed(1)}% excluded` : 'No rules enabled'}
             emphasis
           />
           <SummaryTile
             label="Excluded"
-            value={hasEnabledRules ? combinedText : '—'}
-            hint={hasEnabledRules ? 'Union of enabled rules' : 'Toggle a rule'}
+            value={hasData && hasEnabledRules ? combinedText : placeholder}
+            hint={!hasData ? '' : hasEnabledRules ? 'Union of enabled rules' : 'Toggle a rule'}
           />
         </div>
 

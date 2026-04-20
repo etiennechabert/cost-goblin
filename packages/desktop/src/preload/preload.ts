@@ -32,6 +32,13 @@ import type {
   CostScopeCapabilities,
   CostScopeConfig,
   CostScopePreviewResult,
+  ExplorerFilterValue,
+  ExplorerFilterValuesParams,
+  ExplorerOverviewParams,
+  ExplorerOverviewResult,
+  ExplorerPreferences,
+  ExplorerRowsParams,
+  ExplorerRowsResult,
 } from '@costgoblin/core';
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -177,6 +184,12 @@ const api: CostApi = {
   setAutoSyncEnabled(enabled: boolean): Promise<void> {
     return invoke<undefined>('auto-sync:set-enabled', enabled).then(() => undefined);
   },
+  getAutoSyncIntervalMinutes(): Promise<number> {
+    return invoke<number>('auto-sync:get-interval');
+  },
+  setAutoSyncIntervalMinutes(minutes: number): Promise<void> {
+    return invoke<undefined>('auto-sync:set-interval', minutes).then(() => undefined);
+  },
   getAutoSyncStatus(): Promise<AutoSyncStatus> {
     return invoke<AutoSyncStatus>('auto-sync:get-status');
   },
@@ -206,6 +219,21 @@ const api: CostApi = {
   },
   revealCostScopeFolder(): Promise<void> {
     return invoke<undefined>('cost-scope:reveal-folder').then(() => undefined);
+  },
+  queryExplorerOverview(params: ExplorerOverviewParams): Promise<ExplorerOverviewResult> {
+    return invoke<ExplorerOverviewResult>('explorer:query-overview', params);
+  },
+  queryExplorerRows(params: ExplorerRowsParams): Promise<ExplorerRowsResult> {
+    return invoke<ExplorerRowsResult>('explorer:query-rows', params);
+  },
+  getExplorerFilterValues(params: ExplorerFilterValuesParams): Promise<ExplorerFilterValue[]> {
+    return invoke<ExplorerFilterValue[]>('explorer:filter-values', params);
+  },
+  getExplorerPreferences(): Promise<ExplorerPreferences> {
+    return invoke<ExplorerPreferences>('explorer:get-preferences');
+  },
+  saveExplorerPreferences(prefs: ExplorerPreferences): Promise<void> {
+    return invoke<undefined>('explorer:save-preferences', prefs).then(() => undefined);
   },
 };
 
