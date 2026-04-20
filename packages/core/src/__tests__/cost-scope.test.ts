@@ -34,7 +34,7 @@ const baseParams = {
 };
 
 function buildQuery(costScope?: CostScopeConfig): string {
-  return buildCostQuery(baseParams, '/data', dimensions, 5, undefined, undefined, undefined, costScope);
+  return buildCostQuery(baseParams, '/data', dimensions, 5, undefined, undefined, costScope);
 }
 
 describe('cost metric column selection', () => {
@@ -73,7 +73,6 @@ describe('cost metric column selection', () => {
       5,
       undefined,
       undefined,
-      undefined,
       { costMetric: 'unblended', costPerspective: 'net', rules: [] },
       new Set(['line_item_unblended_cost', 'line_item_net_unblended_cost']),
     );
@@ -91,7 +90,6 @@ describe('cost metric column selection', () => {
       5,
       undefined,
       undefined,
-      undefined,
       { costMetric: 'unblended', costPerspective: 'net', rules: [] },
       new Set(['line_item_unblended_cost']),
     );
@@ -105,7 +103,6 @@ describe('cost metric column selection', () => {
       '/data',
       dimensions,
       5,
-      undefined,
       undefined,
       undefined,
       { costMetric: 'amortized', costPerspective: 'net', rules: [] },
@@ -127,7 +124,6 @@ describe('cost metric column selection', () => {
       '/data',
       dimensions,
       5,
-      undefined,
       undefined,
       undefined,
       { costMetric: 'amortized', costPerspective: 'net', rules: [] },
@@ -223,7 +219,6 @@ describe('exclusion clauses', () => {
       5,
       undefined,
       undefined,
-      undefined,
       {
         costMetric: 'unblended',
         rules: [
@@ -314,7 +309,6 @@ describe('exclusion clauses', () => {
       5,
       undefined,
       undefined,
-      undefined,
       {
         costMetric: 'unblended',
         rules: [
@@ -364,7 +358,6 @@ describe('buildDailyCostsQuery with costScope', () => {
       { ...baseParams, granularity: 'daily' },
       '/data',
       dimensions,
-      undefined,
       undefined,
       undefined,
       {
