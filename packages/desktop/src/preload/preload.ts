@@ -29,6 +29,9 @@ import type {
   FileActivityEvent,
   OptimizeStatus,
   ViewsConfig,
+  CostScopeCapabilities,
+  CostScopeConfig,
+  CostScopePreviewResult,
 } from '@costgoblin/core';
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -66,8 +69,8 @@ const api: CostApi = {
   getOrgTree(): Promise<OrgNode[]> {
     return invoke<OrgNode[]>('config:org-tree');
   },
-  getFilterValues(dimensionId: string, filters: Record<string, string>, dateRange?: { start: string; end: string }): Promise<{ value: string; label: string; count: number }[]> {
-    return invoke<{ value: string; label: string; count: number }[]>('query:filter-values', dimensionId, filters, dateRange);
+  getFilterValues(dimensionId: string, filters: Record<string, string>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }): Promise<{ value: string; label: string; count: number }[]> {
+    return invoke<{ value: string; label: string; count: number }[]>('query:filter-values', dimensionId, filters, dateRange, opts);
   },
   getDataInventory(tier?: DataTier): Promise<DataInventoryResult> {
     return invoke<DataInventoryResult>('data:inventory', tier);
@@ -188,6 +191,21 @@ const api: CostApi = {
   },
   revealViewsFolder(): Promise<void> {
     return invoke<undefined>('views:reveal-folder').then(() => undefined);
+  },
+  getCostScope(): Promise<CostScopeConfig> {
+    return invoke<CostScopeConfig>('cost-scope:get-config');
+  },
+  saveCostScope(config: CostScopeConfig): Promise<void> {
+    return invoke<undefined>('cost-scope:save-config', config).then(() => undefined);
+  },
+  previewCostScope(config: CostScopeConfig): Promise<CostScopePreviewResult> {
+    return invoke<CostScopePreviewResult>('cost-scope:preview', config);
+  },
+  getCostScopeCapabilities(): Promise<CostScopeCapabilities> {
+    return invoke<CostScopeCapabilities>('cost-scope:get-capabilities');
+  },
+  revealCostScopeFolder(): Promise<void> {
+    return invoke<undefined>('cost-scope:reveal-folder').then(() => undefined);
   },
 };
 

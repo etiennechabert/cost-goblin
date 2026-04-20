@@ -69,6 +69,7 @@ async function createWindow(db: DuckDBClient): Promise<void> {
     dimensionsPath: resolveConfigPath(configBase, 'dimensions'),
     orgTreePath: resolveConfigPath(configBase, 'org-tree'),
     viewsPath: resolveConfigPath(configBase, 'views'),
+    costScopePath: resolveConfigPath(configBase, 'cost-scope'),
     dataDir,
   });
 
