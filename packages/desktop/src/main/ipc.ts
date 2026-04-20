@@ -1,4 +1,3 @@
-import { logger } from '@costgoblin/core';
 import { createAppContext, type IpcContext } from './handlers/context.js';
 import { registerQueryHandlers } from './handlers/query.js';
 import { registerSyncHandlers } from './handlers/sync.js';
@@ -12,7 +11,6 @@ import { registerAutoSyncHandlers } from './handlers/auto-sync.js';
 import { registerViewsHandlers } from './handlers/views.js';
 import { registerCostScopeHandlers } from './handlers/cost-scope.js';
 import { registerExplorerHandlers } from './handlers/explorer.js';
-import { enqueueStartupMigration } from './startup-migrate.js';
 
 export type { IpcContext };
 
@@ -30,14 +28,4 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   registerViewsHandlers(app);
   registerCostScopeHandlers(app);
   registerExplorerHandlers(app);
-
-  // Kick off background optimization for any raw files that aren't yet
-  // sorted + sidecar'd. Idempotent — skips already-optimized files. Runs in
-  // parallel with queries (queries fall back to element_at meanwhile).
-  void app.getDimensions()
-    .then(dims => enqueueStartupMigration(ctx.dataDir, dims.tags, app.optimizeQueue))
-    .catch((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      logger.warn(`startup migration skipped: ${message}`);
-    });
 }
