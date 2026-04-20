@@ -29,7 +29,7 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
     case 'summary':
       return { ...common, type: w.type, ...(w.metric !== undefined ? { metric: w.metric } : {}) };
     case 'pie':
-      return { ...common, type: w.type, groupBy: w.groupBy, ...(w.drillable !== undefined ? { drillable: w.drillable } : {}) };
+      return { ...common, type: w.type, groupBy: w.groupBy };
     case 'stackedBar':
     case 'bubble':
       return { ...common, type: w.type, groupBy: w.groupBy };

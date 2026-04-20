@@ -34,7 +34,6 @@ export type WidgetSpec =
   | (WidgetBase & {
       readonly type: 'pie';
       readonly groupBy: DimensionId;
-      readonly drillable?: boolean | undefined;
     })
   | (WidgetBase & {
       readonly type: 'stackedBar';
