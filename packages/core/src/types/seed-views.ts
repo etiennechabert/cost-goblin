@@ -20,7 +20,7 @@ export const OVERVIEW_SEED_VIEW: ViewSpec = {
       widgets: [
         { id: 'overview-pie-account', type: 'pie', size: 'medium', groupBy: asDimensionId('account') },
         { id: 'overview-pie-region', type: 'pie', size: 'medium', groupBy: asDimensionId('region') },
-        { id: 'overview-pie-service', type: 'pie', size: 'medium', groupBy: asDimensionId('service'), drillable: true },
+        { id: 'overview-pie-service', type: 'pie', size: 'medium', groupBy: asDimensionId('service') },
       ],
     },
     {

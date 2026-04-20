@@ -333,7 +333,7 @@ builtIn:
     field: service_family
 
 # Map your CUR resource tags below.
-# tagName: the tag key in your CUR (without the "user_" prefix)
+# tagName: the tag key in your CUR (with or without the "user_" prefix)
 # concept: owner | product | environment (enables special UI features)
 tags: []
   # Example:
