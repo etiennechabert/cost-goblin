@@ -7,6 +7,7 @@ import type {
   WidgetSpec,
 } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { useQuery } from '../hooks/use-query.js';
 import { CustomView } from './custom-view.js';
 import { WidgetInspector } from '../components/widget-inspector.js';
@@ -67,6 +68,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
     dirty: false,
   });
   const [saving, setSaving] = useState(false);
+  useUnsavedChanges(state.dirty, 'Views');
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<{ mode: 'export' | 'import' } | null>(null);
 

@@ -38,6 +38,12 @@ const DEFAULT_BUILT_INS: readonly BuiltInDimension[] = [
   { name: asDimensionId('line_item_type'), label: 'Line Item Type', field: 'line_item_type', description: 'Usage vs Tax vs Credit vs Discount. Filter this to isolate real usage from billing adjustments.' },
   { name: asDimensionId('usage_type'), label: 'Usage Type', field: 'usage_type', description: 'Fine-grained usage string like USE2-BoxUsage:t3.medium. Use for instance/storage-tier breakdowns.', enabled: false },
   { name: asDimensionId('operation'), label: 'Operation', field: 'operation', description: 'API operation billed for (RunInstances, GetObject). Useful for API-level cost attribution.', enabled: false },
+  // Very high cardinality — disabled by default so the normal filter/nav
+  // pickers stay scannable. The Explorer references it directly so
+  // click-to-filter on a resource cell works whether or not this dim is
+  // enabled, and users who want a dedicated "per-resource" view can flip
+  // it on in Dimensions.
+  { name: asDimensionId('resource_id'), label: 'Resource', field: 'resource_id', description: 'AWS resource ID or ARN (i-0abc…, arn:aws:rds:…). High-cardinality — enable when investigating a specific resource.', enabled: false },
 ];
 
 /** Renames we want propagated to existing configs. Only overrides the stored

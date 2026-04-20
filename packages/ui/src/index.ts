@@ -7,6 +7,7 @@ export { cn } from './lib/utils.js';
 
 export { useCostApi, CostApiProvider } from './hooks/use-cost-api.js';
 export { useQuery } from './hooks/use-query.js';
+export { UnsavedChangesProvider, useUnsavedChanges, useConfirmLeave } from './hooks/use-unsaved-changes.js';
 
 export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/card.js';
 export { Button, buttonVariants } from './components/ui/button.js';
@@ -22,6 +23,7 @@ export { SyncStatusIndicator } from './components/sync-status.js';
 export { SyncActivityIndicator } from './components/sync-activity-indicator.js';
 export { formatDollars, formatPercent, formatDate } from './components/format.js';
 export { FilterBar } from './components/filter-bar.js';
+export { DateRangePicker, getDefaultDateRange } from './components/date-range-picker.js';
 export { EnvironmentBar } from './components/environment-bar.js';
 export { SummaryCard } from './components/summary-card.js';
 export { DimensionSelector } from './components/dimension-selector.js';
@@ -51,6 +53,7 @@ export { EntityDetail } from './views/entity-detail.js';
 export { DataManagement } from './views/data-management.js';
 export { DimensionsView } from './views/dimensions.js';
 export { CostScopeView } from './views/cost-scope.js';
+export { ExplorerView } from './views/explorer.js';
 export { SetupWizard } from './views/setup-wizard.js';
 
 export { getDimensionId, isTagDimension, isEnvironmentDimension, isOwnerDimension, isProductDimension } from './lib/dimensions.js';

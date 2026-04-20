@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, CostApiProvider, SetupWizard, ErrorBoundary, SyncActivityIndicator, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, SyncActivityIndicator, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave } from '@costgoblin/ui';
 import type { CostApi, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
 
 function getApi(): CostApi {
@@ -12,6 +12,7 @@ type View =
   | { page: 'trends' }
   | { page: 'missing-tags' }
   | { page: 'savings' }
+  | { page: 'explorer' }
   | { page: 'dimensions' }
   | { page: 'cost-scope' }
   | { page: 'views-editor' }
@@ -22,6 +23,7 @@ const STATIC_LEFT_NAV: { id: string; label: string }[] = [
   { id: 'trends', label: 'Trends' },
   { id: 'missing-tags', label: 'Missing Tags' },
   { id: 'savings', label: 'Savings' },
+  { id: 'explorer', label: 'Explorer' },
 ];
 
 const RIGHT_NAV: { id: string; label: string }[] = [
@@ -62,13 +64,34 @@ type SetupCheck =
 
 const FALLBACK_VIEWS: ViewsConfig = { views: [OVERVIEW_SEED_VIEW] };
 
+/** Top-level app shell — just establishes the context providers. All the
+ *  state + navigation lives in `AppShell` below so it can call
+ *  `useConfirmLeave()` from inside the UnsavedChangesProvider. */
 export function App(): React.JSX.Element {
   const api = getApi();
+  return (
+    <ErrorBoundary>
+      <CostApiProvider value={api}>
+        <UnsavedChangesProvider>
+          <AppShell />
+        </UnsavedChangesProvider>
+      </CostApiProvider>
+    </ErrorBoundary>
+  );
+}
+
+function AppShell(): React.JSX.Element {
+  const api = useCostApi();
+  const confirmLeave = useConfirmLeave();
   const [view, setView] = useState<View>({ page: 'custom', viewId: 'overview' });
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [isDark, setIsDark] = useState(true);
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const [viewsConfig, setViewsConfig] = useState(FALLBACK_VIEWS);
+  // Sync-health signal. Non-null whenever something AWS-side is broken —
+  // most commonly expired credentials. Surfaced as a red dot on the Sync
+  // nav button so the user notices without having to open the tab.
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   useEffect(() => {
     void api.getSetupStatus().then(({ configured }) => {
@@ -126,34 +149,70 @@ export function App(): React.JSX.Element {
       const cutoffPeriod = `${String(cutoff.getFullYear())}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
       const missing = inv.periods.filter(p => p.localStatus === 'missing' && p.period >= cutoffPeriod).length;
       setMissingPeriods(missing);
-    }).catch(() => {
-      // ignore — S3 may not be configured yet
+      setSyncError(null);
+    }).catch((err: unknown) => {
+      // Most common cause is expired AWS credentials — surface the
+      // message on the Sync nav indicator. Swallowed silently before,
+      // which left the user on a screen that looked fine while sync
+      // was completely broken.
+      const message = err instanceof Error ? err.message : String(err);
+      setSyncError(message);
     });
   }, [api, view, setupCheck]);
 
-  function handleNavClick(id: string) {
-    switch (id) {
-      case 'trends': setView({ page: 'trends' }); break;
-      case 'missing-tags': setView({ page: 'missing-tags' }); break;
-      case 'savings': setView({ page: 'savings' }); break;
-      case 'cost-scope': setView({ page: 'cost-scope' }); break;
-      case 'dimensions': setView({ page: 'dimensions' }); break;
-      case 'views-editor': setView({ page: 'views-editor' }); break;
-      case 'sync': setView({ page: 'sync' }); break;
-      default:
-        // Anything else is a custom view id (every nav left-nav entry that
-        // isn't one of the well-known static pages above).
-        setView({ page: 'custom', viewId: id });
+  // Independent auto-sync polling — catches background-sync failures
+  // even when the user isn't on the Sync tab. The inventory effect above
+  // only fires on navigation, so without this a silent auto-sync error
+  // wouldn't surface until the user happened to revisit Sync.
+  useEffect(() => {
+    if (setupCheck.status !== 'ready') return;
+    let cancelled = false;
+    async function tick(): Promise<void> {
+      try {
+        const status = await api.getAutoSyncStatus();
+        if (cancelled) return;
+        if (status.state === 'error') {
+          setSyncError(status.message);
+        } else {
+          // Only clear errors that came from auto-sync itself — don't
+          // stomp a credentials error raised by the inventory fetch.
+          setSyncError(prev => (prev !== null && prev.includes('AWS credentials') ? prev : null));
+        }
+      } catch { /* transient */ }
     }
+    void tick();
+    const timer = setInterval(() => { void tick(); }, 10_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [api, setupCheck]);
+
+  function handleNavClick(id: string) {
+    confirmLeave(() => {
+      switch (id) {
+        case 'trends': setView({ page: 'trends' }); break;
+        case 'missing-tags': setView({ page: 'missing-tags' }); break;
+        case 'savings': setView({ page: 'savings' }); break;
+        case 'explorer': setView({ page: 'explorer' }); break;
+        case 'cost-scope': setView({ page: 'cost-scope' }); break;
+        case 'dimensions': setView({ page: 'dimensions' }); break;
+        case 'views-editor': setView({ page: 'views-editor' }); break;
+        case 'sync': setView({ page: 'sync' }); break;
+        default:
+          // Anything else is a custom view id (every left-nav entry that
+          // isn't one of the well-known static pages above).
+          setView({ page: 'custom', viewId: id });
+      }
+    });
   }
 
   function handleEntityClick(entity: string, dimension: string) {
-    setView({ page: 'entity-detail', entity, dimension });
+    confirmLeave(() => { setView({ page: 'entity-detail', entity, dimension }); });
   }
 
   function handleBack() {
-    const firstId = viewsConfig.views[0]?.id ?? OVERVIEW_SEED_VIEW.id;
-    setView({ page: 'custom', viewId: firstId });
+    confirmLeave(() => {
+      const firstId = viewsConfig.views[0]?.id ?? OVERVIEW_SEED_VIEW.id;
+      setView({ page: 'custom', viewId: firstId });
+    });
   }
 
   function handleSetupComplete() {
@@ -162,19 +221,11 @@ export function App(): React.JSX.Element {
   }
 
   if (setupCheck.status === 'checking') {
-    return (
-      <CostApiProvider value={api}>
-        <div className="min-h-screen bg-bg-primary" />
-      </CostApiProvider>
-    );
+    return <div className="min-h-screen bg-bg-primary" />;
   }
 
   if (setupCheck.status === 'needs-setup') {
-    return (
-      <CostApiProvider value={api}>
-        <SetupWizard onComplete={handleSetupComplete} />
-      </CostApiProvider>
-    );
+    return <SetupWizard onComplete={handleSetupComplete} />;
   }
 
   // User-defined views populate the left nav before the static analytical
@@ -187,6 +238,7 @@ export function App(): React.JSX.Element {
     if (view.page === 'trends') return 'trends';
     if (view.page === 'missing-tags') return 'missing-tags';
     if (view.page === 'savings') return 'savings';
+    if (view.page === 'explorer') return 'explorer';
     if (view.page === 'cost-scope') return 'cost-scope';
     if (view.page === 'dimensions') return 'dimensions';
     if (view.page === 'views-editor') return 'views-editor';
@@ -200,43 +252,45 @@ export function App(): React.JSX.Element {
   }
 
   return (
-    <ErrorBoundary>
-    <CostApiProvider value={api}>
-      <div className="min-h-screen bg-bg-primary text-text-primary">
-        {/* Title bar + nav */}
-        <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border">
-          <div className="h-10 flex items-center justify-center gap-2 px-4 [-webkit-app-region:drag]">
-            <img src="goblin.png" alt="" className="h-7 w-7 object-contain" />
-            <span className="text-sm font-bold text-accent tracking-wider">CostGoblin</span>
-          </div>
-          <nav className="flex items-center justify-between px-4 pb-2">
-            <div className="flex items-center gap-1">
-              {leftNav.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => { handleNavClick(item.id); }}
-                  className={[
-                    'px-3 py-1.5 text-sm font-medium rounded-md transition-colors [-webkit-app-region:no-drag]',
-                    active === item.id
-                      ? 'bg-bg-tertiary text-text-primary'
-                      : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
-                  ].join(' ')}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-1 [-webkit-app-region:no-drag]">
+    <div className="min-h-screen bg-bg-primary text-text-primary">
+      {/* Title bar + nav */}
+      <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border">
+        <div className="h-10 flex items-center justify-center gap-2 px-4 [-webkit-app-region:drag]">
+          <img src="goblin.png" alt="" className="h-7 w-7 object-contain" />
+          <span className="text-sm font-bold text-accent tracking-wider">CostGoblin</span>
+        </div>
+        <nav className="flex items-center justify-between px-4 pb-2">
+          <div className="flex items-center gap-1">
+            {leftNav.map((item) => (
               <button
+                key={item.id}
                 type="button"
-                onClick={handleToggleTheme}
-                className="rounded-md p-1.5 text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
-                aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+                onClick={() => { handleNavClick(item.id); }}
+                className={[
+                  'px-3 py-1.5 text-sm font-medium rounded-md transition-colors [-webkit-app-region:no-drag]',
+                  active === item.id
+                    ? 'bg-bg-tertiary text-text-primary'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
+                ].join(' ')}
               >
-                {isDark ? <SunIcon /> : <MoonIcon />}
+                {item.label}
               </button>
-              {RIGHT_NAV.map((item) => (
+            ))}
+          </div>
+          <div className="flex items-center gap-1 [-webkit-app-region:no-drag]">
+            <button
+              type="button"
+              onClick={handleToggleTheme}
+              className="rounded-md p-1.5 text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
+              aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {isDark ? <SunIcon /> : <MoonIcon />}
+            </button>
+            {RIGHT_NAV.map((item) => {
+              const isSync = item.id === 'sync';
+              const showError = isSync && syncError !== null;
+              const showMissing = isSync && !showError && missingPeriods > 0 && view.page !== 'sync';
+              return (
                 <button
                   key={item.id}
                   type="button"
@@ -246,44 +300,54 @@ export function App(): React.JSX.Element {
                     active === item.id
                       ? 'bg-bg-tertiary text-text-primary'
                       : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
+                    showError ? 'ring-1 ring-negative/60' : '',
                   ].join(' ')}
+                  title={syncError !== null ? `Sync error — ${syncError}` : undefined}
                 >
+                  {showError && (
+                    <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-negative animate-pulse" aria-label="sync error" />
+                  )}
                   {item.label}
-                  {item.id === 'sync' && <SyncActivityIndicator />}
-                  {item.id === 'sync' && missingPeriods > 0 && view.page !== 'sync' && (
+                  {isSync && <SyncActivityIndicator />}
+                  {showError && (
+                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-negative px-1 text-[10px] font-bold text-white">
+                      !
+                    </span>
+                  )}
+                  {showMissing && (
                     <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-bg-primary">
                       {String(missingPeriods)}
                     </span>
                   )}
                 </button>
-              ))}
-            </div>
-          </nav>
-        </div>
-
-        {/* View content */}
-        {view.page === 'custom' && (() => {
-          const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
-          return <CustomView spec={spec} headerSubtitle="Cloud spending visibility" onEntityClick={handleEntityClick} />;
-        })()}
-        {view.page === 'trends' && <CostTrends onEntityClick={handleEntityClick} />}
-        {view.page === 'missing-tags' && <MissingTags />}
-        {view.page === 'savings' && <Savings />}
-        {view.page === 'cost-scope' && <CostScopeView />}
-        {view.page === 'dimensions' && <DimensionsView />}
-        {view.page === 'views-editor' && <ViewsEditor onConfigPersisted={setViewsConfig} />}
-        <div className={view.page === 'sync' ? '' : 'hidden'}>
-          <DataManagement />
-        </div>
-        {view.page === 'entity-detail' && (
-          <EntityDetail
-            entity={view.entity}
-            dimension={view.dimension}
-            onBack={handleBack}
-          />
-        )}
+              );
+            })}
+          </div>
+        </nav>
       </div>
-    </CostApiProvider>
-    </ErrorBoundary>
+
+      {/* View content */}
+      {view.page === 'custom' && (() => {
+        const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
+        return <CustomView spec={spec} headerSubtitle="Cloud spending visibility" onEntityClick={handleEntityClick} />;
+      })()}
+      {view.page === 'trends' && <CostTrends onEntityClick={handleEntityClick} />}
+      {view.page === 'missing-tags' && <MissingTags />}
+      {view.page === 'savings' && <Savings />}
+      {view.page === 'explorer' && <ExplorerView />}
+      {view.page === 'cost-scope' && <CostScopeView />}
+      {view.page === 'dimensions' && <DimensionsView />}
+      {view.page === 'views-editor' && <ViewsEditor onConfigPersisted={setViewsConfig} />}
+      <div className={view.page === 'sync' ? '' : 'hidden'}>
+        <DataManagement />
+      </div>
+      {view.page === 'entity-detail' && (
+        <EntityDetail
+          entity={view.entity}
+          dimension={view.dimension}
+          onBack={handleBack}
+        />
+      )}
+    </div>
   );
 }

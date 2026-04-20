@@ -11,6 +11,7 @@ import { registerOrgHandlers } from './handlers/org.js';
 import { registerAutoSyncHandlers } from './handlers/auto-sync.js';
 import { registerViewsHandlers } from './handlers/views.js';
 import { registerCostScopeHandlers } from './handlers/cost-scope.js';
+import { registerExplorerHandlers } from './handlers/explorer.js';
 import { enqueueStartupMigration } from './startup-migrate.js';
 
 export type { IpcContext };
@@ -28,6 +29,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   registerAutoSyncHandlers(app);
   registerViewsHandlers(app);
   registerCostScopeHandlers(app);
+  registerExplorerHandlers(app);
 
   // Kick off background optimization for any raw files that aren't yet
   // sorted + sidecar'd. Idempotent — skips already-optimized files. Runs in
