@@ -28,8 +28,10 @@ export function SummaryWidget({
     [groupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
   );
 
-  const totalCost = cur.status === 'success' ? cur.data.totalCost : 0;
-  const previousCost = prev.status === 'success' ? prev.data.totalCost : undefined;
+  // `null` means "still loading / errored" — SummaryCard renders a dash
+  // placeholder rather than briefly showing $0.00.
+  const totalCost = cur.status === 'success' ? cur.data.totalCost : null;
+  const previousCost = prev.status === 'success' ? prev.data.totalCost : null;
 
   return (
     <SummaryCard totalCost={totalCost} previousCost={previousCost} dateRange={dateRange} />

@@ -1,14 +1,20 @@
 import { formatDollars, formatDate } from './format.js';
 
 interface SummaryCardProps {
-  totalCost: number;
-  previousCost?: number | undefined;
+  /** `null` means "not loaded yet" — the card renders placeholders so the
+   *  user doesn't briefly see "$0.00" before the real total lands. */
+  totalCost: number | null;
+  previousCost?: number | null | undefined;
   dateRange: { start: string; end: string };
 }
 
+const PLACEHOLDER = '—';
+
 export function SummaryCard({ totalCost, previousCost, dateRange }: Readonly<SummaryCardProps>) {
+  const hasTotal = totalCost !== null;
+  const hasPrevious = previousCost !== null && previousCost !== undefined;
   const delta =
-    previousCost !== undefined && previousCost > 0
+    hasTotal && hasPrevious && previousCost > 0
       ? ((totalCost - previousCost) / previousCost) * 100
       : null;
 
@@ -18,22 +24,24 @@ export function SummaryCard({ totalCost, previousCost, dateRange }: Readonly<Sum
   const rangeStart = new Date(dateRange.start).getTime();
   const rangeEnd = new Date(dateRange.end).getTime();
   const rangeDays = Math.max(1, Math.round((rangeEnd - rangeStart) / (24 * 60 * 60 * 1000)) + 1);
-  const dailyAvg = totalCost / rangeDays;
+  const dailyAvg = hasTotal ? totalCost / rangeDays : null;
 
   return (
     <div className="flex flex-col justify-between rounded-xl border border-border bg-bg-secondary px-6 py-5 h-full">
       <div>
         <p className="text-xs font-medium uppercase tracking-wider text-text-secondary">Total Cost</p>
         <span className="mt-2 block text-4xl font-bold tabular-nums text-text-primary">
-          {formatDollars(totalCost)}
+          {hasTotal ? formatDollars(totalCost) : PLACEHOLDER}
         </span>
       </div>
 
       <div className="flex flex-col gap-3 mt-4">
-        {delta !== null && (
+        {(delta !== null || (hasTotal && previousCost === null)) && (
           <div className="rounded-lg bg-bg-tertiary/30 px-4 py-3">
             <p className="text-xs uppercase tracking-wider text-text-muted">vs Previous Period</p>
-            {(() => {
+            {delta === null ? (
+              <p className="mt-1 text-2xl font-bold tabular-nums text-text-muted">{PLACEHOLDER}</p>
+            ) : (() => {
               const deltaColor = isIncrease ? 'text-negative' : isDecrease ? 'text-positive' : 'text-text-secondary';
               const deltaArrow = isDecrease ? '▼' : isIncrease ? '▲' : '';
               return (
@@ -43,7 +51,7 @@ export function SummaryCard({ totalCost, previousCost, dateRange }: Readonly<Sum
                 </p>
               );
             })()}
-            {previousCost !== undefined && (
+            {hasPrevious && (
               <p className="mt-0.5 text-xs text-text-muted">
                 Previous: {formatDollars(previousCost)}
               </p>
@@ -54,7 +62,7 @@ export function SummaryCard({ totalCost, previousCost, dateRange }: Readonly<Sum
         <div className="rounded-lg bg-bg-tertiary/30 px-4 py-3">
           <p className="text-xs uppercase tracking-wider text-text-muted">Daily Average</p>
           <p className="mt-1 text-lg font-semibold tabular-nums text-text-primary">
-            {formatDollars(dailyAvg)}
+            {dailyAvg === null ? PLACEHOLDER : formatDollars(dailyAvg)}
           </p>
         </div>
       </div>

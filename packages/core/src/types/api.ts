@@ -2,6 +2,15 @@ import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, Normalizatio
 import type { ViewsConfig } from './views.js';
 import type { CostScopeCapabilities, CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
 import type {
+  ExplorerFilterValue,
+  ExplorerFilterValuesParams,
+  ExplorerOverviewParams,
+  ExplorerOverviewResult,
+  ExplorerPreferences,
+  ExplorerRowsParams,
+  ExplorerRowsResult,
+} from './explorer.js';
+import type {
   CostQueryParams,
   CostResult,
   DailyCostsParams,
@@ -151,8 +160,26 @@ export interface CostApi {
    *  degraded Amortized when effective-cost columns are missing). */
   getCostScopeCapabilities(): Promise<CostScopeCapabilities>;
   revealCostScopeFolder(): Promise<void>;
+  /** Daily histogram + aggregate totals for the Explorer. Independent of
+   *  sort so the histogram doesn't re-fetch when the user reorders a
+   *  column. */
+  queryExplorerOverview(params: ExplorerOverviewParams): Promise<ExplorerOverviewResult>;
+  /** Top-|cost| sample rows under the explorer's filters + sort. Only
+   *  fires when sort / filters / range / scope changes — the overview
+   *  query handles the histogram independently. */
+  queryExplorerRows(params: ExplorerRowsParams): Promise<ExplorerRowsResult>;
+  /** Facet values for a single dim under the explorer's other filters.
+   *  Rolls the current dim out of the filter set so the dropdown shows
+   *  every value remaining under the other filters. */
+  getExplorerFilterValues(params: ExplorerFilterValuesParams): Promise<ExplorerFilterValue[]>;
+  getExplorerPreferences(): Promise<ExplorerPreferences>;
+  saveExplorerPreferences(prefs: ExplorerPreferences): Promise<void>;
   getAutoSyncEnabled(): Promise<boolean>;
   setAutoSyncEnabled(enabled: boolean): Promise<void>;
+  /** Minimum minutes between auto-sync runs. Default: 24 × 60 (one day).
+   *  Clamped server-side to [60, 7×24×60]. */
+  getAutoSyncIntervalMinutes(): Promise<number>;
+  setAutoSyncIntervalMinutes(minutes: number): Promise<void>;
   getAutoSyncStatus(): Promise<AutoSyncStatus>;
   syncOrgAccounts(profile: string): Promise<OrgSyncResult>;
   getOrgSyncResult(): Promise<OrgSyncResult | null>;
