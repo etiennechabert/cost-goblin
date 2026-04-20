@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { daysBetween } from '../lib/dates.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { StackedBarChart } from '../components/stacked-bar-chart.js';
@@ -65,9 +66,7 @@ export function StackedBarWidget({
     [specGroupBy, dateRange.start, dateRange.end, fk, granularity, api],
   );
 
-  const periodDays = Math.round(
-    (new Date(dateRange.end).getTime() - new Date(dateRange.start).getTime()) / (24 * 60 * 60 * 1000),
-  ) + 1;
+  const periodDays = daysBetween(dateRange.start, dateRange.end);
   const useWeekly = periodDays > 90;
   const barDays = useMemo(
     () => dailyToBarDays(query.status === 'success' ? query.data : null, useWeekly),

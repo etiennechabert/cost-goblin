@@ -20,6 +20,12 @@ export interface SidecarPlan {
   readonly sidecarFiles: readonly string[];
 }
 
+function assertFiniteNumber(value: number, name: string): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`Query parameter "${name}" must be a non-negative finite number, got ${String(value)}`);
+  }
+}
+
 function tagColumnNameFromTag(t: TagDimension): string {
   return `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`;
 }
@@ -305,12 +311,6 @@ export function buildSource(
   // expose usage_hour as a standard TIMESTAMP — the source column is TIMESTAMP_NS
   // (nanoseconds) in CUR and the @duckdb/node-api row converter doesn't know
   // how to serialize that variant; casting to plain TIMESTAMP fixes it.
-  // usage_date is always DATE so date-range filters work consistently across
-  // tiers (BETWEEN against a TIMESTAMP truncates 'YYYY-MM-DD' to midnight and
-  // would silently drop ~23h of rows on the end day). For hourly we additionally
-  // expose usage_hour as a standard TIMESTAMP — the source column is TIMESTAMP_NS
-  // (nanoseconds) in CUR and the @duckdb/node-api row converter doesn't know
-  // how to serialize that variant; casting to plain TIMESTAMP fixes it.
   const dateExpr = tier === 'hourly'
     ? 'line_item_usage_start_date::DATE AS usage_date,\n      line_item_usage_start_date::TIMESTAMP AS usage_hour'
     : 'line_item_usage_start_date::DATE AS usage_date';
@@ -389,6 +389,7 @@ export function buildCostQuery(
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
 ): string {
+  assertFiniteNumber(topN, 'topN');
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
   const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
@@ -464,6 +465,7 @@ export function buildTrendQuery(
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
 ): string {
+  assertFiniteNumber(Number(params.deltaThreshold), 'deltaThreshold');
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
   const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
@@ -524,7 +526,7 @@ export function buildTrendQuery(
       END AS percent_change
     FROM current_period c
     FULL OUTER JOIN previous_period p ON c.entity = p.entity
-    WHERE ABS(COALESCE(c.total_cost, 0) - COALESCE(p.total_cost, 0)) >= ${String(params.deltaThreshold)}
+    WHERE ABS(COALESCE(c.total_cost, 0) - COALESCE(p.total_cost, 0)) >= ${String(Number(params.deltaThreshold))}
     ORDER BY ABS(COALESCE(c.total_cost, 0) - COALESCE(p.total_cost, 0)) DESC
   `.trim();
 }
@@ -558,6 +560,7 @@ export function buildMissingTagsQuery(
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
 ): string {
+  assertFiniteNumber(Number(params.minCost), 'minCost');
   const tagResolved = resolveField(params.tagDimension, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
   const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
@@ -612,7 +615,7 @@ export function buildMissingTagsQuery(
     FROM resources r
     JOIN category_coverage c USING (service, service_family)
     WHERE r.has_tag = 0
-      AND r.cost >= ${String(params.minCost)}
+      AND r.cost >= ${String(Number(params.minCost))}
     ORDER BY r.cost DESC
   `.trim();
 }

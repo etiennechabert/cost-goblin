@@ -29,6 +29,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
   const [search, setSearch] = useState('');
   const [labelMap, setLabelMap] = useState<Record<string, string>>({});
   const containerRef = useRef<HTMLDivElement>(null);
+  const requestIdRef = useRef(0);
 
   const hasActiveFilters = Object.keys(filters).length > 0;
 
@@ -68,15 +69,18 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
     setDropdown({ status: 'loading' });
 
     const filtersWithoutThis = withoutFilter(dimId);
+    const thisRequestId = ++requestIdRef.current;
 
     getFilterValues(dimId, filtersWithoutThis).then(
       (values) => {
+        if (thisRequestId !== requestIdRef.current) return;
         setDropdown({
           status: 'ready',
           values: [...values].sort((a, b) => b.count - a.count),
         });
       },
       (err: unknown) => {
+        if (thisRequestId !== requestIdRef.current) return;
         setDropdown({
           status: 'error',
           error: err instanceof Error ? err : new Error(String(err)),
