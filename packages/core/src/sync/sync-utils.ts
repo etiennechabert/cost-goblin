@@ -1,4 +1,5 @@
 import { isStringRecord } from '../utils/json.js';
+import { logger } from '../logger/logger.js';
 import type { ManifestFileEntry } from './manifest.js';
 
 export type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
@@ -105,8 +106,14 @@ export function groupByPeriod(files: readonly ManifestFileEntry[]): Map<string, 
  */
 export function parseEtagsJson(raw: string): Record<string, Record<string, string>> {
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { return {}; }
-  if (!isStringRecord(parsed)) return {};
+  try { parsed = JSON.parse(raw); } catch {
+    logger.warn('Failed to parse sync-etags JSON — will re-download all files', { rawLength: raw.length });
+    return {};
+  }
+  if (!isStringRecord(parsed)) {
+    logger.warn('sync-etags JSON is not a valid object — will re-download all files');
+    return {};
+  }
 
   const result: Record<string, Record<string, string>> = {};
   for (const [period, periodEtags] of Object.entries(parsed)) {

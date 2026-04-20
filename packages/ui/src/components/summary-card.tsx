@@ -1,3 +1,4 @@
+import { daysBetween } from '../lib/dates.js';
 import { formatDollars, formatDate } from './format.js';
 
 interface SummaryCardProps {
@@ -21,9 +22,7 @@ export function SummaryCard({ totalCost, previousCost, dateRange }: Readonly<Sum
   const isDecrease = delta !== null && delta < 0;
   const isIncrease = delta !== null && delta > 0;
 
-  const rangeStart = new Date(dateRange.start).getTime();
-  const rangeEnd = new Date(dateRange.end).getTime();
-  const rangeDays = Math.max(1, Math.round((rangeEnd - rangeStart) / (24 * 60 * 60 * 1000)) + 1);
+  const rangeDays = Math.max(1, daysBetween(dateRange.start, dateRange.end));
   const dailyAvg = hasTotal ? totalCost / rangeDays : null;
 
   return (
