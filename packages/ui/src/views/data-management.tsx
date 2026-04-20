@@ -7,7 +7,6 @@ import { SetupWizard } from './setup-wizard.js';
 import { OrgAccountsSection } from './data-management-org.js';
 import { SsmParameterSection } from './data-management-ssm.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
-import { RecentFileActivity } from './recent-file-activity.js';
 
 export function DataManagement() {
   const api = useCostApi();
@@ -47,27 +46,6 @@ export function DataManagement() {
   // and the user wants to retry with a different role without redoing the
   // bucket setup.
   const [showProfileSwap, setShowProfileSwap] = useState(false);
-  const [optimizerBusy, setOptimizerBusy] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function tick(): Promise<void> {
-      try {
-        const s = await api.getOptimizeStatus();
-        // Only block deletes while workers are actually touching files.
-        // A paused optimizer with a pending queue is safe — if the user
-        // deletes a queued file, the worker will just skip it on resume.
-        if (!cancelled) setOptimizerBusy(s.running);
-      } catch { /* transient */ }
-    }
-    void tick();
-    const timer = setInterval(() => { void tick(); }, 1500);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [api]);
-
-  const deleteDisabledTitle = optimizerBusy
-    ? 'Optimizer is running — pause it on the Local optimizer panel to delete data.'
-    : undefined;
 
   const inventory: DataInventoryResult | null =
     inventoryQuery.status === 'success' ? inventoryQuery.data : null;
@@ -406,9 +384,7 @@ export function DataManagement() {
           <button
             type="button"
             onClick={() => { setShowDeleteAll(true); }}
-            disabled={optimizerBusy}
-            title={deleteDisabledTitle}
-            className="rounded-md border border-negative/50 bg-negative-muted px-3 py-1.5 text-xs font-medium text-negative hover:bg-negative-muted hover:text-negative transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="rounded-md border border-negative/50 bg-negative-muted px-3 py-1.5 text-xs font-medium text-negative hover:bg-negative-muted hover:text-negative transition-colors"
           >
             Delete All Data
           </button>
@@ -464,8 +440,7 @@ export function DataManagement() {
             syncState={dailySyncState}
             onCancelSync={() => { void api.cancelSync('daily'); setDailySyncState({ status: 'idle' }); }}
             onConfigure={() => { setConfigureSource('daily'); }}
-            deleteDisabled={optimizerBusy}
-            deleteDisabledTitle={deleteDisabledTitle}
+
           />
           <TierPanel
             title="Hourly"
@@ -486,8 +461,7 @@ export function DataManagement() {
             syncState={hourlySyncState}
             onCancelSync={() => { void api.cancelSync('hourly'); setHourlySyncState({ status: 'idle' }); }}
             onConfigure={() => { setConfigureSource('hourly'); }}
-            deleteDisabled={optimizerBusy}
-            deleteDisabledTitle={deleteDisabledTitle}
+
           />
           <TierPanel
             title="Cost Optimization"
@@ -508,13 +482,10 @@ export function DataManagement() {
             syncState={costOptSyncState}
             onCancelSync={() => { void api.cancelSync('cost-optimization'); setCostOptSyncState({ status: 'idle' }); }}
             onConfigure={() => { setConfigureSource('costOptimization'); }}
-            deleteDisabled={optimizerBusy}
-            deleteDisabledTitle={deleteDisabledTitle}
+
           />
         </div>
       )}
-
-      <RecentFileActivity />
 
       {showDeleteAll && (
         <ConfirmModal

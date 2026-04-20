@@ -5,29 +5,10 @@ import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule } from
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor } from './cost-metric.js';
 
-/**
- * When all raw files for a query's periods have fresh combined sidecars, the
- * handler builds this plan and passes it through to buildSource, which then
- * emits a single POSITIONAL JOIN instead of per-row element_at() lookups.
- *
- * `rawFiles` and `sidecarFiles` must be the same length and in matching order
- * — POSITIONAL JOIN pairs rows by position, and concatenates file reads in
- * list order, so a single misalignment breaks every subsequent row. Each
- * sidecar file is a wide Parquet with one column per configured tag dim.
- */
-export interface SidecarPlan {
-  readonly rawFiles: readonly string[];
-  readonly sidecarFiles: readonly string[];
-}
-
 function assertFiniteNumber(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new Error(`Query parameter "${name}" must be a non-negative finite number, got ${String(value)}`);
   }
-}
-
-function tagColumnNameFromTag(t: TagDimension): string {
-  return `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`;
 }
 
 /**
@@ -201,65 +182,11 @@ function buildExclusionClauses(
   return clauses;
 }
 
-function quoteList(paths: readonly string[]): string {
-  return `[${paths.map(p => `'${p}'`).join(', ')}]`;
-}
-
 /**
- * Sidecar-mode source: a single POSITIONAL JOIN against the wide combined
- * sidecar. Pairs each raw file with its sidecar by list position; the sidecar
- * holds one column per configured tag dim. Replaces per-row element_at(map, key)
- * lookups with a flat column read.
- *
- * Drops the org-accounts JOIN entirely — fallback logic was baked into each
- * sidecar column at generation time.
- */
-function buildSourceFromSidecars(tier: string, dimensions: DimensionsConfig, plan: SidecarPlan, costMetric: CostMetric, availableColumns?: ReadonlySet<string>, costPerspective?: CostPerspective): string {
-  const costExpr = costExprFor(costMetric, 'cur.', costPerspective, availableColumns);
-  const rawList = quoteList(plan.rawFiles);
-  const sidecarList = quoteList(plan.sidecarFiles);
-
-  const tagSelects = dimensions.tags.map(t => {
-    const colName = tagColumnNameFromTag(t);
-    return `side.${colName} AS ${colName}`;
-  });
-  const tagClause = tagSelects.length > 0 ? `,\n      ${tagSelects.join(',\n      ')}` : '';
-  const joinClause = dimensions.tags.length > 0
-    ? `\n      POSITIONAL JOIN read_parquet(${sidecarList}) AS side`
-    : '';
-
-  const dateExpr = tier === 'hourly'
-    ? 'line_item_usage_start_date::DATE AS usage_date,\n      line_item_usage_start_date::TIMESTAMP AS usage_hour'
-    : 'line_item_usage_start_date::DATE AS usage_date';
-
-  return `(
-    SELECT
-      ${dateExpr},
-      cur.line_item_usage_account_id AS account_id,
-      COALESCE(cur.line_item_usage_account_name, '') AS account_name,
-      COALESCE(cur.product_region_code, '') AS region,
-      COALESCE(cur.product_servicecode, '') AS service,
-      COALESCE(cur.product_product_family, '') AS service_family,
-      COALESCE(cur.line_item_line_item_description, '') AS description,
-      COALESCE(cur.line_item_resource_id, '') AS resource_id,
-      COALESCE(cur.line_item_usage_amount, 0) AS usage_amount,
-      ${costExpr} AS cost,
-      COALESCE(cur.pricing_public_on_demand_cost, 0) AS list_cost,
-      COALESCE(cur.line_item_line_item_type, '') AS line_item_type,
-      COALESCE(cur.line_item_operation, '') AS operation,
-      COALESCE(cur.line_item_usage_type, '') AS usage_type${tagClause}
-    FROM read_parquet(${rawList}) AS cur${joinClause}
-  )`;
-}
-
-/**
- * Build the Parquet source subquery. Three modes:
- *   1. sidecar mode (plan provided): POSITIONAL JOIN with pre-computed tag
- *      columns. Dramatically faster on tag-heavy queries — column scan vs
- *      per-row map lookup.
- *   2. narrowed wildcard (periods provided): read_parquet on explicit month
- *      directories. Element_at at query time, but cuts Parquet footer reads.
- *   3. full wildcard (neither): daily-*\/*.parquet. Original path.
+ * Build the Parquet source subquery. Two modes:
+ *   1. narrowed wildcard (periods provided): read_parquet on explicit month
+ *      directories. Cuts Parquet footer reads for short-window queries.
+ *   2. full wildcard (no periods): daily-*\/*.parquet. Original path.
  *
  * DuckDB errors when any glob in the list matches zero files — so callers
  * must pre-filter `periods` to months that actually exist on disk.
@@ -270,14 +197,10 @@ export function buildSource(
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
   periods?: readonly string[],
-  sidecarPlan?: SidecarPlan,
   costMetric: CostMetric = 'unblended',
   availableColumns?: ReadonlySet<string>,
   costPerspective?: CostPerspective,
 ): string {
-  if (sidecarPlan !== undefined) {
-    return buildSourceFromSidecars(tier, dimensions, sidecarPlan, costMetric, availableColumns, costPerspective);
-  }
   const hasFallbacks = dimensions.tags.some(t => t.accountTagFallback !== undefined);
   const needsOrgJoin = hasFallbacks && orgAccountsPath !== undefined;
 
@@ -384,7 +307,6 @@ export function buildCostQuery(
   topN: number = 5,
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
-  sidecarPlan?: SidecarPlan,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
@@ -397,7 +319,7 @@ export function buildCostQuery(
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const costTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, costTier, dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
+  const source = buildSource(dataDir, costTier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -460,7 +382,6 @@ export function buildTrendQuery(
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
-  sidecarPlan?: SidecarPlan,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
@@ -488,7 +409,7 @@ export function buildTrendQuery(
   const previousPeriods = computePeriodsInRange({ start: prevStartIso, end: prevEndIso });
   const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
   const periods = availablePeriods === undefined ? required : required.filter(p => availablePeriods.includes(p));
-  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
 
   const allFilterClauses = [...filterClauses, ...exclusionClauses];
   const filterWhere = allFilterClauses.length > 0 ? ` AND ${allFilterClauses.join(' AND ')}` : '';
@@ -555,7 +476,6 @@ export function buildMissingTagsQuery(
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
-  sidecarPlan?: SidecarPlan,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
@@ -567,7 +487,7 @@ export function buildMissingTagsQuery(
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
 
   // Date + user filters apply to the resource aggregation.
   const whereConditions = [
@@ -637,7 +557,6 @@ export function buildNonResourceCostQuery(
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
-  sidecarPlan?: SidecarPlan,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
@@ -647,7 +566,7 @@ export function buildNonResourceCostQuery(
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -676,7 +595,6 @@ export function buildDailyCostsQuery(
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
-  sidecarPlan?: SidecarPlan,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
@@ -688,7 +606,7 @@ export function buildDailyCostsQuery(
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const dailyTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, dailyTier, dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
+  const source = buildSource(dataDir, dailyTier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
@@ -718,7 +636,6 @@ export function buildEntityDetailQuery(
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
-  sidecarPlan?: SidecarPlan,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
@@ -731,7 +648,7 @@ export function buildEntityDetailQuery(
   const granularity = params.granularity ?? 'daily';
   const tier = granularity === 'hourly' ? 'hourly' : 'daily';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, tier, dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
+  const source = buildSource(dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
 
   // Same display-name collision treatment for the entity selector itself: if
   // the user clicked into "sre default" we need to match every underlying id,

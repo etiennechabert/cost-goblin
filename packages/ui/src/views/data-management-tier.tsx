@@ -43,15 +43,13 @@ interface TierPanelProps {
   syncState: SyncState;
   onConfigure?: (() => void) | undefined;
   onCancelSync?: (() => void) | undefined;
-  deleteDisabled?: boolean | undefined;
-  deleteDisabledTitle?: string | undefined;
 }
 
 export function TierPanel({
   title, configured, bucket, retentionDays,
   localPeriods, diskBytes, oldestPeriod, newestPeriod,
   periods, selected, onToggle, onSelectAll, onDeselectAll, onDownload, onDeletePeriod,
-  syncState, onConfigure, onCancelSync, deleteDisabled = false, deleteDisabledTitle,
+  syncState, onConfigure, onCancelSync,
 }: Readonly<TierPanelProps>) {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const missingPeriods = periods.filter(p => p.localStatus === 'missing' || p.localStatus === 'stale');
@@ -228,9 +226,7 @@ export function TierPanel({
                 <button
                   type="button"
                   onClick={() => { setPendingDelete(p.period); }}
-                  disabled={deleteDisabled}
-                  title={deleteDisabledTitle}
-                  className="text-text-muted hover:text-negative transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-text-muted"
+                  className="text-text-muted hover:text-negative transition-colors"
                 >
                   &#10005;
                 </button>

@@ -90,11 +90,6 @@ function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
     ...(loaded.order !== undefined ? { order: loaded.order } : {}),
   };
 }
-import { FileActivityLog } from '../file-activity.js';
-import { createOptimizeQueue } from '../optimize-queue.js';
-import type { OptimizeQueue } from '../optimize-queue.js';
-import { readOptimizeEnabled } from '../optimize-enabled.js';
-
 export interface IpcContext {
   readonly db: DuckDBClient;
   readonly configPath: string;
@@ -123,8 +118,6 @@ export interface AppState {
 export interface AppContext {
   readonly ctx: IpcContext;
   readonly state: AppState;
-  readonly activity: FileActivityLog;
-  readonly optimizeQueue: OptimizeQueue;
   readonly getConfig: () => Promise<CostGoblinConfig>;
   /** Raw user-facing dimensions config — used by the editor IPC handlers
    *  (the alias textarea must show ONLY user aliases, not the SSM-derived
@@ -410,24 +403,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
     return fetch;
   }
 
-  const activity = new FileActivityLog();
-  async function prefsPath(): Promise<string> {
-    const path = await import('node:path');
-    return path.join(path.dirname(ctx.dataDir), 'app-preferences.json');
-  }
-  const optimizeQueue = createOptimizeQueue({
-    client: ctx.db,
-    activity,
-    getTags: async () => (await getDimensions()).tags,
-    getOrgAccountsPath,
-    isEnabled: async () => readOptimizeEnabled(await prefsPath()),
-  });
-
   return {
     ctx,
     state,
-    activity,
-    optimizeQueue,
     getConfig,
     getDimensions,
     getQueryDimensions,

@@ -20,9 +20,7 @@ import type {
   CostScopePreviewRow,
   CostScopeSampleRow,
   DimensionsConfig,
-  SidecarPlan,
 } from '@costgoblin/core';
-import { resolveSidecarPlan } from '../optimize.js';
 import type { AppContext } from './context.js';
 import { toNum } from './query-utils.js';
 
@@ -112,20 +110,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
     const orgPath = await getOrgAccountsPath();
     const availableColumns = await getAvailableColumns('daily');
 
-    // Optimised source — positional JOIN against pre-built sidecars when
-    // every parquet file in the window has a fresh sidecar for every
-    // configured tag dim. Falls back to element_at() otherwise. The sample
-    // query is the expensive one (it materialises tag columns for up to
-    // 500 rows), so skipping element_at in favour of a column scan makes
-    // the whole preview noticeably faster for tag-heavy configs.
-    let sidecarPlan: SidecarPlan | undefined;
-    try {
-      const resolved = await resolveSidecarPlan(ctx.dataDir, 'daily', periods, dimensions.tags);
-      sidecarPlan = resolved ?? undefined;
-    } catch {
-      sidecarPlan = undefined;
-    }
-    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods, sidecarPlan, config.costMetric, availableColumns, config.costPerspective);
+    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods, config.costMetric, availableColumns, config.costPerspective);
 
     // Pre-compute each rule's positive match expression once — used to
     // build the `excluded` predicate for the main aggregate query, each
