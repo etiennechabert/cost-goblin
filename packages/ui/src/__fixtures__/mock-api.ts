@@ -361,7 +361,7 @@ const MOCK_VIEWS_CONFIG: ViewsConfig = {
           widgets: [
             { id: 'm-pie-account', type: 'pie', size: 'medium', groupBy: asDimensionId('account') },
             { id: 'm-pie-region', type: 'pie', size: 'medium', groupBy: asDimensionId('region') },
-            { id: 'm-pie-service', type: 'pie', size: 'medium', groupBy: asDimensionId('service'), drillable: true },
+            { id: 'm-pie-service', type: 'pie', size: 'medium', groupBy: asDimensionId('service') },
           ],
         },
       ],

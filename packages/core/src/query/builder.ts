@@ -205,7 +205,7 @@ export function buildSource(
   const needsOrgJoin = hasFallbacks && orgAccountsPath !== undefined;
 
   const tagSelects = dimensions.tags.map(t => {
-    const curKey = `user_${t.tagName}`;
+    const curKey = t.tagName.startsWith('user_') ? t.tagName : `user_${t.tagName}`;
     const colName = `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`;
     const tablePrefix = needsOrgJoin ? 'cur.' : '';
     const resourceExpr = `element_at(${tablePrefix}resource_tags, '${curKey}')[1]`;

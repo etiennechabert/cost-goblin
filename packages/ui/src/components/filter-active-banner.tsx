@@ -4,35 +4,16 @@ export function FilterActiveBanner() {
   const focus = useCostFocus();
   const dispatch = useCostFocusDispatch();
 
-  const hasEnvironment = focus.environment !== null;
-  const hasDrill = focus.serviceDrill.depth !== 'none';
-
-  if (!hasEnvironment && !hasDrill) return null;
+  if (focus.environment === null) return null;
 
   return (
     <div className="flex items-center justify-between rounded-lg border border-accent/30 bg-accent/5 px-4 py-3">
       <div className="flex flex-col gap-0.5 text-sm">
         <span className="font-medium text-text-primary">Filter active</span>
-        <div className="flex flex-col gap-0.5 text-text-secondary">
-          {hasDrill && (
-            <span>
-              {'Showing costs for '}
-              <strong className="text-accent">{focus.serviceDrill.service}</strong>
-              {focus.serviceDrill.depth === 'serviceFamily' && (
-                <>
-                  {' → '}
-                  <strong className="text-accent">{focus.serviceDrill.family}</strong>
-                </>
-              )}
-            </span>
-          )}
-          {hasEnvironment && (
-            <span>
-              {'Environment: '}
-              <strong className="text-accent">{focus.environment}</strong>
-            </span>
-          )}
-        </div>
+        <span className="text-text-secondary">
+          {'Environment: '}
+          <strong className="text-accent">{focus.environment}</strong>
+        </span>
       </div>
       <button
         type="button"

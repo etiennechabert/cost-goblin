@@ -18,7 +18,6 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
       return base;
     case 'pie':
       base['groupBy'] = w.groupBy;
-      if (w.drillable === true) base['drillable'] = true;
       return base;
     case 'stackedBar':
     case 'bubble':

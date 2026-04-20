@@ -16,7 +16,7 @@ describe('validateViews', () => {
               widgets: [
                 { id: 'w1', type: 'summary', size: 'small', metric: 'total' },
                 { id: 'w2', type: 'pie', size: 'medium', groupBy: 'account' },
-                { id: 'w3', type: 'pie', size: 'medium', groupBy: 'service', drillable: true },
+                { id: 'w3', type: 'pie', size: 'medium', groupBy: 'service' },
               ],
             },
             {

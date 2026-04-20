@@ -102,13 +102,7 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
     }
     case 'pie': {
       assertString(raw['groupBy'], `${ctx}.groupBy`);
-      const drillable = raw['drillable'] === true || undefined;
-      return {
-        type,
-        ...base,
-        groupBy: asDimensionId(raw['groupBy']),
-        ...(drillable !== undefined ? { drillable } : {}),
-      };
+      return { type, ...base, groupBy: asDimensionId(raw['groupBy']) };
     }
     case 'stackedBar':
     case 'bubble':

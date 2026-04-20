@@ -100,7 +100,7 @@ async function profile(): Promise<void> {
   const tagDefs = await loadTagDefs();
   const tagResults: Record<string, { values: string[]; missingPercent: number }> = {};
   for (const tag of tagDefs) {
-    const curKey = `user_${tag.tagName}`;
+    const curKey = tag.tagName.startsWith('user_') ? tag.tagName : `user_${tag.tagName}`;
     const concept = tag.concept ?? tag.tagName;
     const valRows = await queryAll(conn, `SELECT DISTINCT element_at(resource_tags, '${curKey}')[1] as v FROM ${src} WHERE element_at(resource_tags, '${curKey}') IS NOT NULL LIMIT 30`);
     const values = valRows.map(r => String(r['v'])).filter(v => v !== '' && v !== 'null');
