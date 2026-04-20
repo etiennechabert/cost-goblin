@@ -49,7 +49,9 @@ function assertRuleDimensionsExist(config: CostScopeConfig, dimensions: Dimensio
 }
 
 function isEnoent(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { code?: string }).code === 'ENOENT';
+  if (typeof err !== 'object' || err === null) return false;
+  if (!('code' in err)) return false;
+  return err.code === 'ENOENT';
 }
 
 export function registerCostScopeHandlers(app: AppContext): void {

@@ -6,6 +6,7 @@ import type {
   CostScopeConfig,
   CostScopeDailyRow,
   CostScopePreviewResult,
+  CostScopePreviewRow,
   CostScopeSampleRow,
   ExclusionCondition,
   ExclusionRule,
@@ -141,12 +142,6 @@ interface RuleCardProps {
   suggestionsByDim: ReadonlyMap<string, readonly string[]>;
   onUpdate: (next: ExclusionRule) => void;
   onDelete: () => void;
-}
-
-interface CostScopePreviewRow {
-  ruleId: string;
-  excludedCost: number;
-  excludedRows: number;
 }
 
 /** For a built-in rule, returns the shipped seed version (name, description,
@@ -663,16 +658,12 @@ export function CostScopeView(): React.JSX.Element {
   }
 
   function handlePerspectiveChange(perspective: CostPerspective) {
-    // Omit the field entirely when 'gross' so we serialise the default
-    // cleanly — exactOptionalPropertyTypes forbids writing `undefined`
-    // to an optional property, so destructure the old value out.
-    if (perspective === 'gross') {
-      const { costPerspective: _omit, ...rest } = draft;
-      void _omit;
-      updateDraft(rest);
-      return;
-    }
-    updateDraft({ ...draft, costPerspective: perspective });
+    // Rebuild the config without `costPerspective` when the user picks
+    // the default ('gross') so the serializer writes clean YAML.
+    // exactOptionalPropertyTypes forbids writing `undefined`, so we
+    // enumerate the retained fields instead of spreading + overwriting.
+    const base: CostScopeConfig = { costMetric: draft.costMetric, rules: draft.rules };
+    updateDraft(perspective === 'gross' ? base : { ...base, costPerspective: perspective });
   }
 
   function updateRule(index: number, next: ExclusionRule) {

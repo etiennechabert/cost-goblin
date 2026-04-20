@@ -61,6 +61,86 @@ describe('cost metric column selection', () => {
     // Amortized layers effective-cost columns over unblended via COALESCE.
     expect(sql).toMatch(/COALESCE\(reservation_effective_cost, savings_plan_savings_plan_effective_cost, line_item_unblended_cost, 0\) AS cost/);
   });
+
+  it('net perspective uses line_item_net_unblended_cost when available', () => {
+    // Manually call buildCostQuery with a costScope that has costPerspective='net'
+    // and a full availableColumns set including net columns. The generated
+    // SQL should prefer the net variant.
+    const sql = buildCostQuery(
+      baseParams,
+      '/data',
+      dimensions,
+      5,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { costMetric: 'unblended', costPerspective: 'net', rules: [] },
+      new Set(['line_item_unblended_cost', 'line_item_net_unblended_cost']),
+    );
+    expect(sql).toContain('line_item_net_unblended_cost');
+  });
+
+  it('net perspective falls back to gross column when net column missing', () => {
+    // availableColumns omits line_item_net_unblended_cost — the expression
+    // should degrade to the gross unblended column rather than reference
+    // a missing column (which would error at query time).
+    const sql = buildCostQuery(
+      baseParams,
+      '/data',
+      dimensions,
+      5,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { costMetric: 'unblended', costPerspective: 'net', rules: [] },
+      new Set(['line_item_unblended_cost']),
+    );
+    expect(sql).not.toContain('line_item_net_unblended_cost');
+    expect(sql).toMatch(/COALESCE\(line_item_unblended_cost, 0\) AS cost/);
+  });
+
+  it('amortized + net uses net effective-cost columns when available', () => {
+    const sql = buildCostQuery(
+      baseParams,
+      '/data',
+      dimensions,
+      5,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { costMetric: 'amortized', costPerspective: 'net', rules: [] },
+      new Set([
+        'line_item_unblended_cost',
+        'line_item_net_unblended_cost',
+        'reservation_net_effective_cost',
+        'savings_plan_net_savings_plan_effective_cost',
+      ]),
+    );
+    expect(sql).toMatch(/COALESCE\(reservation_net_effective_cost, savings_plan_net_savings_plan_effective_cost, line_item_net_unblended_cost, line_item_unblended_cost, 0\) AS cost/);
+  });
+
+  it('amortized + net degrades to unblended when no net/effective columns present', () => {
+    // No resource IDs (no effective_cost) and no net columns — amortized
+    // degrades all the way down to line_item_unblended_cost.
+    const sql = buildCostQuery(
+      baseParams,
+      '/data',
+      dimensions,
+      5,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { costMetric: 'amortized', costPerspective: 'net', rules: [] },
+      new Set(['line_item_unblended_cost']),
+    );
+    expect(sql).toMatch(/COALESCE\(line_item_unblended_cost, 0\) AS cost/);
+    expect(sql).not.toContain('net_effective_cost');
+    expect(sql).not.toContain('net_unblended_cost');
+  });
 });
 
 describe('exclusion clauses', () => {
