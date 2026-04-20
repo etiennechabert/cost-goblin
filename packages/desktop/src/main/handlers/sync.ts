@@ -1,5 +1,4 @@
 import { ipcMain, shell } from 'electron';
-import { dirname, basename } from 'node:path';
 import {
   getDataInventory,
   getEtagFileName,
@@ -20,7 +19,6 @@ import {
   isCredentialError,
   toUserFriendlyError,
 } from './context.js';
-import { readOptimizeEnabled, writeOptimizeEnabled } from '../optimize-enabled.js';
 
 type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
 
@@ -31,65 +29,8 @@ function resolveDataType(syncId: string): ExpectedDataType {
 }
 
 export function registerSyncHandlers(app: AppContext): void {
-  const { ctx, state, getConfig, activity, optimizeQueue } = app;
+  const { ctx, state, getConfig } = app;
   const syncAbortControllers = new Map<string, AbortController>();
-
-  ipcMain.handle('sync:get-file-activity', (_event, sinceIso?: string): ReturnType<typeof activity.since> => {
-    return activity.since(sinceIso);
-  });
-
-  ipcMain.handle('sync:get-optimize-status', (): { queued: number; running: boolean } => {
-    return { queued: optimizeQueue.size(), running: optimizeQueue.running() };
-  });
-
-  async function optimizePrefsPath(): Promise<string> {
-    const path = await import('node:path');
-    return path.join(path.dirname(ctx.dataDir), 'app-preferences.json');
-  }
-
-  ipcMain.handle('optimize:get-enabled', async (): Promise<boolean> => {
-    return readOptimizeEnabled(await optimizePrefsPath());
-  });
-
-  ipcMain.handle('optimize:set-enabled', async (_event, enabled: boolean): Promise<void> => {
-    await writeOptimizeEnabled(await optimizePrefsPath(), enabled);
-    if (enabled) optimizeQueue.kick();
-  });
-
-  ipcMain.handle('optimize:clear-sidecars', async (): Promise<{ removed: number; requeued: number }> => {
-    const fs = await import('node:fs/promises');
-    const path = await import('node:path');
-    const columnsRoot = path.join(ctx.dataDir, 'aws', 'columns');
-    let removed = 0;
-    try {
-      const periods = await fs.readdir(columnsRoot);
-      for (const periodDir of periods) {
-        await fs.rm(path.join(columnsRoot, periodDir), { recursive: true, force: true });
-        removed += 1;
-      }
-    } catch { /* columns dir doesn't exist yet */ }
-
-    // Re-enqueue every raw daily + hourly file so the optimizer rebuilds
-    // sidecars. Sort markers stay — we only nuked derived tag data.
-    const rawRoot = path.join(ctx.dataDir, 'aws', 'raw');
-    let requeued = 0;
-    try {
-      const entries = await fs.readdir(rawRoot);
-      for (const entry of entries) {
-        if (!entry.startsWith('daily-') && !entry.startsWith('hourly-')) continue;
-        const full = path.join(rawRoot, entry);
-        const files = await fs.readdir(full);
-        for (const f of files) {
-          if (f.endsWith('.parquet')) {
-            optimizeQueue.enqueue(path.join(full, f));
-            requeued += 1;
-          }
-        }
-      }
-    } catch { /* raw dir doesn't exist yet */ }
-    logger.info(`optimize:clear-sidecars — removed ${String(removed)} period dirs, re-enqueued ${String(requeued)} files`);
-    return { removed, requeued };
-  });
 
   ipcMain.handle('sync:status', (_event, syncId: string = 'default'): SyncStatus => {
     return state.syncStatuses[syncId] ?? { status: 'idle', lastSync: null };
@@ -127,32 +68,18 @@ export function registerSyncHandlers(app: AppContext): void {
     // ${prefix}-${period} OR ${prefix}-${period}-* to cover both cases.
     const prefix = getRawDirPrefix(tier);
     const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
-    const columnsDir = path.join(ctx.dataDir, 'aws', 'columns');
     let removedAny = false;
-    const removedDirs: string[] = [];
     try {
       const entries = await fs.readdir(rawDir);
       for (const entry of entries) {
         if (entry === `${prefix}-${period}` || entry.startsWith(`${prefix}-${period}-`)) {
           await fs.rm(path.join(rawDir, entry), { recursive: true });
-          // Also drop matching sidecars (otherwise they linger until regen).
-          await fs.rm(path.join(columnsDir, entry), { recursive: true, force: true });
           logger.info(`Deleted local data (${tier}): ${entry}`);
           removedAny = true;
-          removedDirs.push(entry);
         }
       }
     } catch {
       // raw dir may not exist
-    }
-
-    // Purge in-memory queue + activity for anything under the removed dirs,
-    // otherwise the "Local optimizer" panel keeps listing files that no
-    // longer exist on disk.
-    if (removedDirs.length > 0) {
-      const matches = (p: string): boolean => removedDirs.some(d => p.includes(`/${d}/`));
-      optimizeQueue.removeWhere(matches);
-      activity.removeWhere(matches);
     }
 
     // Drop the period from the etag manifest so the inventory marks it
@@ -205,9 +132,6 @@ export function registerSyncHandlers(app: AppContext): void {
     state.syncStatuses[syncId] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0, message: '' };
 
     const tier = resolveDataType(syncId);
-    // Only daily/hourly tiers benefit from sidecar optimization. cost-opt
-    // stays raw — the Savings view is already fast and its data shape differs.
-    const optimizable = tier === 'daily' || tier === 'hourly';
 
     try {
       const result = await syncSelectedFiles({
@@ -217,14 +141,6 @@ export function registerSyncHandlers(app: AppContext): void {
         expectedDataType: tier,
         files: fileEntries,
         signal: controller.signal,
-        onFileDownloaded: optimizable ? (localPath) => {
-          // Record the download event, then enqueue optimize. The queue drains
-          // in parallel with subsequent downloads — the whole point of the
-          // pipeline.
-          const relName = `${basename(dirname(localPath))}/${basename(localPath)}`;
-          activity.record({ rawPath: localPath, relName, stage: 'downloaded' });
-          optimizeQueue.enqueue(localPath);
-        } : undefined,
         onProgress: (progress) => {
           state.syncStatuses[syncId] = {
             status: 'syncing',

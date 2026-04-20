@@ -27,9 +27,7 @@ import type {
   ExplorerDailyRow,
   ExplorerTagColumn,
   DimensionsConfig,
-  SidecarPlan,
 } from '@costgoblin/core';
-import { resolveSidecarPlan } from '../optimize.js';
 import type { AppContext } from './context.js';
 import { buildAccountReverseMap, toNum, toStr } from './query-utils.js';
 
@@ -188,26 +186,12 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   const metric = pickMetric(params.costMetric, availableColumns);
   const perspective = pickPerspective(params.costPerspective, availableColumns);
 
-  let sidecarPlan: SidecarPlan | undefined;
-  try {
-    // Sidecars exist only for the daily tier today — hourly falls back to
-    // element_at() on the tag map. Skipping the resolve call avoids a
-    // noisy "no sidecar" log on every hourly query.
-    if (tier === 'daily') {
-      const resolved = await resolveSidecarPlan(ctx.dataDir, tier, periods, dimensions.tags);
-      sidecarPlan = resolved ?? undefined;
-    }
-  } catch {
-    sidecarPlan = undefined;
-  }
-
   const source = buildSource(
     ctx.dataDir,
     tier,
     dimensions,
     orgPath,
     periods,
-    sidecarPlan,
     metric,
     availableColumns,
     perspective,
