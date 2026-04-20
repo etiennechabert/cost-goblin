@@ -43,7 +43,7 @@ export function assertNumber(value: unknown, context: string): asserts value is 
 }
 
 function isValidNormalizationRule(value: string): value is NormalizationRule {
-  return value === 'lowercase' || value === 'uppercase' || value === 'lowercase-kebab' || value === 'lowercase-underscore' || value === 'camelCase';
+  return value === 'lowercase' || value === 'uppercase' || value === 'lowercase-kebab';
 }
 
 function validateSyncTier(raw: unknown, context: string): SyncTierConfig {
@@ -139,7 +139,7 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
     const normalize = dim['normalize'] !== undefined ? (() => {
       assertString(dim['normalize'], `${ctx}.normalize`);
       if (!isValidNormalizationRule(dim['normalize'])) {
-        throw new ConfigValidationError(`${ctx}.normalize must be 'lowercase', 'uppercase', 'lowercase-kebab', 'lowercase-underscore', or 'camelCase'`);
+        throw new ConfigValidationError(`${ctx}.normalize must be 'lowercase', 'uppercase', or 'lowercase-kebab'`);
       }
       return dim['normalize'];
     })() : undefined;
@@ -188,7 +188,7 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
     const normalize = tag['normalize'] !== undefined ? (() => {
       assertString(tag['normalize'], `${ctx}.normalize`);
       if (!isValidNormalizationRule(tag['normalize'])) {
-        throw new ConfigValidationError(`${ctx}.normalize must be 'lowercase', 'uppercase', 'lowercase-kebab', 'lowercase-underscore', or 'camelCase'`);
+        throw new ConfigValidationError(`${ctx}.normalize must be 'lowercase', 'uppercase', or 'lowercase-kebab'`);
       }
       return tag['normalize'];
     })() : undefined;

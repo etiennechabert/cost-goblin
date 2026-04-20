@@ -70,8 +70,6 @@ const NORMALIZE_RULES: { value: NormalizationRule; label: string }[] = [
   { value: 'lowercase', label: 'lowercase' },
   { value: 'uppercase', label: 'UPPERCASE' },
   { value: 'lowercase-kebab', label: 'kebab-case (a-b-c)' },
-  { value: 'lowercase-underscore', label: 'snake_case (a_b_c)' },
-  { value: 'camelCase', label: 'camelCase' },
 ];
 
 interface EditingBuiltIn {
@@ -737,8 +735,6 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
             case 'lowercase': return v.toLowerCase();
             case 'uppercase': return v.toUpperCase();
             case 'lowercase-kebab': return v.replace(/([a-z])([A-Z])/g, '$1-$2').replaceAll('_', '-').replaceAll(' ', '-').toLowerCase();
-            case 'lowercase-underscore': return v.replace(/([a-z])([A-Z])/g, '$1_$2').replaceAll('-', '_').replaceAll(' ', '_').toLowerCase();
-            case 'camelCase': return v.replaceAll(/[-_\s]+(.)/g, (_, c: string) => c.toUpperCase()).replace(/^(.)/, (_, c: string) => c.toLowerCase());
             default: return v;
           }
         };
