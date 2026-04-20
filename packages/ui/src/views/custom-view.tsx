@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { asDateString } from '@costgoblin/core/browser';
+import { daysBetween } from '../lib/dates.js';
 import type {
   Dimension,
   DimensionId,
@@ -45,9 +46,7 @@ function priorityFor(d: Dimension): number {
 }
 
 function previousRangeFor(dr: DateRange): DateRange {
-  const periodDays = Math.round(
-    (new Date(dr.end).getTime() - new Date(dr.start).getTime()) / (24 * 60 * 60 * 1000),
-  ) + 1;
+  const periodDays = daysBetween(dr.start, dr.end);
   const prevEnd = new Date(new Date(dr.start).getTime() - 24 * 60 * 60 * 1000);
   const prevStart = new Date(prevEnd.getTime() - (periodDays - 1) * 24 * 60 * 60 * 1000);
   return {

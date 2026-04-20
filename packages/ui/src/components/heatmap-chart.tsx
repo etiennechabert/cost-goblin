@@ -61,7 +61,7 @@ function HeatmapInner({
   const cellH = yScale.bandwidth();
 
   return (
-    <svg width={width} height={height}>
+    <svg width={width} height={height} role="img" aria-label="Cost heatmap: rows are groups, columns are dates, color intensity represents cost">
       <Group left={MARGIN.left} top={MARGIN.top}>
         {cells.map((c) => {
           const x = xScale(c.date) ?? 0;

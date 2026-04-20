@@ -97,7 +97,7 @@ function BubbleChartInner({
 
   return (
     <div className="relative">
-      <svg width={width} height={height}>
+      <svg width={width} height={height} role="img" aria-label="Cost trend bubble chart: x-axis shows percent change, y-axis shows absolute delta, bubble size represents current cost">
         <Group left={MARGIN.left} top={MARGIN.top}>
           <GridRows
             scale={yScale}
