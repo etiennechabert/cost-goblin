@@ -288,26 +288,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
         }))
       : raw;
 
-    // Disambiguate colliding display names by appending the last 4 digits
-    // of the account ID. Without this, two accounts named "sre-default"
-    // after strip patterns would silently merge in every query result.
-    const nameToIds = new Map<string, string[]>();
-    for (const [id, name] of map) {
-      const ids = nameToIds.get(name);
-      if (ids === undefined) nameToIds.set(name, [id]);
-      else ids.push(id);
-    }
-    let disambiguated = false;
-    for (const [name, ids] of nameToIds) {
-      if (ids.length <= 1) continue;
-      disambiguated = true;
-      for (const id of ids) {
-        map.set(id, `${name} (\u2026${id.slice(-4)})`);
-      }
-    }
-
     if (map.size > 0) {
-      logger.info(`Loaded account mapping (${preferOrg ? 'org-data' : 'csv'} preferred): ${String(map.size)} accounts${disambiguated ? ' (disambiguated collisions)' : ''}`);
+      logger.info(`Loaded account mapping (${preferOrg ? 'org-data' : 'csv'} preferred): ${String(map.size)} accounts`);
     }
     state.accountMap = map;
     return map;

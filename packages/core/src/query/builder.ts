@@ -92,11 +92,24 @@ function resolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): R
 function buildFilterClauses(
   filters: FilterMap,
   dimensions: DimensionsConfig,
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
 ): string[] {
   const clauses: string[] = [];
   for (const [dimId, value] of Object.entries(filters)) {
     if (value === undefined) continue;
     const resolved = resolveField(dimId as DimensionId, dimensions);
+    // Account dim with display-name collisions: the user picks "sre default"
+    // in the filter dropdown, but that collapses N underlying ids. Match any
+    // of them with an IN clause. Falls through to '=' when the value isn't a
+    // known display name (raw id, or no map provided).
+    if (resolved.rawField === 'account_id' && accountReverseMap !== undefined) {
+      const ids = accountReverseMap.get(String(value));
+      if (ids !== undefined && ids.length > 0) {
+        const list = ids.map(id => `'${id.replaceAll("'", "''")}'`).join(', ');
+        clauses.push(`${resolved.rawField} IN (${list})`);
+        continue;
+      }
+    }
     clauses.push(`${resolved.fieldExpr} = '${String(value).replaceAll("'", "''")}'`);
   }
   return clauses;
@@ -109,12 +122,41 @@ function buildFilterClauses(
 export function buildRuleMatchExpr(
   rule: ExclusionRule,
   dimensions: DimensionsConfig,
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
 ): string | null {
   const conditionSqls: string[] = [];
   for (const cond of rule.conditions) {
     if (cond.values.length === 0) continue;
+    // Skip conditions whose dimension no longer exists — happens if a user
+    // deletes/renames a dimension while a rule references it. Emitting a
+    // bogus column reference here would crash every query that threads cost
+    // scope through (which is all of them). Save-time validation prevents
+    // this on new edits; this guard covers legacy on-disk rules.
     const resolved = tryResolveField(cond.dimensionId, dimensions);
     if (resolved === null) continue;
+    if (resolved.rawField === 'account_id' && accountReverseMap !== undefined) {
+      const expandedIds = new Set<string>();
+      let usedReverse = false;
+      for (const v of cond.values) {
+        const ids = accountReverseMap.get(v);
+        if (ids !== undefined && ids.length > 0) {
+          for (const id of ids) expandedIds.add(id);
+          usedReverse = true;
+        } else {
+          expandedIds.add(v);
+        }
+      }
+      if (usedReverse) {
+        const list = [...expandedIds].map(id => `'${id.replaceAll("'", "''")}'`).join(', ');
+        conditionSqls.push(`${resolved.rawField} IN (${list})`);
+        continue;
+      }
+    }
+    // Apply the dim's normalize + alias transformation to each value so
+    // rule conditions stay correct when the user normalises the target
+    // dimension (e.g. a lowercase rule on `line_item_type` would otherwise
+    // turn 'RIFee' in the built-in rule into a silent no-match). The
+    // field expression already bakes in the same transformation.
     const list = cond.values
       .map(v => normalizeRuleValue(v, resolved.dim))
       .map(v => `'${v.replaceAll("'", "''")}'`)
@@ -128,11 +170,12 @@ export function buildRuleMatchExpr(
 function buildExclusionClauses(
   rules: readonly ExclusionRule[],
   dimensions: DimensionsConfig,
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
 ): string[] {
   const clauses: string[] = [];
   for (const rule of rules) {
     if (!rule.enabled) continue;
-    const matchExpr = buildRuleMatchExpr(rule, dimensions);
+    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
     if (matchExpr === null) continue;
     clauses.push(`NOT (${matchExpr})`);
   }
@@ -264,14 +307,14 @@ export function buildCostQuery(
   topN: number = 5,
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
-
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
 ): string {
   assertFiniteNumber(topN, 'topN');
   const groupByResolved = resolveField(params.groupBy, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions);
-  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions) : [];
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const costTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
@@ -339,14 +382,14 @@ export function buildTrendQuery(
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
-
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
 ): string {
   assertFiniteNumber(Number(params.deltaThreshold), 'deltaThreshold');
   const groupByResolved = resolveField(params.groupBy, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions);
-  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions) : [];
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
 
@@ -433,14 +476,14 @@ export function buildMissingTagsQuery(
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
-
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
 ): string {
   assertFiniteNumber(Number(params.minCost), 'minCost');
   const tagResolved = resolveField(params.tagDimension, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions);
-  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions) : [];
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
@@ -514,12 +557,12 @@ export function buildNonResourceCostQuery(
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
-
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
 ): string {
-  const filterClauses = buildFilterClauses(params.filters, dimensions);
-  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions) : [];
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
@@ -552,13 +595,13 @@ export function buildDailyCostsQuery(
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
-
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions);
-  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions) : [];
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const dailyTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
@@ -593,13 +636,13 @@ export function buildEntityDetailQuery(
   dimensions: DimensionsConfig,
   orgAccountsPath?: string,
   availablePeriods?: readonly string[],
-
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
 ): string {
   const dimResolved = resolveField(params.dimension, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions);
-  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions) : [];
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const granularity = params.granularity ?? 'daily';
@@ -607,7 +650,19 @@ export function buildEntityDetailQuery(
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const source = buildSource(dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
 
-  const entityClause = `${dimResolved.fieldExpr} = '${String(params.entity).replaceAll("'", "''")}'`;
+  // Same display-name collision treatment for the entity selector itself: if
+  // the user clicked into "sre default" we need to match every underlying id,
+  // not just one.
+  const entityClause = (() => {
+    if (dimResolved.rawField === 'account_id' && accountReverseMap !== undefined) {
+      const ids = accountReverseMap.get(String(params.entity));
+      if (ids !== undefined && ids.length > 0) {
+        const list = ids.map(id => `'${id.replaceAll("'", "''")}'`).join(', ');
+        return `${dimResolved.rawField} IN (${list})`;
+      }
+    }
+    return `${dimResolved.fieldExpr} = '${String(params.entity).replaceAll("'", "''")}'`;
+  })();
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,

@@ -35,11 +35,14 @@ import type { AppContext } from './context.js';
 import type { RawRow } from '../duckdb-client.js';
 import {
   applyOrgTreeRollup,
+  buildAccountReverseMap,
   buildCostResult,
   buildEntityDetailResult,
   buildMissingTagsResult,
   buildTrendResult,
   isOwnerGroupBy,
+  mergeCostRowsByEntity,
+  mergeTrendRowsByEntity,
   resolveEntityName,
   toEffort,
   toNum,
@@ -66,23 +69,26 @@ export function registerQueryHandlers(app: AppContext): void {
   ipcMain.handle('query:costs', async (_event, params: CostQueryParams): Promise<CostResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-
+    const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const availableColumns = await getAvailableColumns(tier);
     const { available, empty } = await resolveAvailablePeriods(tier, params.dateRange);
     if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
-    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available, costScope, availableColumns);
+    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available, accountReverseMap, costScope, availableColumns);
     logger.info('query:costs', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
     let result = buildCostResult(rows, params.dateRange);
 
     if (params.groupBy === 'account' || params.groupBy === 'account_id') {
+      // Resolve raw account_id → display name, then merge any rows whose
+      // resolved name collides (strip patterns / normalize on the Account dim
+      // can intentionally collapse N ids into one logical entity).
       result = {
         ...result,
-        rows: result.rows.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) })),
+        rows: mergeCostRowsByEntity(result.rows.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) }))),
       };
     }
 
@@ -98,13 +104,15 @@ export function registerQueryHandlers(app: AppContext): void {
 
   ipcMain.handle('query:daily-costs', async (_event, params: DailyCostsParams): Promise<DailyCostsResult> => {
     const dimensions = await getDimensions();
+    const accountMap = await getAccountMap();
+    const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const availableColumns = await getAvailableColumns(tier);
     const { available, empty } = await resolveAvailablePeriods(tier, params.dateRange);
     if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
-    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available, costScope, availableColumns);
+    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
     logger.info('query:daily-costs', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -155,13 +163,13 @@ export function registerQueryHandlers(app: AppContext): void {
   ipcMain.handle('query:trends', async (_event, params: TrendQueryParams): Promise<TrendResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-
+    const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const availableColumns = await getAvailableColumns('daily');
     const { available, empty } = await resolveAvailablePeriods('daily', params.dateRange);
     if (empty) return { increases: [], savings: [], totalIncrease: asDollars(0), totalSavings: asDollars(0) };
-    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath, available, costScope, availableColumns);
+    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
     logger.info('query:trends', { groupBy: params.groupBy });
 
     const rows = await runQuery(sql);
@@ -169,8 +177,8 @@ export function registerQueryHandlers(app: AppContext): void {
     if (params.groupBy === 'account' || params.groupBy === 'account_id') {
       return {
         ...result,
-        increases: result.increases.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) })),
-        savings: result.savings.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) })),
+        increases: mergeTrendRowsByEntity(result.increases.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) }))),
+        savings: mergeTrendRowsByEntity(result.savings.map(r => ({ ...r, entity: asEntityRef(resolveEntityName(r.entity, accountMap)) }))),
       };
     }
     return result;
@@ -179,7 +187,7 @@ export function registerQueryHandlers(app: AppContext): void {
   ipcMain.handle('query:missing-tags', async (_event, params: MissingTagsParams): Promise<MissingTagsResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-
+    const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const availableColumns = await getAvailableColumns('daily');
@@ -197,8 +205,8 @@ export function registerQueryHandlers(app: AppContext): void {
         nonResourceRows: [],
       };
     }
-    const resourceSql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath, available, costScope, availableColumns);
-    const nonResourceSql = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath, available, costScope, availableColumns);
+    const resourceSql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
+    const nonResourceSql = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
     const [resourceRows, nonResourceRows] = await Promise.all([
       runQuery(resourceSql),
       runQuery(nonResourceSql),
@@ -280,7 +288,7 @@ export function registerQueryHandlers(app: AppContext): void {
   ipcMain.handle('query:entity-detail', async (_event, params: EntityDetailParams): Promise<EntityDetailResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-
+    const accountReverseMap = buildAccountReverseMap(accountMap);
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
@@ -298,7 +306,7 @@ export function registerQueryHandlers(app: AppContext): void {
         bySubEntity: [],
       };
     }
-    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available, costScope, availableColumns);
+    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
     logger.info('query:entity-detail', { entity: params.entity });
 
     const rows = await runQuery(sql);
@@ -315,7 +323,7 @@ export function registerQueryHandlers(app: AppContext): void {
   ipcMain.handle('query:filter-values', async (_event, dimensionId: string, filterEntries: Record<string, string>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }): Promise<{ value: string; label: string; count: number }[]> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-
+    const accountReverseMap = buildAccountReverseMap(accountMap);
     // Honour the cost-scope exclusions here too — a user who has
     // excluded Tax / RI purchases doesn't want those values showing up
     // in filter dropdowns either. The Cost Scope editor sets
@@ -350,6 +358,16 @@ export function registerQueryHandlers(app: AppContext): void {
       } else if (ft !== undefined) {
         ffExpr = buildAliasSqlCase(ff, ft);
       }
+      // Account filters carry display names that may collapse N ids — same
+      // expansion the SQL builder does in buildFilterClauses.
+      if (ff === 'account_id') {
+        const ids = accountReverseMap.get(value);
+        if (ids !== undefined && ids.length > 0) {
+          const list = ids.map(id => `'${id.replaceAll("'", "''")}'`).join(', ');
+          whereClauses.push(`${ff} IN (${list})`);
+          continue;
+        }
+      }
       whereClauses.push(`${ffExpr} = '${value.replaceAll("'", "''")}'`);
     }
 
@@ -358,9 +376,12 @@ export function registerQueryHandlers(app: AppContext): void {
     }
 
     if (costScope !== undefined) {
+      // NOT (rule_match) per enabled rule — same shape buildExclusionClauses
+      // emits for the main query builders. Apply the dim's reverse map
+      // (account collapse) when the condition targets account_id.
       for (const rule of costScope.rules) {
         if (!rule.enabled) continue;
-        const matchExpr = buildRuleMatchExpr(rule, dimensions);
+        const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
         if (matchExpr === null) continue;
         whereClauses.push(`NOT (${matchExpr})`);
       }
@@ -388,10 +409,24 @@ export function registerQueryHandlers(app: AppContext): void {
 
     const rows = await runQuery(sql);
     const isAccountDim = dimensionId === 'account' || dimensionId === 'account_id';
+    if (isAccountDim) {
+      // Roll N raw ids that resolve to the same display name into one entry —
+      // value AND label are the display name so the picker shows a single row
+      // and downstream filter matching uses the same display name (which the
+      // SQL builder expands back to all underlying ids).
+      const merged = new Map<string, number>();
+      for (const r of rows) {
+        const rawVal = toStr(r['val']);
+        const name = accountMap.get(rawVal) ?? rawVal;
+        merged.set(name, (merged.get(name) ?? 0) + toNum(r['total_cost']));
+      }
+      return [...merged.entries()]
+        .map(([name, cost]) => ({ value: name, label: name, count: cost }))
+        .sort((a, b) => b.count - a.count);
+    }
     return rows.map(r => {
       const rawVal = toStr(r['val']);
-      const label = isAccountDim ? (accountMap.get(rawVal) ?? rawVal) : rawVal;
-      return { value: label, label, count: toNum(r['total_cost']) };
+      return { value: rawVal, label: rawVal, count: toNum(r['total_cost']) };
     });
   });
 }

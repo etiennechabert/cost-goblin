@@ -29,7 +29,7 @@ import type {
   DimensionsConfig,
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
-import { toNum, toStr } from './query-utils.js';
+import { buildAccountReverseMap, toNum, toStr } from './query-utils.js';
 
 const DEFAULT_WINDOW_DAYS = 30;
 const MAX_ROW_LIMIT = 1000;
@@ -96,6 +96,7 @@ function pickPerspective(p: CostPerspective | undefined, cols: ReadonlySet<strin
 function buildExplorerFilterPredicate(
   filters: ExplorerFilterMap,
   dimensions: DimensionsConfig,
+  accountReverseMap: ReadonlyMap<string, readonly string[]>,
 ): string | null {
   const conditions = Object.entries(filters)
     .filter(([, values]) => values.length > 0)
@@ -111,7 +112,7 @@ function buildExplorerFilterPredicate(
     builtIn: false,
     conditions,
   };
-  return buildRuleMatchExpr(synthetic, dimensions);
+  return buildRuleMatchExpr(synthetic, dimensions, accountReverseMap);
 }
 
 function buildOrderBy(
@@ -181,6 +182,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   const availableColumns = await getAvailableColumns(tier);
   const applyCostScope = params.applyCostScope === true;
   const costScope = applyCostScope ? await getCostScope().catch(() => undefined) : undefined;
+  const accountReverseMap = buildAccountReverseMap(accountMap);
   const metric = pickMetric(params.costMetric, availableColumns);
   const perspective = pickPerspective(params.costPerspective, availableColumns);
 
@@ -195,13 +197,13 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     perspective,
   );
 
-  const filterPredicate = buildExplorerFilterPredicate(params.filters, dimensions);
+  const filterPredicate = buildExplorerFilterPredicate(params.filters, dimensions, accountReverseMap);
 
   const exclusionClauses: string[] = [];
   if (costScope !== undefined) {
     for (const rule of costScope.rules) {
       if (!rule.enabled) continue;
-      const matchExpr = buildRuleMatchExpr(rule, dimensions);
+      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
       if (matchExpr === null) continue;
       exclusionClauses.push(`NOT (${matchExpr})`);
     }
@@ -442,12 +444,27 @@ export function registerExplorerHandlers(app: AppContext): void {
 
     const rows = await runQuery(sql);
     const isAccountDim = dimId === 'account' || dimId === 'account_id';
+    if (isAccountDim) {
+      const merged = new Map<string, { cost: number; rows: number }>();
+      for (const r of rows) {
+        const rawVal = toStr(r['val']);
+        const name = qc.accountMap.get(rawVal) ?? rawVal;
+        const existing = merged.get(name);
+        if (existing === undefined) merged.set(name, { cost: toNum(r['total_cost']), rows: toNum(r['row_count']) });
+        else {
+          existing.cost += toNum(r['total_cost']);
+          existing.rows += toNum(r['row_count']);
+        }
+      }
+      return [...merged.entries()]
+        .map(([name, d]) => ({ value: name, label: name, cost: d.cost, rows: d.rows }))
+        .sort((a, b) => b.cost - a.cost);
+    }
     return rows.map(r => {
       const rawVal = toStr(r['val']);
-      const label = isAccountDim ? (qc.accountMap.get(rawVal) ?? rawVal) : rawVal;
       return {
-        value: label,
-        label,
+        value: rawVal,
+        label: rawVal,
         cost: toNum(r['total_cost']),
         rows: toNum(r['row_count']),
       };
