@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostApiProvider, SetupWizard, ErrorBoundary, SyncActivityIndicator, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, CostApiProvider, SetupWizard, ErrorBoundary, SyncActivityIndicator, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor } from '@costgoblin/ui';
 import type { CostApi, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
 
 function getApi(): CostApi {
@@ -13,6 +13,7 @@ type View =
   | { page: 'missing-tags' }
   | { page: 'savings' }
   | { page: 'dimensions' }
+  | { page: 'cost-scope' }
   | { page: 'views-editor' }
   | { page: 'sync' }
   | { page: 'entity-detail'; entity: string; dimension: string };
@@ -24,6 +25,7 @@ const STATIC_LEFT_NAV: { id: string; label: string }[] = [
 ];
 
 const RIGHT_NAV: { id: string; label: string }[] = [
+  { id: 'cost-scope', label: 'Cost Scope' },
   { id: 'dimensions', label: 'Dimensions' },
   { id: 'views-editor', label: 'Views' },
   { id: 'sync', label: 'Sync' },
@@ -134,6 +136,7 @@ export function App(): React.JSX.Element {
       case 'trends': setView({ page: 'trends' }); break;
       case 'missing-tags': setView({ page: 'missing-tags' }); break;
       case 'savings': setView({ page: 'savings' }); break;
+      case 'cost-scope': setView({ page: 'cost-scope' }); break;
       case 'dimensions': setView({ page: 'dimensions' }); break;
       case 'views-editor': setView({ page: 'views-editor' }); break;
       case 'sync': setView({ page: 'sync' }); break;
@@ -184,6 +187,7 @@ export function App(): React.JSX.Element {
     if (view.page === 'trends') return 'trends';
     if (view.page === 'missing-tags') return 'missing-tags';
     if (view.page === 'savings') return 'savings';
+    if (view.page === 'cost-scope') return 'cost-scope';
     if (view.page === 'dimensions') return 'dimensions';
     if (view.page === 'views-editor') return 'views-editor';
     if (view.page === 'sync') return 'sync';
@@ -265,6 +269,7 @@ export function App(): React.JSX.Element {
         {view.page === 'trends' && <CostTrends onEntityClick={handleEntityClick} />}
         {view.page === 'missing-tags' && <MissingTags />}
         {view.page === 'savings' && <Savings />}
+        {view.page === 'cost-scope' && <CostScopeView />}
         {view.page === 'dimensions' && <DimensionsView />}
         {view.page === 'views-editor' && <ViewsEditor onConfigPersisted={setViewsConfig} />}
         <div className={view.page === 'sync' ? '' : 'hidden'}>

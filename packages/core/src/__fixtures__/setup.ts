@@ -107,7 +107,15 @@ export async function setup(): Promise<void> {
       if (product !== null) tagEntries.push(`'user_system': '${product}'`);
       if (env !== null) tagEntries.push(`'user_environment': '${env}'`);
 
-      rows.push(`(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', 'Compute', 'Usage', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(listCost)}, 'Usage', 'RunInstances', 'Usage', MAP {${tagEntries.join(', ')}})`);
+      // Synthetic fixture:
+      //  - blended = unblended (no consolidated-billing variance)
+      //  - net_unblended = unblended * 0.97 (simulates 3% promotional credit)
+      //  - RI/SP effective cost NULL so amortized falls through to
+      //    unblended via COALESCE; same for net variants.
+      // Real CUR has these columns populated for rows covered by an RI
+      // or SP and when "Include Net Columns" is enabled.
+      const netCost = Math.round(cost * 0.97 * 100) / 100;
+      rows.push(`(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', 'Compute', 'Usage', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(cost)}, ${String(netCost)}, ${String(listCost)}, NULL, NULL, NULL, NULL, 'Usage', 'RunInstances', 'Usage', MAP {${tagEntries.join(', ')}})`);
     }
   }
 
@@ -123,7 +131,13 @@ export async function setup(): Promise<void> {
       line_item_resource_id VARCHAR,
       line_item_usage_amount DOUBLE,
       line_item_unblended_cost DOUBLE,
+      line_item_blended_cost DOUBLE,
+      line_item_net_unblended_cost DOUBLE,
       pricing_public_on_demand_cost DOUBLE,
+      reservation_effective_cost DOUBLE,
+      reservation_net_effective_cost DOUBLE,
+      savings_plan_savings_plan_effective_cost DOUBLE,
+      savings_plan_net_savings_plan_effective_cost DOUBLE,
       line_item_line_item_type VARCHAR,
       line_item_operation VARCHAR,
       line_item_usage_type VARCHAR,

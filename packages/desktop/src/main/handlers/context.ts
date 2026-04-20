@@ -8,12 +8,15 @@ import {
   loadDimensions,
   loadOrgTree,
   loadViews,
+  loadCostScope,
+  mergeBuiltInExclusionRules,
   logger,
   isStringRecord,
 } from '@costgoblin/core';
 import type {
   BuiltInDimension,
   CostGoblinConfig,
+  CostScopeConfig,
   DimensionsConfig,
   OrgNode,
   RegionEnrichment,
@@ -92,6 +95,7 @@ export interface IpcContext {
   readonly dimensionsPath: string;
   readonly orgTreePath: string;
   readonly viewsPath: string;
+  readonly costScopePath: string;
   readonly dataDir: string;
 }
 
@@ -104,6 +108,7 @@ export interface AppState {
   dimensions: DimensionsConfig | null;
   orgTree: OrgTreeConfig | null;
   views: ViewsConfig | null;
+  costScope: CostScopeConfig | null;
   syncStatuses: Record<string, SyncStatus>;
   accountMap: Map<string, string> | null;
   regionMap: Map<string, RegionEnrichment> | null;
@@ -124,13 +129,23 @@ export interface AppContext {
   readonly getQueryDimensions: () => Promise<DimensionsConfig>;
   readonly getOrgTreeConfig: () => Promise<OrgTreeConfig>;
   readonly getViews: () => Promise<ViewsConfig>;
+  readonly getCostScope: () => Promise<CostScopeConfig>;
   readonly getAccountMap: () => Promise<Map<string, string>>;
   readonly getRegionMap: () => Promise<Map<string, RegionEnrichment>>;
   readonly getOrgAccountsPath: () => Promise<string | undefined>;
+  /** Columns present in the user's CUR parquet files for the given tier.
+   *  CUR exports vary by version and by "Include Resource IDs" / "Include
+   *  Net Columns" settings — not every export has
+   *  reservation_effective_cost, savings_plan_savings_plan_effective_cost,
+   *  or line_item_net_*. Cached per-tier for the session; invalidated on
+   *  explicit reset via invalidateColumnCache. */
+  readonly getAvailableColumns: (tier: 'daily' | 'hourly') => Promise<ReadonlySet<string>>;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly invalidateConfig: () => void;
   readonly invalidateDimensions: () => void;
   readonly invalidateViews: () => void;
+  readonly invalidateCostScope: () => void;
+  readonly invalidateColumnCache: () => void;
 }
 
 export function createAppContext(ctx: IpcContext): AppContext {
@@ -139,6 +154,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     dimensions: null,
     orgTree: null,
     views: null,
+    costScope: null,
     syncStatuses: {},
     accountMap: null,
     regionMap: null,
@@ -175,6 +191,14 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const views = await loadViews(ctx.viewsPath);
     state.views = views;
     return views;
+  }
+
+  async function getCostScope(): Promise<CostScopeConfig> {
+    if (state.costScope !== null) return state.costScope;
+    const loaded = await loadCostScope(ctx.costScopePath);
+    const merged = mergeBuiltInExclusionRules(loaded);
+    state.costScope = merged;
+    return merged;
   }
 
   async function getAccountMap(): Promise<Map<string, string>> {
@@ -340,6 +364,46 @@ export function createAppContext(ctx: IpcContext): AppContext {
     return applyRegionFriendlyNames(dims, regionMap);
   }
 
+  // Probe parquet columns once per tier and cache. Used to gate
+  // optional cost columns (reservation_effective_cost,
+  // savings_plan_savings_plan_effective_cost, etc.) that ship only
+  // when the user's CUR has "Include Resource IDs" enabled. Without
+  // the probe, every query that references those columns errors out
+  // for CURs that omit them — even though we could degrade to
+  // unblended.
+  const columnCache = new Map<string, Promise<ReadonlySet<string>>>();
+
+  async function getAvailableColumns(tier: 'daily' | 'hourly'): Promise<ReadonlySet<string>> {
+    const cached = columnCache.get(tier);
+    if (cached !== undefined) return cached;
+    const fetch = (async (): Promise<ReadonlySet<string>> => {
+      try {
+        const { listLocalMonths } = await import('@costgoblin/core');
+        const months = await listLocalMonths(ctx.dataDir, tier);
+        if (months.length === 0) return new Set<string>();
+        // First-month sample is enough — CUR schema is stable across
+        // months within a billing report (AWS bumps schema on CUR
+        // version changes, which is rare and user-initiated).
+        const month = months[months.length - 1];
+        const glob = `${ctx.dataDir}/aws/raw/${tier}-${String(month)}/*.parquet`;
+        const rows = await ctx.db.runQuery(`DESCRIBE SELECT * FROM read_parquet('${glob}') LIMIT 0`);
+        const cols = new Set<string>();
+        for (const r of rows) {
+          const name = r['column_name'];
+          if (typeof name === 'string') cols.add(name);
+        }
+        return cols;
+      } catch {
+        // If the probe fails, return an empty set. Downstream code treats
+        // "unknown columns" as "assume present" to preserve previous
+        // behaviour — we only gate columns when we KNOW they're missing.
+        return new Set<string>();
+      }
+    })();
+    columnCache.set(tier, fetch);
+    return fetch;
+  }
+
   const activity = new FileActivityLog();
   async function prefsPath(): Promise<string> {
     const path = await import('node:path');
@@ -363,13 +427,17 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getQueryDimensions,
     getOrgTreeConfig,
     getViews,
+    getCostScope,
     getAccountMap,
     getRegionMap,
     getOrgAccountsPath,
+    getAvailableColumns,
     runQuery: (sql: string) => ctx.db.runQuery(sql),
     invalidateConfig: () => { state.config = null; },
     invalidateDimensions: () => { state.dimensions = null; state.accountMap = null; state.regionMap = null; },
     invalidateViews: () => { state.views = null; },
+    invalidateCostScope: () => { state.costScope = null; },
+    invalidateColumnCache: () => { columnCache.clear(); },
   };
 }
 

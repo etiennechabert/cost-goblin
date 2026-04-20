@@ -1,5 +1,6 @@
 import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, NormalizationRule, OrgNode, TagDimension } from './config.js';
 import type { ViewsConfig } from './views.js';
+import type { CostScopeCapabilities, CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
 import type {
   CostQueryParams,
   CostResult,
@@ -113,7 +114,7 @@ export interface CostApi {
   getDataInventory(tier?: DataTier): Promise<DataInventoryResult>;
   syncPeriods(files: readonly { key: string; contentHash: string; size: number }[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }>;
   cancelSync(syncId?: string): Promise<void>;
-  getFilterValues(dimensionId: string, filters: Record<string, string>, dateRange?: { start: string; end: string }): Promise<{ value: string; label: string; count: number }[]>;
+  getFilterValues(dimensionId: string, filters: Record<string, string>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }): Promise<{ value: string; label: string; count: number }[]>;
   deleteLocalPeriod(period: string, tier?: DataTier): Promise<void>;
   openDataFolder(): Promise<void>;
   getAccountMapping(): Promise<AccountMappingStatus>;
@@ -143,6 +144,13 @@ export interface CostApi {
   resetViewsConfig(): Promise<ViewsConfig>;
   /** Reveal `views.yaml` in the OS file manager (Finder / Explorer). */
   revealViewsFolder(): Promise<void>;
+  getCostScope(): Promise<CostScopeConfig>;
+  saveCostScope(config: CostScopeConfig): Promise<void>;
+  previewCostScope(config: CostScopeConfig): Promise<CostScopePreviewResult>;
+  /** Which optional CUR columns exist — drives UI warnings (e.g.
+   *  degraded Amortized when effective-cost columns are missing). */
+  getCostScopeCapabilities(): Promise<CostScopeCapabilities>;
+  revealCostScopeFolder(): Promise<void>;
   getAutoSyncEnabled(): Promise<boolean>;
   setAutoSyncEnabled(enabled: boolean): Promise<void>;
   getAutoSyncStatus(): Promise<AutoSyncStatus>;

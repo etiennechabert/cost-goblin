@@ -75,3 +75,17 @@ export type {
   ViewsConfig,
 } from './views.js';
 export { OVERVIEW_SEED_VIEW, SEED_VIEWS_CONFIG } from './seed-views.js';
+
+export type {
+  CostMetric,
+  CostPerspective,
+  CostScopeCapabilities,
+  CostScopeConfig,
+  ExclusionRule,
+  ExclusionCondition,
+  CostScopeDailyRow,
+  CostScopePreviewRow,
+  CostScopePreviewResult,
+  CostScopeSampleRow,
+} from './cost-scope.js';
+export { COST_METRICS, COST_PERSPECTIVES } from './cost-scope.js';

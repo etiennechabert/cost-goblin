@@ -1,7 +1,9 @@
-import type { DimensionsConfig, TagDimension } from '../types/config.js';
+import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
 import type { CostQueryParams, DailyCostsParams, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import type { DimensionId } from '../types/branded.js';
-import { buildAliasSqlCase } from '../normalize/normalize.js';
+import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
+import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
+import { costExprFor } from './cost-metric.js';
 
 /**
  * When all raw files for a query's periods have fresh combined sidecars, the
@@ -53,24 +55,51 @@ export function computePeriodsInRange(dateRange: { readonly start: string; reado
 interface ResolvedDimension {
   readonly fieldExpr: string;
   readonly rawField: string;
+  /** The backing dim, when the id resolves to a known built-in or tag.
+   *  Carries `normalize` and `aliases` so callers that compare literal
+   *  values against the CASE-wrapped field expression can apply the
+   *  same transformation to their values and stay in agreement. */
+  readonly dim: BuiltInDimension | TagDimension | null;
 }
 
-function resolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): ResolvedDimension {
+function tryResolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): ResolvedDimension | null {
   const builtIn = dimensions.builtIn.find(d => d.name === dimensionId);
   if (builtIn !== undefined) {
     // Built-ins now support normalize + aliases just like tags; apply them at
     // query time via the same CASE/LOWER(...) machinery.
     const fieldExpr = buildAliasSqlCase(builtIn.field, builtIn);
-    return { fieldExpr, rawField: builtIn.field };
+    return { fieldExpr, rawField: builtIn.field, dim: builtIn };
   }
 
   const tag = dimensions.tags.find(d => `tag_${d.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === dimensionId);
   if (tag !== undefined) {
     const rawField = `tag_${tag.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`;
-    return { fieldExpr: buildAliasSqlCase(rawField, tag), rawField };
+    return { fieldExpr: buildAliasSqlCase(rawField, tag), rawField, dim: tag };
   }
 
-  return { fieldExpr: dimensionId, rawField: dimensionId };
+  return null;
+}
+
+/** Apply the same normalize + alias transformation that `buildAliasSqlCase`
+ *  bakes into the field expression, but to a literal value on the JS side.
+ *  Required when the SQL compares a normalized/alias-resolved column
+ *  against hard-coded values like the built-in rules' service codes — the
+ *  values need to be moved into the same namespace as the column output or
+ *  the match will silently miss. */
+function normalizeRuleValue(value: string, dim: BuiltInDimension | TagDimension | null): string {
+  if (dim === null) return value;
+  const normalized = normalizeTagValue(value, dim.normalize);
+  return resolveAlias(normalized, dim.aliases);
+}
+
+function resolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): ResolvedDimension {
+  const resolved = tryResolveField(dimensionId, dimensions);
+  if (resolved !== null) return resolved;
+  // Fallback: used by filter/orgNode paths where the caller has already
+  // validated the id exists. For exclusion rules we go through
+  // tryResolveField directly so a stale reference doesn't emit a bogus
+  // column name that would crash every query.
+  return { fieldExpr: dimensionId, rawField: dimensionId, dim: null };
 }
 
 function buildFilterClauses(
@@ -99,6 +128,73 @@ function buildFilterClauses(
   return clauses;
 }
 
+/** Build the positive match expression for a single rule (AND of conditions,
+ *  OR within each condition's values). Used both for NOT-exclusion in queries
+ *  and for the positive preview queries. Returns null when the rule has no
+ *  valid conditions (all empty values). */
+export function buildRuleMatchExpr(
+  rule: ExclusionRule,
+  dimensions: DimensionsConfig,
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
+): string | null {
+  const conditionSqls: string[] = [];
+  for (const cond of rule.conditions) {
+    if (cond.values.length === 0) continue;
+    // Skip conditions whose dimension no longer exists — happens if a user
+    // deletes/renames a dimension while a rule references it. Emitting a
+    // bogus column reference here would crash every query that threads cost
+    // scope through (which is all of them). Save-time validation prevents
+    // this on new edits; this guard covers legacy on-disk rules.
+    const resolved = tryResolveField(cond.dimensionId, dimensions);
+    if (resolved === null) continue;
+    if (resolved.rawField === 'account_id' && accountReverseMap !== undefined) {
+      const expandedIds = new Set<string>();
+      let usedReverse = false;
+      for (const v of cond.values) {
+        const ids = accountReverseMap.get(v);
+        if (ids !== undefined && ids.length > 0) {
+          for (const id of ids) expandedIds.add(id);
+          usedReverse = true;
+        } else {
+          expandedIds.add(v);
+        }
+      }
+      if (usedReverse) {
+        const list = [...expandedIds].map(id => `'${id.replaceAll("'", "''")}'`).join(', ');
+        conditionSqls.push(`${resolved.rawField} IN (${list})`);
+        continue;
+      }
+    }
+    // Apply the dim's normalize + alias transformation to each value so
+    // rule conditions stay correct when the user normalises the target
+    // dimension (e.g. a lowercase rule on `line_item_type` would otherwise
+    // turn 'RIFee' in the built-in rule into a silent no-match). The
+    // field expression already bakes in the same transformation.
+    const list = cond.values
+      .map(v => normalizeRuleValue(v, resolved.dim))
+      .map(v => `'${v.replaceAll("'", "''")}'`)
+      .join(', ');
+    conditionSqls.push(`${resolved.fieldExpr} IN (${list})`);
+  }
+  if (conditionSqls.length === 0) return null;
+  return conditionSqls.join(' AND ');
+}
+
+function buildExclusionClauses(
+  rules: readonly ExclusionRule[],
+  dimensions: DimensionsConfig,
+  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
+): string[] {
+  const clauses: string[] = [];
+  for (const rule of rules) {
+    if (!rule.enabled) continue;
+    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
+    if (matchExpr === null) continue;
+    clauses.push(`NOT (${matchExpr})`);
+  }
+  return clauses;
+}
+
 function quoteList(paths: readonly string[]): string {
   return `[${paths.map(p => `'${p}'`).join(', ')}]`;
 }
@@ -112,7 +208,8 @@ function quoteList(paths: readonly string[]): string {
  * Drops the org-accounts JOIN entirely — fallback logic was baked into each
  * sidecar column at generation time.
  */
-function buildSourceFromSidecars(tier: string, dimensions: DimensionsConfig, plan: SidecarPlan): string {
+function buildSourceFromSidecars(tier: string, dimensions: DimensionsConfig, plan: SidecarPlan, costMetric: CostMetric, availableColumns?: ReadonlySet<string>, costPerspective?: CostPerspective): string {
+  const costExpr = costExprFor(costMetric, 'cur.', costPerspective, availableColumns);
   const rawList = quoteList(plan.rawFiles);
   const sidecarList = quoteList(plan.sidecarFiles);
 
@@ -140,7 +237,7 @@ function buildSourceFromSidecars(tier: string, dimensions: DimensionsConfig, pla
       COALESCE(cur.line_item_line_item_description, '') AS description,
       COALESCE(cur.line_item_resource_id, '') AS resource_id,
       COALESCE(cur.line_item_usage_amount, 0) AS usage_amount,
-      COALESCE(cur.line_item_unblended_cost, 0) AS cost,
+      ${costExpr} AS cost,
       COALESCE(cur.pricing_public_on_demand_cost, 0) AS list_cost,
       COALESCE(cur.line_item_line_item_type, '') AS line_item_type,
       COALESCE(cur.line_item_operation, '') AS operation,
@@ -168,9 +265,12 @@ export function buildSource(
   orgAccountsPath?: string,
   periods?: readonly string[],
   sidecarPlan?: SidecarPlan,
+  costMetric: CostMetric = 'unblended',
+  availableColumns?: ReadonlySet<string>,
+  costPerspective?: CostPerspective,
 ): string {
   if (sidecarPlan !== undefined) {
-    return buildSourceFromSidecars(tier, dimensions, sidecarPlan);
+    return buildSourceFromSidecars(tier, dimensions, sidecarPlan, costMetric, availableColumns, costPerspective);
   }
   const hasFallbacks = dimensions.tags.some(t => t.accountTagFallback !== undefined);
   const needsOrgJoin = hasFallbacks && orgAccountsPath !== undefined;
@@ -238,22 +338,25 @@ export function buildSource(
       ) AS acct_tags ON cur.line_item_usage_account_id = acct_tags.id`
     : parquetSource;
 
+  const tablePrefix = needsOrgJoin ? 'cur.' : '';
+  const costExpr = costExprFor(costMetric, tablePrefix, costPerspective, availableColumns);
+
   return `(
     SELECT
       ${dateExpr},
-      ${needsOrgJoin ? 'cur.' : ''}line_item_usage_account_id AS account_id,
-      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_usage_account_name, '') AS account_name,
-      COALESCE(${needsOrgJoin ? 'cur.' : ''}product_region_code, '') AS region,
-      COALESCE(${needsOrgJoin ? 'cur.' : ''}product_servicecode, '') AS service,
-      COALESCE(${needsOrgJoin ? 'cur.' : ''}product_product_family, '') AS service_family,
-      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_line_item_description, '') AS description,
-      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_resource_id, '') AS resource_id,
-      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_usage_amount, 0) AS usage_amount,
-      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_unblended_cost, 0) AS cost,
-      COALESCE(${needsOrgJoin ? 'cur.' : ''}pricing_public_on_demand_cost, 0) AS list_cost,
-      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_line_item_type, '') AS line_item_type,
-      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_operation, '') AS operation,
-      COALESCE(${needsOrgJoin ? 'cur.' : ''}line_item_usage_type, '') AS usage_type${tagClause}
+      ${tablePrefix}line_item_usage_account_id AS account_id,
+      COALESCE(${tablePrefix}line_item_usage_account_name, '') AS account_name,
+      COALESCE(${tablePrefix}product_region_code, '') AS region,
+      COALESCE(${tablePrefix}product_servicecode, '') AS service,
+      COALESCE(${tablePrefix}product_product_family, '') AS service_family,
+      COALESCE(${tablePrefix}line_item_line_item_description, '') AS description,
+      COALESCE(${tablePrefix}line_item_resource_id, '') AS resource_id,
+      COALESCE(${tablePrefix}line_item_usage_amount, 0) AS usage_amount,
+      ${costExpr} AS cost,
+      COALESCE(${tablePrefix}pricing_public_on_demand_cost, 0) AS list_cost,
+      COALESCE(${tablePrefix}line_item_line_item_type, '') AS line_item_type,
+      COALESCE(${tablePrefix}line_item_operation, '') AS operation,
+      COALESCE(${tablePrefix}line_item_usage_type, '') AS usage_type${tagClause}
     FROM ${fromClause}
   )`;
 }
@@ -283,16 +386,22 @@ export function buildCostQuery(
   availablePeriods?: readonly string[],
   sidecarPlan?: SidecarPlan,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
+  costScope?: CostScopeConfig,
+  availableColumns?: ReadonlySet<string>,
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
+  const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
   const costTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, costTier, dimensions, orgAccountsPath, periods, sidecarPlan);
+  const source = buildSource(dataDir, costTier, dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
     ...filterClauses,
+    ...exclusionClauses,
   ];
 
   if (params.orgNodeValues !== undefined && params.orgNodeValues.length > 0) {
@@ -352,9 +461,14 @@ export function buildTrendQuery(
   availablePeriods?: readonly string[],
   sidecarPlan?: SidecarPlan,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
+  costScope?: CostScopeConfig,
+  availableColumns?: ReadonlySet<string>,
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
+  const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
 
   const startDate = params.dateRange.start;
   const endDate = params.dateRange.end;
@@ -372,9 +486,10 @@ export function buildTrendQuery(
   const previousPeriods = computePeriodsInRange({ start: prevStartIso, end: prevEndIso });
   const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
   const periods = availablePeriods === undefined ? required : required.filter(p => availablePeriods.includes(p));
-  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan);
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
 
-  const filterWhere = filterClauses.length > 0 ? ` AND ${filterClauses.join(' AND ')}` : '';
+  const allFilterClauses = [...filterClauses, ...exclusionClauses];
+  const filterWhere = allFilterClauses.length > 0 ? ` AND ${allFilterClauses.join(' AND ')}` : '';
 
   return `
     WITH current_period AS (
@@ -440,11 +555,16 @@ export function buildMissingTagsQuery(
   availablePeriods?: readonly string[],
   sidecarPlan?: SidecarPlan,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
+  costScope?: CostScopeConfig,
+  availableColumns?: ReadonlySet<string>,
 ): string {
   const tagResolved = resolveField(params.tagDimension, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
+  const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan);
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
 
   // Date + user filters apply to the resource aggregation.
   const whereConditions = [
@@ -452,6 +572,7 @@ export function buildMissingTagsQuery(
     `line_item_type IN ('Usage', 'DiscountedUsage')`,
     `resource_id IS NOT NULL AND resource_id != ''`,
     ...filterClauses,
+    ...exclusionClauses,
   ];
 
   return `
@@ -515,15 +636,21 @@ export function buildNonResourceCostQuery(
   availablePeriods?: readonly string[],
   sidecarPlan?: SidecarPlan,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
+  costScope?: CostScopeConfig,
+  availableColumns?: ReadonlySet<string>,
 ): string {
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
+  const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan);
+  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
     `(line_item_type NOT IN ('Usage', 'DiscountedUsage') OR resource_id IS NULL OR resource_id = '')`,
     ...filterClauses,
+    ...exclusionClauses,
   ];
 
   return `
@@ -548,16 +675,22 @@ export function buildDailyCostsQuery(
   availablePeriods?: readonly string[],
   sidecarPlan?: SidecarPlan,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
+  costScope?: CostScopeConfig,
+  availableColumns?: ReadonlySet<string>,
 ): string {
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
+  const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
   const dailyTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, dailyTier, dimensions, orgAccountsPath, periods, sidecarPlan);
+  const source = buildSource(dataDir, dailyTier, dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
 
   const whereConditions = [
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
     ...filterClauses,
+    ...exclusionClauses,
   ];
 
   const dateExpr = dailyTier === 'hourly'
@@ -584,13 +717,18 @@ export function buildEntityDetailQuery(
   availablePeriods?: readonly string[],
   sidecarPlan?: SidecarPlan,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
+  costScope?: CostScopeConfig,
+  availableColumns?: ReadonlySet<string>,
 ): string {
   const dimResolved = resolveField(params.dimension, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
+  const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
   const granularity = params.granularity ?? 'daily';
   const tier = granularity === 'hourly' ? 'hourly' : 'daily';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, tier, dimensions, orgAccountsPath, periods, sidecarPlan);
+  const source = buildSource(dataDir, tier, dimensions, orgAccountsPath, periods, sidecarPlan, costMetric, availableColumns, costPerspective);
 
   // Same display-name collision treatment for the entity selector itself: if
   // the user clicked into "sre default" we need to match every underlying id,
@@ -610,6 +748,7 @@ export function buildEntityDetailQuery(
     `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
     entityClause,
     ...filterClauses,
+    ...exclusionClauses,
   ];
 
   // Group by hour for hourly tier so the entity detail histogram doesn't
