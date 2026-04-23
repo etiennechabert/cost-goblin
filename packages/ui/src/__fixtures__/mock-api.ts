@@ -342,6 +342,7 @@ export class MockCostApi implements CostApi {
     return Promise.resolve({ hiddenColumns: [], columnOrder: [] });
   }
   saveExplorerPreferences(): Promise<void> { return Promise.resolve(); }
+  cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
 }
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {

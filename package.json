@@ -14,6 +14,7 @@
     "repartition": "npx tsx scripts/repartition.ts",
     "build": "npm run build --workspaces",
     "e2e": "npm run build --workspace=packages/desktop && npx playwright test && npx tsx e2e/collect-coverage.ts",
+    "perf": "npm run build --workspace=packages/desktop && npx playwright test e2e/perf.test.ts",
     "prepare": "husky"
   },
   "devDependencies": {
