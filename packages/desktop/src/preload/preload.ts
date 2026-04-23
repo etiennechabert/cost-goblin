@@ -39,8 +39,30 @@ import type {
   ExplorerRowsResult,
 } from '@costgoblin/core';
 
+// ---------------------------------------------------------------------------
+// Performance instrumentation — active only when COSTGOBLIN_PERF_MODE=1
+// ---------------------------------------------------------------------------
+const perfMode = process.env['COSTGOBLIN_PERF_MODE'] === '1';
+
+interface IpcTiming {
+  readonly channel: string;
+  readonly durationMs: number;
+  readonly timestamp: string;
+}
+
+const ipcTimings: IpcTiming[] = [];
+
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
-  return ipcRenderer.invoke(channel, ...args) as Promise<T>;
+  const start = perfMode ? performance.now() : 0;
+  const result = ipcRenderer.invoke(channel, ...args) as Promise<T>;
+  if (!perfMode) return result;
+  return result.finally(() => {
+    ipcTimings.push({
+      channel,
+      durationMs: Math.round((performance.now() - start) * 100) / 100,
+      timestamp: new Date().toISOString(),
+    });
+  });
 }
 
 const api: CostApi = {
@@ -218,6 +240,20 @@ const api: CostApi = {
   saveExplorerPreferences(prefs: ExplorerPreferences): Promise<void> {
     return invoke<undefined>('explorer:save-preferences', prefs).then(() => undefined);
   },
+  cancelPendingQueries(): Promise<void> {
+    return invoke<undefined>('query:cancel-pending').then(() => undefined);
+  },
 };
 
 contextBridge.exposeInMainWorld('costgoblin', api);
+
+if (perfMode) {
+  contextBridge.exposeInMainWorld('costgoblinPerf', {
+    getIpcTimings(): IpcTiming[] { return [...ipcTimings]; },
+    clearIpcTimings(): void { ipcTimings.length = 0; },
+    startCpuProfile(): Promise<undefined> { return invoke<undefined>('perf:start-cpu-profile'); },
+    stopCpuProfile(label: string): Promise<{ path: string }> {
+      return invoke<{ path: string }>('perf:stop-cpu-profile', label);
+    },
+  });
+}

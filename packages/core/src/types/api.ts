@@ -179,6 +179,10 @@ export interface CostApi {
   /** Swap the AWS profile used to talk to AWS, leaving bucket paths and
    *  every other config field untouched. */
   updateAwsProfile(profile: string): Promise<void>;
+  /** Cancel all queued (not yet running) DuckDB queries. Call on view
+   *  navigation so stale queries from the previous view don't hold pool
+   *  connections and slow down the new view's queries. */
+  cancelPendingQueries(): Promise<void>;
 }
 
 export interface AccountMappingEntry {

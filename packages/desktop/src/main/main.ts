@@ -1,4 +1,7 @@
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { Session } from 'node:inspector';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { logger } from '@costgoblin/core';
 import type { LogEntry } from '@costgoblin/core';
@@ -51,6 +54,44 @@ function formatEntry(entry: LogEntry): string {
 logger.addHandler((entry: LogEntry) => {
   process.stdout.write(formatEntry(entry));
 });
+
+// ---------------------------------------------------------------------------
+// CPU profiling — active only when COSTGOBLIN_PERF_MODE=1
+// ---------------------------------------------------------------------------
+const perfMode = process.env['COSTGOBLIN_PERF_MODE'] === '1';
+
+if (perfMode) {
+  const session = new Session();
+  session.connect();
+
+  ipcMain.handle('perf:start-cpu-profile', () => {
+    return new Promise<void>((resolve, reject) => {
+      session.post('Profiler.enable', (err) => {
+        if (err !== null) { reject(err); return; }
+        session.post('Profiler.start', (err2) => {
+          if (err2 !== null) { reject(err2); return; }
+          resolve();
+        });
+      });
+    });
+  });
+
+  ipcMain.handle('perf:stop-cpu-profile', (_event: unknown, label: string) => {
+    return new Promise<{ path: string }>((resolve, reject) => {
+      session.post('Profiler.stop', (err, result) => {
+        if (err !== null) { reject(err); return; }
+        session.post('Profiler.disable');
+        const dir = join(tmpdir(), 'costgoblin-perf');
+        mkdirSync(dir, { recursive: true });
+        const outPath = join(dir, `cpu-${label}.cpuprofile`);
+        writeFileSync(outPath, JSON.stringify(result.profile));
+        resolve({ path: outPath });
+      });
+    });
+  });
+
+  logger.info('Perf mode enabled — CPU profiling handlers registered');
+}
 
 function resolveConfigPath(base: string, name: string): string {
   const envKey = `COSTGOBLIN_${name.toUpperCase()}_PATH`;
