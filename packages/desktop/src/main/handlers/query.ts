@@ -52,6 +52,10 @@ import {
 export function registerQueryHandlers(app: AppContext): void {
   const { ctx, getQueryDimensions: getDimensions, getAccountMap, getOrgAccountsPath, getOrgTreeConfig, getConfig, getCostScope, getAvailableColumns, runQuery } = app;
 
+  ipcMain.handle('query:cancel-pending', () => {
+    ctx.db.cancelPendingQueries();
+  });
+
   async function resolveAvailablePeriods(
     tier: 'daily' | 'hourly',
     dateRange: { readonly start: string; readonly end: string },

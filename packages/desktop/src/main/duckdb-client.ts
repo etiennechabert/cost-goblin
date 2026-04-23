@@ -5,6 +5,7 @@ export type RawRow = Readonly<Record<string, unknown>>;
 
 export interface DuckDBClient {
   runQuery(sql: string): Promise<RawRow[]>;
+  cancelPendingQueries(): void;
   terminate(): Promise<void>;
 }
 
@@ -113,6 +114,9 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
         });
         worker.postMessage({ kind: 'query', id, sql });
       });
+    },
+    cancelPendingQueries(): void {
+      worker.postMessage({ kind: 'cancel-pending' });
     },
     async terminate(): Promise<void> {
       await worker.terminate();
