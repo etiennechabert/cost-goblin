@@ -1,6 +1,29 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave } from '@costgoblin/ui';
 import type { CostApi, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
+
+// ---------------------------------------------------------------------------
+// React Profiler — collects render timings when perf mode is active
+// ---------------------------------------------------------------------------
+const perfEnabled = globalThis.costgoblinPerf !== undefined;
+const renderTimings: RenderTiming[] = [];
+
+if (perfEnabled) {
+  globalThis.__PERF_REACT__ = renderTimings;
+}
+
+function onPerfRender(
+  id: string,
+  phase: 'mount' | 'update' | 'nested-update',
+  actualDuration: number,
+  baseDuration: number,
+  startTime: number,
+  commitTime: number,
+): void {
+  if (perfEnabled) {
+    renderTimings.push({ id, phase, actualDuration, baseDuration, startTime, commitTime });
+  }
+}
 
 function getApi(): CostApi {
   return globalThis.costgoblin;
@@ -187,6 +210,7 @@ function AppShell(): React.JSX.Element {
 
   function handleNavClick(id: string) {
     confirmLeave(() => {
+      void api.cancelPendingQueries();
       switch (id) {
         case 'trends': setView({ page: 'trends' }); break;
         case 'missing-tags': setView({ page: 'missing-tags' }); break;
@@ -205,11 +229,15 @@ function AppShell(): React.JSX.Element {
   }
 
   function handleEntityClick(entity: string, dimension: string) {
-    confirmLeave(() => { setView({ page: 'entity-detail', entity, dimension }); });
+    confirmLeave(() => {
+      void api.cancelPendingQueries();
+      setView({ page: 'entity-detail', entity, dimension });
+    });
   }
 
   function handleBack() {
     confirmLeave(() => {
+      void api.cancelPendingQueries();
       const firstId = viewsConfig.views[0]?.id ?? OVERVIEW_SEED_VIEW.id;
       setView({ page: 'custom', viewId: firstId });
     });
@@ -328,24 +356,60 @@ function AppShell(): React.JSX.Element {
       {/* View content */}
       {view.page === 'custom' && (() => {
         const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
-        return <CustomView spec={spec} headerSubtitle="Cloud spending visibility" onEntityClick={handleEntityClick} />;
+        return (
+          <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
+            <CustomView spec={spec} headerSubtitle="Cloud spending visibility" onEntityClick={handleEntityClick} />
+          </Profiler>
+        );
       })()}
-      {view.page === 'trends' && <CostTrends onEntityClick={handleEntityClick} />}
-      {view.page === 'missing-tags' && <MissingTags />}
-      {view.page === 'savings' && <Savings />}
-      {view.page === 'explorer' && <ExplorerView />}
-      {view.page === 'cost-scope' && <CostScopeView />}
-      {view.page === 'dimensions' && <DimensionsView />}
-      {view.page === 'views-editor' && <ViewsEditor onConfigPersisted={setViewsConfig} />}
+      {view.page === 'trends' && (
+        <Profiler id="trends" onRender={onPerfRender}>
+          <CostTrends onEntityClick={handleEntityClick} />
+        </Profiler>
+      )}
+      {view.page === 'missing-tags' && (
+        <Profiler id="missing-tags" onRender={onPerfRender}>
+          <MissingTags />
+        </Profiler>
+      )}
+      {view.page === 'savings' && (
+        <Profiler id="savings" onRender={onPerfRender}>
+          <Savings />
+        </Profiler>
+      )}
+      {view.page === 'explorer' && (
+        <Profiler id="explorer" onRender={onPerfRender}>
+          <ExplorerView />
+        </Profiler>
+      )}
+      {view.page === 'cost-scope' && (
+        <Profiler id="cost-scope" onRender={onPerfRender}>
+          <CostScopeView />
+        </Profiler>
+      )}
+      {view.page === 'dimensions' && (
+        <Profiler id="dimensions" onRender={onPerfRender}>
+          <DimensionsView />
+        </Profiler>
+      )}
+      {view.page === 'views-editor' && (
+        <Profiler id="views-editor" onRender={onPerfRender}>
+          <ViewsEditor onConfigPersisted={setViewsConfig} />
+        </Profiler>
+      )}
       <div className={view.page === 'sync' ? '' : 'hidden'}>
-        <DataManagement />
+        <Profiler id="sync" onRender={onPerfRender}>
+          <DataManagement />
+        </Profiler>
       </div>
       {view.page === 'entity-detail' && (
-        <EntityDetail
-          entity={view.entity}
-          dimension={view.dimension}
-          onBack={handleBack}
-        />
+        <Profiler id="entity-detail" onRender={onPerfRender}>
+          <EntityDetail
+            entity={view.entity}
+            dimension={view.dimension}
+            onBack={handleBack}
+          />
+        </Profiler>
       )}
     </div>
   );
