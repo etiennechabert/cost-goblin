@@ -330,6 +330,14 @@ export function registerDimensionsHandlers(app: AppContext): void {
   ipcMain.handle('dimensions:get-alias-suggestions', async (_event, tagName: string): Promise<AliasSuggestion[]> => {
     if (tagName.length === 0) return [];
 
+    // SECURITY: Validate tagName against dimensions config whitelist to prevent SQL injection
+    const config = await getDimensions();
+    const validTagNames = config.tags.map(t => t.tagName);
+    if (!validTagNames.includes(tagName)) {
+      // Invalid tag name - reject silently (not a normal use case)
+      return [];
+    }
+
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
     const rawDir = path.join(ctx.dataDir, 'aws', 'raw');

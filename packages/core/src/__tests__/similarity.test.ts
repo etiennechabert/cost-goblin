@@ -409,3 +409,31 @@ describe('generateAliasSuggestions', () => {
     expect(Array.isArray(suggestion.aliases)).toBe(true);
   });
 });
+
+describe('performance', () => {
+  it('generates suggestions for 500 values in under 2 seconds', () => {
+    // Generate 500 test values with realistic variations
+    const baseValues = [
+      'production', 'staging', 'development', 'testing',
+      'core-banking', 'platform', 'data-engineering'
+    ];
+    const values: string[] = [];
+    for (let i = 0; i < 500; i++) {
+      const base = baseValues[i % baseValues.length];
+      if (base === undefined) continue; // Type guard (never happens due to modulo)
+      const variation = Math.floor(i / baseValues.length);
+      // Add variations: case, separators, abbreviations
+      if (variation % 4 === 0) values.push(base.toUpperCase());
+      else if (variation % 4 === 1) values.push(base.replace(/-/g, '_'));
+      else if (variation % 4 === 2) values.push(base.slice(0, 4));
+      else values.push(base);
+    }
+
+    const start = performance.now();
+    const suggestions = generateAliasSuggestions(values);
+    const duration = performance.now() - start;
+
+    expect(duration).toBeLessThan(2000);
+    expect(suggestions.length).toBeGreaterThan(0);
+  });
+});
