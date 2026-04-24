@@ -1309,9 +1309,9 @@ test.describe('Cost Scope', () => {
 // Widget growth regression — every widget × every size stays bounded
 // ---------------------------------------------------------------------------
 test.describe('Widget growth', () => {
-  // Copy real config to a temp dir so we can swap in a synthetic views.yaml
-  // without clobbering the user's real dashboard.
-  const REAL_CONFIG_DIR = join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config');
+  // Copy fixture config to a temp dir so we can swap in a synthetic views.yaml
+  // for widget testing.
+  const FIXTURE_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'config');
   const TEMP_CONFIG_DIR = join(tmpdir(), `costgoblin-widget-growth-${String(Date.now())}`);
   const VIEWS_YAML = buildWidgetMatrixYaml();
 
@@ -1327,7 +1327,7 @@ test.describe('Widget growth', () => {
   test.beforeAll(async () => {
     mkdirSync(TEMP_CONFIG_DIR, { recursive: true });
     for (const f of ['costgoblin.yaml', 'dimensions.yaml', 'org-tree.yaml']) {
-      const src = join(REAL_CONFIG_DIR, f);
+      const src = join(FIXTURE_CONFIG_DIR, f);
       if (existsSync(src)) writeFileSync(join(TEMP_CONFIG_DIR, f), readFileSync(src));
     }
     writeFileSync(join(TEMP_CONFIG_DIR, 'views.yaml'), VIEWS_YAML);
@@ -1337,7 +1337,7 @@ test.describe('Widget growth', () => {
       env: {
         ...process.env,
         NODE_ENV: 'production',
-        COSTGOBLIN_DATA_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'data'),
+        COSTGOBLIN_DATA_DIR: join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'synthetic'),
         COSTGOBLIN_CONFIG_DIR: TEMP_CONFIG_DIR,
       },
     });

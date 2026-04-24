@@ -1,16 +1,6 @@
-providers:
-  - name: aws-main
-    type: aws
-    credentials:
-      profile: test-profile
-    sync:
-      daily:
-        bucket: s3://test-cur-bucket/daily/
-        retentionDays: 365
-      hourly:
-        bucket: s3://test-cur-bucket/hourly/
-        retentionDays: 30
-      intervalMinutes: 60
+# No providers configured for E2E fixture mode
+# Data already exists locally in the fixture directory
+providers: []
 
 defaults:
   periodDays: 30
