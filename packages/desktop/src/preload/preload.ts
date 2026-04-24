@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  AliasSuggestion,
   CostApi,
   Dimension,
   CostGoblinConfig,
@@ -239,6 +240,15 @@ const api: CostApi = {
   },
   saveExplorerPreferences(prefs: ExplorerPreferences): Promise<void> {
     return invoke<undefined>('explorer:save-preferences', prefs).then(() => undefined);
+  },
+  getAliasSuggestions(tagName: string): Promise<AliasSuggestion[]> {
+    return invoke<AliasSuggestion[]>('dimensions:get-alias-suggestions', tagName);
+  },
+  dismissSuggestion(tagName: string, canonical: string, aliases: readonly string[]): Promise<void> {
+    return invoke<undefined>('dimensions:dismiss-suggestion', tagName, canonical, aliases).then(() => undefined);
+  },
+  acceptSuggestion(tagName: string, canonical: string, aliases: readonly string[]): Promise<void> {
+    return invoke<undefined>('dimensions:accept-suggestion', tagName, canonical, aliases).then(() => undefined);
   },
   cancelPendingQueries(): Promise<void> {
     return invoke<undefined>('query:cancel-pending').then(() => undefined);

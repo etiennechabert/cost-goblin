@@ -7,6 +7,7 @@ import {
 } from '@costgoblin/core/browser';
 import type {
   AccountMappingStatus,
+  AliasSuggestion,
   CostApi,
   CostResult,
   DailyCostsResult,
@@ -342,6 +343,22 @@ export class MockCostApi implements CostApi {
     return Promise.resolve({ hiddenColumns: [], columnOrder: [] });
   }
   saveExplorerPreferences(): Promise<void> { return Promise.resolve(); }
+  getAliasSuggestions(tagName: string): Promise<AliasSuggestion[]> {
+    // Mock suggestions based on common tag patterns
+    const suggestions: Record<string, AliasSuggestion[]> = {
+      'team': [
+        { canonical: 'platform', aliases: ['Platform', 'platform-eng', 'plt'] },
+        { canonical: 'data', aliases: ['Data', 'data-eng', 'data-platform'] },
+      ],
+      'env': [
+        { canonical: 'prod', aliases: ['production', 'prd', 'PROD'] },
+        { canonical: 'staging', aliases: ['stage', 'stg'] },
+      ],
+    };
+    return Promise.resolve(suggestions[tagName] ?? []);
+  }
+  dismissSuggestion(): Promise<void> { return Promise.resolve(); }
+  acceptSuggestion(): Promise<void> { return Promise.resolve(); }
   cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
 }
 

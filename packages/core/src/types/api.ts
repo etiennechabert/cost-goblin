@@ -24,6 +24,7 @@ import type {
   TrendQueryParams,
   TrendResult,
 } from './query.js';
+import type { AliasSuggestion } from '../normalize/similarity.js';
 
 export interface SavingsPreferences {
   readonly hiddenActionTypes: readonly string[];
@@ -179,6 +180,15 @@ export interface CostApi {
   /** Swap the AWS profile used to talk to AWS, leaving bucket paths and
    *  every other config field untouched. */
   updateAwsProfile(profile: string): Promise<void>;
+  /** Analyze tag values for a given tag dimension and return alias suggestions
+   *  based on similarity (case variations, abbreviations, separators).
+   *  Filters out previously dismissed suggestions. */
+  getAliasSuggestions(tagName: string): Promise<AliasSuggestion[]>;
+  /** Dismiss an alias suggestion so it won't appear again. */
+  dismissSuggestion(tagName: string, canonical: string, aliases: readonly string[]): Promise<void>;
+  /** Accept an alias suggestion and merge it into the dimension's aliases in
+   *  dimensions.yaml, then invalidate the query cache. */
+  acceptSuggestion(tagName: string, canonical: string, aliases: readonly string[]): Promise<void>;
   /** Cancel all queued (not yet running) DuckDB queries. Call on view
    *  navigation so stale queries from the previous view don't hold pool
    *  connections and slow down the new view's queries. */
