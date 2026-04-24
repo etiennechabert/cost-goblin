@@ -81,6 +81,12 @@
       padding: 0 24px;
     }
 
+    .container-wide {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
     /* --- NAV --- */
     nav {
       position: fixed;
@@ -147,28 +153,27 @@
 
     /* --- HERO --- */
     .hero {
-      min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
       text-align: center;
-      padding: 120px 24px 80px;
+      padding: 120px 24px 0;
       position: relative;
+      overflow: visible;
     }
 
     /* Radial glow behind hero */
     .hero::before {
       content: '';
       position: absolute;
-      top: 20%;
+      top: 10%;
       left: 50%;
       transform: translateX(-50%);
-      width: 600px;
+      width: 800px;
       height: 600px;
-      background: radial-gradient(circle, var(--emerald-glow) 0%, transparent 70%);
+      background: radial-gradient(ellipse, var(--emerald-glow) 0%, transparent 70%);
       pointer-events: none;
-      opacity: 0.6;
+      opacity: 0.5;
     }
 
     .hero-badge {
@@ -206,7 +211,7 @@
     }
 
     .hero-icon img {
-      width: clamp(140px, 20vw, 220px);
+      width: clamp(100px, 14vw, 160px);
       height: auto;
     }
 
@@ -232,66 +237,55 @@
       color: var(--text-dim);
       max-width: 540px;
       line-height: 1.7;
-      margin-bottom: 48px;
+      margin-bottom: 56px;
       animation: fadeInUp 0.8s ease 0.3s both;
     }
 
-    .hero-terminal {
+    /* --- HERO SCREENSHOT --- */
+    .hero-screenshot {
       width: 100%;
-      max-width: 520px;
-      background: var(--bg-raised);
-      border: 1px solid var(--border);
-      border-radius: 10px;
+      max-width: 1100px;
+      padding: 0 24px;
+      animation: fadeInUp 1s ease 0.45s both;
+      position: relative;
+    }
+
+    .hero-screenshot-inner {
+      position: relative;
+      border-radius: 12px;
       overflow: hidden;
-      text-align: left;
-      animation: fadeInUp 0.8s ease 0.4s both;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      border: 1px solid var(--border);
+      box-shadow:
+        0 4px 24px rgba(0, 0, 0, 0.4),
+        0 24px 80px rgba(0, 0, 0, 0.5),
+        0 0 0 1px rgba(16, 185, 129, 0.06);
+      transition: box-shadow 0.5s ease, border-color 0.5s ease;
     }
 
-    .terminal-bar {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--border);
+    .hero-screenshot-inner:hover {
+      border-color: rgba(16, 185, 129, 0.2);
+      box-shadow:
+        0 4px 24px rgba(0, 0, 0, 0.4),
+        0 24px 80px rgba(0, 0, 0, 0.5),
+        0 0 60px rgba(16, 185, 129, 0.08);
     }
 
-    .terminal-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background: var(--text-muted);
+    .hero-screenshot img {
+      display: block;
+      width: 100%;
+      height: auto;
     }
 
-    .terminal-dot:nth-child(1) { background: #ff5f56; }
-    .terminal-dot:nth-child(2) { background: #ffbd2e; }
-    .terminal-dot:nth-child(3) { background: #27c93f; }
-
-    .terminal-body {
-      padding: 20px;
-      font-family: var(--font-mono);
-      font-size: 13px;
-      line-height: 2;
-    }
-
-    .terminal-body .prompt { color: var(--emerald); }
-    .terminal-body .cmd { color: var(--text); }
-    .terminal-body .comment { color: var(--text-muted); }
-    .terminal-body .output { color: var(--text-dim); }
-
-    .cursor {
-      display: inline-block;
-      width: 8px;
-      height: 16px;
-      background: var(--emerald);
-      margin-left: 2px;
-      vertical-align: text-bottom;
-      animation: blink 1.2s step-end infinite;
-    }
-
-    @keyframes blink {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0; }
+    /* Gradient fade at bottom of hero screenshot */
+    .hero-screenshot-inner::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 120px;
+      background: linear-gradient(to top, var(--bg), transparent);
+      pointer-events: none;
     }
 
     /* --- VALUE PROPS --- */
@@ -363,6 +357,89 @@
       font-size: 14px;
       color: var(--text-dim);
       line-height: 1.7;
+    }
+
+    /* --- SHOWCASE --- */
+    .showcase {
+      padding: 100px 24px;
+      border-top: 1px solid var(--border);
+    }
+
+    .showcase-item {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 64px;
+      align-items: center;
+      opacity: 0;
+      transform: translateY(24px);
+      transition: all 0.7s ease;
+    }
+
+    .showcase-item.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .showcase-item + .showcase-item {
+      margin-top: 100px;
+    }
+
+    .showcase-item.reverse {
+      direction: rtl;
+    }
+
+    .showcase-item.reverse > * {
+      direction: ltr;
+    }
+
+    .showcase-text {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .showcase-text .section-label {
+      margin-bottom: 0;
+    }
+
+    .showcase-text h3 {
+      font-size: clamp(24px, 3vw, 32px);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+    }
+
+    .showcase-text p {
+      font-size: 15px;
+      color: var(--text-dim);
+      line-height: 1.7;
+      max-width: 380px;
+    }
+
+    .showcase-img {
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      box-shadow:
+        0 4px 20px rgba(0, 0, 0, 0.3),
+        0 16px 56px rgba(0, 0, 0, 0.4);
+      transition: all 0.5s ease;
+    }
+
+    .showcase-img:hover {
+      border-color: rgba(16, 185, 129, 0.2);
+      box-shadow:
+        0 4px 20px rgba(0, 0, 0, 0.3),
+        0 16px 56px rgba(0, 0, 0, 0.4),
+        0 0 48px rgba(16, 185, 129, 0.06);
+      transform: scale(1.01);
+    }
+
+    .showcase-img img {
+      display: block;
+      width: 100%;
+      height: auto;
     }
 
     /* --- FEATURES --- */
@@ -657,11 +734,17 @@
       .signup-form { flex-direction: column; }
       .signup-form button { padding: 14px; }
       .nav-links a:not(.gh-star) { display: none; }
+      .showcase-item,
+      .showcase-item.reverse {
+        grid-template-columns: 1fr;
+        gap: 32px;
+        direction: ltr;
+      }
+      .showcase-text p { max-width: none; }
     }
 
     @media (max-width: 480px) {
-      .hero { padding: 100px 20px 60px; }
-      .terminal-body { font-size: 11px; padding: 14px; }
+      .hero { padding: 100px 20px 0; }
     }
   </style>
 </head>
@@ -685,26 +768,15 @@
   <!-- HERO -->
   <section class="hero">
     <div class="hero-badge"><span class="dot"></span> Coming soon</div>
-    <div class="hero-icon"><img src="goblin.png" alt="CostGoblin mascot — a goblin guarding gold coins"></div>
+    <div class="hero-icon"><img src="goblin.png" alt="CostGoblin mascot" width="160" height="160"></div>
     <h1>Know every dollar<br>in your <span>cloud</span></h1>
     <p class="hero-sub">
       CostGoblin syncs your AWS billing data locally and queries it with DuckDB.
       No servers. No SaaS fees. Your data never leaves your machine.
     </p>
-    <div class="hero-terminal">
-      <div class="terminal-bar">
-        <span class="terminal-dot"></span>
-        <span class="terminal-dot"></span>
-        <span class="terminal-dot"></span>
-      </div>
-      <div class="terminal-body">
-        <div><span class="comment"># sync billing data from S3</span></div>
-        <div><span class="prompt">$ </span><span class="cmd">costgoblin sync --provider aws</span></div>
-        <div><span class="output">Syncing 16 billing periods... done (3.5 GB)</span></div>
-        <div><span class="output">Repartitioned to 471 daily partitions</span></div>
-        <div>&nbsp;</div>
-        <div><span class="comment"># launch the desktop app</span></div>
-        <div><span class="prompt">$ </span><span class="cmd">costgoblin</span><span class="cursor"></span></div>
+    <div class="hero-screenshot">
+      <div class="hero-screenshot-inner">
+        <img src="screenshots/hero-final-service.png" alt="CostGoblin dashboard filtered by environment with AWS Service filter open, showing cost breakdown with stacked bar chart and pie charts" width="1440" height="900" loading="eager">
       </div>
     </div>
   </section>
@@ -737,6 +809,44 @@
     </div>
   </section>
 
+  <!-- SHOWCASE -->
+  <section class="showcase" id="showcase">
+    <div class="container-wide">
+      <div class="showcase-item" data-animate>
+        <div class="showcase-text">
+          <div class="section-label">Explorer</div>
+          <h3>Drill into every line item</h3>
+          <p>Filter, sort, and explore the raw CUR dataset. See daily totals at a glance, slice by any dimension, and click any cell to drill deeper. 2,950 line items queried in milliseconds.</p>
+        </div>
+        <div class="showcase-img">
+          <img src="screenshots/explorer.png" alt="CostGoblin explorer view showing filterable data table with daily cost bar chart" width="1440" height="900" loading="lazy">
+        </div>
+      </div>
+
+      <div class="showcase-item reverse" data-animate>
+        <div class="showcase-text">
+          <div class="section-label">Dimensions</div>
+          <h3>Map tags to cost dimensions</h3>
+          <p>Normalize messy tags with aliases and casing rules applied at query time. Create custom allocation dimensions from any tag key. Changes take effect instantly — no re-processing.</p>
+        </div>
+        <div class="showcase-img">
+          <img src="screenshots/dimensions.png" alt="CostGoblin dimensions configuration showing built-in and custom tag dimensions with drag-to-reorder" width="1440" height="900" loading="lazy">
+        </div>
+      </div>
+
+      <div class="showcase-item" data-animate>
+        <div class="showcase-text">
+          <div class="section-label">Views</div>
+          <h3>Build your own dashboards</h3>
+          <p>Compose custom views from a library of widgets — summary cards, stacked bars, pie charts, tables. Drag to reorder, resize, and group. Export and share as YAML.</p>
+        </div>
+        <div class="showcase-img">
+          <img src="screenshots/views.png" alt="CostGoblin view builder showing configurable dashboard with summary, chart, and table widgets" width="1440" height="900" loading="lazy">
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- FEATURES -->
   <section class="features" id="features">
     <div class="container">
@@ -747,7 +857,7 @@
           <span class="feature-num">01</span>
           <div>
             <h4>S3 billing sync</h4>
-            <p>Downloads AWS Cost and Usage Reports from S3 and repartitions them into optimized daily Parquet files.</p>
+            <p>Downloads AWS Cost and Usage Reports from S3 and stores them as optimized daily Parquet files.</p>
           </div>
         </div>
         <div class="feature-item" data-animate>
@@ -859,7 +969,7 @@
           observer.unobserve(el);
         }
       });
-    }, { threshold: 0.15 });
+    }, { threshold: 0.1 });
 
     document.querySelectorAll('[data-animate]').forEach(el => observer.observe(el));
 
