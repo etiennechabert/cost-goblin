@@ -8,4 +8,11 @@ export default defineConfig({
   reporter: process.env.CI ? [['html'], ['list']] : 'list',
   fullyParallel: false,
   workers: 1,
+  webServer: {
+    command: 'npm run build --workspace=packages/desktop',
+    timeout: 120_000,
+    stdout: 'ignore',
+    stderr: 'pipe',
+    reuseExistingServer: !process.env.CI,
+  },
 });
