@@ -1,15 +1,12 @@
 import { ipcMain } from 'electron';
 import { parseJsonObject } from '@costgoblin/core';
 import type { SavingsPreferences } from '@costgoblin/core';
-import type { AppContext } from './context.js';
+import { type AppContext, prefsPath } from './context.js';
 
 export function registerSavingsHandlers(app: AppContext): void {
   const { ctx } = app;
 
-  async function savingsPrefsPath(): Promise<string> {
-    const path = await import('node:path');
-    return path.join(path.dirname(ctx.dataDir), 'savings-preferences.json');
-  }
+  const savingsPrefsPath = () => prefsPath(ctx.dataDir, 'savings-preferences');
 
   ipcMain.handle('savings:get-preferences', async (): Promise<SavingsPreferences> => {
     const fs = await import('node:fs/promises');

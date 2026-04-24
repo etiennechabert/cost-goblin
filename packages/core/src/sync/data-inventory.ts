@@ -4,7 +4,7 @@ import { createS3Handle, parseS3Path } from './s3-client.js';
 import type { S3Handle } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
 import type { DataTier } from '../types/api.js';
-import { getRawDirPrefix, parseEtagsJson } from './sync-utils.js';
+import { extractPeriod, getEtagFileName, getRawDirPrefix, parseEtagsJson } from './sync-utils.js';
 
 export type PeriodStatus = 'missing' | 'repartitioned' | 'stale';
 
@@ -28,13 +28,6 @@ export interface DataInventory {
   readonly totalLocalPeriods: number;
   readonly totalRemotePeriods: number;
   readonly local: LocalDataInfo;
-}
-
-function extractPeriod(key: string): string | undefined {
-  const billingMatch = /BILLING_PERIOD=(\d{4}-\d{2})/.exec(key);
-  if (billingMatch?.[1] !== undefined) return billingMatch[1];
-  const dateMatch = /date=(\d{4}-\d{2})-\d{2}/.exec(key);
-  return dateMatch?.[1];
 }
 
 async function getDirSize(dirPath: string): Promise<number> {
@@ -84,12 +77,6 @@ async function getRawTierSize(rawDir: string, tierPrefix: string): Promise<numbe
   return total;
 }
 
-const ETAG_FILES: Record<DataTier, string> = {
-  'daily': 'sync-etags.json',
-  'hourly': 'sync-etags-hourly.json',
-  'cost-optimization': 'sync-etags-cost-optimization.json',
-};
-
 export async function getDataInventory(
   bucketPath: string,
   profile: string,
@@ -104,7 +91,7 @@ export async function getDataInventory(
   const periodMap = new Map<string, ManifestFileEntry[]>();
   for (const file of remoteFiles) {
     const period = extractPeriod(file.key);
-    if (period === undefined) continue;
+    if (period === 'unknown') continue;
     const existing = periodMap.get(period);
     if (existing !== undefined) {
       existing.push(file);
@@ -121,7 +108,7 @@ export async function getDataInventory(
 
   let savedEtags: Record<string, Record<string, string>> = {};
   try {
-    const raw = await readFile(join(dataDir, ETAG_FILES[tier]), 'utf-8');
+    const raw = await readFile(join(dataDir, getEtagFileName(tier)), 'utf-8');
     savedEtags = parseEtagsJson(raw);
   } catch {
     // no saved etags yet

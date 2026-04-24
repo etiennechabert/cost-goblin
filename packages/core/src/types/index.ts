@@ -13,6 +13,7 @@ export {
   asBucketPath,
   asDollars,
   asDateString,
+  tagColumnName,
 } from './branded.js';
 
 export type {

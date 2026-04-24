@@ -8,6 +8,7 @@ import {
   logger,
   listLocalMonths,
   parseJsonObject,
+  tagColumnName,
 } from '@costgoblin/core';
 import type {
   CostMetric,
@@ -28,7 +29,7 @@ import type {
   ExplorerTagColumn,
   DimensionsConfig,
 } from '@costgoblin/core';
-import type { AppContext } from './context.js';
+import { type AppContext, prefsPath } from './context.js';
 import { buildAccountReverseMap, toNum, toStr } from './query-utils.js';
 
 const DEFAULT_WINDOW_DAYS = 30;
@@ -157,7 +158,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   const accountMap = await getAccountMap();
 
   const tagColumns: readonly ExplorerTagColumn[] = dimensions.tags.map(t => ({
-    id: `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`,
+    id: tagColumnName(t.tagName),
     label: t.label,
   }));
   const tagIdSet = new Set(tagColumns.map(t => t.id));
@@ -234,10 +235,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
 export function registerExplorerHandlers(app: AppContext): void {
   const { ctx, runQuery } = app;
 
-  async function explorerPrefsPath(): Promise<string> {
-    const path = await import('node:path');
-    return path.join(path.dirname(ctx.dataDir), 'explorer-preferences.json');
-  }
+  const explorerPrefsPath = () => prefsPath(ctx.dataDir, 'explorer-preferences');
 
   ipcMain.handle('explorer:get-preferences', async (): Promise<ExplorerPreferences> => {
     const fs = await import('node:fs/promises');
@@ -424,11 +422,11 @@ export function registerExplorerHandlers(app: AppContext): void {
     if (qc.empty) return [];
 
     const builtIn = qc.dimensions.builtIn.find(d => d.name === dimId);
-    const tag = qc.dimensions.tags.find(d => `tag_${d.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === dimId);
+    const tag = qc.dimensions.tags.find(d => tagColumnName(d.tagName) === dimId);
     const field = builtIn === undefined ? dimId : builtIn.field;
     let fieldExpr = field;
     if (builtIn !== undefined) fieldExpr = buildAliasSqlCase(field, builtIn);
-    else if (tag !== undefined) fieldExpr = buildAliasSqlCase(`tag_${tag.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`, tag);
+    else if (tag !== undefined) fieldExpr = buildAliasSqlCase(tagColumnName(tag.tagName), tag);
 
     const sql = `
       SELECT ${fieldExpr} AS val,

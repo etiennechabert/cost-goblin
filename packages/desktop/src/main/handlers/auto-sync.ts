@@ -10,7 +10,7 @@ import {
   readAutoSyncIntervalMinutes,
   writeAutoSyncIntervalMinutes,
 } from '../auto-sync.js';
-import type { AppContext } from './context.js';
+import { type AppContext, prefsPath } from './context.js';
 import type { SyncClient } from '../sync-client.js';
 
 type Tier = 'daily' | 'hourly' | 'cost-optimization';
@@ -23,10 +23,7 @@ function asTier(s: string): Tier {
 export function registerAutoSyncHandlers(app: AppContext): void {
   const { ctx, getConfig } = app;
 
-  async function autoSyncPrefsPath(): Promise<string> {
-    const path = await import('node:path');
-    return path.join(path.dirname(ctx.dataDir), 'app-preferences.json');
-  }
+  const autoSyncPrefsPath = () => prefsPath(ctx.dataDir, 'app-preferences');
 
   function buildAutoSyncDeps(syncClient: SyncClient) {
     return {

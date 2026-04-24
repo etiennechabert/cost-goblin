@@ -1,4 +1,5 @@
 import type { DimensionsConfig } from '../types/config.js';
+import { tagColumnName } from '../types/branded.js';
 
 /**
  * Error thrown when SQL identifier validation fails.
@@ -93,10 +94,9 @@ function buildAllowedColumns(dimensions: DimensionsConfig): ReadonlySet<string> 
 
   // Add tag columns (normalized tag names)
   for (const tag of dimensions.tags) {
-    const colName = `tag_${tag.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`;
-    allowed.add(colName);
-    // Also add the fallback column pattern used in buildSource
-    allowed.add(`fallback_${colName}`);
+    const col = tagColumnName(tag.tagName);
+    allowed.add(col);
+    allowed.add(`fallback_${col}`);
   }
 
   return allowed;

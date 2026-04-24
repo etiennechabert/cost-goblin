@@ -13,6 +13,7 @@ import type {
   Dimension,
 } from '@costgoblin/core/browser';
 import { BUILTIN_EXCLUSION_RULES, COST_METRICS, DEFAULT_COST_SCOPE, asDimensionId } from '@costgoblin/core/browser';
+import { getDimensionId } from '../lib/dimensions.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { formatDollars } from '../components/format.js';
@@ -44,9 +45,6 @@ interface PreviewState {
   loading: boolean;
 }
 
-function dimIdFor(d: Dimension): string {
-  return 'name' in d ? String(d.name) : `tag_${d.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`;
-}
 
 interface ConditionRowProps {
   condition: ExclusionCondition;
@@ -102,7 +100,7 @@ function ConditionRow({ condition, dimensions, suggestions, onUpdate, onRemove, 
       >
         {currentDimId.length === 0 && <option value="">— pick dimension —</option>}
         {dimensions.map(d => {
-          const id = dimIdFor(d);
+          const id = getDimensionId(d);
           const hidden = d.enabled === false;
           return <option key={id} value={id}>{hidden ? `${d.label} (hidden)` : d.label}</option>;
         })}
@@ -206,7 +204,7 @@ function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDel
 
   function addCondition() {
     const firstDim = dimensions.find(d => d.enabled !== false);
-    const dimId = firstDim !== undefined ? dimIdFor(firstDim) : 'service';
+    const dimId = firstDim !== undefined ? getDimensionId(firstDim) : 'service';
     onUpdate({
       ...rule,
       conditions: [...rule.conditions, { dimensionId: asDimensionId(dimId), values: [] }],
@@ -611,7 +609,7 @@ export function CostScopeView(): React.JSX.Element {
       const enabled = dimensions.filter(d => d.enabled !== false);
       const next = new Map<string, readonly string[]>();
       await Promise.all(enabled.map(async d => {
-        const id = dimIdFor(d);
+        const id = getDimensionId(d);
         try {
           // bypassCostScope: users composing an exclusion rule need to
           // see every value a dim can take, including ones the saved
@@ -680,7 +678,7 @@ export function CostScopeView(): React.JSX.Element {
 
   function addRule() {
     const firstDim = dimensions.find(d => d.enabled !== false);
-    const dimId = firstDim !== undefined ? dimIdFor(firstDim) : 'service';
+    const dimId = firstDim !== undefined ? getDimensionId(firstDim) : 'service';
     // New rules start disabled: they have empty `values` by default, which
     // fails validation — shipping them enabled by default would instantly
     // block saves and blank the preview until the user fills the field in.

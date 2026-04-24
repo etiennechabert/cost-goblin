@@ -30,3 +30,7 @@ export function asDollars(value: number): Dollars {
 export function asDateString(value: string): DateString {
   return value as DateString;
 }
+
+export function tagColumnName(tagName: string): string {
+  return `tag_${tagName.replace(/[^a-zA-Z0-9]/g, '_')}`;
+}

@@ -1,15 +1,12 @@
 import { ipcMain } from 'electron';
 import { parseJsonObject } from '@costgoblin/core';
 import type { UIPreferences } from '@costgoblin/core';
-import type { AppContext } from './context.js';
+import { type AppContext, prefsPath } from './context.js';
 
 export function registerUIHandlers(app: AppContext): void {
   const { ctx } = app;
 
-  async function uiPrefsPath(): Promise<string> {
-    const path = await import('node:path');
-    return path.join(path.dirname(ctx.dataDir), 'ui-preferences.json');
-  }
+  const uiPrefsPath = () => prefsPath(ctx.dataDir, 'ui-preferences');
 
   ipcMain.handle('ui:get-preferences', async (): Promise<UIPreferences> => {
     const fs = await import('node:fs/promises');
