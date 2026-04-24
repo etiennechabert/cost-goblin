@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type {
   CostResult,
   DailyCostsResult,
@@ -18,6 +18,8 @@ import type { PieSlice } from '../components/pie-chart.js';
 import { StackedBarChart } from '../components/stacked-bar-chart.js';
 import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
 import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension } from '../lib/dimensions.js';
+import { DataTable } from '../components/data-table.js';
+import type { TableColumn } from '../lib/table-types.js';
 
 interface EntityDetailProps {
   entity: string;
@@ -163,6 +165,39 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
 
   const isLoading = detailQuery.status === 'loading';
 
+  // Breakdown table columns
+  type BreakdownRow = { name: string; cost: number; percentage: number };
+  const breakdownColumns = useMemo<readonly TableColumn<BreakdownRow>[]>(
+    () => [
+      {
+        id: 'service',
+        label: 'Service',
+        accessorKey: 'name',
+        align: 'left',
+        sortable: true,
+      },
+      {
+        id: 'cost',
+        label: 'Cost',
+        accessorKey: 'cost',
+        align: 'right',
+        mono: true,
+        sortable: true,
+        cell: (row) => formatDollars(row.cost),
+      },
+      {
+        id: 'percentage',
+        label: '%',
+        accessorKey: 'percentage',
+        align: 'right',
+        mono: true,
+        sortable: true,
+        cell: (row) => `${row.percentage.toFixed(1)}%`,
+      },
+    ],
+    [],
+  );
+
   return (
     <div className="flex flex-col gap-5 p-6">
       {/* Header */}
@@ -273,29 +308,13 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
             <div className="border-b border-border px-5 py-3">
               <h3 className="text-sm font-medium text-text-secondary">Breakdown</h3>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border text-left text-text-secondary">
-                    <th className="px-5 pb-2 pt-3 font-medium">Service</th>
-                    <th className="px-5 pb-2 pt-3 text-right font-medium">Cost</th>
-                    <th className="px-5 pb-2 pt-3 text-right font-medium">%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.byService.map(s => (
-                    <tr key={s.name} className="border-b border-border-subtle hover:bg-bg-tertiary/20 transition-colors">
-                      <td className="px-5 py-2 text-text-primary">{s.name}</td>
-                      <td className="px-5 py-2 text-right tabular-nums text-text-primary font-medium">
-                        {formatDollars(s.cost)}
-                      </td>
-                      <td className="px-5 py-2 text-right tabular-nums text-text-secondary">
-                        {s.percentage.toFixed(1)}%
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="p-4">
+              <DataTable<BreakdownRow>
+                data={data.byService}
+                columns={breakdownColumns}
+                loading={isLoading}
+                emptyMessage="No breakdown data available"
+              />
             </div>
           </div>
         </>
