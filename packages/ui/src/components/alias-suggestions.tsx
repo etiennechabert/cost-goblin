@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, X } from 'lucide-react';
 import type { AliasSuggestion } from '@costgoblin/core/browser';
+import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 
 /** Props for the AliasSuggestions component.
@@ -44,6 +45,7 @@ export function AliasSuggestions({
   dimensionId,
   onAccepted,
 }: Readonly<AliasSuggestionsProps>): React.JSX.Element | null {
+  const api = useCostApi();
   const [suggestions, setSuggestions] = useState<readonly SuggestionState[]>([]);
   const [pendingAction, setPendingAction] = useState<SuggestionAction | null>(null);
 
@@ -52,15 +54,18 @@ export function AliasSuggestions({
     async () => {
       // TODO: Call api.getAliasSuggestions(dimensionId) once IPC handler is wired in subtask 3-3
       // For now, return empty array until the API method is added
+      void api; // Suppress unused warning until API method is implemented
       return [] as readonly AliasSuggestion[];
     },
-    [dimensionId],
+    [dimensionId, api],
   );
 
-  // Initialize suggestions state when query completes
-  if (suggestionsQuery.status === 'success' && suggestions.length === 0) {
-    setSuggestions(suggestionsQuery.data.map(s => ({ ...s, dismissing: false })));
-  }
+  // Sync query results to local state when query completes
+  useEffect(() => {
+    if (suggestionsQuery.status === 'success') {
+      setSuggestions(suggestionsQuery.data.map(s => ({ ...s, dismissing: false })));
+    }
+  }, [suggestionsQuery]);
 
   async function handleAccept(canonical: string): Promise<void> {
     setPendingAction({ canonical, action: 'accepting' });
@@ -69,9 +74,6 @@ export function AliasSuggestions({
       // For now, just remove from local state
       setSuggestions(prev => prev.filter(s => s.canonical !== canonical));
       onAccepted?.();
-    } catch (error) {
-      // TODO: Show error toast once toast system is available
-      console.error('Failed to accept suggestion:', error);
     } finally {
       setPendingAction(null);
     }
@@ -91,10 +93,8 @@ export function AliasSuggestions({
       // TODO: Call api.dismissAliasSuggestion(dimensionId, canonical) once IPC handler is wired
       // For now, just remove from local state
       setSuggestions(prev => prev.filter(s => s.canonical !== canonical));
-    } catch (error) {
-      // TODO: Show error toast once toast system is available
-      console.error('Failed to dismiss suggestion:', error);
-      // Revert dismissing state on error
+    } catch {
+      // Revert dismissing state on error (toast notification will be added in future)
       setSuggestions(prev => prev.map(s =>
         s.canonical === canonical ? { ...s, dismissing: false } : s,
       ));
