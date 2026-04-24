@@ -23,7 +23,7 @@ const dimensions: DimensionsConfig = {
 
 describe('buildCostQuery', () => {
   it('generates valid SQL for built-in dimension', () => {
-    const sql = buildCostQuery(
+    const result = buildCostQuery(
       {
         groupBy: asDimensionId('service'),
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
@@ -32,16 +32,20 @@ describe('buildCostQuery', () => {
       '/data',
       dimensions,
     );
-    expect(sql).toContain('service AS entity');
-    expect(sql).toContain("usage_date BETWEEN '2026-01-01' AND '2026-01-31'");
+    expect(result.sql).toContain('service AS entity');
+    expect(result.sql).toContain('usage_date BETWEEN');
     // Parquet source is narrowed to the months the range touches, not the
     // year-wide wildcard.
-    expect(sql).toContain("'/data/aws/raw/daily-2026-01/*.parquet'");
-    expect(sql).not.toContain("daily-*/*.parquet");
+    expect(result.sql).toContain("'/data/aws/raw/daily-2026-01/*.parquet'");
+    expect(result.sql).not.toContain("daily-*/*.parquet");
+    // Verify date parameters
+    expect(result.params).toContain('2026-01-01');
+    expect(result.params).toContain('2026-01-31');
+    expect(result.params).toContain(5); // default topN
   });
 
   it('includes filter clauses', () => {
-    const sql = buildCostQuery(
+    const result = buildCostQuery(
       {
         groupBy: asDimensionId('service'),
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
@@ -50,11 +54,14 @@ describe('buildCostQuery', () => {
       '/data',
       dimensions,
     );
-    expect(sql).toContain("account_id = '111111111111'");
+    expect(result.sql).toContain('account_id = $');
+    expect(result.params).toContain('2026-01-01');
+    expect(result.params).toContain('2026-01-31');
+    expect(result.params).toContain('111111111111');
   });
 
   it('uses alias SQL for tag dimensions', () => {
-    const sql = buildCostQuery(
+    const result = buildCostQuery(
       {
         groupBy: asDimensionId('tag_org_team'),
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
@@ -63,14 +70,14 @@ describe('buildCostQuery', () => {
       '/data',
       dimensions,
     );
-    expect(sql).toContain('CASE');
-    expect(sql).toContain("'core-banking'");
+    expect(result.sql).toContain('CASE');
+    expect(result.sql).toContain("'core-banking'");
   });
 });
 
 describe('buildTrendQuery', () => {
   it('generates SQL with period comparison', () => {
-    const sql = buildTrendQuery(
+    const result = buildTrendQuery(
       {
         groupBy: asDimensionId('service'),
         dateRange: { start: asDateString('2026-02-01'), end: asDateString('2026-02-28') },
@@ -81,10 +88,14 @@ describe('buildTrendQuery', () => {
       '/data',
       dimensions,
     );
-    expect(sql).toContain('current_period');
-    expect(sql).toContain('previous_period');
-    expect(sql).toContain('delta');
-    expect(sql).toContain('100');
+    expect(result.sql).toContain('current_period');
+    expect(result.sql).toContain('previous_period');
+    expect(result.sql).toContain('delta');
+    // Verify date parameters
+    expect(result.params).toContain('2026-02-01');
+    expect(result.params).toContain('2026-02-28');
+    // Verify deltaThreshold parameter
+    expect(result.params).toContain(100);
   });
 });
 
@@ -136,7 +147,7 @@ describe('buildTrendQuery', () => {
   it('includes periods from both current and previous spans', () => {
     // 30-day window ending 2026-04-18 → current is 2026-03/2026-04, previous
     // is 2026-02-18 to 2026-03-18 → 2026-02/2026-03. Union: Feb, Mar, Apr.
-    const sql = buildTrendQuery(
+    const result = buildTrendQuery(
       {
         groupBy: asDimensionId('service'),
         dateRange: { start: asDateString('2026-03-20'), end: asDateString('2026-04-18') },
@@ -147,9 +158,9 @@ describe('buildTrendQuery', () => {
       '/data',
       dimensions,
     );
-    expect(sql).toContain("'/data/aws/raw/daily-2026-02/*.parquet'");
-    expect(sql).toContain("'/data/aws/raw/daily-2026-03/*.parquet'");
-    expect(sql).toContain("'/data/aws/raw/daily-2026-04/*.parquet'");
+    expect(result.sql).toContain("'/data/aws/raw/daily-2026-02/*.parquet'");
+    expect(result.sql).toContain("'/data/aws/raw/daily-2026-03/*.parquet'");
+    expect(result.sql).toContain("'/data/aws/raw/daily-2026-04/*.parquet'");
   });
 });
 
@@ -162,37 +173,43 @@ describe('buildMissingTagsQuery', () => {
   };
 
   it('filters to resource-bound Usage lines (excludes Tax / Support / empty resource_id)', () => {
-    const sql = buildMissingTagsQuery(baseParams, '/data', dimensions);
-    expect(sql).toContain("line_item_type IN ('Usage', 'DiscountedUsage')");
-    expect(sql).toContain("resource_id IS NOT NULL AND resource_id != ''");
+    const result = buildMissingTagsQuery(baseParams, '/data', dimensions);
+    expect(result.sql).toContain("line_item_type IN ('Usage', 'DiscountedUsage')");
+    expect(result.sql).toContain("resource_id IS NOT NULL AND resource_id != ''");
+    expect(result.sql).toContain('usage_date BETWEEN');
+    // Verify date parameters
+    expect(result.params).toContain('2026-01-01');
+    expect(result.params).toContain('2026-01-31');
   });
 
   it('computes has_tag per resource and category tagged_ratio', () => {
-    const sql = buildMissingTagsQuery(baseParams, '/data', dimensions);
+    const result = buildMissingTagsQuery(baseParams, '/data', dimensions);
     // Resource is tagged if ANY line for it has the tag populated — MAX over a
     // CASE expression does exactly that.
-    expect(sql).toContain('MAX(CASE WHEN');
-    expect(sql).toContain('AS has_tag');
+    expect(result.sql).toContain('MAX(CASE WHEN');
+    expect(result.sql).toContain('AS has_tag');
     // Category coverage divides tagged cost by total cost.
-    expect(sql).toContain('tagged_ratio');
-    expect(sql).toContain('SUM(CASE WHEN has_tag = 1 THEN cost ELSE 0 END)');
+    expect(result.sql).toContain('tagged_ratio');
+    expect(result.sql).toContain('SUM(CASE WHEN has_tag = 1 THEN cost ELSE 0 END)');
   });
 
   it('buckets into actionable (ratio > 0) vs likely-untaggable (ratio = 0)', () => {
-    const sql = buildMissingTagsQuery(baseParams, '/data', dimensions);
-    expect(sql).toContain("WHEN c.tagged_ratio > 0 THEN 'actionable'");
-    expect(sql).toContain("ELSE 'likely-untaggable'");
+    const result = buildMissingTagsQuery(baseParams, '/data', dimensions);
+    expect(result.sql).toContain("WHEN c.tagged_ratio > 0 THEN 'actionable'");
+    expect(result.sql).toContain("ELSE 'likely-untaggable'");
   });
 
   it('applies minCost to the per-resource cost after classification', () => {
-    const sql = buildMissingTagsQuery(baseParams, '/data', dimensions);
-    expect(sql).toContain('r.cost >= 50');
+    const result = buildMissingTagsQuery(baseParams, '/data', dimensions);
+    expect(result.sql).toContain('r.cost >= $');
+    // Verify minCost parameter
+    expect(result.params).toContain(50);
   });
 });
 
 describe('buildNonResourceCostQuery', () => {
   it('captures non-Usage lines and Usage lines with no resource_id', () => {
-    const sql = buildNonResourceCostQuery(
+    const result = buildNonResourceCostQuery(
       {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
@@ -202,9 +219,13 @@ describe('buildNonResourceCostQuery', () => {
       '/data',
       dimensions,
     );
-    expect(sql).toContain("line_item_type NOT IN ('Usage', 'DiscountedUsage')");
-    expect(sql).toContain("OR resource_id IS NULL OR resource_id = ''");
-    expect(sql).toContain('GROUP BY service, service_family, line_item_type');
+    expect(result.sql).toContain("line_item_type NOT IN ('Usage', 'DiscountedUsage')");
+    expect(result.sql).toContain("OR resource_id IS NULL OR resource_id = ''");
+    expect(result.sql).toContain('GROUP BY service, service_family, line_item_type');
+    expect(result.sql).toContain('usage_date BETWEEN');
+    // Verify date parameters
+    expect(result.params).toContain('2026-01-01');
+    expect(result.params).toContain('2026-01-31');
   });
 });
 
@@ -256,7 +277,7 @@ describe('buildSource with account tag fallback', () => {
 
 describe('buildEntityDetailQuery', () => {
   it('generates detail query for entity', () => {
-    const sql = buildEntityDetailQuery(
+    const { sql, params } = buildEntityDetailQuery(
       {
         entity: asEntityRef('core-banking'),
         dimension: asDimensionId('tag_org_team'),
@@ -266,7 +287,10 @@ describe('buildEntityDetailQuery', () => {
       '/data',
       dimensions,
     );
-    expect(sql).toContain("'core-banking'");
+    expect(sql).toContain('$');
+    expect(params).toContain('2026-01-01');
+    expect(params).toContain('2026-01-31');
+    expect(params).toContain('core-banking');
     expect(sql).toContain('usage_date');
     expect(sql).toContain('service');
   });

@@ -34,7 +34,7 @@ const baseParams = {
 };
 
 function buildQuery(costScope?: CostScopeConfig): string {
-  return buildCostQuery(baseParams, '/data', dimensions, 5, undefined, undefined, undefined, costScope);
+  return buildCostQuery(baseParams, '/data', dimensions, 5, undefined, undefined, undefined, costScope).sql;
 }
 
 describe('cost metric column selection', () => {
@@ -66,7 +66,7 @@ describe('cost metric column selection', () => {
     // Manually call buildCostQuery with a costScope that has costPerspective='net'
     // and a full availableColumns set including net columns. The generated
     // SQL should prefer the net variant.
-    const sql = buildCostQuery(
+    const { sql } = buildCostQuery(
       baseParams,
       '/data',
       dimensions,
@@ -84,7 +84,7 @@ describe('cost metric column selection', () => {
     // availableColumns omits line_item_net_unblended_cost — the expression
     // should degrade to the gross unblended column rather than reference
     // a missing column (which would error at query time).
-    const sql = buildCostQuery(
+    const { sql } = buildCostQuery(
       baseParams,
       '/data',
       dimensions,
@@ -100,7 +100,7 @@ describe('cost metric column selection', () => {
   });
 
   it('amortized + net uses net effective-cost columns when available', () => {
-    const sql = buildCostQuery(
+    const { sql } = buildCostQuery(
       baseParams,
       '/data',
       dimensions,
@@ -122,7 +122,7 @@ describe('cost metric column selection', () => {
   it('amortized + net degrades to unblended when no net/effective columns present', () => {
     // No resource IDs (no effective_cost) and no net columns — amortized
     // degrades all the way down to line_item_unblended_cost.
-    const sql = buildCostQuery(
+    const { sql } = buildCostQuery(
       baseParams,
       '/data',
       dimensions,
@@ -162,61 +162,94 @@ describe('exclusion clauses', () => {
   });
 
   it('enabled rule with one condition produces NOT IN clause', () => {
-    const sql = buildQuery({
-      costMetric: 'unblended',
-      rules: [
-        {
-          id: 'test',
-          name: 'Test',
-          enabled: true,
-          builtIn: false,
-          conditions: [{ dimensionId: asDimensionId('service'), values: ['AWSSupport'] }],
-        },
-      ],
-    });
-    expect(sql).toContain("NOT (service IN ('AWSSupport'))");
+    const result = buildCostQuery(
+      baseParams,
+      '/data',
+      dimensions,
+      5,
+      undefined,
+      undefined,
+      undefined,
+      {
+        costMetric: 'unblended',
+        rules: [
+          {
+            id: 'test',
+            name: 'Test',
+            enabled: true,
+            builtIn: false,
+            conditions: [{ dimensionId: asDimensionId('service'), values: ['AWSSupport'] }],
+          },
+        ],
+      },
+    );
+    expect(result.sql).toContain('NOT (service IN ($');
+    expect(result.params).toContain('AWSSupport');
   });
 
   it('rule with multiple values uses IN list', () => {
-    const sql = buildQuery({
-      costMetric: 'unblended',
-      rules: [
-        {
-          id: 'test',
-          name: 'Test',
-          enabled: true,
-          builtIn: false,
-          conditions: [
-            { dimensionId: asDimensionId('line_item_type'), values: ['RIFee', 'SavingsPlanRecurringFee'] },
-          ],
-        },
-      ],
-    });
-    expect(sql).toContain("line_item_type IN ('RIFee', 'SavingsPlanRecurringFee')");
-    expect(sql).toContain('NOT (');
+    const result = buildCostQuery(
+      baseParams,
+      '/data',
+      dimensions,
+      5,
+      undefined,
+      undefined,
+      undefined,
+      {
+        costMetric: 'unblended',
+        rules: [
+          {
+            id: 'test',
+            name: 'Test',
+            enabled: true,
+            builtIn: false,
+            conditions: [
+              { dimensionId: asDimensionId('line_item_type'), values: ['RIFee', 'SavingsPlanRecurringFee'] },
+            ],
+          },
+        ],
+      },
+    );
+    expect(result.sql).toContain('line_item_type IN ($');
+    expect(result.params).toContain('RIFee');
+    expect(result.params).toContain('SavingsPlanRecurringFee');
+    expect(result.sql).toContain('NOT (');
   });
 
   it('rule with multiple conditions uses AND', () => {
-    const sql = buildQuery({
-      costMetric: 'unblended',
-      rules: [
-        {
-          id: 'test',
-          name: 'Test',
-          enabled: true,
-          builtIn: false,
-          conditions: [
-            { dimensionId: asDimensionId('service'), values: ['EC2'] },
-            { dimensionId: asDimensionId('service_family'), values: ['Compute'] },
-          ],
-        },
-      ],
-    });
-    expect(sql).toContain("NOT (service IN ('EC2') AND service_family IN ('Compute'))");
+    const result = buildCostQuery(
+      baseParams,
+      '/data',
+      dimensions,
+      5,
+      undefined,
+      undefined,
+      undefined,
+      {
+        costMetric: 'unblended',
+        rules: [
+          {
+            id: 'test',
+            name: 'Test',
+            enabled: true,
+            builtIn: false,
+            conditions: [
+              { dimensionId: asDimensionId('service'), values: ['EC2'] },
+              { dimensionId: asDimensionId('service_family'), values: ['Compute'] },
+            ],
+          },
+        ],
+      },
+    );
+    expect(result.sql).toContain('NOT (service IN ($');
+    expect(result.sql).toContain('AND service_family IN ($');
+    expect(result.params).toContain('EC2');
+    expect(result.params).toContain('Compute');
   });
 
   it('tag dimension resolves through alias CASE', () => {
-    const sql = buildCostQuery(
+    const { sql, params } = buildCostQuery(
       { ...baseParams, groupBy: asDimensionId('service') },
       '/data',
       dimensions,
@@ -241,27 +274,38 @@ describe('exclusion clauses', () => {
     );
     // Tag dim resolves via CASE expression
     expect(sql).toContain('CASE');
-    expect(sql).toContain("'core-banking'");
+    expect(params).toContain('core-banking');
     expect(sql).toContain('NOT (');
   });
 
   it('escapes single quotes in values', () => {
-    const sql = buildQuery({
-      costMetric: 'unblended',
-      rules: [
-        {
-          id: 'test',
-          name: 'Test',
-          enabled: true,
-          builtIn: false,
-          conditions: [
-            { dimensionId: asDimensionId('service'), values: ["it's a service"] },
-          ],
-        },
-      ],
-    });
-    expect(sql).toContain("it''s a service");
-    expect(sql).not.toContain("it's a service");
+    const result = buildCostQuery(
+      baseParams,
+      '/data',
+      dimensions,
+      5,
+      undefined,
+      undefined,
+      undefined,
+      {
+        costMetric: 'unblended',
+        rules: [
+          {
+            id: 'test',
+            name: 'Test',
+            enabled: true,
+            builtIn: false,
+            conditions: [
+              { dimensionId: asDimensionId('service'), values: ["it's a service"] },
+            ],
+          },
+        ],
+      },
+    );
+    // With parameterized queries, the value is passed as a parameter
+    // and doesn't need escaping in the SQL
+    expect(result.params).toContain("it's a service");
+    expect(result.sql).toContain('IN ($');
   });
 
   it('DEFAULT_COST_SCOPE built-in rules are disabled by default — no exclusions', () => {
@@ -307,7 +351,7 @@ describe('exclusion clauses', () => {
       ],
       tags: dimensions.tags,
     };
-    const sql = buildCostQuery(
+    const { params } = buildCostQuery(
       baseParams,
       '/data',
       dimsWithNormalize,
@@ -330,37 +374,48 @@ describe('exclusion clauses', () => {
     );
     // Values become 'rifee' (lowercase + alias canonicalises to itself) and
     // 'tax' (lowercase). The raw 'RIFee' / 'Tax' must not appear in the
-    // IN-list — that would never match the LOWER(...) column.
-    expect(sql).toContain("IN ('rifee', 'tax')");
-    expect(sql).not.toContain("'RIFee'");
-    expect(sql).not.toContain("'Tax'");
+    // params — they should be normalized.
+    expect(params).toContain('rifee');
+    expect(params).toContain('tax');
+    expect(params).not.toContain('RIFee');
+    expect(params).not.toContain('Tax');
   });
 
   it('partially applies a rule when only some conditions are resolvable', () => {
-    const sql = buildQuery({
-      costMetric: 'unblended',
-      rules: [
-        {
-          id: 'mixed',
-          name: 'Mixed',
-          enabled: true,
-          builtIn: false,
-          conditions: [
-            { dimensionId: asDimensionId('service'), values: ['EC2'] },
-            { dimensionId: asDimensionId('nonexistent_dim'), values: ['foo'] },
-          ],
-        },
-      ],
-    });
+    const result = buildCostQuery(
+      baseParams,
+      '/data',
+      dimensions,
+      5,
+      undefined,
+      undefined,
+      undefined,
+      {
+        costMetric: 'unblended',
+        rules: [
+          {
+            id: 'mixed',
+            name: 'Mixed',
+            enabled: true,
+            builtIn: false,
+            conditions: [
+              { dimensionId: asDimensionId('service'), values: ['EC2'] },
+              { dimensionId: asDimensionId('nonexistent_dim'), values: ['foo'] },
+            ],
+          },
+        ],
+      },
+    );
     // Resolvable condition still applies; dangling one is silently dropped.
-    expect(sql).toContain("NOT (service IN ('EC2'))");
-    expect(sql).not.toContain('nonexistent_dim');
+    expect(result.sql).toContain('NOT (service IN ($');
+    expect(result.params).toContain('EC2');
+    expect(result.sql).not.toContain('nonexistent_dim');
   });
 });
 
 describe('buildDailyCostsQuery with costScope', () => {
   it('injects exclusion clause in daily costs query', () => {
-    const sql = buildDailyCostsQuery(
+    const { sql, params } = buildDailyCostsQuery(
       { ...baseParams, granularity: 'daily' },
       '/data',
       dimensions,
@@ -380,7 +435,8 @@ describe('buildDailyCostsQuery with costScope', () => {
         ],
       },
     );
-    expect(sql).toContain("NOT (service_family IN ('Support'))");
+    expect(sql).toContain('NOT (service_family IN ($');
+    expect(params).toContain('Support');
     expect(sql).toContain('line_item_blended_cost');
   });
 });

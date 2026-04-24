@@ -4,11 +4,27 @@ import type { DimensionId } from '../types/branded.js';
 import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor } from './cost-metric.js';
+import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
+import { SecurityError } from './identifier-validator.js';
 
 function assertFiniteNumber(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new Error(`Query parameter "${name}" must be a non-negative finite number, got ${String(value)}`);
   }
+}
+
+function sqlEscapeString(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+/** Build a SQL IN-list. Uses placeholders when a QueryBuilder is provided;
+ *  otherwise falls back to escaped string literals (for exported helpers
+ *  like `buildRuleMatchExpr` that may be called without a QueryBuilder). */
+function buildSqlList(values: readonly string[], qb?: QueryBuilder): string {
+  if (qb !== undefined) {
+    return values.map(v => qb.addParam(v)).join(', ');
+  }
+  return values.map(v => `'${sqlEscapeString(v)}'`).join(', ');
 }
 
 /**
@@ -82,35 +98,32 @@ function normalizeRuleValue(value: string, dim: BuiltInDimension | TagDimension 
 function resolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): ResolvedDimension {
   const resolved = tryResolveField(dimensionId, dimensions);
   if (resolved !== null) return resolved;
-  // Fallback: used by filter/orgNode paths where the caller has already
-  // validated the id exists. For exclusion rules we go through
-  // tryResolveField directly so a stale reference doesn't emit a bogus
-  // column name that would crash every query.
-  return { fieldExpr: dimensionId, rawField: dimensionId, dim: null };
+  throw new SecurityError(
+    `Unknown dimension "${dimensionId}" — not found in dimensions config. ` +
+    `This prevents SQL injection via untrusted identifiers.`
+  );
 }
 
 function buildFilterClauses(
   filters: FilterMap,
   dimensions: DimensionsConfig,
-  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
+  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
+  qb: QueryBuilder,
 ): string[] {
   const clauses: string[] = [];
   for (const [dimId, value] of Object.entries(filters)) {
     if (value === undefined) continue;
     const resolved = resolveField(dimId as DimensionId, dimensions);
-    // Account dim with display-name collisions: the user picks "sre default"
-    // in the filter dropdown, but that collapses N underlying ids. Match any
-    // of them with an IN clause. Falls through to '=' when the value isn't a
-    // known display name (raw id, or no map provided).
     if (resolved.rawField === 'account_id' && accountReverseMap !== undefined) {
       const ids = accountReverseMap.get(String(value));
       if (ids !== undefined && ids.length > 0) {
-        const list = ids.map(id => `'${id.replaceAll("'", "''")}'`).join(', ');
+        const list = buildSqlList(ids, qb);
         clauses.push(`${resolved.rawField} IN (${list})`);
         continue;
       }
     }
-    clauses.push(`${resolved.fieldExpr} = '${String(value).replaceAll("'", "''")}'`);
+    const placeholder = qb.addParam(String(value));
+    clauses.push(`${resolved.fieldExpr} = ${placeholder}`);
   }
   return clauses;
 }
@@ -123,6 +136,7 @@ export function buildRuleMatchExpr(
   rule: ExclusionRule,
   dimensions: DimensionsConfig,
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
+  qb?: QueryBuilder,
 ): string | null {
   const conditionSqls: string[] = [];
   for (const cond of rule.conditions) {
@@ -147,7 +161,7 @@ export function buildRuleMatchExpr(
         }
       }
       if (usedReverse) {
-        const list = [...expandedIds].map(id => `'${id.replaceAll("'", "''")}'`).join(', ');
+        const list = buildSqlList([...expandedIds], qb);
         conditionSqls.push(`${resolved.rawField} IN (${list})`);
         continue;
       }
@@ -157,10 +171,8 @@ export function buildRuleMatchExpr(
     // dimension (e.g. a lowercase rule on `line_item_type` would otherwise
     // turn 'RIFee' in the built-in rule into a silent no-match). The
     // field expression already bakes in the same transformation.
-    const list = cond.values
-      .map(v => normalizeRuleValue(v, resolved.dim))
-      .map(v => `'${v.replaceAll("'", "''")}'`)
-      .join(', ');
+    const normalizedValues = cond.values.map(v => normalizeRuleValue(v, resolved.dim));
+    const list = buildSqlList(normalizedValues, qb);
     conditionSqls.push(`${resolved.fieldExpr} IN (${list})`);
   }
   if (conditionSqls.length === 0) return null;
@@ -170,12 +182,13 @@ export function buildRuleMatchExpr(
 function buildExclusionClauses(
   rules: readonly ExclusionRule[],
   dimensions: DimensionsConfig,
-  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
+  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
+  qb: QueryBuilder,
 ): string[] {
   const clauses: string[] = [];
   for (const rule of rules) {
     if (!rule.enabled) continue;
-    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
+    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap, qb);
     if (matchExpr === null) continue;
     clauses.push(`NOT (${matchExpr})`);
   }
@@ -215,8 +228,8 @@ export function buildSource(
       // Apply missingValueTemplate if set — e.g. "unknown-{fallback}" → 'unknown-' || account_tag
       if (t.missingValueTemplate !== undefined && t.missingValueTemplate.length > 0 && t.missingValueTemplate !== '{fallback}') {
         const parts = t.missingValueTemplate.split('{fallback}');
-        const prefix = (parts[0] ?? '').replaceAll("'", "''");
-        const suffix = (parts[1] ?? '').replaceAll("'", "''");
+        const prefix = sqlEscapeString(parts[0] ?? '');
+        const suffix = sqlEscapeString(parts[1] ?? '');
         const formatted = `'${prefix}' || ${fallbackExpr} || '${suffix}'`;
         return `COALESCE(NULLIF(${resourceExpr}, ''), ${formatted}) AS ${colName}`;
       }
@@ -248,7 +261,7 @@ export function buildSource(
         .filter(t => t.accountTagFallback !== undefined)
         .map(t => {
           const colName = `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`;
-          const fallbackKey = (t.accountTagFallback ?? '').replaceAll("'", "''");
+          const fallbackKey = sqlEscapeString(t.accountTagFallback ?? '');
           return `tags->>'${fallbackKey}' AS fallback_${colName}`;
         })
     : [];
@@ -310,29 +323,34 @@ export function buildCostQuery(
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
-): string {
+): ParameterizedQuery {
   assertFiniteNumber(topN, 'topN');
+  const qb = new QueryBuilder();
   const groupByResolved = resolveField(params.groupBy, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
-  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const costTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const source = buildSource(dataDir, costTier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
 
+  const startDatePlaceholder = qb.addParam(params.dateRange.start);
+  const endDatePlaceholder = qb.addParam(params.dateRange.end);
   const whereConditions = [
-    `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
+    `usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder}`,
     ...filterClauses,
     ...exclusionClauses,
   ];
 
   if (params.orgNodeValues !== undefined && params.orgNodeValues.length > 0) {
-    const escaped = params.orgNodeValues.map(v => `'${v.replaceAll("'", "''")}'`).join(', ');
-    whereConditions.push(`${groupByResolved.fieldExpr} IN (${escaped})`);
+    const placeholders = params.orgNodeValues.map(v => qb.addParam(v)).join(', ');
+    whereConditions.push(`${groupByResolved.fieldExpr} IN (${placeholders})`);
   }
 
-  return `
+  const topNPlaceholder = qb.addParam(topN);
+
+  const sql = `
     WITH base AS (
       SELECT
         ${groupByResolved.fieldExpr} AS entity,
@@ -347,7 +365,7 @@ export function buildCostQuery(
       FROM base
       GROUP BY service
       ORDER BY SUM(cost) DESC
-      LIMIT ${String(topN)}
+      LIMIT ${topNPlaceholder}
     ),
     entity_totals AS (
       SELECT
@@ -374,6 +392,8 @@ export function buildCostQuery(
     LEFT JOIN entity_services es ON et.entity = es.entity
     ORDER BY et.total_cost DESC
   `.trim();
+
+  return { sql, params: qb.build().params };
 }
 
 export function buildTrendQuery(
@@ -385,11 +405,12 @@ export function buildTrendQuery(
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
-): string {
+): ParameterizedQuery {
   assertFiniteNumber(Number(params.deltaThreshold), 'deltaThreshold');
+  const qb = new QueryBuilder();
   const groupByResolved = resolveField(params.groupBy, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
-  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
 
@@ -414,17 +435,21 @@ export function buildTrendQuery(
   const allFilterClauses = [...filterClauses, ...exclusionClauses];
   const filterWhere = allFilterClauses.length > 0 ? ` AND ${allFilterClauses.join(' AND ')}` : '';
 
-  return `
+  const startDatePlaceholder = qb.addParam(startDate);
+  const endDatePlaceholder = qb.addParam(endDate);
+  const deltaThresholdPlaceholder = qb.addParam(Number(params.deltaThreshold));
+
+  const sql = `
     WITH current_period AS (
       SELECT
         ${groupByResolved.fieldExpr} AS entity,
         SUM(cost) AS total_cost
       FROM ${source}
-      WHERE usage_date BETWEEN '${startDate}' AND '${endDate}'${filterWhere}
+      WHERE usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder}${filterWhere}
       GROUP BY entity
     ),
     period_length AS (
-      SELECT DATEDIFF('day', DATE '${startDate}', DATE '${endDate}') + 1 AS days
+      SELECT DATEDIFF('day', CAST(${startDatePlaceholder} AS DATE), CAST(${endDatePlaceholder} AS DATE)) + 1 AS days
     ),
     previous_period AS (
       SELECT
@@ -432,8 +457,8 @@ export function buildTrendQuery(
         SUM(cost) AS total_cost
       FROM ${source}
       WHERE usage_date BETWEEN
-        DATE '${startDate}' - (SELECT days FROM period_length) * INTERVAL '1 day'
-        AND DATE '${startDate}' - INTERVAL '1 day'${filterWhere}
+        CAST(${startDatePlaceholder} AS DATE) - (SELECT days FROM period_length) * INTERVAL '1 day'
+        AND CAST(${startDatePlaceholder} AS DATE) - INTERVAL '1 day'${filterWhere}
       GROUP BY entity
     )
     SELECT
@@ -447,9 +472,11 @@ export function buildTrendQuery(
       END AS percent_change
     FROM current_period c
     FULL OUTER JOIN previous_period p ON c.entity = p.entity
-    WHERE ABS(COALESCE(c.total_cost, 0) - COALESCE(p.total_cost, 0)) >= ${String(Number(params.deltaThreshold))}
+    WHERE ABS(COALESCE(c.total_cost, 0) - COALESCE(p.total_cost, 0)) >= ${deltaThresholdPlaceholder}
     ORDER BY ABS(COALESCE(c.total_cost, 0) - COALESCE(p.total_cost, 0)) DESC
   `.trim();
+
+  return { sql, params: qb.build().params };
 }
 
 /**
@@ -479,26 +506,31 @@ export function buildMissingTagsQuery(
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
-): string {
+): ParameterizedQuery {
   assertFiniteNumber(Number(params.minCost), 'minCost');
+  const qb = new QueryBuilder();
   const tagResolved = resolveField(params.tagDimension, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
-  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
 
   // Date + user filters apply to the resource aggregation.
+  const startDatePlaceholder = qb.addParam(params.dateRange.start);
+  const endDatePlaceholder = qb.addParam(params.dateRange.end);
   const whereConditions = [
-    `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
+    `usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder}`,
     `line_item_type IN ('Usage', 'DiscountedUsage')`,
     `resource_id IS NOT NULL AND resource_id != ''`,
     ...filterClauses,
     ...exclusionClauses,
   ];
 
-  return `
+  const minCostPlaceholder = qb.addParam(Number(params.minCost));
+
+  const sql = `
     WITH resources AS (
       SELECT
         account_id,
@@ -535,9 +567,11 @@ export function buildMissingTagsQuery(
     FROM resources r
     JOIN category_coverage c USING (service, service_family)
     WHERE r.has_tag = 0
-      AND r.cost >= ${String(Number(params.minCost))}
+      AND r.cost >= ${minCostPlaceholder}
     ORDER BY r.cost DESC
   `.trim();
+
+  return { sql, params: qb.build().params };
 }
 
 /**
@@ -560,22 +594,25 @@ export function buildNonResourceCostQuery(
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
-): string {
-  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
-  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
+): ParameterizedQuery {
+  const qb = new QueryBuilder();
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
 
+  const startDatePlaceholder = qb.addParam(params.dateRange.start);
+  const endDatePlaceholder = qb.addParam(params.dateRange.end);
   const whereConditions = [
-    `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
+    `usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder}`,
     `(line_item_type NOT IN ('Usage', 'DiscountedUsage') OR resource_id IS NULL OR resource_id = '')`,
     ...filterClauses,
     ...exclusionClauses,
   ];
 
-  return `
+  const sql = `
     SELECT
       service,
       service_family,
@@ -587,6 +624,8 @@ export function buildNonResourceCostQuery(
     HAVING SUM(cost) > 0
     ORDER BY cost DESC
   `.trim();
+
+  return { sql, params: qb.build().params };
 }
 
 export function buildDailyCostsQuery(
@@ -598,18 +637,21 @@ export function buildDailyCostsQuery(
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
-): string {
+): ParameterizedQuery {
+  const qb = new QueryBuilder();
   const groupByResolved = resolveField(params.groupBy, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
-  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const dailyTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const source = buildSource(dataDir, dailyTier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
 
+  const startDatePlaceholder = qb.addParam(params.dateRange.start);
+  const endDatePlaceholder = qb.addParam(params.dateRange.end);
   const whereConditions = [
-    `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
+    `usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder}`,
     ...filterClauses,
     ...exclusionClauses,
   ];
@@ -618,7 +660,7 @@ export function buildDailyCostsQuery(
     ? "strftime(usage_hour, '%Y-%m-%d %H:00')"
     : 'usage_date::VARCHAR';
 
-  return `
+  const sql = `
     SELECT
       ${dateExpr} AS date,
       ${groupByResolved.fieldExpr} AS group_name,
@@ -628,6 +670,8 @@ export function buildDailyCostsQuery(
     GROUP BY date, group_name
     ORDER BY date, cost DESC
   `.trim();
+
+  return { sql, params: qb.build().params };
 }
 
 export function buildEntityDetailQuery(
@@ -639,10 +683,11 @@ export function buildEntityDetailQuery(
   accountReverseMap?: ReadonlyMap<string, readonly string[]>,
   costScope?: CostScopeConfig,
   availableColumns?: ReadonlySet<string>,
-): string {
+): ParameterizedQuery {
+  const qb = new QueryBuilder();
   const dimResolved = resolveField(params.dimension, dimensions);
-  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap);
-  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap) : [];
+  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
+  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb) : [];
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const granularity = params.granularity ?? 'daily';
@@ -657,15 +702,18 @@ export function buildEntityDetailQuery(
     if (dimResolved.rawField === 'account_id' && accountReverseMap !== undefined) {
       const ids = accountReverseMap.get(String(params.entity));
       if (ids !== undefined && ids.length > 0) {
-        const list = ids.map(id => `'${id.replaceAll("'", "''")}'`).join(', ');
-        return `${dimResolved.rawField} IN (${list})`;
+        const placeholders = ids.map(id => qb.addParam(id)).join(', ');
+        return `${dimResolved.rawField} IN (${placeholders})`;
       }
     }
-    return `${dimResolved.fieldExpr} = '${String(params.entity).replaceAll("'", "''")}'`;
+    const entityPlaceholder = qb.addParam(String(params.entity));
+    return `${dimResolved.fieldExpr} = ${entityPlaceholder}`;
   })();
 
+  const startDatePlaceholder = qb.addParam(params.dateRange.start);
+  const endDatePlaceholder = qb.addParam(params.dateRange.end);
   const whereConditions = [
-    `usage_date BETWEEN '${params.dateRange.start}' AND '${params.dateRange.end}'`,
+    `usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder}`,
     entityClause,
     ...filterClauses,
     ...exclusionClauses,
@@ -677,7 +725,7 @@ export function buildEntityDetailQuery(
     ? "strftime(usage_hour, '%Y-%m-%d %H:00')"
     : 'usage_date::VARCHAR';
 
-  return `
+  const sql = `
     SELECT
       ${groupKey} AS usage_date,
       service,
@@ -689,4 +737,6 @@ export function buildEntityDetailQuery(
     GROUP BY ${groupKey}, service, account_id, account_name
     ORDER BY usage_date, cost DESC
   `.trim();
+
+  return { sql, params: qb.build().params };
 }

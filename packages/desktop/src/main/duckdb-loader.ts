@@ -14,7 +14,19 @@ export interface DuckDBInstance {
 
 export interface DuckDBConnection {
   run: (sql: string) => Promise<DuckDBResult>;
+  prepare: (sql: string) => Promise<DuckDBPreparedStatement>;
   disconnectSync: () => void;
+}
+
+export interface DuckDBPreparedStatement {
+  parameterCount: number;
+  bindVarchar: (index: number, value: string) => void;
+  bindDouble: (index: number, value: number) => void;
+  bindInteger: (index: number, value: number) => void;
+  bindBoolean: (index: number, value: boolean) => void;
+  bindNull: (index: number) => void;
+  run: () => Promise<DuckDBResult>;
+  destroySync: () => void;
 }
 
 export interface DuckDBResult {

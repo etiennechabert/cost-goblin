@@ -164,6 +164,14 @@ npm run check
 - **CostApi interface is the boundary** — UI codes against the interface, never calls DuckDB directly. Enables mock testing and future web mode.
 - **Dark mode default, light mode available** — two chart color palettes (standard + Okabe-Ito colorblind-safe), togglable.
 
+## SQL Security — Parameterized Queries Required
+
+**ALL database queries MUST use parameterized queries** — never string interpolation. Config files can be shared via git and could contain malicious values.
+
+- **User-controlled values** (dates, filter values, thresholds, entity values) → use `QueryBuilder.addParam()` to produce `$1`, `$2`, ... placeholders
+- **Identifiers** (dimension IDs, column names) → validated by `resolveField` / `validateColumnName` against the dimensions config allow-list; unknown identifiers throw `SecurityError`
+- **Config string literals** interpolated into SQL (e.g. `missingValueTemplate`, `accountTagFallback`) → escaped with `sqlEscapeString`
+
 ## Frontend Stack
 
 - React 19 + shadcn/ui + Radix primitives (component library, copy-paste, fully owned)

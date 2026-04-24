@@ -5,6 +5,7 @@ export type RawRow = Readonly<Record<string, unknown>>;
 
 export interface DuckDBClient {
   runQuery(sql: string): Promise<RawRow[]>;
+  runPreparedQuery(sql: string, params: readonly unknown[]): Promise<RawRow[]>;
   cancelPendingQueries(): void;
   terminate(): Promise<void>;
 }
@@ -113,6 +114,39 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
           },
         });
         worker.postMessage({ kind: 'query', id, sql });
+      });
+    },
+    runPreparedQuery(sql: string, params: readonly unknown[]): Promise<RawRow[]> {
+      if (fatalError !== null) return Promise.reject(fatalError);
+      const id = nextId++;
+      const startedAt = Date.now();
+      const startedAtIso = new Date(startedAt).toISOString();
+      return new Promise<RawRow[]>((resolve, reject) => {
+        pending.set(id, {
+          resolve: (rows) => {
+            logger.debug('duckdb:prepared-query', {
+              id,
+              startedAt: startedAtIso,
+              durationMs: Date.now() - startedAt,
+              rows: rows.length,
+              sql,
+              paramCount: params.length,
+            });
+            resolve(rows);
+          },
+          reject: (err) => {
+            logger.debug('duckdb:prepared-query-failed', {
+              id,
+              startedAt: startedAtIso,
+              durationMs: Date.now() - startedAt,
+              error: err.message,
+              sql,
+              paramCount: params.length,
+            });
+            reject(err);
+          },
+        });
+        worker.postMessage({ kind: 'prepared-query', id, sql, params });
       });
     },
     cancelPendingQueries(): void {

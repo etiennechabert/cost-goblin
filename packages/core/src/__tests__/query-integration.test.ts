@@ -63,6 +63,28 @@ async function queryAll(conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckD
   return rows;
 }
 
+/**
+ * For integration testing only: substitutes parameters into SQL.
+ * In production, the worker thread uses real prepared statements.
+ */
+function substituteParams(sql: string, params: readonly unknown[]): string {
+  let result = sql;
+  for (let i = params.length; i >= 1; i--) {
+    const param = params[i - 1];
+    const placeholder = '$' + String(i);
+    const value = typeof param === 'string' ? `'${param}'` : String(param);
+    result = result.replaceAll(placeholder, value);
+  }
+  return result;
+}
+
+async function queryAllPrepared(conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>, sql: string, params: readonly unknown[]): Promise<QueryRow[]> {
+  // For integration tests, substitute params back into SQL
+  // (Production code uses real prepared statements via the worker)
+  const substitutedSql = substituteParams(sql, params);
+  return queryAll(conn, substitutedSql);
+}
+
 describe('DuckDB query integration', () => {
   let db: Awaited<ReturnType<typeof DuckDBInstance.create>>;
   let conn: Awaited<ReturnType<typeof db.connect>>;
@@ -105,7 +127,7 @@ describe('DuckDB query integration', () => {
   });
 
   it('queries costs grouped by service', async () => {
-    const sql = buildCostQuery(
+    const result = buildCostQuery(
       {
         groupBy: asDimensionId('service'),
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
@@ -114,7 +136,7 @@ describe('DuckDB query integration', () => {
       SYNTHETIC_DIR,
       dimensions,
     );
-    const rows = await queryAll(conn, sql);
+    const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
     const firstRow = rows[0];
     expect(firstRow?.['entity']).toBeDefined();
@@ -122,7 +144,7 @@ describe('DuckDB query integration', () => {
   });
 
   it('queries costs with filter', async () => {
-    const sqlAll = buildCostQuery(
+    const resultAll = buildCostQuery(
       {
         groupBy: asDimensionId('service'),
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
@@ -131,7 +153,7 @@ describe('DuckDB query integration', () => {
       SYNTHETIC_DIR,
       dimensions,
     );
-    const sqlFiltered = buildCostQuery(
+    const resultFiltered = buildCostQuery(
       {
         groupBy: asDimensionId('service'),
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
@@ -140,13 +162,13 @@ describe('DuckDB query integration', () => {
       SYNTHETIC_DIR,
       dimensions,
     );
-    const allRows = await queryAll(conn, `SELECT SUM(total_cost) as t FROM (${sqlAll})`);
-    const filteredRows = await queryAll(conn, `SELECT SUM(total_cost) as t FROM (${sqlFiltered})`);
+    const allRows = await queryAllPrepared(conn, `SELECT SUM(total_cost) as t FROM (${resultAll.sql})`, resultAll.params);
+    const filteredRows = await queryAllPrepared(conn, `SELECT SUM(total_cost) as t FROM (${resultFiltered.sql})`, resultFiltered.params);
     expect(Number(filteredRows[0]?.['t'])).toBeLessThan(Number(allRows[0]?.['t']));
   });
 
   it('queries missing tags', async () => {
-    const sql = buildMissingTagsQuery(
+    const result = buildMissingTagsQuery(
       {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
@@ -156,7 +178,7 @@ describe('DuckDB query integration', () => {
       SYNTHETIC_DIR,
       dimensions,
     );
-    const rows = await queryAll(conn, sql);
+    const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
     const firstRow = rows[0];
     expect(firstRow?.['service']).toBeDefined();
@@ -164,7 +186,7 @@ describe('DuckDB query integration', () => {
   });
 
   it('classifies missing tags into actionable vs likely-untaggable buckets', async () => {
-    const sql = buildMissingTagsQuery(
+    const result = buildMissingTagsQuery(
       {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
@@ -174,7 +196,7 @@ describe('DuckDB query integration', () => {
       SYNTHETIC_DIR,
       dimensions,
     );
-    const rows = await queryAll(conn, sql);
+    const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
 
     // Every row carries a bucket and a tagged_ratio.
@@ -194,7 +216,7 @@ describe('DuckDB query integration', () => {
   });
 
   it('non-resource cost query returns rows for non-Usage line items', async () => {
-    const sql = buildNonResourceCostQuery(
+    const result = buildNonResourceCostQuery(
       {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
@@ -204,7 +226,7 @@ describe('DuckDB query integration', () => {
       SYNTHETIC_DIR,
       dimensions,
     );
-    const rows = await queryAll(conn, sql);
+    const rows = await queryAllPrepared(conn, result.sql, result.params);
     // Fixture may have zero non-Usage lines; just verify the query is valid
     // and every returned row has the expected shape.
     for (const row of rows) {
@@ -215,7 +237,7 @@ describe('DuckDB query integration', () => {
   });
 
   it('queries entity detail by service', async () => {
-    const sql = buildEntityDetailQuery(
+    const result = buildEntityDetailQuery(
       {
         entity: asEntityRef('AmazonRDS'),
         dimension: asDimensionId('service'),
@@ -225,7 +247,7 @@ describe('DuckDB query integration', () => {
       SYNTHETIC_DIR,
       dimensions,
     );
-    const rows = await queryAll(conn, sql);
+    const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
   });
 
@@ -249,7 +271,7 @@ describe('DuckDB query integration', () => {
     // Regression: BETWEEN against a TIMESTAMP would truncate the end string to
     // midnight and silently drop most of the end day. With usage_date as DATE,
     // the same 'YYYY-MM-DD' end value covers the full day.
-    const sql = buildCostQuery(
+    const result = buildCostQuery(
       {
         groupBy: asDimensionId('service'),
         dateRange: { start: asDateString('2026-02-01'), end: asDateString('2026-02-28') },
@@ -259,19 +281,19 @@ describe('DuckDB query integration', () => {
       SYNTHETIC_DIR,
       dimensions,
     );
-    const rows = await queryAll(conn, sql);
+    const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
     expect(Number(rows[0]?.['total_cost'])).toBeGreaterThan(0);
   });
 
   it('hourly cost query returns the same total as a SUM over the raw hourly source', async () => {
     const range = { start: asDateString('2026-02-01'), end: asDateString('2026-02-28') } as const;
-    const sql = buildCostQuery(
+    const result = buildCostQuery(
       { groupBy: asDimensionId('service'), dateRange: range, filters: {}, granularity: 'hourly' },
       SYNTHETIC_DIR,
       dimensions,
     );
-    const queryTotalRows = await queryAll(conn, `SELECT SUM(total_cost) AS t FROM (${sql})`);
+    const queryTotalRows = await queryAllPrepared(conn, `SELECT SUM(total_cost) AS t FROM (${result.sql})`, result.params);
     const queryTotal = Number(queryTotalRows[0]?.['t'] ?? 0);
 
     const source = buildSource(SYNTHETIC_DIR, 'hourly', dimensions);
@@ -286,7 +308,7 @@ describe('DuckDB query integration', () => {
   });
 
   it('daily costs query with hourly granularity includes hour in date field', async () => {
-    const sql = buildDailyCostsQuery(
+    const result = buildDailyCostsQuery(
       {
         groupBy: asDimensionId('service'),
         dateRange: { start: asDateString('2026-02-01'), end: asDateString('2026-02-28') },
@@ -296,7 +318,7 @@ describe('DuckDB query integration', () => {
       SYNTHETIC_DIR,
       dimensions,
     );
-    const rows = await queryAll(conn, sql);
+    const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
 
     const dates = [...new Set(rows.map(r => String(r['date'])))];
@@ -307,7 +329,7 @@ describe('DuckDB query integration', () => {
   });
 
   it('daily costs query with daily granularity returns daily data points', async () => {
-    const sql = buildDailyCostsQuery(
+    const result = buildDailyCostsQuery(
       {
         groupBy: asDimensionId('service'),
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
@@ -317,7 +339,7 @@ describe('DuckDB query integration', () => {
       SYNTHETIC_DIR,
       dimensions,
     );
-    const rows = await queryAll(conn, sql);
+    const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
 
     const dates = new Set(rows.map(r => String(r['date'])));

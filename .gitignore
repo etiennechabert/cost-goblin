@@ -20,3 +20,7 @@ e2e/*.txt
 
 # Auto Claude data directory
 .auto-claude/
+.auto-claude-security.json
+.auto-claude-status
+.claude_settings.json
+project_index.json

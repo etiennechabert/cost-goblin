@@ -140,6 +140,7 @@ export interface AppContext {
    *  explicit reset via invalidateColumnCache. */
   readonly getAvailableColumns: (tier: 'daily' | 'hourly') => Promise<ReadonlySet<string>>;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
+  readonly runPreparedQuery: (sql: string, params: readonly unknown[]) => Promise<RawRow[]>;
   readonly invalidateConfig: () => void;
   readonly invalidateDimensions: () => void;
   readonly invalidateViews: () => void;
@@ -417,6 +418,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getOrgAccountsPath,
     getAvailableColumns,
     runQuery: (sql: string) => ctx.db.runQuery(sql),
+    runPreparedQuery: (sql: string, params: readonly unknown[]) => ctx.db.runPreparedQuery(sql, params),
     invalidateConfig: () => { state.config = null; },
     invalidateDimensions: () => { state.dimensions = null; state.accountMap = null; state.regionMap = null; },
     invalidateViews: () => { state.views = null; },
