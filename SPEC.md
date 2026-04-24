@@ -99,7 +99,6 @@ interface CostApi {
 
   // Sync
   getSyncStatus(syncId?): Promise<SyncStatus>;
-  triggerSync(): Promise<void>;
   syncPeriods(files, syncId?): Promise<{ filesDownloaded; rowsProcessed }>;
   cancelSync(syncId?): Promise<void>;
   getDataInventory(tier?: DataTier): Promise<DataInventoryResult>;
@@ -1084,8 +1083,6 @@ CostGoblin downloads CUR Parquet directly into `aws/raw/{tier}-{period}/` and qu
 - Downloading raw avoids a CPU-heavy repartition step that would otherwise stall the UI on every sync.
 - `aws s3 sync` (subprocess) handles concurrency, retries, partial-file resume, and etag-based incremental updates natively — much better than a hand-rolled S3 client.
 - Tag columns are extracted at query time from `resource_tags` (a Map column), with normalization rules and aliases applied in SQL CASE expressions.
-
-**Legacy:** an older repartitioning path (`runSync` in `sync-engine.ts` + `repartition.ts`) is still wired to the `triggerSync` IPC method but is not used by the Sync view's per-period download flow. **v1 cleanup:** delete the legacy path and replace `triggerSync` with a "sync all missing periods" loop over `syncPeriods`.
 
 ### Configuration: App is the Sole Writer
 

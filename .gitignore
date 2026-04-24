@@ -17,3 +17,6 @@ e2e/*.txt
 
 # Claude Code local state
 .claude/
+
+# Auto Claude data directory
+.auto-claude/
