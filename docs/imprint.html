@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Imprint — CostGoblin</title>
+  <meta name="description" content="Legal notice and operator information.">
+  <meta name="robots" content="index, follow">
+  <link rel="icon" href="goblin.png">
+  <link rel="preconnect" href="https://fonts.bunny.net" crossorigin>
+  <link href="https://fonts.bunny.net/css?family=dm-mono:400,500|outfit:300,400,500,600,700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #050505;
+      --bg-raised: #0a0a0a;
+      --border: #1a1f1a;
+      --text: #e2e8e2;
+      --text-dim: #6b7b6b;
+      --text-muted: #3a4a3a;
+      --emerald: #10b981;
+      --font-display: 'Outfit', sans-serif;
+      --font-mono: 'DM Mono', monospace;
+    }
+
+    html { scroll-behavior: smooth; overflow-x: hidden; }
+
+    body {
+      font-family: var(--font-display);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      overflow-x: hidden;
+      width: 100%;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      padding: 16px 24px;
+      background: rgba(5, 5, 5, 0.9);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    nav .inner {
+      max-width: 820px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-logo {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--emerald);
+      letter-spacing: 0.05em;
+      text-decoration: none;
+    }
+
+    .nav-back {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-dim);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .nav-back:hover { color: var(--emerald); }
+
+    main {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 64px 24px 96px;
+    }
+
+    h1 {
+      font-size: clamp(32px, 5vw, 44px);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 48px;
+    }
+
+    h2 {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      margin-top: 48px;
+      margin-bottom: 16px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+    }
+
+    h2:first-of-type {
+      border-top: none;
+      padding-top: 0;
+      margin-top: 0;
+    }
+
+    p {
+      color: var(--text-dim);
+      margin-bottom: 16px;
+      font-size: 15px;
+    }
+
+    address {
+      font-style: normal;
+      font-family: var(--font-mono);
+      font-size: 14px;
+      color: var(--text);
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin-bottom: 16px;
+      line-height: 1.8;
+    }
+
+    a { color: var(--emerald); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .todo {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(212, 168, 67, 0.08);
+      border: 1px dashed rgba(212, 168, 67, 0.4);
+      color: #d4a843;
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+
+    footer {
+      padding: 32px 24px;
+      border-top: 1px solid var(--border);
+    }
+
+    footer .inner {
+      max-width: 820px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    footer .left {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    footer .right { display: flex; gap: 20px; }
+
+    footer .right a {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="inner">
+      <a href="/" class="nav-logo">CostGoblin</a>
+      <a href="/" class="nav-back">&larr; Back to home</a>
+    </div>
+  </nav>
+
+  <main>
+    <h1>Imprint</h1>
+
+    <h2>Operator</h2>
+    <p>CostGoblin is run as a private, individual project &mdash; not an incorporated company.</p>
+    <address>
+      Etienne Chabert<br>
+      <span class="todo">[Street and number]</span><br>
+      <span class="todo">[Postal code and city]</span><br>
+      Germany
+    </address>
+
+    <h2>Contact</h2>
+    <p>Email: <a href="mailto:[contact@example.com]"><span class="todo">[contact@example.com]</span></a></p>
+    <p>Phone: +49 1522 2006351</p>
+
+    <h2>Responsible for content</h2>
+    <p>The operator named above is responsible for all content on this site.</p>
+
+    <h2>Liability for content</h2>
+    <p>
+      Content on these pages is prepared with care, but no warranty is
+      given as to accuracy, completeness, or timeliness. As a service
+      provider, the operator is responsible for their own content on these
+      pages under general law. The operator is not, however, obliged to
+      monitor transmitted or stored third-party information or to
+      investigate circumstances that suggest unlawful activity. Obligations
+      to remove or block the use of information under general law remain
+      unaffected; such liability begins only from the moment of knowledge
+      of a specific infringement, and any such content will be removed
+      promptly once it becomes known.
+    </p>
+
+    <h2>Liability for links</h2>
+    <p>
+      This site contains links to external websites over which the
+      operator has no control. No warranty is given for the content of
+      such external sites; the respective provider or operator of the
+      linked pages is always responsible for their content. Linked pages
+      were reviewed for possible legal violations at the time of linking,
+      and no unlawful content was apparent at that time. Continuous
+      monitoring of linked content without specific indications of a
+      violation is not reasonable. Upon becoming aware of any
+      infringement, the relevant link will be removed promptly.
+    </p>
+
+    <h2>Copyright</h2>
+    <p>
+      Original content on this site is protected by copyright. Any form of
+      reproduction, adaptation, distribution, or commercial use outside
+      the limits of copyright law requires the written consent of the
+      respective author. Downloads and copies of this site are permitted
+      for private, non-commercial use only. Third-party content is marked
+      as such where applicable. The CostGoblin source code is released
+      under an open-source licence; see the
+      <a href="https://github.com/etiennechabert/cost-goblin" target="_blank" rel="noopener">GitHub repository</a>.
+    </p>
+  </main>
+
+  <footer>
+    <div class="inner">
+      <div class="left">&copy; 2026 CostGoblin</div>
+      <div class="right">
+        <a href="/imprint.html">Imprint</a>
+        <a href="/privacy.html">Privacy</a>
+        <a href="https://github.com/etiennechabert/cost-goblin" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
