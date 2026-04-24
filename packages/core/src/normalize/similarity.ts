@@ -200,3 +200,54 @@ export function clusterBySimilarity(
 
   return clusters;
 }
+
+/** Represents a suggested alias group where similar values are grouped together.
+ *  The canonical value is the recommended primary value (shortest, then lexicographic).
+ *  Aliases are the similar values that should map to the canonical value. */
+export interface AliasSuggestion {
+  readonly canonical: string;
+  readonly aliases: readonly string[];
+}
+
+/** Generates alias suggestions from a list of tag values.
+ *  Analyzes values for similarity and returns groups where similar values
+ *  are clustered together with a recommended canonical value.
+ *
+ *  The canonical value is chosen as the shortest value in the cluster,
+ *  with ties broken lexicographically. This heuristic works well for
+ *  abbreviations (prod vs production) and consistent naming.
+ *
+ *  Returns only suggestions with 2+ values (canonical + at least one alias).
+ *
+ *  Example:
+ *    Input: ["prod", "production", "PROD", "staging", "stg"]
+ *    Output: [
+ *      { canonical: "prod", aliases: ["PROD", "production"] },
+ *      { canonical: "stg", aliases: ["staging"] }
+ *    ]
+ *
+ *  @param values - Unique tag values to analyze
+ *  @param threshold - Similarity threshold (0-1), defaults to 0.8
+ *  @returns Array of alias suggestions, empty if no similar values found */
+export function generateAliasSuggestions(
+  values: readonly string[],
+  threshold: number = 0.8,
+): ReadonlyArray<AliasSuggestion> {
+  const clusters = clusterBySimilarity(values, threshold);
+
+  return clusters.map(cluster => {
+    // First value is already the canonical (shortest, then lexicographic)
+    const canonical = cluster[0];
+    const aliases = cluster.slice(1);
+
+    // TypeScript knows cluster.length >= 2 from clusterBySimilarity contract,
+    // but we need to handle the case where canonical could be undefined
+    if (canonical === undefined) {
+      // This should never happen given clusterBySimilarity's guarantee,
+      // but we handle it defensively
+      return { canonical: '', aliases: [] };
+    }
+
+    return { canonical, aliases };
+  }).filter(suggestion => suggestion.canonical.length > 0);
+}
