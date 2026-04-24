@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type {
   Dimension,
   DimensionId,
@@ -11,6 +11,8 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { getDimensionId, isTagDimension } from '../lib/dimensions.js';
 import { formatDollars } from '../components/format.js';
+import { DataTable } from '../components/data-table.js';
+import type { TableColumn } from '../lib/table-types.js';
 
 function getDateRange(): { start: DateString; end: DateString } {
   const today = new Date();
@@ -21,46 +23,66 @@ function getDateRange(): { start: DateString; end: DateString } {
 }
 
 function ResourceTable({ rows, showRatio }: Readonly<{ rows: readonly MissingTagRow[]; showRatio: boolean }>) {
-  return (
-    <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-text-secondary">
-            <th className="px-4 pb-3 pt-4 font-medium">Account</th>
-            <th className="px-4 pb-3 pt-4 font-medium">Resource</th>
-            <th className="px-4 pb-3 pt-4 font-medium">Service</th>
-            <th className="px-4 pb-3 pt-4 font-medium">Family</th>
-            <th className="px-4 pb-3 pt-4 text-right font-medium">Cost</th>
-            <th className="px-4 pb-3 pt-4 font-medium">Closest Owner</th>
-            {showRatio && <th className="px-4 pb-3 pt-4 text-right font-medium">Tagged in category</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={`${row.resourceId}-${String(i)}`} className="border-b border-border-subtle hover:bg-bg-tertiary/30 transition-colors">
-              <td className="px-4 py-3 text-text-primary">{row.accountName}</td>
-              <td className="px-4 py-3 text-text-secondary font-mono text-xs max-w-64 truncate" title={row.resourceId}>
-                {row.resourceId}
-              </td>
-              <td className="px-4 py-3 text-text-secondary">{row.service}</td>
-              <td className="px-4 py-3 text-text-secondary">{row.serviceFamily}</td>
-              <td className="px-4 py-3 text-right tabular-nums font-medium text-text-primary">
-                {formatDollars(row.cost)}
-              </td>
-              <td className="px-4 py-3 text-text-secondary">
-                {row.closestOwner ?? '—'}
-              </td>
-              {showRatio && (
-                <td className="px-4 py-3 text-right tabular-nums text-text-muted">
-                  {`${String(Math.round(row.categoryTaggedRatio * 100))}%`}
-                </td>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  const columns = useMemo<readonly TableColumn<MissingTagRow>[]>(() => {
+    const baseColumns: TableColumn<MissingTagRow>[] = [
+      {
+        id: 'accountName',
+        label: 'Account',
+        accessorKey: 'accountName',
+        sortable: true,
+      },
+      {
+        id: 'resourceId',
+        label: 'Resource',
+        accessorKey: 'resourceId',
+        mono: true,
+        truncate: true,
+        sortable: true,
+      },
+      {
+        id: 'service',
+        label: 'Service',
+        accessorKey: 'service',
+        sortable: true,
+      },
+      {
+        id: 'serviceFamily',
+        label: 'Family',
+        accessorKey: 'serviceFamily',
+        sortable: true,
+      },
+      {
+        id: 'cost',
+        label: 'Cost',
+        accessorKey: 'cost',
+        align: 'right',
+        sortable: true,
+        cell: (row) => formatDollars(row.cost),
+      },
+      {
+        id: 'closestOwner',
+        label: 'Closest Owner',
+        accessorKey: 'closestOwner',
+        sortable: true,
+        cell: (row) => row.closestOwner ?? '—',
+      },
+    ];
+
+    if (showRatio) {
+      baseColumns.push({
+        id: 'categoryTaggedRatio',
+        label: 'Tagged in category',
+        accessorKey: 'categoryTaggedRatio',
+        align: 'right',
+        sortable: true,
+        cell: (row) => `${String(Math.round(row.categoryTaggedRatio * 100))}%`,
+      });
+    }
+
+    return baseColumns;
+  }, [showRatio]);
+
+  return <DataTable data={rows} columns={columns} />;
 }
 
 export function MissingTags() {
