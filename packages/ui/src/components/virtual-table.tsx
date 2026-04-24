@@ -152,7 +152,7 @@ export function VirtualTable<TData>({
       className="border border-border rounded-md overflow-auto"
       style={{ height: '600px' }}
     >
-      <div style={{ height: `${virtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+      <div style={{ height: `${String(virtualizer.getTotalSize())}px`, width: '100%', position: 'relative' }}>
         <table className="text-[11px] w-full border-collapse">
           {/* Table Header - Sticky */}
           <thead className="sticky top-0 z-10 bg-bg-tertiary/95 backdrop-blur-sm">
@@ -180,7 +180,7 @@ export function VirtualTable<TData>({
                       style={
                         isPinned === 'left'
                           ? {
-                              left: `${header.getStart('left')}px`,
+                              left: `${String(header.getStart('left'))}px`,
                             }
                           : undefined
                       }
@@ -223,8 +223,8 @@ export function VirtualTable<TData>({
                   key={row.id}
                   className="border-t border-border/40 hover:bg-bg-tertiary/30 transition-colors"
                   style={{
-                    height: `${rowHeight}px`,
-                    transform: `translateY(${virtualRow.start}px)`,
+                    height: `${String(rowHeight)}px`,
+                    transform: `translateY(${String(virtualRow.start)}px)`,
                     position: 'absolute',
                     width: '100%',
                   }}
@@ -252,10 +252,7 @@ export function VirtualTable<TData>({
                           isClickable
                             ? () => {
                                 const value = cell.getValue();
-                                const dimId = meta?.dimId;
-                                if (dimId !== null && dimId !== undefined) {
-                                  onCellClick?.(row.original, cell.column.id, value);
-                                }
+                                onCellClick(row.original, cell.column.id, value);
                               }
                             : undefined
                         }
@@ -263,7 +260,7 @@ export function VirtualTable<TData>({
                         style={
                           isPinned === 'left'
                             ? {
-                                left: `${cell.column.getStart('left')}px`,
+                                left: `${String(cell.column.getStart('left'))}px`,
                               }
                             : undefined
                         }

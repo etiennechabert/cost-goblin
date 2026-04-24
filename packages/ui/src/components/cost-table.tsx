@@ -1,6 +1,9 @@
+import { useMemo } from 'react';
 import { ChevronRight, Folder } from 'lucide-react';
 import type { CostRow, EntityRef } from '@costgoblin/core/browser';
+import type { TableColumn } from '../lib/table-types.js';
 import { formatDollars } from './format.js';
+import { DataTable } from './data-table.js';
 
 interface CostTableProps {
   rows: CostRow[];
@@ -10,70 +13,95 @@ interface CostTableProps {
 }
 
 export function CostTable({ rows, topServices, onEntityClick, onServiceClick }: Readonly<CostTableProps>) {
-  const sorted = [...rows].sort((a, b) => b.totalCost - a.totalCost);
+  // Build column definitions dynamically based on topServices
+  const columns = useMemo<Array<TableColumn<CostRow>>>(() => {
+    const cols: Array<TableColumn<CostRow>> = [
+      // Entity column with custom rendering for virtual folders
+      {
+        id: 'entity',
+        label: 'Entity',
+        accessorKey: 'entity',
+        sortable: true,
+        pinnable: true,
+        cell: (row) => (
+          <button
+            type="button"
+            className={`flex items-center gap-1.5 hover:underline ${
+              row.isVirtual
+                ? 'font-semibold text-warning hover:text-warning'
+                : 'font-medium text-accent hover:text-accent-hover'
+            }`}
+            onClick={(e) => { e.stopPropagation(); onEntityClick(row.entity); }}
+          >
+            {row.isVirtual && (
+              <>
+                <Folder className="h-3.5 w-3.5 shrink-0" />
+                <ChevronRight className="h-3 w-3 shrink-0" />
+              </>
+            )}
+            {row.entity}
+          </button>
+        ),
+      },
+      // Total cost column
+      {
+        id: 'totalCost',
+        label: 'Total',
+        accessorKey: 'totalCost',
+        align: 'right',
+        mono: true,
+        sortable: true,
+        cell: (row) => (
+          <span className="font-medium text-text-primary">
+            {formatDollars(row.totalCost)}
+          </span>
+        ),
+      },
+    ];
+
+    // Add dynamic service columns
+    for (const service of topServices) {
+      cols.push({
+        id: `service-${service}`,
+        label: service,
+        accessorKey: null,
+        align: 'right',
+        mono: true,
+        sortable: true,
+        cell: (row) => {
+          const cost = row.serviceCosts[service];
+          return (
+            <span className="text-text-secondary">
+              {cost === undefined ? '—' : formatDollars(cost)}
+            </span>
+          );
+        },
+      });
+    }
+
+    return cols;
+  }, [topServices, onEntityClick]);
+
+  // Default sorting: totalCost descending
+  const defaultSorting = useMemo(() => [{ id: 'totalCost', desc: true }], []);
+
+  // Handle service header clicks via onCellClick
+  const handleCellClick = useMemo(() => {
+    if (onServiceClick === undefined) return undefined;
+    return (_row: CostRow, columnId: string) => {
+      if (columnId.startsWith('service-')) {
+        const service = columnId.replace('service-', '');
+        onServiceClick(service);
+      }
+    };
+  }, [onServiceClick]);
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-text-secondary">
-            <th className="px-4 pb-3 pt-4 font-medium">Entity</th>
-            <th className="px-4 pb-3 pt-4 text-right font-medium">Total</th>
-            {topServices.map((service) => (
-              <th key={service} className="px-4 pb-3 pt-4 text-right font-medium">
-                {onServiceClick === undefined ? service : (
-                  <button
-                    type="button"
-                    className="hover:text-text-primary transition-colors"
-                    onClick={() => { onServiceClick(service); }}
-                  >
-                    {service}
-                  </button>
-                )}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((row) => (
-            <tr
-              key={row.entity}
-              className="border-b border-border-subtle hover:bg-bg-tertiary/30 transition-colors cursor-pointer"
-            >
-              <td className="px-4 py-3">
-                <button
-                  type="button"
-                  className={`flex items-center gap-1.5 hover:underline ${
-                    row.isVirtual
-                      ? 'font-semibold text-warning hover:text-warning'
-                      : 'font-medium text-accent hover:text-accent-hover'
-                  }`}
-                  onClick={(e) => { e.stopPropagation(); onEntityClick(row.entity); }}
-                >
-                  {row.isVirtual && (
-                    <>
-                      <Folder className="h-3.5 w-3.5 shrink-0" />
-                      <ChevronRight className="h-3 w-3 shrink-0" />
-                    </>
-                  )}
-                  {row.entity}
-                </button>
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums font-medium text-text-primary">
-                {formatDollars(row.totalCost)}
-              </td>
-              {topServices.map((service) => {
-                const cost = row.serviceCosts[service];
-                return (
-                  <td key={service} className="px-4 py-3 text-right tabular-nums text-text-secondary">
-                    {cost === undefined ? '—' : formatDollars(cost)}
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      data={rows}
+      columns={columns}
+      sorting={defaultSorting}
+      onCellClick={handleCellClick}
+    />
   );
 }

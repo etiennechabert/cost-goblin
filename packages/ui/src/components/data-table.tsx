@@ -248,10 +248,7 @@ export function DataTable<TData>({
                       isClickable
                         ? () => {
                             const value = cell.getValue();
-                            const dimId = meta?.dimId;
-                            if (dimId !== null && dimId !== undefined) {
-                              onCellClick?.(row.original, cell.column.id, value);
-                            }
+                            onCellClick(row.original, cell.column.id, value);
                           }
                         : undefined
                     }
