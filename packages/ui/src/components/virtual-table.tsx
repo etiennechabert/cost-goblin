@@ -165,6 +165,8 @@ export function VirtualTable<TData>({
                   const canSort = header.column.getCanSort();
                   const sortDir = header.column.getIsSorted();
                   const isPinned = header.column.getIsPinned();
+                  const sortIndex = header.column.getSortIndex();
+                  const isMultiSort = table.getState().sorting.length > 1;
 
                   return (
                     <th
@@ -194,11 +196,16 @@ export function VirtualTable<TData>({
                       >
                         {flexRender(header.column.columnDef.header, header.getContext())}
                         {canSort && sortDir !== false && (
-                          <span className="text-accent">
+                          <span className="text-accent flex items-center gap-0.5">
                             {sortDir === 'asc' ? (
                               <ChevronUp className="h-3 w-3" />
                             ) : (
                               <ChevronDown className="h-3 w-3" />
+                            )}
+                            {isMultiSort && (
+                              <span className="text-[10px] font-semibold">
+                                {String(sortIndex + 1)}
+                              </span>
                             )}
                           </span>
                         )}
