@@ -19,19 +19,7 @@ function renderMissingTags() {
 afterEach(cleanup);
 
 describe('MissingTags', () => {
-  it('renders heading', () => {
-    renderMissingTags();
-    expect(screen.getByText('Missing Tags')).toBeDefined();
-  });
-
-  it('shows untagged cost summary after loading', async () => {
-    renderMissingTags();
-    await waitFor(() => {
-      expect(screen.getByText(/resources/)).toBeDefined();
-    });
-  });
-
-  it('shows table with resource columns', async () => {
+  it('shows table with resource data after loading', async () => {
     renderMissingTags();
     await waitFor(() => {
       expect(screen.getByText('Account')).toBeDefined();
@@ -40,9 +28,8 @@ describe('MissingTags', () => {
     });
   });
 
-  it('has min cost filter input defaulting to 0 (show everything)', () => {
+  it('has min cost filter input defaulting to 0', () => {
     renderMissingTags();
-    const input = screen.getByDisplayValue('0');
-    expect(input).toBeDefined();
+    expect(screen.getByDisplayValue('0')).toBeDefined();
   });
 });

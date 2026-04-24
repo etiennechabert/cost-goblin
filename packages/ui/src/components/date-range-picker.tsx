@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { DateString } from '@costgoblin/core/browser';
 import { asDateString } from '@costgoblin/core/browser';
+import { daysAgo } from '../lib/dates.js';
 
 export type Granularity = 'daily' | 'hourly';
 
@@ -15,11 +16,6 @@ const HOURLY_PRESETS = [
   { label: '14 days', days: 14 },
   { label: '30 days', days: 30 },
 ];
-
-function daysAgo(days: number): DateString {
-  const d = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  return asDateString(d.toISOString().slice(0, 10));
-}
 
 export interface DateRange {
   start: DateString;
