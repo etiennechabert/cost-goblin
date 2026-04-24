@@ -1,11 +1,8 @@
 providers:
-  - type: aws
+  - name: test-aws
+    type: aws
     credentials:
       profile: test-profile
-    bucketName: cost-goblin-test
-    bucketRegion: us-east-1
-    reportName: test-cur
-    reportPrefix: cur/test-cur
     sync:
       daily:
         retentionDays: 365
