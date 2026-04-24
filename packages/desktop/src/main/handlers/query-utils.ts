@@ -2,7 +2,10 @@ import {
   asEntityRef,
   asDollars,
   asDateString,
+  computePeriodsInRange,
   getDescendantTagValues,
+  listLocalMonths,
+  logger,
   tagColumnName,
 } from '@costgoblin/core';
 import type {
@@ -68,6 +71,21 @@ export function buildAccountReverseMap(accountMap: Map<string, string>): Map<str
     else ids.push(id);
   }
   return reverse;
+}
+
+export async function resolveAvailablePeriods(
+  dataDir: string,
+  tier: 'daily' | 'hourly',
+  dateRange: { readonly start: string; readonly end: string },
+): Promise<{ available: string[]; empty: boolean }> {
+  const available = await listLocalMonths(dataDir, tier);
+  const required = computePeriodsInRange(dateRange);
+  const usePeriods = required.filter(p => available.includes(p));
+  if (usePeriods.length === 0) {
+    logger.debug('query:plan', { tier, mode: 'empty', requestedMonths: required.length, availableMonths: available.length });
+    return { available, empty: true };
+  }
+  return { available, empty: false };
 }
 
 /** Sums two CostRows assumed to share the same entity. Service breakdowns
