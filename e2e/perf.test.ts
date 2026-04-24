@@ -8,7 +8,7 @@ const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
 const REPORT_DIR = join(tmpdir(), 'costgoblin-perf');
 mkdirSync(REPORT_DIR, { recursive: true });
 
-const LOAD_TIMEOUT = 30_000;
+const LOAD_TIMEOUT = 5_000;
 
 // ---------------------------------------------------------------------------
 // Types
