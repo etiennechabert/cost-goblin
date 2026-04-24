@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, applyStripPatterns, isStringRecord } from '@costgoblin/core';
-import type { DimensionsConfig, NormalizationRule } from '@costgoblin/core';
+import { applyNormalizationRule, applyStripPatterns, generateAliasSuggestions, isStringRecord } from '@costgoblin/core';
+import type { AliasSuggestion, DimensionsConfig, NormalizationRule } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import { toNum, toStr } from './query-utils.js';
 
@@ -324,12 +324,53 @@ export function registerDimensionsHandlers(app: AppContext): void {
     invalidateDimensions();
   });
 
-  // Placeholder handlers for alias suggestions — will be fully implemented in
-  // subsequent subtasks. Added here to satisfy TypeScript's noUnusedLocals check
-  // on the dismissed-suggestions state file helper functions.
-  ipcMain.handle('dimensions:get-alias-suggestions', async (_event, _tagName: string): Promise<unknown[]> => {
-    const state = await loadDismissedSuggestions(ctx.dataDir);
-    return state.dismissed.length > 0 ? [] : [];
+  // Analyzes tag values for the given tag name and returns alias suggestions.
+  // Scans the most recent daily period for fast preview, generates suggestions
+  // using fuzzy matching, and filters out previously dismissed suggestions.
+  ipcMain.handle('dimensions:get-alias-suggestions', async (_event, tagName: string): Promise<AliasSuggestion[]> => {
+    if (tagName.length === 0) return [];
+
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
+    let dirs: string[] = [];
+    try {
+      dirs = (await fs.readdir(rawDir)).filter(d => d.startsWith('daily-')).sort();
+    } catch { /* no data */ }
+    const latest = dirs.at(-1);
+    if (latest === undefined) return [];
+
+    // Query distinct tag values for the given tag name from the most recent period
+    const source = `read_parquet('${ctx.dataDir}/aws/raw/${latest}/*.parquet')`;
+    const sql = `
+      WITH tags AS (
+        SELECT unnest(map_keys(resource_tags)) AS tag_key,
+               unnest(map_values(resource_tags)) AS tag_val
+        FROM ${source}
+        WHERE resource_tags IS NOT NULL
+      )
+      SELECT DISTINCT tag_val
+      FROM tags
+      WHERE tag_key = '${tagName}'
+        AND tag_val IS NOT NULL
+        AND tag_val != ''
+      ORDER BY tag_val
+    `;
+    const rows = await runQuery(sql);
+    const values = rows.map(r => toStr(r['tag_val'])).filter(v => v.length > 0);
+
+    if (values.length === 0) return [];
+
+    // Generate suggestions using the similarity algorithm from core
+    const suggestions = generateAliasSuggestions(values);
+
+    // Filter out dismissed suggestions
+    const dismissedState = await loadDismissedSuggestions(ctx.dataDir);
+    const filtered = suggestions.filter(
+      s => !isSuggestionDismissed(dismissedState, tagName, s.canonical, s.aliases)
+    );
+
+    return filtered;
   });
 
   ipcMain.handle('dimensions:dismiss-suggestion', async (_event, _tagName: string, _canonical: string, _aliases: string[]): Promise<void> => {
