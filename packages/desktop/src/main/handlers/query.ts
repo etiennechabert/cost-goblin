@@ -50,7 +50,7 @@ import {
 } from './query-utils.js';
 
 export function registerQueryHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getOrgAccountsPath, getOrgTreeConfig, getConfig, getCostScope, getAvailableColumns, runQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getOrgAccountsPath, getOrgTreeConfig, getConfig, getCostScope, getAvailableColumns, runQuery, runPreparedQuery } = app;
 
   ipcMain.handle('query:cancel-pending', () => {
     ctx.db.cancelPendingQueries();
@@ -80,10 +80,10 @@ export function registerQueryHandlers(app: AppContext): void {
     const availableColumns = await getAvailableColumns(tier);
     const { available, empty } = await resolveAvailablePeriods(tier, params.dateRange);
     if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
-    const sql = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available, accountReverseMap, costScope, availableColumns);
+    const { sql, params: queryParams } = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available, accountReverseMap, costScope, availableColumns);
     logger.info('query:costs', { groupBy: params.groupBy });
 
-    const rows = await runQuery(sql);
+    const rows = await runPreparedQuery(sql, queryParams);
     let result = buildCostResult(rows, params.dateRange);
 
     if (params.groupBy === 'account' || params.groupBy === 'account_id') {
@@ -116,10 +116,10 @@ export function registerQueryHandlers(app: AppContext): void {
     const availableColumns = await getAvailableColumns(tier);
     const { available, empty } = await resolveAvailablePeriods(tier, params.dateRange);
     if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
-    const sql = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
+    const { sql, params: queryParams } = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
     logger.info('query:daily-costs', { groupBy: params.groupBy });
 
-    const rows = await runQuery(sql);
+    const rows = await runPreparedQuery(sql, queryParams);
 
     const dayMap = new Map<string, Record<string, number>>();
     const groupSet = new Set<string>();
@@ -173,10 +173,10 @@ export function registerQueryHandlers(app: AppContext): void {
     const availableColumns = await getAvailableColumns('daily');
     const { available, empty } = await resolveAvailablePeriods('daily', params.dateRange);
     if (empty) return { increases: [], savings: [], totalIncrease: asDollars(0), totalSavings: asDollars(0) };
-    const sql = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
+    const { sql, params: queryParams } = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
     logger.info('query:trends', { groupBy: params.groupBy });
 
-    const rows = await runQuery(sql);
+    const rows = await runPreparedQuery(sql, queryParams);
     const result = buildTrendResult(rows, params.deltaThreshold, params.percentThreshold);
     if (params.groupBy === 'account' || params.groupBy === 'account_id') {
       return {
@@ -209,11 +209,11 @@ export function registerQueryHandlers(app: AppContext): void {
         nonResourceRows: [],
       };
     }
-    const resourceSql = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
-    const nonResourceSql = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
+    const resourceQuery = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
+    const nonResourceQuery = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
     const [resourceRows, nonResourceRows] = await Promise.all([
-      runQuery(resourceSql),
-      runQuery(nonResourceSql),
+      runPreparedQuery(resourceQuery.sql, resourceQuery.params),
+      runPreparedQuery(nonResourceQuery.sql, nonResourceQuery.params),
     ]);
     const result = buildMissingTagsResult(resourceRows, nonResourceRows);
     return {
@@ -310,10 +310,10 @@ export function registerQueryHandlers(app: AppContext): void {
         bySubEntity: [],
       };
     }
-    const sql = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
+    const { sql, params: queryParams } = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
     logger.info('query:entity-detail', { entity: params.entity });
 
-    const rows = await runQuery(sql);
+    const rows = await runPreparedQuery(sql, queryParams);
     const result = buildEntityDetailResult(rows, params.entity);
     return {
       ...result,
