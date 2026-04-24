@@ -282,12 +282,8 @@ function AppShell(): React.JSX.Element {
   return (
     <div className="min-h-screen bg-bg-primary text-text-primary">
       {/* Title bar + nav */}
-      <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border">
-        <div className="h-10 flex items-center justify-center gap-2 px-4 [-webkit-app-region:drag]">
-          <img src="goblin.png" alt="" className="h-7 w-7 object-contain" />
-          <span className="text-sm font-bold text-accent tracking-wider">CostGoblin</span>
-        </div>
-        <nav className="flex items-center justify-between px-4 pb-2">
+      <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
+        <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
           <div className="flex items-center gap-1">
             {leftNav.map((item) => (
               <button
@@ -305,7 +301,11 @@ function AppShell(): React.JSX.Element {
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-1 [-webkit-app-region:no-drag]">
+          <div className="flex items-center justify-center gap-2 px-4">
+            <img src="goblin.png" alt="" className="h-8 w-auto object-contain" />
+            <span className="text-sm font-bold text-accent tracking-wider">CostGoblin</span>
+          </div>
+          <div className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]">
             <button
               type="button"
               onClick={handleToggleTheme}
