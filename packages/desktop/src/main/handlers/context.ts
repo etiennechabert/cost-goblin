@@ -223,27 +223,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const tagKey = accountDim?.accountNameFromTag;
 
     async function fromOrg(): Promise<Map<string, string>> {
-      const map = new Map<string, string>();
-      try {
-        const raw = await fs.readFile(path.join(baseDir, 'org-accounts.json'), 'utf-8');
-        const parsed: unknown = JSON.parse(raw);
-        if (isStringRecord(parsed) && Array.isArray(parsed['accounts'])) {
-          for (const acct of parsed['accounts']) {
-            if (!isStringRecord(acct)) continue;
-            const id = acct['id'];
-            const name = acct['name'];
-            if (typeof id !== 'string' || id.length === 0) continue;
-            let resolved: string | undefined;
-            if (tagKey !== undefined && tagKey.length > 0 && isStringRecord(acct['tags'])) {
-              const tagVal = acct['tags'][tagKey];
-              if (typeof tagVal === 'string' && tagVal.length > 0) resolved = tagVal;
-            }
-            if (resolved === undefined && typeof name === 'string' && name.length > 0) resolved = name;
-            if (resolved !== undefined) map.set(id, resolved);
-          }
-        }
-      } catch { /* no org sync */ }
-      return map;
+      return loadOrgAccountsMap(ctx.dataDir, tagKey);
     }
 
     async function fromCsv(): Promise<Map<string, string>> {
@@ -426,6 +406,40 @@ export function createAppContext(ctx: IpcContext): AppContext {
     invalidateCostScope: () => { state.costScope = null; },
     invalidateColumnCache: () => { columnCache.clear(); },
   };
+}
+
+/** Read org-accounts.json and return an id→name map. When tagKey is set,
+ *  each account's "name" is the value of that tag; accounts missing the tag
+ *  fall back to the Name field. */
+export async function loadOrgAccountsMap(dataDir: string, tagKey?: string): Promise<Map<string, string>> {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const map = new Map<string, string>();
+  try {
+    const raw = await fs.readFile(path.join(path.dirname(dataDir), 'org-accounts.json'), 'utf-8');
+    const parsed: unknown = JSON.parse(raw);
+    if (isStringRecord(parsed) && Array.isArray(parsed['accounts'])) {
+      for (const acct of parsed['accounts']) {
+        if (!isStringRecord(acct)) continue;
+        const id = acct['id'];
+        const name = acct['name'];
+        if (typeof id !== 'string' || id.length === 0) continue;
+        let resolved: string | undefined;
+        if (tagKey !== undefined && tagKey.length > 0 && isStringRecord(acct['tags'])) {
+          const tagVal = acct['tags'][tagKey];
+          if (typeof tagVal === 'string' && tagVal.length > 0) resolved = tagVal;
+        }
+        if (resolved === undefined && typeof name === 'string' && name.length > 0) resolved = name;
+        if (resolved !== undefined) map.set(id, resolved);
+      }
+    }
+  } catch { /* no org sync */ }
+  return map;
+}
+
+export async function prefsPath(dataDir: string, name: string): Promise<string> {
+  const path = await import('node:path');
+  return path.join(path.dirname(dataDir), `${name}.json`);
 }
 
 export function isCredentialError(err: unknown): boolean {

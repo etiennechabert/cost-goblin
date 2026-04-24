@@ -1,39 +1,8 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, applyStripPatterns, isStringRecord } from '@costgoblin/core';
+import { applyNormalizationRule, applyStripPatterns } from '@costgoblin/core';
 import type { DimensionsConfig, NormalizationRule } from '@costgoblin/core';
-import type { AppContext } from './context.js';
+import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { toNum, toStr } from './query-utils.js';
-
-/** One-shot read of org-accounts.json → id→name map. No caching here (the
- *  preview handler wants fresh data on every toggle change). When tagKey is
- *  set, the "name" for each account is the value of that account-level tag;
- *  accounts missing the tag fall back to the account's Name field so the
- *  preview never drops rows. */
-async function loadOrgAccountsMap(dataDir: string, tagKey?: string): Promise<Map<string, string>> {
-  const fs = await import('node:fs/promises');
-  const path = await import('node:path');
-  const map = new Map<string, string>();
-  try {
-    const raw = await fs.readFile(path.join(path.dirname(dataDir), 'org-accounts.json'), 'utf-8');
-    const parsed: unknown = JSON.parse(raw);
-    if (isStringRecord(parsed) && Array.isArray(parsed['accounts'])) {
-      for (const acct of parsed['accounts']) {
-        if (!isStringRecord(acct)) continue;
-        const id = acct['id'];
-        const name = acct['name'];
-        if (typeof id !== 'string' || id.length === 0) continue;
-        let resolved: string | undefined;
-        if (tagKey !== undefined && tagKey.length > 0 && isStringRecord(acct['tags'])) {
-          const tagVal = acct['tags'][tagKey];
-          if (typeof tagVal === 'string' && tagVal.length > 0) resolved = tagVal;
-        }
-        if (resolved === undefined && typeof name === 'string' && name.length > 0) resolved = name;
-        if (resolved !== undefined) map.set(id, resolved);
-      }
-    }
-  } catch { /* no org sync */ }
-  return map;
-}
 
 export function registerDimensionsHandlers(app: AppContext): void {
   const { ctx, getConfig, getDimensions, getRegionMap, invalidateDimensions, runQuery } = app;

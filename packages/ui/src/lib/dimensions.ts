@@ -1,9 +1,9 @@
 import type { Dimension, DimensionId } from '@costgoblin/core/browser';
-import { asDimensionId } from '@costgoblin/core/browser';
+import { asDimensionId, tagColumnName } from '@costgoblin/core/browser';
 
 export function getDimensionId(dim: Dimension): DimensionId {
   if ('tagName' in dim) {
-    return asDimensionId(`tag_${dim.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`);
+    return asDimensionId(tagColumnName(dim.tagName));
   }
   return dim.name;
 }
