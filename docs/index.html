@@ -38,7 +38,10 @@
       --font-mono: 'DM Mono', monospace;
     }
 
-    html { scroll-behavior: smooth; }
+    html {
+      scroll-behavior: smooth;
+      overflow-x: hidden;
+    }
 
     body {
       font-family: var(--font-display);
@@ -46,6 +49,7 @@
       color: var(--text);
       line-height: 1.6;
       overflow-x: hidden;
+      width: 100%;
       -webkit-font-smoothing: antialiased;
     }
 
@@ -159,7 +163,7 @@
       text-align: center;
       padding: 120px 24px 0;
       position: relative;
-      overflow: visible;
+      overflow: hidden;
     }
 
     /* Radial glow behind hero */
@@ -516,6 +520,7 @@
       text-align: center;
       border-top: 1px solid var(--border);
       position: relative;
+      overflow: hidden;
     }
 
     .cta::before {
