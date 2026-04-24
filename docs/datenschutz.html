@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Datenschutzerklärung — CostGoblin</title>
+  <meta name="description" content="Datenschutzerklärung gemäß Art. 13 DSGVO.">
+  <meta name="robots" content="index, follow">
+  <link rel="icon" href="goblin.png">
+  <link rel="preconnect" href="https://fonts.bunny.net" crossorigin>
+  <link href="https://fonts.bunny.net/css?family=dm-mono:400,500|outfit:300,400,500,600,700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #050505;
+      --bg-raised: #0a0a0a;
+      --border: #1a1f1a;
+      --text: #e2e8e2;
+      --text-dim: #6b7b6b;
+      --text-muted: #3a4a3a;
+      --emerald: #10b981;
+      --font-display: 'Outfit', sans-serif;
+      --font-mono: 'DM Mono', monospace;
+    }
+
+    html { scroll-behavior: smooth; overflow-x: hidden; }
+
+    body {
+      font-family: var(--font-display);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      overflow-x: hidden;
+      width: 100%;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      padding: 16px 24px;
+      background: rgba(5, 5, 5, 0.9);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    nav .inner {
+      max-width: 820px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-logo {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--emerald);
+      letter-spacing: 0.05em;
+      text-decoration: none;
+    }
+
+    .nav-back {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-dim);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .nav-back:hover { color: var(--emerald); }
+
+    main {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 64px 24px 96px;
+    }
+
+    h1 {
+      font-size: clamp(32px, 5vw, 44px);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+
+    .lang-note {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 48px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      margin-top: 48px;
+      margin-bottom: 16px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+    }
+
+    h2:first-of-type {
+      border-top: none;
+      padding-top: 0;
+    }
+
+    h3 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-top: 24px;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+
+    p, li {
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      font-size: 15px;
+    }
+
+    ul, ol { padding-left: 24px; margin-bottom: 16px; }
+
+    a { color: var(--emerald); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .todo {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(212, 168, 67, 0.08);
+      border: 1px dashed rgba(212, 168, 67, 0.4);
+      color: #d4a843;
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+
+    address {
+      font-style: normal;
+      font-family: var(--font-mono);
+      font-size: 14px;
+      color: var(--text);
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin-bottom: 16px;
+      line-height: 1.8;
+    }
+
+    footer {
+      padding: 32px 24px;
+      border-top: 1px solid var(--border);
+    }
+
+    footer .inner {
+      max-width: 820px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    footer .left {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    footer .right { display: flex; gap: 20px; }
+
+    footer .right a {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="inner">
+      <a href="/" class="nav-logo">CostGoblin</a>
+      <a href="/" class="nav-back">&larr; Zur Startseite</a>
+    </div>
+  </nav>
+
+  <main>
+    <h1>Datenschutzerklärung</h1>
+    <p class="lang-note">Deutsch — English summary below</p>
+
+    <h2>1. Verantwortlicher</h2>
+    <p>Verantwortlich für die Datenverarbeitung auf dieser Website im Sinne der DSGVO ist:</p>
+    <address>
+      <span class="todo">[Vollständiger Vor- und Nachname]</span><br>
+      <span class="todo">[Straße und Hausnummer]</span><br>
+      <span class="todo">[PLZ Ort]</span><br>
+      Deutschland<br>
+      E-Mail: <span class="todo">[kontakt@beispiel.de]</span>
+    </address>
+
+    <h2>2. Überblick über die Verarbeitungen</h2>
+    <p>
+      Die nachfolgende Übersicht fasst zusammen, welche personenbezogenen
+      Daten über diese Website verarbeitet werden. Es werden nur Daten
+      verarbeitet, die für den Betrieb der Website und den Versand der
+      optionalen Launch-Benachrichtigung zwingend erforderlich sind.
+    </p>
+    <ul>
+      <li>Serverseitige Zugriffsdaten (über unseren Hoster Cloudflare)</li>
+      <li>E-Mail-Adresse bei freiwilliger Anmeldung zur Launch-Benachrichtigung</li>
+      <li>IP-Adresse und User-Agent bei Absenden des Anmeldeformulars (Missbrauchsschutz)</li>
+      <li>Schriftverarbeitung durch Bunny Fonts (CDN-Aufruf beim Laden der Seite)</li>
+      <li>Bot-Schutz durch Cloudflare Turnstile beim Absenden des Formulars</li>
+    </ul>
+    <p>Es findet <strong>kein</strong> Tracking, kein Profiling und keine Webanalyse statt. Es werden <strong>keine Marketing-Cookies</strong> gesetzt.</p>
+
+    <h2>3. Bereitstellung der Website und Zugriffsprotokollierung</h2>
+    <p>
+      Die Website wird auf der Infrastruktur der Cloudflare Germany GmbH
+      (Rosental 7, c/o Mindspace, 80331 München) bzw. deren
+      US-Muttergesellschaft Cloudflare, Inc. (101 Townsend Street, San
+      Francisco, CA 94107, USA) gehostet. Beim Aufruf der Website verarbeitet
+      Cloudflare technisch zwingend folgende Daten:
+    </p>
+    <ul>
+      <li>IP-Adresse des anfragenden Endgeräts</li>
+      <li>Datum und Uhrzeit des Abrufs</li>
+      <li>Aufgerufene URL und HTTP-Statuscode</li>
+      <li>User-Agent (Browser, Betriebssystem)</li>
+      <li>Referrer</li>
+    </ul>
+    <p>
+      <strong>Rechtsgrundlage:</strong> Art. 6 Abs. 1 lit. f DSGVO
+      (berechtigtes Interesse am technisch fehlerfreien und sicheren Betrieb
+      der Website).<br>
+      <strong>Speicherdauer:</strong> Zugriffslogs werden von Cloudflare
+      kurzzeitig zu Sicherheitszwecken vorgehalten. Ein Abschluss eines
+      Auftragsverarbeitungsvertrags nach Art. 28 DSGVO mit Cloudflare liegt
+      vor. Datenübermittlungen in die USA sind durch die EU-Standardvertragsklauseln
+      (Art. 46 Abs. 2 lit. c DSGVO) sowie die Zertifizierung nach dem
+      EU-U.S. Data Privacy Framework abgesichert.
+    </p>
+    <p>
+      Mehr Informationen: <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener">Cloudflare Privacy Policy</a>.
+    </p>
+
+    <h2>4. Anmeldung zur Launch-Benachrichtigung</h2>
+    <p>
+      Auf der Startseite kann Ihre E-Mail-Adresse in ein Formular eingetragen
+      werden, um eine einmalige Benachrichtigung beim öffentlichen Start von
+      CostGoblin zu erhalten.
+    </p>
+    <h3>Verarbeitete Daten</h3>
+    <ul>
+      <li>E-Mail-Adresse</li>
+      <li>IP-Adresse und User-Agent des absendenden Endgeräts</li>
+      <li>Zeitstempel der Anmeldung</li>
+    </ul>
+    <h3>Zweck</h3>
+    <p>Versand einer einmaligen E-Mail zur Produkteinführung sowie Schutz vor Missbrauch und Spam.</p>
+    <h3>Rechtsgrundlage</h3>
+    <p>
+      Einwilligung nach Art. 6 Abs. 1 lit. a DSGVO (Versand der
+      Benachrichtigung) sowie berechtigtes Interesse nach Art. 6 Abs. 1
+      lit. f DSGVO (Schutz vor Spam und Missbrauch durch Speicherung der
+      IP-Adresse).
+    </p>
+    <h3>Speicherdauer</h3>
+    <p>
+      Die Daten werden gelöscht, sobald die Launch-Benachrichtigung versandt
+      wurde, spätestens jedoch, wenn Sie eine Löschung verlangen oder der
+      Zweck entfällt. Zur Umsetzung der Anmeldung werden die Daten in einem
+      Cloudflare Workers KV-Store gespeichert.
+    </p>
+    <h3>Widerruf</h3>
+    <p>
+      Sie können Ihre Einwilligung jederzeit widerrufen. Eine formlose
+      E-Mail an die oben genannte Kontaktadresse genügt. Der Widerruf
+      berührt nicht die Rechtmäßigkeit der bis zum Widerruf erfolgten
+      Verarbeitung.
+    </p>
+
+    <h2>5. Bot-Schutz (Cloudflare Turnstile)</h2>
+    <p>
+      Zum Schutz des Anmeldeformulars vor automatisierten Anfragen nutzen
+      wir <strong>Cloudflare Turnstile</strong>, einen CAPTCHA-ähnlichen
+      Dienst der Cloudflare, Inc.
+    </p>
+    <ul>
+      <li><strong>Verarbeitete Daten:</strong> IP-Adresse, Browser- und Geräteinformationen, ggf. ein kurzlebiges Session-Token (kein dauerhafter Tracking-Cookie).</li>
+      <li><strong>Zweck:</strong> Unterscheidung zwischen menschlichen Nutzern und Bots.</li>
+      <li><strong>Rechtsgrundlage:</strong> Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse am Schutz vor Spam und automatisiertem Missbrauch).</li>
+      <li><strong>Speicherdauer:</strong> Entsprechend der Cloudflare-Richtlinien; die Session-Validierung ist kurzlebig.</li>
+    </ul>
+    <p>
+      Datenübermittlungen an Cloudflare, Inc. in die USA sind durch
+      EU-Standardvertragsklauseln sowie das EU-U.S. Data Privacy Framework
+      abgesichert.<br>
+      Weitere Informationen:
+      <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener">Cloudflare Privacy Policy</a>.
+    </p>
+
+    <h2>6. Schriftarten (Bunny Fonts)</h2>
+    <p>
+      Zur einheitlichen Darstellung der Schriftarten verwenden wir
+      <strong>Bunny Fonts</strong>, einen datenschutzfreundlichen
+      Font-Dienst der BunnyWay d.o.o. (Douglas Way, Cerknica, Slowenien
+      &mdash; EU). Bunny Fonts speichert laut eigener Aussage keine
+      IP-Adressen und setzt keine Cookies.
+    </p>
+    <ul>
+      <li><strong>Verarbeitete Daten:</strong> Technische Verbindungsdaten, die zum Ausliefern der Schriftdateien notwendig sind.</li>
+      <li><strong>Zweck:</strong> Konsistentes Schriftbild, reduziertes Datenaufkommen gegenüber Standard-Schriftarten.</li>
+      <li><strong>Rechtsgrundlage:</strong> Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an einheitlicher, performanter Darstellung).</li>
+    </ul>
+    <p>Weitere Informationen: <a href="https://fonts.bunny.net/about" target="_blank" rel="noopener">Bunny Fonts — GDPR-friendly fonts</a>.</p>
+
+    <h2>7. Cookies</h2>
+    <p>
+      Diese Website setzt <strong>keine eigenen Cookies</strong>, keine
+      Analyse-Cookies und keine Marketing-Cookies.
+    </p>
+    <p>
+      Cloudflare Turnstile und die Cloudflare-Infrastruktur können im
+      Rahmen ihrer Sicherheitsfunktionen technisch notwendige, kurzlebige
+      Tokens (z.&nbsp;B. <code>__cf_bm</code>) setzen, die der Erkennung
+      und Abwehr automatisierten Missbrauchs dienen. Rechtsgrundlage ist
+      § 25 Abs. 2 Nr. 2 TDDDG (unbedingt erforderlich für die vom Nutzer
+      gewünschte Bereitstellung eines Telemediendienstes).
+    </p>
+
+    <h2>8. Externe Links</h2>
+    <p>
+      Die Website verlinkt auf externe Seiten, insbesondere das
+      GitHub-Repository. Beim Anklicken eines externen Links werden Daten
+      (z.&nbsp;B. IP-Adresse, Referrer) an den jeweiligen Anbieter
+      übertragen. Auf die Datenverarbeitung durch diese Anbieter haben wir
+      keinen Einfluss. Bitte informieren Sie sich über die
+      Datenschutzrichtlinien des jeweiligen Anbieters.
+    </p>
+
+    <h2>9. Ihre Rechte als betroffene Person</h2>
+    <p>Nach der DSGVO stehen Ihnen folgende Rechte zu:</p>
+    <ul>
+      <li>Auskunft über die gespeicherten Daten (Art. 15 DSGVO)</li>
+      <li>Berichtigung unrichtiger Daten (Art. 16 DSGVO)</li>
+      <li>Löschung (Art. 17 DSGVO)</li>
+      <li>Einschränkung der Verarbeitung (Art. 18 DSGVO)</li>
+      <li>Widerspruch gegen die Verarbeitung (Art. 21 DSGVO)</li>
+      <li>Datenübertragbarkeit (Art. 20 DSGVO)</li>
+      <li>Widerruf erteilter Einwilligungen (Art. 7 Abs. 3 DSGVO)</li>
+    </ul>
+    <p>
+      Zur Ausübung Ihrer Rechte genügt eine formlose E-Mail an den oben
+      genannten Verantwortlichen.
+    </p>
+
+    <h2>10. Beschwerderecht</h2>
+    <p>
+      Sie haben das Recht, sich bei einer Datenschutz-Aufsichtsbehörde zu
+      beschweren, wenn Sie der Ansicht sind, dass die Verarbeitung der Sie
+      betreffenden personenbezogenen Daten gegen die DSGVO verstößt
+      (Art. 77 DSGVO). Die für den Verantwortlichen zuständige
+      Aufsichtsbehörde richtet sich nach dem Bundesland des Wohnsitzes:
+    </p>
+    <p>
+      <span class="todo">[Zuständige Landesdatenschutzbehörde eintragen — z.&nbsp;B. BayLDA für Bayern, LfDI Baden-Württemberg, BlnBDI für Berlin]</span>
+    </p>
+
+    <h2>11. Keine automatisierte Entscheidungsfindung</h2>
+    <p>
+      Es findet keine automatisierte Entscheidungsfindung einschließlich
+      Profiling im Sinne von Art. 22 DSGVO statt.
+    </p>
+
+    <h2>12. Änderungen dieser Datenschutzerklärung</h2>
+    <p>
+      Diese Datenschutzerklärung kann angepasst werden, wenn sich
+      rechtliche Rahmenbedingungen ändern oder neue Funktionen auf der
+      Website eingeführt werden. Die jeweils aktuelle Fassung ist unter
+      dieser URL abrufbar.
+    </p>
+    <p><strong>Stand:</strong> April 2026</p>
+
+    <h2 id="en">Privacy policy — English summary</h2>
+    <p>
+      This site is operated as a private project by an individual resident
+      in Germany. It collects personal data only to the extent strictly
+      necessary to operate the site and to optionally notify you when
+      CostGoblin launches.
+    </p>
+    <ul>
+      <li><strong>Hosting &amp; access logs:</strong> Cloudflare (EU / US, EU-US DPF certified, SCCs in place). Legal basis: Art. 6(1)(f) GDPR.</li>
+      <li><strong>Launch-notification signup:</strong> stores your e-mail, IP and timestamp in Cloudflare Workers KV. Email is used for a single launch notification. Legal basis: Art. 6(1)(a) and (f) GDPR. You may withdraw consent at any time by contacting the operator.</li>
+      <li><strong>Bot protection:</strong> Cloudflare Turnstile. Processes your IP and short-lived tokens. Legal basis: Art. 6(1)(f) GDPR.</li>
+      <li><strong>Fonts:</strong> Bunny Fonts (EU, does not log IPs, does not set cookies).</li>
+      <li><strong>No analytics, no tracking, no marketing cookies.</strong></li>
+    </ul>
+    <p>
+      Your rights under GDPR (access, rectification, erasure, restriction,
+      objection, portability, complaint with a supervisory authority)
+      apply fully. Contact details are in the
+      <a href="/impressum.html">Impressum</a>.
+    </p>
+  </main>
+
+  <footer>
+    <div class="inner">
+      <div class="left">&copy; 2026 CostGoblin</div>
+      <div class="right">
+        <a href="/impressum.html">Impressum</a>
+        <a href="/datenschutz.html">Datenschutz</a>
+        <a href="https://github.com/etiennechabert/cost-goblin" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
