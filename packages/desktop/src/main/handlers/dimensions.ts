@@ -373,12 +373,21 @@ export function registerDimensionsHandlers(app: AppContext): void {
     return filtered;
   });
 
-  ipcMain.handle('dimensions:dismiss-suggestion', async (_event, _tagName: string, _canonical: string, _aliases: string[]): Promise<void> => {
+  ipcMain.handle('dimensions:dismiss-suggestion', async (_event, tagName: string, canonical: string, aliases: string[]): Promise<void> => {
     const state = await loadDismissedSuggestions(ctx.dataDir);
-    if (isSuggestionDismissed(state, _tagName, _canonical, _aliases)) {
+    if (isSuggestionDismissed(state, tagName, canonical, aliases)) {
       return;
     }
-    await saveDismissedSuggestions(ctx.dataDir, state);
+    const newDismissed: DismissedSuggestion = {
+      tagName,
+      canonical,
+      aliases,
+      dismissedAt: new Date().toISOString(),
+    };
+    const updatedState: DismissedSuggestionsState = {
+      dismissed: [...state.dismissed, newDismissed],
+    };
+    await saveDismissedSuggestions(ctx.dataDir, updatedState);
   });
 
   ipcMain.handle('dimensions:accept-suggestion', async (_event, _tagName: string, _canonical: string, _aliases: string[]): Promise<void> => {
