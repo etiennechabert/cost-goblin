@@ -35,6 +35,69 @@ async function loadOrgAccountsMap(dataDir: string, tagKey?: string): Promise<Map
   return map;
 }
 
+interface DismissedSuggestion {
+  readonly tagName: string;
+  readonly canonical: string;
+  readonly aliases: readonly string[];
+  readonly dismissedAt: string;
+}
+
+interface DismissedSuggestionsState {
+  readonly dismissed: readonly DismissedSuggestion[];
+}
+
+function isDismissedSuggestion(v: unknown): v is DismissedSuggestion {
+  if (!isStringRecord(v)) return false;
+  return (
+    typeof v['tagName'] === 'string' &&
+    typeof v['canonical'] === 'string' &&
+    Array.isArray(v['aliases']) &&
+    v['aliases'].every((a: unknown) => typeof a === 'string') &&
+    typeof v['dismissedAt'] === 'string'
+  );
+}
+
+async function dismissedSuggestionsPath(dataDir: string): Promise<string> {
+  const path = await import('node:path');
+  return path.join(path.dirname(dataDir), 'dismissed-suggestions.json');
+}
+
+async function loadDismissedSuggestions(dataDir: string): Promise<DismissedSuggestionsState> {
+  const fs = await import('node:fs/promises');
+  try {
+    const raw = await fs.readFile(await dismissedSuggestionsPath(dataDir), 'utf-8');
+    const parsed: unknown = JSON.parse(raw);
+    if (!isStringRecord(parsed)) return { dismissed: [] };
+    const dismissed = parsed['dismissed'];
+    if (!Array.isArray(dismissed)) return { dismissed: [] };
+    const valid = dismissed.filter(isDismissedSuggestion);
+    return { dismissed: valid };
+  } catch {
+    return { dismissed: [] };
+  }
+}
+
+async function saveDismissedSuggestions(dataDir: string, state: DismissedSuggestionsState): Promise<void> {
+  const fs = await import('node:fs/promises');
+  await fs.writeFile(await dismissedSuggestionsPath(dataDir), JSON.stringify(state, null, 2), 'utf-8');
+}
+
+function isSuggestionDismissed(
+  state: DismissedSuggestionsState,
+  tagName: string,
+  canonical: string,
+  aliases: readonly string[]
+): boolean {
+  const aliasSet = new Set(aliases);
+  return state.dismissed.some(
+    d =>
+      d.tagName === tagName &&
+      d.canonical === canonical &&
+      d.aliases.length === aliases.length &&
+      d.aliases.every(a => aliasSet.has(a))
+  );
+}
+
 export function registerDimensionsHandlers(app: AppContext): void {
   const { ctx, getConfig, getDimensions, getRegionMap, invalidateDimensions, runQuery } = app;
 
@@ -259,5 +322,26 @@ export function registerDimensionsHandlers(app: AppContext): void {
     });
     await fs.writeFile(ctx.dimensionsPath, output);
     invalidateDimensions();
+  });
+
+  // Placeholder handlers for alias suggestions — will be fully implemented in
+  // subsequent subtasks. Added here to satisfy TypeScript's noUnusedLocals check
+  // on the dismissed-suggestions state file helper functions.
+  ipcMain.handle('dimensions:get-alias-suggestions', async (_event, _tagName: string): Promise<unknown[]> => {
+    const state = await loadDismissedSuggestions(ctx.dataDir);
+    return state.dismissed.length > 0 ? [] : [];
+  });
+
+  ipcMain.handle('dimensions:dismiss-suggestion', async (_event, _tagName: string, _canonical: string, _aliases: string[]): Promise<void> => {
+    const state = await loadDismissedSuggestions(ctx.dataDir);
+    if (isSuggestionDismissed(state, _tagName, _canonical, _aliases)) {
+      return;
+    }
+    await saveDismissedSuggestions(ctx.dataDir, state);
+  });
+
+  ipcMain.handle('dimensions:accept-suggestion', async (_event, _tagName: string, _canonical: string, _aliases: string[]): Promise<void> => {
+    const state = await loadDismissedSuggestions(ctx.dataDir);
+    await saveDismissedSuggestions(ctx.dataDir, state);
   });
 }
