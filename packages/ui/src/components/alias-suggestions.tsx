@@ -52,10 +52,7 @@ export function AliasSuggestions({
   // Load suggestions from the backend on mount and when dimensionId changes
   const suggestionsQuery = useQuery(
     async () => {
-      // TODO: Call api.getAliasSuggestions(dimensionId) once IPC handler is wired in subtask 3-3
-      // For now, return empty array until the API method is added
-      void api; // Suppress unused warning until API method is implemented
-      return [] as readonly AliasSuggestion[];
+      return await api.getAliasSuggestions(dimensionId);
     },
     [dimensionId, api],
   );
@@ -70,8 +67,10 @@ export function AliasSuggestions({
   async function handleAccept(canonical: string): Promise<void> {
     setPendingAction({ canonical, action: 'accepting' });
     try {
-      // TODO: Call api.acceptAliasSuggestion(dimensionId, canonical) once IPC handler is wired
-      // For now, just remove from local state
+      const suggestion = suggestions.find(s => s.canonical === canonical);
+      if (!suggestion) return;
+
+      await api.acceptSuggestion(dimensionId, canonical, suggestion.aliases);
       setSuggestions(prev => prev.filter(s => s.canonical !== canonical));
       onAccepted?.();
     } finally {
@@ -90,8 +89,10 @@ export function AliasSuggestions({
 
     setPendingAction({ canonical, action: 'dismissing' });
     try {
-      // TODO: Call api.dismissAliasSuggestion(dimensionId, canonical) once IPC handler is wired
-      // For now, just remove from local state
+      const suggestion = suggestions.find(s => s.canonical === canonical);
+      if (!suggestion) return;
+
+      await api.dismissSuggestion(dimensionId, canonical, suggestion.aliases);
       setSuggestions(prev => prev.filter(s => s.canonical !== canonical));
     } catch {
       // Revert dismissing state on error (toast notification will be added in future)
