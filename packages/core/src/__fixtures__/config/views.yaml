@@ -1,0 +1,38 @@
+views:
+  - id: overview
+    name: Cost Overview
+    builtIn: true
+    rows:
+      - widgets:
+          - id: overview-summary
+            type: summary
+            size: small
+            metric: total
+          - id: overview-histogram
+            type: stackedBar
+            size: large
+            groupBy: service
+      - widgets:
+          - id: overview-pie-account
+            type: pie
+            size: medium
+            groupBy: account
+          - id: overview-pie-region
+            type: pie
+            size: medium
+            groupBy: region
+          - id: overview-pie-service
+            type: pie
+            size: medium
+            groupBy: service
+      - widgets:
+          - id: overview-breakdown
+            type: table
+            size: full
+            groupBy: account
+            topN: 20
+            columns:
+              - entity
+              - service
+              - cost
+              - percentage

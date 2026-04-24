@@ -144,11 +144,9 @@ interface CostApi {
 
 The interface is exported from `@costgoblin/core/browser`. The renderer accesses it through a React context (`useCostApi()`) — never through globals — so component tests can swap in `MockCostApi`.
 
-### Worker Thread Architecture (v1)
+### Worker Thread Architecture
 
-> **Status: v1.** Today, DuckDB and S3 sync run on the Electron main process. Heavy queries can stall IPC responsiveness. Migration to worker threads is a v1 commitment.
-
-Target architecture:
+DuckDB and S3 sync run in dedicated worker threads so the main process stays responsive.
 
 ```
 Main Process
@@ -157,11 +155,9 @@ Main Process
   └── Window (Renderer)       # React UI
 ```
 
-Constraints:
-- Workers communicate via structured-clone messages typed with the same `CostApi`-adjacent types.
-- DuckDB instance is owned exclusively by its worker. The main process never touches DuckDB directly.
-- Sync worker streams progress events back to main, which forwards to the renderer.
-- Cancellation (`AbortSignal`-style) must work from the renderer down through main into the worker.
+- **DuckDB worker** owns the database exclusively. Queries arrive via structured-clone messages; results are serialized back to main. Connection pooling and prepared statement cache are internal to the worker.
+- **Sync worker** runs S3 downloads and DuckDB repartitioning. Progress events stream back to main for UI updates. Cancellation propagates via `AbortController` signaling.
+- Workers communicate via typed messages (`{ kind, id, ... }` discriminated unions). No `any` types cross the worker boundary.
 
 ### Electron Security
 

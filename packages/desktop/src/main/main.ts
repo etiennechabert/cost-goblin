@@ -7,6 +7,8 @@ import { logger } from '@costgoblin/core';
 import type { LogEntry } from '@costgoblin/core';
 import { createDuckDBClient } from './duckdb-client.js';
 import type { DuckDBClient } from './duckdb-client.js';
+import { createSyncClient } from './sync-client.js';
+import type { SyncClient } from './sync-client.js';
 import { registerIpcHandlers } from './ipc.js';
 
 // Log level: debug in dev (NODE_ENV=development or electron-vite serving
@@ -99,13 +101,14 @@ function resolveConfigPath(base: string, name: string): string {
   return typeof env === 'string' && env.length > 0 ? env : join(base, `${name}.yaml`);
 }
 
-async function createWindow(db: DuckDBClient): Promise<void> {
+async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<void> {
   const userDataPath = app.getPath('userData');
   const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
   const configBase = process.env['COSTGOBLIN_CONFIG_DIR'] ?? join(userDataPath, 'config');
 
   registerIpcHandlers({
     db,
+    syncClient,
     configPath: resolveConfigPath(configBase, 'costgoblin'),
     dimensionsPath: resolveConfigPath(configBase, 'dimensions'),
     orgTreePath: resolveConfigPath(configBase, 'org-tree'),
@@ -157,18 +160,22 @@ async function createWindow(db: DuckDBClient): Promise<void> {
 async function main(): Promise<void> {
   await app.whenReady();
 
-  // Worker bundle is built by `npm run build:worker` (esbuild) into out/worker/
+  // Worker bundles are built by `npm run build:worker` (esbuild) into out/worker/
   // — sibling to out/main/ where this file lives. We resolve up one level then
-  // into out/worker/ to find it.
-  const workerPath = join(__dirname, '..', 'worker', 'duckdb-worker.cjs');
-  const db = await createDuckDBClient(workerPath);
+  // into out/worker/ to find them.
+  const duckdbWorkerPath = join(__dirname, '..', 'worker', 'duckdb-worker.cjs');
+  const db = await createDuckDBClient(duckdbWorkerPath);
   logger.info('DuckDB worker ready');
 
-  await createWindow(db);
+  const syncWorkerPath = join(__dirname, '..', 'worker', 'sync-worker.cjs');
+  const syncClient = await createSyncClient(syncWorkerPath);
+  logger.info('Sync worker ready');
+
+  await createWindow(db, syncClient);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      void createWindow(db);
+      void createWindow(db, syncClient);
     }
   });
 }

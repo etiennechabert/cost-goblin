@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { getDataInventory, syncSelectedFiles } from '@costgoblin/core';
+import { getDataInventory } from '@costgoblin/core';
 import type { AutoSyncStatus } from '@costgoblin/core';
 import {
   startAutoSync,
@@ -11,6 +11,7 @@ import {
   writeAutoSyncIntervalMinutes,
 } from '../auto-sync.js';
 import type { AppContext } from './context.js';
+import type { SyncClient } from '../sync-client.js';
 
 type Tier = 'daily' | 'hourly' | 'cost-optimization';
 
@@ -27,7 +28,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
     return path.join(path.dirname(ctx.dataDir), 'app-preferences.json');
   }
 
-  function buildAutoSyncDeps() {
+  function buildAutoSyncDeps(syncClient: SyncClient) {
     return {
       getPrefsPath: autoSyncPrefsPath,
       getConfig: async () => {
@@ -55,18 +56,21 @@ export function registerAutoSyncHandlers(app: AppContext): void {
       syncPeriods: async (files: { key: string; contentHash: string; size: number }[], tier: string) => {
         const config = await getConfig();
         const provider = config.providers[0];
-        if (provider === undefined) return { filesDownloaded: 0 };
+        if (provider === undefined) return { filesDownloaded: 0, rowsProcessed: 0 };
         const bucket = tier === 'hourly'
           ? provider.sync.hourly?.bucket ?? provider.sync.daily.bucket
           : tier === 'cost-optimization'
             ? provider.sync.costOptimization?.bucket ?? provider.sync.daily.bucket
             : provider.sync.daily.bucket;
-        return syncSelectedFiles({
+
+        // Use worker thread via SyncClient
+        return syncClient.syncPeriods({
           bucketPath: bucket,
           profile: provider.credentials.profile,
           dataDir: ctx.dataDir,
-          expectedDataType: asTier(tier),
+          tier: asTier(tier),
           files,
+          // No onProgress for background sync (silent operation)
         });
       },
     };
@@ -81,7 +85,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
     await writeAutoSyncEnabled(prefsPath, enabled);
     if (enabled) {
       const minutes = await readAutoSyncIntervalMinutes(prefsPath);
-      startAutoSync(buildAutoSyncDeps(), minutes);
+      startAutoSync(buildAutoSyncDeps(ctx.syncClient), minutes);
     } else {
       stopAutoSync();
     }
@@ -100,7 +104,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
     const enabled = await readAutoSyncEnabled(prefsPath);
     if (enabled) {
       const stored = await readAutoSyncIntervalMinutes(prefsPath);
-      startAutoSync(buildAutoSyncDeps(), stored);
+      startAutoSync(buildAutoSyncDeps(ctx.syncClient), stored);
     }
   });
 
@@ -113,7 +117,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
     const enabled = await readAutoSyncEnabled(prefsPath);
     if (enabled) {
       const minutes = await readAutoSyncIntervalMinutes(prefsPath);
-      startAutoSync(buildAutoSyncDeps(), minutes);
+      startAutoSync(buildAutoSyncDeps(ctx.syncClient), minutes);
     }
   }).catch(() => { /* auto-sync startup failure is non-fatal */ });
 }
