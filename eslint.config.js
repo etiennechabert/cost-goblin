@@ -35,6 +35,6 @@ export default [
     },
   },
   {
-    ignores: ['**/dist/**', '**/node_modules/**', '**/*.config.*', '**/__fixtures__/generate.ts'],
+    ignores: ['**/dist/**', '**/node_modules/**', '**/out/**', '**/*.config.*', '**/__fixtures__/generate.ts'],
   },
 ];

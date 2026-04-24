@@ -92,6 +92,7 @@ function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
 }
 export interface IpcContext {
   readonly db: DuckDBClient;
+  readonly syncClient: import('../sync-client.js').SyncClient;
   readonly configPath: string;
   readonly dimensionsPath: string;
   readonly orgTreePath: string;

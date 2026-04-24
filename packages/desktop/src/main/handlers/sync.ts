@@ -4,7 +4,6 @@ import {
   getEtagFileName,
   getRawDirPrefix,
   parseEtagsJson,
-  syncSelectedFiles,
   logger,
 } from '@costgoblin/core';
 import type {
@@ -30,7 +29,8 @@ function resolveDataType(syncId: string): ExpectedDataType {
 
 export function registerSyncHandlers(app: AppContext): void {
   const { ctx, state, getConfig } = app;
-  const syncAbortControllers = new Map<string, AbortController>();
+  const syncWorkerIds = new Map<string, number>();
+  let nextWorkerId = 0;
 
   ipcMain.handle('sync:status', (_event, syncId: string = 'default'): SyncStatus => {
     return state.syncStatuses[syncId] ?? { status: 'idle', lastSync: null };
@@ -127,20 +127,19 @@ export function registerSyncHandlers(app: AppContext): void {
       bucketPath = provider.sync.daily.bucket;
     }
 
-    const controller = new AbortController();
-    syncAbortControllers.set(syncId, controller);
+    const workerId = nextWorkerId++;
+    syncWorkerIds.set(syncId, workerId);
     state.syncStatuses[syncId] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0, message: '' };
 
     const tier = resolveDataType(syncId);
 
     try {
-      const result = await syncSelectedFiles({
+      const result = await ctx.syncClient.syncPeriods({
         bucketPath,
         profile: provider.credentials.profile,
         dataDir: ctx.dataDir,
-        expectedDataType: tier,
+        tier,
         files: fileEntries,
-        signal: controller.signal,
         onProgress: (progress) => {
           state.syncStatuses[syncId] = {
             status: 'syncing',
@@ -153,11 +152,11 @@ export function registerSyncHandlers(app: AppContext): void {
         },
       });
 
-      syncAbortControllers.delete(syncId);
+      syncWorkerIds.delete(syncId);
       state.syncStatuses[syncId] = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
       return result;
     } catch (err: unknown) {
-      syncAbortControllers.delete(syncId);
+      syncWorkerIds.delete(syncId);
       const raw = err instanceof Error ? err : new Error(String(err));
       if (raw.message === 'Download cancelled') {
         state.syncStatuses[syncId] = { status: 'idle', lastSync: null };
@@ -171,9 +170,9 @@ export function registerSyncHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('data:cancel-sync', (_event, syncId: string = 'default'): void => {
-    const controller = syncAbortControllers.get(syncId);
-    if (controller !== undefined) {
-      controller.abort();
+    const workerId = syncWorkerIds.get(syncId);
+    if (workerId !== undefined) {
+      ctx.syncClient.cancelSync(workerId);
       logger.info(`Sync '${syncId}' cancelled by user`);
     }
   });
