@@ -1,6 +1,16 @@
-# No providers configured for E2E fixture mode
-# Data already exists locally in the fixture directory
-providers: []
+providers:
+  - type: aws
+    credentials:
+      profile: test-profile
+    bucketName: cost-goblin-test
+    bucketRegion: us-east-1
+    reportName: test-cur
+    reportPrefix: cur/test-cur
+    sync:
+      daily:
+        retentionDays: 365
+      hourly:
+        retentionDays: 30
 
 defaults:
   periodDays: 30
