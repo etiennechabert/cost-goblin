@@ -1,6 +1,32 @@
-# CostGoblin
+<p align="center">
+  <img src="docs/goblin.png" alt="CostGoblin" width="128">
+</p>
 
-Cloud cost visibility that runs on your machine. No servers, no SaaS fees, no third-party data sharing.
+<h1 align="center">CostGoblin</h1>
+
+<p align="center">
+  Cloud cost visibility that runs on your machine.<br>
+  No servers, no SaaS fees, no third-party data sharing.
+</p>
+
+<p align="center">
+  <a href="https://github.com/etiennechabert/cost-goblin/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License"></a>
+  <img src="https://img.shields.io/badge/Node.js-%3E%3D%2020-339933.svg?logo=node.js&logoColor=white" alt="Node.js">
+  <img src="https://img.shields.io/badge/Electron-34-47848F.svg?logo=electron&logoColor=white" alt="Electron">
+  <img src="https://img.shields.io/badge/DuckDB-1.5-FFF000.svg?logo=duckdb&logoColor=black" alt="DuckDB">
+  <a href="https://github.com/etiennechabert/cost-goblin/actions/workflows/ci.yml"><img src="https://github.com/etiennechabert/cost-goblin/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://buymeacoffee.com/etiennechak"><img src="https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buymeacoffee&logoColor=white" alt="Buy Me A Coffee"></a>
+</p>
+
+<p align="center">
+  <a href="https://costgoblin.com">Website</a> &middot;
+  <a href="#quick-start">Quick Start</a> &middot;
+  <a href="#features">Features</a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/hero-final-service.png" alt="CostGoblin dashboard" width="800">
+</p>
 
 CostGoblin is a desktop app that syncs your AWS billing data locally and queries it with DuckDB. Filter, drill down, and slice costs by any dimension — from a plane at 10,000 meters.
 
@@ -15,7 +41,7 @@ On first launch, the setup wizard guides you through connecting to your AWS CUR 
 
 ## Prerequisites
 
-- **Node.js** 22+
+- **Node.js** 20+
 - **AWS CUR 2.0** report exported as Parquet to S3
 
 ### Setting Up a CUR Report
@@ -119,14 +145,34 @@ Then use the Data tab to repartition the downloaded files.
 
 ## Features
 
-- **S3 billing sync** — downloads CUR parquet files, repartitions into optimized daily Hive partitions
+- **S3 billing sync** — downloads CUR parquet files into optimized daily Hive partitions
 - **Interactive dashboard** — pie charts for accounts/services/tags, stacked daily histogram, drill-down
 - **Filter by any dimension** — account, service, region, team, product, environment, or custom tags
+- **Custom dimensions** — map any AWS tag to a first-class cost allocation dimension
 - **Tag normalization** — aliases applied at query time, fix messy tags without re-processing
+- **Composable views** — drag-and-drop widget builder with 9 widget types
 - **Service drill-down** — click through service → service family breakdowns
 - **Period-over-period comparison** — vs previous period delta on the summary card
 - **CSV export** — export any view for reporting
 - **Works offline** — once synced, no internet needed
+
+<details>
+<summary><strong>Dimensions</strong> — map tags to cost allocation dimensions</summary>
+<br>
+<img src="docs/screenshots/dimensions.png" alt="Dimensions configuration" width="800">
+</details>
+
+<details>
+<summary><strong>Views</strong> — compose dashboards from the widget library</summary>
+<br>
+<img src="docs/screenshots/views.png" alt="View builder" width="800">
+</details>
+
+<details>
+<summary><strong>Explorer</strong> — drill into individual line items</summary>
+<br>
+<img src="docs/screenshots/explorer.png" alt="Cost explorer" width="800">
+</details>
 
 ## Architecture
 
