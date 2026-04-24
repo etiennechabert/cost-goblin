@@ -6,6 +6,7 @@ import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { useQuery } from '../hooks/use-query.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
+import { AliasSuggestions } from '../components/alias-suggestions.js';
 
 /** Drag/drop is now indexed by position in the unified `order` array,
  *  not by (type, index) into the split built-in/tag arrays. Keeps a single
@@ -699,6 +700,18 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           />
         </label>
       </div>
+
+      {/* Alias Suggestions — only show when a tag is selected */}
+      {state.tagName.length > 0 && (
+        <AliasSuggestions
+          dimensionId={state.tagName}
+          onAccepted={() => {
+            // Suggestion accepted — the config has been updated.
+            // The user can close and reopen the editor to see the changes,
+            // or we could reload the state here. For now, keep it simple.
+          }}
+        />
+      )}
 
       {/* Row 5: Merged + normalized preview of all values */}
       {(() => {
