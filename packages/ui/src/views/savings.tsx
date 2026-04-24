@@ -3,10 +3,9 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { formatDollars } from '../components/format.js';
 import { useState, useMemo, Fragment } from 'react';
-
-type SortField = 'monthlySavings' | 'savingsPercentage' | 'monthlyCost' | 'effort' | 'accountName';
-
-const EFFORT_ORDER: Record<string, number> = { 'VeryLow': 0, 'Low': 1, 'Medium': 2, 'High': 3 };
+import { VirtualTable } from '../components/virtual-table.js';
+import type { TableColumn } from '../lib/table-types.js';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
 function effortLabel(effort: string): string {
   if (effort === 'VeryLow') return 'Very Low';
@@ -97,12 +96,215 @@ function parseResourceDetails(json: string): ParsedDetails | null {
   }
 }
 
+interface SavingsTableProps {
+  recommendations: readonly SavingsRecommendation[];
+  expandedRow: number | null;
+  onRowClick: (index: number | null) => void;
+}
+
+function SavingsTable({ recommendations, expandedRow, onRowClick }: Readonly<SavingsTableProps>): React.JSX.Element {
+  type RowData = SavingsRecommendation & { index: number };
+
+  const columns = useMemo<Array<TableColumn<RowData>>>(() => [
+    {
+      id: 'expand',
+      label: '',
+      sortable: false,
+      cell: (row) => {
+        const isExpanded = expandedRow === row.index;
+        return (
+          <div className="flex items-center justify-center">
+            {isExpanded ? (
+              <ChevronDown className="h-4 w-4 text-text-secondary" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-text-secondary" />
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      id: 'recommendation',
+      label: 'Recommendation',
+      sortable: false,
+      cell: (row) => (
+        <div className="max-w-lg">
+          <div className="flex items-baseline gap-2">
+            <span className="text-text-primary text-xs font-medium shrink-0">
+              {humanizeAction(row.actionType)}
+            </span>
+            {row.resourceArn.length > 0 && (
+              <span className="text-text-muted text-[10px] font-mono truncate" title={row.resourceArn}>
+                {row.resourceArn.split(':').pop() ?? row.resourceArn}
+              </span>
+            )}
+          </div>
+          <p className="text-text-muted text-xs mt-0.5 truncate" title={row.summary}>
+            {row.summary}
+          </p>
+        </div>
+      ),
+    },
+    {
+      id: 'account',
+      label: 'Account',
+      accessorKey: 'accountName',
+      sortable: true,
+      cell: (row) => (
+        <div>
+          <p className="text-text-secondary text-xs">{row.accountName}</p>
+          <p className="text-text-muted text-[10px] font-mono">{row.accountId}</p>
+        </div>
+      ),
+    },
+    {
+      id: 'region',
+      label: 'Region',
+      accessorKey: 'region',
+      sortable: false,
+      cell: (row) => <span className="text-text-secondary text-xs">{row.region}</span>,
+    },
+    {
+      id: 'monthlyCost',
+      label: 'Monthly Cost',
+      accessorKey: 'monthlyCost',
+      sortable: true,
+      align: 'right',
+      mono: true,
+      cell: (row) => <span className="text-text-secondary">{formatDollars(row.monthlyCost)}</span>,
+    },
+    {
+      id: 'monthlySavings',
+      label: 'Savings/mo',
+      accessorKey: 'monthlySavings',
+      sortable: true,
+      align: 'right',
+      mono: true,
+      cell: (row) => <span className="font-medium text-accent">{formatDollars(row.monthlySavings)}</span>,
+    },
+    {
+      id: 'savingsPercentage',
+      label: '%',
+      accessorKey: 'savingsPercentage',
+      sortable: true,
+      align: 'right',
+      mono: true,
+      cell: (row) => <span className="text-text-secondary">{String(Math.round(row.savingsPercentage))}%</span>,
+    },
+    {
+      id: 'effort',
+      label: 'Effort',
+      accessorKey: 'effort',
+      sortable: true,
+      cell: (row) => (
+        <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${effortColor(row.effort)}`}>
+          {effortLabel(row.effort)}
+        </span>
+      ),
+    },
+  ], [expandedRow]);
+
+  const tableData = useMemo<readonly RowData[]>(
+    () => recommendations.map((rec, index) => ({ ...rec, index })),
+    [recommendations],
+  );
+
+  const [sorting, setSorting] = useState<Array<{ id: string; desc: boolean }>>([
+    { id: 'monthlySavings', desc: true },
+  ]);
+
+  function handleCellClick(row: RowData) {
+    onRowClick(expandedRow === row.index ? null : row.index);
+  }
+
+  const expandedRec = expandedRow !== null && expandedRow >= 0 && expandedRow < recommendations.length
+    ? recommendations[expandedRow]
+    : undefined;
+  const current = expandedRec !== undefined ? parseResourceDetails(expandedRec.currentDetails) : null;
+  const recommended = expandedRec !== undefined ? parseResourceDetails(expandedRec.recommendedDetails) : null;
+
+  return (
+    <div className="space-y-4">
+      <VirtualTable
+        data={tableData}
+        columns={columns}
+        sorting={sorting}
+        onSortingChange={setSorting}
+        onCellClick={handleCellClick}
+        rowHeight={56}
+      />
+
+      {expandedRec !== undefined && (
+        <div className="rounded-xl border border-border bg-bg-tertiary/10 px-6 py-4">
+          <div className="grid grid-cols-2 gap-6 text-xs">
+            <div className="space-y-3">
+              <h4 className="text-text-muted uppercase tracking-wider text-[10px] font-medium">Current</h4>
+              {expandedRec.currentSummary.length > 0 && (
+                <p className="text-text-secondary font-mono text-xs">{expandedRec.currentSummary}</p>
+              )}
+              {current !== null && Object.keys(current.config).length > 0 && (
+                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+                  {Object.entries(current.config).map(([k, v]) => (
+                    <Fragment key={`c-${k}`}>
+                      <span className="text-text-muted">{k}</span>
+                      <span className="text-text-secondary">{v}</span>
+                    </Fragment>
+                  ))}
+                </div>
+              )}
+              {current !== null && current.usages.length > 0 && (
+                <div className="space-y-1 pt-1">
+                  <p className="text-text-muted text-[10px] uppercase tracking-wider">Usage</p>
+                  {current.usages.map((u, ui) => (
+                    <p key={ui} className="text-text-secondary">
+                      {u.amount} {u.unit} <span className="text-text-muted">({u.type.split('-').pop() ?? u.type})</span>
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="space-y-3">
+              <h4 className="text-accent uppercase tracking-wider text-[10px] font-medium">Recommended</h4>
+              <p className="text-text-secondary">{expandedRec.summary}</p>
+              {recommended !== null && Object.keys(recommended.config).length > 0 && (
+                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+                  {Object.entries(recommended.config).map(([k, v]) => (
+                    <Fragment key={`r-${k}`}>
+                      <span className="text-text-muted">{k}</span>
+                      <span className="text-accent">{v}</span>
+                    </Fragment>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-6 mt-4 pt-3 border-t border-border-subtle text-xs text-text-muted">
+            {expandedRec.resourceArn.length > 0 && <span className="font-mono">{expandedRec.resourceArn}</span>}
+            <span>{expandedRec.resourceType}</span>
+            <span>{expandedRec.recommendationSource}</span>
+            <span>
+              Restart:{' '}
+              <span className={expandedRec.restartNeeded ? 'text-warning' : 'text-text-secondary'}>
+                {expandedRec.restartNeeded ? 'Yes' : 'No'}
+              </span>
+            </span>
+            <span>
+              Rollback:{' '}
+              <span className={expandedRec.rollbackPossible ? 'text-accent' : 'text-text-secondary'}>
+                {expandedRec.rollbackPossible ? 'Yes' : 'No'}
+              </span>
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Savings() {
   const api = useCostApi();
   const savingsQuery = useQuery(() => api.querySavings(), [api]);
   const prefsQuery = useQuery(() => api.getSavingsPreferences(), [api]);
-  const [sortField, setSortField] = useState<SortField>('monthlySavings');
-  const [sortAsc, setSortAsc] = useState(false);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -177,38 +379,13 @@ export function Savings() {
   }
 
   const filtered = useMemo(() => {
-    const recs = activeFilter !== null
+    return activeFilter !== null
       ? visibleRecs.filter(r => r.actionType === activeFilter)
-      : [...visibleRecs];
-    return recs.sort((a, b) => {
-      let cmp: number;
-      switch (sortField) {
-        case 'monthlySavings': cmp = a.monthlySavings - b.monthlySavings; break;
-        case 'savingsPercentage': cmp = a.savingsPercentage - b.savingsPercentage; break;
-        case 'monthlyCost': cmp = a.monthlyCost - b.monthlyCost; break;
-        case 'effort': cmp = (EFFORT_ORDER[a.effort] ?? 4) - (EFFORT_ORDER[b.effort] ?? 4); break;
-        case 'accountName': cmp = a.accountName.localeCompare(b.accountName); break;
-        default: cmp = 0;
-      }
-      return sortAsc ? cmp : -cmp;
-    });
-  }, [visibleRecs, activeFilter, sortField, sortAsc]);
+      : visibleRecs;
+  }, [visibleRecs, activeFilter]);
 
   const filteredSavings = filtered.reduce((s, r) => s + r.monthlySavings, 0);
 
-  function handleSort(field: SortField) {
-    if (sortField === field) {
-      setSortAsc(prev => !prev);
-    } else {
-      setSortField(field);
-      setSortAsc(false);
-    }
-  }
-
-  function sortIndicator(field: SortField): string {
-    if (sortField !== field) return '';
-    return sortAsc ? ' \u25B2' : ' \u25BC';
-  }
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -316,113 +493,7 @@ export function Savings() {
         </div>
       )}
 
-      {filtered.length > 0 && (
-        <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-text-secondary">
-                <th className="px-4 pb-3 pt-4 font-medium">Recommendation</th>
-                <th className="px-4 pb-3 pt-4 font-medium cursor-pointer hover:text-text-primary" onClick={() => { handleSort('accountName'); }}>
-                  Account{sortIndicator('accountName')}
-                </th>
-                <th className="px-4 pb-3 pt-4 font-medium">Region</th>
-                <th className="px-4 pb-3 pt-4 text-right font-medium cursor-pointer hover:text-text-primary" onClick={() => { handleSort('monthlyCost'); }}>
-                  Monthly Cost{sortIndicator('monthlyCost')}
-                </th>
-                <th className="px-4 pb-3 pt-4 text-right font-medium cursor-pointer hover:text-text-primary" onClick={() => { handleSort('monthlySavings'); }}>
-                  Savings/mo{sortIndicator('monthlySavings')}
-                </th>
-                <th className="px-4 pb-3 pt-4 text-right font-medium cursor-pointer hover:text-text-primary" onClick={() => { handleSort('savingsPercentage'); }}>
-                  %{sortIndicator('savingsPercentage')}
-                </th>
-                <th className="px-4 pb-3 pt-4 font-medium cursor-pointer hover:text-text-primary" onClick={() => { handleSort('effort'); }}>
-                  Effort{sortIndicator('effort')}
-                </th>
-              </tr>
-            </thead>
-              {filtered.map((rec: SavingsRecommendation, i: number) => {
-                const isExpanded = expandedRow === i;
-                const current = isExpanded ? parseResourceDetails(rec.currentDetails) : null;
-                const recommended = isExpanded ? parseResourceDetails(rec.recommendedDetails) : null;
-                return (
-                  <tbody key={String(i)}>
-                  <tr className={`border-b ${isExpanded ? 'border-border bg-bg-tertiary/20' : 'border-border-subtle'} hover:bg-bg-tertiary/30 transition-colors cursor-pointer`} onClick={() => { setExpandedRow(isExpanded ? null : i); }}>
-                    <td className="px-4 py-3 max-w-lg">
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-text-primary text-xs font-medium shrink-0">{humanizeAction(rec.actionType)}</span>
-                        {rec.resourceArn.length > 0 && (
-                          <span className="text-text-muted text-[10px] font-mono truncate" title={rec.resourceArn}>{rec.resourceArn.split(':').pop() ?? rec.resourceArn}</span>
-                        )}
-                      </div>
-                      <p className="text-text-muted text-xs mt-0.5 truncate" title={rec.summary}>{rec.summary}</p>
-                    </td>
-                    <td className="px-4 py-3">
-                      <p className="text-text-secondary text-xs">{rec.accountName}</p>
-                      <p className="text-text-muted text-[10px] font-mono">{rec.accountId}</p>
-                    </td>
-                    <td className="px-4 py-3 text-text-secondary text-xs">{rec.region}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-text-secondary">{formatDollars(rec.monthlyCost)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums font-medium text-accent">{formatDollars(rec.monthlySavings)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-text-secondary">{String(Math.round(rec.savingsPercentage))}%</td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${effortColor(rec.effort)}`}>
-                        {effortLabel(rec.effort)}
-                      </span>
-                    </td>
-                  </tr>
-                  {isExpanded && (
-                    <tr key={`detail-${String(i)}`} className="border-b border-border bg-bg-tertiary/10">
-                      <td colSpan={7} className="px-6 py-4">
-                        <div className="grid grid-cols-2 gap-6 text-xs">
-                          <div className="space-y-3">
-                            <h4 className="text-text-muted uppercase tracking-wider text-[10px] font-medium">Current</h4>
-                            {rec.currentSummary.length > 0 && (
-                              <p className="text-text-secondary font-mono text-xs">{rec.currentSummary}</p>
-                            )}
-                            {current !== null && Object.keys(current.config).length > 0 && (
-                              <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-                                {Object.entries(current.config).map(([k, v]) => (
-                                  <Fragment key={`c-${k}`}><span className="text-text-muted">{k}</span><span className="text-text-secondary">{v}</span></Fragment>
-                                ))}
-                              </div>
-                            )}
-                            {current !== null && current.usages.length > 0 && (
-                              <div className="space-y-1 pt-1">
-                                <p className="text-text-muted text-[10px] uppercase tracking-wider">Usage</p>
-                                {current.usages.map((u, ui) => (
-                                  <p key={ui} className="text-text-secondary">{u.amount} {u.unit} <span className="text-text-muted">({u.type.split('-').pop() ?? u.type})</span></p>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          <div className="space-y-3">
-                            <h4 className="text-accent uppercase tracking-wider text-[10px] font-medium">Recommended</h4>
-                            <p className="text-text-secondary">{rec.summary}</p>
-                            {recommended !== null && Object.keys(recommended.config).length > 0 && (
-                              <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-                                {Object.entries(recommended.config).map(([k, v]) => (
-                                  <Fragment key={`r-${k}`}><span className="text-text-muted">{k}</span><span className="text-accent">{v}</span></Fragment>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-6 mt-4 pt-3 border-t border-border-subtle text-xs text-text-muted">
-                          {rec.resourceArn.length > 0 && <span className="font-mono">{rec.resourceArn}</span>}
-                          <span>{rec.resourceType}</span>
-                          <span>{rec.recommendationSource}</span>
-                          <span>Restart: <span className={rec.restartNeeded ? 'text-warning' : 'text-text-secondary'}>{rec.restartNeeded ? 'Yes' : 'No'}</span></span>
-                          <span>Rollback: <span className={rec.rollbackPossible ? 'text-accent' : 'text-text-secondary'}>{rec.rollbackPossible ? 'Yes' : 'No'}</span></span>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                  </tbody>
-                );
-              })}
-          </table>
-        </div>
-      )}
+      {filtered.length > 0 && <SavingsTable recommendations={filtered} expandedRow={expandedRow} onRowClick={setExpandedRow} />}
 
       {data !== null && data.recommendations.length === 0 && (
         <div className="rounded-xl border border-border bg-bg-secondary/50 p-12 text-center text-text-secondary">
