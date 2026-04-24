@@ -37,3 +37,29 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@v5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Generate fixtures
+        run: npx tsx packages/core/src/__fixtures__/generate.ts --generate
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Build desktop
+        run: npm run build --workspace=packages/desktop
+
+      - name: Run E2E tests
+        run: npx playwright test
