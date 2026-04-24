@@ -1,6 +1,8 @@
 {
   "name": "costgoblin",
   "private": true,
+  "license": "AGPL-3.0-only",
+  "author": "Etienne Chabert",
   "type": "module",
   "workspaces": [
     "packages/core",
