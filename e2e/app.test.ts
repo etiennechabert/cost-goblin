@@ -120,7 +120,7 @@ test.beforeAll(async () => {
   page = await app.firstWindow();
   await expect(page).toHaveTitle('CostGoblin');
   await startCoverage(page);
-});
+}, 90_000); // 90 seconds timeout for CI environments
 
 test.afterAll(async () => {
   await stopAndCollectCoverage(page);

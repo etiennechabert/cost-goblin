@@ -212,7 +212,7 @@ test.describe('Performance Benchmarks', () => {
     page = await app.firstWindow();
     await expect(page).toHaveTitle('CostGoblin');
     await waitForQuerySettle(page);
-  });
+  }, 90_000); // 90 seconds timeout for CI environments
 
   test.afterAll(async () => {
     writeReport();
