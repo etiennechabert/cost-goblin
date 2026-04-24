@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Group } from '@visx/group';
 import { Treemap, treemapSquarify, stratify } from '@visx/hierarchy';
 import { ParentSize } from '@visx/responsive';
-import { PALETTE_STANDARD } from '../lib/palette.js';
+import { getColor } from '../lib/palette.js';
 import { formatDollars } from './format.js';
 
 export interface TreemapCell {
@@ -60,7 +60,7 @@ function TreemapInner({
               if (node.depth === 0) return null;
               const w = node.x1 - node.x0;
               const h = node.y1 - node.y0;
-              const color = PALETTE_STANDARD[i % PALETTE_STANDARD.length] ?? '#374151';
+              const color = getColor(i);
               const name = node.data.id;
               const cost = node.value ?? 0;
               const showLabel = w > 60 && h > 24;

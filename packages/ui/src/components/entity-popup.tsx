@@ -1,7 +1,8 @@
 import type { DateString, EntityDetailResult } from '@costgoblin/core/browser';
-import { asDimensionId, asEntityRef, asDateString } from '@costgoblin/core/browser';
+import { asDimensionId, asEntityRef } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
+import { daysAgo } from '../lib/dates.js';
 import { formatDollars } from './format.js';
 
 export interface EntityPopupProps {
@@ -13,11 +14,7 @@ export interface EntityPopupProps {
 }
 
 function getDateRange(): { start: DateString; end: DateString } {
-  const today = new Date();
-  const end = asDateString(today.toISOString().slice(0, 10));
-  const startDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const start = asDateString(startDate.toISOString().slice(0, 10));
-  return { start, end };
+  return { start: daysAgo(30), end: daysAgo(0) };
 }
 
 function MiniHistogram({ dailyCosts }: Readonly<{ dailyCosts: EntityDetailResult['dailyCosts'] }>) {

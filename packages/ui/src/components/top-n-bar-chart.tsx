@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
-import { PALETTE_STANDARD } from '../lib/palette.js';
+import { getColor } from '../lib/palette.js';
+import { CollapsedChart } from './collapsed-chart.js';
 import { useContainerWidth } from '../lib/use-container-width.js';
 import { formatDollars } from './format.js';
 import type { Dimension } from '@costgoblin/core/browser';
@@ -32,19 +33,6 @@ const LABEL_WIDTH = 140;
 const RIGHT_GUTTER = 90;
 const CHART_HEIGHT = 320;
 
-function CollapsedBar({ title, onExpandToggle }: { title: string; onExpandToggle?: (() => void) | undefined }) {
-  return (
-    <button
-      type="button"
-      onClick={onExpandToggle}
-      className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border bg-bg-secondary/50 px-2 py-6 hover:bg-bg-tertiary/30 transition-colors min-h-[260px]"
-    >
-      <span className="text-xs font-medium text-text-secondary [writing-mode:vertical-rl] rotate-180">
-        {title}
-      </span>
-    </button>
-  );
-}
 
 function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
@@ -134,7 +122,7 @@ function TopNBarChartInner({
               const isDimmed = hoveredName !== null && !isHovered;
               const ratio = max > 0 ? row.cost / max : 0;
               const barW = Math.max(ratio * barAreaWidth, 1);
-              const color = PALETTE_STANDARD[i % PALETTE_STANDARD.length] ?? '#374151';
+              const color = getColor(i);
 
               return (
                 <li
@@ -191,7 +179,7 @@ export function TopNBarChart(props: TopNBarChartProps) {
   const [containerRef, width] = useContainerWidth();
 
   if (props.collapsed === true) {
-    return <CollapsedBar title={props.title} onExpandToggle={props.onExpandToggle} />;
+    return <CollapsedChart title={props.title} onExpandToggle={props.onExpandToggle} />;
   }
 
   return (

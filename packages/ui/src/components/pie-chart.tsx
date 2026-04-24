@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react';
 import { Group } from '@visx/group';
 import { Pie } from '@visx/shape';
-import { PALETTE_STANDARD } from '../lib/palette.js';
+import { getColor } from '../lib/palette.js';
+import { CollapsedChart } from './collapsed-chart.js';
 import { useContainerWidth } from '../lib/use-container-width.js';
 import { formatDollars } from './format.js';
 import type { Dimension } from '@costgoblin/core/browser';
@@ -39,23 +40,6 @@ function aggregateOther(data: readonly PieSlice[], maxSlices: number): PieSlice[
   return [...top, { name: OTHER_KEY, cost: otherCost, percentage: otherPct }];
 }
 
-function CollapsedPie({ title, onExpandToggle }: { title: string; onExpandToggle?: (() => void) | undefined }) {
-  return (
-    <button
-      type="button"
-      onClick={onExpandToggle}
-      className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border bg-bg-secondary/50 px-2 py-6 hover:bg-bg-tertiary/30 transition-colors min-h-[260px]"
-    >
-      <span className="text-xs font-medium text-text-secondary [writing-mode:vertical-rl] rotate-180">
-        {title}
-      </span>
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-text-muted">
-        <rect x="2" y="2" width="12" height="12" rx="2" />
-        <path d="M6 4v8M10 4v8" />
-      </svg>
-    </button>
-  );
-}
 
 function PieChartInner({
   data,
@@ -143,7 +127,7 @@ function PieChartInner({
             {(pie) =>
               pie.arcs.map((arc, i) => {
                 const sliceName = arc.data.name;
-                const color = sliceName === OTHER_KEY ? '#374151' : PALETTE_STANDARD[i % PALETTE_STANDARD.length] ?? '#374151';
+                const color = sliceName === OTHER_KEY ? '#374151' : getColor(i);
                 const isHovered = hoveredName === sliceName;
                 const isDimmed = hoveredName !== null && !isHovered;
                 const path = pie.path(arc) ?? '';
@@ -177,7 +161,7 @@ function PieChartInner({
         {/* Legend */}
         <Group top={6} left={legendX}>
           {displayData.map((d, i) => {
-            const color = d.name === OTHER_KEY ? '#374151' : PALETTE_STANDARD[i % PALETTE_STANDARD.length] ?? '#374151';
+            const color = d.name === OTHER_KEY ? '#374151' : getColor(i);
             const isHovered = hoveredName === d.name;
             const isDimmed = hoveredName !== null && !isHovered;
             const y = i * 22;
@@ -230,7 +214,7 @@ export function PieChart(props: PieChartProps) {
   const [containerRef, width] = useContainerWidth();
 
   if (props.collapsed) {
-    return <CollapsedPie title={props.title} onExpandToggle={props.onExpandToggle} />;
+    return <CollapsedChart title={props.title} onExpandToggle={props.onExpandToggle} />;
   }
 
   return (
