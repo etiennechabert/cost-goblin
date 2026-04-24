@@ -17,6 +17,7 @@
     "declarationMap": true,
     "sourceMap": true,
     "esModuleInterop": false,
+    "ignoreDeprecations": "5.0",
     "isolatedModules": true,
     "skipLibCheck": true
   }
