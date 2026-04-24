@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { PALETTE_STANDARD } from '../lib/palette.js';
+import { getColor } from '../lib/palette.js';
 import { formatDollars } from './format.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
 
@@ -136,7 +136,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                   >
                     {segments.map(seg => {
                       const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
-                      const color = PALETTE_STANDARD[seg.colorIdx % PALETTE_STANDARD.length] ?? '#374151';
+                      const color = getColor(seg.colorIdx);
                       const isDimmed = highlightedGroup !== null && highlightedGroup !== undefined && highlightedGroup !== seg.key;
                       return (
                         <div
@@ -164,7 +164,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                           {segments
                             .slice(0, 8)
                             .map(seg => {
-                              const color = PALETTE_STANDARD[seg.colorIdx % PALETTE_STANDARD.length] ?? '#374151';
+                              const color = getColor(seg.colorIdx);
                               const isHighlighted = highlightedGroup === seg.key;
                               return (
                                 <div

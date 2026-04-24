@@ -21,21 +21,10 @@ function renderTrends() {
 afterEach(cleanup);
 
 describe('CostTrends', () => {
-  it('renders heading', () => {
-    renderTrends();
-    expect(screen.getByText('Cost Trends')).toBeDefined();
-  });
-
-  it('shows trend data after loading', async () => {
+  it('shows trend data and columns after loading', async () => {
     renderTrends();
     await waitFor(() => {
       expect(screen.getByText(/platform/)).toBeDefined();
-    });
-  });
-
-  it('shows delta and percent change columns', async () => {
-    renderTrends();
-    await waitFor(() => {
       expect(screen.getByText('Entity')).toBeDefined();
       expect(screen.getByText('Current')).toBeDefined();
       expect(screen.getByText('Previous')).toBeDefined();

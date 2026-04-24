@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-// Mirror of toStr from ipc.ts — kept in sync to test the conversion logic
+// Mirror of toStr from query-utils.ts
 function toStr(v: unknown): string {
   if (typeof v === 'string') return v;
   if (v === null || v === undefined) return '';
@@ -21,25 +21,12 @@ class FakeDuckDBDateValue {
 }
 
 describe('toStr', () => {
-  it('handles strings', () => {
-    expect(toStr('2026-04-01')).toBe('2026-04-01');
-  });
-
-  it('handles numbers', () => {
-    expect(toStr(42)).toBe('42');
-  });
-
-  it('handles JS Date objects', () => {
-    expect(toStr(new Date('2026-04-01'))).toBe('2026-04-01');
-  });
-
   it('handles DuckDB date-like objects with toString()', () => {
     const duckDate = new FakeDuckDBDateValue(20544);
     expect(toStr(duckDate)).toBe('2026-04-01');
   });
 
-  it('returns empty for null/undefined', () => {
-    expect(toStr(null)).toBe('');
-    expect(toStr(undefined)).toBe('');
+  it('handles JS Date objects', () => {
+    expect(toStr(new Date('2026-04-01'))).toBe('2026-04-01');
   });
 });

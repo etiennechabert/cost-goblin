@@ -8,7 +8,7 @@ import { ParentSize } from '@visx/responsive';
 import { localPoint } from '@visx/event';
 import { TooltipWithBounds, useTooltip } from '@visx/tooltip';
 import { curveMonotoneX } from '@visx/curve';
-import { PALETTE_STANDARD } from '../lib/palette.js';
+import { getColor } from '../lib/palette.js';
 import { TOOLTIP_STYLES } from '../lib/tooltip-styles.js';
 import { formatDollars } from './format.js';
 
@@ -106,7 +106,7 @@ function LineSvg({ series, visible, width, height }: LineSvgProps) {
       .map((s) => {
         const p = s.points.find(x2 => x2.date === nearest);
         const colorIdx = seriesColorIndex.get(s.name) ?? 0;
-        const color = PALETTE_STANDARD[colorIdx % PALETTE_STANDARD.length] ?? '#999';
+        const color = getColor(colorIdx);
         return p !== undefined ? { name: s.name, cost: p.cost, color } : null;
       })
       .filter((e): e is { name: string; cost: number; color: string } => e !== null);
@@ -161,7 +161,7 @@ function LineSvg({ series, visible, width, height }: LineSvgProps) {
           />
           {visible.map((s) => {
             const colorIdx = seriesColorIndex.get(s.name) ?? 0;
-            const color = PALETTE_STANDARD[colorIdx % PALETTE_STANDARD.length] ?? '#999';
+            const color = getColor(colorIdx);
             return (
               <LinePath<LineSeriesPoint>
                 key={s.name}
@@ -238,7 +238,7 @@ export function LineChart({ series, title, subtitle, height = 320, onSeriesClick
       <div className="mt-2 flex flex-wrap gap-2 shrink-0">
         {series.map((s) => {
           const colorIdx = series.findIndex(x => x.name === s.name);
-          const color = PALETTE_STANDARD[colorIdx % PALETTE_STANDARD.length] ?? '#999';
+          const color = getColor(colorIdx);
           const off = hidden.has(s.name);
           return (
             <button

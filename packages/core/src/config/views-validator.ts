@@ -31,19 +31,19 @@ const TABLE_COLUMNS: readonly TableColumn[] = [
 ];
 
 function isWidgetType(s: string): s is WidgetType {
-  return WIDGET_TYPES.some(t => t === s);
+  return (WIDGET_TYPES as readonly string[]).includes(s);
 }
 
 function isWidgetSize(s: string): s is WidgetSize {
-  return WIDGET_SIZES.some(t => t === s);
+  return (WIDGET_SIZES as readonly string[]).includes(s);
 }
 
 function isSummaryMetric(s: string): s is SummaryMetric {
-  return SUMMARY_METRICS.some(t => t === s);
+  return (SUMMARY_METRICS as readonly string[]).includes(s);
 }
 
 function isTableColumn(s: string): s is TableColumn {
-  return TABLE_COLUMNS.some(t => t === s);
+  return (TABLE_COLUMNS as readonly string[]).includes(s);
 }
 
 function validateFilters(raw: unknown, ctx: string): WidgetFilterOverlay | undefined {
