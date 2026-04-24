@@ -154,4 +154,11 @@ make reset      # wipe app data, restart with wizard
 
 ## License
 
-MIT
+CostGoblin is licensed under the **GNU Affero General Public License v3.0 only** (AGPL-3.0-only). See [`LICENSE`](./LICENSE) for the full text.
+
+In short:
+- You can use, modify, and redistribute CostGoblin freely.
+- If you distribute modified versions, or make them available over a network (e.g. host a fork as a service), you must publish your modifications under the same license.
+- Commercial use is permitted; what the AGPL prevents is closed-source forks and undisclosed SaaS re-hosting.
+
+If you want to embed CostGoblin in a closed-source product or ship it under different terms, a commercial license is available on request — contact the author.
