@@ -11,6 +11,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { VirtualTableProps } from '../lib/table-types.js';
 import { cn } from '../lib/utils.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
+import { ColumnVisibilityToggle } from './column-visibility-toggle.js';
 
 /** Headless TanStack Table wrapper with virtual scrolling for 10k+ row datasets.
  *  Uses @tanstack/react-virtual to render only visible rows, enabling smooth
@@ -33,6 +34,7 @@ export function VirtualTable<TData>({
   rowHeight = 48,
   overscan = 10,
   onCellClick,
+  showColumnVisibilityToggle = false,
 }: Readonly<VirtualTableProps<TData>>): React.JSX.Element {
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
@@ -147,11 +149,17 @@ export function VirtualTable<TData>({
   const virtualItems = virtualizer.getVirtualItems();
 
   return (
-    <div
-      ref={tableContainerRef}
-      className="border border-border rounded-md overflow-auto"
-      style={{ height: '600px' }}
-    >
+    <div className="space-y-2">
+      {showColumnVisibilityToggle && onColumnVisibilityChange !== undefined && (
+        <div className="flex justify-end">
+          <ColumnVisibilityToggle table={table} />
+        </div>
+      )}
+      <div
+        ref={tableContainerRef}
+        className="border border-border rounded-md overflow-auto"
+        style={{ height: '600px' }}
+      >
       <div style={{ height: `${String(virtualizer.getTotalSize())}px`, width: '100%', position: 'relative' }}>
         <table className="text-[11px] w-full border-collapse">
           {/* Table Header - Sticky */}
@@ -281,6 +289,7 @@ export function VirtualTable<TData>({
             })}
           </tbody>
         </table>
+      </div>
       </div>
     </div>
   );

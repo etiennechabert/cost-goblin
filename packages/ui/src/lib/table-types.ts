@@ -123,4 +123,7 @@ export interface VirtualTableProps<TData> {
    *  data, column ID, and cell value. Used by Explorer to add filter chips
    *  when clicking dimension values. */
   readonly onCellClick?: ((row: TData, columnId: string, value: unknown) => void) | undefined;
+  /** If true, show a column visibility toggle button in the table toolbar.
+   *  Requires onColumnVisibilityChange to be set. Defaults to false. */
+  readonly showColumnVisibilityToggle?: boolean | undefined;
 }

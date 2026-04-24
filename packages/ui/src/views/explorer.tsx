@@ -238,8 +238,6 @@ export function ExplorerView(): React.JSX.Element {
     return ordered;
   }, [defaultColumns, columnOrder]);
 
-  const hiddenSet = useMemo(() => new Set(hiddenColumns), [hiddenColumns]);
-
   // Columns auto-hidden because the user has pinned their dim to a single
   // filter value — every cell would show that same value, so the column
   // carries no information. Cleared automatically when the filter is
@@ -256,14 +254,10 @@ export function ExplorerView(): React.JSX.Element {
     return keys;
   }, [filters, availableColumns]);
 
-  const visibleColumns = useMemo(
-    () => availableColumns.filter(c => !hiddenSet.has(c.key) && !autoHiddenSet.has(c.key)),
-    [availableColumns, hiddenSet, autoHiddenSet],
-  );
-
   // Convert ColumnSpec to TableColumn<ExplorerSampleRow> format for VirtualTable
+  // Pass ALL available columns - visibility is handled by columnVisibility state
   const tableColumns = useMemo<readonly TableColumn<ExplorerSampleRow>[]>(
-    () => visibleColumns.map(col => ({
+    () => availableColumns.map(col => ({
       id: col.key,
       label: col.label,
       // Set accessorKey to null for all columns since we use custom cell renderers
@@ -275,7 +269,7 @@ export function ExplorerView(): React.JSX.Element {
       sortable: true,
       cell: (row: ExplorerSampleRow) => renderCell(col, row),
     })),
-    [visibleColumns],
+    [availableColumns],
   );
 
   // Convert ExplorerSort to TanStack Table's SortingState
@@ -344,14 +338,14 @@ export function ExplorerView(): React.JSX.Element {
 
   // Handle cell clicks for adding filters
   const handleCellClick = useCallback((row: ExplorerSampleRow, columnId: string) => {
-    const col = visibleColumns.find(c => c.key === columnId);
+    const col = availableColumns.find(c => c.key === columnId);
     if (col === undefined || col.dimId === null) return;
 
     const value = filterValueFor(col, row);
     if (value !== null && value.length > 0) {
       addFilterValue(col.dimId, value);
     }
-  }, [visibleColumns]);
+  }, [availableColumns]);
 
   const activeFilterCount = Object.values(filters).reduce((n, vs) => n + vs.length, 0);
   const overviewData = overview.data;
@@ -451,6 +445,7 @@ export function ExplorerView(): React.JSX.Element {
             rowHeight={48}
             overscan={10}
             onCellClick={handleCellClick}
+            showColumnVisibilityToggle={true}
           />
         </CardContent>
       </Card>
