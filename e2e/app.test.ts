@@ -100,21 +100,42 @@ async function hasVisibleData(page: Page): Promise<boolean> {
   return text !== null && text.includes('$') && !text.includes('$0.00');
 }
 
+// Click a nav button, wait for the destination heading, and let initial
+// queries settle. Shared app launch means each describe block navigates
+// between views via clicks instead of relaunching Electron.
+async function navigateTo(page: Page, buttonName: string, headingName: string): Promise<void> {
+  await page.getByRole('button', { name: buttonName, exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: headingName, exact: true })).toBeVisible({ timeout: 5000 });
+  await waitForQuerySettle(page);
+}
+
+// Single shared app launch for every block except Widget growth (which needs
+// a custom config dir). Saves 10 relaunches × ~2-5s each and avoids the
+// teardown flake we saw when each block opened its own Electron process.
+let app: ElectronApplication;
+let page: Page;
+
+test.beforeAll(async () => {
+  app = await launchApp();
+  page = await app.firstWindow();
+  await expect(page).toHaveTitle('CostGoblin');
+  await startCoverage(page);
+});
+
+test.afterAll(async () => {
+  await stopAndCollectCoverage(page);
+  await app.close();
+  if (allCoverage.length > 0) {
+    writeFileSync(join(V8_DIR, 'coverage.json'), JSON.stringify(allCoverage));
+  }
+});
+
 // ---------------------------------------------------------------------------
 // App launch & navigation shell
 // ---------------------------------------------------------------------------
 test.describe('App shell', () => {
-  let app: ElectronApplication;
-  let page: Page;
-
-  test.beforeAll(async () => {
-    app = await launchApp();
-    page = await app.firstWindow();
-    await expect(page).toHaveTitle('CostGoblin');
-    await startCoverage(page);
-  });
-
-  test.afterAll(async () => { await stopAndCollectCoverage(page); await app.close(); });
+  // No beforeAll — the shared app boots into Cost Overview by default,
+  // which is exactly what these tests want.
 
   test('shows title bar with logo and CostGoblin text', async () => {
     await expect(page.getByText('CostGoblin', { exact: true })).toBeVisible();
@@ -177,17 +198,9 @@ test.describe('App shell', () => {
 // Cost Overview — the main dashboard
 // ---------------------------------------------------------------------------
 test.describe('Cost Overview', () => {
-  let app: ElectronApplication;
-  let page: Page;
-
   test.beforeAll(async () => {
-    app = await launchApp();
-    page = await app.firstWindow();
-    await expect(page).toHaveTitle('CostGoblin');
-    await waitForQuerySettle(page);
+    await navigateTo(page, 'Cost Overview', 'Cost Overview');
   });
-
-  test.afterAll(async () => { await app.close(); });
 
   test('renders summary card with Total Cost label and a dollar amount', async () => {
     await expect(page.getByText('Total Cost', { exact: false }).first()).toBeVisible({ timeout: LOAD_TIMEOUT });
@@ -433,19 +446,9 @@ test.describe('Cost Overview', () => {
 // Cost Trends
 // ---------------------------------------------------------------------------
 test.describe('Cost Trends', () => {
-  let app: ElectronApplication;
-  let page: Page;
-
   test.beforeAll(async () => {
-    app = await launchApp();
-    page = await app.firstWindow();
-    await expect(page).toHaveTitle('CostGoblin');
-    await page.getByRole('button', { name: 'Trends' }).click();
-    await expect(page.getByRole('heading', { name: 'Cost Trends' })).toBeVisible();
-    await waitForQuerySettle(page);
+    await navigateTo(page, 'Trends', 'Cost Trends');
   });
-
-  test.afterAll(async () => { await app.close(); });
 
   test('shows heading and subtitle', async () => {
     await expect(page.getByText('Period-over-period comparison')).toBeVisible();
@@ -580,19 +583,9 @@ test.describe('Cost Trends', () => {
 // Missing Tags
 // ---------------------------------------------------------------------------
 test.describe('Missing Tags', () => {
-  let app: ElectronApplication;
-  let page: Page;
-
   test.beforeAll(async () => {
-    app = await launchApp();
-    page = await app.firstWindow();
-    await expect(page).toHaveTitle('CostGoblin');
-    await page.getByRole('button', { name: 'Missing Tags' }).click();
-    await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
-    await waitForQuerySettle(page);
+    await navigateTo(page, 'Missing Tags', 'Missing Tags');
   });
-
-  test.afterAll(async () => { await app.close(); });
 
   test('shows heading and subtitle', async () => {
     await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
@@ -679,19 +672,9 @@ test.describe('Missing Tags', () => {
 // Savings Opportunities
 // ---------------------------------------------------------------------------
 test.describe('Savings', () => {
-  let app: ElectronApplication;
-  let page: Page;
-
   test.beforeAll(async () => {
-    app = await launchApp();
-    page = await app.firstWindow();
-    await expect(page).toHaveTitle('CostGoblin');
-    await page.getByRole('button', { name: 'Savings' }).click();
-    await expect(page.getByRole('heading', { name: 'Savings Opportunities' })).toBeVisible();
-    await waitForQuerySettle(page);
+    await navigateTo(page, 'Savings', 'Savings Opportunities');
   });
-
-  test.afterAll(async () => { await app.close(); });
 
   test('shows heading and subtitle', async () => {
     await expect(page.getByText('AWS cost optimization recommendations')).toBeVisible();
@@ -767,19 +750,11 @@ test.describe('Savings', () => {
 // Entity Detail (conditional — only if trends has clickable entities)
 // ---------------------------------------------------------------------------
 test.describe('Entity Detail', () => {
-  let app: ElectronApplication;
-  let page: Page;
   let entityReached = false;
 
   test.beforeAll(async () => {
-    app = await launchApp();
-    page = await app.firstWindow();
-    await expect(page).toHaveTitle('CostGoblin');
-
-    // try to reach entity detail via trends
-    await page.getByRole('button', { name: 'Trends' }).click();
-    await expect(page.getByRole('heading', { name: 'Cost Trends' })).toBeVisible();
-    await waitForQuerySettle(page);
+    // Reach entity detail via Trends → click first entity link.
+    await navigateTo(page, 'Trends', 'Cost Trends');
 
     const entityLink = page.locator('table button.text-accent').first();
     const exists = await entityLink.isVisible().catch(() => false);
@@ -791,8 +766,6 @@ test.describe('Entity Detail', () => {
       entityReached = true;
     }
   });
-
-  test.afterAll(async () => { await app.close(); });
 
   test('shows entity name as heading', async () => {
     test.skip(!entityReached, 'No entity data available to navigate to');
@@ -884,20 +857,11 @@ test.describe('Entity Detail', () => {
 // Data Management
 // ---------------------------------------------------------------------------
 test.describe('Data Management', () => {
-  let app: ElectronApplication;
-  let page: Page;
-
   test.beforeAll(async () => {
-    app = await launchApp();
-    page = await app.firstWindow();
-    await expect(page).toHaveTitle('CostGoblin');
-    await page.getByRole('button', { name: 'Sync' }).click();
-    await expect(page.getByRole('heading', { name: 'Data Management' })).toBeVisible();
-    // Data management loads S3 inventory which can be slow — wait longer
-    await waitForQuerySettle(page);
+    // Data management loads S3 inventory which can be slow — navigateTo's
+    // waitForQuerySettle gives it the 30s LOAD_TIMEOUT window.
+    await navigateTo(page, 'Sync', 'Data Management');
   });
-
-  test.afterAll(async () => { await app.close(); });
 
   test('shows heading and subtitle', async () => {
     await expect(page.getByText('S3 sync and local data inventory')).toBeVisible();
@@ -1034,20 +998,9 @@ test.describe('Data Management', () => {
 // Dimensions
 // ---------------------------------------------------------------------------
 test.describe('Dimensions', () => {
-  let app: ElectronApplication;
-  let page: Page;
-
   test.beforeAll(async () => {
-    app = await launchApp();
-    page = await app.firstWindow();
-    await expect(page).toHaveTitle('CostGoblin');
-    await startCoverage(page);
-    await page.getByRole('button', { name: 'Dimensions' }).click();
-    await expect(page.getByRole('heading', { name: 'Dimensions', exact: true })).toBeVisible();
-    await waitForQuerySettle(page);
+    await navigateTo(page, 'Dimensions', 'Dimensions');
   });
-
-  test.afterAll(async () => { await stopAndCollectCoverage(page); await app.close(); });
 
   test('shows heading and subtitle', async () => {
     await expect(page.getByText('Map tags to cost allocation dimensions')).toBeVisible();
@@ -1155,19 +1108,9 @@ test.describe('Dimensions', () => {
 // Views editor — user-built dashboards
 // ---------------------------------------------------------------------------
 test.describe('Views editor', () => {
-  let app: ElectronApplication;
-  let page: Page;
-
   test.beforeAll(async () => {
-    app = await launchApp();
-    page = await app.firstWindow();
-    await expect(page).toHaveTitle('CostGoblin');
-    await page.getByRole('button', { name: 'Views' }).click();
-    await expect(page.getByRole('heading', { name: 'Views', exact: true })).toBeVisible();
-    await waitForQuerySettle(page);
+    await navigateTo(page, 'Views', 'Views');
   });
-
-  test.afterAll(async () => { await app.close(); });
 
   test('shows the heading and seed view in the left pane', async () => {
     await expect(page.getByText('Compose dashboards from the widget library')).toBeVisible();
@@ -1200,19 +1143,13 @@ test.describe('Views editor', () => {
 // Cost Scope — metric picker, exclusion rules, preview histogram + table
 // ---------------------------------------------------------------------------
 test.describe('Cost Scope', () => {
-  let app: ElectronApplication;
-  let page: Page;
-
   test.beforeAll(async () => {
-    app = await launchApp();
-    page = await app.firstWindow();
-    await expect(page).toHaveTitle('CostGoblin');
-    await page.getByRole('button', { name: 'Cost Scope' }).click();
-    await expect(page.getByRole('heading', { name: 'Cost Scope' })).toBeVisible();
+    // Cost Scope has its own preview settle signal — use it instead of
+    // waitForQuerySettle, so we bypass navigateTo here.
+    await page.getByRole('button', { name: 'Cost Scope', exact: true }).first().click();
+    await expect(page.getByRole('heading', { name: 'Cost Scope', exact: true })).toBeVisible({ timeout: 5000 });
     await waitForCostScopePreview(page);
   });
-
-  test.afterAll(async () => { await app.close(); });
 
   test('shows heading and intro copy', async () => {
     await expect(page.getByText(/Define what counts as cost/)).toBeVisible();
@@ -1377,17 +1314,24 @@ test.describe('Widget growth', () => {
   const TEMP_CONFIG_DIR = join(tmpdir(), `costgoblin-widget-growth-${String(Date.now())}`);
   const VIEWS_YAML = buildWidgetMatrixYaml();
 
-  test.beforeAll(() => {
+  // One test per widget type — each test renders that widget at all 4 sizes in
+  // separate rows and asserts no horizontal/vertical runaway growth.
+  const WIDGET_TYPES = ['summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table'] as const;
+
+  // Single app launch with the temp config, reused across all widget tests.
+  // Previously each widget type launched its own Electron process.
+  let widgetApp: ElectronApplication;
+  let widgetPage: Page;
+
+  test.beforeAll(async () => {
     mkdirSync(TEMP_CONFIG_DIR, { recursive: true });
     for (const f of ['costgoblin.yaml', 'dimensions.yaml', 'org-tree.yaml']) {
       const src = join(REAL_CONFIG_DIR, f);
       if (existsSync(src)) writeFileSync(join(TEMP_CONFIG_DIR, f), readFileSync(src));
     }
     writeFileSync(join(TEMP_CONFIG_DIR, 'views.yaml'), VIEWS_YAML);
-  });
 
-  async function launchWithTemp(): Promise<ElectronApplication> {
-    return _electron.launch({
+    widgetApp = await _electron.launch({
       args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],
       env: {
         ...process.env,
@@ -1396,36 +1340,32 @@ test.describe('Widget growth', () => {
         COSTGOBLIN_CONFIG_DIR: TEMP_CONFIG_DIR,
       },
     });
-  }
+    widgetPage = await widgetApp.firstWindow();
+    await expect(widgetPage).toHaveTitle('CostGoblin');
+    await widgetPage.setViewportSize({ width: 1400, height: 900 });
+  });
 
-  // One test per widget type — each test renders that widget at all 4 sizes in
-  // separate rows and asserts no horizontal/vertical runaway growth.
-  const WIDGET_TYPES = ['summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table'] as const;
+  test.afterAll(async () => { await widgetApp.close(); });
 
   for (const widgetType of WIDGET_TYPES) {
     test(`${widgetType} stays bounded at all sizes`, async () => {
-      const app = await launchWithTemp();
-      const page = await app.firstWindow();
-      await expect(page).toHaveTitle('CostGoblin');
-      await page.setViewportSize({ width: 1400, height: 900 });
-
-      await page.getByRole('button', { name: `test-${widgetType}`, exact: true }).click();
-      await waitForQuerySettle(page);
+      await widgetPage.getByRole('button', { name: `test-${widgetType}`, exact: true }).click();
+      await waitForQuerySettle(widgetPage);
       // Let queries resolve, loaders swap to real data, and any one-shot
       // layout transitions settle — we're hunting runaway growth, not
       // legitimate data-arrival reflows.
-      await page.waitForTimeout(4000);
+      await widgetPage.waitForTimeout(4000);
 
       // Sample every 600ms for ~3 seconds. Runaway growth shows up as
       // sample-to-sample increases.
       const samples: { bodyWidth: number; bodyHeight: number }[] = [];
       for (let i = 0; i < 5; i++) {
-        const m = await page.evaluate(() => ({
+        const m = await widgetPage.evaluate(() => ({
           bodyWidth: document.body.scrollWidth,
           bodyHeight: document.body.scrollHeight,
         }));
         samples.push(m);
-        await page.waitForTimeout(600);
+        await widgetPage.waitForTimeout(600);
       }
 
       const maxAllowedWidth = 1400 + 40; // scrollbar tolerance
@@ -1442,8 +1382,6 @@ test.describe('Widget growth', () => {
         expect(cur.bodyWidth - prev.bodyWidth, `width grew between samples ${String(i - 1)}→${String(i)} for ${widgetType}`).toBeLessThan(20);
         expect(cur.bodyHeight - prev.bodyHeight, `height grew between samples ${String(i - 1)}→${String(i)} for ${widgetType}`).toBeLessThan(20);
       }
-
-      await app.close();
     });
   }
 });
@@ -1490,17 +1428,11 @@ ${widgetLines.join('\n')}`);
 // Cross-view navigation — full user journey
 // ---------------------------------------------------------------------------
 test.describe('Full user journey', () => {
-  let app: ElectronApplication;
-  let page: Page;
-
   test.beforeAll(async () => {
-    app = await launchApp();
-    page = await app.firstWindow();
-    await expect(page).toHaveTitle('CostGoblin');
-    await startCoverage(page);
+    // Start the journey from Cost Overview regardless of where the previous
+    // block left the app.
+    await navigateTo(page, 'Cost Overview', 'Cost Overview');
   });
-
-  test.afterAll(async () => { await stopAndCollectCoverage(page); await app.close(); });
 
   test('overview → trends → missing tags → savings → data → overview (full navigation cycle)', async () => {
     // 1. Overview
@@ -1545,13 +1477,4 @@ test.describe('Full user journey', () => {
     // final state should be Missing Tags
     await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
   });
-});
-
-// ---------------------------------------------------------------------------
-// Write accumulated V8 coverage to disk for post-processing
-// ---------------------------------------------------------------------------
-test.afterAll(async () => {
-  if (allCoverage.length > 0) {
-    writeFileSync(join(V8_DIR, 'coverage.json'), JSON.stringify(allCoverage));
-  }
 });
