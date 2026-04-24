@@ -30,6 +30,9 @@ jobs:
       - name: Lint
         run: npx eslint packages/*/src/
 
+      - name: Build workers
+        run: npm run build:worker --workspace=packages/desktop
+
       - name: Test with coverage
         run: npx vitest run --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage
 

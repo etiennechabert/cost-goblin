@@ -254,6 +254,9 @@ function handleCancelPending(): void {
   for (const id of queuedIds) {
     cancelledIds.add(id);
   }
+  for (const id of runningIds) {
+    cancelledIds.add(id);
+  }
 }
 
 port.on('message', (msg: unknown) => {
