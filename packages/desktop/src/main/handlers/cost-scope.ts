@@ -11,6 +11,7 @@ import {
   computePeriodsInRange,
   logger,
   listLocalMonths,
+  tagColumnName,
 } from '@costgoblin/core';
 import type {
   CostScopeCapabilities,
@@ -33,7 +34,7 @@ const SAMPLE_ROW_LIMIT = 500;
 function assertRuleDimensionsExist(config: CostScopeConfig, dimensions: DimensionsConfig): void {
   const knownIds = new Set<string>();
   for (const d of dimensions.builtIn) knownIds.add(String(d.name));
-  for (const t of dimensions.tags) knownIds.add(`tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`);
+  for (const t of dimensions.tags) knownIds.add(tagColumnName(t.tagName));
   for (const rule of config.rules) {
     for (const cond of rule.conditions) {
       const id = String(cond.dimensionId);
@@ -125,7 +126,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
       : 'FALSE';
 
     const tagColumns = dimensions.tags.map(t => ({
-      id: `tag_${t.tagName.replace(/[^a-zA-Z0-9]/g, '_')}`,
+      id: tagColumnName(t.tagName),
       label: t.label,
     }));
 

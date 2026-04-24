@@ -15,6 +15,7 @@ import {
   asEntityRef,
   asDollars,
   asDateString,
+  tagColumnName,
 } from '@costgoblin/core';
 import type {
   CostQueryParams,
@@ -338,7 +339,7 @@ export function registerQueryHandlers(app: AppContext): void {
       : await getCostScope().catch(() => undefined);
 
     const builtIn = dimensions.builtIn.find(d => d.name === dimensionId);
-    const tag = dimensions.tags.find(d => `tag_${d.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === dimensionId);
+    const tag = dimensions.tags.find(d => tagColumnName(d.tagName) === dimensionId);
 
     const field = builtIn === undefined ? dimensionId : builtIn.field;
     // Apply alias/normalize CASE for both built-ins and tags so the SQL
@@ -354,7 +355,7 @@ export function registerQueryHandlers(app: AppContext): void {
     const whereClauses: string[] = [];
     for (const [key, value] of Object.entries(filterEntries)) {
       const fb = dimensions.builtIn.find(d => d.name === key);
-      const ft = dimensions.tags.find(d => `tag_${d.tagName.replace(/[^a-zA-Z0-9]/g, '_')}` === key);
+      const ft = dimensions.tags.find(d => tagColumnName(d.tagName) === key);
       const ff = fb === undefined ? key : fb.field;
       let ffExpr = ff;
       if (fb !== undefined) {
