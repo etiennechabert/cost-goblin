@@ -1,7 +1,7 @@
 import { test, expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 
 const ROOT = join(import.meta.dirname, '..');
 const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
@@ -21,9 +21,9 @@ function launchApp(): Promise<ElectronApplication> {
     env: {
       ...process.env,
       NODE_ENV: 'production',
-      // Point at the real Electron userData where synced data + config live
-      COSTGOBLIN_DATA_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'data'),
-      COSTGOBLIN_CONFIG_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config'),
+      // Point at synthetic fixture data for E2E tests
+      COSTGOBLIN_DATA_DIR: join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'synthetic'),
+      COSTGOBLIN_CONFIG_DIR: join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'config'),
     },
   });
 }
