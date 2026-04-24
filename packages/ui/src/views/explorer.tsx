@@ -446,6 +446,8 @@ export function ExplorerView(): React.JSX.Element {
             overscan={10}
             onCellClick={handleCellClick}
             showColumnVisibilityToggle={true}
+            showCsvExport={true}
+            csvFilename="costgoblin-explorer.csv"
           />
         </CardContent>
       </Card>

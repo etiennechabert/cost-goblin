@@ -12,6 +12,7 @@ import type { VirtualTableProps } from '../lib/table-types.js';
 import { cn } from '../lib/utils.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
 import { ColumnVisibilityToggle } from './column-visibility-toggle.js';
+import { TableCsvExport } from './table-csv-export.js';
 
 /** Headless TanStack Table wrapper with virtual scrolling for 10k+ row datasets.
  *  Uses @tanstack/react-virtual to render only visible rows, enabling smooth
@@ -35,6 +36,8 @@ export function VirtualTable<TData>({
   overscan = 10,
   onCellClick,
   showColumnVisibilityToggle = false,
+  showCsvExport = false,
+  csvFilename = 'export.csv',
 }: Readonly<VirtualTableProps<TData>>): React.JSX.Element {
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
@@ -150,9 +153,14 @@ export function VirtualTable<TData>({
 
   return (
     <div className="space-y-2">
-      {showColumnVisibilityToggle && onColumnVisibilityChange !== undefined && (
-        <div className="flex justify-end">
-          <ColumnVisibilityToggle table={table} />
+      {(showColumnVisibilityToggle || showCsvExport) && (
+        <div className="flex justify-end gap-2">
+          {showCsvExport && (
+            <TableCsvExport table={table} filename={csvFilename} />
+          )}
+          {showColumnVisibilityToggle && onColumnVisibilityChange !== undefined && (
+            <ColumnVisibilityToggle table={table} />
+          )}
         </div>
       )}
       <div

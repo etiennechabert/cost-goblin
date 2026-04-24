@@ -14,6 +14,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { TableColumn } from '../lib/table-types.js';
 import { cn } from '../lib/utils.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
+import { TableCsvExport } from './table-csv-export.js';
 
 /** Props for the DataTable component — a headless TanStack Table wrapper with
  *  sorting, column visibility, and column pinning. This is the non-virtualized
@@ -63,6 +64,11 @@ export interface DataTableProps<TData> {
   /** Optional max height for the table container. When set, the table will
    *  scroll vertically. Defaults to undefined (no max height). */
   readonly maxHeight?: number | undefined;
+  /** If true, show a CSV export button above the table. Exports visible
+   *  columns in current sort order. Defaults to false. */
+  readonly showCsvExport?: boolean | undefined;
+  /** Optional filename for CSV export. Defaults to 'export.csv'. */
+  readonly csvFilename?: string | undefined;
 }
 
 /** Headless TanStack Table wrapper with sorting, column visibility, and
@@ -87,6 +93,8 @@ export function DataTable<TData>({
   onCellClick,
   className,
   maxHeight,
+  showCsvExport = false,
+  csvFilename = 'export.csv',
 }: Readonly<DataTableProps<TData>>): React.JSX.Element {
   // Convert TableColumn<TData> to TanStack Table's ColumnDef format
   const columnDefs = useMemo<Array<ColumnDef<TData>>>(
@@ -186,14 +194,20 @@ export function DataTable<TData>({
   }
 
   return (
-    <div
-      className={cn(
-        'border border-border rounded-md overflow-auto',
-        className,
+    <div className="space-y-2">
+      {showCsvExport && (
+        <div className="flex justify-end">
+          <TableCsvExport table={table} filename={csvFilename} />
+        </div>
       )}
-      style={maxHeight !== undefined ? { maxHeight: `${String(maxHeight)}px` } : undefined}
-    >
-      <table className="text-[11px] w-full border-collapse">
+      <div
+        className={cn(
+          'border border-border rounded-md overflow-auto',
+          className,
+        )}
+        style={maxHeight !== undefined ? { maxHeight: `${String(maxHeight)}px` } : undefined}
+      >
+        <table className="text-[11px] w-full border-collapse">
         <thead className="sticky top-0 z-10 bg-bg-tertiary/95 backdrop-blur-sm">
           {table.getHeaderGroups().map(headerGroup => (
             <tr key={headerGroup.id} className="text-left text-text-secondary">
@@ -305,6 +319,7 @@ export function DataTable<TData>({
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

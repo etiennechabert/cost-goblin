@@ -126,4 +126,9 @@ export interface VirtualTableProps<TData> {
   /** If true, show a column visibility toggle button in the table toolbar.
    *  Requires onColumnVisibilityChange to be set. Defaults to false. */
   readonly showColumnVisibilityToggle?: boolean | undefined;
+  /** If true, show a CSV export button in the table toolbar. Exports visible
+   *  columns in current sort order. Defaults to false. */
+  readonly showCsvExport?: boolean | undefined;
+  /** Optional filename for CSV export. Defaults to 'export.csv'. */
+  readonly csvFilename?: string | undefined;
 }
