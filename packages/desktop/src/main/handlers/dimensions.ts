@@ -390,8 +390,80 @@ export function registerDimensionsHandlers(app: AppContext): void {
     await saveDismissedSuggestions(ctx.dataDir, updatedState);
   });
 
-  ipcMain.handle('dimensions:accept-suggestion', async (_event, _tagName: string, _canonical: string, _aliases: string[]): Promise<void> => {
-    const state = await loadDismissedSuggestions(ctx.dataDir);
-    await saveDismissedSuggestions(ctx.dataDir, state);
+  ipcMain.handle('dimensions:accept-suggestion', async (_event, tagName: string, canonical: string, aliases: string[]): Promise<void> => {
+    // Load current dimensions config
+    const config = await getDimensions();
+
+    // Find the tag dimension matching the tag name
+    const tagIndex = config.tags.findIndex(t => t.tagName === tagName);
+    if (tagIndex === -1) {
+      // Tag dimension not found - should not happen in normal use
+      return;
+    }
+
+    const tag = config.tags[tagIndex];
+    if (tag === undefined) return;
+
+    // Merge the suggestion into the dimension's aliases
+    const existingAliases = tag.aliases ?? {};
+    const updatedAliases: Record<string, readonly string[]> = {
+      ...existingAliases,
+      [canonical]: aliases,
+    };
+
+    // Create updated tag dimension
+    const updatedTag: typeof tag = {
+      ...tag,
+      aliases: updatedAliases,
+    };
+
+    // Create updated config with the modified tag
+    const updatedTags = [
+      ...config.tags.slice(0, tagIndex),
+      updatedTag,
+      ...config.tags.slice(tagIndex + 1),
+    ];
+
+    const updatedConfig: DimensionsConfig = {
+      ...config,
+      tags: updatedTags,
+    };
+
+    // Save the updated config using the same YAML serialization logic
+    const yaml = await import('yaml');
+    const fs = await import('node:fs/promises');
+
+    const output = yaml.stringify({
+      builtIn: updatedConfig.builtIn.map(d => ({
+        name: d.name,
+        label: d.label,
+        field: d.field,
+        ...(d.displayField === undefined ? {} : { displayField: d.displayField }),
+        ...(d.description === undefined ? {} : { description: d.description }),
+        ...(d.normalize === undefined ? {} : { normalize: d.normalize }),
+        ...(d.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(d.aliases).map(([k, v]) => [k, [...v]])) }),
+        ...(d.useOrgAccounts === true ? { useOrgAccounts: true } : {}),
+        ...(typeof d.accountNameFromTag === 'string' && d.accountNameFromTag.length > 0 ? { accountNameFromTag: d.accountNameFromTag } : {}),
+        ...(d.nameStripPatterns !== undefined && d.nameStripPatterns.length > 0 ? { nameStripPatterns: [...d.nameStripPatterns] } : {}),
+        ...(d.useRegionNames === undefined ? {} : { useRegionNames: d.useRegionNames }),
+        ...(d.enabled === false ? { enabled: false } : {}),
+      })),
+      tags: updatedConfig.tags.map(t => ({
+        tagName: t.tagName,
+        label: t.label,
+        ...(t.concept === undefined ? {} : { concept: t.concept }),
+        ...(t.normalize === undefined ? {} : { normalize: t.normalize }),
+        ...(t.separator === undefined ? {} : { separator: t.separator }),
+        ...(t.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(t.aliases).map(([k, v]) => [k, [...v]])) }),
+        ...(t.accountTagFallback === undefined ? {} : { accountTagFallback: t.accountTagFallback }),
+        ...(t.missingValueTemplate === undefined ? {} : { missingValueTemplate: t.missingValueTemplate }),
+        ...(t.description === undefined ? {} : { description: t.description }),
+        ...(t.enabled === false ? { enabled: false } : {}),
+      })),
+      ...(updatedConfig.order !== undefined ? { order: [...updatedConfig.order] } : {}),
+    });
+
+    await fs.writeFile(ctx.dimensionsPath, output);
+    invalidateDimensions();
   });
 }
