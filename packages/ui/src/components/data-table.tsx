@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import {
   type ColumnDef,
+  type ColumnPinningState,
   type OnChangeFn,
   type SortingState,
   type VisibilityState,
@@ -15,9 +16,9 @@ import { cn } from '../lib/utils.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
 
 /** Props for the DataTable component — a headless TanStack Table wrapper with
- *  sorting and column visibility. This is the non-virtualized table component
- *  suitable for datasets under ~1000 rows. For larger datasets (10k+ rows),
- *  use VirtualTable instead. */
+ *  sorting, column visibility, and column pinning. This is the non-virtualized
+ *  table component suitable for datasets under ~1000 rows. For larger datasets
+ *  (10k+ rows), use VirtualTable instead. */
 export interface DataTableProps<TData> {
   /** Row data array. */
   readonly data: readonly TData[];
@@ -30,6 +31,13 @@ export interface DataTableProps<TData> {
   /** Callback fired when the user toggles column visibility via the column
    *  picker dropdown. The consuming component should persist this state. */
   readonly onColumnVisibilityChange?: OnChangeFn<VisibilityState> | undefined;
+  /** Initial column pinning state. Keys are 'left' and 'right'; values are
+   *  arrays of column IDs. Only 'left' pinning is currently supported
+   *  (right-side pinning reserved for future actions column). */
+  readonly columnPinning?: ColumnPinningState | undefined;
+  /** Callback fired when the user pins or unpins a column. The consuming
+   *  component should persist this state. */
+  readonly onColumnPinningChange?: OnChangeFn<ColumnPinningState> | undefined;
   /** Initial sort state. Array of { id: columnId, desc: boolean } objects.
    *  Multi-column sort is supported — shift+click a header to add a secondary
    *  sort. Empty array means no sorting. */
@@ -57,9 +65,10 @@ export interface DataTableProps<TData> {
   readonly maxHeight?: number | undefined;
 }
 
-/** Headless TanStack Table wrapper with sorting and column visibility.
- *  This component converts TableColumn<TData> definitions to TanStack Table's
- *  ColumnDef format and renders a styled table with sticky headers.
+/** Headless TanStack Table wrapper with sorting, column visibility, and
+ *  column pinning. This component converts TableColumn<TData> definitions to
+ *  TanStack Table's ColumnDef format and renders a styled table with sticky
+ *  headers and optional pinned columns.
  *
  *  For datasets under ~1000 rows. For larger datasets (10k+), use VirtualTable
  *  which wraps this component with @tanstack/react-virtual. */
@@ -68,6 +77,8 @@ export function DataTable<TData>({
   columns,
   columnVisibility = {},
   onColumnVisibilityChange,
+  columnPinning = { left: [], right: [] },
+  onColumnPinningChange,
   sorting = [],
   onSortingChange,
   loading = false,
@@ -85,6 +96,7 @@ export function DataTable<TData>({
         id: col.id,
         header: col.label,
         enableSorting: col.sortable ?? hasAccessorKey,
+        enablePinning: col.pinnable ?? false,
         meta: {
           align: col.align ?? 'left',
           mono: col.mono ?? false,
@@ -123,6 +135,7 @@ export function DataTable<TData>({
     state: {
       sorting,
       columnVisibility,
+      columnPinning,
     },
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -130,6 +143,8 @@ export function DataTable<TData>({
     enableMultiSort: true,
     // Don't remove sorting when toggling visibility
     enableSortingRemoval: true,
+    // Enable column pinning
+    enableColumnPinning: true,
   };
 
   // Conditionally add callbacks to satisfy exactOptionalPropertyTypes
@@ -138,6 +153,9 @@ export function DataTable<TData>({
   }
   if (onColumnVisibilityChange !== undefined) {
     Object.assign(tableConfig, { onColumnVisibilityChange });
+  }
+  if (onColumnPinningChange !== undefined) {
+    Object.assign(tableConfig, { onColumnPinningChange });
   }
 
   const table = useReactTable(tableConfig);
@@ -185,6 +203,7 @@ export function DataTable<TData>({
                   | undefined;
                 const canSort = header.column.getCanSort();
                 const sortDir = header.column.getIsSorted();
+                const isPinned = header.column.getIsPinned();
 
                 return (
                   <th
@@ -194,8 +213,16 @@ export function DataTable<TData>({
                       meta?.align === 'right' && 'text-right',
                       meta?.align === 'center' && 'text-center',
                       canSort && 'cursor-pointer select-none hover:text-text-primary',
+                      isPinned === 'left' && 'sticky left-0 z-20 bg-bg-tertiary/95 backdrop-blur-sm',
                     )}
                     onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
+                    style={
+                      isPinned === 'left'
+                        ? {
+                            left: `${String(header.getStart('left'))}px`,
+                          }
+                        : undefined
+                    }
                   >
                     <div
                       className={cn(
@@ -232,6 +259,7 @@ export function DataTable<TData>({
                   | { align?: 'left' | 'right' | 'center'; mono?: boolean; truncate?: boolean; dimId?: string | null }
                   | undefined;
                 const isClickable = onCellClick !== undefined && meta?.dimId !== null && meta?.dimId !== undefined;
+                const isPinned = cell.column.getIsPinned();
 
                 return (
                   <td
@@ -243,12 +271,20 @@ export function DataTable<TData>({
                       meta?.mono === true && 'font-mono',
                       meta?.truncate === true && 'max-w-xs truncate',
                       isClickable && 'cursor-pointer hover:text-accent',
+                      isPinned === 'left' && 'sticky left-0 z-10 bg-bg-primary',
                     )}
                     onClick={
                       isClickable
                         ? () => {
                             const value = cell.getValue();
                             onCellClick(row.original, cell.column.id, value);
+                          }
+                        : undefined
+                    }
+                    style={
+                      isPinned === 'left'
+                        ? {
+                            left: `${String(cell.column.getStart('left'))}px`,
                           }
                         : undefined
                     }
