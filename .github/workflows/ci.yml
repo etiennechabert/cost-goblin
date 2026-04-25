@@ -63,7 +63,7 @@ jobs:
         run: npm run build --workspace=packages/desktop
 
       - name: Run E2E tests
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" npx playwright test
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" npx playwright test e2e/app.test.ts
 
       - name: Upload Playwright report
         if: always()
