@@ -9,8 +9,10 @@ import { useQuery } from '../hooks/use-query.js';
 export interface AliasSuggestionsProps {
   /** Tag dimension name to generate suggestions for (e.g., 'Environment', 'Owner') */
   readonly dimensionId: string;
-  /** Callback fired when a suggestion is accepted and applied to the config */
-  readonly onAccepted?: () => void;
+  /** Callback fired when a suggestion is accepted and applied to the config.
+   *  Receives the canonical value and the aliases that were merged so the
+   *  caller can update its own editing state to stay in sync. */
+  readonly onAccepted?: (canonical: string, aliases: readonly string[]) => void;
 }
 
 /** Internal state for tracking which suggestions are being processed.
@@ -72,7 +74,7 @@ export function AliasSuggestions({
 
       await api.acceptSuggestion(dimensionId, canonical, suggestion.aliases);
       setSuggestions(prev => prev.filter(s => s.canonical !== canonical));
-      onAccepted?.();
+      onAccepted?.(canonical, suggestion.aliases);
     } finally {
       setPendingAction(null);
     }
