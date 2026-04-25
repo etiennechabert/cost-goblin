@@ -344,6 +344,21 @@ async function generate(): Promise<void> {
   `);
   process.stdout.write(`  Exported hourly raw file (${String(hourlyDates.length)} days)\n`);
 
+  // Repartition into BILLING_PERIOD Hive partitions (what the app actually queries)
+  for (const month of months) {
+    const billingPeriod = `BILLING_PERIOD=${month}`;
+    const partitionDir = join(SYNTHETIC_DIR, billingPeriod);
+    await mkdir(partitionDir, { recursive: true });
+    const partitionPath = join(partitionDir, 'data.parquet');
+    await conn.run(`
+      COPY (
+        SELECT * FROM synthetic
+        WHERE line_item_usage_start_date::DATE::VARCHAR LIKE '${month}%'
+      ) TO '${partitionPath}' (FORMAT PARQUET)
+    `);
+  }
+  process.stdout.write(`  Repartitioned into ${String(months.length)} BILLING_PERIOD Hive partitions\n`);
+
   process.stdout.write('Done!\n');
 }
 

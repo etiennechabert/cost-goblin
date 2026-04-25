@@ -1,14 +1,14 @@
 providers:
-  - name: aws-main
+  - name: test-aws
     type: aws
     credentials:
       profile: test-profile
     sync:
       daily:
-        bucket: s3://test-cur-bucket/daily/
+        bucket: s3://test-bucket/cur/daily
         retentionDays: 365
       hourly:
-        bucket: s3://test-cur-bucket/hourly/
+        bucket: s3://test-bucket/cur/hourly
         retentionDays: 30
       intervalMinutes: 60
 

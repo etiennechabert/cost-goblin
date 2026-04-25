@@ -1,0 +1,157 @@
+{
+  "rowCount": 5000,
+  "dateRange": {
+    "min": "2026-01-01",
+    "max": "2026-02-28"
+  },
+  "services": [
+    {
+      "name": "AmazonEC2",
+      "costShare": 0.35,
+      "avgDailyCost": 450.0
+    },
+    {
+      "name": "AmazonRDS",
+      "costShare": 0.18,
+      "avgDailyCost": 230.0
+    },
+    {
+      "name": "AmazonS3",
+      "costShare": 0.12,
+      "avgDailyCost": 155.0
+    },
+    {
+      "name": "AmazonCloudFront",
+      "costShare": 0.08,
+      "avgDailyCost": 103.0
+    },
+    {
+      "name": "AmazonDynamoDB",
+      "costShare": 0.07,
+      "avgDailyCost": 90.0
+    },
+    {
+      "name": "AmazonECS",
+      "costShare": 0.06,
+      "avgDailyCost": 77.0
+    },
+    {
+      "name": "AmazonElastiCache",
+      "costShare": 0.05,
+      "avgDailyCost": 64.0
+    },
+    {
+      "name": "AWSLambda",
+      "costShare": 0.04,
+      "avgDailyCost": 51.0
+    },
+    {
+      "name": "AmazonSNS",
+      "costShare": 0.02,
+      "avgDailyCost": 26.0
+    },
+    {
+      "name": "AmazonSQS",
+      "costShare": 0.03,
+      "avgDailyCost": 39.0
+    }
+  ],
+  "accounts": [
+    {
+      "id": "100000000000",
+      "name": "Production Main",
+      "costShare": 0.35
+    },
+    {
+      "id": "100000000001",
+      "name": "Production Payments",
+      "costShare": 0.22
+    },
+    {
+      "id": "100000000002",
+      "name": "Production Data",
+      "costShare": 0.18
+    },
+    {
+      "id": "100000000003",
+      "name": "Staging",
+      "costShare": 0.12
+    },
+    {
+      "id": "100000000004",
+      "name": "Development",
+      "costShare": 0.08
+    },
+    {
+      "id": "100000000005",
+      "name": "Security",
+      "costShare": 0.05
+    }
+  ],
+  "regions": [
+    "us-east-1",
+    "us-west-2",
+    "eu-west-1",
+    "ap-southeast-1",
+    "ap-northeast-1"
+  ],
+  "tags": {
+    "owner": {
+      "values": [
+        "backend",
+        "frontend",
+        "platform",
+        "data-eng",
+        "security",
+        "payments",
+        "identity",
+        "sre"
+      ],
+      "missingPercent": 0.08
+    },
+    "product": {
+      "values": [
+        "api-gateway",
+        "auth-service",
+        "billing-engine",
+        "card-processor",
+        "data-pipeline",
+        "event-bus",
+        "ledger",
+        "notification-service",
+        "payment-router",
+        "user-service"
+      ],
+      "missingPercent": 0.12
+    },
+    "environment": {
+      "values": [
+        "production",
+        "staging",
+        "testing",
+        "sandbox"
+      ],
+      "missingPercent": 0.03
+    },
+    "cost-center": {
+      "values": [
+        "ENG-001",
+        "ENG-002",
+        "OPS-001",
+        "DATA-001"
+      ],
+      "missingPercent": 0.25
+    }
+  },
+  "costDistribution": {
+    "p50": 0.05,
+    "p90": 2.5,
+    "p99": 15.0
+  },
+  "lineItemTypes": {
+    "Usage": 0.89,
+    "Fee": 0.06,
+    "Credit": 0.04,
+    "Tax": 0.01
+  }
+}
