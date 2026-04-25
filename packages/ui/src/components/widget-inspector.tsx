@@ -295,14 +295,22 @@ function TableColumnsEditor({
     onOrderChange(next);
   }
 
+  const allHidden = hiddenColumns.length >= allColumns.length;
+
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
         <span className="text-text-muted">Columns</span>
         <span className="flex items-center gap-2 text-[10px]">
-          <button type="button" onClick={() => { onHiddenChange([]); }} className="text-text-secondary hover:text-text-primary">Show all</button>
+          <button
+            type="button"
+            onClick={() => { onHiddenChange(allHidden ? [] : allColumns.map(c => c.key)); }}
+            className="text-text-secondary hover:text-text-primary"
+          >
+            {allHidden ? 'Select all' : 'Deselect all'}
+          </button>
           <span className="text-text-muted">·</span>
-          <button type="button" onClick={() => { onOrderChange([]); }} className="text-text-secondary hover:text-text-primary">Reset</button>
+          <button type="button" onClick={() => { onOrderChange([]); onHiddenChange([]); }} className="text-text-secondary hover:text-text-primary">Reset</button>
         </span>
       </div>
       <div className="rounded border border-border max-h-48 overflow-y-auto">
