@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { BubbleChart } from '../components/bubble-chart.js';
+import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { asDollars } from '@costgoblin/core/browser';
 import type { TrendResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
@@ -42,6 +43,8 @@ export function BubbleWidget({
     () => combinedRows(query.status === 'success' ? query.data : null),
     [query],
   );
+
+  if (query.status === 'loading') return <CoinRainLoader height={260} count={5} />;
 
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4">
