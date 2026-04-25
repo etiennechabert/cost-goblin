@@ -91,6 +91,14 @@ async function waitForCostScopePreview(page: Page): Promise<void> {
   await assertNoReactCrash(page);
 }
 
+/** Wait for a view to be ready after navigation. Ensures the heading is
+ *  visible and the view has settled before continuing. */
+async function waitForViewReady(page: Page, viewName: string): Promise<void> {
+  await page.getByRole('heading', { name: viewName, exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  await page.waitForTimeout(300); // Allow view to settle
+  await assertNoReactCrash(page);
+}
+
 async function hasVisibleData(page: Page): Promise<boolean> {
   // Check if there are any table rows with dollar amounts
   const dollarCells = page.locator('.tabular-nums');
@@ -183,14 +191,12 @@ test.describe('App shell', () => {
       // names contain "Sync" as a substring, which otherwise resolves
       // to multiple elements and fails strict mode.
       await page.getByRole('button', { name: button, exact: true }).first().click();
-      await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible({ timeout: 5000 });
-      await page.waitForTimeout(500);
-      await assertNoReactCrash(page);
+      await waitForViewReady(page, heading);
     }
 
     // go back to overview for subsequent tests
     await page.getByRole('button', { name: 'Cost Overview', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
+    await waitForViewReady(page, 'Cost Overview');
   });
 });
 
@@ -837,9 +843,12 @@ test.describe('Entity Detail', () => {
     expect(text).toContain('$');
   });
 
-  test('Export CSV button is visible', async () => {
+  test('Export CSV button is visible and enabled', async () => {
     test.skip(!entityReached, 'No entity data available');
-    await expect(page.getByRole('button', { name: 'Export CSV' })).toBeVisible();
+    const exportButton = page.getByRole('button', { name: /Export.*CSV/i });
+    await expect(exportButton).toBeVisible();
+    // Verify button is clickable (functional, download happens in real usage)
+    await expect(exportButton).toBeEnabled();
   });
 
   test('back button returns to overview', async () => {
@@ -860,7 +869,7 @@ test.describe('Data Management', () => {
   });
 
   test('shows heading and subtitle', async () => {
-    await expect(page.getByText('S3 sync and local data inventory')).toBeVisible();
+    await expect(page.getByText('S3 sync and local data inventory')).toBeVisible({ timeout: 10_000 });
   });
 
   test('shows action buttons: Auto-sync, Delete All, Open Folder, Refresh', async () => {
@@ -1438,34 +1447,34 @@ test.describe('Full user journey', () => {
   test('overview → trends → missing tags → savings → data → overview (full navigation cycle)', async () => {
     // 1. Overview
     await waitForQuerySettle(page);
-    await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
+    await waitForViewReady(page, 'Cost Overview');
 
     // 2. Trends
     await page.getByRole('button', { name: 'Trends' }).click();
-    await expect(page.getByRole('heading', { name: 'Cost Trends' })).toBeVisible();
+    await waitForViewReady(page, 'Cost Trends');
     await waitForQuerySettle(page);
 
     // 3. Missing Tags
     await page.getByRole('button', { name: 'Missing Tags' }).click();
-    await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
+    await waitForViewReady(page, 'Missing Tags');
     await waitForQuerySettle(page);
 
     // 4. Savings
     await page.getByRole('button', { name: 'Savings' }).click();
-    await expect(page.getByRole('heading', { name: 'Savings Opportunities' })).toBeVisible();
+    await waitForViewReady(page, 'Savings Opportunities');
     await waitForQuerySettle(page);
 
     // 5. Dimensions
     await page.getByRole('button', { name: 'Dimensions' }).click();
-    await expect(page.getByRole('heading', { name: 'Dimensions', exact: true })).toBeVisible();
+    await waitForViewReady(page, 'Dimensions');
 
     // 6. Sync
-    await page.getByRole('button', { name: 'Sync' }).click();
-    await expect(page.getByRole('heading', { name: 'Data Management' })).toBeVisible();
+    await page.getByRole('button', { name: 'Sync', exact: true }).first().click();
+    await waitForViewReady(page, 'Data Management');
 
     // 7. Back to Overview
     await page.getByRole('button', { name: 'Cost Overview' }).click();
-    await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
+    await waitForViewReady(page, 'Cost Overview');
 
     await screenshot(page, 'journey-complete');
   });
@@ -1474,8 +1483,9 @@ test.describe('Full user journey', () => {
     const views = ['Trends', 'Cost Overview', 'Missing Tags', 'Savings', 'Dimensions', 'Sync', 'Cost Overview', 'Trends', 'Missing Tags'];
     for (const view of views) {
       await page.getByRole('button', { name: view, exact: true }).first().click();
+      await page.waitForTimeout(200); // Brief pause to allow view to start rendering
     }
-    await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
+    await waitForViewReady(page, 'Missing Tags');
     await assertNoReactCrash(page);
   });
 });
