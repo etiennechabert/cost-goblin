@@ -705,10 +705,14 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
       {state.tagName.length > 0 && (
         <AliasSuggestions
           dimensionId={state.tagName}
-          onAccepted={() => {
-            // Suggestion accepted — the config has been updated.
-            // The user can close and reopen the editor to see the changes,
-            // or we could reload the state here. For now, keep it simple.
+          onAccepted={(canonical, aliases) => {
+            setState(s => {
+              const current = textToAliases(s.aliases) ?? {};
+              const existing: readonly string[] = current[canonical] ?? [];
+              const merged = [...new Set([...existing, ...aliases])];
+              const updated = { ...current, [canonical]: merged };
+              return { ...s, aliases: aliasesToText(updated) };
+            });
           }}
         />
       )}
