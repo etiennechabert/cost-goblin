@@ -6,9 +6,14 @@ import { StackedBarChart } from '../components/stacked-bar-chart.js';
 import type { BarDay } from '../components/stacked-bar-chart.js';
 import type { HistogramTab } from '../components/stacked-bar-chart.js';
 import { useCostFocus } from '../hooks/use-cost-focus.js';
-import type { DailyCostsResult } from '@costgoblin/core/browser';
+import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { filtersKey, mergeFilters } from './widget.js';
+import { filtersKey, getDimensionFallback, mergeFilters } from './widget.js';
+
+interface DailyQueryResult {
+  readonly result: DailyCostsResult;
+  readonly groupBy: DimensionId;
+}
 
 function getISOWeekStart(dateStr: string): string {
   const d = new Date(dateStr);
@@ -61,15 +66,23 @@ export function StackedBarWidget({
 
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
-  const query = useQuery(
-    () => api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity }),
+  const query = useQuery<DailyQueryResult>(
+    async () => {
+      const primary = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
+      const fallbackDim = getDimensionFallback(specGroupBy);
+      if (primary.groups.length <= 1 && fallbackDim !== undefined) {
+        const fallback = await api.queryDailyCosts({ groupBy: fallbackDim, dateRange, filters, granularity });
+        return { result: fallback, groupBy: fallbackDim };
+      }
+      return { result: primary, groupBy: specGroupBy };
+    },
     [specGroupBy, dateRange.start, dateRange.end, fk, granularity, api],
   );
 
   const periodDays = daysBetween(dateRange.start, dateRange.end);
   const useWeekly = periodDays > 90;
   const barDays = useMemo(
-    () => dailyToBarDays(query.status === 'success' ? query.data : null, useWeekly),
+    () => dailyToBarDays(query.status === 'success' ? query.data.result : null, useWeekly),
     [query, useWeekly],
   );
   const loading = query.status === 'loading';

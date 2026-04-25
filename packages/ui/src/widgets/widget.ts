@@ -11,7 +11,17 @@ import type {
   WidgetSize,
   WidgetSpec,
 } from '@costgoblin/core/browser';
+import { asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
+
+const DIMENSION_FALLBACKS: ReadonlyMap<DimensionId, DimensionId> = new Map([
+  [asDimensionId('service'), asDimensionId('service_family')],
+  [asDimensionId('service_family'), asDimensionId('service')],
+]);
+
+export function getDimensionFallback(dimId: DimensionId): DimensionId | undefined {
+  return DIMENSION_FALLBACKS.get(dimId);
+}
 
 /** Props every widget renderer receives. The host view owns the global
  *  FilterBar/DateRangePicker; each widget owns its own data fetching and
