@@ -27,7 +27,7 @@ const WIDGET_SIZES: readonly WidgetSize[] = ['small', 'medium', 'large', 'full']
 const SUMMARY_METRICS: readonly SummaryMetric[] = ['total', 'delta', 'topEntity', 'entityCount'];
 
 const TABLE_COLUMNS: readonly TableColumn[] = [
-  'entity', 'service', 'serviceFamily', 'cost', 'percentage',
+  'entity', 'cost', 'percentage', 'topService', 'previousCost', 'delta', 'percentChange',
 ];
 
 function isWidgetType(s: string): s is WidgetType {

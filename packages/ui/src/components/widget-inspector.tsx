@@ -1,4 +1,4 @@
-import type { Dimension, WidgetSize, WidgetSpec, WidgetType } from '@costgoblin/core/browser';
+import type { Dimension, TableColumn, WidgetSize, WidgetSpec, WidgetType } from '@costgoblin/core/browser';
 import { asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
 import { WIDGET_CATALOG } from '../widgets/registry.js';
@@ -11,6 +11,16 @@ interface WidgetInspectorProps {
   readonly onMoveLeft?: (() => void) | undefined;
   readonly onMoveRight?: (() => void) | undefined;
 }
+
+const ALL_TABLE_COLUMNS: readonly { value: TableColumn; label: string }[] = [
+  { value: 'entity', label: 'Entity' },
+  { value: 'cost', label: 'Cost' },
+  { value: 'percentage', label: '%' },
+  { value: 'topService', label: 'Top Service' },
+  { value: 'previousCost', label: 'Previous Cost' },
+  { value: 'delta', label: 'Delta' },
+  { value: 'percentChange', label: '% Change' },
+];
 
 const SIZES: readonly { value: WidgetSize; label: string }[] = [
   { value: 'small', label: 'S' },
@@ -68,7 +78,7 @@ function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: str
     case 'heatmap':
       return { ...base, type, groupBy: existingGroupBy, topN: 'topN' in prev && prev.topN !== undefined ? prev.topN : 10 };
     case 'table':
-      return { ...base, type, groupBy: existingGroupBy, columns: ['entity', 'service', 'cost', 'percentage'], topN: 20 };
+      return { ...base, type, groupBy: existingGroupBy, columns: ['entity', 'cost', 'delta', 'percentChange'], topN: 20 };
   }
 }
 
@@ -110,6 +120,15 @@ export function WidgetInspector({
     if (widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap' || widget.type === 'table') {
       onChange({ ...widget, topN: value });
     }
+  }
+
+  function toggleColumn(col: TableColumn) {
+    if (widget.type !== 'table') return;
+    const current = widget.columns ?? ['entity', 'cost', 'delta', 'percentChange'];
+    const next = current.includes(col)
+      ? current.filter(c => c !== col)
+      : [...current, col];
+    onChange({ ...widget, columns: next });
   }
 
   return (
@@ -221,6 +240,32 @@ export function WidgetInspector({
             className="w-20 bg-transparent border border-border rounded px-2 py-1 text-text-primary"
           />
         </label>
+      )}
+
+      {widget.type === 'table' && (
+        <div className="flex flex-col gap-1">
+          <span className="text-text-muted">Columns</span>
+          <div className="flex flex-wrap gap-1">
+            {ALL_TABLE_COLUMNS.map(col => {
+              const active = (widget.columns ?? ['entity', 'cost', 'delta', 'percentChange']).includes(col.value);
+              return (
+                <button
+                  key={col.value}
+                  type="button"
+                  onClick={() => { toggleColumn(col.value); }}
+                  className={[
+                    'px-2 py-0.5 rounded border text-[11px] transition-colors',
+                    active
+                      ? 'border-accent/50 bg-accent/10 text-text-primary'
+                      : 'border-border text-text-muted hover:text-text-secondary',
+                  ].join(' ')}
+                >
+                  {col.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
     </div>
   );

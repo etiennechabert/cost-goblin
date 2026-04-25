@@ -14,10 +14,12 @@ export type SummaryMetric = 'total' | 'delta' | 'topEntity' | 'entityCount';
 
 export type TableColumn =
   | 'entity'
-  | 'service'
-  | 'serviceFamily'
   | 'cost'
-  | 'percentage';
+  | 'percentage'
+  | 'topService'
+  | 'previousCost'
+  | 'delta'
+  | 'percentChange';
 
 interface WidgetBase {
   readonly id: WidgetId;

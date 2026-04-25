@@ -30,7 +30,7 @@ export const OVERVIEW_SEED_VIEW: ViewSpec = {
           type: 'table',
           size: 'full',
           groupBy: asDimensionId('account'),
-          columns: ['entity', 'service', 'cost', 'percentage'],
+          columns: ['entity', 'cost', 'delta', 'percentChange'],
           topN: 20,
         },
       ],

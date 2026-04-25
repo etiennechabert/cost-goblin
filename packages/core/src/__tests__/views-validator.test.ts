@@ -26,7 +26,7 @@ describe('validateViews', () => {
                   type: 'table',
                   size: 'full',
                   groupBy: 'account',
-                  columns: ['entity', 'service', 'cost', 'percentage'],
+                  columns: ['entity', 'cost', 'delta', 'percentChange'],
                   topN: 20,
                 },
               ],
