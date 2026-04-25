@@ -1,4 +1,4 @@
-import type { Dimension, TableColumn, WidgetSize, WidgetSpec, WidgetType } from '@costgoblin/core/browser';
+import type { Dimension, WidgetSize, WidgetSpec, WidgetType } from '@costgoblin/core/browser';
 import { asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
 import { WIDGET_CATALOG } from '../widgets/registry.js';
@@ -11,16 +11,6 @@ interface WidgetInspectorProps {
   readonly onMoveLeft?: (() => void) | undefined;
   readonly onMoveRight?: (() => void) | undefined;
 }
-
-const ALL_TABLE_COLUMNS: readonly { value: TableColumn; label: string }[] = [
-  { value: 'entity', label: 'Entity' },
-  { value: 'cost', label: 'Cost' },
-  { value: 'percentage', label: '%' },
-  { value: 'topService', label: 'Top Service' },
-  { value: 'previousCost', label: 'Previous Cost' },
-  { value: 'delta', label: 'Delta' },
-  { value: 'percentChange', label: '% Change' },
-];
 
 const SIZES: readonly { value: WidgetSize; label: string }[] = [
   { value: 'small', label: 'S' },
@@ -53,9 +43,8 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
       return {
         ...common,
         type: w.type,
-        groupBy: w.groupBy,
-        ...(w.topN !== undefined ? { topN: w.topN } : {}),
-        ...(w.columns !== undefined ? { columns: w.columns } : {}),
+        ...(w.hiddenColumns !== undefined ? { hiddenColumns: w.hiddenColumns } : {}),
+        ...(w.columnOrder !== undefined ? { columnOrder: w.columnOrder } : {}),
       };
   }
 }
@@ -78,7 +67,7 @@ function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: str
     case 'heatmap':
       return { ...base, type, groupBy: existingGroupBy, topN: 'topN' in prev && prev.topN !== undefined ? prev.topN : 10 };
     case 'table':
-      return { ...base, type, groupBy: existingGroupBy, columns: ['entity', 'cost', 'delta', 'percentChange'], topN: 20 };
+      return { ...base, type };
   }
 }
 
@@ -117,18 +106,9 @@ export function WidgetInspector({
   }
 
   function setTopN(value: number) {
-    if (widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap' || widget.type === 'table') {
+    if (widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap') {
       onChange({ ...widget, topN: value });
     }
-  }
-
-  function toggleColumn(col: TableColumn) {
-    if (widget.type !== 'table') return;
-    const current = widget.columns ?? ['entity', 'cost', 'delta', 'percentChange'];
-    const next = current.includes(col)
-      ? current.filter(c => c !== col)
-      : [...current, col];
-    onChange({ ...widget, columns: next });
   }
 
   return (
@@ -225,7 +205,7 @@ export function WidgetInspector({
         />
       </label>
 
-      {(widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap' || widget.type === 'table') && (
+      {(widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap') && (
         <label className="flex items-center gap-2">
           <span className="text-text-muted shrink-0 w-14">Top N</span>
           <input
@@ -242,31 +222,6 @@ export function WidgetInspector({
         </label>
       )}
 
-      {widget.type === 'table' && (
-        <div className="flex flex-col gap-1">
-          <span className="text-text-muted">Columns</span>
-          <div className="flex flex-wrap gap-1">
-            {ALL_TABLE_COLUMNS.map(col => {
-              const active = (widget.columns ?? ['entity', 'cost', 'delta', 'percentChange']).includes(col.value);
-              return (
-                <button
-                  key={col.value}
-                  type="button"
-                  onClick={() => { toggleColumn(col.value); }}
-                  className={[
-                    'px-2 py-0.5 rounded border text-[11px] transition-colors',
-                    active
-                      ? 'border-accent/50 bg-accent/10 text-text-primary'
-                      : 'border-border text-text-muted hover:text-text-secondary',
-                  ].join(' ')}
-                >
-                  {col.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

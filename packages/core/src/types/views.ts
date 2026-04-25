@@ -12,15 +12,6 @@ export type WidgetFilterOverlay = Readonly<Partial<Record<DimensionId, TagValue>
 
 export type SummaryMetric = 'total' | 'delta' | 'topEntity' | 'entityCount';
 
-export type TableColumn =
-  | 'entity'
-  | 'cost'
-  | 'percentage'
-  | 'topService'
-  | 'previousCost'
-  | 'delta'
-  | 'percentChange';
-
 interface WidgetBase {
   readonly id: WidgetId;
   readonly title?: string | undefined;
@@ -67,9 +58,8 @@ export type WidgetSpec =
     })
   | (WidgetBase & {
       readonly type: 'table';
-      readonly groupBy: DimensionId;
-      readonly columns?: readonly TableColumn[] | undefined;
-      readonly topN?: number | undefined;
+      readonly hiddenColumns?: readonly string[] | undefined;
+      readonly columnOrder?: readonly string[] | undefined;
     });
 
 export type WidgetType = WidgetSpec['type'];

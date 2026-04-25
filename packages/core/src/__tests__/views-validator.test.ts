@@ -25,9 +25,7 @@ describe('validateViews', () => {
                   id: 'w4',
                   type: 'table',
                   size: 'full',
-                  groupBy: 'account',
-                  columns: ['entity', 'cost', 'delta', 'percentChange'],
-                  topN: 20,
+                  hiddenColumns: ['usage_hour', 'list_cost'],
                 },
               ],
             },
@@ -113,11 +111,11 @@ describe('validateViews', () => {
     expect(() => validateViews({})).toThrow(ConfigValidationError);
   });
 
-  it('rejects an invalid table column', () => {
+  it('rejects non-string entries in table hiddenColumns', () => {
     expect(() => validateViews({
       views: [{
         id: 'v', name: 'V', rows: [{ widgets: [
-          { id: 'w', type: 'table', size: 'full', groupBy: 'account', columns: ['entity', 'gibberish'] },
+          { id: 'w', type: 'table', size: 'full', hiddenColumns: [42] },
         ] }],
       }],
     })).toThrow(ConfigValidationError);
