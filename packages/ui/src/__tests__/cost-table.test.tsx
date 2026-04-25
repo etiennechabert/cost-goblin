@@ -76,11 +76,16 @@ describe('CostTable', () => {
     expect(infraBtn.className).toContain('text-warning');
   });
 
-  it('calls onServiceClick when service header clicked', async () => {
+  it('calls onServiceClick when service cell clicked', async () => {
     const onServiceClick = vi.fn();
     const user = userEvent.setup();
-    render(<CostTable rows={rows} topServices={topServices} onEntityClick={vi.fn()} onServiceClick={onServiceClick} />);
-    await user.click(screen.getByText('Amazon EC2'));
+    const { container } = render(<CostTable rows={rows} topServices={topServices} onEntityClick={vi.fn()} onServiceClick={onServiceClick} />);
+    // Find a service cell (not header) - get the first service column cell
+    const serviceCells = container.querySelectorAll('tbody tr:first-child td');
+    // Skip entity column (0) and total column (1), click first service column (2)
+    const serviceCell = serviceCells[2];
+    expect(serviceCell).toBeDefined();
+    await user.click(serviceCell as HTMLElement);
     expect(onServiceClick).toHaveBeenCalledWith('Amazon EC2');
   });
 });

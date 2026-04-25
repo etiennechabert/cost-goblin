@@ -279,7 +279,7 @@ export function DataTable<TData>({
                 const meta = cell.column.columnDef.meta as
                   | { align?: 'left' | 'right' | 'center'; mono?: boolean; truncate?: boolean; dimId?: string | null }
                   | undefined;
-                const isClickable = onCellClick !== undefined && meta?.dimId !== null && meta?.dimId !== undefined;
+                const isClickable = onCellClick !== undefined;
                 const isPinned = cell.column.getIsPinned();
 
                 return (
