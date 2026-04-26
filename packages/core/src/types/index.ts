@@ -105,4 +105,7 @@ export type {
   ExplorerFilterValue,
   ExplorerFilterValuesParams,
   ExplorerPreferences,
+  AggregatedTableParams,
+  AggregatedTableRow,
+  AggregatedTableResult,
 } from './explorer.js';

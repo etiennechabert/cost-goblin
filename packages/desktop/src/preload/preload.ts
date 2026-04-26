@@ -37,6 +37,8 @@ import type {
   ExplorerPreferences,
   ExplorerRowsParams,
   ExplorerRowsResult,
+  AggregatedTableParams,
+  AggregatedTableResult,
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
@@ -230,6 +232,9 @@ const api: CostApi = {
   },
   queryExplorerRows(params: ExplorerRowsParams): Promise<ExplorerRowsResult> {
     return invoke<ExplorerRowsResult>('explorer:query-rows', params);
+  },
+  queryAggregatedTable(params: AggregatedTableParams): Promise<AggregatedTableResult> {
+    return invoke<AggregatedTableResult>('explorer:query-aggregated-table', params);
   },
   getExplorerFilterValues(params: ExplorerFilterValuesParams): Promise<ExplorerFilterValue[]> {
     return invoke<ExplorerFilterValue[]>('explorer:filter-values', params);

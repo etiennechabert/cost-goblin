@@ -9,6 +9,8 @@ import type {
   ExplorerPreferences,
   ExplorerRowsParams,
   ExplorerRowsResult,
+  AggregatedTableParams,
+  AggregatedTableResult,
 } from './explorer.js';
 import type {
   CostQueryParams,
@@ -138,6 +140,7 @@ export interface CostApi {
    *  fires when sort / filters / range / scope changes — the overview
    *  query handles the histogram independently. */
   queryExplorerRows(params: ExplorerRowsParams): Promise<ExplorerRowsResult>;
+  queryAggregatedTable(params: AggregatedTableParams): Promise<AggregatedTableResult>;
   /** Facet values for a single dim under the explorer's other filters.
    *  Rolls the current dim out of the filter set so the dropdown shows
    *  every value remaining under the other filters. */

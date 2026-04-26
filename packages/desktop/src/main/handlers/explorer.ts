@@ -28,6 +28,9 @@ import type {
   ExplorerDailyRow,
   ExplorerTagColumn,
   DimensionsConfig,
+  AggregatedTableParams,
+  AggregatedTableRow,
+  AggregatedTableResult,
 } from '@costgoblin/core';
 import { type AppContext, prefsPath } from './context.js';
 import { buildAccountReverseMap, toNum, toStr } from './query-utils.js';
@@ -405,6 +408,92 @@ export function registerExplorerHandlers(app: AppContext): void {
     }
 
     return { sampleRows, tagColumns: qc.tagColumns };
+  });
+
+  ipcMain.handle('explorer:query-aggregated-table', async (_event, payload: unknown): Promise<AggregatedTableResult> => {
+    const params = payload as AggregatedTableParams;
+    const qc = await prepareQueryContext(app, params);
+    const rowLimit = clampRowLimit(params.rowLimit);
+
+    if (qc.empty) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
+
+    const groupByColumns = params.groupByColumns.filter(
+      col => SORTABLE_SCALAR_COLUMNS.has(col) || qc.tagIdSet.has(col),
+    );
+
+    if (groupByColumns.length === 0) {
+      const sql = `
+        SELECT
+          CAST(SUM(cost) AS DOUBLE) AS cost,
+          CAST(SUM(list_cost) AS DOUBLE) AS list_cost,
+          CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
+          CAST(COUNT(*) AS DOUBLE) AS row_count
+        FROM ${qc.source}
+        ${qc.whereStr}
+      `.trim();
+      const rows = await runQuery(sql);
+      const r = rows[0];
+      if (r === undefined) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
+      return {
+        rows: [{ values: {}, cost: toNum(r['cost']), listCost: toNum(r['list_cost']), usageAmount: toNum(r['usage_amount']), rowCount: toNum(r['row_count']) }],
+        totalRows: 1,
+        tagColumns: qc.tagColumns,
+      };
+    }
+
+    const selectCols = groupByColumns.map(col => {
+      if (col === 'usage_date') return `usage_date::VARCHAR AS usage_date`;
+      return col;
+    });
+    const orderBy = (() => {
+      if (params.sort === undefined) return 'SUM(cost) DESC';
+      const dir = params.sort.direction === 'asc' ? 'ASC' : 'DESC';
+      const col = params.sort.column;
+      if (col === 'cost') return `SUM(cost) ${dir}`;
+      if (col === 'list_cost') return `SUM(list_cost) ${dir}`;
+      if (col === 'usage_amount') return `SUM(usage_amount) ${dir}`;
+      if (col === 'row_count') return `COUNT(*) ${dir}`;
+      if (groupByColumns.includes(col)) return `${col} ${dir}`;
+      return 'SUM(cost) DESC';
+    })();
+
+    const countSql = `
+      SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
+        SELECT 1 FROM ${qc.source} ${qc.whereStr}
+        GROUP BY ${groupByColumns.join(', ')}
+      ) AS _cnt
+    `.trim();
+    const dataSql = `
+      SELECT
+        ${selectCols.join(', ')},
+        CAST(SUM(cost) AS DOUBLE) AS cost,
+        CAST(SUM(list_cost) AS DOUBLE) AS list_cost,
+        CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
+        CAST(COUNT(*) AS DOUBLE) AS row_count
+      FROM ${qc.source}
+      ${qc.whereStr}
+      GROUP BY ${groupByColumns.join(', ')}
+      ORDER BY ${orderBy}
+      LIMIT ${String(rowLimit)}
+    `.trim();
+
+    const [countResult, dataResult] = await Promise.all([runQuery(countSql), runQuery(dataSql)]);
+    const totalRows = countResult[0] !== undefined ? toNum(countResult[0]['n']) : 0;
+    const resultRows: AggregatedTableRow[] = dataResult.map(r => {
+      const values: Record<string, string> = {};
+      for (const col of groupByColumns) {
+        values[col] = toStr(r[col]);
+      }
+      return {
+        values,
+        cost: toNum(r['cost']),
+        listCost: toNum(r['list_cost']),
+        usageAmount: toNum(r['usage_amount']),
+        rowCount: toNum(r['row_count']),
+      };
+    });
+
+    return { rows: resultRows, totalRows, tagColumns: qc.tagColumns };
   });
 
   ipcMain.handle('explorer:filter-values', async (_event, payload: unknown): Promise<ExplorerFilterValue[]> => {

@@ -45,11 +45,6 @@ export function TableWidget({
     [fk, dateRange.start, dateRange.end, granularity, api],
   );
 
-  const rowsQuery = useQuery(
-    () => api.queryExplorerRows({ filters: explorerFilters, dateRange, granularity, ...(sort !== undefined ? { sort } : {}), rowLimit: ROW_LIMIT }),
-    [fk, dateRange.start, dateRange.end, granularity, sort?.column, sort?.direction, api],
-  );
-
   const tagColumns = overviewQuery.status === 'success' ? overviewQuery.data.tagColumns : [];
   const totalRows = overviewQuery.status === 'success' ? overviewQuery.data.totalRows : 0;
 
@@ -60,10 +55,28 @@ export function TableWidget({
 
   const enabledSet = useMemo(() => new Set(enabledColumns), [enabledColumns]);
 
-  const orderedColumns = useMemo(() => {
+  const groupByColumns = useMemo(
+    () => allColumns.filter(c => c.dimId !== null && enabledSet.has(c.key)).map(c => c.key),
+    [allColumns, enabledSet],
+  );
+
+  const groupByKey = groupByColumns.join(',');
+
+  const dataQuery = useQuery(
+    () => api.queryAggregatedTable({
+      filters: explorerFilters,
+      dateRange,
+      granularity,
+      groupByColumns,
+      ...(sort !== undefined ? { sort } : {}),
+      rowLimit: ROW_LIMIT,
+    }),
+    [fk, dateRange.start, dateRange.end, granularity, groupByKey, sort?.column, sort?.direction, api],
+  );
+
+  const visibleColumns = useMemo(() => {
     const enabled = allColumns.filter(c => enabledSet.has(c.key));
-    const order = [...enabledColumns];
-    return applyColumnOrder(enabled, order);
+    return applyColumnOrder(enabled, [...enabledColumns]);
   }, [allColumns, enabledSet, enabledColumns]);
 
   const hiddenColumns = useMemo(
@@ -93,12 +106,13 @@ export function TableWidget({
   }, [allColumns]);
 
   const handleOrderChange = useCallback(() => {
-    // no-op: column order is controlled by enabledColumns in the views editor
+    // no-op: column order controlled by enabledColumns in views editor
   }, []);
 
-  const rows = rowsQuery.status === 'success' ? rowsQuery.data.sampleRows : [];
-  const loading = rowsQuery.status === 'loading' || overviewQuery.status === 'loading';
-  const error = rowsQuery.status === 'error' ? rowsQuery.error.message : null;
+  const rows = dataQuery.status === 'success' ? dataQuery.data.rows : [];
+  const aggregatedTotal = dataQuery.status === 'success' ? dataQuery.data.totalRows : totalRows;
+  const loading = dataQuery.status === 'loading' || overviewQuery.status === 'loading';
+  const error = dataQuery.status === 'error' ? dataQuery.error.message : null;
 
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden p-4">
@@ -106,14 +120,14 @@ export function TableWidget({
         <h3 className="text-sm font-medium text-text-secondary mb-3">{spec.title}</h3>
       )}
       <DataTable
-        columns={orderedColumns}
+        columns={visibleColumns}
         allColumns={allColumns}
         hiddenColumns={hiddenColumns}
         autoHiddenKeys={emptySet}
         onHiddenColumnsChange={handleHiddenChange}
         onColumnOrderChange={handleOrderChange}
         rows={rows}
-        totalRows={totalRows}
+        totalRows={aggregatedTotal}
         sort={sort}
         onSort={handleSort}
         onFilterAdd={handleFilterAdd}

@@ -105,6 +105,26 @@ export interface ExplorerRowsResult {
   readonly tagColumns: readonly ExplorerTagColumn[];
 }
 
+export interface AggregatedTableParams extends ExplorerBaseParams {
+  readonly groupByColumns: readonly string[];
+  readonly sort?: ExplorerSort;
+  readonly rowLimit: number;
+}
+
+export interface AggregatedTableRow {
+  readonly values: Readonly<Record<string, string>>;
+  readonly cost: number;
+  readonly listCost: number;
+  readonly usageAmount: number;
+  readonly rowCount: number;
+}
+
+export interface AggregatedTableResult {
+  readonly rows: readonly AggregatedTableRow[];
+  readonly totalRows: number;
+  readonly tagColumns: readonly ExplorerTagColumn[];
+}
+
 export interface ExplorerFilterValue {
   readonly value: string;
   readonly label: string;
