@@ -43,17 +43,21 @@ export function PieWidget({
   const baseFilters = mergeFilters(globalFilters, spec.filters);
 
   const fk = filtersKey(baseFilters);
+  const fallbackDim = getDimensionFallback(specGroupBy);
   const query = useQuery<PieQueryResult>(
     async () => {
-      const primary = await api.queryCosts({ groupBy: specGroupBy, dateRange, filters: baseFilters, granularity });
-      const fallbackDim = getDimensionFallback(specGroupBy);
-      if (primary.rows.length <= 1 && fallbackDim !== undefined) {
-        const fallback = await api.queryCosts({ groupBy: fallbackDim, dateRange, filters: baseFilters, granularity });
-        return { result: fallback, groupBy: fallbackDim };
+      if (fallbackDim === undefined) {
+        const result = await api.queryCosts({ groupBy: specGroupBy, dateRange, filters: baseFilters, granularity });
+        return { result, groupBy: specGroupBy };
       }
-      return { result: primary, groupBy: specGroupBy };
+      const [primary, fallback] = await Promise.all([
+        api.queryCosts({ groupBy: specGroupBy, dateRange, filters: baseFilters, granularity }),
+        api.queryCosts({ groupBy: fallbackDim, dateRange, filters: baseFilters, granularity }),
+      ]);
+      if (primary.rows.length > 1) return { result: primary, groupBy: specGroupBy };
+      return { result: fallback, groupBy: fallbackDim };
     },
-    [specGroupBy, dateRange.start, dateRange.end, fk, granularity, api],
+    [specGroupBy, fallbackDim, dateRange.start, dateRange.end, fk, granularity, api],
   );
 
   const activeGroupBy = query.status === 'success' ? query.data.groupBy : specGroupBy;

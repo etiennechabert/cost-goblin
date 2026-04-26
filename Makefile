@@ -1,8 +1,12 @@
-.PHONY: dev reset test e2e perf lint help
+.PHONY: dev prod reset test e2e perf lint help
 .DEFAULT_GOAL := help
 
 dev: ## Launch Electron in dev mode
 	cd packages/desktop && npm run dev
+
+prod: ## Build and launch Electron in production mode
+	npm run build --workspace=packages/desktop
+	npx electron packages/desktop/out/main/main.js
 
 reset: ## Wipe app data and config — next launch shows wizard
 	rm -rf "$(HOME)/Library/Application Support/@costgoblin"
