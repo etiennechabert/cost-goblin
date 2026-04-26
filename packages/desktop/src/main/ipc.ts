@@ -13,7 +13,7 @@ import { registerCostScopeHandlers } from './handlers/cost-scope.js';
 import { registerExplorerHandlers } from './handlers/explorer.js';
 import { registerDebugHandlers } from './handlers/debug.js';
 
-export type { IpcContext };
+export type { IpcContext } from './handlers/context.js';
 
 export function registerIpcHandlers(ctx: IpcContext): void {
   const app = createAppContext(ctx);

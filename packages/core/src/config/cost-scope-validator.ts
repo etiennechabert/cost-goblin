@@ -91,8 +91,8 @@ export function validateCostScope(raw: unknown): CostScopeConfig {
   const rules = raw['rules'].map((r, i) => validateRule(r, `costScope.rules[${String(i)}]`));
   return {
     costMetric: raw['costMetric'],
-    ...(costPerspective !== undefined ? { costPerspective } : {}),
-    ...(lagDays !== undefined ? { lagDays } : {}),
+    ...(costPerspective === undefined ? {} : { costPerspective }),
+    ...(lagDays === undefined ? {} : { lagDays }),
     rules,
   };
 }

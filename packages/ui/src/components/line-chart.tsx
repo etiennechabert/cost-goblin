@@ -59,7 +59,7 @@ function LineSvg({ series, visible, width, height }: LineSvgProps) {
   }, [series]);
 
   const minDate = sortedDates[0];
-  const maxDate = sortedDates[sortedDates.length - 1];
+  const maxDate = sortedDates.at(-1);
 
   const xScale = useMemo(() => {
     const start = minDate !== undefined ? new Date(minDate) : new Date();

@@ -53,7 +53,6 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
         const err = new Error(msg.message);
         fatalError = err;
         reject(err);
-        return;
       }
     };
     worker.on('message', onMessage);

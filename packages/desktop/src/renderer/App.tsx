@@ -209,7 +209,7 @@ function AppShell(): React.JSX.Element {
         } else {
           // Only clear errors that came from auto-sync itself — don't
           // stomp a credentials error raised by the inventory fetch.
-          setSyncError(prev => (prev !== null && prev.includes('AWS credentials') ? prev : null));
+          setSyncError(prev => (prev?.includes('AWS credentials') ? prev : null));
         }
       } catch { /* transient */ }
     }
@@ -363,7 +363,7 @@ function AppShell(): React.JSX.Element {
                       : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
                     showError ? 'ring-1 ring-negative/60' : '',
                   ].join(' ')}
-                  title={syncError !== null ? `Sync error — ${syncError}` : undefined}
+                  title={syncError === null ? undefined : `Sync error — ${syncError}`}
                 >
                   {showError && (
                     <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-negative animate-pulse" aria-label="sync error" />

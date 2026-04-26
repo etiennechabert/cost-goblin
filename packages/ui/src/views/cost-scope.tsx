@@ -204,7 +204,7 @@ function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDel
 
   function addCondition() {
     const firstDim = dimensions.find(d => d.enabled !== false);
-    const dimId = firstDim !== undefined ? getDimensionId(firstDim) : 'service';
+    const dimId = firstDim === undefined ? 'service' : getDimensionId(firstDim);
     onUpdate({
       ...rule,
       conditions: [...rule.conditions, { dimensionId: asDimensionId(dimId), values: [] }],
@@ -673,8 +673,8 @@ export function CostScopeView(): React.JSX.Element {
     // writing `undefined`, so enumerate retained fields.
     const next: CostScopeConfig = {
       costMetric: draft.costMetric,
-      ...(draft.costPerspective !== undefined ? { costPerspective: draft.costPerspective } : {}),
-      ...(clamped !== DEFAULT_LAG_DAYS ? { lagDays: clamped } : {}),
+      ...(draft.costPerspective === undefined ? {} : { costPerspective: draft.costPerspective }),
+      ...(clamped === DEFAULT_LAG_DAYS ? {} : { lagDays: clamped }),
       rules: draft.rules,
     };
     updateDraft(next);
@@ -692,7 +692,7 @@ export function CostScopeView(): React.JSX.Element {
 
   function addRule() {
     const firstDim = dimensions.find(d => d.enabled !== false);
-    const dimId = firstDim !== undefined ? getDimensionId(firstDim) : 'service';
+    const dimId = firstDim === undefined ? 'service' : getDimensionId(firstDim);
     // New rules start disabled: they have empty `values` by default, which
     // fails validation — shipping them enabled by default would instantly
     // block saves and blank the preview until the user fills the field in.
@@ -726,9 +726,9 @@ export function CostScopeView(): React.JSX.Element {
   }
 
   const enabledRules = draft.rules.filter(r => r.enabled);
-  const combinedText = preview.result !== null
-    ? formatExcluded(preview.result.combined.excludedCost, preview.result.combined.excludedRows)
-    : preview.loading ? 'loading…' : 'no data';
+  const combinedText = preview.result === null
+    ? (preview.loading ? 'loading…' : 'no data')
+    : formatExcluded(preview.result.combined.excludedCost, preview.result.combined.excludedRows);
 
   function getPreviewRow(ruleId: string): CostScopePreviewRow | undefined {
     return preview.result?.perRule.find(p => p.ruleId === ruleId);
@@ -1004,13 +1004,13 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules 
           <SummaryTile
             label="After scope"
             value={hasData ? formatDollars(result.scopedTotalCost) : placeholder}
-            hint={!hasData ? '' : hasEnabledRules ? `${excludedPct.toFixed(1)}% excluded` : 'No rules enabled'}
+            hint={hasData ? (hasEnabledRules ? `${excludedPct.toFixed(1)}% excluded` : 'No rules enabled') : ''}
             emphasis
           />
           <SummaryTile
             label="Excluded"
             value={hasData && hasEnabledRules ? combinedText : placeholder}
-            hint={!hasData ? '' : hasEnabledRules ? 'Union of enabled rules' : 'Toggle a rule'}
+            hint={hasData ? (hasEnabledRules ? 'Union of enabled rules' : 'Toggle a rule') : ''}
           />
         </div>
 

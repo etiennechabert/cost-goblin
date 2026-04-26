@@ -136,7 +136,7 @@ export async function getDataInventory(
     }));
 
   const oldestPeriod = localPeriodList.length > 0 ? localPeriodList[0] ?? null : null;
-  const newestPeriod = localPeriodList.length > 0 ? localPeriodList[localPeriodList.length - 1] ?? null : null;
+  const newestPeriod = localPeriodList.length > 0 ? localPeriodList.at(-1) ?? null : null;
 
   return {
     periods,

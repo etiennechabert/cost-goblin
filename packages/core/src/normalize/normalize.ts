@@ -10,17 +10,17 @@ export function applyNormalizationRule(value: string, rule: NormalizationRule): 
       return value.toUpperCase();
     case 'lowercase-kebab':
       return value
-        .replace(/([a-z])([A-Z])/g, '$1-$2')
-        .replace(/[_\s]+/g, '-')
+        .replaceAll(/([a-z])([A-Z])/g, '$1-$2')
+        .replaceAll(/[_\s]+/g, '-')
         .toLowerCase();
     case 'lowercase-underscore':
       return value
-        .replace(/([a-z])([A-Z])/g, '$1_$2')
-        .replace(/[-\s]+/g, '_')
+        .replaceAll(/([a-z])([A-Z])/g, '$1_$2')
+        .replaceAll(/[-\s]+/g, '_')
         .toLowerCase();
     case 'camelCase':
       return value
-        .replace(/[-_\s]+(.)/g, (_, c: string) => c.toUpperCase())
+        .replaceAll(/[-_\s]+(.)/g, (_, c: string) => c.toUpperCase())
         .replace(/^(.)/, (_, c: string) => c.toLowerCase());
   }
 }
@@ -115,10 +115,10 @@ export function applyStripPatterns(value: string, patterns: readonly string[] | 
   for (const p of patterns) {
     if (p.length === 0) continue;
     try {
-      result = result.replace(new RegExp(p, 'g'), '');
+      result = result.replaceAll(new RegExp(p, 'g'), '');
     } catch { /* invalid regex — skip silently so a typo doesn't blow up resolution */ }
   }
-  return result.replace(/\s+/g, ' ').trim();
+  return result.replaceAll(/\s+/g, ' ').trim();
 }
 
 export function normalizeAndResolve(value: string, dimension: TagDimension): TagValue {

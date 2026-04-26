@@ -15,16 +15,16 @@ function serializeLog(entries: DebugQueryLogEntry[]): string {
   return entries.map(e => {
     const labels: Record<string, string> = { queued: 'QUE', running: 'RUN', success: 'OK', error: 'ERR' };
     const status = labels[e.status] ?? e.status;
-    const duration = e.durationMs !== null ? formatDuration(e.durationMs) : '...';
-    const rows = e.rowCount !== null ? `${String(e.rowCount)} rows` : '';
+    const duration = e.durationMs === null ? '...' : formatDuration(e.durationMs);
+    const rows = e.rowCount === null ? '' : `${String(e.rowCount)} rows`;
     const header = `[${status}] ${formatTimestamp(e.startedAt)}  ${duration}  ${rows}`;
-    const error = e.error !== null ? `\nError: ${e.error}` : '';
+    const error = e.error === null ? '' : `\nError: ${e.error}`;
     return `${header}\n${e.sql}${error}`;
   }).join('\n\n---\n\n');
 }
 
 function sqlPreview(sql: string): string {
-  const oneLine = sql.replace(/\s+/g, ' ').trim();
+  const oneLine = sql.replaceAll(/\s+/g, ' ').trim();
   return oneLine.length > 100 ? `${oneLine.slice(0, 100)}...` : oneLine;
 }
 
@@ -67,7 +67,7 @@ function QueryRow({ entry }: { entry: DebugQueryLogEntry }): React.JSX.Element {
             {sqlPreview(entry.sql)}
           </span>
           <span className="text-xs text-text-muted shrink-0">
-            {entry.durationMs !== null ? formatDuration(entry.durationMs) : entry.status === 'queued' ? 'queued' : '...'}
+            {entry.durationMs === null ? (entry.status === 'queued' ? 'queued' : '...') : formatDuration(entry.durationMs)}
           </span>
         </div>
         <div className="flex items-center gap-3 mt-0.5 ml-4">
@@ -161,7 +161,7 @@ export function DebugPanel({ onClose }: { onClose: () => void }): React.JSX.Elem
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
               a.href = url;
-              a.download = `query-log-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`;
+              a.download = `query-log-${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}.txt`;
               a.click();
               URL.revokeObjectURL(url);
             }}

@@ -52,7 +52,7 @@ export class QueryLog {
 
   markRunning(id: number): void {
     const entry = this.entries.find(e => e.id === id);
-    if (entry !== undefined && entry.status === 'queued') {
+    if (entry?.status === 'queued') {
       entry.status = 'running';
     }
   }
