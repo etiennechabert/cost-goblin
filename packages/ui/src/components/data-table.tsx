@@ -167,7 +167,7 @@ export function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onCha
               const isDragging = draggedKey === col.key;
               const isDropTarget = dragOverKey === col.key && draggedKey !== null && draggedKey !== col.key;
               return (
-                <div
+                <label
                   key={col.key}
                   draggable
                   onDragStart={(e) => { setDraggedKey(col.key); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', col.key); }}
@@ -176,7 +176,7 @@ export function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onCha
                   onDrop={(e) => { e.preventDefault(); handleDrop(col.key); setDragOverKey(null); setDraggedKey(null); }}
                   onDragEnd={() => { setDragOverKey(null); setDraggedKey(null); }}
                   className={[
-                    'flex items-center gap-2 px-2 py-1.5 text-xs select-none',
+                    'flex items-center gap-2 px-2 py-1.5 text-xs select-none cursor-default',
                     isDragging ? 'opacity-40' : '',
                     isDropTarget ? 'border-t-2 border-t-accent' : 'border-t-2 border-t-transparent',
                     'hover:bg-bg-tertiary',
@@ -187,7 +187,7 @@ export function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onCha
                   <span className={['truncate flex-1', !checked || autoHidden ? 'text-text-muted' : 'text-text-primary'].join(' ')}>{col.label}</span>
                   {autoHidden && <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0" title="Hidden because this column is pinned to a single filter value">filtered</span>}
                   {!autoHidden && col.dimId !== null && col.dimId.startsWith('tag_') && <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0">tag</span>}
-                </div>
+                </label>
               );
             })}
           </div>
