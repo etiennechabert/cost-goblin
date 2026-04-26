@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ExplorerSampleRow, ExplorerSort, ExplorerTagColumn } from '@costgoblin/core/browser';
+import type { AggregatedTableRow, ExplorerSort, ExplorerTagColumn } from '@costgoblin/core/browser';
 import { formatDollars } from './format.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
 
@@ -18,8 +18,8 @@ export interface ColumnSpec {
 }
 
 export const BASE_COLUMNS: readonly ColumnSpec[] = [
-  { key: 'usage_date', label: 'Date', dimId: null, align: 'left', mono: true },
-  { key: 'usage_hour', label: 'Hour', dimId: null, align: 'left', mono: true },
+  { key: 'usage_date', label: 'Date', dimId: 'usage_date', align: 'left', mono: true },
+  { key: 'usage_hour', label: 'Hour', dimId: 'usage_hour', align: 'left', mono: true },
   { key: 'cost', label: 'Cost', dimId: null, align: 'right', mono: true },
   { key: 'list_cost', label: 'List', dimId: null, align: 'right', mono: true },
   { key: 'service', label: 'Service', dimId: 'service', align: 'left' },
@@ -34,7 +34,7 @@ export const BASE_COLUMNS: readonly ColumnSpec[] = [
 
 export const TRAILING_COLUMNS: readonly ColumnSpec[] = [
   { key: 'resource_id', label: 'Resource', dimId: 'resource_id', align: 'left', mono: true, truncate: true },
-  { key: 'description', label: 'Description', dimId: null, align: 'left', truncate: true },
+  { key: 'description', label: 'Description', dimId: 'description', align: 'left', truncate: true },
 ];
 
 
@@ -206,7 +206,7 @@ interface DataTableProps {
   readonly autoHiddenKeys: ReadonlySet<string>;
   readonly onHiddenColumnsChange: (next: readonly string[]) => void;
   readonly onColumnOrderChange: (next: readonly string[]) => void;
-  readonly rows: readonly ExplorerSampleRow[];
+  readonly rows: readonly AggregatedTableRow[];
   readonly totalRows: number;
   readonly sort: ExplorerSort | undefined;
   readonly onSort: (columnKey: string) => void;
@@ -274,7 +274,7 @@ export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, 
               const isExpanded = expandedIdx === i;
               return (
                 <ExpandableRow
-                  key={`${String(i)}-${r.resourceId}-${r.date}`}
+                  key={String(i)}
                   row={r}
                   columns={columns}
                   allColumns={allColumns}
@@ -323,10 +323,10 @@ function ColumnHeader({ spec, sort, onSort }: { spec: ColumnSpec; sort: Explorer
   );
 }
 
-function RowCell({ spec, row, onFilterAdd }: { spec: ColumnSpec; row: ExplorerSampleRow; onFilterAdd: (dimId: string, value: string) => void }) {
+function RowCell({ spec, row, onFilterAdd }: { spec: ColumnSpec; row: AggregatedTableRow; onFilterAdd: (dimId: string, value: string) => void }) {
   const display = renderCell(spec, row);
-  const rawValue = filterValueFor(spec, row);
-  const titleText = spec.truncate === true ? stringValueFor(spec, row) : undefined;
+  const rawValue = spec.dimId !== null ? (row.values[spec.key] ?? '') : null;
+  const titleText = spec.truncate === true ? (row.values[spec.key] ?? '') : undefined;
   const classes = [
     'px-2 py-1 whitespace-nowrap',
     spec.align === 'right' ? 'text-right' : '',
@@ -347,83 +347,22 @@ function RowCell({ spec, row, onFilterAdd }: { spec: ColumnSpec; row: ExplorerSa
   return <td className={classes} title={titleText}>{display}</td>;
 }
 
-function stringValueFor(spec: ColumnSpec, row: ExplorerSampleRow): string {
+function renderCell(spec: ColumnSpec, row: AggregatedTableRow): React.ReactNode {
   switch (spec.key) {
-    case 'resource_id': return row.resourceId;
-    case 'description': return row.description;
-    default: return row.tags[spec.key] ?? '';
-  }
-}
-
-function renderCell(spec: ColumnSpec, row: ExplorerSampleRow): React.ReactNode {
-  switch (spec.key) {
-    case 'usage_date': return row.date;
-    case 'usage_hour': {
-      if (row.hour.length === 0) return '';
-      const time = row.hour.includes(' ') ? row.hour.split(' ')[1] ?? row.hour : row.hour;
-      return time.slice(0, 8);
-    }
     case 'cost': {
       const cls = row.cost < 0 ? 'text-warning' : '';
       return <span className={cls}>{formatSignedDollars(row.cost)}</span>;
     }
     case 'list_cost': return formatSignedDollars(row.listCost);
-    case 'service': return row.service;
-    case 'account_name': return row.accountName.length > 0 ? row.accountName : row.accountId;
-    case 'line_item_type': return row.lineItemType;
-    case 'region': return row.region;
-    case 'service_family': return row.serviceFamily;
-    case 'usage_type': return row.usageType;
-    case 'operation': return row.operation;
     case 'usage_amount': return row.usageAmount === 0 ? '' : row.usageAmount.toLocaleString(undefined, { maximumFractionDigits: 4 });
-    case 'resource_id': return row.resourceId;
-    case 'description': return row.description;
-    default: return row.tags[spec.key] ?? '';
-  }
-}
-
-function filterValueFor(spec: ColumnSpec, row: ExplorerSampleRow): string | null {
-  switch (spec.key) {
-    case 'service': return row.service;
-    case 'account_name': return row.accountName.length > 0 ? row.accountName : row.accountId;
-    case 'line_item_type': return row.lineItemType;
-    case 'region': return row.region;
-    case 'service_family': return row.serviceFamily;
-    case 'usage_type': return row.usageType;
-    case 'operation': return row.operation;
-    case 'resource_id': return row.resourceId.length > 0 ? row.resourceId : null;
-    default: {
-      if (spec.dimId !== null && spec.dimId.startsWith('tag_')) {
-        const v = row.tags[spec.key];
-        return v === undefined || v.length === 0 ? null : v;
-      }
-      return null;
-    }
+    default: return row.values[spec.key] ?? '';
   }
 }
 
 // --- Expandable Row ---
 
-const ROW_FIELDS: readonly { key: string; label: string; render: (r: ExplorerSampleRow) => string }[] = [
-  { key: 'date', label: 'Date', render: r => r.date },
-  { key: 'hour', label: 'Hour', render: r => r.hour },
-  { key: 'cost', label: 'Cost', render: r => formatSignedDollars(r.cost) },
-  { key: 'listCost', label: 'List Cost', render: r => formatSignedDollars(r.listCost) },
-  { key: 'service', label: 'Service', render: r => r.service },
-  { key: 'serviceFamily', label: 'Family', render: r => r.serviceFamily },
-  { key: 'accountId', label: 'Account ID', render: r => r.accountId },
-  { key: 'accountName', label: 'Account Name', render: r => r.accountName },
-  { key: 'region', label: 'Region', render: r => r.region },
-  { key: 'lineItemType', label: 'Line Type', render: r => r.lineItemType },
-  { key: 'operation', label: 'Operation', render: r => r.operation },
-  { key: 'usageType', label: 'Usage Type', render: r => r.usageType },
-  { key: 'usageAmount', label: 'Usage Amount', render: r => r.usageAmount === 0 ? '' : r.usageAmount.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
-  { key: 'resourceId', label: 'Resource', render: r => r.resourceId },
-  { key: 'description', label: 'Description', render: r => r.description },
-];
-
 function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterAdd }: {
-  row: ExplorerSampleRow;
+  row: AggregatedTableRow;
   columns: readonly ColumnSpec[];
   allColumns: readonly ColumnSpec[];
   expanded: boolean;
@@ -454,28 +393,36 @@ function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterA
   );
 }
 
-function RowDetail({ row, allColumns }: { row: ExplorerSampleRow; allColumns: readonly ColumnSpec[] }) {
-  const tagEntries = Object.entries(row.tags).filter(([, v]) => v.length > 0);
-  const tagLabels = new Map(allColumns.filter(c => c.dimId !== null && c.dimId.startsWith('tag_')).map(c => [c.key, c.label]));
+function RowDetail({ row, allColumns }: { row: AggregatedTableRow; allColumns: readonly ColumnSpec[] }) {
+  const entries = Object.entries(row.values).filter(([, v]) => v.length > 0);
+  const labelMap = new Map(allColumns.map(c => [c.key, c.label]));
 
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-4 gap-y-0.5 text-[11px]">
-      {ROW_FIELDS.map(f => {
-        const val = f.render(row);
-        if (val.length === 0) return null;
-        return (
-          <div key={f.key} className="flex gap-1.5 py-0.5 min-w-0">
-            <span className="text-text-muted shrink-0">{f.label}</span>
-            <span className="text-text-primary truncate" title={val}>{val}</span>
-          </div>
-        );
-      })}
-      {tagEntries.map(([key, val]) => (
+      {entries.map(([key, val]) => (
         <div key={key} className="flex gap-1.5 py-0.5 min-w-0">
-          <span className="text-text-muted shrink-0">{tagLabels.get(key) ?? key}</span>
+          <span className="text-text-muted shrink-0">{labelMap.get(key) ?? key}</span>
           <span className="text-text-primary truncate" title={val}>{val}</span>
         </div>
       ))}
+      <div className="flex gap-1.5 py-0.5 min-w-0">
+        <span className="text-text-muted shrink-0">Cost</span>
+        <span className="text-text-primary">{formatSignedDollars(row.cost)}</span>
+      </div>
+      <div className="flex gap-1.5 py-0.5 min-w-0">
+        <span className="text-text-muted shrink-0">List Cost</span>
+        <span className="text-text-primary">{formatSignedDollars(row.listCost)}</span>
+      </div>
+      {row.usageAmount > 0 && (
+        <div className="flex gap-1.5 py-0.5 min-w-0">
+          <span className="text-text-muted shrink-0">Usage</span>
+          <span className="text-text-primary">{row.usageAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+        </div>
+      )}
+      <div className="flex gap-1.5 py-0.5 min-w-0">
+        <span className="text-text-muted shrink-0">Line Items</span>
+        <span className="text-text-primary">{row.rowCount.toLocaleString()}</span>
+      </div>
     </div>
   );
 }

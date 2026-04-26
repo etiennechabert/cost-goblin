@@ -330,6 +330,16 @@ export class MockCostApi implements CostApi {
       ],
     });
   }
+  queryAggregatedTable(): Promise<import('@costgoblin/core/browser').AggregatedTableResult> {
+    return Promise.resolve({
+      rows: [
+        { values: { service: 'Amazon EC2', region: 'eu-central-1' }, cost: 1_180.5, listCost: 1_200, usageAmount: 24, rowCount: 500 },
+        { values: { service: 'Amazon RDS', region: 'us-east-1' }, cost: 420, listCost: 500, usageAmount: 12, rowCount: 200 },
+      ],
+      totalRows: 2,
+      tagColumns: [{ id: 'tag_team', label: 'Team' }, { id: 'tag_env', label: 'Environment' }],
+    });
+  }
   getExplorerFilterValues(): Promise<ExplorerFilterValue[]> {
     return Promise.resolve([
       { value: 'Amazon EC2', label: 'Amazon EC2', cost: 18_000, rows: 8_400 },
