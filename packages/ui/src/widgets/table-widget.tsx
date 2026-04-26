@@ -110,21 +110,17 @@ export function TableWidget({
   }, []);
 
   const fetchDetailRows = useCallback(async (row: AggregatedTableRow) => {
-    const detailFilters: Record<string, readonly string[]> = {};
-    for (const [k, v] of Object.entries(explorerFilters)) {
-      detailFilters[k] = v;
-    }
-    for (const [k, v] of Object.entries(row.values)) {
-      if (v.length > 0) detailFilters[k] = [v];
-    }
-    const result = await api.queryExplorerRows({
-      filters: detailFilters,
+    const allDimKeys = allColumns.filter(c => c.dimId !== null).map(c => c.key);
+    const result = await api.queryAggregatedTable({
+      filters: explorerFilters,
       dateRange,
       granularity,
+      groupByColumns: allDimKeys,
       rowLimit: 100,
+      rowFilters: row.values,
     });
-    return result.sampleRows;
-  }, [api, explorerFilters, dateRange, granularity]);
+    return result.rows;
+  }, [api, explorerFilters, dateRange, granularity, allColumns]);
 
   const rows = dataQuery.status === 'success' ? dataQuery.data.rows : [];
   const aggregatedTotal = dataQuery.status === 'success' ? dataQuery.data.totalRows : totalRows;

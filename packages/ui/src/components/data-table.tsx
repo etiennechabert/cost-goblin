@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AggregatedTableRow, ExplorerSampleRow, ExplorerSort, ExplorerTagColumn } from '@costgoblin/core/browser';
+import type { AggregatedTableRow, ExplorerSort, ExplorerTagColumn } from '@costgoblin/core/browser';
 import { formatDollars } from './format.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
 
@@ -214,7 +214,7 @@ interface DataTableProps {
   readonly loading: boolean;
   readonly error: string | null;
   readonly maxHeight?: string;
-  readonly fetchDetailRows?: ((row: AggregatedTableRow) => Promise<readonly ExplorerSampleRow[]>) | undefined;
+  readonly fetchDetailRows?: ((row: AggregatedTableRow) => Promise<readonly AggregatedTableRow[]>) | undefined;
 }
 
 export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, onHiddenColumnsChange, onColumnOrderChange, rows, totalRows, sort, onSort, onFilterAdd, loading, error, maxHeight = '560px', fetchDetailRows }: DataTableProps) {
@@ -370,7 +370,7 @@ function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterA
   expanded: boolean;
   onToggle: () => void;
   onFilterAdd: (dimId: string, value: string) => void;
-  fetchDetailRows?: ((r: AggregatedTableRow) => Promise<readonly ExplorerSampleRow[]>) | undefined;
+  fetchDetailRows?: ((r: AggregatedTableRow) => Promise<readonly AggregatedTableRow[]>) | undefined;
 }) {
   return (
     <>
@@ -396,23 +396,12 @@ function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterA
   );
 }
 
-const DETAIL_COLUMNS: readonly { key: string; label: string; align: 'left' | 'right'; render: (r: ExplorerSampleRow) => string }[] = [
-  { key: 'date', label: 'Date', align: 'left', render: r => r.date },
-  { key: 'cost', label: 'Cost', align: 'right', render: r => formatSignedDollars(r.cost) },
-  { key: 'service', label: 'Service', align: 'left', render: r => r.service },
-  { key: 'accountName', label: 'Account', align: 'left', render: r => r.accountName.length > 0 ? r.accountName : r.accountId },
-  { key: 'region', label: 'Region', align: 'left', render: r => r.region },
-  { key: 'description', label: 'Description', align: 'left', render: r => r.description },
-  { key: 'resourceId', label: 'Resource', align: 'left', render: r => r.resourceId },
-  { key: 'lineItemType', label: 'Line type', align: 'left', render: r => r.lineItemType },
-];
-
 function RowDetail({ row, allColumns, fetchDetailRows }: {
   row: AggregatedTableRow;
   allColumns: readonly ColumnSpec[];
-  fetchDetailRows?: ((r: AggregatedTableRow) => Promise<readonly ExplorerSampleRow[]>) | undefined;
+  fetchDetailRows?: ((r: AggregatedTableRow) => Promise<readonly AggregatedTableRow[]>) | undefined;
 }) {
-  const [detailRows, setDetailRows] = useState<readonly ExplorerSampleRow[] | null>(null);
+  const [detailRows, setDetailRows] = useState<readonly AggregatedTableRow[] | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
   useEffect(() => {
@@ -426,6 +415,17 @@ function RowDetail({ row, allColumns, fetchDetailRows }: {
 
   const entries = Object.entries(row.values).filter(([, v]) => v.length > 0);
   const labelMap = new Map(allColumns.map(c => [c.key, c.label]));
+
+  const detailColSpecs = useMemo(() => {
+    if (detailRows === null || detailRows.length === 0) return [];
+    const first = detailRows[0];
+    if (first === undefined) return [];
+    const dimCols = Object.keys(first.values)
+      .map(key => allColumns.find(c => c.key === key))
+      .filter((c): c is ColumnSpec => c !== undefined);
+    const costCol: ColumnSpec = { key: 'cost', label: 'Cost', dimId: null, align: 'right', mono: true };
+    return [...dimCols, costCol];
+  }, [detailRows, allColumns]);
 
   return (
     <div className="space-y-3">
@@ -454,7 +454,7 @@ function RowDetail({ row, allColumns, fetchDetailRows }: {
               <table className="text-[10px] w-full border-collapse">
                 <thead className="sticky top-0 z-10 bg-bg-tertiary/95 backdrop-blur-sm">
                   <tr className="text-left text-text-muted">
-                    {DETAIL_COLUMNS.map(c => (
+                    {detailColSpecs.map(c => (
                       <th key={c.key} className={`px-2 py-1 font-medium whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''}`}>{c.label}</th>
                     ))}
                   </tr>
@@ -462,15 +462,18 @@ function RowDetail({ row, allColumns, fetchDetailRows }: {
                 <tbody>
                   {detailRows.map((dr, i) => (
                     <tr key={String(i)} className="border-t border-border/30 hover:bg-bg-tertiary/20">
-                      {DETAIL_COLUMNS.map(c => (
-                        <td
-                          key={c.key}
-                          className={`px-2 py-0.5 whitespace-nowrap ${c.align === 'right' ? 'text-right tabular-nums' : ''} ${c.key === 'resourceId' || c.key === 'description' ? 'max-w-[200px] overflow-hidden text-ellipsis' : ''}`}
-                          title={c.render(dr)}
-                        >
-                          {c.render(dr)}
-                        </td>
-                      ))}
+                      {detailColSpecs.map(c => {
+                        const val = c.key === 'cost' ? formatSignedDollars(dr.cost) : (dr.values[c.key] ?? '');
+                        return (
+                          <td
+                            key={c.key}
+                            className={`px-2 py-0.5 whitespace-nowrap ${c.align === 'right' ? 'text-right tabular-nums' : ''} ${c.truncate === true ? 'max-w-[200px] overflow-hidden text-ellipsis' : ''}`}
+                            title={val}
+                          >
+                            {val}
+                          </td>
+                        );
+                      })}
                     </tr>
                   ))}
                 </tbody>
