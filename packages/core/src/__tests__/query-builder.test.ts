@@ -29,8 +29,7 @@ describe('buildCostQuery', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
       },
-      '/data',
-      dimensions,
+      { dataDir: '/data', dimensions },
     );
     expect(result.sql).toContain('service AS entity');
     expect(result.sql).toContain('usage_date BETWEEN');
@@ -51,8 +50,7 @@ describe('buildCostQuery', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: { [asDimensionId('account')]: asTagValue('111111111111') },
       },
-      '/data',
-      dimensions,
+      { dataDir: '/data', dimensions },
     );
     expect(result.sql).toContain('account_id = $');
     expect(result.params).toContain('2026-01-01');
@@ -67,8 +65,7 @@ describe('buildCostQuery', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
       },
-      '/data',
-      dimensions,
+      { dataDir: '/data', dimensions },
     );
     expect(result.sql).toContain('CASE');
     expect(result.sql).toContain("'core-banking'");
@@ -85,8 +82,7 @@ describe('buildTrendQuery', () => {
         deltaThreshold: asDollars(100),
         percentThreshold: 10,
       },
-      '/data',
-      dimensions,
+      { dataDir: '/data', dimensions },
     );
     expect(result.sql).toContain('current_period');
     expect(result.sql).toContain('previous_period');
@@ -155,8 +151,7 @@ describe('buildTrendQuery', () => {
         deltaThreshold: asDollars(0),
         percentThreshold: 0,
       },
-      '/data',
-      dimensions,
+      { dataDir: '/data', dimensions },
     );
     expect(result.sql).toContain("'/data/aws/raw/daily-2026-02/*.parquet'");
     expect(result.sql).toContain("'/data/aws/raw/daily-2026-03/*.parquet'");
@@ -173,7 +168,7 @@ describe('buildMissingTagsQuery', () => {
   };
 
   it('filters to resource-bound Usage lines (excludes Tax / Support / empty resource_id)', () => {
-    const result = buildMissingTagsQuery(baseParams, '/data', dimensions);
+    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions });
     expect(result.sql).toContain("line_item_type IN ('Usage', 'DiscountedUsage')");
     expect(result.sql).toContain("resource_id IS NOT NULL AND resource_id != ''");
     expect(result.sql).toContain('usage_date BETWEEN');
@@ -183,7 +178,7 @@ describe('buildMissingTagsQuery', () => {
   });
 
   it('computes has_tag per resource and category tagged_ratio', () => {
-    const result = buildMissingTagsQuery(baseParams, '/data', dimensions);
+    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions });
     // Resource is tagged if ANY line for it has the tag populated — MAX over a
     // CASE expression does exactly that.
     expect(result.sql).toContain('MAX(CASE WHEN');
@@ -194,13 +189,13 @@ describe('buildMissingTagsQuery', () => {
   });
 
   it('buckets into actionable (ratio > 0) vs likely-untaggable (ratio = 0)', () => {
-    const result = buildMissingTagsQuery(baseParams, '/data', dimensions);
+    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions });
     expect(result.sql).toContain("WHEN c.tagged_ratio > 0 THEN 'actionable'");
     expect(result.sql).toContain("ELSE 'likely-untaggable'");
   });
 
   it('applies minCost to the per-resource cost after classification', () => {
-    const result = buildMissingTagsQuery(baseParams, '/data', dimensions);
+    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions });
     expect(result.sql).toContain('r.cost >= $');
     // Verify minCost parameter
     expect(result.params).toContain(50);
@@ -216,8 +211,7 @@ describe('buildNonResourceCostQuery', () => {
         minCost: asDollars(0),
         tagDimension: asDimensionId('tag_org_team'),
       },
-      '/data',
-      dimensions,
+      { dataDir: '/data', dimensions },
     );
     expect(result.sql).toContain("line_item_type NOT IN ('Usage', 'DiscountedUsage')");
     expect(result.sql).toContain("OR resource_id IS NULL OR resource_id = ''");
@@ -284,8 +278,7 @@ describe('buildEntityDetailQuery', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
       },
-      '/data',
-      dimensions,
+      { dataDir: '/data', dimensions },
     );
     expect(sql).toContain('$');
     expect(params).toContain('2026-01-01');

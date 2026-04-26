@@ -244,11 +244,11 @@ function TableColumnsEditor({
   dimensions,
   enabledColumns,
   onChange,
-}: {
+}: Readonly<{
   dimensions: readonly Dimension[];
   enabledColumns: readonly string[];
   onChange: (next: readonly string[]) => void;
-}) {
+}>) {
   const tagColumns = useMemo(
     () => dimensions.filter(d => isTagDimension(d)).map(d => ({ id: getDimensionId(d), label: getDimensionLabel(d) })),
     [dimensions],

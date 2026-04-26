@@ -599,6 +599,8 @@ function Histogram({ days, loading }: HistogramProps): React.JSX.Element {
             return (
               <div
                 key={d.date}
+                role="img"
+                aria-label={`${d.date}: ${formatDollars(d.cost)}`}
                 className="group relative flex-1 min-w-0 flex flex-col justify-end"
                 style={{ height: '100%' }}
                 onMouseEnter={() => { setHoveredKey(d.date); }}
@@ -732,11 +734,11 @@ function MultiFilterBar({ dimensions, filters, onChange, fetchValues }: MultiFil
         const dimId = getDimensionId(dim);
         const active = filters[dimId] ?? [];
         const isOpen = dropdown.status !== 'closed' && 'dimId' in dropdown && dropdown.dimId === dimId;
-        const chipLabel = active.length === 0
-          ? dim.label
-          : active.length === 1
-            ? `${dim.label}: ${active[0] ?? ''}`
-            : `${dim.label} · ${String(active.length)}`;
+        const chipLabel = (() => {
+          if (active.length === 0) return dim.label;
+          if (active.length === 1) return `${dim.label}: ${active[0] ?? ''}`;
+          return `${dim.label} · ${String(active.length)}`;
+        })();
         return (
           <div key={dimId} className="relative">
             <button
@@ -1147,6 +1149,9 @@ function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onChange, on
               return (
                 <div
                   key={col.key}
+                  role="option"
+                  aria-selected={checked}
+                  tabIndex={0}
                   draggable
                   onDragStart={(e) => {
                     setDraggedKey(col.key);
@@ -1237,12 +1242,14 @@ function ColumnHeader({ spec, sort, onSort }: ColumnHeaderProps): React.JSX.Elem
       >
         <span>{spec.label}</span>
         <span className={`text-accent ${indicator.length > 0 ? '' : 'opacity-0'}`}>
-          {indicator.length > 0 ? indicator : '↕'}
+          {indicator.length > 0 ? indicator : '\u2195'}
         </span>
       </button>
     </th>
   );
 }
+
+
 
 interface RowCellProps {
   readonly spec: ColumnSpec;
@@ -1368,7 +1375,7 @@ const DETAIL_FIELDS: readonly { key: string; label: string; render: (r: import('
   { key: 'description', label: 'Description', render: r => r.description },
 ];
 
-function RowDetail({ row, allColumns }: { row: import('@costgoblin/core/browser').ExplorerSampleRow; allColumns: readonly ColumnSpec[] }) {
+function RowDetail({ row, allColumns }: Readonly<{ row: import('@costgoblin/core/browser').ExplorerSampleRow; allColumns: readonly ColumnSpec[] }>) {
   const tagEntries = Object.entries(row.tags).filter(([, v]) => v.length > 0);
   const tagLabels = new Map(allColumns.filter(c => c.dimId?.startsWith('tag_')).map(c => [c.key, c.label]));
 

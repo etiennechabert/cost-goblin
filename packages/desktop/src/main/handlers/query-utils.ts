@@ -136,7 +136,10 @@ export function mergeTrendRowsByEntity(rows: readonly TrendRow[]): TrendRow[] {
     currentCost: asDollars(d.currentCost),
     previousCost: asDollars(d.previousCost),
     delta: asDollars(d.delta),
-    percentChange: d.previousCost === 0 ? (d.currentCost === 0 ? 0 : 100) : (d.delta / d.previousCost) * 100,
+    percentChange: (() => {
+      if (d.previousCost === 0) return d.currentCost === 0 ? 0 : 100;
+      return (d.delta / d.previousCost) * 100;
+    })(),
   })).sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
 }
 

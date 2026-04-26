@@ -9,6 +9,7 @@ import type {
   MissingTagsParams,
   MissingTagsResult,
   SavingsResult,
+  QueryContextOptions,
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import {
@@ -45,8 +46,9 @@ export function registerRecommendationHandlers(app: AppContext): void {
         nonResourceRows: [],
       };
     }
-    const resourceQuery = buildMissingTagsQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
-    const nonResourceQuery = buildNonResourceCostQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns };
+    const resourceQuery = buildMissingTagsQuery(params, qcOpts);
+    const nonResourceQuery = buildNonResourceCostQuery(params, qcOpts);
     const [resourceRows, nonResourceRows] = await Promise.all([
       runPreparedQuery(resourceQuery.sql, resourceQuery.params),
       runPreparedQuery(nonResourceQuery.sql, nonResourceQuery.params),

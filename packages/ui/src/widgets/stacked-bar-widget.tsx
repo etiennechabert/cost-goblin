@@ -92,8 +92,8 @@ export function StackedBarWidget({
 
   const loading = query.status === 'loading';
 
-  const title = spec.title
-    ?? (granularity === 'hourly' ? 'Hourly Costs' : useWeekly ? 'Weekly Costs' : 'Daily Costs');
+  const defaultTitle = granularity === 'hourly' ? 'Hourly Costs' : (useWeekly ? 'Weekly Costs' : 'Daily Costs');
+  const title = spec.title ?? defaultTitle;
 
   return (
     <StackedBarChart

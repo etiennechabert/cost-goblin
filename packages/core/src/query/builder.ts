@@ -327,18 +327,23 @@ interface CommonQuerySetup {
   readonly costMetric: CostMetric;
 }
 
+export interface QueryContextOptions {
+  readonly dataDir: string;
+  readonly dimensions: DimensionsConfig;
+  readonly orgAccountsPath?: string | undefined;
+  readonly availablePeriods?: readonly string[] | undefined;
+  readonly accountReverseMap?: ReadonlyMap<string, readonly string[]> | undefined;
+  readonly costScope?: CostScopeConfig | undefined;
+  readonly availableColumns?: ReadonlySet<string> | undefined;
+  readonly materializedSource?: string | undefined;
+}
+
 function setupQuery(
   params: CommonQueryArgs,
-  dataDir: string,
   tier: string,
-  dimensions: DimensionsConfig,
-  orgAccountsPath: string | undefined,
-  availablePeriods: readonly string[] | undefined,
-  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
-  costScope: CostScopeConfig | undefined,
-  availableColumns: ReadonlySet<string> | undefined,
-  materializedSource?: string,
+  opts: QueryContextOptions,
 ): CommonQuerySetup {
+  const { dataDir, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns, materializedSource } = opts;
   const qb = new QueryBuilder();
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
   const costMetric = costScope?.costMetric ?? 'unblended';
@@ -356,20 +361,13 @@ function setupQuery(
 
 export function buildCostQuery(
   params: CostQueryParams,
-  dataDir: string,
-  dimensions: DimensionsConfig,
+  opts: QueryContextOptions,
   topN: number = 5,
-  orgAccountsPath?: string,
-  availablePeriods?: readonly string[],
-  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
-  costScope?: CostScopeConfig,
-  availableColumns?: ReadonlySet<string>,
-  materializedSource?: string,
 ): ParameterizedQuery {
   assertFiniteNumber(topN, 'topN');
   const costTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
-  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, dataDir, costTier, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns, materializedSource);
-  const groupByResolved = resolveField(params.groupBy, dimensions);
+  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, costTier, opts);
+  const groupByResolved = resolveField(params.groupBy, opts.dimensions);
 
   const startDatePlaceholder = qb.addParam(params.dateRange.start);
   const endDatePlaceholder = qb.addParam(params.dateRange.end);
@@ -434,14 +432,9 @@ export function buildCostQuery(
 
 export function buildTrendQuery(
   params: TrendQueryParams,
-  dataDir: string,
-  dimensions: DimensionsConfig,
-  orgAccountsPath?: string,
-  availablePeriods?: readonly string[],
-  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
-  costScope?: CostScopeConfig,
-  availableColumns?: ReadonlySet<string>,
+  opts: QueryContextOptions,
 ): ParameterizedQuery {
+  const { dataDir, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns } = opts;
   assertFiniteNumber(Number(params.deltaThreshold), 'deltaThreshold');
   const qb = new QueryBuilder();
   const groupByResolved = resolveField(params.groupBy, dimensions);
@@ -535,18 +528,11 @@ export function buildTrendQuery(
  */
 export function buildMissingTagsQuery(
   params: MissingTagsParams,
-  dataDir: string,
-  dimensions: DimensionsConfig,
-  orgAccountsPath?: string,
-  availablePeriods?: readonly string[],
-  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
-  costScope?: CostScopeConfig,
-  availableColumns?: ReadonlySet<string>,
-  materializedSource?: string,
+  opts: QueryContextOptions,
 ): ParameterizedQuery {
   assertFiniteNumber(Number(params.minCost), 'minCost');
-  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, dataDir, 'daily', dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns, materializedSource);
-  const tagResolved = resolveField(params.tagDimension, dimensions);
+  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, 'daily', opts);
+  const tagResolved = resolveField(params.tagDimension, opts.dimensions);
 
   const startDatePlaceholder = qb.addParam(params.dateRange.start);
   const endDatePlaceholder = qb.addParam(params.dateRange.end);
@@ -617,16 +603,9 @@ export function buildMissingTagsQuery(
  */
 export function buildNonResourceCostQuery(
   params: MissingTagsParams,
-  dataDir: string,
-  dimensions: DimensionsConfig,
-  orgAccountsPath?: string,
-  availablePeriods?: readonly string[],
-  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
-  costScope?: CostScopeConfig,
-  availableColumns?: ReadonlySet<string>,
-  materializedSource?: string,
+  opts: QueryContextOptions,
 ): ParameterizedQuery {
-  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, dataDir, 'daily', dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns, materializedSource);
+  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, 'daily', opts);
 
   const startDatePlaceholder = qb.addParam(params.dateRange.start);
   const endDatePlaceholder = qb.addParam(params.dateRange.end);
@@ -655,18 +634,11 @@ export function buildNonResourceCostQuery(
 
 export function buildDailyCostsQuery(
   params: DailyCostsParams,
-  dataDir: string,
-  dimensions: DimensionsConfig,
-  orgAccountsPath?: string,
-  availablePeriods?: readonly string[],
-  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
-  costScope?: CostScopeConfig,
-  availableColumns?: ReadonlySet<string>,
-  materializedSource?: string,
+  opts: QueryContextOptions,
 ): ParameterizedQuery {
   const dailyTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
-  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, dataDir, dailyTier, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns, materializedSource);
-  const groupByResolved = resolveField(params.groupBy, dimensions);
+  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, dailyTier, opts);
+  const groupByResolved = resolveField(params.groupBy, opts.dimensions);
 
   const startDatePlaceholder = qb.addParam(params.dateRange.start);
   const endDatePlaceholder = qb.addParam(params.dateRange.end);
@@ -696,26 +668,19 @@ export function buildDailyCostsQuery(
 
 export function buildEntityDetailQuery(
   params: EntityDetailParams,
-  dataDir: string,
-  dimensions: DimensionsConfig,
-  orgAccountsPath?: string,
-  availablePeriods?: readonly string[],
-  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
-  costScope?: CostScopeConfig,
-  availableColumns?: ReadonlySet<string>,
-  materializedSource?: string,
+  opts: QueryContextOptions,
 ): ParameterizedQuery {
   const granularity = params.granularity ?? 'daily';
   const tier = granularity === 'hourly' ? 'hourly' : 'daily';
-  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, dataDir, tier, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns, materializedSource);
-  const dimResolved = resolveField(params.dimension, dimensions);
+  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, tier, opts);
+  const dimResolved = resolveField(params.dimension, opts.dimensions);
 
   // Same display-name collision treatment for the entity selector itself: if
   // the user clicked into "sre default" we need to match every underlying id,
   // not just one.
   const entityClause = (() => {
-    if (dimResolved.rawField === 'account_id' && accountReverseMap !== undefined) {
-      const ids = accountReverseMap.get(String(params.entity));
+    if (dimResolved.rawField === 'account_id' && opts.accountReverseMap !== undefined) {
+      const ids = opts.accountReverseMap.get(String(params.entity));
       if (ids !== undefined && ids.length > 0) {
         const placeholders = ids.map(id => qb.addParam(id)).join(', ');
         return `${dimResolved.rawField} IN (${placeholders})`;
@@ -761,16 +726,11 @@ export function buildEntityDetailQuery(
  *  does not support prepared DDL. All values originate from app config (cost
  *  scope rules, computed date range), not from user input. */
 export function buildMaterializeBaseQuery(
-  dataDir: string,
   tier: string,
-  dimensions: DimensionsConfig,
   dateRange: { readonly start: string; readonly end: string },
-  orgAccountsPath?: string,
-  availablePeriods?: readonly string[],
-  accountReverseMap?: ReadonlyMap<string, readonly string[]>,
-  costScope?: CostScopeConfig,
-  availableColumns?: ReadonlySet<string>,
+  opts: QueryContextOptions,
 ): string {
+  const { dataDir, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns } = opts;
   const exclusionClauses: string[] = [];
   if (costScope !== undefined) {
     for (const rule of costScope.rules) {
