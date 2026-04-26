@@ -1,7 +1,10 @@
+import { useMemo } from 'react';
 import type { Dimension, WidgetSize, WidgetSpec, WidgetType } from '@costgoblin/core/browser';
 import { asDimensionId } from '@costgoblin/core/browser';
-import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
+import { getDimensionId, getDimensionLabel, isTagDimension } from '../lib/dimensions.js';
 import { WIDGET_CATALOG } from '../widgets/registry.js';
+import { buildAllColumns } from './data-table.js';
+import { OVERVIEW_SEED_VIEW } from '@costgoblin/core/browser';
 
 interface WidgetInspectorProps {
   readonly widget: WidgetSpec;
@@ -11,6 +14,9 @@ interface WidgetInspectorProps {
   readonly onMoveLeft?: (() => void) | undefined;
   readonly onMoveRight?: (() => void) | undefined;
 }
+
+const SEED_TABLE = OVERVIEW_SEED_VIEW.rows.flatMap(r => r.widgets).find(w => w.type === 'table');
+const SEED_TABLE_ENABLED = SEED_TABLE?.type === 'table' ? (SEED_TABLE.enabledColumns ?? []) : ['cost', 'resource_id', 'description'];
 
 const SIZES: readonly { value: WidgetSize; label: string }[] = [
   { value: 'small', label: 'S' },
@@ -43,9 +49,7 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
       return {
         ...common,
         type: w.type,
-        groupBy: w.groupBy,
-        ...(w.topN !== undefined ? { topN: w.topN } : {}),
-        ...(w.columns !== undefined ? { columns: w.columns } : {}),
+        ...(w.enabledColumns !== undefined ? { enabledColumns: w.enabledColumns } : {}),
       };
   }
 }
@@ -68,7 +72,11 @@ function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: str
     case 'heatmap':
       return { ...base, type, groupBy: existingGroupBy, topN: 'topN' in prev && prev.topN !== undefined ? prev.topN : 10 };
     case 'table':
-      return { ...base, type, groupBy: existingGroupBy, columns: ['entity', 'service', 'cost', 'percentage'], topN: 20 };
+      return {
+        ...base,
+        type,
+        enabledColumns: [...SEED_TABLE_ENABLED],
+      };
   }
 }
 
@@ -107,7 +115,7 @@ export function WidgetInspector({
   }
 
   function setTopN(value: number) {
-    if (widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap' || widget.type === 'table') {
+    if (widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap') {
       onChange({ ...widget, topN: value });
     }
   }
@@ -206,7 +214,7 @@ export function WidgetInspector({
         />
       </label>
 
-      {(widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap' || widget.type === 'table') && (
+      {(widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap') && (
         <label className="flex items-center gap-2">
           <span className="text-text-muted shrink-0 w-14">Top N</span>
           <input
@@ -222,6 +230,75 @@ export function WidgetInspector({
           />
         </label>
       )}
+
+      {widget.type === 'table' && (
+        <TableColumnsEditor
+          dimensions={dimensions}
+          enabledColumns={widget.enabledColumns ?? SEED_TABLE_ENABLED}
+          onChange={(next) => { onChange({ ...widget, enabledColumns: next }); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function TableColumnsEditor({
+  dimensions,
+  enabledColumns,
+  onChange,
+}: {
+  dimensions: readonly Dimension[];
+  enabledColumns: readonly string[];
+  onChange: (next: readonly string[]) => void;
+}) {
+  const tagColumns = useMemo(
+    () => dimensions.filter(d => isTagDimension(d)).map(d => ({ id: getDimensionId(d), label: getDimensionLabel(d) })),
+    [dimensions],
+  );
+
+  const allColumns = useMemo(() => buildAllColumns(tagColumns), [tagColumns]);
+  const enabledSet = useMemo(() => new Set(enabledColumns), [enabledColumns]);
+  const noneEnabled = enabledColumns.length === 0;
+
+  function toggle(key: string) {
+    if (enabledSet.has(key)) {
+      onChange(enabledColumns.filter(k => k !== key));
+    } else {
+      onChange([...enabledColumns, key]);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between">
+        <span className="text-text-muted">Columns</span>
+        <span className="flex items-center gap-2 text-[10px]">
+          <button
+            type="button"
+            onClick={() => { onChange(noneEnabled ? allColumns.map(c => c.key) : []); }}
+            className="text-text-secondary hover:text-text-primary"
+          >
+            {noneEnabled ? 'Select all' : 'Deselect all'}
+          </button>
+          <span className="text-text-muted">·</span>
+          <button type="button" onClick={() => { onChange([...SEED_TABLE_ENABLED]); }} className="text-text-secondary hover:text-text-primary">Reset</button>
+        </span>
+      </div>
+      <div className="rounded border border-border max-h-48 overflow-y-auto">
+        {allColumns.map(col => {
+          const checked = enabledSet.has(col.key);
+          return (
+            <div
+              key={col.key}
+              className="flex items-center gap-1.5 px-2 py-1 text-[11px] select-none hover:bg-bg-tertiary/50"
+            >
+              <input type="checkbox" className="accent-accent shrink-0" checked={checked} onChange={() => { toggle(col.key); }} />
+              <span className={checked ? 'text-text-primary' : 'text-text-muted'}>{col.label}</span>
+              {col.dimId !== null && col.dimId.startsWith('tag_') && <span className="text-[9px] text-text-muted uppercase tracking-wider ml-auto">tag</span>}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

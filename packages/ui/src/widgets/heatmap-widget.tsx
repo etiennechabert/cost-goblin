@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { HeatmapChart } from '../components/heatmap-chart.js';
+import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { HeatmapCell } from '../components/heatmap-chart.js';
 import { asTagValue } from '@costgoblin/core/browser';
 import type { DailyCostsResult } from '@costgoblin/core/browser';
@@ -65,6 +66,8 @@ export function HeatmapWidget({
   );
 
   const label = dimensionLabelFor(dimensions, specGroupBy);
+
+  if (query.status === 'loading') return <CoinRainLoader height={260} count={5} />;
 
   return (
     <HeatmapChart

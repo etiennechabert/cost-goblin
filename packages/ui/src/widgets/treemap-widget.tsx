@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { TreemapChart } from '../components/treemap-chart.js';
+import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { TreemapCell } from '../components/treemap-chart.js';
 import { asTagValue } from '@costgoblin/core/browser';
 import type { CostResult } from '@costgoblin/core/browser';
@@ -37,6 +38,8 @@ export function TreemapWidget({
     [query],
   );
   const label = dimensionLabelFor(dimensions, specGroupBy);
+
+  if (query.status === 'loading') return <CoinRainLoader height={260} count={5} />;
 
   return (
     <TreemapChart
