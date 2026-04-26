@@ -1149,7 +1149,6 @@ function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onChange, on
               return (
                 <div
                   key={col.key}
-                  tabIndex={0}
                   draggable
                   onDragStart={(e) => {
                     setDraggedKey(col.key);
