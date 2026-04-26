@@ -42,6 +42,20 @@ import type {
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
+// Debug query log entry — mirrors QueryLogEntry from main/query-log.ts
+// ---------------------------------------------------------------------------
+interface DebugQueryLogEntry {
+  readonly id: number;
+  readonly sql: string;
+  readonly paramCount: number;
+  readonly status: 'queued' | 'running' | 'success' | 'error';
+  readonly startedAt: number;
+  readonly durationMs: number | null;
+  readonly rowCount: number | null;
+  readonly error: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // Performance instrumentation — active only when COSTGOBLIN_PERF_MODE=1
 // ---------------------------------------------------------------------------
 const perfMode = process.env['COSTGOBLIN_PERF_MODE'] === '1';
@@ -53,17 +67,22 @@ interface IpcTiming {
 }
 
 const ipcTimings: IpcTiming[] = [];
+let inFlightCount = 0;
 
 function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   const start = perfMode ? performance.now() : 0;
+  const isDebug = channel.startsWith('debug:');
+  if (!isDebug) inFlightCount++;
   const result = ipcRenderer.invoke(channel, ...args) as Promise<T>;
-  if (!perfMode) return result;
   return result.finally(() => {
-    ipcTimings.push({
-      channel,
-      durationMs: Math.round((performance.now() - start) * 100) / 100,
-      timestamp: new Date().toISOString(),
-    });
+    if (!isDebug) inFlightCount--;
+    if (perfMode) {
+      ipcTimings.push({
+        channel,
+        durationMs: Math.round((performance.now() - start) * 100) / 100,
+        timestamp: new Date().toISOString(),
+      });
+    }
   });
 }
 
@@ -246,11 +265,25 @@ const api: CostApi = {
     return invoke<undefined>('explorer:save-preferences', prefs).then(() => undefined);
   },
   cancelPendingQueries(): Promise<void> {
+    void invoke<undefined>('debug:clear-completed');
     return invoke<undefined>('query:cancel-pending').then(() => undefined);
   },
 };
 
 contextBridge.exposeInMainWorld('costgoblin', api);
+
+contextBridge.exposeInMainWorld('costgoblinDebug', {
+  getInFlightCount(): number { return inFlightCount; },
+  getQueryLog(): Promise<DebugQueryLogEntry[]> {
+    return invoke<DebugQueryLogEntry[]>('debug:get-query-log');
+  },
+  runExplain(queryId: number): Promise<string> {
+    return invoke<string>('debug:run-explain', queryId);
+  },
+  clearLog(): Promise<void> {
+    return invoke<undefined>('debug:clear-query-log').then(() => undefined);
+  },
+});
 
 if (perfMode) {
   contextBridge.exposeInMainWorld('costgoblinPerf', {

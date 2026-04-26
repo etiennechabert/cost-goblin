@@ -20,6 +20,7 @@ const port = parentPort;
 
 type WorkerResponse =
   | { kind: 'ready' }
+  | { kind: 'started'; id: number }
   | { kind: 'rows'; id: number; rows: Readonly<Record<string, unknown>>[] }
   | { kind: 'error'; id: number; message: string };
 
@@ -182,6 +183,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
   const pool = await getPool();
   const conn = await pool.acquire();
   queuedIds.delete(req.id);
+  send({ kind: 'started', id: req.id });
 
   try {
     // Check after acquiring — cancel may have arrived while queued
@@ -222,6 +224,7 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
   const pool = await getPool();
   const conn = await pool.acquire();
   queuedIds.delete(req.id);
+  send({ kind: 'started', id: req.id });
 
   try {
     // Check after acquiring — cancel may have arrived while queued

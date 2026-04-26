@@ -11,6 +11,7 @@ import { registerAutoSyncHandlers } from './handlers/auto-sync.js';
 import { registerViewsHandlers } from './handlers/views.js';
 import { registerCostScopeHandlers } from './handlers/cost-scope.js';
 import { registerExplorerHandlers } from './handlers/explorer.js';
+import { registerDebugHandlers } from './handlers/debug.js';
 
 export type { IpcContext };
 
@@ -28,4 +29,5 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   registerViewsHandlers(app);
   registerCostScopeHandlers(app);
   registerExplorerHandlers(app);
+  registerDebugHandlers(app);
 }
