@@ -2,7 +2,6 @@ import { asDimensionId, asTagValue } from '../types/branded.js';
 import type { DimensionId, TagValue } from '../types/branded.js';
 import type {
   SummaryMetric,
-  TableColumn,
   ViewSpec,
   ViewsConfig,
   WidgetFilterOverlay,
@@ -26,10 +25,6 @@ const WIDGET_SIZES: readonly WidgetSize[] = ['small', 'medium', 'large', 'full']
 
 const SUMMARY_METRICS: readonly SummaryMetric[] = ['total', 'delta', 'topEntity', 'entityCount'];
 
-const TABLE_COLUMNS: readonly TableColumn[] = [
-  'entity', 'service', 'serviceFamily', 'cost', 'percentage',
-];
-
 function isWidgetType(s: string): s is WidgetType {
   return (WIDGET_TYPES as readonly string[]).includes(s);
 }
@@ -40,10 +35,6 @@ function isWidgetSize(s: string): s is WidgetSize {
 
 function isSummaryMetric(s: string): s is SummaryMetric {
   return (SUMMARY_METRICS as readonly string[]).includes(s);
-}
-
-function isTableColumn(s: string): s is TableColumn {
-  return (TABLE_COLUMNS as readonly string[]).includes(s);
 }
 
 function validateFilters(raw: unknown, ctx: string): WidgetFilterOverlay | undefined {
@@ -134,31 +125,18 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
       };
     }
     case 'table': {
-      assertString(raw['groupBy'], `${ctx}.groupBy`);
-      let topN: number | undefined;
-      if (raw['topN'] !== undefined) {
-        assertNumber(raw['topN'], `${ctx}.topN`);
-        topN = raw['topN'];
-      }
-      let columns: TableColumn[] | undefined;
-      if (raw['columns'] !== undefined) {
-        assertArray(raw['columns'], `${ctx}.columns`);
-        columns = raw['columns'].map((c, i) => {
-          assertString(c, `${ctx}.columns[${String(i)}]`);
-          if (!isTableColumn(c)) {
-            throw new ConfigValidationError(
-              `${ctx}.columns[${String(i)}] must be one of: ${TABLE_COLUMNS.join(', ')}`,
-            );
-          }
+      let enabledColumns: string[] | undefined;
+      if (raw['enabledColumns'] !== undefined) {
+        assertArray(raw['enabledColumns'], `${ctx}.enabledColumns`);
+        enabledColumns = raw['enabledColumns'].map((c, i) => {
+          assertString(c, `${ctx}.enabledColumns[${String(i)}]`);
           return c;
         });
       }
       return {
         type,
         ...base,
-        groupBy: asDimensionId(raw['groupBy']),
-        ...(topN !== undefined ? { topN } : {}),
-        ...(columns !== undefined ? { columns } : {}),
+        ...(enabledColumns !== undefined ? { enabledColumns } : {}),
       };
     }
   }

@@ -68,7 +68,6 @@ export type {
   WidgetSize,
   WidgetFilterOverlay,
   SummaryMetric,
-  TableColumn,
   WidgetSpec,
   WidgetType,
   ViewRow,

@@ -40,5 +40,5 @@ export const WIDGET_CATALOG: readonly WidgetCatalogEntry[] = [
   { type: 'treemap',    label: 'Treemap',          description: 'Hierarchical cells sized by cost.', needsGroupBy: true },
   { type: 'heatmap',    label: 'Heatmap',          description: 'Dimension × date density.', needsGroupBy: true },
   { type: 'bubble',     label: 'Bubble (trends)',  description: 'Period-over-period scatter.', needsGroupBy: true },
-  { type: 'table',      label: 'Table',            description: 'Top rows with service breakdown.', needsGroupBy: true },
+  { type: 'table',      label: 'Table',            description: 'Raw line-item rows with dynamic columns.', needsGroupBy: false },
 ];
