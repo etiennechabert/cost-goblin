@@ -3,7 +3,7 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { DataTable, buildAllColumns, applyColumnOrder } from '../components/data-table.js';
 import { asDimensionId, asTagValue, OVERVIEW_SEED_VIEW } from '@costgoblin/core/browser';
-import type { ExplorerFilterMap, ExplorerSort, ExplorerSortDirection } from '@costgoblin/core/browser';
+import type { AggregatedTableRow, ExplorerFilterMap, ExplorerSort, ExplorerSortDirection } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { filtersKey, mergeFilters } from './widget.js';
 
@@ -109,6 +109,23 @@ export function TableWidget({
     // no-op: column order controlled by enabledColumns in views editor
   }, []);
 
+  const fetchDetailRows = useCallback(async (row: AggregatedTableRow) => {
+    const detailFilters: Record<string, readonly string[]> = {};
+    for (const [k, v] of Object.entries(explorerFilters)) {
+      detailFilters[k] = v;
+    }
+    for (const [k, v] of Object.entries(row.values)) {
+      if (v.length > 0) detailFilters[k] = [v];
+    }
+    const result = await api.queryExplorerRows({
+      filters: detailFilters,
+      dateRange,
+      granularity,
+      rowLimit: 100,
+    });
+    return result.sampleRows;
+  }, [api, explorerFilters, dateRange, granularity]);
+
   const rows = dataQuery.status === 'success' ? dataQuery.data.rows : [];
   const aggregatedTotal = dataQuery.status === 'success' ? dataQuery.data.totalRows : totalRows;
   const loading = dataQuery.status === 'loading' || overviewQuery.status === 'loading';
@@ -134,6 +151,7 @@ export function TableWidget({
         loading={loading}
         error={error}
         maxHeight="400px"
+        fetchDetailRows={fetchDetailRows}
       />
     </div>
   );
