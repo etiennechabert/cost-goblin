@@ -266,12 +266,10 @@ function AppShell(): React.JSX.Element {
     return <SetupWizard onComplete={handleSetupComplete} />;
   }
 
-  if (viewsConfig === null) {
-    return <div className="min-h-screen bg-bg-primary" />;
-  }
-
-  // Narrowed — viewsConfig is non-null from here on.
-  const views = viewsConfig;
+  // Use fallback while views.yaml loads — but DON'T render custom-view
+  // widgets until the real config arrives to avoid double-mount queries.
+  const views = viewsConfig ?? FALLBACK_VIEWS;
+  const viewsReady = viewsConfig !== null;
 
   // User-defined views populate the left nav before the static analytical
   // views (Trends / Missing Tags / Savings).
@@ -389,7 +387,7 @@ function AppShell(): React.JSX.Element {
       </div>
 
       {/* View content */}
-      {view.page === 'custom' && (() => {
+      {view.page === 'custom' && viewsReady && (() => {
         const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
         return (
           <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>

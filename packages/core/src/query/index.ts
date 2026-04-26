@@ -6,6 +6,7 @@ export {
   buildNonResourceCostQuery,
   buildEntityDetailQuery,
   buildSource,
+  buildMaterializeBaseQuery,
   buildRuleMatchExpr,
   computePeriodsInRange,
 } from './builder.js';

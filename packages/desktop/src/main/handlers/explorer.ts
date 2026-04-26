@@ -183,43 +183,45 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     };
   }
 
-  const orgPath = await getOrgAccountsPath();
-  const availableColumns = await getAvailableColumns(tier);
-  const applyCostScope = params.applyCostScope === true;
-  const costScope = applyCostScope ? await getCostScope().catch(() => undefined) : undefined;
   const accountReverseMap = buildAccountReverseMap(accountMap);
-  const metric = pickMetric(params.costMetric, availableColumns);
-  const perspective = pickPerspective(params.costPerspective, availableColumns);
-
-  const source = buildSource(
-    ctx.dataDir,
-    tier,
-    dimensions,
-    orgPath,
-    periods,
-    metric,
-    availableColumns,
-    perspective,
-  );
-
   const filterPredicate = buildExplorerFilterPredicate(params.filters, dimensions, accountReverseMap);
 
-  const exclusionClauses: string[] = [];
-  if (costScope !== undefined) {
-    for (const rule of costScope.rules) {
-      if (!rule.enabled) continue;
-      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-      if (matchExpr === null) continue;
-      exclusionClauses.push(`NOT (${matchExpr})`);
-    }
-  }
+  const matSource = app.materializedBase.getSource({ start: startStr, end: endStr }, tier);
 
-  const whereClauses: string[] = [
-    `usage_date BETWEEN '${startStr}' AND '${endStr}'`,
-    ...(filterPredicate === null ? [] : [`(${filterPredicate})`]),
-    ...exclusionClauses,
-  ];
-  const whereStr = `WHERE ${whereClauses.join(' AND ')}`;
+  let source: string;
+  let whereStr: string;
+
+  if (matSource !== undefined) {
+    source = matSource;
+    const whereClauses: string[] = filterPredicate === null ? [] : [`(${filterPredicate})`];
+    whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+  } else {
+    const orgPath = await getOrgAccountsPath();
+    const availableColumns = await getAvailableColumns(tier);
+    const applyCostScope = params.applyCostScope === true;
+    const costScope = applyCostScope ? await getCostScope().catch(() => undefined) : undefined;
+    const metric = pickMetric(params.costMetric, availableColumns);
+    const perspective = pickPerspective(params.costPerspective, availableColumns);
+
+    source = buildSource(ctx.dataDir, tier, dimensions, orgPath, periods, metric, availableColumns, perspective);
+
+    const exclusionClauses: string[] = [];
+    if (costScope !== undefined) {
+      for (const rule of costScope.rules) {
+        if (!rule.enabled) continue;
+        const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
+        if (matchExpr === null) continue;
+        exclusionClauses.push(`NOT (${matchExpr})`);
+      }
+    }
+
+    const whereClauses: string[] = [
+      `usage_date BETWEEN '${startStr}' AND '${endStr}'`,
+      ...(filterPredicate === null ? [] : [`(${filterPredicate})`]),
+      ...exclusionClauses,
+    ];
+    whereStr = `WHERE ${whereClauses.join(' AND ')}`;
+  }
 
   return {
     empty: false,
