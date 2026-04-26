@@ -1,17 +1,10 @@
 import { useMemo, useState } from 'react';
 import { daysBetween } from '../lib/dates.js';
-import { useCostApi } from '../hooks/use-cost-api.js';
-import { useQuery } from '../hooks/use-query.js';
+import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
 import { StackedBarChart, type BarDay, type HistogramTab } from '../components/stacked-bar-chart.js';
 import { useCostFocus } from '../hooks/use-cost-focus.js';
-import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
+import type { DailyCostsResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { filtersKey, getDimensionFallback, mergeFilters } from './widget.js';
-
-interface DailyQueryResult {
-  readonly result: DailyCostsResult;
-  readonly groupBy: DimensionId;
-}
 
 function getISOWeekStart(dateStr: string): string {
   const d = new Date(dateStr);
@@ -56,36 +49,23 @@ export function StackedBarWidget({
   granularity,
   globalFilters,
 }: WidgetCommonProps) {
-  const api = useCostApi();
   const focus = useCostFocus();
   const [tab, setTab] = useState<HistogramTab>('service');
   const specGroupBy = spec.type === 'stackedBar' ? spec.groupBy : undefined;
 
-  const filters = mergeFilters(globalFilters, spec.filters);
-  const fk = filtersKey(filters);
-  const fallbackDim = specGroupBy === undefined ? undefined : getDimensionFallback(specGroupBy);
-  const query = useQuery<DailyQueryResult | null>(
-    async () => {
-      if (specGroupBy === undefined) return null;
-      if (fallbackDim === undefined) {
-        const result = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
-        return { result, groupBy: specGroupBy };
-      }
-      const [primary, fallback] = await Promise.all([
-        api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity }),
-        api.queryDailyCosts({ groupBy: fallbackDim, dateRange, filters, granularity }),
-      ]);
-      if (primary.groups.length > 1) return { result: primary, groupBy: specGroupBy };
-      return { result: fallback, groupBy: fallbackDim };
-    },
-    [specGroupBy, fallbackDim, dateRange.start, dateRange.end, fk, granularity, api],
-  );
+  const { query, dailyResult } = useDailyWidgetQuery({
+    specGroupBy,
+    dateRange,
+    granularity,
+    globalFilters,
+    specFilters: spec.filters,
+  });
 
   const periodDays = daysBetween(dateRange.start, dateRange.end);
   const useWeekly = periodDays > 90;
   const barDays = useMemo(
-    () => dailyToBarDays(query.status === 'success' && query.data !== null ? query.data.result : null, useWeekly),
-    [query, useWeekly],
+    () => dailyToBarDays(dailyResult, useWeekly),
+    [dailyResult, useWeekly],
   );
 
   if (spec.type !== 'stackedBar') return null;

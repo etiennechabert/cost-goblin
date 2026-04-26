@@ -1,19 +1,13 @@
 import { useMemo } from 'react';
-import { useCostApi } from '../hooks/use-cost-api.js';
-import { useQuery } from '../hooks/use-query.js';
+import { useCostWidgetQuery } from '../hooks/use-widget-query.js';
 import { TopNBarChart } from '../components/top-n-bar-chart.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { TopNBar } from '../components/top-n-bar-chart.js';
 import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import { asTagValue } from '@costgoblin/core/browser';
-import type { CostResult, DimensionId } from '@costgoblin/core/browser';
+import type { CostResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { dimensionLabelFor, filtersKey, getDimensionFallback, mergeFilters } from './widget.js';
-
-interface CostQueryResult {
-  readonly result: CostResult;
-  readonly groupBy: DimensionId;
-}
+import { dimensionLabelFor } from './widget.js';
 
 function rowsToBars(data: CostResult | null): TopNBar[] {
   if (data === null) return [];
@@ -33,35 +27,21 @@ export function TopNBarWidget({
   dimensions,
   onSetFilter,
 }: WidgetCommonProps) {
-  const api = useCostApi();
   const focus = useCostFocus();
   const dispatch = useCostFocusDispatch();
   const specGroupBy = spec.type === 'topNBar' ? spec.groupBy : undefined;
 
-  const filters = mergeFilters(globalFilters, spec.filters);
-  const fk = filtersKey(filters);
-  const fallbackDim = specGroupBy === undefined ? undefined : getDimensionFallback(specGroupBy);
-  const query = useQuery<CostQueryResult | null>(
-    async () => {
-      if (specGroupBy === undefined) return null;
-      if (fallbackDim === undefined) {
-        const result = await api.queryCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
-        return { result, groupBy: specGroupBy };
-      }
-      const [primary, fallback] = await Promise.all([
-        api.queryCosts({ groupBy: specGroupBy, dateRange, filters, granularity }),
-        api.queryCosts({ groupBy: fallbackDim, dateRange, filters, granularity }),
-      ]);
-      if (primary.rows.length > 1) return { result: primary, groupBy: specGroupBy };
-      return { result: fallback, groupBy: fallbackDim };
-    },
-    [specGroupBy, fallbackDim, dateRange.start, dateRange.end, fk, granularity, api],
-  );
+  const { query, activeGroupBy, costResult } = useCostWidgetQuery({
+    specGroupBy,
+    dateRange,
+    granularity,
+    globalFilters,
+    specFilters: spec.filters,
+  });
 
-  const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
   const bars = useMemo(
-    () => rowsToBars(query.status === 'success' && query.data !== null ? query.data.result : null),
-    [query],
+    () => rowsToBars(costResult),
+    [costResult],
   );
 
   if (spec.type !== 'topNBar' || specGroupBy === undefined || activeGroupBy === undefined) return null;

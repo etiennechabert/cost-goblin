@@ -1,5 +1,5 @@
-import { Worker } from 'node:worker_threads';
 import { logger } from '@costgoblin/core';
+import { initWorkerLifecycle } from './worker-lifecycle.js';
 
 export type RawRow = Readonly<Record<string, unknown>>;
 
@@ -35,29 +35,16 @@ interface PendingQuery {
 }
 
 export async function createDuckDBClient(workerPath: string): Promise<DuckDBClient> {
-  const worker = new Worker(workerPath);
-  const pending = new Map<number, PendingQuery>();
-  let nextId = 0;
-  let fatalError: Error | null = null;
-
-  const ready = new Promise<void>((resolve, reject) => {
-    const onMessage = (msg: unknown): void => {
-      if (!isWorkerResponse(msg)) return;
-      if (msg.kind === 'ready') {
-        worker.off('message', onMessage);
-        resolve();
-        return;
-      }
-      if (msg.kind === 'error' && msg.id === -1) {
-        worker.off('message', onMessage);
-        const err = new Error(msg.message);
-        fatalError = err;
-        reject(err);
-      }
-    };
-    worker.on('message', onMessage);
-    worker.once('error', (err) => { fatalError = err; reject(err); });
-  });
+  const lifecycle = await initWorkerLifecycle<PendingQuery>(
+    workerPath,
+    (msg) => isWorkerResponse(msg) && msg.kind === 'ready',
+    (msg) => {
+      if (!isWorkerResponse(msg)) return null;
+      if (msg.kind === 'error' && msg.id === -1) return msg.message;
+      return null;
+    },
+  );
+  const { worker, pending } = lifecycle;
 
   worker.on('message', (msg: unknown) => {
     if (!isWorkerResponse(msg)) return;
@@ -74,89 +61,54 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
     else entry.reject(new Error(msg.message));
   });
 
-  worker.on('error', (err) => {
-    fatalError = err;
-    for (const entry of pending.values()) entry.reject(err);
-    pending.clear();
-  });
-
-  worker.on('exit', (code) => {
-    if (code !== 0) {
-      const err = new Error(`DuckDB worker exited unexpectedly with code ${String(code)}`);
-      fatalError ??= err;
-      for (const entry of pending.values()) entry.reject(err);
-      pending.clear();
-    }
-  });
-
-  await ready;
+  function submitQuery(
+    kind: string,
+    sql: string,
+    logTag: string,
+    extraPayload: Record<string, unknown>,
+    extraLogFields: Record<string, unknown>,
+    onStarted?: () => void,
+  ): Promise<RawRow[]> {
+    if (lifecycle.fatalError !== null) return Promise.reject(lifecycle.fatalError);
+    const id = lifecycle.nextId++;
+    const startedAt = Date.now();
+    const startedAtIso = new Date(startedAt).toISOString();
+    return new Promise<RawRow[]>((resolve, reject) => {
+      pending.set(id, {
+        onStarted,
+        resolve: (rows) => {
+          logger.debug(logTag, {
+            id,
+            startedAt: startedAtIso,
+            durationMs: Date.now() - startedAt,
+            rows: rows.length,
+            sql,
+            ...extraLogFields,
+          });
+          resolve(rows);
+        },
+        reject: (err) => {
+          logger.debug(`${logTag}-failed`, {
+            id,
+            startedAt: startedAtIso,
+            durationMs: Date.now() - startedAt,
+            error: err.message,
+            sql,
+            ...extraLogFields,
+          });
+          reject(err);
+        },
+      });
+      worker.postMessage({ kind, id, sql, ...extraPayload });
+    });
+  }
 
   return {
     runQuery(sql: string, onStarted?: () => void): Promise<RawRow[]> {
-      if (fatalError !== null) return Promise.reject(fatalError);
-      const id = nextId++;
-      const startedAt = Date.now();
-      const startedAtIso = new Date(startedAt).toISOString();
-      return new Promise<RawRow[]>((resolve, reject) => {
-        pending.set(id, {
-          onStarted,
-          resolve: (rows) => {
-            logger.debug('duckdb:query', {
-              id,
-              startedAt: startedAtIso,
-              durationMs: Date.now() - startedAt,
-              rows: rows.length,
-              sql,
-            });
-            resolve(rows);
-          },
-          reject: (err) => {
-            logger.debug('duckdb:query-failed', {
-              id,
-              startedAt: startedAtIso,
-              durationMs: Date.now() - startedAt,
-              error: err.message,
-              sql,
-            });
-            reject(err);
-          },
-        });
-        worker.postMessage({ kind: 'query', id, sql });
-      });
+      return submitQuery('query', sql, 'duckdb:query', {}, {}, onStarted);
     },
     runPreparedQuery(sql: string, params: readonly unknown[], onStarted?: () => void): Promise<RawRow[]> {
-      if (fatalError !== null) return Promise.reject(fatalError);
-      const id = nextId++;
-      const startedAt = Date.now();
-      const startedAtIso = new Date(startedAt).toISOString();
-      return new Promise<RawRow[]>((resolve, reject) => {
-        pending.set(id, {
-          onStarted,
-          resolve: (rows) => {
-            logger.debug('duckdb:prepared-query', {
-              id,
-              startedAt: startedAtIso,
-              durationMs: Date.now() - startedAt,
-              rows: rows.length,
-              sql,
-              paramCount: params.length,
-            });
-            resolve(rows);
-          },
-          reject: (err) => {
-            logger.debug('duckdb:prepared-query-failed', {
-              id,
-              startedAt: startedAtIso,
-              durationMs: Date.now() - startedAt,
-              error: err.message,
-              sql,
-              paramCount: params.length,
-            });
-            reject(err);
-          },
-        });
-        worker.postMessage({ kind: 'prepared-query', id, sql, params });
-      });
+      return submitQuery('prepared-query', sql, 'duckdb:prepared-query', { params }, { paramCount: params.length }, onStarted);
     },
     cancelPendingQueries(): void {
       worker.postMessage({ kind: 'cancel-pending' });
