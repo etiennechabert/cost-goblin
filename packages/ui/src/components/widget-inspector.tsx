@@ -4,6 +4,7 @@ import { asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel, isTagDimension } from '../lib/dimensions.js';
 import { WIDGET_CATALOG } from '../widgets/registry.js';
 import { buildAllColumns, type ColumnSpec } from './data-table.js';
+import { OVERVIEW_SEED_VIEW } from '@costgoblin/core/browser';
 
 interface WidgetInspectorProps {
   readonly widget: WidgetSpec;
@@ -13,6 +14,10 @@ interface WidgetInspectorProps {
   readonly onMoveLeft?: (() => void) | undefined;
   readonly onMoveRight?: (() => void) | undefined;
 }
+
+const SEED_TABLE = OVERVIEW_SEED_VIEW.rows.flatMap(r => r.widgets).find(w => w.type === 'table');
+const SEED_TABLE_HIDDEN = SEED_TABLE?.type === 'table' ? (SEED_TABLE.hiddenColumns ?? []) : [];
+const SEED_TABLE_ORDER = SEED_TABLE?.type === 'table' ? (SEED_TABLE.columnOrder ?? []) : [];
 
 const SIZES: readonly { value: WidgetSize; label: string }[] = [
   { value: 'small', label: 'S' },
@@ -69,7 +74,12 @@ function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: str
     case 'heatmap':
       return { ...base, type, groupBy: existingGroupBy, topN: 'topN' in prev && prev.topN !== undefined ? prev.topN : 10 };
     case 'table':
-      return { ...base, type };
+      return {
+        ...base,
+        type,
+        columnOrder: [...SEED_TABLE_ORDER],
+        hiddenColumns: [...SEED_TABLE_HIDDEN],
+      };
   }
 }
 

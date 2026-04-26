@@ -37,6 +37,7 @@ export const TRAILING_COLUMNS: readonly ColumnSpec[] = [
   { key: 'description', label: 'Description', dimId: null, align: 'left', truncate: true },
 ];
 
+
 export function buildAllColumns(tagColumns: readonly ExplorerTagColumn[], granularity?: string): ColumnSpec[] {
   const base = granularity === 'hourly'
     ? BASE_COLUMNS
