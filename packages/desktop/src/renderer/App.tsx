@@ -120,7 +120,7 @@ function AppShell(): React.JSX.Element {
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [isDark, setIsDark] = useState(true);
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
-  const [viewsConfig, setViewsConfig] = useState(FALLBACK_VIEWS);
+  const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
   // Sync-health signal. Non-null whenever something AWS-side is broken —
   // most commonly expired credentials. Surfaced as a red dot on the Sync
   // nav button so the user notices without having to open the tab.
@@ -146,19 +146,17 @@ function AppShell(): React.JSX.Element {
     // call also bootstraps the file for new installations.
     api.getViewsConfig()
       .then((cfg) => {
-        if (cfg.views.length > 0) {
-          setViewsConfig(cfg);
-          setView(prev => {
-            if (prev.page !== 'custom') return prev;
-            const exists = cfg.views.some(v => v.id === prev.viewId);
-            const firstId = cfg.views[0]?.id;
-            return exists || firstId === undefined ? prev : { page: 'custom', viewId: firstId };
-          });
-        }
+        const resolved = cfg.views.length > 0 ? cfg : FALLBACK_VIEWS;
+        setViewsConfig(resolved);
+        setView(prev => {
+          if (prev.page !== 'custom') return prev;
+          const exists = resolved.views.some(v => v.id === prev.viewId);
+          const firstId = resolved.views[0]?.id;
+          return exists || firstId === undefined ? prev : { page: 'custom', viewId: firstId };
+        });
       })
       .catch(() => {
-        // Keep fallback — ensures Cost Overview always renders even if YAML
-        // parsing fails (corrupted file, schema migration in progress).
+        setViewsConfig(FALLBACK_VIEWS);
       });
   }, [api, setupCheck]);
 
@@ -250,7 +248,7 @@ function AppShell(): React.JSX.Element {
   function handleBack() {
     confirmLeave(() => {
       void api.cancelPendingQueries();
-      const firstId = viewsConfig.views[0]?.id ?? OVERVIEW_SEED_VIEW.id;
+      const firstId = viewsConfig?.views[0]?.id ?? OVERVIEW_SEED_VIEW.id;
       setView({ page: 'custom', viewId: firstId });
     });
   }
@@ -268,9 +266,16 @@ function AppShell(): React.JSX.Element {
     return <SetupWizard onComplete={handleSetupComplete} />;
   }
 
+  if (viewsConfig === null) {
+    return <div className="min-h-screen bg-bg-primary" />;
+  }
+
+  // Narrowed — viewsConfig is non-null from here on.
+  const views = viewsConfig;
+
   // User-defined views populate the left nav before the static analytical
   // views (Trends / Missing Tags / Savings).
-  const customNav: { id: string; label: string }[] = viewsConfig.views.map(v => ({ id: v.id, label: v.name }));
+  const customNav: { id: string; label: string }[] = views.views.map(v => ({ id: v.id, label: v.name }));
   const leftNav = [...customNav, ...STATIC_LEFT_NAV];
 
   function activeNavId(): string | null {
@@ -288,7 +293,7 @@ function AppShell(): React.JSX.Element {
   const active = activeNavId();
 
   function findViewSpec(id: string): ViewSpec | null {
-    return viewsConfig.views.find(v => v.id === id) ?? null;
+    return views.views.find(v => v.id === id) ?? null;
   }
 
   return (

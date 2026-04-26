@@ -41,17 +41,21 @@ export function TopNBarWidget({
 
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
+  const fallbackDim = getDimensionFallback(specGroupBy);
   const query = useQuery<CostQueryResult>(
     async () => {
-      const primary = await api.queryCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
-      const fallbackDim = getDimensionFallback(specGroupBy);
-      if (primary.rows.length <= 1 && fallbackDim !== undefined) {
-        const fallback = await api.queryCosts({ groupBy: fallbackDim, dateRange, filters, granularity });
-        return { result: fallback, groupBy: fallbackDim };
+      if (fallbackDim === undefined) {
+        const result = await api.queryCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
+        return { result, groupBy: specGroupBy };
       }
-      return { result: primary, groupBy: specGroupBy };
+      const [primary, fallback] = await Promise.all([
+        api.queryCosts({ groupBy: specGroupBy, dateRange, filters, granularity }),
+        api.queryCosts({ groupBy: fallbackDim, dateRange, filters, granularity }),
+      ]);
+      if (primary.rows.length > 1) return { result: primary, groupBy: specGroupBy };
+      return { result: fallback, groupBy: fallbackDim };
     },
-    [specGroupBy, dateRange.start, dateRange.end, fk, granularity, api],
+    [specGroupBy, fallbackDim, dateRange.start, dateRange.end, fk, granularity, api],
   );
 
   const activeGroupBy = query.status === 'success' ? query.data.groupBy : specGroupBy;

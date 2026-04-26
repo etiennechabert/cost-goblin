@@ -60,17 +60,21 @@ export function HeatmapWidget({
 
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
+  const fallbackDim = getDimensionFallback(specGroupBy);
   const query = useQuery<DailyQueryResult>(
     async () => {
-      const primary = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
-      const fallbackDim = getDimensionFallback(specGroupBy);
-      if (primary.groups.length <= 1 && fallbackDim !== undefined) {
-        const fallback = await api.queryDailyCosts({ groupBy: fallbackDim, dateRange, filters, granularity });
-        return { result: fallback, groupBy: fallbackDim };
+      if (fallbackDim === undefined) {
+        const result = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
+        return { result, groupBy: specGroupBy };
       }
-      return { result: primary, groupBy: specGroupBy };
+      const [primary, fallback] = await Promise.all([
+        api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity }),
+        api.queryDailyCosts({ groupBy: fallbackDim, dateRange, filters, granularity }),
+      ]);
+      if (primary.groups.length > 1) return { result: primary, groupBy: specGroupBy };
+      return { result: fallback, groupBy: fallbackDim };
     },
-    [specGroupBy, dateRange.start, dateRange.end, fk, granularity, api],
+    [specGroupBy, fallbackDim, dateRange.start, dateRange.end, fk, granularity, api],
   );
 
   const activeGroupBy = query.status === 'success' ? query.data.groupBy : specGroupBy;

@@ -387,6 +387,20 @@ export function createAppContext(ctx: IpcContext): AppContext {
 
   const queryLog = new QueryLog();
 
+  const wrappedRunQuery = queryLog.wrapQuery((sql, onStarted) => ctx.db.runQuery(sql, onStarted));
+  const wrappedRunPreparedQuery = queryLog.wrapPreparedQuery((sql, params, onStarted) => ctx.db.runPreparedQuery(sql, params, onStarted));
+
+  const inflightQueries = new Map<string, Promise<RawRow[]>>();
+
+  function dedup(key: string, run: () => Promise<RawRow[]>): Promise<RawRow[]> {
+    const existing = inflightQueries.get(key);
+    if (existing !== undefined) return existing;
+    const promise = run();
+    inflightQueries.set(key, promise);
+    void promise.finally(() => { inflightQueries.delete(key); });
+    return promise;
+  }
+
   return {
     ctx,
     state,
@@ -401,8 +415,11 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getOrgAccountsPath,
     getAvailableColumns,
     queryLog,
-    runQuery: queryLog.wrapQuery((sql, onStarted) => ctx.db.runQuery(sql, onStarted)),
-    runPreparedQuery: queryLog.wrapPreparedQuery((sql, params, onStarted) => ctx.db.runPreparedQuery(sql, params, onStarted)),
+    runQuery: (sql: string) => dedup(sql, () => wrappedRunQuery(sql)),
+    runPreparedQuery: (sql: string, params: readonly unknown[]) => dedup(
+      `${sql}\0${JSON.stringify(params)}`,
+      () => wrappedRunPreparedQuery(sql, params),
+    ),
     invalidateConfig: () => { state.config = null; },
     invalidateDimensions: () => { state.dimensions = null; state.accountMap = null; state.regionMap = null; },
     invalidateViews: () => { state.views = null; },
