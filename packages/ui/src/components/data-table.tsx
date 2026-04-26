@@ -252,7 +252,7 @@ export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, 
     return <div className="space-y-2">{headerRow}<div className="text-xs text-text-muted py-4 text-center">No rows match the current filters.</div></div>;
   }
   if (columns.length === 0) {
-    return <div className="space-y-2">{headerRow}<div className="text-xs text-text-muted py-4 text-center">All columns are hidden — open <em>Columns</em> to show some again.</div></div>;
+    return <div className="space-y-2 min-h-[200px]">{headerRow}<div className="text-xs text-text-muted py-16 text-center">All columns are hidden — open <em>Columns</em> to show some again.</div></div>;
   }
 
   return (
