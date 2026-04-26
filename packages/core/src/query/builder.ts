@@ -205,6 +205,30 @@ function buildExclusionClauses(
  * DuckDB errors when any glob in the list matches zero files — so callers
  * must pre-filter `periods` to months that actually exist on disk.
  */
+function buildTagSelect(
+  t: DimensionsConfig['tags'][number],
+  needsOrgJoin: boolean,
+): string {
+  const curKey = t.tagName.startsWith('user_') ? t.tagName : `user_${t.tagName}`;
+  const colName = tagColumnName(t.tagName);
+  const tablePrefix = needsOrgJoin ? 'cur.' : '';
+  const resourceExpr = `element_at(${tablePrefix}resource_tags, '${curKey}')[1]`;
+
+  if (t.accountTagFallback === undefined || !needsOrgJoin) {
+    return `${resourceExpr} AS ${colName}`;
+  }
+
+  const fallbackExpr = `acct_tags.fallback_${colName}`;
+  if (t.missingValueTemplate !== undefined && t.missingValueTemplate.length > 0 && t.missingValueTemplate !== '{fallback}') {
+    const parts = t.missingValueTemplate.split('{fallback}');
+    const prefix = sqlEscapeString(parts[0] ?? '');
+    const suffix = sqlEscapeString(parts[1] ?? '');
+    const formatted = `'${prefix}' || ${fallbackExpr} || '${suffix}'`;
+    return `COALESCE(NULLIF(${resourceExpr}, ''), ${formatted}) AS ${colName}`;
+  }
+  return `COALESCE(NULLIF(${resourceExpr}, ''), ${fallbackExpr}) AS ${colName}`;
+}
+
 export function buildSource(
   dataDir: string,
   tier: string,
@@ -218,27 +242,7 @@ export function buildSource(
   const hasFallbacks = dimensions.tags.some(t => t.accountTagFallback !== undefined);
   const needsOrgJoin = hasFallbacks && orgAccountsPath !== undefined;
 
-  const tagSelects = dimensions.tags.map(t => {
-    const curKey = t.tagName.startsWith('user_') ? t.tagName : `user_${t.tagName}`;
-    const colName = tagColumnName(t.tagName);
-    const tablePrefix = needsOrgJoin ? 'cur.' : '';
-    const resourceExpr = `element_at(${tablePrefix}resource_tags, '${curKey}')[1]`;
-
-    if (t.accountTagFallback !== undefined && needsOrgJoin) {
-      const fallbackExpr = `acct_tags.fallback_${colName}`;
-      // Apply missingValueTemplate if set — e.g. "unknown-{fallback}" → 'unknown-' || account_tag
-      if (t.missingValueTemplate !== undefined && t.missingValueTemplate.length > 0 && t.missingValueTemplate !== '{fallback}') {
-        const parts = t.missingValueTemplate.split('{fallback}');
-        const prefix = sqlEscapeString(parts[0] ?? '');
-        const suffix = sqlEscapeString(parts[1] ?? '');
-        const formatted = `'${prefix}' || ${fallbackExpr} || '${suffix}'`;
-        return `COALESCE(NULLIF(${resourceExpr}, ''), ${formatted}) AS ${colName}`;
-      }
-      return `COALESCE(NULLIF(${resourceExpr}, ''), ${fallbackExpr}) AS ${colName}`;
-    }
-
-    return `${resourceExpr} AS ${colName}`;
-  });
+  const tagSelects = dimensions.tags.map(t => buildTagSelect(t, needsOrgJoin));
 
   const tagClause = tagSelects.length > 0 ? `,\n      ${tagSelects.join(',\n      ')}` : '';
 

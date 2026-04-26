@@ -40,6 +40,41 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+function flattenConfiguration(rawConfig: unknown): Record<string, string> {
+  const config: Record<string, string> = {};
+  if (!isRecord(rawConfig)) return config;
+  for (const [section, value] of Object.entries(rawConfig)) {
+    if (isRecord(value)) {
+      for (const [k, v] of Object.entries(value)) {
+        config[`${section}.${k}`] = String(v);
+      }
+    } else {
+      config[section] = String(value);
+    }
+  }
+  return config;
+}
+
+function parseUsages(costCalc: unknown): ParsedDetails['usages'] {
+  if (!isRecord(costCalc)) return [];
+  const rawUsages = costCalc['usages'];
+  if (!Array.isArray(rawUsages)) return [];
+  const usages: ParsedDetails['usages'] = [];
+  for (const u of rawUsages) {
+    if (!isRecord(u)) continue;
+    const uAmount = u['usageAmount'];
+    const amountStr = typeof uAmount === 'number' ? String(uAmount)
+      : typeof uAmount === 'string' ? uAmount
+        : '';
+    usages.push({
+      type: typeof u['usageType'] === 'string' ? u['usageType'] : '',
+      amount: amountStr,
+      unit: typeof u['unit'] === 'string' ? u['unit'] : '',
+    });
+  }
+  return usages;
+}
+
 function parseResourceDetails(json: string): ParsedDetails | null {
   if (json.length === 0) return null;
   try {
@@ -49,49 +84,10 @@ function parseResourceDetails(json: string): ParsedDetails | null {
     if (topKey === undefined) return null;
     const inner = parsed[topKey];
     if (!isRecord(inner)) return null;
-
-    const config: Record<string, string> = {};
-    const rawConfig = inner['configuration'];
-    if (isRecord(rawConfig)) {
-      for (const [section, value] of Object.entries(rawConfig)) {
-        if (isRecord(value)) {
-          for (const [k, v] of Object.entries(value)) {
-            config[`${section}.${k}`] = String(v);
-          }
-        } else {
-          config[section] = String(value);
-        }
-      }
-    }
-
-    const usages: ParsedDetails['usages'] = [];
-    const costCalc = inner['costCalculation'];
-    if (isRecord(costCalc)) {
-      const rawUsages = costCalc['usages'];
-      if (Array.isArray(rawUsages)) {
-        for (const u of rawUsages) {
-          if (!isRecord(u)) continue;
-          const uType = u['usageType'];
-          const uAmount = u['usageAmount'];
-          const uUnit = u['unit'];
-          let amountStr: string;
-          if (typeof uAmount === 'number') {
-            amountStr = String(uAmount);
-          } else if (typeof uAmount === 'string') {
-            amountStr = uAmount;
-          } else {
-            amountStr = '';
-          }
-          usages.push({
-            type: typeof uType === 'string' ? uType : '',
-            amount: amountStr,
-            unit: typeof uUnit === 'string' ? uUnit : '',
-          });
-        }
-      }
-    }
-
-    return { config, usages };
+    return {
+      config: flattenConfiguration(inner['configuration']),
+      usages: parseUsages(inner['costCalculation']),
+    };
   } catch {
     return null;
   }

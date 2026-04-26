@@ -570,6 +570,37 @@ function describeDraftError(draft: CostScopeConfig): string | null {
   return null;
 }
 
+function PerspectiveToggle({ current, netDisabled, onChange }: Readonly<{
+  current: CostPerspective;
+  netDisabled: boolean;
+  onChange: (p: CostPerspective) => void;
+}>): React.JSX.Element {
+  return (
+    <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary/30 p-0.5 shrink-0">
+      {(['gross', 'net'] as const).map(perspective => {
+        const disabled = perspective === 'net' && netDisabled;
+        const active = current === perspective;
+        return (
+          <button
+            key={perspective}
+            type="button"
+            disabled={disabled}
+            onClick={() => { onChange(perspective); }}
+            className={[
+              'px-3 py-1 text-xs rounded-md transition-colors capitalize',
+              active ? 'bg-accent text-bg-primary' : 'text-text-secondary hover:text-text-primary',
+              disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer',
+            ].join(' ')}
+            title={disabled ? 'Requires line_item_net_unblended_cost — enable "Include Net Columns" on the CUR report.' : undefined}
+          >
+            {perspective}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function CostScopeView(): React.JSX.Element {
   const api = useCostApi();
   const [draft, setDraft] = useState(DEFAULT_COST_SCOPE);
@@ -845,28 +876,11 @@ export function CostScopeView(): React.JSX.Element {
                       Net applies credits, refunds, and promotional discounts on top of the chosen metric.
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary/30 p-0.5 shrink-0">
-                    {(['gross', 'net'] as const).map(perspective => {
-                      const disabled = perspective === 'net' && capabilities !== null && !capabilities.hasNetColumns;
-                      const active = (draft.costPerspective ?? 'gross') === perspective;
-                      return (
-                        <button
-                          key={perspective}
-                          type="button"
-                          disabled={disabled}
-                          onClick={() => { handlePerspectiveChange(perspective); }}
-                          className={[
-                            'px-3 py-1 text-xs rounded-md transition-colors capitalize',
-                            active ? 'bg-accent text-bg-primary' : 'text-text-secondary hover:text-text-primary',
-                            disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer',
-                          ].join(' ')}
-                          title={disabled ? 'Requires line_item_net_unblended_cost — enable "Include Net Columns" on the CUR report.' : undefined}
-                        >
-                          {perspective}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <PerspectiveToggle
+                    current={draft.costPerspective ?? 'gross'}
+                    netDisabled={capabilities !== null && !capabilities.hasNetColumns}
+                    onChange={handlePerspectiveChange}
+                  />
                 </div>
                 {(draft.costPerspective ?? 'gross') === 'net' && capabilities !== null && !capabilities.hasNetColumns && (
                   <div className="mt-2 text-xs text-warning">

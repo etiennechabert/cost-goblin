@@ -37,6 +37,22 @@ function createCoin(id: number, containerWidth: number, containerHeight: number)
   };
 }
 
+function updateCoin(c: Coin, containerWidth: number, containerHeight: number): Coin {
+  let { x, y, vx, vy, rotation, rotationSpeed, scale } = c;
+  vy += 0.034;
+  vx += Math.sin(Date.now() / 800 + c.id * 2) * 0.013;
+  vx *= 0.98;
+  x += vx;
+  y += vy;
+  rotation += rotationSpeed;
+  if (rotation >= ROTATION_MAX) { rotation = ROTATION_MAX; rotationSpeed = -Math.abs(rotationSpeed); }
+  else if (rotation <= ROTATION_MIN) { rotation = ROTATION_MIN; rotationSpeed = Math.abs(rotationSpeed); }
+  if (x < 0) { x = 0; vx = Math.abs(vx) * 0.5; }
+  if (x > containerWidth - COIN_SIZE * scale) { x = containerWidth - COIN_SIZE * scale; vx = -Math.abs(vx) * 0.5; }
+  if (y > containerHeight + COIN_SIZE) return createCoin(c.id, containerWidth, containerHeight);
+  return { ...c, x, y, vx, vy, rotation, scale };
+}
+
 export function CoinRainLoader({ height = 120, count = 5 }: Readonly<{ height?: number; count?: number }>) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [coins, setCoins] = useState<Coin[]>([]);
@@ -56,26 +72,7 @@ export function CoinRainLoader({ height = 120, count = 5 }: Readonly<{ height?: 
     const w = el.offsetWidth;
 
     const tick = () => {
-      setCoins(prev => prev.map(c => {
-        let { x, y, vx, vy, rotation, rotationSpeed, scale } = c;
-        vy += 0.034;
-        vx += Math.sin(Date.now() / 800 + c.id * 2) * 0.013;
-        vx *= 0.98;
-        x += vx;
-        y += vy;
-        rotation += rotationSpeed;
-        if (rotation >= ROTATION_MAX) { rotation = ROTATION_MAX; rotationSpeed = -Math.abs(rotationSpeed); }
-        else if (rotation <= ROTATION_MIN) { rotation = ROTATION_MIN; rotationSpeed = Math.abs(rotationSpeed); }
-
-        if (x < 0) { x = 0; vx = Math.abs(vx) * 0.5; }
-        if (x > w - COIN_SIZE * scale) { x = w - COIN_SIZE * scale; vx = -Math.abs(vx) * 0.5; }
-
-        if (y > height + COIN_SIZE) {
-          return createCoin(c.id, w, height);
-        }
-
-        return { ...c, x, y, vx, vy, rotation, scale };
-      }));
+      setCoins(prev => prev.map(c => updateCoin(c, w, height)));
       frameRef.current = requestAnimationFrame(tick);
     };
 

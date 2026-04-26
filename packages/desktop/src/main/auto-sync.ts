@@ -90,6 +90,46 @@ function retentionCutoff(days: number): string {
   return `${String(d.getFullYear())}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function syncTier(
+  deps: AutoSyncDeps,
+  tier: { name: string; retention: number },
+): Promise<'ok' | 'skip' | 'error'> {
+  const cutoff = retentionCutoff(tier.retention);
+  let inventory: Awaited<ReturnType<typeof deps.getInventory>>;
+  try {
+    inventory = await deps.getInventory(tier.name);
+  } catch (err: unknown) {
+    logger.info(`Auto-sync: failed to get ${tier.name} inventory — ${errorMessage(err)}`);
+    return 'skip';
+  }
+
+  const missing = inventory.periods
+    .filter(p => (p.localStatus === 'missing' || p.localStatus === 'stale') && p.period >= cutoff);
+
+  if (missing.length === 0) {
+    logger.info(`Auto-sync: ${tier.name} — nothing to sync`);
+    return 'skip';
+  }
+
+  const files = missing.flatMap(p => [...p.files]);
+  logger.info(`Auto-sync: ${tier.name} — syncing ${String(missing.length)} periods (${String(files.length)} files)`);
+  status = { state: 'syncing', tier: tier.name, filesDone: 0, filesTotal: files.length };
+
+  try {
+    const result = await deps.syncPeriods(files, tier.name);
+    logger.info(`Auto-sync: ${tier.name} — synced ${String(result.filesDownloaded)} files`);
+    return 'ok';
+  } catch (err: unknown) {
+    logger.info(`Auto-sync: ${tier.name} — sync failed: ${errorMessage(err)}`);
+    status = { state: 'error', message: errorMessage(err), lastRun: new Date().toISOString() };
+    return 'error';
+  }
+}
+
 async function runOnce(deps: AutoSyncDeps): Promise<void> {
   if (running) return;
   running = true;
@@ -122,34 +162,8 @@ async function runOnce(deps: AutoSyncDeps): Promise<void> {
     }
 
     for (const tier of tiers) {
-      const cutoff = retentionCutoff(tier.retention);
-      let inventory: Awaited<ReturnType<typeof deps.getInventory>>;
-      try {
-        inventory = await deps.getInventory(tier.name);
-      } catch (err: unknown) {
-        logger.info(`Auto-sync: failed to get ${tier.name} inventory — ${err instanceof Error ? err.message : String(err)}`);
-        continue;
-      }
-
-      const missing = inventory.periods
-        .filter(p => (p.localStatus === 'missing' || p.localStatus === 'stale') && p.period >= cutoff);
-
-      if (missing.length === 0) {
-        logger.info(`Auto-sync: ${tier.name} — nothing to sync`);
-        continue;
-      }
-
-      const files = missing.flatMap(p => [...p.files]);
-      logger.info(`Auto-sync: ${tier.name} — syncing ${String(missing.length)} periods (${String(files.length)} files)`);
-
-      status = { state: 'syncing', tier: tier.name, filesDone: 0, filesTotal: files.length };
-
-      try {
-        const result = await deps.syncPeriods(files, tier.name);
-        logger.info(`Auto-sync: ${tier.name} — synced ${String(result.filesDownloaded)} files`);
-      } catch (err: unknown) {
-        logger.info(`Auto-sync: ${tier.name} — sync failed: ${err instanceof Error ? err.message : String(err)}`);
-        status = { state: 'error', message: err instanceof Error ? err.message : String(err), lastRun: new Date().toISOString() };
+      const tierResult = await syncTier(deps, tier);
+      if (tierResult === 'error') {
         running = false;
         return;
       }
@@ -158,7 +172,7 @@ async function runOnce(deps: AutoSyncDeps): Promise<void> {
     const now = new Date().toISOString();
     status = { state: 'idle', lastRun: now, nextRun: new Date(Date.now() + currentIntervalMs).toISOString() };
   } catch (err: unknown) {
-    status = { state: 'error', message: err instanceof Error ? err.message : String(err), lastRun: new Date().toISOString() };
+    status = { state: 'error', message: errorMessage(err), lastRun: new Date().toISOString() };
   }
 
   running = false;
