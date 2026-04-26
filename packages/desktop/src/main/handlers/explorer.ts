@@ -451,7 +451,7 @@ export function registerExplorerHandlers(app: AppContext): void {
       SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
         SELECT 1 FROM ${qc.source} ${qc.whereStr}
         GROUP BY ${groupByColumns.join(', ')}
-      )
+      ) AS _cnt
     `.trim();
     const dataSql = `
       SELECT
@@ -467,27 +467,21 @@ export function registerExplorerHandlers(app: AppContext): void {
       LIMIT ${String(rowLimit)}
     `.trim();
 
-    let totalRows = 0;
-    let resultRows: AggregatedTableRow[] = [];
-    try {
-      const [countResult, dataResult] = await Promise.all([runQuery(countSql), runQuery(dataSql)]);
-      totalRows = countResult[0] !== undefined ? toNum(countResult[0]['n']) : 0;
-      resultRows = dataResult.map(r => {
-        const values: Record<string, string> = {};
-        for (const col of groupByColumns) {
-          values[col] = toStr(r[col]);
-        }
-        return {
-          values,
-          cost: toNum(r['cost']),
-          listCost: toNum(r['list_cost']),
-          usageAmount: toNum(r['usage_amount']),
-          rowCount: toNum(r['row_count']),
-        };
-      });
-    } catch (err) {
-      logger.warn(`explorer: aggregated table query failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    const [countResult, dataResult] = await Promise.all([runQuery(countSql), runQuery(dataSql)]);
+    const totalRows = countResult[0] !== undefined ? toNum(countResult[0]['n']) : 0;
+    const resultRows: AggregatedTableRow[] = dataResult.map(r => {
+      const values: Record<string, string> = {};
+      for (const col of groupByColumns) {
+        values[col] = toStr(r[col]);
+      }
+      return {
+        values,
+        cost: toNum(r['cost']),
+        listCost: toNum(r['list_cost']),
+        usageAmount: toNum(r['usage_amount']),
+        rowCount: toNum(r['row_count']),
+      };
+    });
 
     return { rows: resultRows, totalRows, tagColumns: qc.tagColumns };
   });
