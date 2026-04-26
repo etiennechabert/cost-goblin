@@ -41,9 +41,7 @@ const DEFAULT_BUILT_INS: readonly BuiltInDimension[] = [
   // Very high cardinality — disabled by default so the normal filter/nav
   // pickers stay scannable. The Explorer references it directly so
   // click-to-filter on a resource cell works whether or not this dim is
-  // enabled, and users who want a dedicated "per-resource" view can flip
-  // it on in Dimensions.
-  { name: asDimensionId('resource_id'), label: 'Resource', field: 'resource_id', description: 'AWS resource ID or ARN (i-0abc…, arn:aws:rds:…). High-cardinality — enable when investigating a specific resource.', enabled: false },
+  { name: asDimensionId('resource_id'), label: 'Resource', field: 'resource_id', description: 'AWS resource ID or ARN (i-0abc…, arn:aws:rds:…). High-cardinality — useful for drilling into specific resources.' },
 ];
 
 /** Renames we want propagated to existing configs. Only overrides the stored
