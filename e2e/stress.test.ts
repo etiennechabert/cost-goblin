@@ -1,0 +1,125 @@
+import { test, expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
+import { join } from 'node:path';
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { tmpdir, homedir } from 'node:os';
+import { DESKTOP_DIR, waitForQuerySettle } from './helpers.js';
+
+// ---------------------------------------------------------------------------
+// Widget growth regression — every widget × every size stays bounded
+// ---------------------------------------------------------------------------
+test.describe('Widget growth', () => {
+  // Copy real config to a temp dir so we can swap in a synthetic views.yaml
+  // without clobbering the user's real dashboard.
+  const REAL_CONFIG_DIR = join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config');
+  const TEMP_CONFIG_DIR = join(tmpdir(), `costgoblin-widget-growth-${String(Date.now())}`);
+  const VIEWS_YAML = buildWidgetMatrixYaml();
+
+  // One test per widget type — each test renders that widget at all 4 sizes in
+  // separate rows and asserts no horizontal/vertical runaway growth.
+  const WIDGET_TYPES = ['summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table'] as const;
+
+  // Single app launch with the temp config, reused across all widget tests.
+  // Previously each widget type launched its own Electron process.
+  let widgetApp: ElectronApplication;
+  let widgetPage: Page;
+
+  test.beforeAll(async () => {
+    mkdirSync(TEMP_CONFIG_DIR, { recursive: true });
+    for (const f of ['costgoblin.yaml', 'dimensions.yaml', 'org-tree.yaml']) {
+      const src = join(REAL_CONFIG_DIR, f);
+      if (existsSync(src)) writeFileSync(join(TEMP_CONFIG_DIR, f), readFileSync(src));
+    }
+    writeFileSync(join(TEMP_CONFIG_DIR, 'views.yaml'), VIEWS_YAML);
+
+    widgetApp = await _electron.launch({
+      args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],
+      env: {
+        ...process.env,
+        NODE_ENV: 'production',
+        COSTGOBLIN_DATA_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'data'),
+        COSTGOBLIN_CONFIG_DIR: TEMP_CONFIG_DIR,
+      },
+    });
+    widgetPage = await widgetApp.firstWindow();
+    await expect(widgetPage).toHaveTitle('CostGoblin');
+    await widgetPage.setViewportSize({ width: 1400, height: 900 });
+  });
+
+  test.afterAll(async () => { await widgetApp.close(); });
+
+  for (const widgetType of WIDGET_TYPES) {
+    test(`${widgetType} stays bounded at all sizes`, async () => {
+      await widgetPage.getByRole('button', { name: `test-${widgetType}`, exact: true }).click();
+      await waitForQuerySettle(widgetPage);
+      // Let queries resolve, loaders swap to real data, and any one-shot
+      // layout transitions settle — we're hunting runaway growth, not
+      // legitimate data-arrival reflows.
+      await widgetPage.waitForTimeout(4000);
+
+      // Sample every 600ms for ~3 seconds. Runaway growth shows up as
+      // sample-to-sample increases.
+      const samples: { bodyWidth: number; bodyHeight: number }[] = [];
+      for (let i = 0; i < 5; i++) {
+        const m = await widgetPage.evaluate(() => ({
+          bodyWidth: document.body.scrollWidth,
+          bodyHeight: document.body.scrollHeight,
+        }));
+        samples.push(m);
+        await widgetPage.waitForTimeout(600);
+      }
+
+      const maxAllowedWidth = 1400 + 200; // scrollbar + window chrome tolerance
+      for (const [i, s] of samples.entries()) {
+        expect(s.bodyWidth, `sample ${String(i)}: body wider than viewport for ${widgetType}`).toBeLessThanOrEqual(maxAllowedWidth);
+      }
+      // Growth check: no single inter-sample gap should exceed 20px. A runaway
+      // grower accumulates ~100s of px per second; legitimate reflows land in
+      // the first sample and stay put.
+      for (let i = 1; i < samples.length; i++) {
+        const prev = samples[i - 1];
+        const cur = samples[i];
+        if (prev === undefined || cur === undefined) continue;
+        expect(cur.bodyWidth - prev.bodyWidth, `width grew between samples ${String(i - 1)}→${String(i)} for ${widgetType}`).toBeLessThan(20);
+        expect(cur.bodyHeight - prev.bodyHeight, `height grew between samples ${String(i - 1)}→${String(i)} for ${widgetType}`).toBeLessThan(20);
+      }
+    });
+  }
+});
+
+function buildWidgetMatrixYaml(): string {
+  const types = ['summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table'] as const;
+  const sizes = ['small', 'medium', 'large', 'full'] as const;
+  const views: string[] = [];
+  // Keep the seed Cost Overview so the app boots into a working state. It's
+  // also built-in so it can't be deleted by the test.
+  views.push(`  - id: overview
+    name: Cost Overview
+    builtIn: true
+    rows:
+      - widgets:
+          - id: ov-sum
+            type: summary
+            size: small
+            metric: total`);
+  for (const t of types) {
+    const widgetLines: string[] = [];
+    for (const [i, size] of sizes.entries()) {
+      const id = `w-${t}-${size}`;
+      if (t === 'summary') {
+        widgetLines.push(`      - widgets:\n          - id: ${id}\n            type: summary\n            size: ${size}\n            metric: total`);
+      } else {
+        const extras = t === 'topNBar' || t === 'line' || t === 'heatmap' || t === 'table'
+          ? `\n            topN: 10`
+          : '';
+        const columns = t === 'table' ? `\n            columns: [entity, service, cost, percentage]` : '';
+        widgetLines.push(`      - widgets:\n          - id: ${id}\n            type: ${t}\n            size: ${size}\n            groupBy: service${extras}${columns}`);
+      }
+      void i;
+    }
+    views.push(`  - id: test-${t}
+    name: test-${t}
+    rows:
+${widgetLines.join('\n')}`);
+  }
+  return `views:\n${views.join('\n')}\n`;
+}
