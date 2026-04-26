@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CostMetric,
   CostPerspective,
@@ -55,23 +55,26 @@ interface ColumnSpec {
 
 const BASE_COLUMNS: readonly ColumnSpec[] = [
   { key: 'usage_date', label: 'Date', dimId: null, align: 'left', mono: true },
-  { key: 'usage_hour', label: 'Hour', dimId: null, align: 'left', mono: true },
-  { key: 'cost', label: 'Cost', dimId: null, align: 'right', mono: true },
-  { key: 'list_cost', label: 'List', dimId: null, align: 'right', mono: true },
-  { key: 'service', label: 'Service', dimId: 'service', align: 'left' },
-  { key: 'account_name', label: 'Account', dimId: 'account', align: 'left' },
   { key: 'line_item_type', label: 'Line type', dimId: 'line_item_type', align: 'left' },
-  { key: 'region', label: 'Region', dimId: 'region', align: 'left', mono: true },
+  { key: 'cost', label: 'Cost', dimId: null, align: 'right', mono: true },
   { key: 'service_family', label: 'Family', dimId: 'service_family', align: 'left' },
-  { key: 'usage_type', label: 'Usage type', dimId: 'usage_type', align: 'left', mono: true },
-  { key: 'operation', label: 'Operation', dimId: 'operation', align: 'left' },
-  { key: 'usage_amount', label: 'Usage', dimId: null, align: 'right', mono: true },
-];
-
-const TRAILING_COLUMNS: readonly ColumnSpec[] = [
+  { key: 'region', label: 'Region', dimId: 'region', align: 'left', mono: true },
+  { key: 'account_name', label: 'Account', dimId: 'account', align: 'left' },
   { key: 'resource_id', label: 'Resource', dimId: 'resource_id', align: 'left', mono: true, truncate: true },
   { key: 'description', label: 'Description', dimId: null, align: 'left', truncate: true },
+  { key: 'usage_type', label: 'Usage type', dimId: 'usage_type', align: 'left', mono: true },
+  { key: 'usage_hour', label: 'Hour', dimId: null, align: 'left', mono: true },
+  { key: 'list_cost', label: 'List', dimId: null, align: 'right', mono: true },
+  { key: 'service', label: 'Service', dimId: 'service', align: 'left' },
+  { key: 'usage_amount', label: 'Usage', dimId: null, align: 'right', mono: true },
+  { key: 'operation', label: 'Operation', dimId: 'operation', align: 'left' },
 ];
+
+const TRAILING_COLUMNS: readonly ColumnSpec[] = [];
+
+const DEFAULT_HIDDEN: ReadonlySet<string> = new Set([
+  'usage_hour', 'list_cost', 'service', 'usage_amount', 'operation',
+]);
 
 export function ExplorerView(): React.JSX.Element {
   const api = useCostApi();
@@ -86,7 +89,7 @@ export function ExplorerView(): React.JSX.Element {
   const [costPerspective, setCostPerspective] = useState<CostPerspective>('gross');
   const [overview, setOverview] = useState<OverviewState>({ data: null, loading: true, error: null });
   const [rows, setRows] = useState<RowsState>({ data: null, loading: true, error: null });
-  const [hiddenColumns, setHiddenColumns] = useState<readonly string[]>([]);
+  const [hiddenColumns, setHiddenColumns] = useState<readonly string[]>([...DEFAULT_HIDDEN]);
   const [columnOrder, setColumnOrder] = useState<readonly string[]>([]);
   const overviewDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rowsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -898,6 +901,7 @@ interface RowsTableProps {
 }
 
 function RowsTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, onHiddenColumnsChange, onColumnOrderChange, rows, totalRows, sort, onSort, onFilterAdd, loading, error }: RowsTableProps): React.JSX.Element {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   // Header (row count / columns picker) is always rendered — keeps the
   // Columns button reachable even when the table is empty or loading, so
   // a user who accidentally hid every column isn't stranded.
@@ -981,21 +985,31 @@ function RowsTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, onHidde
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
-              <tr
-                key={`${String(i)}-${r.resourceId}-${r.date}`}
-                className="border-t border-border/40 hover:bg-bg-tertiary/30"
-              >
-                {columns.map(col => (
-                  <RowCell
-                    key={col.key}
-                    spec={col}
-                    row={r}
-                    onFilterAdd={onFilterAdd}
-                  />
-                ))}
-              </tr>
-            ))}
+            {rows.map((r, i) => {
+              const isExpanded = expandedIdx === i;
+              return (
+                <React.Fragment key={`${String(i)}-${r.resourceId}-${r.date}`}>
+                  <tr
+                    className={[
+                      'border-t border-border/40 cursor-pointer',
+                      isExpanded ? 'bg-bg-tertiary/40' : 'hover:bg-bg-tertiary/30',
+                    ].join(' ')}
+                    onClick={() => { setExpandedIdx(isExpanded ? null : i); }}
+                  >
+                    {columns.map(col => (
+                      <RowCell key={col.key} spec={col} row={r} onFilterAdd={onFilterAdd} />
+                    ))}
+                  </tr>
+                  {isExpanded && (
+                    <tr className="bg-bg-tertiary/20">
+                      <td colSpan={columns.length} className="px-3 py-2">
+                        <RowDetail row={r} allColumns={allColumns} />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1331,4 +1345,48 @@ function filterValueFor(spec: ColumnSpec, row: import('@costgoblin/core/browser'
       return null;
     }
   }
+}
+
+const DETAIL_FIELDS: readonly { key: string; label: string; render: (r: import('@costgoblin/core/browser').ExplorerSampleRow) => string }[] = [
+  { key: 'date', label: 'Date', render: r => r.date },
+  { key: 'hour', label: 'Hour', render: r => r.hour },
+  { key: 'cost', label: 'Cost', render: r => formatSignedDollars(r.cost) },
+  { key: 'listCost', label: 'List Cost', render: r => formatSignedDollars(r.listCost) },
+  { key: 'service', label: 'Service', render: r => r.service },
+  { key: 'serviceFamily', label: 'Family', render: r => r.serviceFamily },
+  { key: 'accountId', label: 'Account ID', render: r => r.accountId },
+  { key: 'accountName', label: 'Account Name', render: r => r.accountName },
+  { key: 'region', label: 'Region', render: r => r.region },
+  { key: 'lineItemType', label: 'Line Type', render: r => r.lineItemType },
+  { key: 'operation', label: 'Operation', render: r => r.operation },
+  { key: 'usageType', label: 'Usage Type', render: r => r.usageType },
+  { key: 'usageAmount', label: 'Usage Amount', render: r => r.usageAmount === 0 ? '' : r.usageAmount.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
+  { key: 'resourceId', label: 'Resource', render: r => r.resourceId },
+  { key: 'description', label: 'Description', render: r => r.description },
+];
+
+function RowDetail({ row, allColumns }: { row: import('@costgoblin/core/browser').ExplorerSampleRow; allColumns: readonly ColumnSpec[] }) {
+  const tagEntries = Object.entries(row.tags).filter(([, v]) => v.length > 0);
+  const tagLabels = new Map(allColumns.filter(c => c.dimId !== null && c.dimId.startsWith('tag_')).map(c => [c.key, c.label]));
+
+  return (
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-4 gap-y-0.5 text-[11px]">
+      {DETAIL_FIELDS.map(f => {
+        const val = f.render(row);
+        if (val.length === 0) return null;
+        return (
+          <div key={f.key} className="flex gap-1.5 py-0.5 min-w-0">
+            <span className="text-text-muted shrink-0">{f.label}</span>
+            <span className="text-text-primary truncate" title={val}>{val}</span>
+          </div>
+        );
+      })}
+      {tagEntries.map(([key, val]) => (
+        <div key={key} className="flex gap-1.5 py-0.5 min-w-0">
+          <span className="text-text-muted shrink-0">{tagLabels.get(key) ?? key}</span>
+          <span className="text-text-primary truncate" title={val}>{val}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
