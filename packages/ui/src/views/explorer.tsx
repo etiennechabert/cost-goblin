@@ -1147,15 +1147,12 @@ function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onChange, on
               const isDragging = draggedKey === col.key;
               const isDropTarget = dragOverKey === col.key && draggedKey !== null && draggedKey !== col.key;
               return (
-                <div
+                <label
                   key={col.key}
                   draggable
                   onDragStart={(e) => {
                     setDraggedKey(col.key);
                     e.dataTransfer.effectAllowed = 'move';
-                    // Firefox needs dataTransfer.setData or the drag never
-                    // starts. The payload itself is irrelevant — we drive
-                    // the logic off component state.
                     e.dataTransfer.setData('text/plain', col.key);
                   }}
                   onDragOver={(e) => {
@@ -1177,7 +1174,7 @@ function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onChange, on
                     setDraggedKey(null);
                   }}
                   className={[
-                    'flex items-center gap-2 px-2 py-1.5 text-xs select-none',
+                    'flex items-center gap-2 px-2 py-1.5 text-xs select-none cursor-default',
                     isDragging ? 'opacity-40' : '',
                     isDropTarget ? 'border-t-2 border-t-accent' : 'border-t-2 border-t-transparent',
                     'hover:bg-bg-tertiary',
@@ -1207,7 +1204,7 @@ function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onChange, on
                   {!autoHidden && col.dimId !== null && col.dimId.startsWith('tag_') && (
                     <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0">tag</span>
                   )}
-                </div>
+                </label>
               );
             })}
           </div>
