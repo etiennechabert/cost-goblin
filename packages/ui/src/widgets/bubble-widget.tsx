@@ -23,19 +23,20 @@ export function BubbleWidget({
   onEntityClick,
 }: WidgetCommonProps) {
   const api = useCostApi();
-  if (spec.type !== 'bubble') return null;
-  const specGroupBy = spec.groupBy;
+  const specGroupBy = spec.type === 'bubble' ? spec.groupBy : undefined;
 
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
   const query = useQuery(
-    () => api.queryTrends({
-      groupBy: specGroupBy,
-      dateRange,
-      filters,
-      deltaThreshold: DEFAULT_DELTA_THRESHOLD,
-      percentThreshold: DEFAULT_PERCENT_THRESHOLD,
-    }),
+    () => specGroupBy !== undefined
+      ? api.queryTrends({
+          groupBy: specGroupBy,
+          dateRange,
+          filters,
+          deltaThreshold: DEFAULT_DELTA_THRESHOLD,
+          percentThreshold: DEFAULT_PERCENT_THRESHOLD,
+        })
+      : Promise.resolve(null),
     [specGroupBy, dateRange.start, dateRange.end, fk, api],
   );
 
@@ -44,6 +45,7 @@ export function BubbleWidget({
     [query],
   );
 
+  if (spec.type !== 'bubble' || specGroupBy === undefined) return null;
   if (query.status === 'loading') return <CoinRainLoader height={260} count={5} />;
 
   return (

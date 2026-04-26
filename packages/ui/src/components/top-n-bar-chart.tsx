@@ -127,9 +127,12 @@ function TopNBarChartInner({
               return (
                 <li
                   key={row.name}
+                  role="button"
+                  tabIndex={onBarClick !== undefined ? 0 : undefined}
                   onMouseEnter={() => { handleEnter(row.name); }}
                   onMouseLeave={handleLeave}
                   onClick={() => { onBarClick?.(row.name); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onBarClick?.(row.name); } }}
                   className="flex items-center gap-3 rounded px-1 transition-colors"
                   style={{
                     cursor: onBarClick !== undefined ? 'pointer' : 'default',
