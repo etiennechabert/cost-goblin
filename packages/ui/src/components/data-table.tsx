@@ -424,7 +424,9 @@ function RowDetail({ row, allColumns, fetchDetailRows }: {
       .map(key => allColumns.find(c => c.key === key))
       .filter((c): c is ColumnSpec => c !== undefined);
     const costCol: ColumnSpec = { key: 'cost', label: 'Cost', dimId: null, align: 'right', mono: true };
-    return [...dimCols, costCol];
+    const result = [...dimCols];
+    result.splice(1, 0, costCol);
+    return result;
   }, [detailRows, allColumns]);
 
   return (
