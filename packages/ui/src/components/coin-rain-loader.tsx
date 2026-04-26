@@ -70,12 +70,12 @@ export function CoinRainLoader({ height = 120, count = 5 }: Readonly<{ height?: 
     if (el === null) return;
 
     const w = el.offsetWidth;
-    const makeTick = (): FrameRequestCallback => () => {
+    function tick() {
       setCoins(prev => prev.map(c => updateCoin(c, w, height)));
-      frameRef.current = requestAnimationFrame(makeTick());
-    };
+      frameRef.current = requestAnimationFrame(tick);
+    }
 
-    frameRef.current = requestAnimationFrame(makeTick());
+    frameRef.current = requestAnimationFrame(tick);
     return () => { cancelAnimationFrame(frameRef.current); };
   }, [coins.length, height]);
 

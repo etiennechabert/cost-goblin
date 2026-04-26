@@ -114,7 +114,7 @@ function buildDiscoverOptions(
   const isAccountDim = dim.field === 'account_id';
   const isAnyRegionDim = dim.field === 'region';
   return {
-    ...(normalize !== undefined ? { normalize } : {}),
+    ...(normalize === undefined ? {} : { normalize }),
     ...(isAccountDim ? {
       useOrgAccounts: true,
       nameStripPatterns: stripPatternList,
@@ -1327,7 +1327,7 @@ export function DimensionsView() {
     );
   }
 
-  const orderedRows = config !== null ? resolveOrderedRows(config) : [];
+  const orderedRows = config === null ? [] : resolveOrderedRows(config);
 
 
 

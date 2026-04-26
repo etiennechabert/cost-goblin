@@ -460,7 +460,7 @@ function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loa
                 className="accent-accent"
                 checked={hideExcluded}
                 onChange={e => { setHideExcluded(e.target.checked); }}
-              />
+              />{' '}
               Hide excluded
             </label>
           )}

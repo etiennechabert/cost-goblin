@@ -1,4 +1,4 @@
-import { useState, useEffect, Profiler } from 'react';
+import { useState, useEffect, useCallback, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave } from '@costgoblin/ui';
 import type { CostApi, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
@@ -140,22 +140,23 @@ function AppShell(): React.JSX.Element {
     });
   }, [api]);
 
+  const applyViews = useCallback((cfg: ViewsConfig): void => {
+    const resolved = cfg.views.length > 0 ? cfg : FALLBACK_VIEWS;
+    setViewsConfig(resolved);
+    setView(prev => {
+      if (prev.page !== 'custom') return prev;
+      const exists = resolved.views.some(v => v.id === prev.viewId);
+      const firstId = resolved.views[0]?.id;
+      return exists || firstId === undefined ? prev : { page: 'custom', viewId: firstId };
+    });
+  }, []);
+
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
-    function applyViews(cfg: ViewsConfig): void {
-      const resolved = cfg.views.length > 0 ? cfg : FALLBACK_VIEWS;
-      setViewsConfig(resolved);
-      setView(prev => {
-        if (prev.page !== 'custom') return prev;
-        const exists = resolved.views.some(v => v.id === prev.viewId);
-        const firstId = resolved.views[0]?.id;
-        return exists || firstId === undefined ? prev : { page: 'custom', viewId: firstId };
-      });
-    }
     api.getViewsConfig()
       .then(applyViews)
       .catch(() => { setViewsConfig(FALLBACK_VIEWS); });
-  }, [api, setupCheck]);
+  }, [api, setupCheck, applyViews]);
 
   useEffect(() => {
     if (isDark) {
