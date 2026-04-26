@@ -169,7 +169,6 @@ export function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onCha
               return (
                 <div
                   key={col.key}
-                  tabIndex={0}
                   draggable
                   onDragStart={(e) => { setDraggedKey(col.key); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', col.key); }}
                   onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragOverKey !== col.key) setDragOverKey(col.key); }}
