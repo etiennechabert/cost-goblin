@@ -55,7 +55,7 @@ function LineSvg({ series, visible, width, height }: LineSvgProps) {
   const sortedDates = useMemo(() => {
     const all = new Set<string>();
     for (const s of series) for (const p of s.points) all.add(p.date);
-    return [...all].sort();
+    return [...all].sort((a, b) => a.localeCompare(b));
   }, [series]);
 
   const minDate = sortedDates[0];

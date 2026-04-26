@@ -28,14 +28,14 @@ export function TreemapWidget({
   onSetFilter,
 }: WidgetCommonProps) {
   const api = useCostApi();
-  if (spec.type !== 'treemap') return null;
-  const specGroupBy = spec.groupBy;
+  const specGroupBy = spec.type === 'treemap' ? spec.groupBy : undefined;
 
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
-  const fallbackDim = getDimensionFallback(specGroupBy);
-  const query = useQuery<CostQueryResult>(
+  const fallbackDim = specGroupBy !== undefined ? getDimensionFallback(specGroupBy) : undefined;
+  const query = useQuery<CostQueryResult | null>(
     async () => {
+      if (specGroupBy === undefined) return null;
       if (fallbackDim === undefined) {
         const result = await api.queryCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
         return { result, groupBy: specGroupBy };
@@ -50,11 +50,14 @@ export function TreemapWidget({
     [specGroupBy, fallbackDim, dateRange.start, dateRange.end, fk, granularity, api],
   );
 
-  const activeGroupBy = query.status === 'success' ? query.data.groupBy : specGroupBy;
+  const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
   const cells = useMemo(
-    () => rowsToCells(query.status === 'success' ? query.data.result : null),
+    () => rowsToCells(query.status === 'success' && query.data !== null ? query.data.result : null),
     [query],
   );
+
+  if (spec.type !== 'treemap' || specGroupBy === undefined || activeGroupBy === undefined) return null;
+
   const label = dimensionLabelFor(dimensions, activeGroupBy);
 
   if (query.status === 'loading') return <CoinRainLoader height={260} count={5} />;

@@ -36,14 +36,14 @@ export function TopNBarWidget({
   const api = useCostApi();
   const focus = useCostFocus();
   const dispatch = useCostFocusDispatch();
-  if (spec.type !== 'topNBar') return null;
-  const specGroupBy = spec.groupBy;
+  const specGroupBy = spec.type === 'topNBar' ? spec.groupBy : undefined;
 
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
-  const fallbackDim = getDimensionFallback(specGroupBy);
-  const query = useQuery<CostQueryResult>(
+  const fallbackDim = specGroupBy !== undefined ? getDimensionFallback(specGroupBy) : undefined;
+  const query = useQuery<CostQueryResult | null>(
     async () => {
+      if (specGroupBy === undefined) return null;
       if (fallbackDim === undefined) {
         const result = await api.queryCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
         return { result, groupBy: specGroupBy };
@@ -58,11 +58,13 @@ export function TopNBarWidget({
     [specGroupBy, fallbackDim, dateRange.start, dateRange.end, fk, granularity, api],
   );
 
-  const activeGroupBy = query.status === 'success' ? query.data.groupBy : specGroupBy;
+  const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
   const bars = useMemo(
-    () => rowsToBars(query.status === 'success' ? query.data.result : null),
+    () => rowsToBars(query.status === 'success' && query.data !== null ? query.data.result : null),
     [query],
   );
+
+  if (spec.type !== 'topNBar' || specGroupBy === undefined || activeGroupBy === undefined) return null;
 
   const label = dimensionLabelFor(dimensions, activeGroupBy);
 
