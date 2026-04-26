@@ -82,6 +82,49 @@ interface EditingBuiltIn {
   useRegionNames: boolean;
 }
 
+const TRANSFORM_FREE_FIELDS = new Set(['service', 'service_family']);
+
+function buildDiscoverOptions(
+  dim: { name: string; field: string },
+  state: EditingBuiltIn,
+  normalize: NormalizationRule | undefined,
+  stripPatternList: string[],
+): Record<string, unknown> {
+  const isAccountDim = dim.field === 'account_id';
+  const isAnyRegionDim = dim.field === 'region';
+  return {
+    ...(normalize !== undefined ? { normalize } : {}),
+    ...(isAccountDim ? {
+      useOrgAccounts: true,
+      nameStripPatterns: stripPatternList,
+      ...(state.accountNameFromTag.length > 0 ? { accountNameFromTag: state.accountNameFromTag } : {}),
+    } : {}),
+    ...(isAnyRegionDim ? { dimName: dim.name, useRegionNames: state.useRegionNames } : {}),
+  };
+}
+
+function computeEnrichmentWarnings(
+  dim: { name: string; field: string },
+  state: EditingBuiltIn,
+  regionInfoQuery: { status: string; data?: { count: number; lastError: string | null } | null },
+  orgQuery: { status: string; data?: unknown },
+): { regionWarning: { kind: 'missing' | 'error'; message?: string } | null; accountWarning: boolean } {
+  const isRegionDim = dim.name === 'region';
+  const isRegionCountryDim = dim.name === 'region_country';
+  const isRegionContinentDim = dim.name === 'region_continent';
+  const isAccountDim = dim.field === 'account_id';
+
+  const wantsRegionEnrichment = (isRegionDim && state.useRegionNames) || isRegionCountryDim || isRegionContinentDim;
+  let regionWarning: { kind: 'missing' | 'error'; message?: string } | null = null;
+  if (wantsRegionEnrichment && regionInfoQuery.status === 'success') {
+    const regionInfo = regionInfoQuery.data ?? null;
+    if (regionInfo === null || regionInfo.count === 0) regionWarning = { kind: 'missing' };
+    else if (regionInfo.lastError !== null) regionWarning = { kind: 'error', message: regionInfo.lastError };
+  }
+  const accountWarning = isAccountDim && orgQuery.status === 'success' && orgQuery.data === null;
+  return { regionWarning, accountWarning };
+}
+
 function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
   dim: { name: string; field: string; editing: EditingBuiltIn };
   onSave: (edited: EditingBuiltIn) => void;
@@ -89,24 +132,11 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
   accountTagKeys: readonly string[];
 }>): React.JSX.Element {
   const isAccountDim = dim.field === 'account_id';
-  // Three dims share field='region' — distinguish by name so only the Region
-  // dim gets the longName toggle, while Country/Continent are pure derived
-  // views with no user toggle (SSM data is either there or not).
   const isRegionDim = dim.name === 'region';
-  const isRegionCountryDim = dim.name === 'region_country';
-  const isRegionContinentDim = dim.name === 'region_continent';
   const isAnyRegionDim = dim.field === 'region';
-  // AWS-controlled values arrive in a single canonical form — normalize/strip
-  // would only chip at the labels users already recognize. Aliases stay
-  // visible since folding "AmazonEC2 → EC2" is a reasonable user choice.
-  const TRANSFORM_FREE_FIELDS = new Set(['service', 'service_family']);
   const showTransforms = !TRANSFORM_FREE_FIELDS.has(dim.field);
   const api = useCostApi();
   const [state, setState] = useState(dim.editing);
-  // Surface missing enrichment data: Region needs SSM region-names sync,
-  // Account (with org-data toggle) needs the AWS Org sync. Both ship as
-  // side-effects of the org sync on the Sync tab — without them the dim's
-  // values render as raw codes / IDs.
   const regionInfoQuery = useQuery(
     () => isAnyRegionDim ? api.getRegionNamesInfo() : Promise.resolve(null),
     [isAnyRegionDim],
@@ -124,30 +154,15 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
     else onCancel();
   }
   const containerRef = useRef<HTMLDivElement | null>(null);
-  // Parse the textarea once per render — empty lines and trailing whitespace
-  // are dropped so a stray Enter doesn't make the regex .replace() a no-op.
   const stripPatternList = state.nameStripPatterns
     .split('\n')
     .map(l => l.trim())
     .filter(l => l.length > 0);
   const stripPatternsKey = stripPatternList.join('\u0001');
   const normalize: NormalizationRule | undefined = state.normalize.length > 0 ? state.normalize as NormalizationRule : undefined;
+  const discoverOptions = buildDiscoverOptions(dim, state, normalize, stripPatternList);
   const valuesQuery = useQuery(
-    () => api.discoverColumnValues(
-      dim.field,
-      {
-        ...(normalize !== undefined ? { normalize } : {}),
-        ...(isAccountDim ? {
-          // Both "Account Name" and "Account Tag" are org-sync-sourced, so
-          // the preview always wants useOrgAccounts=true regardless of any
-          // legacy value on the saved dim.
-          useOrgAccounts: true,
-          nameStripPatterns: stripPatternList,
-          ...(state.accountNameFromTag.length > 0 ? { accountNameFromTag: state.accountNameFromTag } : {}),
-        } : {}),
-        ...(isAnyRegionDim ? { dimName: dim.name, useRegionNames: state.useRegionNames } : {}),
-      },
-    ),
+    () => api.discoverColumnValues(dim.field, discoverOptions),
     [dim.field, dim.name, isAccountDim, isAnyRegionDim, state.useOrgAccounts, state.useRegionNames, state.accountNameFromTag, stripPatternsKey, normalize],
   );
 
@@ -302,29 +317,7 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
     </label>
   );
 
-  // Compute enrichment-data warnings:
-  //   - Region dim ships raw codes ('eu-central-1') unless region-names.json
-  //     was synced from SSM. Warn either way: missing entirely, or last
-  //     attempt errored (typically: profile lacks ssm:GetParametersByPath).
-  //   - Account dim's org-data toggle resolves IDs → names from the AWS Org
-  //     sync. Warn when toggle is on but the sync result file is missing.
-  const regionInfo = regionInfoQuery.status === 'success' ? regionInfoQuery.data : null;
-  const orgInfo = orgQuery.status === 'success' ? orgQuery.data : null;
-  // Warn when the user's editing a dim that needs SSM data but the snapshot
-  // isn't there. Region: only when the friendly-names toggle is on (off is a
-  // valid state — raw codes). Country/Continent: always, since these dims
-  // are defined entirely in terms of SSM enrichment and collapse to raw
-  // codes otherwise.
-  const wantsRegionEnrichment = (isRegionDim && state.useRegionNames) || isRegionCountryDim || isRegionContinentDim;
-  let regionWarning: { kind: 'missing' | 'error'; message?: string } | null = null;
-  if (wantsRegionEnrichment && regionInfoQuery.status === 'success') {
-    if (regionInfo === null || regionInfo.count === 0) regionWarning = { kind: 'missing' };
-    else if (regionInfo.lastError !== null) regionWarning = { kind: 'error', message: regionInfo.lastError };
-  }
-  // Both "Account Name" and "Account Tag" sources resolve via the Org sync,
-  // so if it hasn't run yet the dim will display raw 12-digit IDs regardless.
-  const accountWarning: boolean =
-    isAccountDim && orgQuery.status === 'success' && orgInfo === null;
+  const { regionWarning, accountWarning } = computeEnrichmentWarnings(dim, state, regionInfoQuery, orgQuery);
 
   return (
     <div ref={containerRef} className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
@@ -525,6 +518,54 @@ function applyPreviewNormalize(v: string, rule: string): string {
   }
 }
 
+function buildTemplateVals(fallbackFormat: string, accountVals: string[]): string[] {
+  if (fallbackFormat === '{fallback}' || accountVals.length === 0) return [];
+  if (fallbackFormat.includes('{fallback}')) {
+    return accountVals.map(v => fallbackFormat.replaceAll('{fallback}', v));
+  }
+  return [fallbackFormat];
+}
+
+function buildAliasMap(aliasText: string, normalizeRule: string): Map<string, string> {
+  const aliasMap = new Map<string, string>();
+  const parsed = textToAliases(aliasText);
+  if (parsed === undefined) return aliasMap;
+  for (const [canonical, alts] of Object.entries(parsed)) {
+    for (const alt of alts) aliasMap.set(applyPreviewNormalize(alt, normalizeRule), canonical);
+  }
+  return aliasMap;
+}
+
+function classifySource(
+  raw: string,
+  resourceSet: ReadonlySet<string>,
+  accountSet: ReadonlySet<string>,
+  templateSet: ReadonlySet<string>,
+): TagSource {
+  if (templateSet.has(raw)) return 'template';
+  if (resourceSet.has(raw) && accountSet.has(raw)) return 'both';
+  if (resourceSet.has(raw)) return 'resource';
+  return 'account';
+}
+
+function deduplicateResolved(
+  transformed: readonly { resolved: string; aliased: boolean; source: TagSource }[],
+): { resolved: string; aliased: boolean; source: TagSource }[] {
+  const resolvedMap = new Map<string, TagSource>();
+  for (const t of transformed) {
+    const existing = resolvedMap.get(t.resolved);
+    if (existing === undefined) resolvedMap.set(t.resolved, t.source);
+    else if (existing !== 'both' && existing !== t.source) resolvedMap.set(t.resolved, 'both');
+  }
+  return [...resolvedMap.entries()]
+    .map(([resolved, source]) => ({
+      resolved,
+      aliased: transformed.some(t => t.resolved === resolved && t.aliased),
+      source,
+    }))
+    .sort((a, b) => a.resolved.localeCompare(b.resolved));
+}
+
 function TagValuePreview({ tagMatch, fallbackValues, missingValueTemplate, normalizeRule, aliasText }: Readonly<{
   tagMatch: { sampleValues: string[] } | undefined;
   fallbackValues: [string, number][];
@@ -537,14 +578,7 @@ function TagValuePreview({ tagMatch, fallbackValues, missingValueTemplate, norma
   const fallbackFormat = missingValueTemplate.length > 0 ? missingValueTemplate : '{fallback}';
   const isPassthrough = fallbackFormat === '{fallback}';
 
-  const templateVals: string[] = [];
-  if (!isPassthrough && accountVals.length > 0) {
-    if (fallbackFormat.includes('{fallback}')) {
-      for (const acctVal of accountVals) templateVals.push(fallbackFormat.replaceAll('{fallback}', acctVal));
-    } else {
-      templateVals.push(fallbackFormat);
-    }
-  }
+  const templateVals = buildTemplateVals(fallbackFormat, accountVals);
 
   const resourceSet = new Set(resourceVals);
   const templateSet = new Set(templateVals);
@@ -554,44 +588,17 @@ function TagValuePreview({ tagMatch, fallbackValues, missingValueTemplate, norma
   const accountSet = isPassthrough ? new Set(accountVals) : new Set<string>();
   if (allRaw.length === 0) return null;
 
-  const normalize = (v: string): string => applyPreviewNormalize(v, normalizeRule);
-  const aliasMap = new Map<string, string>();
-  const parsed = textToAliases(aliasText);
-  if (parsed !== undefined) {
-    for (const [canonical, alts] of Object.entries(parsed)) {
-      for (const alt of alts) aliasMap.set(normalize(alt), canonical);
-    }
-  }
+  const aliasMap = buildAliasMap(aliasText, normalizeRule);
 
   const transformed = allRaw.map(raw => {
-    const normalized = normalize(raw);
+    const normalized = applyPreviewNormalize(raw, normalizeRule);
     const resolved = aliasMap.get(normalized) ?? normalized;
-    const fromResource = resourceSet.has(raw);
-    const fromAccount = accountSet.has(raw);
-    const fromTemplate = templateSet.has(raw);
-    let source: TagSource;
-    if (fromTemplate) source = 'template';
-    else if (fromResource && fromAccount) source = 'both';
-    else if (fromResource) source = 'resource';
-    else source = 'account';
+    const source = classifySource(raw, resourceSet, accountSet, templateSet);
     return { raw, resolved, aliased: aliasMap.has(normalized), source };
   });
 
   const aliasPreviewCount = transformed.filter(t => t.aliased).length;
-
-  const resolvedMap = new Map<string, TagSource>();
-  for (const t of transformed) {
-    const existing = resolvedMap.get(t.resolved);
-    if (existing === undefined) resolvedMap.set(t.resolved, t.source);
-    else if (existing !== 'both' && existing !== t.source) resolvedMap.set(t.resolved, 'both');
-  }
-  const unique = [...resolvedMap.entries()]
-    .map(([resolved, source]) => ({
-      resolved,
-      aliased: transformed.some(t => t.resolved === resolved && t.aliased),
-      source,
-    }))
-    .sort((a, b) => a.resolved.localeCompare(b.resolved));
+  const unique = deduplicateResolved(transformed);
 
   return (
     <div className="flex flex-col gap-1">
@@ -1056,6 +1063,34 @@ function GripHandle({ attrs }: Readonly<{ attrs: React.HTMLAttributes<HTMLButton
   );
 }
 
+type OrderedRow =
+  | { kind: 'builtIn'; key: string; idx: number; dim: BuiltInDimension }
+  | { kind: 'tag'; key: string; idx: number; dim: TagDimension };
+
+function resolveOrderedRow(key: string, config: DimensionsConfig): OrderedRow | null {
+  if (key.startsWith('builtin:')) {
+    const name = key.slice('builtin:'.length);
+    const idx = config.builtIn.findIndex(d => d.name === name);
+    const dim = idx >= 0 ? config.builtIn[idx] : undefined;
+    if (dim !== undefined) return { kind: 'builtIn', key, idx, dim };
+  } else if (key.startsWith('tag:')) {
+    const tagName = key.slice('tag:'.length);
+    const idx = config.tags.findIndex(t => t.tagName === tagName);
+    const dim = idx >= 0 ? config.tags[idx] : undefined;
+    if (dim !== undefined) return { kind: 'tag', key, idx, dim };
+  }
+  return null;
+}
+
+function resolveOrderedRows(config: DimensionsConfig): OrderedRow[] {
+  const rows: OrderedRow[] = [];
+  for (const key of reconcileOrder(config)) {
+    const row = resolveOrderedRow(key, config);
+    if (row !== null) rows.push(row);
+  }
+  return rows;
+}
+
 export function DimensionsView() {
   const api = useCostApi();
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -1298,31 +1333,7 @@ export function DimensionsView() {
     );
   }
 
-  // Resolve the unified display order into concrete row descriptors. Each
-  // entry carries its key (for React), its full-array index (for handlers
-  // that still take a typed idx like editingBuiltInIdx / editingIdx), and
-  // the dim object itself.
-  type OrderedRow =
-    | { kind: 'builtIn'; key: string; idx: number; dim: BuiltInDimension }
-    | { kind: 'tag'; key: string; idx: number; dim: TagDimension };
-  const orderedRows: OrderedRow[] = (() => {
-    if (config === null) return [];
-    const rows: OrderedRow[] = [];
-    for (const key of reconcileOrder(config)) {
-      if (key.startsWith('builtin:')) {
-        const name = key.slice('builtin:'.length);
-        const idx = config.builtIn.findIndex(d => d.name === name);
-        const dim = idx >= 0 ? config.builtIn[idx] : undefined;
-        if (dim !== undefined) rows.push({ kind: 'builtIn', key, idx, dim });
-      } else if (key.startsWith('tag:')) {
-        const tagName = key.slice('tag:'.length);
-        const idx = config.tags.findIndex(t => t.tagName === tagName);
-        const dim = idx >= 0 ? config.tags[idx] : undefined;
-        if (dim !== undefined) rows.push({ kind: 'tag', key, idx, dim });
-      }
-    }
-    return rows;
-  })();
+  const orderedRows = config !== null ? resolveOrderedRows(config) : [];
 
 
 

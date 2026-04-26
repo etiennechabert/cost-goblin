@@ -1,8 +1,6 @@
 import type { ViewSpec, ViewsConfig, WidgetSpec } from '../types/views.js';
 
-/** YAML-ready shape for a single widget. Keeps keys in a stable order so
- *  round-tripping a config doesn't produce noisy diffs. */
-export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
+function buildWidgetBase(w: WidgetSpec): Record<string, unknown> {
   const base: Record<string, unknown> = { id: w.id, type: w.type, size: w.size };
   if (w.title !== undefined) base['title'] = w.title;
   if (w.filters !== undefined) {
@@ -12,6 +10,17 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
     }
     if (Object.keys(f).length > 0) base['filters'] = f;
   }
+  return base;
+}
+
+function addGroupByFields(base: Record<string, unknown>, w: WidgetSpec & { groupBy: string }): void {
+  base['groupBy'] = w.groupBy;
+}
+
+/** YAML-ready shape for a single widget. Keeps keys in a stable order so
+ *  round-tripping a config doesn't produce noisy diffs. */
+export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
+  const base = buildWidgetBase(w);
   switch (w.type) {
     case 'summary':
       if (w.metric !== undefined) base['metric'] = w.metric;
@@ -19,16 +28,16 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
     case 'pie':
     case 'stackedBar':
     case 'bubble':
-      base['groupBy'] = w.groupBy;
+      addGroupByFields(base, w);
       return base;
     case 'treemap':
-      base['groupBy'] = w.groupBy;
+      addGroupByFields(base, w);
       if (w.drillTo !== undefined) base['drillTo'] = w.drillTo;
       return base;
     case 'line':
     case 'topNBar':
     case 'heatmap':
-      base['groupBy'] = w.groupBy;
+      addGroupByFields(base, w);
       if (w.topN !== undefined) base['topN'] = w.topN;
       return base;
     case 'table':

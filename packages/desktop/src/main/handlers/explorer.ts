@@ -149,8 +149,53 @@ interface QueryContext {
   readonly accountMap: ReadonlyMap<string, string>;
 }
 
+function buildExclusionClauses(
+  costScope: { rules: readonly ExclusionRule[] } | undefined,
+  dimensions: DimensionsConfig,
+  accountReverseMap: ReadonlyMap<string, readonly string[]>,
+): string[] {
+  if (costScope === undefined) return [];
+  const clauses: string[] = [];
+  for (const rule of costScope.rules) {
+    if (!rule.enabled) continue;
+    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
+    if (matchExpr !== null) clauses.push(`NOT (${matchExpr})`);
+  }
+  return clauses;
+}
+
+async function buildFreshSource(
+  app: AppContext,
+  params: ExplorerBaseParams,
+  startStr: string,
+  endStr: string,
+  tier: 'daily' | 'hourly',
+  periods: readonly string[],
+  dimensions: DimensionsConfig,
+  filterPredicate: string | null,
+  accountReverseMap: ReadonlyMap<string, readonly string[]>,
+): Promise<{ source: string; whereStr: string }> {
+  const { ctx, getCostScope, getOrgAccountsPath, getAvailableColumns } = app;
+  const orgPath = await getOrgAccountsPath();
+  const availableColumns = await getAvailableColumns(tier);
+  const applyCostScope = params.applyCostScope === true;
+  const costScope = applyCostScope ? await getCostScope().catch(() => undefined) : undefined;
+  const metric = pickMetric(params.costMetric, availableColumns);
+  const perspective = pickPerspective(params.costPerspective, availableColumns);
+
+  const source = buildSource({ dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath, periods, costMetric: metric, availableColumns, costPerspective: perspective });
+  const exclusions = buildExclusionClauses(costScope, dimensions, accountReverseMap);
+
+  const whereClauses: string[] = [
+    `usage_date BETWEEN '${startStr}' AND '${endStr}'`,
+    ...(filterPredicate === null ? [] : [`(${filterPredicate})`]),
+    ...exclusions,
+  ];
+  return { source, whereStr: `WHERE ${whereClauses.join(' AND ')}` };
+}
+
 async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams): Promise<QueryContext> {
-  const { ctx, getCostScope, getQueryDimensions, getOrgAccountsPath, getAvailableColumns, getAccountMap } = app;
+  const { ctx, getQueryDimensions, getAccountMap } = app;
   const { startStr, endStr, windowDays } = resolveDateRange(params.dateRange);
   const tier: 'daily' | 'hourly' = params.granularity === 'hourly' ? 'hourly' : 'daily';
 
@@ -166,76 +211,60 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     label: t.label,
   }));
   const tagIdSet = new Set(tagColumns.map(t => t.id));
+  const shared = { startStr, endStr, windowDays, tier, tagColumns, tagIdSet, dimensions, accountMap } as const;
 
   if (periods.length === 0) {
-    return {
-      empty: true,
-      source: '',
-      whereStr: '',
-      startStr,
-      endStr,
-      windowDays,
-      tier,
-      tagColumns,
-      tagIdSet,
-      dimensions,
-      accountMap,
-    };
+    return { empty: true, source: '', whereStr: '', ...shared };
   }
 
   const accountReverseMap = buildAccountReverseMap(accountMap);
   const filterPredicate = buildExplorerFilterPredicate(params.filters, dimensions, accountReverseMap);
-
   const matSource = app.materializedBase.getSource({ start: startStr, end: endStr }, tier);
 
-  let source: string;
-  let whereStr: string;
-
-  if (matSource === undefined) {
-    const orgPath = await getOrgAccountsPath();
-    const availableColumns = await getAvailableColumns(tier);
-    const applyCostScope = params.applyCostScope === true;
-    const costScope = applyCostScope ? await getCostScope().catch(() => undefined) : undefined;
-    const metric = pickMetric(params.costMetric, availableColumns);
-    const perspective = pickPerspective(params.costPerspective, availableColumns);
-
-    source = buildSource({ dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath, periods, costMetric: metric, availableColumns, costPerspective: perspective });
-
-    const exclusionClauses: string[] = [];
-    if (costScope !== undefined) {
-      for (const rule of costScope.rules) {
-        if (!rule.enabled) continue;
-        const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-        if (matchExpr === null) continue;
-        exclusionClauses.push(`NOT (${matchExpr})`);
-      }
-    }
-
-    const whereClauses: string[] = [
-      `usage_date BETWEEN '${startStr}' AND '${endStr}'`,
-      ...(filterPredicate === null ? [] : [`(${filterPredicate})`]),
-      ...exclusionClauses,
-    ];
-    whereStr = `WHERE ${whereClauses.join(' AND ')}`;
-  } else {
-    source = matSource;
+  if (matSource !== undefined) {
     const whereClauses: string[] = filterPredicate === null ? [] : [`(${filterPredicate})`];
-    whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+    const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+    return { empty: false, source: matSource, whereStr, ...shared };
   }
 
-  return {
-    empty: false,
-    source,
-    whereStr,
-    startStr,
-    endStr,
-    windowDays,
-    tier,
-    tagColumns,
-    tagIdSet,
-    dimensions,
-    accountMap,
-  };
+  const { source, whereStr } = await buildFreshSource(
+    app, params, startStr, endStr, tier, periods, dimensions, filterPredicate, accountReverseMap,
+  );
+  return { empty: false, source, whereStr, ...shared };
+}
+
+function appendRowFilters(
+  baseWhere: string,
+  rowFilters: Record<string, string> | undefined,
+  tagIdSet: ReadonlySet<string>,
+): string {
+  if (rowFilters === undefined) return baseWhere;
+  const extra: string[] = [];
+  for (const [col, val] of Object.entries(rowFilters)) {
+    if (val.length === 0) continue;
+    if (!SORTABLE_SCALAR_COLUMNS.has(col) && !tagIdSet.has(col)) continue;
+    const escaped = val.replaceAll("'", "''");
+    const colExpr = col === 'usage_date' ? `usage_date::VARCHAR` : col;
+    extra.push(`${colExpr} = '${escaped}'`);
+  }
+  if (extra.length === 0) return baseWhere;
+  return `${baseWhere} AND ${extra.join(' AND ')}`;
+}
+
+const AGG_SORT_COLUMNS: Record<string, (dir: string) => string> = {
+  cost: (dir) => `SUM(cost) ${dir}`,
+  list_cost: (dir) => `SUM(list_cost) ${dir}`,
+  usage_amount: (dir) => `SUM(usage_amount) ${dir}`,
+  row_count: (dir) => `COUNT(*) ${dir}`,
+};
+
+function resolveAggregatedSort(sort: ExplorerSort | undefined, groupByColumns: readonly string[]): string {
+  if (sort === undefined) return 'SUM(cost) DESC';
+  const dir = sort.direction === 'asc' ? 'ASC' : 'DESC';
+  const fn = AGG_SORT_COLUMNS[sort.column];
+  if (fn !== undefined) return fn(dir);
+  if (groupByColumns.includes(sort.column)) return `${sort.column} ${dir}`;
+  return 'SUM(cost) DESC';
 }
 
 export function registerExplorerHandlers(app: AppContext): void {
@@ -422,20 +451,7 @@ export function registerExplorerHandlers(app: AppContext): void {
 
     if (qc.empty) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
 
-    let whereStr = qc.whereStr;
-    if (params.rowFilters !== undefined) {
-      const extra: string[] = [];
-      for (const [col, val] of Object.entries(params.rowFilters)) {
-        if (val.length === 0) continue;
-        if (!SORTABLE_SCALAR_COLUMNS.has(col) && !qc.tagIdSet.has(col)) continue;
-        const escaped = val.replaceAll("'", "''");
-        const colExpr = col === 'usage_date' ? `usage_date::VARCHAR` : col;
-        extra.push(`${colExpr} = '${escaped}'`);
-      }
-      if (extra.length > 0) {
-        whereStr = `${whereStr} AND ${extra.join(' AND ')}`;
-      }
-    }
+    const whereStr = appendRowFilters(qc.whereStr, params.rowFilters, qc.tagIdSet);
 
     const groupByColumns = params.groupByColumns.filter(
       col => SORTABLE_SCALAR_COLUMNS.has(col) || qc.tagIdSet.has(col),
@@ -465,17 +481,7 @@ export function registerExplorerHandlers(app: AppContext): void {
       if (col === 'usage_date') return `usage_date::VARCHAR AS usage_date`;
       return col;
     });
-    const orderBy = (() => {
-      if (params.sort === undefined) return 'SUM(cost) DESC';
-      const dir = params.sort.direction === 'asc' ? 'ASC' : 'DESC';
-      const col = params.sort.column;
-      if (col === 'cost') return `SUM(cost) ${dir}`;
-      if (col === 'list_cost') return `SUM(list_cost) ${dir}`;
-      if (col === 'usage_amount') return `SUM(usage_amount) ${dir}`;
-      if (col === 'row_count') return `COUNT(*) ${dir}`;
-      if (groupByColumns.includes(col)) return `${col} ${dir}`;
-      return 'SUM(cost) DESC';
-    })();
+    const orderBy = resolveAggregatedSort(params.sort, groupByColumns);
 
     const countSql = `
       SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
