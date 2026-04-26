@@ -1,4 +1,5 @@
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
+import { QueryLog } from '../query-log.js';
 import {
   asDimensionId,
   applyNormalizationRule,
@@ -138,6 +139,7 @@ export interface AppContext {
    *  or line_item_net_*. Cached per-tier for the session; invalidated on
    *  explicit reset via invalidateColumnCache. */
   readonly getAvailableColumns: (tier: 'daily' | 'hourly') => Promise<ReadonlySet<string>>;
+  readonly queryLog: QueryLog;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly runPreparedQuery: (sql: string, params: readonly unknown[]) => Promise<RawRow[]>;
   readonly invalidateConfig: () => void;
@@ -383,6 +385,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
     return fetch;
   }
 
+  const queryLog = new QueryLog();
+
   return {
     ctx,
     state,
@@ -396,8 +400,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getRegionMap,
     getOrgAccountsPath,
     getAvailableColumns,
-    runQuery: (sql: string) => ctx.db.runQuery(sql),
-    runPreparedQuery: (sql: string, params: readonly unknown[]) => ctx.db.runPreparedQuery(sql, params),
+    queryLog,
+    runQuery: queryLog.wrapQuery((sql, onStarted) => ctx.db.runQuery(sql, onStarted)),
+    runPreparedQuery: queryLog.wrapPreparedQuery((sql, params, onStarted) => ctx.db.runPreparedQuery(sql, params, onStarted)),
     invalidateConfig: () => { state.config = null; },
     invalidateDimensions: () => { state.dimensions = null; state.accountMap = null; state.regionMap = null; },
     invalidateViews: () => { state.views = null; },
