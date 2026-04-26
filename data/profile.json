@@ -1,0 +1,331 @@
+{
+  "rowCount": 1410240,
+  "dateRange": {
+    "min": "2026-04-01",
+    "max": "2026-05-01"
+  },
+  "services": [
+    {
+      "name": "ComputeSavingsPlans",
+      "costShare": 0.16475459552527583,
+      "avgDailyCost": 463.4399999999998
+    },
+    {
+      "name": "AmazonRDS",
+      "costShare": 0.15609360818179624,
+      "avgDailyCost": 439.0774141694493
+    },
+    {
+      "name": "AmazonCloudWatch",
+      "costShare": 0.07024795393151054,
+      "avgDailyCost": 197.601236349275
+    },
+    {
+      "name": "DatabaseSavingsPlans",
+      "costShare": 0.06325586746105294,
+      "avgDailyCost": 177.93312
+    },
+    {
+      "name": "AWSShield",
+      "costShare": 0.03569365613625859,
+      "avgDailyCost": 100.40307493122344
+    },
+    {
+      "name": "AmazonEC2",
+      "costShare": 0.028690520679278044,
+      "avgDailyCost": 80.70387876716164
+    },
+    {
+      "name": "AmazonVPC",
+      "costShare": 0.021706543616879327,
+      "avgDailyCost": 61.058573460327224
+    },
+    {
+      "name": "AmazonDynamoDB",
+      "costShare": 0.021108979823067125,
+      "avgDailyCost": 59.37767974248345
+    },
+    {
+      "name": "AWSBackup",
+      "costShare": 0.020037694035021356,
+      "avgDailyCost": 56.36424825652673
+    },
+    {
+      "name": "AmazonS3",
+      "costShare": 0.01339578668384199,
+      "avgDailyCost": 37.68115457396943
+    },
+    {
+      "name": "AWSDatabaseMigrationSvc",
+      "costShare": 0.012474521535258583,
+      "avgDailyCost": 35.089717782186625
+    },
+    {
+      "name": "AWSELB",
+      "costShare": 0.011631934493876086,
+      "avgDailyCost": 32.719595496897185
+    },
+    {
+      "name": "AmazonGuardDuty",
+      "costShare": 0.01052287976612826,
+      "avgDailyCost": 29.599923348215906
+    },
+    {
+      "name": "AWSXRay",
+      "costShare": 0.009103327617966683,
+      "avgDailyCost": 25.60684961666665
+    },
+    {
+      "name": "AmazonDetective",
+      "costShare": 0.00883073806496794,
+      "avgDailyCost": 24.840079487803344
+    },
+    {
+      "name": "AWSSecurityHub",
+      "costShare": 0.006146255080452273,
+      "avgDailyCost": 17.28886800033332
+    },
+    {
+      "name": "AmazonElastiCache",
+      "costShare": 0.00603109529686754,
+      "avgDailyCost": 16.96493378815336
+    },
+    {
+      "name": "awskms",
+      "costShare": 0.0054041247422878,
+      "avgDailyCost": 15.201321471980618
+    },
+    {
+      "name": "AmazonConnect",
+      "costShare": 0.005316384741698292,
+      "avgDailyCost": 14.954516666666624
+    },
+    {
+      "name": "AmazonECS",
+      "costShare": 0.005054141978837707,
+      "avgDailyCost": 14.216851136715054
+    }
+  ],
+  "accounts": [
+    {
+      "id": "439916378441",
+      "name": "solarisBank AG",
+      "costShare": 0.5948919302082044
+    },
+    {
+      "id": "890219777283",
+      "name": "Core Banking Default production",
+      "costShare": 0.09760368881115286
+    },
+    {
+      "id": "283567760452",
+      "name": "DiBa Cards RTA production",
+      "costShare": 0.04864716926520932
+    },
+    {
+      "id": "906323275771",
+      "name": "Identity Default production",
+      "costShare": 0.03487216712378947
+    },
+    {
+      "id": "778114978010",
+      "name": "PET Default production",
+      "costShare": 0.03452477974666616
+    },
+    {
+      "id": "739701143176",
+      "name": "Identity AFC production",
+      "costShare": 0.034158717173133485
+    },
+    {
+      "id": "970831335143",
+      "name": "B2C Banking Default production",
+      "costShare": 0.022863710307565167
+    },
+    {
+      "id": "154268422988",
+      "name": "Platform Tools",
+      "costShare": 0.022189325471037653
+    },
+    {
+      "id": "404977151305",
+      "name": "Platform CI",
+      "costShare": 0.021251057571422167
+    },
+    {
+      "id": "803260048317",
+      "name": "Platform Security",
+      "costShare": 0.016505840695565977
+    },
+    {
+      "id": "052243513717",
+      "name": "DiBa Cards Cards production",
+      "costShare": 0.016087654501272662
+    },
+    {
+      "id": "952637769795",
+      "name": "DiBa Cards Dunning production",
+      "costShare": 0.014837839662340098
+    },
+    {
+      "id": "754961608729",
+      "name": "Platform Production",
+      "costShare": 0.014495584295514839
+    },
+    {
+      "id": "361449312040",
+      "name": "Business Ops Default production",
+      "costShare": 0.01421442103920488
+    },
+    {
+      "id": "986752179579",
+      "name": "Platform VPN",
+      "costShare": 0.01285611412792092
+    }
+  ],
+  "regions": [
+    "ap-northeast-1",
+    "ap-northeast-2",
+    "ap-northeast-3",
+    "ap-south-1",
+    "ap-southeast-1",
+    "ap-southeast-2",
+    "ca-central-1",
+    "eu-central-1",
+    "eu-north-1",
+    "eu-west-1",
+    "eu-west-2",
+    "eu-west-3",
+    "sa-east-1",
+    "us-east-1",
+    "us-east-2",
+    "us-west-1",
+    "us-west-2"
+  ],
+  "tags": {
+    "team": {
+      "values": [
+        "afc-risk-identification",
+        "process-engineering",
+        "BusinessOps",
+        "Productivity",
+        "bizops",
+        "cloud-and-platform-engineering",
+        "angus",
+        "Architecture",
+        "lending",
+        "undine",
+        "payments",
+        "cyber-security",
+        "core-banking",
+        "adac-migration",
+        "infosec",
+        "CPE",
+        "data-platform",
+        "cardano",
+        "sre",
+        "cards-vulcanus",
+        "account-management-and-services",
+        "transaction-processing",
+        "architecture",
+        "accounts",
+        "identity-kyc-b2c",
+        "cpe",
+        "auth",
+        "afc-risk-and-devices",
+        "site-reliability-engineering",
+        "cards-undine",
+        "gemini",
+        "productivity",
+        "identity-kyc-b2b",
+        "Cyber Security",
+        "identity-customer-compliance",
+        "Core-Banking",
+        "ai-taskforce",
+        "Information Security",
+        "cyber-platform",
+        "data-infrastructure",
+        "b2c-banking",
+        "ada",
+        "originators",
+        "credit-risk-tech",
+        "backoffice",
+        "tech-architects",
+        "Cyber-Security"
+      ],
+      "missingPercent": 0
+    },
+    "system": {
+      "values": [
+        "device-monitoring",
+        "person-identification",
+        "access-control-3ds",
+        "sms",
+        "tokenization",
+        "sdd-settlement",
+        "crt-gdpr-trigger",
+        "card-management",
+        "afc-suspicious-activity-report",
+        "sepa-instant-outgoing",
+        "architecture-infrastructure",
+        "webui",
+        "client-vpn",
+        "data-platform-account",
+        "policy",
+        "proxy-auth",
+        "siem",
+        "proxy-xs2a",
+        "decoupled-card-dunning",
+        "afc-cops-cards-monitoring",
+        "account-information",
+        "credit-scorer",
+        "workflow-api",
+        "ai-agents",
+        "sepa-direct-debit",
+        "partner",
+        "okular-orm",
+        "internal-mcp",
+        "partner-monitoring-reporter",
+        "infrastrcuture"
+      ],
+      "missingPercent": 0
+    },
+    "environment": {
+      "values": [
+        "ci",
+        "all",
+        "sandbox",
+        "tools",
+        "staging",
+        "test",
+        "security",
+        "backup",
+        "management",
+        "Staging",
+        "prod",
+        "production",
+        "sun",
+        "Production",
+        "n/a",
+        "testing"
+      ],
+      "missingPercent": 0
+    }
+  },
+  "costDistribution": {
+    "p50": 0.0000048,
+    "p90": 0.012330584020000035,
+    "p99": 0.864
+  },
+  "lineItemTypes": {
+    "Tax": 0.002415900839573406,
+    "SavingsPlanNegation": 0.003722061493079192,
+    "SavingsPlanCoveredUsage": 0.06546899818470615,
+    "SavingsPlanRecurringFee": 0.00008509189925119128,
+    "BundledDiscount": 0.000020563875652371227,
+    "Usage": 0.8114299693669162,
+    "DiscountedUsage": 0.003835517358747447,
+    "RIFee": 0.00008721919673247107,
+    "EdpDiscount": 0.1129346777853415
+  }
+}
