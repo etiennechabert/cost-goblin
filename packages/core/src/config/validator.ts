@@ -110,126 +110,113 @@ export function validateConfig(raw: unknown): CostGoblinConfig {
   return { providers, defaults };
 }
 
+function validateNormalize(value: unknown, ctx: string): NormalizationRule | undefined {
+  if (value === undefined) return undefined;
+  assertString(value, `${ctx}.normalize`);
+  if (!isValidNormalizationRule(value)) {
+    throw new ConfigValidationError(`${ctx}.normalize must be 'lowercase', 'uppercase', 'lowercase-kebab', 'lowercase-underscore', or 'camelCase'`);
+  }
+  return value;
+}
+
+function validateAliases(value: unknown, ctx: string): Record<string, string[]> | undefined {
+  if (value === undefined) return undefined;
+  assertObject(value, `${ctx}.aliases`);
+  const result: Record<string, string[]> = {};
+  for (const [key, arr] of Object.entries(value)) {
+    assertArray(arr, `${ctx}.aliases.${key}`);
+    result[key] = arr.map((v, j) => {
+      assertString(v, `${ctx}.aliases.${key}[${String(j)}]`);
+      return v;
+    });
+  }
+  return result;
+}
+
+function validateStringArray(value: unknown, ctx: string): string[] {
+  assertArray(value, ctx);
+  return value.map((v, j) => {
+    assertString(v, `${ctx}[${String(j)}]`);
+    return v;
+  });
+}
+
+function validateBuiltInDimension(dim: unknown, i: number) {
+  const ctx = `builtIn[${String(i)}]`;
+  assertObject(dim, ctx);
+  assertString(dim['name'], `${ctx}.name`);
+  assertString(dim['label'], `${ctx}.label`);
+  assertString(dim['field'], `${ctx}.field`);
+  const displayField = dim['displayField'] === undefined ? undefined : (assertString(dim['displayField'], `${ctx}.displayField`), dim['displayField']);
+  const enabled = dim['enabled'] === false ? false : undefined;
+  const description = dim['description'] === undefined ? undefined : (assertString(dim['description'], `${ctx}.description`), dim['description']);
+  const useOrgAccounts = dim['useOrgAccounts'] === true ? true : undefined;
+  const accountNameFromTag = typeof dim['accountNameFromTag'] === 'string' && dim['accountNameFromTag'].length > 0
+    ? dim['accountNameFromTag']
+    : undefined;
+  const nameStripPatterns = dim['nameStripPatterns'] === undefined
+    ? undefined
+    : validateStringArray(dim['nameStripPatterns'], `${ctx}.nameStripPatterns`);
+  const normalize = validateNormalize(dim['normalize'], ctx);
+  const aliases = validateAliases(dim['aliases'], ctx);
+  return {
+    name: asDimensionId(dim['name']),
+    label: dim['label'],
+    field: dim['field'],
+    ...(displayField === undefined ? {} : { displayField }),
+    ...(enabled === false ? { enabled } : {}),
+    ...(description === undefined ? {} : { description }),
+    ...(normalize === undefined ? {} : { normalize }),
+    ...(aliases === undefined ? {} : { aliases }),
+    ...(useOrgAccounts === true ? { useOrgAccounts } : {}),
+    ...(accountNameFromTag === undefined ? {} : { accountNameFromTag }),
+    ...(nameStripPatterns === undefined || nameStripPatterns.length === 0 ? {} : { nameStripPatterns }),
+  };
+}
+
+function validateTagDimension(tag: unknown, i: number) {
+  const ctx = `tags[${String(i)}]`;
+  assertObject(tag, ctx);
+  assertString(tag['tagName'], `${ctx}.tagName`);
+  assertString(tag['label'], `${ctx}.label`);
+
+  const concept = tag['concept'] === undefined ? undefined : (() => {
+    assertString(tag['concept'], `${ctx}.concept`);
+    const validConcepts = new Set(['owner', 'product', 'environment']);
+    if (!validConcepts.has(tag['concept'])) {
+      throw new ConfigValidationError(`${ctx}.concept must be 'owner', 'product', or 'environment'`);
+    }
+    return tag['concept'] as 'owner' | 'product' | 'environment';
+  })();
+  const normalize = validateNormalize(tag['normalize'], ctx);
+  const separator = tag['separator'] === undefined ? undefined : (assertString(tag['separator'], `${ctx}.separator`), tag['separator']);
+  const aliases = validateAliases(tag['aliases'], ctx);
+  const enabled = tag['enabled'] === false ? false : undefined;
+
+  return {
+    tagName: tag['tagName'],
+    label: tag['label'],
+    ...(concept === undefined ? {} : { concept }),
+    ...(normalize === undefined ? {} : { normalize }),
+    ...(separator === undefined ? {} : { separator }),
+    ...(aliases === undefined ? {} : { aliases }),
+    ...(typeof tag['accountTagFallback'] === 'string' ? { accountTagFallback: tag['accountTagFallback'] } : {}),
+    ...(typeof tag['missingValueTemplate'] === 'string' ? { missingValueTemplate: tag['missingValueTemplate'] } : {}),
+    ...(enabled === false ? { enabled } : {}),
+  };
+}
+
 export function validateDimensions(raw: unknown): DimensionsConfig {
   assertObject(raw, 'dimensions');
   assertArray(raw['builtIn'], 'builtIn');
   assertArray(raw['tags'], 'tags');
 
-  const builtIn = raw['builtIn'].map((dim, i) => {
-    const ctx = `builtIn[${String(i)}]`;
-    assertObject(dim, ctx);
-    assertString(dim['name'], `${ctx}.name`);
-    assertString(dim['label'], `${ctx}.label`);
-    assertString(dim['field'], `${ctx}.field`);
-    const displayField = dim['displayField'] === undefined ? undefined : (assertString(dim['displayField'], `${ctx}.displayField`), dim['displayField']);
-    const enabled = dim['enabled'] === false ? false : undefined;
-    const description = dim['description'] === undefined ? undefined : (assertString(dim['description'], `${ctx}.description`), dim['description']);
-    const useOrgAccounts = dim['useOrgAccounts'] === true ? true : undefined;
-    const accountNameFromTag = typeof dim['accountNameFromTag'] === 'string' && dim['accountNameFromTag'].length > 0
-      ? dim['accountNameFromTag']
-      : undefined;
-    let nameStripPatterns: string[] | undefined;
-    if (dim['nameStripPatterns'] !== undefined) {
-      assertArray(dim['nameStripPatterns'], `${ctx}.nameStripPatterns`);
-      nameStripPatterns = dim['nameStripPatterns'].map((p, j) => {
-        assertString(p, `${ctx}.nameStripPatterns[${String(j)}]`);
-        return p;
-      });
-    }
-    const normalize = dim['normalize'] === undefined ? undefined : (() => {
-      assertString(dim['normalize'], `${ctx}.normalize`);
-      if (!isValidNormalizationRule(dim['normalize'])) {
-        throw new ConfigValidationError(`${ctx}.normalize must be 'lowercase', 'uppercase', 'lowercase-kebab', 'lowercase-underscore', or 'camelCase'`);
-      }
-      return dim['normalize'];
-    })();
-    let aliases: Record<string, string[]> | undefined;
-    if (dim['aliases'] !== undefined) {
-      assertObject(dim['aliases'], `${ctx}.aliases`);
-      const aliasObj = dim['aliases'];
-      aliases = {};
-      for (const [key, value] of Object.entries(aliasObj)) {
-        assertArray(value, `${ctx}.aliases.${key}`);
-        aliases[key] = value.map((v, j) => {
-          assertString(v, `${ctx}.aliases.${key}[${String(j)}]`);
-          return v;
-        });
-      }
-    }
-    return {
-      name: asDimensionId(dim['name']),
-      label: dim['label'],
-      field: dim['field'],
-      ...(displayField === undefined ? {} : { displayField }),
-      ...(enabled === false ? { enabled } : {}),
-      ...(description === undefined ? {} : { description }),
-      ...(normalize === undefined ? {} : { normalize }),
-      ...(aliases === undefined ? {} : { aliases }),
-      ...(useOrgAccounts === true ? { useOrgAccounts } : {}),
-      ...(accountNameFromTag === undefined ? {} : { accountNameFromTag }),
-      ...(nameStripPatterns === undefined || nameStripPatterns.length === 0 ? {} : { nameStripPatterns }),
-    };
-  });
-
-  const tags = raw['tags'].map((tag, i) => {
-    const ctx = `tags[${String(i)}]`;
-    assertObject(tag, ctx);
-    assertString(tag['tagName'], `${ctx}.tagName`);
-    assertString(tag['label'], `${ctx}.label`);
-
-    const concept = tag['concept'] === undefined ? undefined : (() => {
-      assertString(tag['concept'], `${ctx}.concept`);
-      const validConcepts = new Set(['owner', 'product', 'environment']);
-      if (!validConcepts.has(tag['concept'])) {
-        throw new ConfigValidationError(`${ctx}.concept must be 'owner', 'product', or 'environment'`);
-      }
-      return tag['concept'] as 'owner' | 'product' | 'environment';
-    })();
-    const normalize = tag['normalize'] === undefined ? undefined : (() => {
-      assertString(tag['normalize'], `${ctx}.normalize`);
-      if (!isValidNormalizationRule(tag['normalize'])) {
-        throw new ConfigValidationError(`${ctx}.normalize must be 'lowercase', 'uppercase', 'lowercase-kebab', 'lowercase-underscore', or 'camelCase'`);
-      }
-      return tag['normalize'];
-    })();
-    const separator = tag['separator'] === undefined ? undefined : (assertString(tag['separator'], `${ctx}.separator`), tag['separator']);
-
-    let aliases: Record<string, string[]> | undefined;
-    if (tag['aliases'] !== undefined) {
-      assertObject(tag['aliases'], `${ctx}.aliases`);
-      const aliasObj = tag['aliases'];
-      aliases = {};
-      for (const [key, value] of Object.entries(aliasObj)) {
-        assertArray(value, `${ctx}.aliases.${key}`);
-        const arr = value;
-        aliases[key] = arr.map((v, j) => {
-          assertString(v, `${ctx}.aliases.${key}[${String(j)}]`);
-          return v;
-        });
-      }
-    }
-
-    const enabled = tag['enabled'] === false ? false : undefined;
-    return {
-      tagName: tag['tagName'],
-      label: tag['label'],
-      ...(concept === undefined ? {} : { concept }),
-      ...(normalize === undefined ? {} : { normalize }),
-      ...(separator === undefined ? {} : { separator }),
-      ...(aliases === undefined ? {} : { aliases }),
-      ...(typeof tag['accountTagFallback'] === 'string' ? { accountTagFallback: tag['accountTagFallback'] } : {}),
-      ...(typeof tag['missingValueTemplate'] === 'string' ? { missingValueTemplate: tag['missingValueTemplate'] } : {}),
-      ...(enabled === false ? { enabled } : {}),
-    };
-  });
+  const builtIn = raw['builtIn'].map((dim, i) => validateBuiltInDimension(dim, i));
+  const tags = raw['tags'].map((tag, i) => validateTagDimension(tag, i));
 
   let order: string[] | undefined;
   if (raw['order'] !== undefined) {
-    assertArray(raw['order'], 'order');
-    order = raw['order'].map((v, i) => {
-      assertString(v, `order[${String(i)}]`);
-      return v;
-    });
+    order = validateStringArray(raw['order'], 'order');
   }
 
   return { builtIn, tags, ...(order === undefined ? {} : { order }) };

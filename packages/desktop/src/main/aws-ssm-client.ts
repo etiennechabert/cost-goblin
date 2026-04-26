@@ -43,6 +43,32 @@ async function resolveProfileRegion(profile: string): Promise<string> {
 
 const FIELDS = ['longName', 'geolocationCountry', 'geolocationRegion'] as const;
 
+function applyParameterToPartial(partial: Map<string, Partial<RegionInfo>>, name: string, value: string): void {
+  if (value.length === 0) return;
+  const parts = name.split('/');
+  const code = parts.at(-2) ?? '';
+  const field = parts.at(-1) ?? '';
+  if (code.length === 0) return;
+  const entry = partial.get(code) ?? {};
+  if (field === 'longName') entry.longName = value;
+  else if (field === 'geolocationCountry') entry.country = value;
+  else if (field === 'geolocationRegion') entry.continent = value;
+  partial.set(code, entry);
+}
+
+function buildRegionsFromPartial(partial: Map<string, Partial<RegionInfo>>): Record<string, RegionInfo> {
+  const regions: Record<string, RegionInfo> = {};
+  for (const [code, entry] of partial) {
+    if (typeof entry.longName !== 'string' || entry.longName.length === 0) continue;
+    regions[code] = {
+      longName: entry.longName,
+      country: entry.country ?? '',
+      continent: entry.continent ?? '',
+    };
+  }
+  return regions;
+}
+
 /** Pulls AWS-published region metadata from SSM Parameter Store.
  *  Parameters live under /aws/service/global-infrastructure/regions/<code>/<field>
  *  as public params — same source the AWS CLI uses. We list the region codes
@@ -76,9 +102,6 @@ export async function syncRegionNames(profile: string): Promise<RegionNameMap> {
 
   logger.info(`SSM region sync: discovered ${String(codes.length)} regions`);
 
-  // 2. Build the full list of (code, field) lookups and batch 10 at a time.
-  //    A batch may span multiple regions — we recover the region+field from
-  //    each returned Name rather than tracking it positionally.
   const partial = new Map<string, Partial<RegionInfo>>();
   const allNames: string[] = [];
   for (const c of codes) {
@@ -91,36 +114,14 @@ export async function syncRegionNames(profile: string): Promise<RegionNameMap> {
     try {
       const resp = await client.send(new GetParametersCommand({ Names: batch }));
       for (const p of resp.Parameters ?? []) {
-        const name = p.Name ?? '';
-        const value = p.Value ?? '';
-        if (value.length === 0) continue;
-        // /aws/service/global-infrastructure/regions/<code>/<field>
-        const parts = name.split('/');
-        const code = parts.at(-2) ?? '';
-        const field = parts.at(-1) ?? '';
-        if (code.length === 0) continue;
-        const entry = partial.get(code) ?? {};
-        if (field === 'longName') entry.longName = value;
-        else if (field === 'geolocationCountry') entry.country = value;
-        else if (field === 'geolocationRegion') entry.continent = value;
-        partial.set(code, entry);
+        applyParameterToPartial(partial, p.Name ?? '', p.Value ?? '');
       }
     } catch (err: unknown) {
       logger.info(`SSM region sync: batch ${String(i)} failed: ${String(err)}`);
     }
   }
 
-  // Only emit regions that got at least a longName — country/continent default
-  // to empty strings so the consumer can still treat them as present-but-unknown.
-  const regions: Record<string, RegionInfo> = {};
-  for (const [code, entry] of partial) {
-    if (typeof entry.longName !== 'string' || entry.longName.length === 0) continue;
-    regions[code] = {
-      longName: entry.longName,
-      country: entry.country ?? '',
-      continent: entry.continent ?? '',
-    };
-  }
+  const regions = buildRegionsFromPartial(partial);
 
   logger.info(`SSM region sync: resolved ${String(Object.keys(regions).length)} regions with metadata`);
 

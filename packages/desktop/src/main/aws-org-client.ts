@@ -32,33 +32,19 @@ async function getOrganizationsModule(): Promise<typeof import('@aws-sdk/client-
   return import('@aws-sdk/client-organizations');
 }
 
-export async function syncOrgAccounts(
-  profile: string,
+type OrgClient = InstanceType<Awaited<ReturnType<typeof getOrganizationsModule>>['OrganizationsClient']>;
+type OrgModule = Awaited<ReturnType<typeof getOrganizationsModule>>;
+
+async function listAllAccounts(
+  client: OrgClient,
+  module: OrgModule,
   onProgress?: (progress: OrgSyncProgress) => void,
-): Promise<OrgSyncResult> {
-  const {
-    OrganizationsClient,
-    ListAccountsCommand,
-    ListRootsCommand,
-    ListOrganizationalUnitsForParentCommand,
-    ListAccountsForParentCommand,
-    ListTagsForResourceCommand,
-    DescribeOrganizationCommand,
-  } = await getOrganizationsModule();
-
-  const config = profile === 'default' ? {} : { profile };
-  const client = new OrganizationsClient(config);
-
-  // Get org ID
-  const orgResp = await client.send(new DescribeOrganizationCommand({}));
-  const orgId = orgResp.Organization?.Id ?? 'unknown';
-
-  // 1. List all accounts
+): Promise<{ id: string; name: string; email: string; status: string; joinedTimestamp: string }[]> {
   onProgress?.({ phase: 'accounts', done: 0, total: 0 });
   const allAccounts: { id: string; name: string; email: string; status: string; joinedTimestamp: string }[] = [];
   let nextToken: string | undefined;
   do {
-    const resp = await client.send(new ListAccountsCommand({ NextToken: nextToken }));
+    const resp = await client.send(new module.ListAccountsCommand({ NextToken: nextToken }));
     for (const acct of resp.Accounts ?? []) {
       allAccounts.push({
         id: acct.Id ?? '',
@@ -71,14 +57,16 @@ export async function syncOrgAccounts(
     nextToken = resp.NextToken;
     onProgress?.({ phase: 'accounts', done: allAccounts.length, total: allAccounts.length });
   } while (nextToken !== undefined);
+  return allAccounts;
+}
 
-  logger.info(`Discovered ${String(allAccounts.length)} accounts`);
-
-  // 2. Build OU tree to resolve paths
+async function buildOuTree(
+  client: OrgClient,
+  module: OrgModule,
+  rootId: string,
+  onProgress?: (progress: OrgSyncProgress) => void,
+): Promise<OUNode[]> {
   onProgress?.({ phase: 'ous', done: 0, total: 0 });
-  const roots = await client.send(new ListRootsCommand({}));
-  const rootId = roots.Roots?.[0]?.Id ?? '';
-
   const ouNodes: OUNode[] = [];
   const queue = [rootId];
   while (queue.length > 0) {
@@ -86,7 +74,7 @@ export async function syncOrgAccounts(
     if (parentId === undefined) break;
     let ouToken: string | undefined;
     do {
-      const resp = await client.send(new ListOrganizationalUnitsForParentCommand({
+      const resp = await client.send(new module.ListOrganizationalUnitsForParentCommand({
         ParentId: parentId,
         NextToken: ouToken,
       }));
@@ -100,14 +88,19 @@ export async function syncOrgAccounts(
     } while (ouToken !== undefined);
     onProgress?.({ phase: 'ous', done: ouNodes.length, total: ouNodes.length });
   }
+  return ouNodes;
+}
 
-  // Build a map of account → parent OU
+async function buildAccountParentMap(
+  client: OrgClient,
+  module: OrgModule,
+  parentIds: string[],
+): Promise<Map<string, string>> {
   const accountParentMap = new Map<string, string>();
-  const parentsToScan = [rootId, ...ouNodes.map(ou => ou.id)];
-  for (const parentId of parentsToScan) {
+  for (const parentId of parentIds) {
     let acctToken: string | undefined;
     do {
-      const resp = await client.send(new ListAccountsForParentCommand({
+      const resp = await client.send(new module.ListAccountsForParentCommand({
         ParentId: parentId,
         NextToken: acctToken,
       }));
@@ -119,10 +112,16 @@ export async function syncOrgAccounts(
       acctToken = resp.NextToken;
     } while (acctToken !== undefined);
   }
+  return accountParentMap;
+}
 
-  // Resolve OU path for each account
+function makeOuPathResolver(
+  ouNodes: OUNode[],
+  accountParentMap: Map<string, string>,
+  rootId: string,
+): (accountId: string) => string {
   const ouMap = new Map(ouNodes.map(ou => [ou.id, ou]));
-  function resolveOuPath(accountId: string): string {
+  return (accountId: string): string => {
     const parts: string[] = [];
     let current = accountParentMap.get(accountId);
     while (current !== undefined && current !== rootId) {
@@ -132,49 +131,72 @@ export async function syncOrgAccounts(
       current = ou.parentId;
     }
     return parts.join(' / ');
-  }
+  };
+}
 
-  // 3. Fetch tags for each account
+async function fetchAccountTags(
+  client: OrgClient,
+  module: OrgModule,
+  accountId: string,
+): Promise<Record<string, string>> {
+  const tags: Record<string, string> = {};
+  let tagToken: string | undefined;
+  do {
+    const resp = await client.send(new module.ListTagsForResourceCommand({
+      ResourceId: accountId,
+      NextToken: tagToken,
+    }));
+    for (const tag of resp.Tags ?? []) {
+      if (tag.Key !== undefined && tag.Value !== undefined) {
+        tags[tag.Key] = tag.Value;
+      }
+    }
+    tagToken = resp.NextToken;
+  } while (tagToken !== undefined);
+  return tags;
+}
+
+export async function syncOrgAccounts(
+  profile: string,
+  onProgress?: (progress: OrgSyncProgress) => void,
+): Promise<OrgSyncResult> {
+  const module = await getOrganizationsModule();
+  const config = profile === 'default' ? {} : { profile };
+  const client = new module.OrganizationsClient(config);
+
+  const orgResp = await client.send(new module.DescribeOrganizationCommand({}));
+  const orgId = orgResp.Organization?.Id ?? 'unknown';
+
+  const allAccounts = await listAllAccounts(client, module, onProgress);
+  logger.info(`Discovered ${String(allAccounts.length)} accounts`);
+
+  const roots = await client.send(new module.ListRootsCommand({}));
+  const rootId = roots.Roots?.[0]?.Id ?? '';
+
+  const ouNodes = await buildOuTree(client, module, rootId, onProgress);
+  const parentIds = [rootId, ...ouNodes.map(ou => ou.id)];
+  const accountParentMap = await buildAccountParentMap(client, module, parentIds);
+  const resolveOuPath = makeOuPathResolver(ouNodes, accountParentMap, rootId);
+
   const results: OrgAccount[] = [];
   for (let i = 0; i < allAccounts.length; i++) {
     const acct = allAccounts[i];
     if (acct === undefined) continue;
     onProgress?.({ phase: 'tags', done: i, total: allAccounts.length });
 
-    const tags: Record<string, string> = {};
+    let tags: Record<string, string> = {};
     try {
-      let tagToken: string | undefined;
-      do {
-        const resp = await client.send(new ListTagsForResourceCommand({
-          ResourceId: acct.id,
-          NextToken: tagToken,
-        }));
-        for (const tag of resp.Tags ?? []) {
-          if (tag.Key !== undefined && tag.Value !== undefined) {
-            tags[tag.Key] = tag.Value;
-          }
-        }
-        tagToken = resp.NextToken;
-      } while (tagToken !== undefined);
+      tags = await fetchAccountTags(client, module, acct.id);
     } catch {
       logger.info(`Failed to fetch tags for ${acct.id}, skipping`);
     }
 
-    results.push({
-      ...acct,
-      ouPath: resolveOuPath(acct.id),
-      tags,
-    });
+    results.push({ ...acct, ouPath: resolveOuPath(acct.id), tags });
   }
   onProgress?.({ phase: 'tags', done: allAccounts.length, total: allAccounts.length });
 
   logger.info(`Org sync complete: ${String(results.length)} accounts with tags`);
-
-  return {
-    accounts: results,
-    orgId,
-    syncedAt: new Date().toISOString(),
-  };
+  return { accounts: results, orgId, syncedAt: new Date().toISOString() };
 }
 
 export type { OrgAccount, OrgSyncProgress, OrgSyncResult };

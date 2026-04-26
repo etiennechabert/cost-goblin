@@ -168,6 +168,66 @@ function weightedPick<T extends { costShare: number }>(arr: readonly T[], rand: 
   return arr.at(-1)!;
 }
 
+function generateDailyDates(): string[] {
+  const dates: string[] = [];
+  for (let m = 1; m <= 2; m++) {
+    const daysInMonth = m === 1 ? 31 : 28;
+    for (let d = 1; d <= daysInMonth; d++) {
+      dates.push(`2026-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+    }
+  }
+  return dates;
+}
+
+function pickLineItemType(lineItemTypes: string[], litWeights: number[], rand: () => number): string {
+  const litR = rand();
+  let litCum = 0;
+  for (let j = 0; j < lineItemTypes.length; j++) {
+    litCum += litWeights[j]!;
+    if (litR <= litCum) return lineItemTypes[j]!;
+  }
+  return 'Usage';
+}
+
+function optionalTag(rand: () => number, missingRate: number, values: readonly string[]): string | null {
+  return rand() < missingRate ? null : pick(values, rand);
+}
+
+function generateRow(
+  date: string,
+  profileData: Profile,
+  syntheticAccounts: { id: string; name: string; costShare: number }[],
+  rand: () => number,
+  owners: string[],
+  products: string[],
+  envs: string[],
+  lineItemTypes: string[],
+  litWeights: number[],
+): string {
+  const service = weightedPick(profileData.services, rand);
+  const account = weightedPick(syntheticAccounts, rand);
+  const region = pick(profileData.regions.slice(0, 5), rand);
+
+  const owner = optionalTag(rand, Math.max(profileData.tags['owner']?.missingPercent ?? 0.08, 0.08), owners);
+  const product = optionalTag(rand, Math.max(profileData.tags['product']?.missingPercent ?? 0.12, 0.12), products);
+  const env = optionalTag(rand, Math.max(profileData.tags['environment']?.missingPercent ?? 0.03, 0.03), envs);
+
+  const baseCost = Math.exp(rand() * 6 - 2) * service.costShare * 10;
+  const cost = Math.round(baseCost * 100) / 100;
+  const lineItemType = pickLineItemType(lineItemTypes, litWeights, rand);
+  const listCost = Math.round(cost * (1 + rand() * 0.3) * 100) / 100;
+  const usageAmount = Math.round(rand() * 1000 * 100) / 100;
+  const resourceId = `arn:aws:${service.name.toLowerCase()}:${region}:${account.id}:resource/${String(Math.floor(rand() * 10000))}`;
+
+  const tagEntries: string[] = [];
+  if (owner !== null) tagEntries.push(`'user_team': '${owner}'`);
+  if (product !== null) tagEntries.push(`'user_system': '${product}'`);
+  if (env !== null) tagEntries.push(`'user_environment': '${env}'`);
+  const tagsMap = `MAP {${tagEntries.join(', ')}}`;
+
+  return `(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', 'Compute', '${lineItemType}', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(listCost)}, '${lineItemType}', 'RunInstances', 'Usage', ${tagsMap})`;
+}
+
 async function generate(): Promise<void> {
   process.stdout.write('Generating synthetic fixtures...\n');
 
@@ -197,8 +257,6 @@ async function generate(): Promise<void> {
     costShare: a.costShare,
   }));
 
-  const services = profileData.services;
-
   const owners = [
     'backend', 'frontend', 'platform', 'data-eng', 'security',
     'payments', 'identity', 'cards', 'sre', 'devops', 'ml', 'mobile',
@@ -214,60 +272,14 @@ async function generate(): Promise<void> {
   const lineItemTypes = ['Usage', 'Fee', 'Credit', 'Tax'];
   const litWeights = [0.89, 0.06, 0.04, 0.01];
 
-  // Generate daily data: 2 months (Jan + Feb 2026)
-  const dailyDates: string[] = [];
-  for (let m = 1; m <= 2; m++) {
-    const daysInMonth = m === 1 ? 31 : 28;
-    for (let d = 1; d <= daysInMonth; d++) {
-      dailyDates.push(`2026-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
-    }
-  }
+  const dailyDates = generateDailyDates();
 
-  // Generate rows
   const ROWS_PER_DAY = 50;
   const rows: string[] = [];
 
   for (const date of dailyDates) {
     for (let i = 0; i < ROWS_PER_DAY; i++) {
-      const service = weightedPick(services, rand);
-      const account = weightedPick(syntheticAccounts, rand);
-      const region = pick(profileData.regions.slice(0, 5), rand);
-
-      const ownerMissingRate = Math.max(profileData.tags['owner']?.missingPercent ?? 0.08, 0.08);
-      const ownerMissing = rand() < ownerMissingRate;
-      const owner = ownerMissing ? null : pick(owners, rand);
-
-      const productMissingRate = Math.max(profileData.tags['product']?.missingPercent ?? 0.12, 0.12);
-      const productMissing = rand() < productMissingRate;
-      const product = productMissing ? null : pick(products, rand);
-
-      const envMissingRate = Math.max(profileData.tags['environment']?.missingPercent ?? 0.03, 0.03);
-      const envMissing = rand() < envMissingRate;
-      const env = envMissing ? null : pick(envs, rand);
-
-      // Cost: log-normal distribution roughly matching profile
-      const baseCost = Math.exp(rand() * 6 - 2) * service.costShare * 10;
-      const cost = Math.round(baseCost * 100) / 100;
-
-      const litR = rand();
-      let litCum = 0;
-      let lineItemType = 'Usage';
-      for (let j = 0; j < lineItemTypes.length; j++) {
-        litCum += litWeights[j]!;
-        if (litR <= litCum) { lineItemType = lineItemTypes[j]!; break; }
-      }
-
-      const listCost = Math.round(cost * (1 + rand() * 0.3) * 100) / 100;
-      const usageAmount = Math.round(rand() * 1000 * 100) / 100;
-      const resourceId = `arn:aws:${service.name.toLowerCase()}:${region}:${account.id}:resource/${String(Math.floor(rand() * 10000))}`;
-
-      const tagEntries: string[] = [];
-      if (owner !== null) tagEntries.push(`'user_team': '${owner}'`);
-      if (product !== null) tagEntries.push(`'user_system': '${product}'`);
-      if (env !== null) tagEntries.push(`'user_environment': '${env}'`);
-      const tagsMap = `MAP {${tagEntries.join(', ')}}`;
-
-      rows.push(`(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', 'Compute', '${lineItemType}', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(listCost)}, '${lineItemType}', 'RunInstances', 'Usage', ${tagsMap})`);
+      rows.push(generateRow(date, profileData, syntheticAccounts, rand, owners, products, envs, lineItemTypes, litWeights));
     }
   }
 

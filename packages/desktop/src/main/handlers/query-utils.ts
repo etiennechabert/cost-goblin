@@ -362,6 +362,43 @@ export function buildEntityDetailResult(rows: RawRow[], entity: string): EntityD
   };
 }
 
+function mergeDescendantCosts(
+  descendants: readonly string[],
+  entityCostMap: Map<string, CostRow>,
+  consumedEntities: Set<string>,
+  skipName?: string,
+  baseCost?: number,
+  baseServices?: Record<string, number>,
+): { totalCost: number; mergedServices: Record<string, number> } {
+  let totalCost = baseCost ?? 0;
+  const mergedServices: Record<string, number> = baseServices !== undefined
+    ? { ...baseServices }
+    : {};
+  for (const desc of descendants) {
+    if (desc === skipName) continue;
+    consumedEntities.add(desc);
+    const row = entityCostMap.get(desc);
+    if (row === undefined) continue;
+    totalCost += row.totalCost;
+    for (const [svc, cost] of Object.entries(row.serviceCosts)) {
+      mergedServices[svc] = (mergedServices[svc] ?? 0) + cost;
+    }
+  }
+  return { totalCost, mergedServices };
+}
+
+function makeVirtualRow(name: string, totalCost: number, mergedServices: Record<string, number>): CostRow | null {
+  if (totalCost <= 0) return null;
+  return {
+    entity: asEntityRef(name),
+    totalCost: asDollars(totalCost),
+    serviceCosts: Object.fromEntries(
+      Object.entries(mergedServices).map(([k, v]) => [k, asDollars(v)]),
+    ),
+    isVirtual: true,
+  };
+}
+
 export function applyOrgTreeRollup(result: CostResult, tree: readonly OrgNode[]): CostResult {
   const entityCostMap = new Map<string, CostRow>();
   for (const row of result.rows) {
@@ -374,69 +411,32 @@ export function applyOrgTreeRollup(result: CostResult, tree: readonly OrgNode[])
   for (const node of tree) {
     if (node.virtual) {
       const descendants = getDescendantTagValues(node);
-      let totalCost = 0;
-      const mergedServices: Record<string, number> = {};
-
-      for (const desc of descendants) {
-        consumedEntities.add(desc);
-        const row = entityCostMap.get(desc);
-        if (row !== undefined) {
-          totalCost += row.totalCost;
-          for (const [svc, cost] of Object.entries(row.serviceCosts)) {
-            mergedServices[svc] = (mergedServices[svc] ?? 0) + cost;
-          }
-        }
-      }
-
-      if (totalCost > 0) {
-        rolledUpRows.push({
-          entity: asEntityRef(node.name),
-          totalCost: asDollars(totalCost),
-          serviceCosts: Object.fromEntries(
-            Object.entries(mergedServices).map(([k, v]) => [k, asDollars(v)]),
-          ),
-          isVirtual: true,
-        });
-      }
-    } else {
-      const descendants = node.children === undefined ? [] : getDescendantTagValues(node);
-      for (const desc of descendants) {
-        if (desc !== node.name) consumedEntities.add(desc);
-      }
-
-      const row = entityCostMap.get(node.name);
-      if (node.children !== undefined && node.children.length > 0) {
-        let totalCost = row === undefined ? 0 : row.totalCost;
-        const mergedServices: Record<string, number> = row === undefined
-          ? {}
-          : Object.fromEntries(Object.entries(row.serviceCosts).map(([k, v]) => [k, Number(v)]));
-
-        for (const desc of descendants) {
-          if (desc === node.name) continue;
-          consumedEntities.add(desc);
-          const childRow = entityCostMap.get(desc);
-          if (childRow !== undefined) {
-            totalCost += childRow.totalCost;
-            for (const [svc, cost] of Object.entries(childRow.serviceCosts)) {
-              mergedServices[svc] = (mergedServices[svc] ?? 0) + cost;
-            }
-          }
-        }
-
-        if (totalCost > 0) {
-          rolledUpRows.push({
-            entity: asEntityRef(node.name),
-            totalCost: asDollars(totalCost),
-            serviceCosts: Object.fromEntries(
-              Object.entries(mergedServices).map(([k, v]) => [k, asDollars(v)]),
-            ),
-            isVirtual: true,
-          });
-        }
-      } else if (row !== undefined) {
-        rolledUpRows.push(row);
-      }
+      const { totalCost, mergedServices } = mergeDescendantCosts(descendants, entityCostMap, consumedEntities);
+      const row = makeVirtualRow(node.name, totalCost, mergedServices);
+      if (row !== null) rolledUpRows.push(row);
+      continue;
     }
+
+    const descendants = node.children === undefined ? [] : getDescendantTagValues(node);
+    for (const desc of descendants) {
+      if (desc !== node.name) consumedEntities.add(desc);
+    }
+
+    const existingRow = entityCostMap.get(node.name);
+    if (node.children === undefined || node.children.length === 0) {
+      if (existingRow !== undefined) rolledUpRows.push(existingRow);
+      continue;
+    }
+
+    const baseCost = existingRow === undefined ? 0 : existingRow.totalCost;
+    const baseServices = existingRow === undefined
+      ? {}
+      : Object.fromEntries(Object.entries(existingRow.serviceCosts).map(([k, v]) => [k, Number(v)]));
+    const { totalCost, mergedServices } = mergeDescendantCosts(
+      descendants, entityCostMap, consumedEntities, node.name, baseCost, baseServices,
+    );
+    const row = makeVirtualRow(node.name, totalCost, mergedServices);
+    if (row !== null) rolledUpRows.push(row);
   }
 
   for (const row of result.rows) {
@@ -445,8 +445,5 @@ export function applyOrgTreeRollup(result: CostResult, tree: readonly OrgNode[])
     }
   }
 
-  return {
-    ...result,
-    rows: rolledUpRows,
-  };
+  return { ...result, rows: rolledUpRows };
 }

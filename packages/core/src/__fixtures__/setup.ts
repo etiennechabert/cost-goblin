@@ -34,6 +34,47 @@ function weightedPick<T extends { costShare: number }>(arr: readonly T[], rand: 
   return last;
 }
 
+interface FixtureConfig {
+  services: { name: string; costShare: number }[];
+  accounts: { id: string; name: string; costShare: number }[];
+  regions: string[];
+  owners: string[];
+  products: string[];
+  envs: string[];
+}
+
+function generateDailyDates(): string[] {
+  const dates: string[] = [];
+  for (let m = 1; m <= 2; m++) {
+    const daysInMonth = m === 1 ? 31 : 28;
+    for (let d = 1; d <= daysInMonth; d++) {
+      dates.push(`2026-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+    }
+  }
+  return dates;
+}
+
+function generateFixtureRow(date: string, cfg: FixtureConfig, rand: () => number): string {
+  const service = weightedPick(cfg.services, rand);
+  const account = weightedPick(cfg.accounts, rand);
+  const region = pick(cfg.regions, rand);
+  const owner = rand() < 0.08 ? null : pick(cfg.owners, rand);
+  const product = rand() < 0.12 ? null : pick(cfg.products, rand);
+  const env = rand() < 0.03 ? null : pick(cfg.envs, rand);
+  const cost = Math.round(Math.exp(rand() * 6 - 2) * service.costShare * 10 * 100) / 100;
+  const listCost = Math.round(cost * (1 + rand() * 0.3) * 100) / 100;
+  const usageAmount = Math.round(rand() * 1000 * 100) / 100;
+  const resourceId = `arn:aws:${service.name.toLowerCase()}:${region}:${account.id}:resource/${String(Math.floor(rand() * 10000))}`;
+
+  const tagEntries: string[] = [];
+  if (owner !== null) tagEntries.push(`'user_team': '${owner}'`);
+  if (product !== null) tagEntries.push(`'user_system': '${product}'`);
+  if (env !== null) tagEntries.push(`'user_environment': '${env}'`);
+
+  const netCost = Math.round(cost * 0.97 * 100) / 100;
+  return `(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', 'Compute', 'Usage', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(cost)}, ${String(netCost)}, ${String(listCost)}, NULL, NULL, NULL, NULL, 'Usage', 'RunInstances', 'Usage', MAP {${tagEntries.join(', ')}})`;
+}
+
 export async function setup(): Promise<void> {
   const dailyParquet = join(SYNTHETIC_DIR, 'aws', 'raw', 'daily-2026-01', 'data.parquet');
   try {
@@ -47,75 +88,45 @@ export async function setup(): Promise<void> {
   const db = await DuckDBInstance.create();
   const conn = await db.connect();
 
-  const services = [
-    { name: 'AmazonEC2', costShare: 0.25 },
-    { name: 'AmazonRDS', costShare: 0.2 },
-    { name: 'AmazonS3', costShare: 0.1 },
-    { name: 'AWSLambda', costShare: 0.08 },
-    { name: 'AmazonCloudWatch', costShare: 0.07 },
-    { name: 'AmazonDynamoDB', costShare: 0.06 },
-    { name: 'AmazonVPC', costShare: 0.05 },
-    { name: 'AWSBackup', costShare: 0.05 },
-    { name: 'AmazonECR', costShare: 0.04 },
-    { name: 'AmazonSNS', costShare: 0.03 },
-    { name: 'AmazonSQS', costShare: 0.02 },
-    { name: 'AWSCloudTrail', costShare: 0.02 },
-    { name: 'AmazonRoute53', costShare: 0.015 },
-    { name: 'AmazonEFS', costShare: 0.015 },
-  ];
+  const cfg: FixtureConfig = {
+    services: [
+      { name: 'AmazonEC2', costShare: 0.25 },
+      { name: 'AmazonRDS', costShare: 0.2 },
+      { name: 'AmazonS3', costShare: 0.1 },
+      { name: 'AWSLambda', costShare: 0.08 },
+      { name: 'AmazonCloudWatch', costShare: 0.07 },
+      { name: 'AmazonDynamoDB', costShare: 0.06 },
+      { name: 'AmazonVPC', costShare: 0.05 },
+      { name: 'AWSBackup', costShare: 0.05 },
+      { name: 'AmazonECR', costShare: 0.04 },
+      { name: 'AmazonSNS', costShare: 0.03 },
+      { name: 'AmazonSQS', costShare: 0.02 },
+      { name: 'AWSCloudTrail', costShare: 0.02 },
+      { name: 'AmazonRoute53', costShare: 0.015 },
+      { name: 'AmazonEFS', costShare: 0.015 },
+    ],
+    accounts: [
+      { id: '100000000000', name: 'Acme Corp Main', costShare: 0.3 },
+      { id: '100000000001', name: 'Payments Production', costShare: 0.2 },
+      { id: '100000000002', name: 'Cards Production', costShare: 0.15 },
+      { id: '100000000003', name: 'Identity Production', costShare: 0.1 },
+      { id: '100000000004', name: 'Platform Engineering', costShare: 0.08 },
+      { id: '100000000005', name: 'Security Operations', costShare: 0.07 },
+      { id: '100000000006', name: 'Data Analytics', costShare: 0.05 },
+      { id: '100000000007', name: 'CI/CD Platform', costShare: 0.05 },
+    ],
+    regions: ['eu-central-1', 'us-east-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1'],
+    owners: ['backend', 'frontend', 'platform', 'data-eng', 'security', 'payments', 'identity', 'sre'],
+    products: ['api-gateway', 'auth-service', 'billing-engine', 'data-pipeline', 'event-bus', 'ledger'],
+    envs: ['production', 'staging', 'testing', 'sandbox'],
+  };
 
-  const accounts = [
-    { id: '100000000000', name: 'Acme Corp Main', costShare: 0.3 },
-    { id: '100000000001', name: 'Payments Production', costShare: 0.2 },
-    { id: '100000000002', name: 'Cards Production', costShare: 0.15 },
-    { id: '100000000003', name: 'Identity Production', costShare: 0.1 },
-    { id: '100000000004', name: 'Platform Engineering', costShare: 0.08 },
-    { id: '100000000005', name: 'Security Operations', costShare: 0.07 },
-    { id: '100000000006', name: 'Data Analytics', costShare: 0.05 },
-    { id: '100000000007', name: 'CI/CD Platform', costShare: 0.05 },
-  ];
-
-  const regions = ['eu-central-1', 'us-east-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1'];
-  const owners = ['backend', 'frontend', 'platform', 'data-eng', 'security', 'payments', 'identity', 'sre'];
-  const products = ['api-gateway', 'auth-service', 'billing-engine', 'data-pipeline', 'event-bus', 'ledger'];
-  const envs = ['production', 'staging', 'testing', 'sandbox'];
-
-  const dailyDates: string[] = [];
-  for (let m = 1; m <= 2; m++) {
-    const daysInMonth = m === 1 ? 31 : 28;
-    for (let d = 1; d <= daysInMonth; d++) {
-      dailyDates.push(`2026-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
-    }
-  }
+  const dailyDates = generateDailyDates();
 
   const rows: string[] = [];
   for (const date of dailyDates) {
     for (let i = 0; i < 50; i++) {
-      const service = weightedPick(services, rand);
-      const account = weightedPick(accounts, rand);
-      const region = pick(regions, rand);
-      const owner = rand() < 0.08 ? null : pick(owners, rand);
-      const product = rand() < 0.12 ? null : pick(products, rand);
-      const env = rand() < 0.03 ? null : pick(envs, rand);
-      const cost = Math.round(Math.exp(rand() * 6 - 2) * service.costShare * 10 * 100) / 100;
-      const listCost = Math.round(cost * (1 + rand() * 0.3) * 100) / 100;
-      const usageAmount = Math.round(rand() * 1000 * 100) / 100;
-      const resourceId = `arn:aws:${service.name.toLowerCase()}:${region}:${account.id}:resource/${String(Math.floor(rand() * 10000))}`;
-
-      const tagEntries: string[] = [];
-      if (owner !== null) tagEntries.push(`'user_team': '${owner}'`);
-      if (product !== null) tagEntries.push(`'user_system': '${product}'`);
-      if (env !== null) tagEntries.push(`'user_environment': '${env}'`);
-
-      // Synthetic fixture:
-      //  - blended = unblended (no consolidated-billing variance)
-      //  - net_unblended = unblended * 0.97 (simulates 3% promotional credit)
-      //  - RI/SP effective cost NULL so amortized falls through to
-      //    unblended via COALESCE; same for net variants.
-      // Real CUR has these columns populated for rows covered by an RI
-      // or SP and when "Include Net Columns" is enabled.
-      const netCost = Math.round(cost * 0.97 * 100) / 100;
-      rows.push(`(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', 'Compute', 'Usage', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(cost)}, ${String(netCost)}, ${String(listCost)}, NULL, NULL, NULL, NULL, 'Usage', 'RunInstances', 'Usage', MAP {${tagEntries.join(', ')}})`);
+      rows.push(generateFixtureRow(date, cfg, rand));
     }
   }
 
