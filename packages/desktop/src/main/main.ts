@@ -163,7 +163,7 @@ async function main(): Promise<void> {
   // Worker bundles are built by `npm run build:worker` (esbuild) into out/worker/
   // — sibling to out/main/ where this file lives. We resolve up one level then
   // into out/worker/ to find them.
-  const duckdbWorkerPath = join(__dirname, '..', 'worker', 'duckdb-worker.cjs');
+  const duckdbWorkerPath = join(__dirname, '..', 'worker', 'duckdb-worker.mjs');
   const db = await createDuckDBClient(duckdbWorkerPath);
   logger.info('DuckDB worker ready');
 
@@ -186,12 +186,10 @@ app.on('window-all-closed', () => {
   }
 });
 
-void (async () => {
-  try {
-    await main();
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`Fatal error: ${message}\n`);
-    process.exit(1);
-  }
-})();
+try {
+  await main();
+} catch (err: unknown) {
+  const message = err instanceof Error ? err.message : String(err);
+  process.stderr.write(`Fatal error: ${message}\n`);
+  process.exit(1);
+}
