@@ -1140,7 +1140,7 @@ function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onChange, on
               </button>
             </span>
           </div>
-          <div className="max-h-96 overflow-y-auto py-1" role="listbox">
+          <div className="max-h-96 overflow-y-auto py-1">
             {allColumns.map(col => {
               const checked = !hiddenSet.has(col.key);
               const autoHidden = autoHiddenKeys.has(col.key);
@@ -1149,8 +1149,6 @@ function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onChange, on
               return (
                 <div
                   key={col.key}
-                  role="option"
-                  aria-selected={checked}
                   tabIndex={0}
                   draggable
                   onDragStart={(e) => {

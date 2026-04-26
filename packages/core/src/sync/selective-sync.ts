@@ -155,16 +155,19 @@ function makeLineHandler(
   };
 }
 
-async function syncDateGroup(
-  date: string,
-  dateFiles: readonly ManifestFileEntry[],
-  s3Bucket: string,
-  dataDir: string,
-  outputDir: string,
-  profile: string,
-  signal: AbortSignal | undefined,
-  onLine: (line: string) => void,
-): Promise<number> {
+interface SyncDateGroupOptions {
+  readonly date: string;
+  readonly dateFiles: readonly ManifestFileEntry[];
+  readonly s3Bucket: string;
+  readonly dataDir: string;
+  readonly outputDir: string;
+  readonly profile: string;
+  readonly signal: AbortSignal | undefined;
+  readonly onLine: (line: string) => void;
+}
+
+async function syncDateGroup(opts: SyncDateGroupOptions): Promise<number> {
+  const { date, dateFiles, s3Bucket, dataDir, outputDir, profile, signal, onLine } = opts;
   const firstFile = dateFiles[0];
   if (firstFile === undefined) return 0;
 
@@ -207,10 +210,10 @@ async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ fi
 
     for (const [date, dateFiles] of dateGroups) {
       if (options.signal?.aborted) break;
-      totalFilesDownloaded += await syncDateGroup(
-        date, dateFiles, s3Path.bucket, dataDir, outputDir, profile,
-        options.signal, makeLineHandler(onProgress, totalFiles, counter),
-      );
+      totalFilesDownloaded += await syncDateGroup({
+        date, dateFiles, s3Bucket: s3Path.bucket, dataDir, outputDir, profile,
+        signal: options.signal, onLine: makeLineHandler(onProgress, totalFiles, counter),
+      });
     }
 
     if (onProgress !== undefined) {

@@ -97,9 +97,9 @@ function validateGroupByWidget(raw: Record<string, unknown>, ctx: string, base: 
   assertString(raw['groupBy'], `${ctx}.groupBy`);
   const groupBy = asDimensionId(raw['groupBy']);
   if (type === 'treemap') {
-    const drillTo = raw['drillTo'] !== undefined
-      ? (assertString(raw['drillTo'], `${ctx}.drillTo`), asDimensionId(raw['drillTo']))
-      : undefined;
+    const drillTo = raw['drillTo'] === undefined
+      ? undefined
+      : (assertString(raw['drillTo'], `${ctx}.drillTo`), asDimensionId(raw['drillTo']));
     return { type, ...base, groupBy, ...(drillTo === undefined ? {} : { drillTo }) };
   }
   if (type === 'pie') return { type, ...base, groupBy };

@@ -160,7 +160,7 @@ export function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onCha
               <button type="button" onClick={() => { onOrderChange([]); }} className="text-text-secondary hover:text-text-primary" title="Restore the default column order">Reset order</button>
             </span>
           </div>
-          <div className="max-h-96 overflow-y-auto py-1" role="listbox">
+          <div className="max-h-96 overflow-y-auto py-1">
             {allColumns.map(col => {
               const checked = !hiddenSet.has(col.key);
               const autoHidden = autoHiddenKeys.has(col.key);
@@ -169,8 +169,6 @@ export function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onCha
               return (
                 <div
                   key={col.key}
-                  role="option"
-                  aria-selected={checked}
                   tabIndex={0}
                   draggable
                   onDragStart={(e) => { setDraggedKey(col.key); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', col.key); }}

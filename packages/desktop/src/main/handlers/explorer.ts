@@ -164,17 +164,20 @@ function buildExclusionClauses(
   return clauses;
 }
 
-async function buildFreshSource(
-  app: AppContext,
-  params: ExplorerBaseParams,
-  startStr: string,
-  endStr: string,
-  tier: 'daily' | 'hourly',
-  periods: readonly string[],
-  dimensions: DimensionsConfig,
-  filterPredicate: string | null,
-  accountReverseMap: ReadonlyMap<string, readonly string[]>,
-): Promise<{ source: string; whereStr: string }> {
+interface BuildFreshSourceOptions {
+  readonly app: AppContext;
+  readonly params: ExplorerBaseParams;
+  readonly startStr: string;
+  readonly endStr: string;
+  readonly tier: 'daily' | 'hourly';
+  readonly periods: readonly string[];
+  readonly dimensions: DimensionsConfig;
+  readonly filterPredicate: string | null;
+  readonly accountReverseMap: ReadonlyMap<string, readonly string[]>;
+}
+
+async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source: string; whereStr: string }> {
+  const { app, params, startStr, endStr, tier, periods, dimensions, filterPredicate, accountReverseMap } = opts;
   const { ctx, getCostScope, getOrgAccountsPath, getAvailableColumns } = app;
   const orgPath = await getOrgAccountsPath();
   const availableColumns = await getAvailableColumns(tier);
@@ -227,9 +230,9 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     return { empty: false, source: matSource, whereStr, ...shared };
   }
 
-  const { source, whereStr } = await buildFreshSource(
+  const { source, whereStr } = await buildFreshSource({
     app, params, startStr, endStr, tier, periods, dimensions, filterPredicate, accountReverseMap,
-  );
+  });
   return { empty: false, source, whereStr, ...shared };
 }
 
