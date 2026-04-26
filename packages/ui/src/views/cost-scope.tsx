@@ -636,24 +636,19 @@ export function CostScopeView(): React.JSX.Element {
   // every condition row fires its own identical fetch on mount.
   useEffect(() => {
     let cancelled = false;
+    async function fetchDimValues(d: typeof dimensions[number]): Promise<[string, readonly string[]]> {
+      const id = getDimensionId(d);
+      try {
+        const vals = await api.getFilterValues(id, {}, undefined, { bypassCostScope: true });
+        return [id, vals.map(v => v.value)];
+      } catch {
+        return [id, []];
+      }
+    }
     async function run(): Promise<void> {
       const enabled = dimensions.filter(d => d.enabled !== false);
-      const next = new Map<string, readonly string[]>();
-      await Promise.all(enabled.map(async d => {
-        const id = getDimensionId(d);
-        try {
-          // bypassCostScope: users composing an exclusion rule need to
-          // see every value a dim can take, including ones the saved
-          // cost-scope rules already exclude. Otherwise once Tax is
-          // excluded globally, the autocomplete in a new rule can't
-          // suggest 'Tax' for them to add to a second rule.
-          const vals = await api.getFilterValues(id, {}, undefined, { bypassCostScope: true });
-          next.set(id, vals.map(v => v.value));
-        } catch {
-          next.set(id, []);
-        }
-      }));
-      if (!cancelled) setSuggestionsByDim(next);
+      const entries = await Promise.all(enabled.map(fetchDimValues));
+      if (!cancelled) setSuggestionsByDim(new Map(entries));
     }
     if (dimensions.length > 0) void run();
     return () => { cancelled = true; };

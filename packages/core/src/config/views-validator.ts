@@ -48,8 +48,14 @@ function validateFilters(raw: unknown, ctx: string): WidgetFilterOverlay | undef
   return out;
 }
 
-function validateWidget(raw: unknown, ctx: string): WidgetSpec {
-  assertObject(raw, ctx);
+interface WidgetBase {
+  readonly id: string;
+  readonly size: WidgetSize;
+  readonly title?: string;
+  readonly filters?: WidgetFilterOverlay;
+}
+
+function parseWidgetBase(raw: Record<string, unknown>, ctx: string): WidgetBase {
   assertString(raw['id'], `${ctx}.id`);
   assertString(raw['type'], `${ctx}.type`);
   if (!isWidgetType(raw['type'])) {
@@ -63,82 +69,85 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
       `${ctx}.size must be one of: ${WIDGET_SIZES.join(', ')} (got ${raw['size']})`,
     );
   }
-
-  const id = raw['id'];
-  const type = raw['type'];
-  const size = raw['size'];
   const title = raw['title'] === undefined ? undefined : (assertString(raw['title'], `${ctx}.title`), raw['title']);
   const filters = validateFilters(raw['filters'], `${ctx}.filters`);
-
-  const base = {
-    id,
-    size,
+  return {
+    id: raw['id'],
+    size: raw['size'],
     ...(title === undefined ? {} : { title }),
     ...(filters === undefined ? {} : { filters }),
   };
+}
+
+function validateSummaryWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase): WidgetSpec {
+  let metric: SummaryMetric | undefined;
+  if (raw['metric'] !== undefined) {
+    assertString(raw['metric'], `${ctx}.metric`);
+    if (!isSummaryMetric(raw['metric'])) {
+      throw new ConfigValidationError(
+        `${ctx}.metric must be one of: ${SUMMARY_METRICS.join(', ')}`,
+      );
+    }
+    metric = raw['metric'];
+  }
+  return { type: 'summary', ...base, ...(metric === undefined ? {} : { metric }) };
+}
+
+function validateGroupByWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, type: 'pie' | 'stackedBar' | 'bubble' | 'treemap'): WidgetSpec {
+  assertString(raw['groupBy'], `${ctx}.groupBy`);
+  const groupBy = asDimensionId(raw['groupBy']);
+  if (type === 'treemap') {
+    const drillTo = raw['drillTo'] !== undefined
+      ? (assertString(raw['drillTo'], `${ctx}.drillTo`), asDimensionId(raw['drillTo']))
+      : undefined;
+    return { type, ...base, groupBy, ...(drillTo === undefined ? {} : { drillTo }) };
+  }
+  if (type === 'pie') return { type, ...base, groupBy };
+  return { type, ...base, groupBy };
+}
+
+function validateTopNWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, type: 'line' | 'topNBar' | 'heatmap'): WidgetSpec {
+  assertString(raw['groupBy'], `${ctx}.groupBy`);
+  let topN: number | undefined;
+  if (raw['topN'] !== undefined) {
+    assertNumber(raw['topN'], `${ctx}.topN`);
+    topN = raw['topN'];
+  }
+  return { type, ...base, groupBy: asDimensionId(raw['groupBy']), ...(topN === undefined ? {} : { topN }) };
+}
+
+function validateTableWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase): WidgetSpec {
+  let enabledColumns: string[] | undefined;
+  if (raw['enabledColumns'] !== undefined) {
+    assertArray(raw['enabledColumns'], `${ctx}.enabledColumns`);
+    enabledColumns = raw['enabledColumns'].map((c, i) => {
+      assertString(c, `${ctx}.enabledColumns[${String(i)}]`);
+      return c;
+    });
+  }
+  return { type: 'table', ...base, ...(enabledColumns === undefined ? {} : { enabledColumns }) };
+}
+
+function validateWidget(raw: unknown, ctx: string): WidgetSpec {
+  assertObject(raw, ctx);
+  const base = parseWidgetBase(raw, ctx);
+  assertString(raw['type'], `${ctx}.type`);
+  const type = raw['type'] as WidgetType;
 
   switch (type) {
-    case 'summary': {
-      let metric: SummaryMetric | undefined;
-      if (raw['metric'] !== undefined) {
-        assertString(raw['metric'], `${ctx}.metric`);
-        if (!isSummaryMetric(raw['metric'])) {
-          throw new ConfigValidationError(
-            `${ctx}.metric must be one of: ${SUMMARY_METRICS.join(', ')}`,
-          );
-        }
-        metric = raw['metric'];
-      }
-      return { type, ...base, ...(metric === undefined ? {} : { metric }) };
-    }
-    case 'pie': {
-      assertString(raw['groupBy'], `${ctx}.groupBy`);
-      return { type, ...base, groupBy: asDimensionId(raw['groupBy']) };
-    }
+    case 'summary':
+      return validateSummaryWidget(raw, ctx, base);
+    case 'pie':
     case 'stackedBar':
     case 'bubble':
-    case 'treemap': {
-      assertString(raw['groupBy'], `${ctx}.groupBy`);
-      const drillTo = type === 'treemap' && raw['drillTo'] !== undefined
-        ? (assertString(raw['drillTo'], `${ctx}.drillTo`), asDimensionId(raw['drillTo']))
-        : undefined;
-      const groupBy = asDimensionId(raw['groupBy']);
-      if (type === 'treemap') {
-        return { type, ...base, groupBy, ...(drillTo === undefined ? {} : { drillTo }) };
-      }
-      return { type, ...base, groupBy };
-    }
+    case 'treemap':
+      return validateGroupByWidget(raw, ctx, base, type);
     case 'line':
     case 'topNBar':
-    case 'heatmap': {
-      assertString(raw['groupBy'], `${ctx}.groupBy`);
-      let topN: number | undefined;
-      if (raw['topN'] !== undefined) {
-        assertNumber(raw['topN'], `${ctx}.topN`);
-        topN = raw['topN'];
-      }
-      return {
-        type,
-        ...base,
-        groupBy: asDimensionId(raw['groupBy']),
-        ...(topN === undefined ? {} : { topN }),
-      };
-    }
-    case 'table': {
-      let enabledColumns: string[] | undefined;
-      if (raw['enabledColumns'] !== undefined) {
-        assertArray(raw['enabledColumns'], `${ctx}.enabledColumns`);
-        enabledColumns = raw['enabledColumns'].map((c, i) => {
-          assertString(c, `${ctx}.enabledColumns[${String(i)}]`);
-          return c;
-        });
-      }
-      return {
-        type,
-        ...base,
-        ...(enabledColumns === undefined ? {} : { enabledColumns }),
-      };
-    }
+    case 'heatmap':
+      return validateTopNWidget(raw, ctx, base, type);
+    case 'table':
+      return validateTableWidget(raw, ctx, base);
   }
 }
 
