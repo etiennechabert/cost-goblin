@@ -214,9 +214,10 @@ interface DataTableProps {
   readonly loading: boolean;
   readonly error: string | null;
   readonly maxHeight?: string;
+  readonly fetchDetailRows?: ((row: AggregatedTableRow) => Promise<readonly AggregatedTableRow[]>) | undefined;
 }
 
-export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, onHiddenColumnsChange, onColumnOrderChange, rows, totalRows, sort, onSort, onFilterAdd, loading, error, maxHeight = '560px' }: DataTableProps) {
+export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, onHiddenColumnsChange, onColumnOrderChange, rows, totalRows, sort, onSort, onFilterAdd, loading, error, maxHeight = '560px', fetchDetailRows }: DataTableProps) {
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
   const toggleExpand = useCallback((idx: number) => {
@@ -281,6 +282,7 @@ export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, 
                   expanded={isExpanded}
                   onToggle={() => { toggleExpand(i); }}
                   onFilterAdd={onFilterAdd}
+                  fetchDetailRows={fetchDetailRows}
                 />
               );
             })}
@@ -361,13 +363,14 @@ function renderCell(spec: ColumnSpec, row: AggregatedTableRow): React.ReactNode 
 
 // --- Expandable Row ---
 
-function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterAdd }: {
+function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterAdd, fetchDetailRows }: {
   row: AggregatedTableRow;
   columns: readonly ColumnSpec[];
   allColumns: readonly ColumnSpec[];
   expanded: boolean;
   onToggle: () => void;
   onFilterAdd: (dimId: string, value: string) => void;
+  fetchDetailRows?: ((r: AggregatedTableRow) => Promise<readonly AggregatedTableRow[]>) | undefined;
 }) {
   return (
     <>
@@ -385,7 +388,7 @@ function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterA
       {expanded && (
         <tr className="bg-bg-tertiary/20">
           <td colSpan={columns.length} className="px-3 py-2">
-            <RowDetail row={row} allColumns={allColumns} />
+            <RowDetail row={row} allColumns={allColumns} fetchDetailRows={fetchDetailRows} />
           </td>
         </tr>
       )}
@@ -393,36 +396,97 @@ function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterA
   );
 }
 
-function RowDetail({ row, allColumns }: { row: AggregatedTableRow; allColumns: readonly ColumnSpec[] }) {
+function RowDetail({ row, allColumns, fetchDetailRows }: {
+  row: AggregatedTableRow;
+  allColumns: readonly ColumnSpec[];
+  fetchDetailRows?: ((r: AggregatedTableRow) => Promise<readonly AggregatedTableRow[]>) | undefined;
+}) {
+  const [detailRows, setDetailRows] = useState<readonly AggregatedTableRow[] | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  useEffect(() => {
+    if (fetchDetailRows === undefined) return;
+    setDetailLoading(true);
+    fetchDetailRows(row)
+      .then(rows => { setDetailRows(rows); })
+      .catch(() => { setDetailRows([]); })
+      .finally(() => { setDetailLoading(false); });
+  }, [row, fetchDetailRows]);
+
   const entries = Object.entries(row.values).filter(([, v]) => v.length > 0);
   const labelMap = new Map(allColumns.map(c => [c.key, c.label]));
 
+  const detailColSpecs = useMemo(() => {
+    if (detailRows === null || detailRows.length === 0) return [];
+    const first = detailRows[0];
+    if (first === undefined) return [];
+    const dimCols = Object.keys(first.values)
+      .map(key => allColumns.find(c => c.key === key))
+      .filter((c): c is ColumnSpec => c !== undefined);
+    const costCol: ColumnSpec = { key: 'cost', label: 'Cost', dimId: null, align: 'right', mono: true };
+    const result = [...dimCols];
+    result.splice(1, 0, costCol);
+    return result;
+  }, [detailRows, allColumns]);
+
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-4 gap-y-0.5 text-[11px]">
-      {entries.map(([key, val]) => (
-        <div key={key} className="flex gap-1.5 py-0.5 min-w-0">
-          <span className="text-text-muted shrink-0">{labelMap.get(key) ?? key}</span>
-          <span className="text-text-primary truncate" title={val}>{val}</span>
-        </div>
-      ))}
-      <div className="flex gap-1.5 py-0.5 min-w-0">
-        <span className="text-text-muted shrink-0">Cost</span>
-        <span className="text-text-primary">{formatSignedDollars(row.cost)}</span>
-      </div>
-      <div className="flex gap-1.5 py-0.5 min-w-0">
-        <span className="text-text-muted shrink-0">List Cost</span>
-        <span className="text-text-primary">{formatSignedDollars(row.listCost)}</span>
-      </div>
-      {row.usageAmount > 0 && (
+    <div className="space-y-3">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-4 gap-y-0.5 text-[11px]">
+        {entries.map(([key, val]) => (
+          <div key={key} className="flex gap-1.5 py-0.5 min-w-0">
+            <span className="text-text-muted shrink-0">{labelMap.get(key) ?? key}</span>
+            <span className="text-text-primary truncate" title={val}>{val}</span>
+          </div>
+        ))}
         <div className="flex gap-1.5 py-0.5 min-w-0">
-          <span className="text-text-muted shrink-0">Usage</span>
-          <span className="text-text-primary">{row.usageAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
+          <span className="text-text-muted shrink-0">Cost</span>
+          <span className="text-text-primary">{formatSignedDollars(row.cost)}</span>
+        </div>
+        <div className="flex gap-1.5 py-0.5 min-w-0">
+          <span className="text-text-muted shrink-0">Line Items</span>
+          <span className="text-text-primary">{row.rowCount.toLocaleString()}</span>
+        </div>
+      </div>
+
+      {fetchDetailRows !== undefined && (
+        <div>
+          {detailLoading && <CoinRainLoader height={80} count={3} />}
+          {detailRows !== null && detailRows.length > 0 && (
+            <div className="border border-border/60 rounded overflow-auto max-h-[300px]">
+              <table className="text-[10px] w-full border-collapse">
+                <thead className="sticky top-0 z-10 bg-bg-tertiary/95 backdrop-blur-sm">
+                  <tr className="text-left text-text-muted">
+                    {detailColSpecs.map(c => (
+                      <th key={c.key} className={`px-2 py-1 font-medium whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''}`}>{c.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {detailRows.map((dr, i) => (
+                    <tr key={String(i)} className="border-t border-border/30 hover:bg-bg-tertiary/20">
+                      {detailColSpecs.map(c => {
+                        const val = c.key === 'cost' ? formatSignedDollars(dr.cost) : (dr.values[c.key] ?? '');
+                        return (
+                          <td
+                            key={c.key}
+                            className={`px-2 py-0.5 whitespace-nowrap ${c.align === 'right' ? 'text-right tabular-nums' : ''} ${c.truncate === true ? 'max-w-[200px] overflow-hidden text-ellipsis' : ''}`}
+                            title={val}
+                          >
+                            {val}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {detailRows !== null && detailRows.length === 0 && !detailLoading && (
+            <div className="text-[10px] text-text-muted text-center py-2">No detail rows available.</div>
+          )}
         </div>
       )}
-      <div className="flex gap-1.5 py-0.5 min-w-0">
-        <span className="text-text-muted shrink-0">Line Items</span>
-        <span className="text-text-primary">{row.rowCount.toLocaleString()}</span>
-      </div>
     </div>
   );
 }
