@@ -50,11 +50,20 @@ export interface ExclusionRule {
   readonly conditions: readonly ExclusionCondition[];
 }
 
+/** Number of most-recent days to exclude from all date ranges. AWS CUR
+ *  data is not consolidated immediately, so the latest day(s) are
+ *  typically incomplete. `0` = include today, `1` = end at yesterday,
+ *  `2` (default) = end at the day before yesterday. */
+export const DEFAULT_LAG_DAYS = 2;
+
 export interface CostScopeConfig {
   readonly costMetric: CostMetric;
   /** Optional. Defaults to 'gross' when omitted (back-compat with
    *  earlier on-disk configs that predate the perspective axis). */
   readonly costPerspective?: CostPerspective;
+  /** How many recent days to trim from query date ranges. Defaults to
+   *  `DEFAULT_LAG_DAYS` (2) when omitted. */
+  readonly lagDays?: number | undefined;
   readonly rules: readonly ExclusionRule[];
 }
 

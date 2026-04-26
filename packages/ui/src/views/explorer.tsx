@@ -14,6 +14,7 @@ import type {
   Granularity,
 } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useLagDays } from '../hooks/use-lag-days.js';
 import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
@@ -78,11 +79,12 @@ const DEFAULT_HIDDEN: ReadonlySet<string> = new Set([
 
 export function ExplorerView(): React.JSX.Element {
   const api = useCostApi();
+  const lagDays = useLagDays();
   const [filters, setFilters] = useState<ExplorerFilterMap>({});
   const [sort, setSort] = useState<ExplorerSort | undefined>(undefined);
   const [dimensions, setDimensions] = useState<Dimension[]>([]);
   const [capabilities, setCapabilities] = useState<CostScopeCapabilities | null>(null);
-  const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange);
+  const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [applyCostScope, setApplyCostScope] = useState(false);
   const [costMetric, setCostMetric] = useState<CostMetric>('unblended');
@@ -345,6 +347,7 @@ export function ExplorerView(): React.JSX.Element {
           value={dateRange}
           granularity={granularity}
           onChange={(range, g) => { setDateRange(range); setGranularity(g); }}
+          lagDays={lagDays}
         />
       </div>
 

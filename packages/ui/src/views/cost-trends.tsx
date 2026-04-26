@@ -7,9 +7,11 @@ import type {
   TrendRow,
   EntityRef,
 } from '@costgoblin/core/browser';
-import { asDimensionId, asDateString, asDollars } from '@costgoblin/core/browser';
+import { DEFAULT_LAG_DAYS, asDimensionId, asDollars } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
+import { daysAgo } from '../lib/dates.js';
 import { getDimensionId } from '../lib/dimensions.js';
 import { BubbleChart } from '../components/bubble-chart.js';
 import { DimensionSelector } from '../components/dimension-selector.js';
@@ -23,12 +25,8 @@ const PERIOD_PRESETS = [
   { label: '180d', days: 180 },
 ] as const;
 
-function getDateRange(days: number): { start: DateString; end: DateString } {
-  const today = new Date();
-  const end = asDateString(today.toISOString().slice(0, 10));
-  const startDate = new Date(today.getTime() - days * 24 * 60 * 60 * 1000);
-  const start = asDateString(startDate.toISOString().slice(0, 10));
-  return { start, end };
+function getDateRange(days: number, lagDays: number = DEFAULT_LAG_DAYS): { start: DateString; end: DateString } {
+  return { start: daysAgo(days + lagDays), end: daysAgo(lagDays) };
 }
 
 type Direction = 'increases' | 'savings';
@@ -76,6 +74,7 @@ interface CostTrendsProps {
 
 export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps = {}) {
   const api = useCostApi();
+  const lagDays = useLagDays();
   const dimensionsQuery = useQuery(() => api.getDimensions(), []);
 
   const [state, setState] = useState<TrendsState>({
@@ -99,13 +98,13 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
       if (activeDimensionId === null) return Promise.resolve(null);
       return api.queryTrends({
         groupBy: activeDimensionId,
-        dateRange: getDateRange(state.periodDays),
+        dateRange: getDateRange(state.periodDays, lagDays),
         filters: {},
         deltaThreshold: asDollars(state.deltaThreshold),
         percentThreshold: state.percentThreshold,
       });
     },
-    [activeDimensionId, state.periodDays, state.deltaThreshold, state.percentThreshold, api],
+    [activeDimensionId, state.periodDays, state.deltaThreshold, state.percentThreshold, lagDays, api],
   );
 
   const trendData: TrendResult | null =

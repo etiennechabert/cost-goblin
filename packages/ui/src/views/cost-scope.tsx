@@ -12,7 +12,7 @@ import type {
   ExclusionRule,
   Dimension,
 } from '@costgoblin/core/browser';
-import { BUILTIN_EXCLUSION_RULES, COST_METRICS, DEFAULT_COST_SCOPE, asDimensionId } from '@costgoblin/core/browser';
+import { BUILTIN_EXCLUSION_RULES, COST_METRICS, DEFAULT_COST_SCOPE, DEFAULT_LAG_DAYS, asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId } from '../lib/dimensions.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
@@ -666,6 +666,20 @@ export function CostScopeView(): React.JSX.Element {
     updateDraft(perspective === 'gross' ? base : { ...base, costPerspective: perspective });
   }
 
+  function handleLagDaysChange(value: number) {
+    const clamped = Math.max(0, Math.round(value));
+    // Rebuild without lagDays when it matches the default so the
+    // serializer writes clean YAML. exactOptionalPropertyTypes forbids
+    // writing `undefined`, so enumerate retained fields.
+    const next: CostScopeConfig = {
+      costMetric: draft.costMetric,
+      ...(draft.costPerspective !== undefined ? { costPerspective: draft.costPerspective } : {}),
+      ...(clamped !== DEFAULT_LAG_DAYS ? { lagDays: clamped } : {}),
+      rules: draft.rules,
+    };
+    updateDraft(next);
+  }
+
   function updateRule(index: number, next: ExclusionRule) {
     const rules = draft.rules.map((r, i) => i === index ? next : r);
     updateDraft({ ...draft, rules });
@@ -861,6 +875,30 @@ export function CostScopeView(): React.JSX.Element {
                     Enable <em>Include Net Columns</em> on your CUR report in AWS Billing.
                   </div>
                 )}
+              </div>
+
+              {/* Data freshness lag */}
+              <div className="pt-2 mt-2 border-t border-border">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-text-primary">Data freshness</div>
+                    <div className="text-xs text-text-muted mt-0.5">
+                      Exclude the most recent N days from all date ranges. AWS billing data
+                      typically lags 1–2 days before it is fully consolidated.
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <input
+                      type="number"
+                      min={0}
+                      max={7}
+                      value={draft.lagDays ?? DEFAULT_LAG_DAYS}
+                      onChange={e => { handleLagDaysChange(Number(e.target.value)); }}
+                      className="w-16 rounded border border-border bg-bg-secondary px-2 py-1 text-xs text-text-primary text-right tabular-nums"
+                    />
+                    <span className="text-xs text-text-muted">days</span>
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>
