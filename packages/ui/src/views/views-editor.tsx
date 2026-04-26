@@ -292,7 +292,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
             disabled={saving || !state.dirty}
             className="px-4 py-1.5 text-sm rounded-md bg-accent text-bg-primary font-medium hover:opacity-90 disabled:opacity-40"
           >
-            {(() => { if (saving) return 'Saving…'; return state.dirty ? 'Save changes' : 'Saved'; })()}
+            {(() => { if (saving) { return 'Saving…'; } return state.dirty ? 'Save changes' : 'Saved'; })()}
           </button>
         </div>
       </div>

@@ -63,9 +63,8 @@ function parseUsages(costCalc: unknown): ParsedDetails['usages'] {
   for (const u of rawUsages) {
     if (!isRecord(u)) continue;
     const uAmount = u['usageAmount'];
-    const amountStr = typeof uAmount === 'number' ? String(uAmount)
-      : typeof uAmount === 'string' ? uAmount
-        : '';
+    const stringOrEmpty = typeof uAmount === 'string' ? uAmount : '';
+    const amountStr = typeof uAmount === 'number' ? String(uAmount) : stringOrEmpty;
     usages.push({
       type: typeof u['usageType'] === 'string' ? u['usageType'] : '',
       amount: amountStr,
@@ -128,11 +127,11 @@ export function Savings() {
     const map = new Map<string, { count: number; savings: number }>();
     for (const rec of visibleRecs) {
       const existing = map.get(rec.actionType);
-      if (existing !== undefined) {
+      if (existing === undefined) {
+        map.set(rec.actionType, { count: 1, savings: rec.monthlySavings });
+      } else {
         existing.count++;
         existing.savings += rec.monthlySavings;
-      } else {
-        map.set(rec.actionType, { count: 1, savings: rec.monthlySavings });
       }
     }
     return [...map.entries()]
@@ -146,11 +145,11 @@ export function Savings() {
     const map = new Map<string, { count: number; savings: number }>();
     for (const rec of data.recommendations) {
       const existing = map.get(rec.actionType);
-      if (existing !== undefined) {
+      if (existing === undefined) {
+        map.set(rec.actionType, { count: 1, savings: rec.monthlySavings });
+      } else {
         existing.count++;
         existing.savings += rec.monthlySavings;
-      } else {
-        map.set(rec.actionType, { count: 1, savings: rec.monthlySavings });
       }
     }
     return [...map.entries()]
@@ -173,9 +172,9 @@ export function Savings() {
   }
 
   const filtered = useMemo(() => {
-    const recs = activeFilter !== null
-      ? visibleRecs.filter(r => r.actionType === activeFilter)
-      : [...visibleRecs];
+    const recs = activeFilter === null
+      ? [...visibleRecs]
+      : visibleRecs.filter(r => r.actionType === activeFilter);
     return recs.sort((a, b) => {
       let cmp: number;
       switch (sortField) {

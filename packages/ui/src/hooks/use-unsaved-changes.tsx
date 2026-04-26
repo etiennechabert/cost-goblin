@@ -40,7 +40,7 @@ export function UnsavedChangesProvider({ children }: Readonly<{ children: ReactN
       // kicking off a re-render every keystroke when a dirty state stays
       // dirty, which would otherwise re-fire every view's useEffect that
       // depends on `setDirty`.
-      if (dirty && existing !== undefined && existing.dirty === dirty && existing.label === (label ?? null)) {
+      if (dirty && existing?.dirty === dirty && existing.label === (label ?? null)) {
         return prev;
       }
       if (!dirty && existing === undefined) return prev;

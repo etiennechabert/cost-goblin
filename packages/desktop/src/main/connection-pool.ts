@@ -30,8 +30,8 @@ export async function createResourcePool<T>(
     },
     release(resource: T): void {
       const waiter = waiters.shift();
-      if (waiter !== undefined) waiter(resource);
-      else idle.push(resource);
+      if (waiter === undefined) idle.push(resource);
+      else waiter(resource);
     },
   };
 }

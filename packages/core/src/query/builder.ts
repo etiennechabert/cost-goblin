@@ -273,9 +273,9 @@ export function buildSource(opts: BuildSourceOptions): string {
   const parquetPaths = periods !== undefined && periods.length > 0
     ? periods.map(p => `'${dataDir}/aws/raw/${tier}-${p}/*.parquet'`).join(', ')
     : undefined;
-  const parquetSource = parquetPaths !== undefined
-    ? `read_parquet([${parquetPaths}])`
-    : `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`;
+  const parquetSource = parquetPaths === undefined
+    ? `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`
+    : `read_parquet([${parquetPaths}])`;
 
   // Build fallback column extractions for the org-accounts join
   const fallbackSelects = needsOrgJoin

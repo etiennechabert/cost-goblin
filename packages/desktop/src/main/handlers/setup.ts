@@ -8,7 +8,9 @@ const REQUIRED_CUR_COLUMNS = [
   'product_product_family', 'product_region_code', 'resource_tags',
 ];
 
-function classifyManifestColumns(columnNames: string[]): { detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] } {
+type DetectedReportType = 'daily' | 'hourly' | 'cost-optimization' | 'unknown';
+
+function classifyManifestColumns(columnNames: string[]): { detectedType: DetectedReportType; missingColumns: string[] } {
   if (columnNames.includes('recommendation_id') || columnNames.includes('estimated_monthly_savings')) {
     return { detectedType: 'cost-optimization', missingColumns: [] };
   }
@@ -94,7 +96,7 @@ export function registerSetupHandlers(app: AppContext): void {
       const { S3Client, ListBucketsCommand } = await import('@aws-sdk/client-s3');
       const client = new S3Client({
         region: 'us-east-1',
-        ...(profile !== 'default' ? { profile } : {}),
+        ...(profile === 'default' ? {} : { profile }),
       });
 
       const response = await client.send(new ListBucketsCommand({}));

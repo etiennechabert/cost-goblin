@@ -193,17 +193,20 @@ function optionalTag(rand: () => number, missingRate: number, values: readonly s
   return rand() < missingRate ? null : pick(values, rand);
 }
 
-function generateRow(
-  date: string,
-  profileData: Profile,
-  syntheticAccounts: { id: string; name: string; costShare: number }[],
-  rand: () => number,
-  owners: string[],
-  products: string[],
-  envs: string[],
-  lineItemTypes: string[],
-  litWeights: number[],
-): string {
+interface GenerateRowOpts {
+  date: string;
+  profileData: Profile;
+  syntheticAccounts: { id: string; name: string; costShare: number }[];
+  rand: () => number;
+  owners: string[];
+  products: string[];
+  envs: string[];
+  lineItemTypes: string[];
+  litWeights: number[];
+}
+
+function generateRow(opts: GenerateRowOpts): string {
+  const { date, profileData, syntheticAccounts, rand, owners, products, envs, lineItemTypes, litWeights } = opts;
   const service = weightedPick(profileData.services, rand);
   const account = weightedPick(syntheticAccounts, rand);
   const region = pick(profileData.regions.slice(0, 5), rand);
@@ -279,7 +282,7 @@ async function generate(): Promise<void> {
 
   for (const date of dailyDates) {
     for (let i = 0; i < ROWS_PER_DAY; i++) {
-      rows.push(generateRow(date, profileData, syntheticAccounts, rand, owners, products, envs, lineItemTypes, litWeights));
+      rows.push(generateRow({ date, profileData, syntheticAccounts, rand, owners, products, envs, lineItemTypes, litWeights }));
     }
   }
 

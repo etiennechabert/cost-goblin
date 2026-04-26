@@ -62,7 +62,7 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
         >
           <div className={[
             'h-2 w-2 rounded-full',
-            (() => { if (hasData) return 'bg-accent'; return hasError ? 'bg-negative' : 'bg-text-muted'; })(),
+            (() => { if (hasData) { return 'bg-accent'; } return hasError ? 'bg-negative' : 'bg-text-muted'; })(),
           ].join(' ')} />
           <span className="text-sm font-medium text-text-primary">SSM Parameter Store</span>
           {hasData && <span className="text-text-muted ml-auto text-xs">{expanded ? '▾' : '▸'}</span>}

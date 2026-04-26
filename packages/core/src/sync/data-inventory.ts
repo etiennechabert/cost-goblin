@@ -93,10 +93,10 @@ export async function getDataInventory(
     const period = extractPeriod(file.key);
     if (period === 'unknown') continue;
     const existing = periodMap.get(period);
-    if (existing !== undefined) {
-      existing.push(file);
-    } else {
+    if (existing === undefined) {
       periodMap.set(period, [file]);
+    } else {
+      existing.push(file);
     }
   }
 

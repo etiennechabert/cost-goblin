@@ -1140,7 +1140,7 @@ function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onChange, on
               </button>
             </span>
           </div>
-          <div className="max-h-96 overflow-y-auto py-1">
+          <div className="max-h-96 overflow-y-auto py-1" role="listbox">
             {allColumns.map(col => {
               const checked = !hiddenSet.has(col.key);
               const autoHidden = autoHiddenKeys.has(col.key);
@@ -1228,7 +1228,8 @@ interface ColumnHeaderProps {
 
 function ColumnHeader({ spec, sort, onSort }: ColumnHeaderProps): React.JSX.Element {
   const isSorted = sort?.column === spec.key;
-  const indicator = isSorted ? (sort.direction === 'asc' ? '↑' : '↓') : '';
+  const arrow = sort?.direction === 'asc' ? '↑' : '↓';
+  const indicator = isSorted ? arrow : '';
   return (
     <th className="p-0 font-medium whitespace-nowrap">
       <button
