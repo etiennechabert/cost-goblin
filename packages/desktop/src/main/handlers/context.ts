@@ -1,5 +1,6 @@
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import { QueryLog } from '../query-log.js';
+import { MaterializedBase, configHash } from '../materialized-base.js';
 import {
   asDimensionId,
   applyNormalizationRule,
@@ -11,9 +12,14 @@ import {
   loadViews,
   loadCostScope,
   mergeBuiltInExclusionRules,
+  buildMaterializeBaseQuery,
+  listLocalMonths,
+  computePeriodsInRange,
+  DEFAULT_LAG_DAYS,
   logger,
   isStringRecord,
 } from '@costgoblin/core';
+import { buildAccountReverseMap } from './query-utils.js';
 import type {
   BuiltInDimension,
   CostGoblinConfig,
@@ -140,6 +146,7 @@ export interface AppContext {
    *  explicit reset via invalidateColumnCache. */
   readonly getAvailableColumns: (tier: 'daily' | 'hourly') => Promise<ReadonlySet<string>>;
   readonly queryLog: QueryLog;
+  readonly materializedBase: MaterializedBase;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly runPreparedQuery: (sql: string, params: readonly unknown[]) => Promise<RawRow[]>;
   readonly invalidateConfig: () => void;
@@ -147,6 +154,7 @@ export interface AppContext {
   readonly invalidateViews: () => void;
   readonly invalidateCostScope: () => void;
   readonly invalidateColumnCache: () => void;
+  readonly warmupBase: () => void;
 }
 
 export function createAppContext(ctx: IpcContext): AppContext {
@@ -386,6 +394,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
   }
 
   const queryLog = new QueryLog();
+  const materializedBase = new MaterializedBase();
 
   const wrappedRunQuery = queryLog.wrapQuery((sql, onStarted) => ctx.db.runQuery(sql, onStarted));
   const wrappedRunPreparedQuery = queryLog.wrapPreparedQuery((sql, params, onStarted) => ctx.db.runPreparedQuery(sql, params, onStarted));
@@ -399,6 +408,50 @@ export function createAppContext(ctx: IpcContext): AppContext {
     inflightQueries.set(key, promise);
     void promise.finally(() => { inflightQueries.delete(key); });
     return promise;
+  }
+
+  const runQuery = (sql: string) => dedup(sql, () => wrappedRunQuery(sql));
+  const runPreparedQuery = (sql: string, params: readonly unknown[]) => dedup(
+    `${sql}\0${JSON.stringify(params)}`,
+    () => wrappedRunPreparedQuery(sql, params),
+  );
+
+  async function warmupBase(): Promise<void> {
+    try {
+      const config = await getConfig();
+      const dimensions = await getQueryDimensions();
+      const costScope = await getCostScope().catch(() => undefined);
+      const accountMap = await getAccountMap();
+      const orgPath = await getOrgAccountsPath();
+      const availableColumns = await getAvailableColumns('daily');
+      const lagDays = costScope?.lagDays ?? DEFAULT_LAG_DAYS;
+      const dayMs = 86_400_000;
+      const end = new Date(Date.now() - lagDays * dayMs);
+      const retentionDays = config.providers[0]?.sync.daily.retentionDays ?? 30;
+      const windowDays = Math.min(retentionDays, 30);
+      const start = new Date(Date.now() - (windowDays + lagDays) * dayMs);
+      const dateRange = {
+        start: start.toISOString().slice(0, 10),
+        end: end.toISOString().slice(0, 10),
+      };
+      const available = await listLocalMonths(ctx.dataDir, 'daily');
+      const required = computePeriodsInRange(dateRange);
+      const periods = required.filter(p => available.includes(p));
+      if (periods.length === 0) return;
+
+      const accountReverseMap = buildAccountReverseMap(accountMap);
+      const hash = configHash(dimensions, costScope);
+      const sql = buildMaterializeBaseQuery(
+        ctx.dataDir, 'daily', dimensions, dateRange,
+        orgPath, periods, accountReverseMap, costScope, availableColumns,
+      );
+      await materializedBase.materialize(
+        (s) => ctx.db.runQuery(s),
+        sql, dateRange, 'daily', hash,
+      );
+    } catch (err: unknown) {
+      logger.warn(`warmup-base: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   return {
@@ -415,16 +468,21 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getOrgAccountsPath,
     getAvailableColumns,
     queryLog,
-    runQuery: (sql: string) => dedup(sql, () => wrappedRunQuery(sql)),
-    runPreparedQuery: (sql: string, params: readonly unknown[]) => dedup(
-      `${sql}\0${JSON.stringify(params)}`,
-      () => wrappedRunPreparedQuery(sql, params),
-    ),
+    materializedBase,
+    runQuery,
+    runPreparedQuery,
     invalidateConfig: () => { state.config = null; },
-    invalidateDimensions: () => { state.dimensions = null; state.accountMap = null; state.regionMap = null; },
+    invalidateDimensions: () => {
+      state.dimensions = null; state.accountMap = null; state.regionMap = null;
+      void materializedBase.drop((s) => ctx.db.runQuery(s)).then(() => { void warmupBase(); });
+    },
     invalidateViews: () => { state.views = null; },
-    invalidateCostScope: () => { state.costScope = null; },
+    invalidateCostScope: () => {
+      state.costScope = null;
+      void materializedBase.drop((s) => ctx.db.runQuery(s)).then(() => { void warmupBase(); });
+    },
     invalidateColumnCache: () => { columnCache.clear(); },
+    warmupBase: () => { void warmupBase(); },
   };
 }
 

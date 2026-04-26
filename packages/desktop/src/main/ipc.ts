@@ -30,4 +30,6 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   registerCostScopeHandlers(app);
   registerExplorerHandlers(app);
   registerDebugHandlers(app);
+
+  app.warmupBase();
 }
