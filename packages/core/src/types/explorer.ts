@@ -109,6 +109,7 @@ export interface AggregatedTableParams extends ExplorerBaseParams {
   readonly groupByColumns: readonly string[];
   readonly sort?: ExplorerSort;
   readonly rowLimit: number;
+  readonly rowFilters?: Readonly<Record<string, string>> | undefined;
 }
 
 export interface AggregatedTableRow {

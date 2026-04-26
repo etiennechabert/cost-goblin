@@ -417,6 +417,21 @@ export function registerExplorerHandlers(app: AppContext): void {
 
     if (qc.empty) return { rows: [], totalRows: 0, tagColumns: qc.tagColumns };
 
+    let whereStr = qc.whereStr;
+    if (params.rowFilters !== undefined) {
+      const extra: string[] = [];
+      for (const [col, val] of Object.entries(params.rowFilters)) {
+        if (val.length === 0) continue;
+        if (!SORTABLE_SCALAR_COLUMNS.has(col) && !qc.tagIdSet.has(col)) continue;
+        const escaped = val.replace(/'/g, "''");
+        const colExpr = col === 'usage_date' ? `usage_date::VARCHAR` : col;
+        extra.push(`${colExpr} = '${escaped}'`);
+      }
+      if (extra.length > 0) {
+        whereStr = `${whereStr} AND ${extra.join(' AND ')}`;
+      }
+    }
+
     const groupByColumns = params.groupByColumns.filter(
       col => SORTABLE_SCALAR_COLUMNS.has(col) || qc.tagIdSet.has(col),
     );
@@ -429,7 +444,7 @@ export function registerExplorerHandlers(app: AppContext): void {
           CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
           CAST(COUNT(*) AS DOUBLE) AS row_count
         FROM ${qc.source}
-        ${qc.whereStr}
+        ${whereStr}
       `.trim();
       const rows = await runQuery(sql);
       const r = rows[0];
@@ -459,7 +474,7 @@ export function registerExplorerHandlers(app: AppContext): void {
 
     const countSql = `
       SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
-        SELECT 1 FROM ${qc.source} ${qc.whereStr}
+        SELECT 1 FROM ${qc.source} ${whereStr}
         GROUP BY ${groupByColumns.join(', ')}
       ) AS _cnt
     `.trim();
@@ -471,7 +486,7 @@ export function registerExplorerHandlers(app: AppContext): void {
         CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
         CAST(COUNT(*) AS DOUBLE) AS row_count
       FROM ${qc.source}
-      ${qc.whereStr}
+      ${whereStr}
       GROUP BY ${groupByColumns.join(', ')}
       ORDER BY ${orderBy}
       LIMIT ${String(rowLimit)}
