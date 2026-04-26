@@ -29,11 +29,7 @@ export const OVERVIEW_SEED_VIEW: ViewSpec = {
           id: 'overview-breakdown',
           type: 'table',
           size: 'full',
-          columnOrder: ['cost', 'resource_id', 'description'],
-          hiddenColumns: [
-            'usage_date', 'usage_hour', 'list_cost', 'service', 'account_name',
-            'line_item_type', 'region', 'service_family', 'usage_type', 'operation', 'usage_amount',
-          ],
+          enabledColumns: ['cost', 'resource_id', 'description'],
         },
       ],
     },

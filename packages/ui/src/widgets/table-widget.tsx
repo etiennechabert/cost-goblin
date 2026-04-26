@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
-import { DataTable, buildAllColumns, applyColumnOrder, filterVisibleColumns } from '../components/data-table.js';
-import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
+import { DataTable, buildAllColumns, applyColumnOrder } from '../components/data-table.js';
+import { asDimensionId, asTagValue, OVERVIEW_SEED_VIEW } from '@costgoblin/core/browser';
 import type { ExplorerFilterMap, ExplorerSort, ExplorerSortDirection } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { filtersKey, mergeFilters } from './widget.js';
@@ -10,6 +10,9 @@ import { filtersKey, mergeFilters } from './widget.js';
 const ROW_LIMIT = 500;
 
 const NUMERIC_SORT_KEYS = new Set(['cost', 'list_cost', 'usage_amount', 'usage_date']);
+
+const SEED_TABLE = OVERVIEW_SEED_VIEW.rows.flatMap(r => r.widgets).find(w => w.type === 'table');
+const DEFAULT_ENABLED = SEED_TABLE?.type === 'table' ? (SEED_TABLE.enabledColumns ?? []) : ['cost', 'resource_id', 'description'];
 
 export function TableWidget({
   spec,
@@ -20,6 +23,8 @@ export function TableWidget({
 }: WidgetCommonProps) {
   const api = useCostApi();
   if (spec.type !== 'table') return null;
+
+  const specEnabled = spec.enabledColumns ?? DEFAULT_ENABLED;
 
   const widgetFilters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(widgetFilters);
@@ -33,8 +38,7 @@ export function TableWidget({
   }, [widgetFilters]);
 
   const [sort, setSort] = useState<ExplorerSort | undefined>(undefined);
-  const [hiddenColumns, setHiddenColumns] = useState(spec.hiddenColumns ?? []);
-  const [columnOrder, setColumnOrder] = useState(spec.columnOrder ?? []);
+  const [enabledColumns, setEnabledColumns] = useState(specEnabled);
 
   const overviewQuery = useQuery(
     () => api.queryExplorerOverview({ filters: explorerFilters, dateRange, granularity }),
@@ -54,18 +58,20 @@ export function TableWidget({
     [tagColumns, granularity],
   );
 
-  const orderedColumns = useMemo(
-    () => applyColumnOrder(allColumns, columnOrder),
-    [allColumns, columnOrder],
+  const enabledSet = useMemo(() => new Set(enabledColumns), [enabledColumns]);
+
+  const orderedColumns = useMemo(() => {
+    const enabled = allColumns.filter(c => enabledSet.has(c.key));
+    const order = [...enabledColumns];
+    return applyColumnOrder(enabled, order);
+  }, [allColumns, enabledSet, enabledColumns]);
+
+  const hiddenColumns = useMemo(
+    () => allColumns.filter(c => !enabledSet.has(c.key)).map(c => c.key),
+    [allColumns, enabledSet],
   );
 
-  const hiddenSet = useMemo(() => new Set(hiddenColumns), [hiddenColumns]);
   const emptySet = useMemo(() => new Set<string>(), []);
-
-  const visibleColumns = useMemo(
-    () => filterVisibleColumns(orderedColumns, hiddenSet, emptySet),
-    [orderedColumns, hiddenSet, emptySet],
-  );
 
   const handleSort = useCallback((columnKey: string) => {
     setSort(prev => {
@@ -81,6 +87,15 @@ export function TableWidget({
     onSetFilter(asDimensionId(dimId), asTagValue(value));
   }, [onSetFilter]);
 
+  const handleHiddenChange = useCallback((nextHidden: readonly string[]) => {
+    const hiddenSet = new Set(nextHidden);
+    setEnabledColumns(allColumns.filter(c => !hiddenSet.has(c.key)).map(c => c.key));
+  }, [allColumns]);
+
+  const handleOrderChange = useCallback(() => {
+    // no-op: column order is controlled by enabledColumns in the views editor
+  }, []);
+
   const rows = rowsQuery.status === 'success' ? rowsQuery.data.sampleRows : [];
   const loading = rowsQuery.status === 'loading' || overviewQuery.status === 'loading';
   const error = rowsQuery.status === 'error' ? rowsQuery.error.message : null;
@@ -91,12 +106,12 @@ export function TableWidget({
         <h3 className="text-sm font-medium text-text-secondary mb-3">{spec.title}</h3>
       )}
       <DataTable
-        columns={visibleColumns}
-        allColumns={orderedColumns}
+        columns={orderedColumns}
+        allColumns={allColumns}
         hiddenColumns={hiddenColumns}
         autoHiddenKeys={emptySet}
-        onHiddenColumnsChange={setHiddenColumns}
-        onColumnOrderChange={setColumnOrder}
+        onHiddenColumnsChange={handleHiddenChange}
+        onColumnOrderChange={handleOrderChange}
         rows={rows}
         totalRows={totalRows}
         sort={sort}

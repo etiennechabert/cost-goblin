@@ -34,8 +34,7 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
       if (w.topN !== undefined) base['topN'] = w.topN;
       return base;
     case 'table':
-      if (w.hiddenColumns !== undefined && w.hiddenColumns.length > 0) base['hiddenColumns'] = [...w.hiddenColumns];
-      if (w.columnOrder !== undefined && w.columnOrder.length > 0) base['columnOrder'] = [...w.columnOrder];
+      if (w.enabledColumns !== undefined && w.enabledColumns.length > 0) base['enabledColumns'] = [...w.enabledColumns];
       return base;
   }
 }

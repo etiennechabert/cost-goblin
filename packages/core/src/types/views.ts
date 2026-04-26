@@ -58,8 +58,7 @@ export type WidgetSpec =
     })
   | (WidgetBase & {
       readonly type: 'table';
-      readonly hiddenColumns?: readonly string[] | undefined;
-      readonly columnOrder?: readonly string[] | undefined;
+      readonly enabledColumns?: readonly string[] | undefined;
     });
 
 export type WidgetType = WidgetSpec['type'];

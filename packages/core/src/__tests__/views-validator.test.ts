@@ -25,7 +25,7 @@ describe('validateViews', () => {
                   id: 'w4',
                   type: 'table',
                   size: 'full',
-                  hiddenColumns: ['usage_hour', 'list_cost'],
+                  enabledColumns: ['cost', 'resource_id', 'description'],
                 },
               ],
             },
@@ -111,11 +111,11 @@ describe('validateViews', () => {
     expect(() => validateViews({})).toThrow(ConfigValidationError);
   });
 
-  it('rejects non-string entries in table hiddenColumns', () => {
+  it('rejects non-string entries in table enabledColumns', () => {
     expect(() => validateViews({
       views: [{
         id: 'v', name: 'V', rows: [{ widgets: [
-          { id: 'w', type: 'table', size: 'full', hiddenColumns: [42] },
+          { id: 'w', type: 'table', size: 'full', enabledColumns: [42] },
         ] }],
       }],
     })).toThrow(ConfigValidationError);

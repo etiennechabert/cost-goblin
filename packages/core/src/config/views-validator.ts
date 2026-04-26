@@ -125,27 +125,18 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
       };
     }
     case 'table': {
-      let hiddenColumns: string[] | undefined;
-      if (raw['hiddenColumns'] !== undefined) {
-        assertArray(raw['hiddenColumns'], `${ctx}.hiddenColumns`);
-        hiddenColumns = raw['hiddenColumns'].map((c, i) => {
-          assertString(c, `${ctx}.hiddenColumns[${String(i)}]`);
-          return c;
-        });
-      }
-      let columnOrder: string[] | undefined;
-      if (raw['columnOrder'] !== undefined) {
-        assertArray(raw['columnOrder'], `${ctx}.columnOrder`);
-        columnOrder = raw['columnOrder'].map((c, i) => {
-          assertString(c, `${ctx}.columnOrder[${String(i)}]`);
+      let enabledColumns: string[] | undefined;
+      if (raw['enabledColumns'] !== undefined) {
+        assertArray(raw['enabledColumns'], `${ctx}.enabledColumns`);
+        enabledColumns = raw['enabledColumns'].map((c, i) => {
+          assertString(c, `${ctx}.enabledColumns[${String(i)}]`);
           return c;
         });
       }
       return {
         type,
         ...base,
-        ...(hiddenColumns !== undefined ? { hiddenColumns } : {}),
-        ...(columnOrder !== undefined ? { columnOrder } : {}),
+        ...(enabledColumns !== undefined ? { enabledColumns } : {}),
       };
     }
   }

@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import type { Dimension, WidgetSize, WidgetSpec, WidgetType } from '@costgoblin/core/browser';
 import { asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel, isTagDimension } from '../lib/dimensions.js';
 import { WIDGET_CATALOG } from '../widgets/registry.js';
-import { buildAllColumns, type ColumnSpec } from './data-table.js';
+import { buildAllColumns } from './data-table.js';
 import { OVERVIEW_SEED_VIEW } from '@costgoblin/core/browser';
 
 interface WidgetInspectorProps {
@@ -16,8 +16,7 @@ interface WidgetInspectorProps {
 }
 
 const SEED_TABLE = OVERVIEW_SEED_VIEW.rows.flatMap(r => r.widgets).find(w => w.type === 'table');
-const SEED_TABLE_HIDDEN = SEED_TABLE?.type === 'table' ? (SEED_TABLE.hiddenColumns ?? []) : [];
-const SEED_TABLE_ORDER = SEED_TABLE?.type === 'table' ? (SEED_TABLE.columnOrder ?? []) : [];
+const SEED_TABLE_ENABLED = SEED_TABLE?.type === 'table' ? (SEED_TABLE.enabledColumns ?? []) : ['cost', 'resource_id', 'description'];
 
 const SIZES: readonly { value: WidgetSize; label: string }[] = [
   { value: 'small', label: 'S' },
@@ -50,8 +49,7 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
       return {
         ...common,
         type: w.type,
-        ...(w.hiddenColumns !== undefined ? { hiddenColumns: w.hiddenColumns } : {}),
-        ...(w.columnOrder !== undefined ? { columnOrder: w.columnOrder } : {}),
+        ...(w.enabledColumns !== undefined ? { enabledColumns: w.enabledColumns } : {}),
       };
   }
 }
@@ -77,8 +75,7 @@ function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: str
       return {
         ...base,
         type,
-        columnOrder: [...SEED_TABLE_ORDER],
-        hiddenColumns: [...SEED_TABLE_HIDDEN],
+        enabledColumns: [...SEED_TABLE_ENABLED],
       };
   }
 }
@@ -237,10 +234,8 @@ export function WidgetInspector({
       {widget.type === 'table' && (
         <TableColumnsEditor
           dimensions={dimensions}
-          hiddenColumns={widget.hiddenColumns ?? []}
-          columnOrder={widget.columnOrder ?? []}
-          onHiddenChange={(next) => { onChange({ ...widget, hiddenColumns: next }); }}
-          onOrderChange={(next) => { onChange({ ...widget, columnOrder: next }); }}
+          enabledColumns={widget.enabledColumns ?? SEED_TABLE_ENABLED}
+          onChange={(next) => { onChange({ ...widget, enabledColumns: next }); }}
         />
       )}
     </div>
@@ -249,63 +244,29 @@ export function WidgetInspector({
 
 function TableColumnsEditor({
   dimensions,
-  hiddenColumns,
-  columnOrder,
-  onHiddenChange,
-  onOrderChange,
+  enabledColumns,
+  onChange,
 }: {
   dimensions: readonly Dimension[];
-  hiddenColumns: readonly string[];
-  columnOrder: readonly string[];
-  onHiddenChange: (next: readonly string[]) => void;
-  onOrderChange: (next: readonly string[]) => void;
+  enabledColumns: readonly string[];
+  onChange: (next: readonly string[]) => void;
 }) {
-  const [draggedKey, setDraggedKey] = useState<string | null>(null);
-  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
-
   const tagColumns = useMemo(
     () => dimensions.filter(d => isTagDimension(d)).map(d => ({ id: getDimensionId(d), label: getDimensionLabel(d) })),
     [dimensions],
   );
 
-  const allColumns = useMemo(() => {
-    const base = buildAllColumns(tagColumns);
-    if (columnOrder.length === 0) return base;
-    const byKey = new Map(base.map(c => [c.key, c]));
-    const ordered: ColumnSpec[] = [];
-    for (const key of columnOrder) {
-      const col = byKey.get(key);
-      if (col !== undefined) { ordered.push(col); byKey.delete(key); }
-    }
-    for (const col of base) {
-      if (byKey.has(col.key)) ordered.push(col);
-    }
-    return ordered;
-  }, [tagColumns, columnOrder]);
-
-  const hiddenSet = useMemo(() => new Set(hiddenColumns), [hiddenColumns]);
+  const allColumns = useMemo(() => buildAllColumns(tagColumns), [tagColumns]);
+  const enabledSet = useMemo(() => new Set(enabledColumns), [enabledColumns]);
+  const noneEnabled = enabledColumns.length === 0;
 
   function toggle(key: string) {
-    if (hiddenSet.has(key)) {
-      onHiddenChange(hiddenColumns.filter(k => k !== key));
+    if (enabledSet.has(key)) {
+      onChange(enabledColumns.filter(k => k !== key));
     } else {
-      onHiddenChange([...hiddenColumns, key]);
+      onChange([...enabledColumns, key]);
     }
   }
-
-  function handleDrop(targetKey: string) {
-    if (draggedKey === null || draggedKey === targetKey) return;
-    const keys = allColumns.map(c => c.key);
-    const from = keys.indexOf(draggedKey);
-    const to = keys.indexOf(targetKey);
-    if (from === -1 || to === -1) return;
-    const next = [...keys];
-    next.splice(from, 1);
-    next.splice(to, 0, draggedKey);
-    onOrderChange(next);
-  }
-
-  const allHidden = hiddenColumns.length >= allColumns.length;
 
   return (
     <div className="flex flex-col gap-1">
@@ -314,37 +275,23 @@ function TableColumnsEditor({
         <span className="flex items-center gap-2 text-[10px]">
           <button
             type="button"
-            onClick={() => { onHiddenChange(allHidden ? [] : allColumns.map(c => c.key)); }}
+            onClick={() => { onChange(noneEnabled ? allColumns.map(c => c.key) : []); }}
             className="text-text-secondary hover:text-text-primary"
           >
-            {allHidden ? 'Select all' : 'Deselect all'}
+            {noneEnabled ? 'Select all' : 'Deselect all'}
           </button>
           <span className="text-text-muted">·</span>
-          <button type="button" onClick={() => { onOrderChange([]); onHiddenChange([]); }} className="text-text-secondary hover:text-text-primary">Reset</button>
+          <button type="button" onClick={() => { onChange([...SEED_TABLE_ENABLED]); }} className="text-text-secondary hover:text-text-primary">Reset</button>
         </span>
       </div>
       <div className="rounded border border-border max-h-48 overflow-y-auto">
         {allColumns.map(col => {
-          const checked = !hiddenSet.has(col.key);
-          const isDragging = draggedKey === col.key;
-          const isDropTarget = dragOverKey === col.key && draggedKey !== null && draggedKey !== col.key;
+          const checked = enabledSet.has(col.key);
           return (
             <div
               key={col.key}
-              draggable
-              onDragStart={(e) => { setDraggedKey(col.key); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', col.key); }}
-              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragOverKey !== col.key) setDragOverKey(col.key); }}
-              onDragLeave={() => { if (dragOverKey === col.key) setDragOverKey(null); }}
-              onDrop={(e) => { e.preventDefault(); handleDrop(col.key); setDragOverKey(null); setDraggedKey(null); }}
-              onDragEnd={() => { setDragOverKey(null); setDraggedKey(null); }}
-              className={[
-                'flex items-center gap-1.5 px-2 py-1 text-[11px] select-none',
-                isDragging ? 'opacity-40' : '',
-                isDropTarget ? 'border-t-2 border-t-accent' : 'border-t border-t-transparent',
-                'hover:bg-bg-tertiary/50',
-              ].join(' ')}
+              className="flex items-center gap-1.5 px-2 py-1 text-[11px] select-none hover:bg-bg-tertiary/50"
             >
-              <span className="cursor-grab text-text-muted hover:text-text-secondary text-[10px]">⋮⋮</span>
               <input type="checkbox" className="accent-accent shrink-0" checked={checked} onChange={() => { toggle(col.key); }} />
               <span className={checked ? 'text-text-primary' : 'text-text-muted'}>{col.label}</span>
               {col.dimId !== null && col.dimId.startsWith('tag_') && <span className="text-[9px] text-text-muted uppercase tracking-wider ml-auto">tag</span>}
