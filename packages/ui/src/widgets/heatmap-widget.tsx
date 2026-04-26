@@ -54,15 +54,15 @@ export function HeatmapWidget({
   onSetFilter,
 }: WidgetCommonProps) {
   const api = useCostApi();
-  if (spec.type !== 'heatmap') return null;
-  const specGroupBy = spec.groupBy;
-  const topN = spec.topN ?? 12;
+  const specGroupBy = spec.type === 'heatmap' ? spec.groupBy : undefined;
+  const topN = spec.type === 'heatmap' ? (spec.topN ?? 12) : 12;
 
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
-  const fallbackDim = getDimensionFallback(specGroupBy);
-  const query = useQuery<DailyQueryResult>(
+  const fallbackDim = specGroupBy !== undefined ? getDimensionFallback(specGroupBy) : undefined;
+  const query = useQuery<DailyQueryResult | null>(
     async () => {
+      if (specGroupBy === undefined) return null;
       if (fallbackDim === undefined) {
         const result = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
         return { result, groupBy: specGroupBy };
@@ -77,11 +77,13 @@ export function HeatmapWidget({
     [specGroupBy, fallbackDim, dateRange.start, dateRange.end, fk, granularity, api],
   );
 
-  const activeGroupBy = query.status === 'success' ? query.data.groupBy : specGroupBy;
+  const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
   const { cells, groups, dates } = useMemo(
-    () => buildCells(query.status === 'success' ? query.data.result : null, topN),
+    () => buildCells(query.status === 'success' && query.data !== null ? query.data.result : null, topN),
     [query, topN],
   );
+
+  if (spec.type !== 'heatmap' || specGroupBy === undefined || activeGroupBy === undefined) return null;
 
   const label = dimensionLabelFor(dimensions, activeGroupBy);
 

@@ -74,7 +74,7 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
   }
 
   const allTagKeys = orgData !== null
-    ? [...new Set(orgData.accounts.flatMap(a => Object.keys(a.tags)))].sort()
+    ? [...new Set(orgData.accounts.flatMap(a => Object.keys(a.tags)))].sort((a, b) => a.localeCompare(b))
     : [];
   // OU count is derivable from the per-account ouPath. Distinct non-empty
   // paths approximate the number of OUs the user has placed accounts into.

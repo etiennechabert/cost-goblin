@@ -22,9 +22,8 @@ export function TableWidget({
   onSetFilter,
 }: WidgetCommonProps) {
   const api = useCostApi();
-  if (spec.type !== 'table') return null;
 
-  const specEnabled = spec.enabledColumns ?? DEFAULT_ENABLED;
+  const specEnabled = spec.type === 'table' ? (spec.enabledColumns ?? DEFAULT_ENABLED) : DEFAULT_ENABLED;
 
   const widgetFilters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(widgetFilters);
@@ -121,6 +120,8 @@ export function TableWidget({
     });
     return result.rows;
   }, [api, explorerFilters, dateRange, granularity, allColumns]);
+
+  if (spec.type !== 'table') return null;
 
   const rows = dataQuery.status === 'success' ? dataQuery.data.rows : [];
   const aggregatedTotal = dataQuery.status === 'success' ? dataQuery.data.totalRows : totalRows;

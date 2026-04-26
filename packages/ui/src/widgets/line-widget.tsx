@@ -45,14 +45,14 @@ export function LineWidget({
   onSetFilter,
 }: WidgetCommonProps) {
   const api = useCostApi();
-  if (spec.type !== 'line') return null;
-  const specGroupBy = spec.groupBy;
+  const specGroupBy = spec.type === 'line' ? spec.groupBy : undefined;
 
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
-  const fallbackDim = getDimensionFallback(specGroupBy);
-  const query = useQuery<DailyQueryResult>(
+  const fallbackDim = specGroupBy !== undefined ? getDimensionFallback(specGroupBy) : undefined;
+  const query = useQuery<DailyQueryResult | null>(
     async () => {
+      if (specGroupBy === undefined) return null;
       if (fallbackDim === undefined) {
         const result = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
         return { result, groupBy: specGroupBy };
@@ -67,12 +67,14 @@ export function LineWidget({
     [specGroupBy, fallbackDim, dateRange.start, dateRange.end, fk, granularity, api],
   );
 
-  const activeGroupBy = query.status === 'success' ? query.data.groupBy : specGroupBy;
-  const topN = spec.topN ?? 6;
+  const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
+  const topN = spec.type === 'line' ? (spec.topN ?? 6) : 6;
   const series = useMemo(
-    () => buildSeries(query.status === 'success' ? query.data.result : null, topN),
+    () => buildSeries(query.status === 'success' && query.data !== null ? query.data.result : null, topN),
     [query, topN],
   );
+
+  if (spec.type !== 'line' || specGroupBy === undefined || activeGroupBy === undefined) return null;
 
   const label = dimensionLabelFor(dimensions, activeGroupBy);
 

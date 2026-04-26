@@ -17,7 +17,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const dailyDir = path.join(ctx.dataDir, 'aws', 'raw');
     let dirs: string[] = [];
     try {
-      dirs = (await fs.readdir(dailyDir)).filter(d => d.startsWith('daily-')).sort();
+      dirs = (await fs.readdir(dailyDir)).filter(d => d.startsWith('daily-')).sort((a, b) => a.localeCompare(b));
     } catch { /* no data */ }
     const recentDirs = dirs.slice(-2);
     const rawParquet = recentDirs.length > 0
@@ -99,7 +99,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
     let dirs: string[] = [];
     try {
-      dirs = (await fs.readdir(rawDir)).filter(d => d.startsWith('daily-')).sort();
+      dirs = (await fs.readdir(rawDir)).filter(d => d.startsWith('daily-')).sort((a, b) => a.localeCompare(b));
     } catch { /* no data */ }
     const latest = dirs.at(-1);
     if (latest === undefined) return { values: [], distinctCount: 0, period: '' };

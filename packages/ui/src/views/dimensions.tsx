@@ -903,7 +903,7 @@ export function DimensionsView() {
 
   // Account tag keys from org sync
   const accountTagKeys = orgData !== null
-    ? [...new Set(orgData.accounts.flatMap(a => Object.keys(a.tags)))].sort()
+    ? [...new Set(orgData.accounts.flatMap(a => Object.keys(a.tags)))].sort((a, b) => a.localeCompare(b))
     : [];
 
   // Which resource tags are already mapped as dimensions

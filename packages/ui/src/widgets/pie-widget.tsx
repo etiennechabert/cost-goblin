@@ -36,16 +36,16 @@ export function PieWidget({
   const api = useCostApi();
   const focus = useCostFocus();
   const dispatch = useCostFocusDispatch();
-  if (spec.type !== 'pie') return null;
-  const specGroupBy = spec.groupBy;
+  const specGroupBy = spec.type === 'pie' ? spec.groupBy : undefined;
   const specTitle = spec.title;
 
   const baseFilters = mergeFilters(globalFilters, spec.filters);
 
   const fk = filtersKey(baseFilters);
-  const fallbackDim = getDimensionFallback(specGroupBy);
-  const query = useQuery<PieQueryResult>(
+  const fallbackDim = specGroupBy !== undefined ? getDimensionFallback(specGroupBy) : undefined;
+  const query = useQuery<PieQueryResult | null>(
     async () => {
+      if (specGroupBy === undefined) return null;
       if (fallbackDim === undefined) {
         const result = await api.queryCosts({ groupBy: specGroupBy, dateRange, filters: baseFilters, granularity });
         return { result, groupBy: specGroupBy };
@@ -60,11 +60,13 @@ export function PieWidget({
     [specGroupBy, fallbackDim, dateRange.start, dateRange.end, fk, granularity, api],
   );
 
-  const activeGroupBy = query.status === 'success' ? query.data.groupBy : specGroupBy;
+  const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
   const slices = useMemo(
-    () => rowsToSlices(query.status === 'success' ? query.data.result : null),
+    () => rowsToSlices(query.status === 'success' && query.data !== null ? query.data.result : null),
     [query],
   );
+
+  if (spec.type !== 'pie' || specGroupBy === undefined || activeGroupBy === undefined) return null;
 
   const label = dimensionLabelFor(dimensions, activeGroupBy);
 

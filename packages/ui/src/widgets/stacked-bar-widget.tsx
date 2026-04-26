@@ -61,14 +61,14 @@ export function StackedBarWidget({
   const api = useCostApi();
   const focus = useCostFocus();
   const [tab, setTab] = useState<HistogramTab>('service');
-  if (spec.type !== 'stackedBar') return null;
-  const specGroupBy = spec.groupBy;
+  const specGroupBy = spec.type === 'stackedBar' ? spec.groupBy : undefined;
 
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
-  const fallbackDim = getDimensionFallback(specGroupBy);
-  const query = useQuery<DailyQueryResult>(
+  const fallbackDim = specGroupBy !== undefined ? getDimensionFallback(specGroupBy) : undefined;
+  const query = useQuery<DailyQueryResult | null>(
     async () => {
+      if (specGroupBy === undefined) return null;
       if (fallbackDim === undefined) {
         const result = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
         return { result, groupBy: specGroupBy };
@@ -86,9 +86,12 @@ export function StackedBarWidget({
   const periodDays = daysBetween(dateRange.start, dateRange.end);
   const useWeekly = periodDays > 90;
   const barDays = useMemo(
-    () => dailyToBarDays(query.status === 'success' ? query.data.result : null, useWeekly),
+    () => dailyToBarDays(query.status === 'success' && query.data !== null ? query.data.result : null, useWeekly),
     [query, useWeekly],
   );
+
+  if (spec.type !== 'stackedBar') return null;
+
   const loading = query.status === 'loading';
 
   const title = spec.title
