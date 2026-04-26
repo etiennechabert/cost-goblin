@@ -39,9 +39,9 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
   const hasData = info !== null && info.count > 0;
   const hasError = info?.lastError !== null && info?.lastError !== undefined;
 
-  const regionEntries = info !== null
-    ? Object.entries(info.regions).sort(([a], [b]) => a.localeCompare(b))
-    : [];
+  const regionEntries = info === null
+    ? []
+    : Object.entries(info.regions).sort(([a], [b]) => a.localeCompare(b));
   const needle = regionSearch.toLowerCase();
   const filteredRegions = regionSearch.length > 0
     ? regionEntries.filter(([code, r]) =>
@@ -62,7 +62,7 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
         >
           <div className={[
             'h-2 w-2 rounded-full',
-            hasData ? 'bg-accent' : hasError ? 'bg-negative' : 'bg-text-muted',
+            (() => { if (hasData) return 'bg-accent'; return hasError ? 'bg-negative' : 'bg-text-muted'; })(),
           ].join(' ')} />
           <span className="text-sm font-medium text-text-primary">SSM Parameter Store</span>
           {hasData && <span className="text-text-muted ml-auto text-xs">{expanded ? '▾' : '▸'}</span>}
@@ -91,29 +91,33 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
 
       <ul className="px-4 pb-3 flex flex-col gap-1 text-xs">
         <li className="flex items-center gap-2">
-          {hasData ? (
-            <>
-              <span className="text-accent">✓</span>
-              <span className="text-text-secondary">{String(info.count)} regions enriched with longName + country + continent</span>
-              {info.syncedAt.length > 0 && (
-                <span className="text-text-muted ml-auto">
-                  Synced {new Date(info.syncedAt).toLocaleString()}
+          {(() => {
+            if (hasData) return (
+              <>
+                <span className="text-accent">✓</span>
+                <span className="text-text-secondary">{String(info.count)} regions enriched with longName + country + continent</span>
+                {info.syncedAt.length > 0 && (
+                  <span className="text-text-muted ml-auto">
+                    Synced {new Date(info.syncedAt).toLocaleString()}
+                  </span>
+                )}
+              </>
+            );
+            if (hasError) return (
+              <>
+                <span className="text-negative shrink-0">✗</span>
+                <span className="text-negative break-words">
+                  Last sync failed: {info.lastError ?? ''}
                 </span>
-              )}
-            </>
-          ) : hasError ? (
-            <>
-              <span className="text-negative shrink-0">✗</span>
-              <span className="text-negative break-words">
-                Last sync failed: {info.lastError ?? ''}
-              </span>
-            </>
-          ) : (
-            <>
-              <span className="text-text-muted">○</span>
-              <span className="text-text-muted">No region names cached — click Sync to fetch from SSM Parameter Store</span>
-            </>
-          )}
+              </>
+            );
+            return (
+              <>
+                <span className="text-text-muted">○</span>
+                <span className="text-text-muted">No region names cached — click Sync to fetch from SSM Parameter Store</span>
+              </>
+            );
+          })()}
         </li>
       </ul>
 

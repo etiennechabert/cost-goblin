@@ -124,24 +124,8 @@ function TopNBarChartInner({
               const barW = Math.max(ratio * barAreaWidth, 1);
               const color = getColor(i);
 
-              return (
-                <li
-                  key={row.name}
-                  role={onBarClick !== undefined ? 'button' : undefined}
-                  tabIndex={onBarClick !== undefined ? 0 : undefined}
-                  onMouseEnter={() => { handleEnter(row.name); }}
-                  onMouseLeave={handleLeave}
-                  onClick={() => { onBarClick?.(row.name); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onBarClick?.(row.name); } }}
-                  className="flex items-center gap-3 rounded px-1 transition-colors"
-                  style={{
-                    cursor: onBarClick !== undefined ? 'pointer' : 'default',
-                    height: ROW_HEIGHT,
-                    opacity: isDimmed ? 0.4 : 1,
-                    backgroundColor: isHovered ? 'rgba(255,255,255,0.05)' : 'transparent',
-                  }}
-                  title={`${row.name} — ${formatDollars(row.cost)}`}
-                >
+              const barContent = (
+                <>
                   <span
                     className="text-xs tabular-nums text-text-secondary text-right shrink-0"
                     style={{ width: LABEL_WIDTH - 16 }}
@@ -168,6 +152,36 @@ function TopNBarChartInner({
                       ({row.percentage.toFixed(1)}%)
                     </span>
                   </span>
+                </>
+              );
+
+              return (
+                <li
+                  key={row.name}
+                  className="rounded transition-colors"
+                  style={{
+                    height: ROW_HEIGHT,
+                    opacity: isDimmed ? 0.4 : 1,
+                    backgroundColor: isHovered ? 'rgba(255,255,255,0.05)' : 'transparent',
+                  }}
+                  title={`${row.name} — ${formatDollars(row.cost)}`}
+                  onMouseEnter={() => { handleEnter(row.name); }}
+                  onMouseLeave={handleLeave}
+                >
+                  {onBarClick === undefined ? (
+                    <div className="flex items-center gap-3 px-1" style={{ height: ROW_HEIGHT }}>
+                      {barContent}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => { onBarClick(row.name); }}
+                      className="flex items-center gap-3 px-1 w-full cursor-pointer"
+                      style={{ height: ROW_HEIGHT }}
+                    >
+                      {barContent}
+                    </button>
+                  )}
                 </li>
               );
             })}

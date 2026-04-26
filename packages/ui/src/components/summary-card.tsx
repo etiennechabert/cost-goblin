@@ -41,8 +41,12 @@ export function SummaryCard({ totalCost, previousCost, dateRange }: Readonly<Sum
             {delta === null ? (
               <p className="mt-1 text-2xl font-bold tabular-nums text-text-muted">{PLACEHOLDER}</p>
             ) : (() => {
-              const deltaColor = isIncrease ? 'text-negative' : isDecrease ? 'text-positive' : 'text-text-secondary';
-              const deltaArrow = isDecrease ? '▼' : isIncrease ? '▲' : '';
+              let deltaColor = 'text-text-secondary';
+              if (isIncrease) deltaColor = 'text-negative';
+              else if (isDecrease) deltaColor = 'text-positive';
+              let deltaArrow = '';
+              if (isDecrease) deltaArrow = '▼';
+              else if (isIncrease) deltaArrow = '▲';
               return (
                 <p className={`mt-1 text-2xl font-bold tabular-nums ${deltaColor}`}>
                   {deltaArrow}

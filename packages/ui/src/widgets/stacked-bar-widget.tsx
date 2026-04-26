@@ -63,7 +63,7 @@ export function StackedBarWidget({
 
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
-  const fallbackDim = specGroupBy !== undefined ? getDimensionFallback(specGroupBy) : undefined;
+  const fallbackDim = specGroupBy === undefined ? undefined : getDimensionFallback(specGroupBy);
   const query = useQuery<DailyQueryResult | null>(
     async () => {
       if (specGroupBy === undefined) return null;
@@ -92,7 +92,9 @@ export function StackedBarWidget({
 
   const loading = query.status === 'loading';
 
-  const defaultTitle = granularity === 'hourly' ? 'Hourly Costs' : (useWeekly ? 'Weekly Costs' : 'Daily Costs');
+  let defaultTitle = 'Daily Costs';
+  if (granularity === 'hourly') defaultTitle = 'Hourly Costs';
+  else if (useWeekly) defaultTitle = 'Weekly Costs';
   const title = spec.title ?? defaultTitle;
 
   return (

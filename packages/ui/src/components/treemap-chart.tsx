@@ -73,7 +73,7 @@ function TreemapInner({
                     fillOpacity={0.85}
                     stroke="var(--color-bg-secondary)"
                     strokeWidth={1.5}
-                    style={{ cursor: onCellClick !== undefined ? 'pointer' : 'default' }}
+                    style={{ cursor: onCellClick === undefined ? 'default' : 'pointer' }}
                     onClick={() => { onCellClick?.(name); }}
                   >
                     <title>{`${name} — ${formatDollars(cost)}`}</title>

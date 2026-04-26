@@ -67,7 +67,7 @@ function QueryRow({ entry }: Readonly<{ entry: DebugQueryLogEntry }>): React.JSX
             {sqlPreview(entry.sql)}
           </span>
           <span className="text-xs text-text-muted shrink-0">
-            {entry.durationMs === null ? (entry.status === 'queued' ? 'queued' : '...') : formatDuration(entry.durationMs)}
+            {(() => { if (entry.durationMs !== null) return formatDuration(entry.durationMs); return entry.status === 'queued' ? 'queued' : '...'; })()}
           </span>
         </div>
         <div className="flex items-center gap-3 mt-0.5 ml-4">

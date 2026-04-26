@@ -211,9 +211,9 @@ function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDel
     });
   }
 
-  const previewText = preview !== undefined
-    ? formatExcluded(preview.excludedCost, preview.excludedRows)
-    : '—';
+  const previewText = preview === undefined
+    ? '—'
+    : formatExcluded(preview.excludedCost, preview.excludedRows);
 
   return (
     <Card className={`transition-opacity ${rule.enabled ? '' : 'opacity-60'}`}>
@@ -284,7 +284,7 @@ function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDel
         <div className="space-y-2">
           {rule.conditions.map((cond, i) => (
             <ConditionRow
-              key={i}
+              key={`${String(cond.dimensionId)}-${String(i)}`}
               condition={cond}
               dimensions={dimensions}
               suggestions={suggestionsByDim.get(String(cond.dimensionId)) ?? []}
@@ -450,7 +450,7 @@ function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loa
           {totalRowCount > rows.length && (
             <> of <span className="text-text-secondary tabular-nums">{totalRowCount.toLocaleString()}</span> in window</>
           )}
-          , sorted by |cost| desc.
+          {', sorted by |cost| desc.'}
         </span>
         <span className="flex items-center gap-3 shrink-0">
           {hasEnabledRules && excludedInSample > 0 && (
@@ -757,9 +757,9 @@ export function CostScopeView(): React.JSX.Element {
   }
 
   const enabledRules = draft.rules.filter(r => r.enabled);
-  const combinedText = preview.result === null
-    ? (preview.loading ? 'loading…' : 'no data')
-    : formatExcluded(preview.result.combined.excludedCost, preview.result.combined.excludedRows);
+  let combinedText: string;
+  if (preview.result !== null) combinedText = formatExcluded(preview.result.combined.excludedCost, preview.result.combined.excludedRows);
+  else combinedText = preview.loading ? 'loading…' : 'no data';
 
   function getPreviewRow(ruleId: string): CostScopePreviewRow | undefined {
     return preview.result?.perRule.find(p => p.ruleId === ruleId);
@@ -1018,13 +1018,13 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules 
           <SummaryTile
             label="After scope"
             value={hasData ? formatDollars(result.scopedTotalCost) : placeholder}
-            hint={hasData ? (hasEnabledRules ? `${excludedPct.toFixed(1)}% excluded` : 'No rules enabled') : ''}
+            hint={(() => { if (!hasData) return ''; return hasEnabledRules ? `${excludedPct.toFixed(1)}% excluded` : 'No rules enabled'; })()}
             emphasis
           />
           <SummaryTile
             label="Excluded"
             value={hasData && hasEnabledRules ? combinedText : placeholder}
-            hint={hasData ? (hasEnabledRules ? 'Union of enabled rules' : 'Toggle a rule') : ''}
+            hint={(() => { if (!hasData) return ''; return hasEnabledRules ? 'Union of enabled rules' : 'Toggle a rule'; })()}
           />
         </div>
 

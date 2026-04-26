@@ -61,7 +61,7 @@ function HeatmapInner({
   const cellH = yScale.bandwidth();
 
   return (
-    <svg width={width} height={height} role="img" aria-label="Cost heatmap: rows are groups, columns are dates, color intensity represents cost">
+    <svg width={width} height={height} aria-label="Cost heatmap: rows are groups, columns are dates, color intensity represents cost">
       <Group left={MARGIN.left} top={MARGIN.top}>
         {cells.map((c) => {
           const x = xScale(c.date) ?? 0;
@@ -76,7 +76,7 @@ function HeatmapInner({
               fill={colorScale(c.cost)}
               rx={2}
               onClick={() => { onCellClick?.(c.group, c.date); }}
-              style={{ cursor: onCellClick !== undefined ? 'pointer' : 'default' }}
+              style={{ cursor: onCellClick === undefined ? 'default' : 'pointer' }}
             >
               <title>{`${c.group} • ${c.date} — ${formatDollars(c.cost)}`}</title>
             </rect>

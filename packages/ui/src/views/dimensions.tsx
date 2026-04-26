@@ -316,16 +316,11 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
   // are defined entirely in terms of SSM enrichment and collapse to raw
   // codes otherwise.
   const wantsRegionEnrichment = (isRegionDim && state.useRegionNames) || isRegionCountryDim || isRegionContinentDim;
-  const regionWarning: { kind: 'missing' | 'error'; message?: string } | null =
-    wantsRegionEnrichment && regionInfoQuery.status === 'success'
-      ? regionInfo === null
-        ? { kind: 'missing' }
-        : regionInfo.lastError !== null
-          ? { kind: 'error', message: regionInfo.lastError }
-          : regionInfo.count === 0
-            ? { kind: 'missing' }
-            : null
-      : null;
+  let regionWarning: { kind: 'missing' | 'error'; message?: string } | null = null;
+  if (wantsRegionEnrichment && regionInfoQuery.status === 'success') {
+    if (regionInfo === null || regionInfo.count === 0) regionWarning = { kind: 'missing' };
+    else if (regionInfo.lastError !== null) regionWarning = { kind: 'error', message: regionInfo.lastError };
+  }
   // Both "Account Name" and "Account Tag" sources resolve via the Org sync,
   // so if it hasn't run yet the dim will display raw 12-digit IDs regardless.
   const accountWarning: boolean =
@@ -364,7 +359,7 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
       )}
       {showTransforms && (
         <div className="grid grid-cols-2 gap-4 items-stretch">
-          {isAccountDim ? nameSourceField : isRegionDim ? regionToggleField : <div />}
+          {(() => { if (isAccountDim) return nameSourceField; if (isRegionDim) return regionToggleField; return <div />; })()}
           {normalizationField}
         </div>
       )}
@@ -1039,6 +1034,28 @@ function AccountTagsContent({ orgData, accountTagKeys, hiddenAccountCols, setHid
   );
 }
 
+function pillClass(enabled: boolean): string {
+  return [
+    'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+    enabled
+      ? 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20'
+      : 'border-border bg-bg-tertiary/20 text-text-muted hover:border-text-muted hover:text-text-secondary',
+  ].join(' ');
+}
+
+function GripHandle({ attrs }: Readonly<{ attrs: React.HTMLAttributes<HTMLButtonElement> }>): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      {...attrs}
+      title="Drag to reorder"
+      className="flex items-center justify-center text-text-muted hover:text-text-primary cursor-grab active:cursor-grabbing"
+    >
+      <GripVertical size={16} />
+    </button>
+  );
+}
+
 export function DimensionsView() {
   const api = useCostApi();
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -1254,20 +1271,7 @@ export function DimensionsView() {
     };
   }
 
-  function GripHandle({ attrs }: Readonly<{ attrs: React.HTMLAttributes<HTMLButtonElement> }>): React.JSX.Element {
-    return (
-      <button
-        type="button"
-        {...attrs}
-        title="Drag to reorder"
-        className="flex items-center justify-center text-text-muted hover:text-text-primary cursor-grab active:cursor-grabbing"
-      >
-        <GripVertical size={16} />
-      </button>
-    );
-  }
-
-  function ReorderArrows({ orderIdx, total }: Readonly<{ orderIdx: number; total: number }>): React.JSX.Element {
+  function renderReorderArrows(orderIdx: number, total: number): React.JSX.Element {
     const canUp = orderIdx > 0;
     const canDown = orderIdx < total - 1;
     return (
@@ -1320,14 +1324,7 @@ export function DimensionsView() {
     return rows;
   })();
 
-  function pillClass(enabled: boolean): string {
-    return [
-      'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-      enabled
-        ? 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20'
-        : 'border-border bg-bg-tertiary/20 text-text-muted hover:border-text-muted hover:text-text-secondary',
-    ].join(' ');
-  }
+
 
   return (
     <div className="flex flex-col gap-8 p-6">
@@ -1417,7 +1414,7 @@ export function DimensionsView() {
 
           {orderedRows.map((row, orderIdx) => {
             const dnd = dragProps(orderIdx);
-            const arrows = <ReorderArrows orderIdx={orderIdx} total={orderedRows.length} />;
+            const arrows = renderReorderArrows(orderIdx, orderedRows.length);
 
             if (row.kind === 'builtIn') {
               const d = row.dim;
@@ -1558,7 +1555,11 @@ export function DimensionsView() {
 
           <DebugPanel
             title="Resource Tags"
-            subtitle={tagsQuery.status === 'success' && tagsQuery.data !== null ? `${String(tagsQuery.data.tags.length)} keys${tagsQuery.data.samplePeriod.length > 0 ? ` · sampled from ${tagsQuery.data.samplePeriod}` : ''}` : 'Tag keys discovered by scanning the latest CUR period'}
+            subtitle={(() => {
+              if (tagsQuery.status !== 'success' || tagsQuery.data === null) return 'Tag keys discovered by scanning the latest CUR period';
+              const suffix = tagsQuery.data.samplePeriod.length > 0 ? ` · sampled from ${tagsQuery.data.samplePeriod}` : '';
+              return `${String(tagsQuery.data.tags.length)} keys${suffix}`;
+            })()}
             expanded={resourceTagsExpanded}
             onToggle={() => { setResourceTagsExpanded(v => !v); }}
           >

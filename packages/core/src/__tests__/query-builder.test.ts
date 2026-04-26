@@ -120,21 +120,21 @@ describe('computePeriodsInRange', () => {
 
 describe('buildSource narrowed paths', () => {
   it('emits read_parquet with a list of month paths when periods are given', () => {
-    const sql = buildSource('/data', 'daily', dimensions, undefined, ['2026-03', '2026-04']);
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions, periods: ['2026-03', '2026-04'] });
     expect(sql).toContain("'/data/aws/raw/daily-2026-03/*.parquet'");
     expect(sql).toContain("'/data/aws/raw/daily-2026-04/*.parquet'");
     expect(sql).not.toContain("daily-*/*.parquet");
   });
 
   it('falls back to the wildcard when periods are empty or omitted', () => {
-    const sql = buildSource('/data', 'daily', dimensions, undefined, []);
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions, periods: [] });
     expect(sql).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet')");
-    const sql2 = buildSource('/data', 'daily', dimensions);
+    const sql2 = buildSource({ dataDir: '/data', tier: 'daily', dimensions });
     expect(sql2).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet')");
   });
 
   it('uses the hourly prefix when tier is hourly', () => {
-    const sql = buildSource('/data', 'hourly', dimensions, undefined, ['2026-04']);
+    const sql = buildSource({ dataDir: '/data', tier: 'hourly', dimensions, periods: ['2026-04'] });
     expect(sql).toContain("'/data/aws/raw/hourly-2026-04/*.parquet'");
   });
 });
@@ -229,7 +229,7 @@ describe('buildSource with account tag fallback', () => {
       builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
       tags: [{ tagName: 'system', label: 'System', concept: 'product', accountTagFallback: 'sb:system' }],
     };
-    const sql = buildSource('/data', 'daily', dims, '/org-tags.json');
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
     expect(sql).toContain('COALESCE(NULLIF(');
     expect(sql).toContain('fallback_tag_system');
     expect(sql).not.toContain('unknown');
@@ -240,7 +240,7 @@ describe('buildSource with account tag fallback', () => {
       builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
       tags: [{ tagName: 'system', label: 'System', concept: 'product', accountTagFallback: 'sb:owner', missingValueTemplate: 'unknown-{fallback}' }],
     };
-    const sql = buildSource('/data', 'daily', dims, '/org-tags.json');
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
     expect(sql).toContain("'unknown-'");
     expect(sql).toContain('fallback_tag_system');
     expect(sql).toContain('COALESCE');
@@ -251,7 +251,7 @@ describe('buildSource with account tag fallback', () => {
       builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
       tags: [{ tagName: 'team', label: 'Team', accountTagFallback: 'sb:team', missingValueTemplate: '{fallback}' }],
     };
-    const sql = buildSource('/data', 'daily', dims, '/org-tags.json');
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
     expect(sql).toContain('COALESCE(NULLIF(');
     expect(sql).toContain('fallback_tag_team');
     // Should NOT contain string concatenation — {fallback} is passthrough
@@ -263,7 +263,7 @@ describe('buildSource with account tag fallback', () => {
       builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
       tags: [{ tagName: 'system', label: 'System', accountTagFallback: 'sb:system' }],
     };
-    const sql = buildSource('/data', 'daily', dims);
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims });
     expect(sql).not.toContain('LEFT JOIN');
     expect(sql).not.toContain('fallback');
   });
