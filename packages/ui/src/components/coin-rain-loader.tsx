@@ -53,6 +53,10 @@ function updateCoin(c: Coin, containerWidth: number, containerHeight: number): C
   return { ...c, x, y, vx, vy, rotation, rotationSpeed, scale };
 }
 
+function advanceCoins(prev: Coin[], w: number, h: number): Coin[] {
+  return prev.map(c => updateCoin(c, w, h));
+}
+
 export function CoinRainLoader({ height = 120, count = 5 }: Readonly<{ height?: number; count?: number }>) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [coins, setCoins] = useState<Coin[]>([]);
@@ -71,7 +75,7 @@ export function CoinRainLoader({ height = 120, count = 5 }: Readonly<{ height?: 
 
     const w = el.offsetWidth;
     function tick() {
-      setCoins(prev => prev.map(c => updateCoin(c, w, height)));
+      setCoins(prev => advanceCoins(prev, w, height));
       frameRef.current = requestAnimationFrame(tick);
     }
 
