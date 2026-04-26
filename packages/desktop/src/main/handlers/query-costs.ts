@@ -31,7 +31,7 @@ import {
 } from './query-utils.js';
 
 export function registerCostHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getOrgAccountsPath, getOrgTreeConfig, getCostScope, getAvailableColumns, runPreparedQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getOrgAccountsPath, getOrgTreeConfig, getCostScope, getAvailableColumns, runPreparedQuery, materializedBase } = app;
 
   ipcMain.handle('query:costs', async (_event, params: CostQueryParams): Promise<CostResult> => {
     const dimensions = await getDimensions();
@@ -43,8 +43,9 @@ export function registerCostHandlers(app: AppContext): void {
     const availableColumns = await getAvailableColumns(tier);
     const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, tier, params.dateRange);
     if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
-    const { sql, params: queryParams } = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available, accountReverseMap, costScope, availableColumns);
-    logger.info('query:costs', { groupBy: params.groupBy });
+    const matSource = materializedBase.getSource(params.dateRange, tier);
+    const { sql, params: queryParams } = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available, accountReverseMap, costScope, availableColumns, matSource);
+    logger.info('query:costs', { groupBy: params.groupBy, materialized: matSource !== undefined });
 
     const rows = await runPreparedQuery(sql, queryParams);
     let result = buildCostResult(rows, params.dateRange);
@@ -76,8 +77,9 @@ export function registerCostHandlers(app: AppContext): void {
     const availableColumns = await getAvailableColumns(tier);
     const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, tier, params.dateRange);
     if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
-    const { sql, params: queryParams } = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
-    logger.info('query:daily-costs', { groupBy: params.groupBy });
+    const matSource = materializedBase.getSource(params.dateRange, tier);
+    const { sql, params: queryParams } = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns, matSource);
+    logger.info('query:daily-costs', { groupBy: params.groupBy, materialized: matSource !== undefined });
 
     const rows = await runPreparedQuery(sql, queryParams);
 
@@ -145,8 +147,9 @@ export function registerCostHandlers(app: AppContext): void {
         bySubEntity: [],
       };
     }
-    const { sql, params: queryParams } = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
-    logger.info('query:entity-detail', { entity: params.entity });
+    const matSource = materializedBase.getSource(params.dateRange, tier);
+    const { sql, params: queryParams } = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns, matSource);
+    logger.info('query:entity-detail', { entity: params.entity, materialized: matSource !== undefined });
 
     const rows = await runPreparedQuery(sql, queryParams);
     const result = buildEntityDetailResult(rows, params.entity);

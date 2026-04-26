@@ -18,6 +18,10 @@ export function registerDebugHandlers(app: AppContext): void {
     }
   });
 
+  ipcMain.handle('debug:materialized-status', () => {
+    return app.materializedBase.getCurrentState();
+  });
+
   ipcMain.handle('debug:clear-completed', () => {
     app.queryLog.clearCompleted();
   });

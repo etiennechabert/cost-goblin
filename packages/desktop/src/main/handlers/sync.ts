@@ -154,6 +154,7 @@ export function registerSyncHandlers(app: AppContext): void {
 
       syncWorkerIds.delete(syncId);
       state.syncStatuses[syncId] = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
+      if (result.filesDownloaded > 0) app.warmupBase();
       return result;
     } catch (err: unknown) {
       syncWorkerIds.delete(syncId);

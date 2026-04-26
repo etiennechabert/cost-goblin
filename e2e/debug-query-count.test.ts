@@ -17,42 +17,83 @@ function launchApp(): Promise<ElectronApplication> {
   });
 }
 
-test('capture Cost Overview query log', async () => {
-  const app = await launchApp();
-  const page = await app.firstWindow();
-  await expect(page).toHaveTitle('CostGoblin');
+interface LogEntry {
+  id: number;
+  sql: string;
+  status: string;
+  durationMs: number | null;
+  rowCount: number | null;
+}
 
-  // Wait for Cost Overview to fully load
-  await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible({ timeout: 10_000 });
+async function waitForAllComplete(page: Page, timeoutMs = 30_000): Promise<LogEntry[]> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const log: LogEntry[] = await page.evaluate(() => globalThis.costgoblinDebug.getQueryLog());
+    const allDone = log.length > 0 && log.every(e => e.status === 'success' || e.status === 'error');
+    if (allDone) return log;
+    await page.waitForTimeout(300);
+  }
+  return page.evaluate(() => globalThis.costgoblinDebug.getQueryLog());
+}
 
-  // Wait for queries to settle — no more "Loading" text
-  try {
-    await expect(page.getByText('Loading', { exact: false }).first()).toBeHidden({ timeout: 15_000 });
-  } catch { /* may never appear */ }
-  await page.waitForTimeout(3000);
-
-  // Read the query log from the debug API
-  const log = await page.evaluate(() => globalThis.costgoblinDebug.getQueryLog());
-
-  console.log(`\n=== TOTAL QUERIES: ${String(log.length)} ===\n`);
-
+function printLog(log: LogEntry[]): void {
   for (const entry of log) {
     const status = entry.status === 'success' ? 'OK' : entry.status === 'error' ? 'ERR' : entry.status;
     const duration = entry.durationMs !== null ? `${String(entry.durationMs)}ms` : '...';
     const rows = entry.rowCount !== null ? `${String(entry.rowCount)}r` : '';
-    const sqlPreview = entry.sql.replace(/\s+/g, ' ').trim().slice(0, 120);
-    console.log(`[${String(entry.id).padStart(2)}] ${status.padEnd(7)} ${duration.padStart(8)} ${rows.padStart(6)}  ${sqlPreview}`);
+    const usesBase = entry.sql.includes('cost_base') ? ' [MAT]' : '';
+    const sqlPreview = entry.sql.replace(/\s+/g, ' ').trim().slice(0, 100);
+    console.log(`[${String(entry.id).padStart(2)}] ${status.padEnd(4)} ${duration.padStart(7)} ${rows.padStart(6)}${usesBase}  ${sqlPreview}`);
   }
+}
 
-  console.log(`\n=== BREAKDOWN ===`);
-  const bySqlPrefix = new Map<string, number>();
-  for (const entry of log) {
-    const prefix = entry.sql.replace(/\s+/g, ' ').trim().slice(0, 60);
-    bySqlPrefix.set(prefix, (bySqlPrefix.get(prefix) ?? 0) + 1);
-  }
-  for (const [prefix, count] of [...bySqlPrefix.entries()].sort((a, b) => b[1] - a[1])) {
-    console.log(`  ${String(count).padStart(2)}x  ${prefix}`);
-  }
+test('materialized base: first vs second load', async () => {
+  const app = await launchApp();
+  const page = await app.firstWindow();
+  await expect(page).toHaveTitle('CostGoblin');
+  await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible({ timeout: 10_000 });
+
+  const firstLog = await waitForAllComplete(page);
+  console.log(`\n=== FIRST LOAD: ${String(firstLog.length)} queries ===`);
+  printLog(firstLog);
+
+  // Wait extra for the warmup to complete (it runs on raw db, not through query log)
+  await page.waitForTimeout(5000);
+
+  // Check if cost_base table exists by running a query against it
+  const tableExists = await page.evaluate(async () => {
+    try {
+      await globalThis.costgoblin.cancelPendingQueries();
+      // If we can get the query log, the IPC works. Check materialized status.
+      const result = await (window as Record<string, unknown>)['electron'];
+      return 'cant-check-from-renderer';
+    } catch {
+      return 'error';
+    }
+  });
+  console.log(`\nTable check: ${String(tableExists)}`);
+
+  // Navigate away
+  await page.getByRole('button', { name: 'Trends', exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: 'Cost Trends' })).toBeVisible({ timeout: 5000 });
+  await page.waitForTimeout(2000);
+
+  // Clear log and navigate back
+  await page.evaluate(async () => { await globalThis.costgoblinDebug.clearLog(); });
+  await page.getByRole('button', { name: 'Cost Overview', exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible({ timeout: 5000 });
+
+  const secondLog = await waitForAllComplete(page);
+  console.log(`\n=== SECOND LOAD: ${String(secondLog.length)} queries ===`);
+  printLog(secondLog);
+
+  const matUsed = secondLog.some(e => e.sql.includes('cost_base'));
+  console.log(`\nMaterialized base used: ${String(matUsed)}`);
+
+  const firstMax = Math.max(0, ...firstLog.filter(e => e.durationMs !== null).map(e => e.durationMs ?? 0));
+  const secondMax = Math.max(0, ...secondLog.filter(e => e.durationMs !== null).map(e => e.durationMs ?? 0));
+  console.log(`First load max query:  ${String(firstMax)}ms`);
+  console.log(`Second load max query: ${String(secondMax)}ms`);
 
   await app.close();
 });
