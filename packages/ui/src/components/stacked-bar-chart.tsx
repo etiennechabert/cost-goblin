@@ -12,14 +12,14 @@ export interface BarDay {
 export type HistogramTab = 'owner' | 'product' | 'service';
 
 interface StackedBarChartProps {
-  days: readonly BarDay[];
-  highlightedGroup?: string | null;
-  tab: HistogramTab;
-  onTabChange: (tab: HistogramTab) => void;
-  expanded?: boolean | undefined;
-  onExpandToggle?: (() => void) | undefined;
-  title?: string | undefined;
-  loading?: boolean | undefined;
+  readonly days: readonly BarDay[];
+  readonly highlightedGroup?: string | null;
+  readonly tab: HistogramTab;
+  readonly onTabChange: (tab: HistogramTab) => void;
+  readonly expanded?: boolean | undefined;
+  readonly onExpandToggle?: (() => void) | undefined;
+  readonly title?: string | undefined;
+  readonly loading?: boolean | undefined;
 }
 
 export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading }: StackedBarChartProps) {

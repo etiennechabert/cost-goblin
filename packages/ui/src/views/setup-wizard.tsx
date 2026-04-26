@@ -55,12 +55,12 @@ function WelcomeStep({ onNext }: Readonly<{ onNext: () => void }>) {
   );
 }
 
-function ProfileStep({ state, onSelect, onSkip, onBack }: {
+function ProfileStep({ state, onSelect, onSkip, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'profile' }>;
   onSelect: (profile: string) => void;
   onSkip: () => void;
   onBack: () => void;
-}) {
+}>) {
   return (
     <div className="flex flex-col gap-5">
       <div>
@@ -127,12 +127,12 @@ function ProfileStep({ state, onSelect, onSkip, onBack }: {
   );
 }
 
-function BucketStep({ state, onSelect, onSkip, onBack }: {
+function BucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'bucket' }>;
   onSelect: (bucket: string) => void;
   onSkip?: (() => void) | undefined;
   onBack: () => void;
-}) {
+}>) {
   const [filter, setFilter] = useState('');
   const filtered = state.buckets.filter(b => filter.length === 0 || b.name.toLowerCase().includes(filter.toLowerCase()));
   const sourceLabel = SOURCE_LABELS[state.source];
@@ -206,13 +206,13 @@ function BucketStep({ state, onSelect, onSkip, onBack }: {
   );
 }
 
-function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: {
+function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'browse' }>;
   onNavigate: (prefix: string) => void;
   onConfirm: () => void;
   onSkip?: (() => void) | undefined;
   onBack: () => void;
-}) {
+}>) {
   const sourceLabel = SOURCE_LABELS[state.source];
 
   return (

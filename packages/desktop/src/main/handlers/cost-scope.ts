@@ -251,7 +251,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
     if (dailyResult.status === 'fulfilled') {
       dailyTotals = dailyResult.value.map(r => {
         const raw = r['date'];
-        const date = typeof raw === 'string' ? raw : raw instanceof Date ? raw.toISOString().slice(0, 10) : '';
+        const date = typeof raw === 'string' ? raw : (raw instanceof Date ? raw.toISOString().slice(0, 10) : '');
         return { date, keptCost: toNum(r['kept_cost']), excludedCost: toNum(r['excluded_cost']) };
       });
     } else {
@@ -269,7 +269,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
         const rawDate = r['usage_date'];
         const date = typeof rawDate === 'string'
           ? rawDate
-          : rawDate instanceof Date ? rawDate.toISOString().slice(0, 10) : '';
+          : (rawDate instanceof Date ? rawDate.toISOString().slice(0, 10) : '');
         return {
           date,
           accountId: typeof r['account_id'] === 'string' ? r['account_id'] : '',

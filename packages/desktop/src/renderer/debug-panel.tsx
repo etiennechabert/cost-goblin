@@ -28,7 +28,7 @@ function sqlPreview(sql: string): string {
   return oneLine.length > 100 ? `${oneLine.slice(0, 100)}...` : oneLine;
 }
 
-function StatusDot({ status }: { status: DebugQueryLogEntry['status'] }): React.JSX.Element {
+function StatusDot({ status }: Readonly<{ status: DebugQueryLogEntry['status'] }>): React.JSX.Element {
   if (status === 'running') {
     return <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-accent animate-pulse" />;
   }
@@ -41,7 +41,7 @@ function StatusDot({ status }: { status: DebugQueryLogEntry['status'] }): React.
   return <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-positive" />;
 }
 
-function QueryRow({ entry }: { entry: DebugQueryLogEntry }): React.JSX.Element {
+function QueryRow({ entry }: Readonly<{ entry: DebugQueryLogEntry }>): React.JSX.Element {
   const [expanded, setExpanded] = useState(false);
   const [explainResult, setExplainResult] = useState<string | null>(null);
   const [explainLoading, setExplainLoading] = useState(false);
@@ -110,7 +110,7 @@ function QueryRow({ entry }: { entry: DebugQueryLogEntry }): React.JSX.Element {
   );
 }
 
-export function DebugPanel({ onClose }: { onClose: () => void }): React.JSX.Element {
+export function DebugPanel({ onClose }: Readonly<{ onClose: () => void }>): React.JSX.Element {
   const [entries, setEntries] = useState<DebugQueryLogEntry[]>([]);
 
   useEffect(() => {

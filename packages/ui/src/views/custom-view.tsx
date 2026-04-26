@@ -117,8 +117,8 @@ function CustomViewInner({ spec, headerSubtitle, onEntityClick }: CustomViewProp
         <div className="text-sm text-text-secondary">Loading...</div>
       )}
 
-      {spec.rows.map((row, rIdx) => (
-        <div key={rIdx} className="flex gap-4 items-stretch min-w-0">
+      {spec.rows.map((row) => (
+        <div key={row.widgets.map(w => w.id).join('-')} className="flex gap-4 items-stretch min-w-0">
           {row.widgets.map((w) => {
             const Renderer = WIDGET_REGISTRY[w.type];
             return (

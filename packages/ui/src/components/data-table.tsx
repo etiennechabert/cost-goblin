@@ -169,6 +169,9 @@ export function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onCha
               return (
                 <div
                   key={col.key}
+                  role="option"
+                  aria-selected={checked}
+                  tabIndex={0}
                   draggable
                   onDragStart={(e) => { setDraggedKey(col.key); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', col.key); }}
                   onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragOverKey !== col.key) setDragOverKey(col.key); }}
@@ -272,10 +275,11 @@ export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, 
           </thead>
           <tbody>
             {rows.map((r, i) => {
+              const rowKey = `${r.values['usage_date'] ?? ''}-${r.values['service'] ?? ''}-${r.values['account_name'] ?? ''}-${String(r.cost)}-${String(i)}`;
               const isExpanded = expandedIdx === i;
               return (
                 <ExpandableRow
-                  key={String(i)}
+                  key={rowKey}
                   row={r}
                   columns={columns}
                   allColumns={allColumns}
@@ -302,9 +306,9 @@ export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, 
 
 // --- Header + Cell ---
 
-function ColumnHeader({ spec, sort, onSort }: { spec: ColumnSpec; sort: ExplorerSort | undefined; onSort: () => void }) {
+function ColumnHeader({ spec, sort, onSort }: Readonly<{ spec: ColumnSpec; sort: ExplorerSort | undefined; onSort: () => void }>) {
   const isSorted = sort?.column === spec.key;
-  const indicator = isSorted ? (sort.direction === 'asc' ? '↑' : '↓') : '';
+  const indicator = isSorted ? (sort.direction === 'asc' ? '\u2191' : '\u2193') : '';
   return (
     <th className="p-0 font-medium whitespace-nowrap">
       <button
@@ -325,7 +329,7 @@ function ColumnHeader({ spec, sort, onSort }: { spec: ColumnSpec; sort: Explorer
   );
 }
 
-function RowCell({ spec, row, onFilterAdd }: { spec: ColumnSpec; row: AggregatedTableRow; onFilterAdd: (dimId: string, value: string) => void }) {
+function RowCell({ spec, row, onFilterAdd }: Readonly<{ spec: ColumnSpec; row: AggregatedTableRow; onFilterAdd: (dimId: string, value: string) => void }>) {
   const display = renderCell(spec, row);
   const rawValue = spec.dimId === null ? null : (row.values[spec.key] ?? '');
   const titleText = spec.truncate === true ? (row.values[spec.key] ?? '') : undefined;
@@ -363,7 +367,7 @@ function renderCell(spec: ColumnSpec, row: AggregatedTableRow): React.ReactNode 
 
 // --- Expandable Row ---
 
-function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterAdd, fetchDetailRows }: {
+function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterAdd, fetchDetailRows }: Readonly<{
   row: AggregatedTableRow;
   columns: readonly ColumnSpec[];
   allColumns: readonly ColumnSpec[];
@@ -371,7 +375,7 @@ function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterA
   onToggle: () => void;
   onFilterAdd: (dimId: string, value: string) => void;
   fetchDetailRows?: ((r: AggregatedTableRow) => Promise<readonly AggregatedTableRow[]>) | undefined;
-}) {
+}>) {
   return (
     <>
       <tr
@@ -380,6 +384,9 @@ function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterA
           expanded ? 'bg-bg-tertiary/40' : 'hover:bg-bg-tertiary/30',
         ].join(' ')}
         onClick={onToggle}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onToggle(); }}
+        tabIndex={0}
+        role="row"
       >
         {columns.map(col => (
           <RowCell key={col.key} spec={col} row={row} onFilterAdd={onFilterAdd} />
@@ -396,11 +403,11 @@ function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterA
   );
 }
 
-function RowDetail({ row, allColumns, fetchDetailRows }: {
+function RowDetail({ row, allColumns, fetchDetailRows }: Readonly<{
   row: AggregatedTableRow;
   allColumns: readonly ColumnSpec[];
   fetchDetailRows?: ((r: AggregatedTableRow) => Promise<readonly AggregatedTableRow[]>) | undefined;
-}) {
+}>) {
   const [detailRows, setDetailRows] = useState<readonly AggregatedTableRow[] | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
@@ -462,8 +469,10 @@ function RowDetail({ row, allColumns, fetchDetailRows }: {
                   </tr>
                 </thead>
                 <tbody>
-                  {detailRows.map((dr, i) => (
-                    <tr key={String(i)} className="border-t border-border/30 hover:bg-bg-tertiary/20">
+                  {detailRows.map((dr) => {
+                    const drKey = `${dr.values['usage_date'] ?? ''}-${dr.values['service'] ?? ''}-${String(dr.cost)}`;
+                    return (
+                    <tr key={drKey} className="border-t border-border/30 hover:bg-bg-tertiary/20">
                       {detailColSpecs.map(c => {
                         const val = c.key === 'cost' ? formatSignedDollars(dr.cost) : (dr.values[c.key] ?? '');
                         return (
@@ -477,7 +486,8 @@ function RowDetail({ row, allColumns, fetchDetailRows }: {
                         );
                       })}
                     </tr>
-                  ))}
+                  );
+                  })}
                 </tbody>
               </table>
             </div>

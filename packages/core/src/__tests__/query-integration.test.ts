@@ -133,8 +133,7 @@ describe('DuckDB query integration', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
       },
-      SYNTHETIC_DIR,
-      dimensions,
+      { dataDir: SYNTHETIC_DIR, dimensions },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
@@ -150,8 +149,7 @@ describe('DuckDB query integration', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
       },
-      SYNTHETIC_DIR,
-      dimensions,
+      { dataDir: SYNTHETIC_DIR, dimensions },
     );
     const resultFiltered = buildCostQuery(
       {
@@ -159,8 +157,7 @@ describe('DuckDB query integration', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: { [asDimensionId('region')]: asTagValue('eu-central-1') },
       },
-      SYNTHETIC_DIR,
-      dimensions,
+      { dataDir: SYNTHETIC_DIR, dimensions },
     );
     const allRows = await queryAllPrepared(conn, `SELECT SUM(total_cost) as t FROM (${resultAll.sql})`, resultAll.params);
     const filteredRows = await queryAllPrepared(conn, `SELECT SUM(total_cost) as t FROM (${resultFiltered.sql})`, resultFiltered.params);
@@ -175,8 +172,7 @@ describe('DuckDB query integration', () => {
         minCost: asDollars(0),
         tagDimension: asDimensionId('tag_team'),
       },
-      SYNTHETIC_DIR,
-      dimensions,
+      { dataDir: SYNTHETIC_DIR, dimensions },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
@@ -193,8 +189,7 @@ describe('DuckDB query integration', () => {
         minCost: asDollars(0),
         tagDimension: asDimensionId('tag_team'),
       },
-      SYNTHETIC_DIR,
-      dimensions,
+      { dataDir: SYNTHETIC_DIR, dimensions },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
@@ -223,8 +218,7 @@ describe('DuckDB query integration', () => {
         minCost: asDollars(0),
         tagDimension: asDimensionId('tag_team'),
       },
-      SYNTHETIC_DIR,
-      dimensions,
+      { dataDir: SYNTHETIC_DIR, dimensions },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     // Fixture may have zero non-Usage lines; just verify the query is valid
@@ -244,8 +238,7 @@ describe('DuckDB query integration', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-02-28') },
         filters: {},
       },
-      SYNTHETIC_DIR,
-      dimensions,
+      { dataDir: SYNTHETIC_DIR, dimensions },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
@@ -278,8 +271,7 @@ describe('DuckDB query integration', () => {
         filters: {},
         granularity: 'hourly',
       },
-      SYNTHETIC_DIR,
-      dimensions,
+      { dataDir: SYNTHETIC_DIR, dimensions },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
@@ -290,8 +282,7 @@ describe('DuckDB query integration', () => {
     const range = { start: asDateString('2026-02-01'), end: asDateString('2026-02-28') } as const;
     const result = buildCostQuery(
       { groupBy: asDimensionId('service'), dateRange: range, filters: {}, granularity: 'hourly' },
-      SYNTHETIC_DIR,
-      dimensions,
+      { dataDir: SYNTHETIC_DIR, dimensions },
     );
     const queryTotalRows = await queryAllPrepared(conn, `SELECT SUM(total_cost) AS t FROM (${result.sql})`, result.params);
     const queryTotal = Number(queryTotalRows[0]?.['t'] ?? 0);
@@ -315,8 +306,7 @@ describe('DuckDB query integration', () => {
         filters: {},
         granularity: 'hourly',
       },
-      SYNTHETIC_DIR,
-      dimensions,
+      { dataDir: SYNTHETIC_DIR, dimensions },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
@@ -336,8 +326,7 @@ describe('DuckDB query integration', () => {
         filters: {},
         granularity: 'daily',
       },
-      SYNTHETIC_DIR,
-      dimensions,
+      { dataDir: SYNTHETIC_DIR, dimensions },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);

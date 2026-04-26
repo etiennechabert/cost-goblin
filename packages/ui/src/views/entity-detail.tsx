@@ -147,11 +147,11 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   const pie3Slices = costRowsToSlices(pie3Query.status === 'success' ? pie3Query.data : null);
 
   // Histogram — reuse StackedBarChart with queryDailyCosts
-  const histogramDimId = histogramTab === 'owner' && ownerDim !== undefined
-    ? getDimensionId(ownerDim)
-    : histogramTab === 'product' && productDim !== undefined
-      ? getDimensionId(productDim)
-      : serviceDimId;
+  const histogramDimId = (() => {
+    if (histogramTab === 'owner' && ownerDim !== undefined) return getDimensionId(ownerDim);
+    if (histogramTab === 'product' && productDim !== undefined) return getDimensionId(productDim);
+    return serviceDimId;
+  })();
 
   const dailyQuery = useQuery(
     () => api.queryDailyCosts({ groupBy: histogramDimId, dateRange, filters: entityFilter, granularity }),
@@ -220,7 +220,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
                 <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4">
                   <p className="text-xs uppercase tracking-wider text-text-muted">vs Previous Period</p>
                   {(() => {
-                    const changeColor = isIncrease ? 'text-negative' : isDecrease ? 'text-positive' : 'text-text-secondary';
+                    const changeColor = isIncrease ? 'text-negative' : (isDecrease ? 'text-positive' : 'text-text-secondary');
                     return (
                       <p className={`mt-1 text-2xl font-bold tabular-nums ${changeColor}`}>
                         {formatPercent(data.percentChange)}

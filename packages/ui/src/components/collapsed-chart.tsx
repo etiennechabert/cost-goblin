@@ -1,4 +1,4 @@
-export function CollapsedChart({ title, onExpandToggle }: { title: string; onExpandToggle?: (() => void) | undefined }) {
+export function CollapsedChart({ title, onExpandToggle }: Readonly<{ title: string; onExpandToggle?: (() => void) | undefined }>) {
   return (
     <button
       type="button"

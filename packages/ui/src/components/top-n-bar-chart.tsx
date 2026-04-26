@@ -127,7 +127,7 @@ function TopNBarChartInner({
               return (
                 <li
                   key={row.name}
-                  role="button"
+                  role={onBarClick !== undefined ? 'button' : undefined}
                   tabIndex={onBarClick !== undefined ? 0 : undefined}
                   onMouseEnter={() => { handleEnter(row.name); }}
                   onMouseLeave={handleLeave}

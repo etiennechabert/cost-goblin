@@ -329,7 +329,7 @@ export function registerExplorerHandlers(app: AppContext): void {
     if (dailyResult.status === 'fulfilled') {
       dailyTotals = dailyResult.value.map(r => {
         const raw = r['date'];
-        const date = typeof raw === 'string' ? raw : raw instanceof Date ? raw.toISOString().slice(0, 10) : '';
+        const date = typeof raw === 'string' ? raw : (raw instanceof Date ? raw.toISOString().slice(0, 10) : '');
         return { date, cost: toNum(r['daily_cost']), rows: toNum(r['daily_rows']) };
       });
     } else {

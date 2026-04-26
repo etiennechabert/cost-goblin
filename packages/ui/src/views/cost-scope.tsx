@@ -56,7 +56,7 @@ interface ConditionRowProps {
   invalid: boolean;
 }
 
-function ConditionRow({ condition, dimensions, suggestions, onUpdate, onRemove, canRemove, invalid }: ConditionRowProps) {
+function ConditionRow({ condition, dimensions, suggestions, onUpdate, onRemove, canRemove, invalid }: Readonly<ConditionRowProps>) {
   const [valuesInput, setValuesInput] = useState(condition.values.join(', '));
 
   // Sync local input state when the condition prop changes externally (e.g.
@@ -163,7 +163,7 @@ function builtInDiverges(rule: ExclusionRule, seed: ExclusionRule): boolean {
   return false;
 }
 
-function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDelete }: RuleCardProps) {
+function RuleCard({ rule, preview, dimensions, suggestionsByDim, onUpdate, onDelete }: Readonly<RuleCardProps>) {
   const seed = seedForBuiltIn(rule);
   const diverged = seed !== null && builtInDiverges(rule, seed);
 
@@ -466,7 +466,7 @@ function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loa
           )}
           {hasEnabledRules && !hideExcluded && (
             <span>
-              <span className="inline-block w-2 h-2 rounded-sm bg-negative/40 mr-1 align-middle" />
+              <span className="inline-block w-2 h-2 rounded-sm bg-negative/40 mr-1 align-middle" />{' '}
               excluded
             </span>
           )}
@@ -527,18 +527,18 @@ function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loa
   );
 }
 
-function Th({ children, align = 'left' }: { children: React.ReactNode; align?: 'left' | 'right' }): React.JSX.Element {
+function Th({ children, align = 'left' }: Readonly<{ children: React.ReactNode; align?: 'left' | 'right' }>): React.JSX.Element {
   return <th className={`px-2 py-1.5 font-medium whitespace-nowrap ${align === 'right' ? 'text-right' : ''}`}>{children}</th>;
 }
 
-function Td({ children, align = 'left', mono, truncate, className, title }: {
+function Td({ children, align = 'left', mono, truncate, className, title }: Readonly<{
   children: React.ReactNode;
   align?: 'left' | 'right';
   mono?: boolean;
   truncate?: boolean;
   className?: string;
   title?: string;
-}): React.JSX.Element {
+}>): React.JSX.Element {
   const classes = [
     'px-2 py-1 whitespace-nowrap',
     align === 'right' ? 'text-right' : '',
@@ -816,17 +816,17 @@ export function CostScopeView(): React.JSX.Element {
                     <span className="ml-2 text-xs text-text-muted">{METRIC_LABELS[metric].description}</span>
                     {metric === 'amortized' && capabilities !== null && !capabilities.hasEffectiveCostColumns && (
                       <div className="mt-1 text-xs text-warning">
-                        Degraded → falls back to Unblended because your CUR export doesn't include
-                        <code className="mx-1 text-[11px]">reservation_effective_cost</code>
-                        /
-                        <code className="mx-1 text-[11px]">savings_plan_savings_plan_effective_cost</code>.
+                        Degraded &mdash; falls back to Unblended because your CUR export doesn&apos;t include{' '}
+                        <code className="mx-1 text-[11px]">reservation_effective_cost</code>{' '}
+                        /{' '}
+                        <code className="mx-1 text-[11px]">savings_plan_savings_plan_effective_cost</code>.{' '}
                         Enable <em>Include Resource IDs</em> on your CUR report in AWS Billing to get
                         an accurate amortized view (takes one billing cycle to land).
                       </div>
                     )}
                     {metric === 'blended' && capabilities !== null && !capabilities.hasBlendedColumn && (
                       <div className="mt-1 text-xs text-warning">
-                        Degraded → falls back to Unblended because your CUR export doesn't include
+                        Degraded &mdash; falls back to Unblended because your CUR export doesn&apos;t include{' '}
                         <code className="mx-1 text-[11px]">line_item_blended_cost</code>.
                       </div>
                     )}
@@ -870,8 +870,8 @@ export function CostScopeView(): React.JSX.Element {
                 </div>
                 {(draft.costPerspective ?? 'gross') === 'net' && capabilities !== null && !capabilities.hasNetColumns && (
                   <div className="mt-2 text-xs text-warning">
-                    Degraded → falls back to Gross because your CUR export doesn't include
-                    <code className="mx-1 text-[11px]">line_item_net_unblended_cost</code>.
+                    Degraded &mdash; falls back to Gross because your CUR export doesn&apos;t include{' '}
+                    <code className="mx-1 text-[11px]">line_item_net_unblended_cost</code>.{' '}
                     Enable <em>Include Net Columns</em> on your CUR report in AWS Billing.
                   </div>
                 )}
@@ -1072,7 +1072,7 @@ function LineItemsCard({ preview, loading, hasEnabledRules }: LineItemsCardProps
   );
 }
 
-function SummaryTile({ label, value, hint, emphasis }: { label: string; value: string; hint: string; emphasis?: boolean }): React.JSX.Element {
+function SummaryTile({ label, value, hint, emphasis }: Readonly<{ label: string; value: string; hint: string; emphasis?: boolean }>): React.JSX.Element {
   return (
     <div className={`rounded-md border border-border px-3 py-2 ${emphasis ? 'bg-bg-tertiary/40' : 'bg-bg-secondary/60'}`}>
       <div className="text-[10px] uppercase tracking-wide text-text-muted">{label}</div>
