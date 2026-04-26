@@ -1,6 +1,7 @@
 import { useState, useEffect, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave } from '@costgoblin/ui';
 import type { CostApi, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
+import { DebugPanel, useDebugBadge } from './debug-panel.js';
 
 // ---------------------------------------------------------------------------
 // React Profiler — collects render timings when perf mode is active
@@ -80,6 +81,15 @@ function MoonIcon() {
   );
 }
 
+function TerminalIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
+    </svg>
+  );
+}
+
 type SetupCheck =
   | { status: 'checking' }
   | { status: 'needs-setup' }
@@ -115,6 +125,8 @@ function AppShell(): React.JSX.Element {
   // most commonly expired credentials. Surfaced as a red dot on the Sync
   // nav button so the user notices without having to open the tab.
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [debugOpen, setDebugOpen] = useState(false);
+  const inFlightCount = useDebugBadge();
 
   useEffect(() => {
     void api.getSetupStatus().then(({ configured }) => {
@@ -308,6 +320,24 @@ function AppShell(): React.JSX.Element {
           <div className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]">
             <button
               type="button"
+              onClick={() => { setDebugOpen(prev => !prev); }}
+              className={[
+                'relative rounded-md p-1.5 transition-colors',
+                debugOpen
+                  ? 'bg-bg-tertiary text-text-primary'
+                  : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
+              ].join(' ')}
+              aria-label="Debug panel"
+            >
+              <TerminalIcon />
+              {inFlightCount > 0 && (
+                <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">
+                  {String(inFlightCount)}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
               onClick={handleToggleTheme}
               className="rounded-md p-1.5 text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
               aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -411,6 +441,7 @@ function AppShell(): React.JSX.Element {
           />
         </Profiler>
       )}
+      {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} />}
     </div>
   );
 }
