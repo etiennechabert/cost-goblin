@@ -20,7 +20,7 @@ export function applyNormalizationRule(value: string, rule: NormalizationRule): 
         .toLowerCase();
     case 'camelCase':
       return value
-        .replaceAll(/[-_\s]+(.)/g, (_, c: string) => c.toUpperCase())
+        .replaceAll(/[-_\s]+([^-_\s])/g, (_, c: string) => c.toUpperCase())
         .replace(/^(.)/, (_, c: string) => c.toLowerCase());
   }
 }
