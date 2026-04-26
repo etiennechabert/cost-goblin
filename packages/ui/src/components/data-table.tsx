@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ExplorerSampleRow, ExplorerSort, ExplorerTagColumn } from '@costgoblin/core/browser';
 import { formatDollars } from './format.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
@@ -216,6 +216,12 @@ interface DataTableProps {
 }
 
 export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, onHiddenColumnsChange, onColumnOrderChange, rows, totalRows, sort, onSort, onFilterAdd, loading, error, maxHeight = '560px' }: DataTableProps) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  const toggleExpand = useCallback((idx: number) => {
+    setExpandedIdx(prev => prev === idx ? null : idx);
+  }, []);
+
   const headerRow = (
     <div className="flex items-center justify-between gap-3 text-xs text-text-muted">
       <span>
@@ -263,13 +269,20 @@ export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, 
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
-              <tr key={`${String(i)}-${r.resourceId}-${r.date}`} className="border-t border-border/40 hover:bg-bg-tertiary/30">
-                {columns.map(col => (
-                  <RowCell key={col.key} spec={col} row={r} onFilterAdd={onFilterAdd} />
-                ))}
-              </tr>
-            ))}
+            {rows.map((r, i) => {
+              const isExpanded = expandedIdx === i;
+              return (
+                <ExpandableRow
+                  key={`${String(i)}-${r.resourceId}-${r.date}`}
+                  row={r}
+                  columns={columns}
+                  allColumns={allColumns}
+                  expanded={isExpanded}
+                  onToggle={() => { toggleExpand(i); }}
+                  onFilterAdd={onFilterAdd}
+                />
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -386,4 +399,82 @@ function filterValueFor(spec: ColumnSpec, row: ExplorerSampleRow): string | null
       return null;
     }
   }
+}
+
+// --- Expandable Row ---
+
+const ROW_FIELDS: readonly { key: string; label: string; render: (r: ExplorerSampleRow) => string }[] = [
+  { key: 'date', label: 'Date', render: r => r.date },
+  { key: 'hour', label: 'Hour', render: r => r.hour },
+  { key: 'cost', label: 'Cost', render: r => formatSignedDollars(r.cost) },
+  { key: 'listCost', label: 'List Cost', render: r => formatSignedDollars(r.listCost) },
+  { key: 'service', label: 'Service', render: r => r.service },
+  { key: 'serviceFamily', label: 'Family', render: r => r.serviceFamily },
+  { key: 'accountId', label: 'Account ID', render: r => r.accountId },
+  { key: 'accountName', label: 'Account Name', render: r => r.accountName },
+  { key: 'region', label: 'Region', render: r => r.region },
+  { key: 'lineItemType', label: 'Line Type', render: r => r.lineItemType },
+  { key: 'operation', label: 'Operation', render: r => r.operation },
+  { key: 'usageType', label: 'Usage Type', render: r => r.usageType },
+  { key: 'usageAmount', label: 'Usage Amount', render: r => r.usageAmount === 0 ? '' : r.usageAmount.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
+  { key: 'resourceId', label: 'Resource', render: r => r.resourceId },
+  { key: 'description', label: 'Description', render: r => r.description },
+];
+
+function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterAdd }: {
+  row: ExplorerSampleRow;
+  columns: readonly ColumnSpec[];
+  allColumns: readonly ColumnSpec[];
+  expanded: boolean;
+  onToggle: () => void;
+  onFilterAdd: (dimId: string, value: string) => void;
+}) {
+  return (
+    <>
+      <tr
+        className={[
+          'border-t border-border/40 cursor-pointer',
+          expanded ? 'bg-bg-tertiary/40' : 'hover:bg-bg-tertiary/30',
+        ].join(' ')}
+        onClick={onToggle}
+      >
+        {columns.map(col => (
+          <RowCell key={col.key} spec={col} row={row} onFilterAdd={onFilterAdd} />
+        ))}
+      </tr>
+      {expanded && (
+        <tr className="bg-bg-tertiary/20">
+          <td colSpan={columns.length} className="px-3 py-2">
+            <RowDetail row={row} allColumns={allColumns} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function RowDetail({ row, allColumns }: { row: ExplorerSampleRow; allColumns: readonly ColumnSpec[] }) {
+  const tagEntries = Object.entries(row.tags).filter(([, v]) => v.length > 0);
+  const tagLabels = new Map(allColumns.filter(c => c.dimId !== null && c.dimId.startsWith('tag_')).map(c => [c.key, c.label]));
+
+  return (
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-4 gap-y-0.5 text-[11px]">
+      {ROW_FIELDS.map(f => {
+        const val = f.render(row);
+        if (val.length === 0) return null;
+        return (
+          <div key={f.key} className="flex gap-1.5 py-0.5 min-w-0">
+            <span className="text-text-muted shrink-0">{f.label}</span>
+            <span className="text-text-primary truncate" title={val}>{val}</span>
+          </div>
+        );
+      })}
+      {tagEntries.map(([key, val]) => (
+        <div key={key} className="flex gap-1.5 py-0.5 min-w-0">
+          <span className="text-text-muted shrink-0">{tagLabels.get(key) ?? key}</span>
+          <span className="text-text-primary truncate" title={val}>{val}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
