@@ -64,7 +64,11 @@ export function TierPanel({
         <h3 className="text-sm font-semibold text-text-primary mb-4">{title}</h3>
         <div className="rounded-lg border border-dashed border-border p-6 text-center">
           <p className="text-sm text-text-secondary">Not configured</p>
-          {onConfigure !== undefined ? (
+          {onConfigure === undefined ? (
+            <p className="text-xs text-text-muted mt-2">
+              Add a <span className="font-mono text-text-secondary">{title.toLowerCase()}</span> section to your provider sync config in <span className="font-mono text-accent">costgoblin.yaml</span>
+            </p>
+          ) : (
             <button
               type="button"
               onClick={onConfigure}
@@ -72,10 +76,6 @@ export function TierPanel({
             >
               Configure {title.toLowerCase()} data source
             </button>
-          ) : (
-            <p className="text-xs text-text-muted mt-2">
-              Add a <span className="font-mono text-text-secondary">{title.toLowerCase()}</span> section to your provider sync config in <span className="font-mono text-accent">costgoblin.yaml</span>
-            </p>
           )}
         </div>
       </div>
@@ -115,7 +115,7 @@ export function TierPanel({
         <div className="rounded-lg border border-border bg-bg-primary/50 p-3">
           <p className="text-xs text-text-muted">Range</p>
           <p className="text-xs font-medium text-text-primary mt-1">{oldestPeriod ?? '—'}</p>
-          <p className="text-xs text-text-muted">{newestPeriod !== null ? `to ${newestPeriod}` : ''}</p>
+          <p className="text-xs text-text-muted">{newestPeriod === null ? '' : `to ${newestPeriod}`}</p>
         </div>
       </div>
 

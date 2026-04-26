@@ -107,7 +107,7 @@ export function registerFilterHandlers(app: AppContext): void {
     const orgPath = await getOrgAccountsPath();
     const periods = dateRange === undefined ? undefined : computePeriodsInRange(dateRange);
     const availableColumns = await getAvailableColumns('daily');
-    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods, 'unblended', availableColumns);
+    const source = buildSource({ dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath, periods, costMetric: 'unblended', availableColumns });
     const sql = `
       SELECT ${fieldExpr} AS val, SUM(cost) AS total_cost
       FROM ${source}

@@ -42,7 +42,7 @@ export function PieWidget({
   const baseFilters = mergeFilters(globalFilters, spec.filters);
 
   const fk = filtersKey(baseFilters);
-  const fallbackDim = specGroupBy !== undefined ? getDimensionFallback(specGroupBy) : undefined;
+  const fallbackDim = specGroupBy === undefined ? undefined : getDimensionFallback(specGroupBy);
   const query = useQuery<PieQueryResult | null>(
     async () => {
       if (specGroupBy === undefined) return null;

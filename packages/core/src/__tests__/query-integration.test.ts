@@ -99,15 +99,15 @@ describe('DuckDB query integration', () => {
   });
 
   it('reads fixture parquet files', async () => {
-    const source = buildSource(SYNTHETIC_DIR, 'daily', dimensions);
+    const source = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions });
     const rows = await queryAll(conn, `SELECT COUNT(*) as cnt FROM ${source}`);
     expect(Number(rows[0]?.['cnt'])).toBeGreaterThan(0);
   });
 
   it('narrowed source with specific months reads the same data as the wildcard', async () => {
     // Synthetic fixtures: daily-2026-01/ and daily-2026-02/.
-    const wide = buildSource(SYNTHETIC_DIR, 'daily', dimensions);
-    const narrow = buildSource(SYNTHETIC_DIR, 'daily', dimensions, undefined, ['2026-01', '2026-02']);
+    const wide = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions });
+    const narrow = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, periods: ['2026-01', '2026-02'] });
     const [[wideRow], [narrowRow]] = await Promise.all([
       queryAll(conn, `SELECT COUNT(*) as cnt, SUM(cost) as total FROM ${wide}`),
       queryAll(conn, `SELECT COUNT(*) as cnt, SUM(cost) as total FROM ${narrow}`),
@@ -121,7 +121,7 @@ describe('DuckDB query integration', () => {
     // matches zero files, even when other patterns in the list match. Callers
     // must intersect required periods with what's actually on disk BEFORE
     // passing to buildSource. The query handlers do this via listLocalMonths.
-    const source = rebuildSource(SYNTHETIC_DIR, 'daily', dimensions, undefined, ['2025-11']);
+    const source = rebuildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, periods: ['2025-11'] });
     await expect(queryAll(conn, `SELECT COUNT(*) as cnt FROM ${source}`))
       .rejects.toThrow(/No files found/);
   });
@@ -245,13 +245,13 @@ describe('DuckDB query integration', () => {
   });
 
   it('reads hourly raw files', async () => {
-    const source = buildSource(SYNTHETIC_DIR, 'hourly', dimensions);
+    const source = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'hourly', dimensions });
     const rows = await queryAll(conn, `SELECT COUNT(*) as cnt FROM ${source}`);
     expect(Number(rows[0]?.['cnt'])).toBeGreaterThan(0);
   });
 
   it('hourly tier exposes both usage_date (DATE) and usage_hour (TIMESTAMP)', async () => {
-    const source = buildSource(SYNTHETIC_DIR, 'hourly', dimensions);
+    const source = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'hourly', dimensions });
     const rows = await queryAll(conn, `
       SELECT typeof(usage_date) AS d_type, typeof(usage_hour) AS h_type
       FROM ${source} LIMIT 1
@@ -287,7 +287,7 @@ describe('DuckDB query integration', () => {
     const queryTotalRows = await queryAllPrepared(conn, `SELECT SUM(total_cost) AS t FROM (${result.sql})`, result.params);
     const queryTotal = Number(queryTotalRows[0]?.['t'] ?? 0);
 
-    const source = buildSource(SYNTHETIC_DIR, 'hourly', dimensions);
+    const source = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'hourly', dimensions });
     const rawRows = await queryAll(conn, `
       SELECT SUM(cost) AS t FROM ${source}
       WHERE usage_date BETWEEN '${range.start}' AND '${range.end}'

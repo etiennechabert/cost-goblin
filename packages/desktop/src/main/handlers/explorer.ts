@@ -199,7 +199,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     const metric = pickMetric(params.costMetric, availableColumns);
     const perspective = pickPerspective(params.costPerspective, availableColumns);
 
-    source = buildSource(ctx.dataDir, tier, dimensions, orgPath, periods, metric, availableColumns, perspective);
+    source = buildSource({ dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath, periods, costMetric: metric, availableColumns, costPerspective: perspective });
 
     const exclusionClauses: string[] = [];
     if (costScope !== undefined) {
@@ -329,7 +329,9 @@ export function registerExplorerHandlers(app: AppContext): void {
     if (dailyResult.status === 'fulfilled') {
       dailyTotals = dailyResult.value.map(r => {
         const raw = r['date'];
-        const date = typeof raw === 'string' ? raw : (raw instanceof Date ? raw.toISOString().slice(0, 10) : '');
+        let date = '';
+        if (typeof raw === 'string') date = raw;
+        else if (raw instanceof Date) date = raw.toISOString().slice(0, 10);
         return { date, cost: toNum(r['daily_cost']), rows: toNum(r['daily_rows']) };
       });
     } else {

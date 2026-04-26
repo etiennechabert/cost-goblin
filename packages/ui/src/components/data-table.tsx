@@ -169,7 +169,6 @@ export function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onCha
               return (
                 <div
                   key={col.key}
-                  role="option"
                   aria-selected={checked}
                   tabIndex={0}
                   draggable
@@ -308,7 +307,8 @@ export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, 
 
 function ColumnHeader({ spec, sort, onSort }: Readonly<{ spec: ColumnSpec; sort: ExplorerSort | undefined; onSort: () => void }>) {
   const isSorted = sort?.column === spec.key;
-  const indicator = isSorted ? (sort.direction === 'asc' ? '\u2191' : '\u2193') : '';
+  const dirArrow = sort?.direction === 'asc' ? '\u2191' : '\u2193';
+  const indicator = isSorted ? dirArrow : '';
   return (
     <th className="p-0 font-medium whitespace-nowrap">
       <button

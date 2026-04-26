@@ -1,8 +1,5 @@
 import type { DimensionId, TagValue } from './branded.js';
 
-export type WidgetId = string;
-export type ViewId = string;
-
 export type WidgetSize = 'small' | 'medium' | 'large' | 'full';
 
 /** Extra filter overlay applied on top of the view's global FilterBar. The
@@ -13,7 +10,7 @@ export type WidgetFilterOverlay = Readonly<Partial<Record<DimensionId, TagValue>
 export type SummaryMetric = 'total' | 'delta' | 'topEntity' | 'entityCount';
 
 interface WidgetBase {
-  readonly id: WidgetId;
+  readonly id: string;
   readonly title?: string | undefined;
   readonly size: WidgetSize;
   readonly filters?: WidgetFilterOverlay | undefined;
@@ -68,7 +65,7 @@ export interface ViewRow {
 }
 
 export interface ViewSpec {
-  readonly id: ViewId;
+  readonly id: string;
   readonly name: string;
   readonly icon?: string | undefined;
   /** Built-in seed view. The user can duplicate/clone but not delete. */

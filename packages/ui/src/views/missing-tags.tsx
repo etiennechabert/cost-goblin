@@ -199,7 +199,7 @@ export function MissingTags() {
       {data !== null && actionableRows.length > 0 && (
         <div className="flex flex-col gap-3">
           <h3 className="text-sm font-semibold text-text-primary">
-            Actionable
+            {'Actionable'}
             <span className="ml-2 text-xs font-normal text-text-muted">
               {String(actionableRows.length)} resources · {formatDollars(data.totalActionableCost)}
             </span>
@@ -217,7 +217,7 @@ export function MissingTags() {
       {data !== null && showLikelyUntaggable && likelyUntaggableRows.length > 0 && (
         <div className="flex flex-col gap-3">
           <h3 className="text-sm font-semibold text-text-secondary">
-            Likely not taggable
+            {'Likely not taggable'}
             <span className="ml-2 text-xs font-normal text-text-muted">
               {String(likelyUntaggableRows.length)} resources · {formatDollars(data.totalLikelyUntaggableCost)}
             </span>

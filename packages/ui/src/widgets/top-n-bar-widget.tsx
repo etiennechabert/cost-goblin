@@ -40,7 +40,7 @@ export function TopNBarWidget({
 
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
-  const fallbackDim = specGroupBy !== undefined ? getDimensionFallback(specGroupBy) : undefined;
+  const fallbackDim = specGroupBy === undefined ? undefined : getDimensionFallback(specGroupBy);
   const query = useQuery<CostQueryResult | null>(
     async () => {
       if (specGroupBy === undefined) return null;
