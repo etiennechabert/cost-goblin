@@ -25,7 +25,7 @@ function asCustomView(v: ViewSpec): ViewSpec {
     id: v.id,
     name: v.name,
     rows: v.rows,
-    ...(v.icon !== undefined ? { icon: v.icon } : {}),
+    ...(v.icon === undefined ? {} : { icon: v.icon }),
   };
 }
 
@@ -75,14 +75,15 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
       // `builtIn: true` would otherwise create an undeletable duplicate.
       props.onImport(asCustomView(first));
     } catch (err: unknown) {
-      setImportError(err instanceof ConfigValidationError ? err.message : err instanceof Error ? err.message : String(err));
+      const msg = err instanceof ConfigValidationError || err instanceof Error ? err.message : String(err);
+      setImportError(msg);
     }
   }
 
   const isExport = props.mode === 'export';
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center" role="dialog" aria-modal="true">
+    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none" aria-modal="true">
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={props.onClose}
@@ -142,7 +143,7 @@ export function ViewYamlModal(props: ViewYamlModalProps): React.JSX.Element {
           )}
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }
 

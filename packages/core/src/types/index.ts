@@ -63,8 +63,6 @@ export type {
 export type { Dimension, CostApi, DataInventoryResult, DataTier, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress } from './api.js';
 
 export type {
-  WidgetId,
-  ViewId,
   WidgetSize,
   WidgetFilterOverlay,
   SummaryMetric,

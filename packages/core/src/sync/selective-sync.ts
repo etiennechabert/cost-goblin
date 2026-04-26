@@ -5,8 +5,8 @@ import { logger } from '../logger/logger.js';
 import { parseS3Path } from './s3-client.js';
 import type { ProgressCallback } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
+import type { ExpectedDataType } from './sync-utils.js';
 import {
-  type ExpectedDataType,
   extractDate,
   extractPeriodPrefix,
   getEtagFileName,
@@ -14,7 +14,7 @@ import {
   parseEtagsJson,
 } from './sync-utils.js';
 
-export type { ExpectedDataType };
+export type { ExpectedDataType } from './sync-utils.js';
 
 export interface SelectiveSyncOptions {
   readonly bucketPath: string;

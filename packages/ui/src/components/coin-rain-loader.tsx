@@ -50,7 +50,7 @@ function updateCoin(c: Coin, containerWidth: number, containerHeight: number): C
   if (x < 0) { x = 0; vx = Math.abs(vx) * 0.5; }
   if (x > containerWidth - COIN_SIZE * scale) { x = containerWidth - COIN_SIZE * scale; vx = -Math.abs(vx) * 0.5; }
   if (y > containerHeight + COIN_SIZE) return createCoin(c.id, containerWidth, containerHeight);
-  return { ...c, x, y, vx, vy, rotation, scale };
+  return { ...c, x, y, vx, vy, rotation, rotationSpeed, scale };
 }
 
 export function CoinRainLoader({ height = 120, count = 5 }: Readonly<{ height?: number; count?: number }>) {

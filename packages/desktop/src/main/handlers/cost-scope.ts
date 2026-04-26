@@ -113,7 +113,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
     const orgPath = await getOrgAccountsPath();
     const availableColumns = await getAvailableColumns('daily');
 
-    const source = buildSource(ctx.dataDir, 'daily', dimensions, orgPath, periods, config.costMetric, availableColumns, config.costPerspective);
+    const source = buildSource({ dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath, periods, costMetric: config.costMetric, availableColumns, costPerspective: config.costPerspective });
 
     // Pre-compute each rule's positive match expression once — used to
     // build the `excluded` predicate for the main aggregate query, each
@@ -251,7 +251,9 @@ export function registerCostScopeHandlers(app: AppContext): void {
     if (dailyResult.status === 'fulfilled') {
       dailyTotals = dailyResult.value.map(r => {
         const raw = r['date'];
-        const date = typeof raw === 'string' ? raw : (raw instanceof Date ? raw.toISOString().slice(0, 10) : '');
+        let date = '';
+        if (typeof raw === 'string') date = raw;
+        else if (raw instanceof Date) date = raw.toISOString().slice(0, 10);
         return { date, keptCost: toNum(r['kept_cost']), excludedCost: toNum(r['excluded_cost']) };
       });
     } else {
@@ -267,9 +269,9 @@ export function registerCostScopeHandlers(app: AppContext): void {
           tags[t.id] = typeof v === 'string' ? v : '';
         }
         const rawDate = r['usage_date'];
-        const date = typeof rawDate === 'string'
-          ? rawDate
-          : (rawDate instanceof Date ? rawDate.toISOString().slice(0, 10) : '');
+        let date = '';
+        if (typeof rawDate === 'string') date = rawDate;
+        else if (rawDate instanceof Date) date = rawDate.toISOString().slice(0, 10);
         return {
           date,
           accountId: typeof r['account_id'] === 'string' ? r['account_id'] : '',

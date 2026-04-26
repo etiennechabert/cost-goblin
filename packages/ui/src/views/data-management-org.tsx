@@ -72,9 +72,9 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
     await api.clearOrgData();
     setRefreshKey(k => k + 1);
   }
-  const selectedAccount = orgData !== null && selectedAccountId !== null
-    ? orgData.accounts.find(a => a.id === selectedAccountId) ?? null
-    : null;
+  const selectedAccount = orgData === null || selectedAccountId === null
+    ? null
+    : orgData.accounts.find(a => a.id === selectedAccountId) ?? null;
 
   async function handleSync() {
     if (profile === null) return;
@@ -213,22 +213,26 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
               <span>{String(allTagKeys.length)} tag keys (across all accounts, used as fallback when resources are under-tagged)</span>
             </li>
             <li className="flex items-center gap-2">
-              {regionInfo !== null && regionInfo.count > 0 ? (
-                <>
-                  <span className="text-accent">✓</span>
-                  <span className="text-text-secondary">{String(regionInfo.count)} region friendly names</span>
-                </>
-              ) : regionInfo?.lastError !== undefined && regionInfo.lastError !== null ? (
-                <>
-                  <span className="text-negative">✗</span>
-                  <span className="text-negative" title={regionInfo.lastError}>region friendly names — {regionInfo.lastError}</span>
-                </>
-              ) : (
-                <>
-                  <span className="text-text-muted">○</span>
-                  <span className="text-text-muted">region friendly names not synced (re-sync to populate)</span>
-                </>
-              )}
+              {(() => {
+                if (regionInfo !== null && regionInfo.count > 0) return (
+                  <>
+                    <span className="text-accent">✓</span>
+                    <span className="text-text-secondary">{String(regionInfo.count)} region friendly names</span>
+                  </>
+                );
+                if (regionInfo?.lastError !== undefined && regionInfo.lastError !== null) return (
+                  <>
+                    <span className="text-negative">✗</span>
+                    <span className="text-negative" title={regionInfo.lastError}>region friendly names — {regionInfo.lastError}</span>
+                  </>
+                );
+                return (
+                  <>
+                    <span className="text-text-muted">○</span>
+                    <span className="text-text-muted">region friendly names not synced (re-sync to populate)</span>
+                  </>
+                );
+              })()}
             </li>
           </ul>
           <div className="flex items-center justify-between px-4 py-2">

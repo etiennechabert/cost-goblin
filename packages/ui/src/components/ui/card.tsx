@@ -32,7 +32,7 @@ export function CardTitle({
   className,
   children,
   ...props
-}: React.HTMLAttributes<HTMLHeadingElement>) {
+}: Readonly<React.HTMLAttributes<HTMLHeadingElement>>) {
   return (
     <h3
       className={cn('font-semibold leading-none tracking-tight', className)}
@@ -46,7 +46,7 @@ export function CardTitle({
 export function CardDescription({
   className,
   ...props
-}: React.HTMLAttributes<HTMLParagraphElement>) {
+}: Readonly<React.HTMLAttributes<HTMLParagraphElement>>) {
   return (
     <p
       className={cn('text-sm text-text-secondary', className)}
@@ -58,14 +58,14 @@ export function CardDescription({
 export function CardContent({
   className,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
+}: Readonly<React.HTMLAttributes<HTMLDivElement>>) {
   return <div className={cn('p-6 pt-0', className)} {...props} />;
 }
 
 export function CardFooter({
   className,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
+}: Readonly<React.HTMLAttributes<HTMLDivElement>>) {
   return (
     <div
       className={cn('flex items-center p-6 pt-0', className)}

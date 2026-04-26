@@ -229,16 +229,19 @@ function buildTagSelect(
   return `COALESCE(NULLIF(${resourceExpr}, ''), ${fallbackExpr}) AS ${colName}`;
 }
 
-export function buildSource(
-  dataDir: string,
-  tier: string,
-  dimensions: DimensionsConfig,
-  orgAccountsPath?: string,
-  periods?: readonly string[],
-  costMetric: CostMetric = 'unblended',
-  availableColumns?: ReadonlySet<string>,
-  costPerspective?: CostPerspective,
-): string {
+export interface BuildSourceOptions {
+  readonly dataDir: string;
+  readonly tier: string;
+  readonly dimensions: DimensionsConfig;
+  readonly orgAccountsPath?: string | undefined;
+  readonly periods?: readonly string[] | undefined;
+  readonly costMetric?: CostMetric | undefined;
+  readonly availableColumns?: ReadonlySet<string> | undefined;
+  readonly costPerspective?: CostPerspective | undefined;
+}
+
+export function buildSource(opts: BuildSourceOptions): string {
+  const { dataDir, tier, dimensions, orgAccountsPath, periods, costMetric = 'unblended', availableColumns, costPerspective } = opts;
   const hasFallbacks = dimensions.tags.some(t => t.accountTagFallback !== undefined);
   const needsOrgJoin = hasFallbacks && orgAccountsPath !== undefined;
 
@@ -256,8 +259,11 @@ export function buildSource(
     ? 'line_item_usage_start_date::DATE AS usage_date,\n      line_item_usage_start_date::TIMESTAMP AS usage_hour'
     : 'line_item_usage_start_date::DATE AS usage_date';
 
-  const parquetSource = periods !== undefined && periods.length > 0
-    ? `read_parquet([${periods.map(p => `'${dataDir}/aws/raw/${tier}-${p}/*.parquet'`).join(', ')}])`
+  const parquetPaths = periods !== undefined && periods.length > 0
+    ? periods.map(p => `'${dataDir}/aws/raw/${tier}-${p}/*.parquet'`).join(', ')
+    : undefined;
+  const parquetSource = parquetPaths !== undefined
+    ? `read_parquet([${parquetPaths}])`
     : `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`;
 
   // Build fallback column extractions for the org-accounts join
@@ -359,7 +365,7 @@ function setupQuery(
   const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource(dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
+  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective });
   return { qb, filterClauses, exclusionClauses, source, costMetric };
 }
 
@@ -463,7 +469,7 @@ export function buildTrendQuery(
   const previousPeriods = computePeriodsInRange({ start: prevStartIso, end: prevEndIso });
   const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
   const periods = availablePeriods === undefined ? required : required.filter(p => availablePeriods.includes(p));
-  const source = buildSource(dataDir, 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
+  const source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective });
 
   const allFilterClauses = [...filterClauses, ...exclusionClauses];
   const filterWhere = allFilterClauses.length > 0 ? ` AND ${allFilterClauses.join(' AND ')}` : '';
@@ -747,7 +753,7 @@ export function buildMaterializeBaseQuery(
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(dateRange, availablePeriods);
-  const source = buildSource(dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
+  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective });
 
   const whereConditions = [
     `usage_date BETWEEN '${sqlEscapeString(dateRange.start)}' AND '${sqlEscapeString(dateRange.end)}'`,

@@ -362,10 +362,10 @@ async function generate(): Promise<void> {
   process.stdout.write('Done!\n');
 }
 
-const args = process.argv.slice(2);
-if (args.includes('--profile')) {
+const args = new Set(process.argv.slice(2));
+if (args.has('--profile')) {
   await profile();
-} else if (args.includes('--generate')) {
+} else if (args.has('--generate')) {
   await generate();
 } else {
   process.stdout.write('Usage: npx tsx generate.ts --profile | --generate\n');

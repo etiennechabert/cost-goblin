@@ -289,9 +289,9 @@ export class MockCostApi implements CostApi {
   queryExplorerOverview(): Promise<ExplorerOverviewResult> {
     const today = new Date();
     const end = today.toISOString().slice(0, 10);
-    const start = new Date(today.getTime() - 29 * 86400_000).toISOString().slice(0, 10);
+    const start = new Date(today.getTime() - 29 * 86_400_000).toISOString().slice(0, 10);
     const dailyTotals = Array.from({ length: 30 }, (_, i) => {
-      const d = new Date(today.getTime() - (29 - i) * 86400_000);
+      const d = new Date(today.getTime() - (29 - i) * 86_400_000);
       return {
         date: d.toISOString().slice(0, 10),
         cost: 3_500 + Math.sin(i / 3) * 400 + Math.random() * 300,
@@ -314,7 +314,7 @@ export class MockCostApi implements CostApi {
   queryExplorerRows(): Promise<ExplorerRowsResult> {
     const today = new Date();
     const end = today.toISOString().slice(0, 10);
-    const start = new Date(today.getTime() - 29 * 86400_000).toISOString().slice(0, 10);
+    const start = new Date(today.getTime() - 29 * 86_400_000).toISOString().slice(0, 10);
     const mockRows = [
       { date: end, hour: '', accountId: '111', accountName: 'prod-main', region: 'eu-central-1', service: 'Amazon EC2', serviceFamily: 'Compute', lineItemType: 'Usage', operation: 'RunInstances', usageType: 'EUC1-BoxUsage:t3.medium', description: '$0.0464 per On Demand Linux t3.medium Instance Hour', resourceId: 'i-0abc', usageAmount: 24, cost: 1_180.5, listCost: 1_200, tags: { tag_team: 'platform', tag_env: 'prod' } },
       { date: end, hour: '', accountId: '222', accountName: 'staging', region: 'us-east-1', service: 'Amazon RDS', serviceFamily: 'Database', lineItemType: 'Usage', operation: 'CreateDBInstance', usageType: 'RDS:db.t4g.micro', description: 'Aurora MySQL db.t4g.micro', resourceId: 'arn:rds:...', usageAmount: 12, cost: 420, listCost: 500, tags: { tag_team: 'data', tag_env: 'staging' } },

@@ -28,15 +28,15 @@ export function BubbleWidget({
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
   const query = useQuery(
-    () => specGroupBy !== undefined
-      ? api.queryTrends({
+    () => specGroupBy === undefined
+      ? Promise.resolve(null)
+      : api.queryTrends({
           groupBy: specGroupBy,
           dateRange,
           filters,
           deltaThreshold: DEFAULT_DELTA_THRESHOLD,
           percentThreshold: DEFAULT_PERCENT_THRESHOLD,
-        })
-      : Promise.resolve(null),
+        }),
     [specGroupBy, dateRange.start, dateRange.end, fk, api],
   );
 

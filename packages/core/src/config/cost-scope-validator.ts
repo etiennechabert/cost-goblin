@@ -43,15 +43,15 @@ function validateRule(raw: unknown, ctx: string): ExclusionRule {
     validateCondition(c, `${ctx}.conditions[${String(i)}]`),
   );
   const description =
-    raw['description'] !== undefined
-      ? (assertString(raw['description'], `${ctx}.description`), raw['description'])
-      : undefined;
+    raw['description'] === undefined
+      ? undefined
+      : (assertString(raw['description'], `${ctx}.description`), raw['description']);
   const enabled = raw['enabled'] === true;
   const builtIn = raw['builtIn'] === true;
   return {
     id: raw['id'],
     name: raw['name'],
-    ...(description !== undefined ? { description } : {}),
+    ...(description === undefined ? {} : { description }),
     enabled,
     builtIn,
     conditions,

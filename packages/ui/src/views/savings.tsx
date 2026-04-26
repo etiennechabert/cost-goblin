@@ -341,7 +341,7 @@ export function Savings() {
                 const current = isExpanded ? parseResourceDetails(rec.currentDetails) : null;
                 const recommended = isExpanded ? parseResourceDetails(rec.recommendedDetails) : null;
                 return (
-                  <tbody key={String(i)}>
+                  <tbody key={`${rec.resourceArn}-${rec.accountId}-${String(i)}`}>
                   <tr className={`border-b ${isExpanded ? 'border-border bg-bg-tertiary/20' : 'border-border-subtle'} hover:bg-bg-tertiary/30 transition-colors cursor-pointer`} onClick={() => { setExpandedRow(isExpanded ? null : i); }}>
                     <td className="px-4 py-3 max-w-lg">
                       <div className="flex items-baseline gap-2">
@@ -367,7 +367,7 @@ export function Savings() {
                     </td>
                   </tr>
                   {isExpanded && (
-                    <tr key={`detail-${String(i)}`} className="border-b border-border bg-bg-tertiary/10">
+                    <tr key={`detail-${rec.resourceArn}-${rec.accountId}`} className="border-b border-border bg-bg-tertiary/10">
                       <td colSpan={7} className="px-6 py-4">
                         <div className="grid grid-cols-2 gap-6 text-xs">
                           <div className="space-y-3">
@@ -385,8 +385,8 @@ export function Savings() {
                             {current !== null && current.usages.length > 0 && (
                               <div className="space-y-1 pt-1">
                                 <p className="text-text-muted text-[10px] uppercase tracking-wider">Usage</p>
-                                {current.usages.map((u, ui) => (
-                                  <p key={ui} className="text-text-secondary">{u.amount} {u.unit} <span className="text-text-muted">({u.type.split('-').pop() ?? u.type})</span></p>
+                                {current.usages.map((u) => (
+                                  <p key={`${u.type}-${u.amount}`} className="text-text-secondary">{u.amount} {u.unit} <span className="text-text-muted">({u.type.split('-').pop() ?? u.type})</span></p>
                                 ))}
                               </div>
                             )}

@@ -32,7 +32,7 @@ export function ConfirmModal({
   }, [onCancel]);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center" role="dialog" aria-modal="true">
+    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none" aria-modal="true">
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={onCancel}
@@ -66,6 +66,6 @@ export function ConfirmModal({
           </button>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }

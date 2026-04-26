@@ -70,7 +70,7 @@ function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
   const backfilled = loaded.builtIn.map(d => {
     let next = d;
     const rename = LEGACY_LABEL_RENAMES[d.name];
-    if (rename !== undefined && next.label === rename.from) {
+    if (rename !== undefined && rename.from === next.label) {
       next = { ...next, label: rename.to };
     }
     if (next.description === undefined) {

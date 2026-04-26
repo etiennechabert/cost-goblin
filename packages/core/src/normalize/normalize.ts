@@ -43,7 +43,7 @@ export function resolveAlias(
     if (canonical === normalizedValue) {
       return canonical;
     }
-    if (aliasList.some(a => a === normalizedValue)) {
+    if (aliasList.includes(normalizedValue)) {
       return canonical;
     }
   }
@@ -81,11 +81,10 @@ export function applyRegionFriendlyNames(
   if (regionMap.size === 0) return dims;
   const builtIn = dims.builtIn.map(d => {
     if (d.field !== 'region') return d;
-    const pick: ((e: RegionEnrichment) => string) | null =
-      d.name === 'region_country' ? (e) => e.country
-        : d.name === 'region_continent' ? (e) => e.continent
-          : d.useRegionNames === true ? (e) => e.longName
-            : null;
+    let pick: ((e: RegionEnrichment) => string) | null = null;
+    if (d.name === 'region_country') pick = (e) => e.country;
+    else if (d.name === 'region_continent') pick = (e) => e.continent;
+    else if (d.useRegionNames === true) pick = (e) => e.longName;
     if (pick === null) return d;
     const userAliases = d.aliases ?? {};
     const userCovered = new Set<string>();
@@ -135,8 +134,8 @@ interface NormalizableDimension {
 const NORMALIZE_SQL: Record<NormalizationRule, (expr: string) => string> = {
   'lowercase': (expr) => `LOWER(${expr})`,
   'uppercase': (expr) => `UPPER(${expr})`,
-  'lowercase-kebab': (expr) => `LOWER(REGEXP_REPLACE(REGEXP_REPLACE(${expr}, '([a-z])([A-Z])', '\\1-\\2'), '[_\\s]+', '-', 'g'))`,
-  'lowercase-underscore': (expr) => `LOWER(REGEXP_REPLACE(REGEXP_REPLACE(${expr}, '([a-z])([A-Z])', '\\1_\\2'), '[-\\s]+', '_', 'g'))`,
+  'lowercase-kebab': (expr) => String.raw`LOWER(REGEXP_REPLACE(REGEXP_REPLACE(${expr}, '([a-z])([A-Z])', '\1-\2'), '[_\s]+', '-', 'g'))`,
+  'lowercase-underscore': (expr) => String.raw`LOWER(REGEXP_REPLACE(REGEXP_REPLACE(${expr}, '([a-z])([A-Z])', '\1_\2'), '[-\s]+', '_', 'g'))`,
   'camelCase': (expr) => `LOWER(REPLACE(REPLACE(REPLACE(${expr}, '-', ''), '_', ''), ' ', ''))`,
 };
 

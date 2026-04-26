@@ -74,7 +74,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
 
   const dimensionsQuery = useQuery(() => api.getDimensions(), [api]);
   const dimensions: readonly Dimension[] = dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
-  const fallbackDim = dimensions[0] !== undefined ? getDimensionId(dimensions[0]) : 'service';
+  const fallbackDim = dimensions[0] === undefined ? 'service' : getDimensionId(dimensions[0]);
 
   useEffect(() => {
     let cancelled = false;
@@ -213,7 +213,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
   }
 
   async function handleReset(): Promise<void> {
-    if (!window.confirm('Reset built-in views to defaults? Your custom views will be kept (delete them manually to fully reset).')) return;
+    if (!globalThis.confirm('Reset built-in views to defaults? Your custom views will be kept (delete them manually to fully reset).')) return;
     // Client-side merge: built-ins from seed replace any current same-id built-in,
     // custom (non-builtIn) views in the editor are preserved in place. Missing
     // built-ins are prepended.
@@ -221,7 +221,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
     const seenSeedIds = new Set<string>();
     const replaced: ViewSpec[] = state.config.views.map(v => {
       const seed = seedById.get(v.id);
-      if (seed !== undefined && seed.builtIn === true) {
+      if (seed?.builtIn === true) {
         seenSeedIds.add(v.id);
         return seed;
       }
@@ -292,7 +292,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
             disabled={saving || !state.dirty}
             className="px-4 py-1.5 text-sm rounded-md bg-accent text-bg-primary font-medium hover:opacity-90 disabled:opacity-40"
           >
-            {saving ? 'Saving…' : state.dirty ? 'Save changes' : 'Saved'}
+            {(() => { if (saving) return 'Saving…'; return state.dirty ? 'Save changes' : 'Saved'; })()}
           </button>
         </div>
       </div>
@@ -385,7 +385,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
               </div>
 
               {selectedView.rows.map((row, rowIdx) => (
-                <div key={rowIdx} className="rounded-lg border border-border bg-bg-secondary/30 p-3 flex flex-col gap-2">
+                <div key={row.widgets[0]?.id ?? `row-${String(rowIdx)}`} className="rounded-lg border border-border bg-bg-secondary/30 p-3 flex flex-col gap-2">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-text-muted">Row {String(rowIdx + 1)}</span>
                     <div className="flex items-center gap-0.5">

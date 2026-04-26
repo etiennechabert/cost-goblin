@@ -62,8 +62,8 @@ function LineSvg({ series, visible, width, height }: LineSvgProps) {
   const maxDate = sortedDates.at(-1);
 
   const xScale = useMemo(() => {
-    const start = minDate !== undefined ? new Date(minDate) : new Date();
-    const end = maxDate !== undefined ? new Date(maxDate) : new Date();
+    const start = minDate === undefined ? new Date() : new Date(minDate);
+    const end = maxDate === undefined ? new Date() : new Date(maxDate);
     return scaleTime<number>({
       domain: [start, end],
       range: [0, innerW],
@@ -107,7 +107,7 @@ function LineSvg({ series, visible, width, height }: LineSvgProps) {
         const p = s.points.find(x2 => x2.date === nearest);
         const colorIdx = seriesColorIndex.get(s.name) ?? 0;
         const color = getColor(colorIdx);
-        return p !== undefined ? { name: s.name, cost: p.cost, color } : null;
+        return p === undefined ? null : { name: s.name, cost: p.cost, color };
       })
       .filter((e): e is { name: string; cost: number; color: string } => e !== null);
     showTooltip({
@@ -245,8 +245,8 @@ export function LineChart({ series, title, subtitle, height = 320, onSeriesClick
               key={s.name}
               type="button"
               onClick={() => {
-                if (onSeriesClick !== undefined) onSeriesClick(s.name);
-                else toggle(s.name);
+                if (onSeriesClick === undefined) toggle(s.name);
+                else onSeriesClick(s.name);
               }}
               onDoubleClick={() => { toggle(s.name); }}
               className="flex items-center gap-1.5 text-[11px] px-1.5 py-0.5 rounded hover:bg-bg-tertiary/40 transition-colors"
