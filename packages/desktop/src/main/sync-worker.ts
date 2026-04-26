@@ -129,7 +129,7 @@ async function handleSyncRequest(req: SyncRequest): Promise<void> {
           phase: progress.phase,
           filesDone: progress.filesDone,
           filesTotal: progress.filesTotal,
-          ...(progress.message !== undefined ? { message: progress.message } : {}),
+          ...(progress.message === undefined ? {} : { message: progress.message }),
         });
       },
     };

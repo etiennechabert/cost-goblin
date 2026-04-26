@@ -1341,7 +1341,7 @@ function filterValueFor(spec: ColumnSpec, row: import('@costgoblin/core/browser'
     case 'operation': return row.operation;
     case 'resource_id': return row.resourceId.length > 0 ? row.resourceId : null;
     default: {
-      if (spec.dimId !== null && spec.dimId.startsWith('tag_')) {
+      if (spec.dimId?.startsWith('tag_')) {
         const v = row.tags[spec.key];
         return v === undefined || v.length === 0 ? null : v;
       }
@@ -1370,7 +1370,7 @@ const DETAIL_FIELDS: readonly { key: string; label: string; render: (r: import('
 
 function RowDetail({ row, allColumns }: { row: import('@costgoblin/core/browser').ExplorerSampleRow; allColumns: readonly ColumnSpec[] }) {
   const tagEntries = Object.entries(row.tags).filter(([, v]) => v.length > 0);
-  const tagLabels = new Map(allColumns.filter(c => c.dimId !== null && c.dimId.startsWith('tag_')).map(c => [c.key, c.label]));
+  const tagLabels = new Map(allColumns.filter(c => c.dimId?.startsWith('tag_')).map(c => [c.key, c.label]));
 
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-4 gap-y-0.5 text-[11px]">

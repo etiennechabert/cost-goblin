@@ -212,7 +212,7 @@ export function registerSyncHandlers(app: AppContext): void {
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
       if (line === undefined) continue;
-      const cols = line.split(',').map(c => c.replace(/^"|"$/g, '').trim());
+      const cols = line.split(',').map(c => c.replaceAll(/^"|"$/g, '').trim());
       const accountId = cols[0] ?? '';
       const name = cols[4] ?? '';
       const orgPath = cols[2] ?? '';

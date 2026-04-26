@@ -15,7 +15,7 @@ function assertFiniteNumber(value: number, name: string): void {
 }
 
 function sqlEscapeString(value: string): string {
-  return value.replace(/'/g, "''");
+  return value.replaceAll("'", "''");
 }
 
 /** Build a SQL IN-list. Uses placeholders when a QueryBuilder is provided;
@@ -347,7 +347,7 @@ function setupQuery(
     return { qb, filterClauses, exclusionClauses: [], source: materializedSource, costMetric };
   }
 
-  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb) : [];
+  const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const source = buildSource(dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective);
@@ -446,7 +446,7 @@ export function buildTrendQuery(
   const qb = new QueryBuilder();
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
-  const exclusionClauses = costScope !== undefined ? buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb) : [];
+  const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
 

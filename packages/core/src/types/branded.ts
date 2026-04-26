@@ -32,5 +32,5 @@ export function asDateString(value: string): DateString {
 }
 
 export function tagColumnName(tagName: string): string {
-  return `tag_${tagName.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  return `tag_${tagName.replaceAll(/[^a-zA-Z0-9]/g, '_')}`;
 }

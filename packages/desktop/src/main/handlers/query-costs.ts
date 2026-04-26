@@ -105,10 +105,10 @@ export function registerCostHandlers(app: AppContext): void {
       totalCost += cost;
 
       const existing = dayMap.get(date);
-      if (existing !== undefined) {
-        existing[group] = (existing[group] ?? 0) + cost;
-      } else {
+      if (existing === undefined) {
         dayMap.set(date, { [group]: cost });
+      } else {
+        existing[group] = (existing[group] ?? 0) + cost;
       }
     }
 

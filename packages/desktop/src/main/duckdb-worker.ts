@@ -154,9 +154,7 @@ function parsePoolSize(): number {
 let poolPromise: Promise<ResourcePool<DuckDBConnection>> | null = null;
 
 function getPool(): Promise<ResourcePool<DuckDBConnection>> {
-  if (poolPromise === null) {
-    poolPromise = createDuckDB().then(db => createResourcePool(parsePoolSize(), () => db.connect()));
-  }
+  poolPromise ??= createDuckDB().then(db => createResourcePool(parsePoolSize(), () => db.connect()));
   return poolPromise;
 }
 

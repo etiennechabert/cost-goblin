@@ -67,7 +67,7 @@ export function TableWidget({
       dateRange,
       granularity,
       groupByColumns,
-      ...(sort !== undefined ? { sort } : {}),
+      ...(sort === undefined ? {} : { sort }),
       rowLimit: ROW_LIMIT,
     }),
     [fk, dateRange.start, dateRange.end, granularity, groupByKey, sort?.column, sort?.direction, api],

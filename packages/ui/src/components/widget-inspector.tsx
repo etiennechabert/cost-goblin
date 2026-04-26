@@ -1,10 +1,8 @@
 import { useMemo } from 'react';
-import type { Dimension, WidgetSize, WidgetSpec, WidgetType } from '@costgoblin/core/browser';
-import { asDimensionId } from '@costgoblin/core/browser';
+import { asDimensionId, OVERVIEW_SEED_VIEW, type Dimension, type WidgetSize, type WidgetSpec, type WidgetType } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel, isTagDimension } from '../lib/dimensions.js';
 import { WIDGET_CATALOG } from '../widgets/registry.js';
 import { buildAllColumns } from './data-table.js';
-import { OVERVIEW_SEED_VIEW } from '@costgoblin/core/browser';
 
 interface WidgetInspectorProps {
   readonly widget: WidgetSpec;
@@ -29,33 +27,33 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
   const common = {
     id: w.id,
     size: w.size,
-    ...(w.filters !== undefined ? { filters: w.filters } : {}),
+    ...(w.filters === undefined ? {} : { filters: w.filters }),
   };
   switch (w.type) {
     case 'summary':
-      return { ...common, type: w.type, ...(w.metric !== undefined ? { metric: w.metric } : {}) };
+      return { ...common, type: w.type, ...(w.metric === undefined ? {} : { metric: w.metric }) };
     case 'pie':
       return { ...common, type: w.type, groupBy: w.groupBy };
     case 'stackedBar':
     case 'bubble':
       return { ...common, type: w.type, groupBy: w.groupBy };
     case 'treemap':
-      return { ...common, type: w.type, groupBy: w.groupBy, ...(w.drillTo !== undefined ? { drillTo: w.drillTo } : {}) };
+      return { ...common, type: w.type, groupBy: w.groupBy, ...(w.drillTo === undefined ? {} : { drillTo: w.drillTo }) };
     case 'line':
     case 'topNBar':
     case 'heatmap':
-      return { ...common, type: w.type, groupBy: w.groupBy, ...(w.topN !== undefined ? { topN: w.topN } : {}) };
+      return { ...common, type: w.type, groupBy: w.groupBy, ...(w.topN === undefined ? {} : { topN: w.topN }) };
     case 'table':
       return {
         ...common,
         type: w.type,
-        ...(w.enabledColumns !== undefined ? { enabledColumns: w.enabledColumns } : {}),
+        ...(w.enabledColumns === undefined ? {} : { enabledColumns: w.enabledColumns }),
       };
   }
 }
 
 function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: string): WidgetSpec {
-  const base = { id: prev.id, size: prev.size, ...(prev.title !== undefined ? { title: prev.title } : {}) };
+  const base = { id: prev.id, size: prev.size, ...(prev.title === undefined ? {} : { title: prev.title }) };
   const existingGroupBy = 'groupBy' in prev ? prev.groupBy : asDimensionId(fallbackDim);
   switch (type) {
     case 'summary':
@@ -89,7 +87,7 @@ export function WidgetInspector({
   onMoveRight,
 }: WidgetInspectorProps) {
   const catalog = WIDGET_CATALOG.find(c => c.type === widget.type);
-  const fallbackDim = dimensions[0] !== undefined ? getDimensionId(dimensions[0]) : 'service';
+  const fallbackDim = dimensions[0] === undefined ? 'service' : getDimensionId(dimensions[0]);
 
   function setSize(size: WidgetSize) {
     onChange({ ...widget, size });

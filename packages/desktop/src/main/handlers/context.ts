@@ -92,7 +92,7 @@ function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
   return {
     builtIn: [...backfilled, ...missing],
     tags: loaded.tags,
-    ...(loaded.order !== undefined ? { order: loaded.order } : {}),
+    ...(loaded.order === undefined ? {} : { order: loaded.order }),
   };
 }
 export interface IpcContext {
@@ -246,7 +246,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
           for (let i = 1; i < lines.length; i++) {
             const line = lines[i];
             if (line === undefined) continue;
-            const cols = line.split(',').map(c => c.replace(/^"|"$/g, '').trim());
+            const cols = line.split(',').map(c => c.replaceAll(/^"|"$/g, '').trim());
             const id = cols[0] ?? '';
             const name = cols[4] ?? '';
             if (id.length > 0 && name.length > 0) map.set(id, name);
@@ -373,7 +373,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
         // First-month sample is enough — CUR schema is stable across
         // months within a billing report (AWS bumps schema on CUR
         // version changes, which is rare and user-initiated).
-        const month = months[months.length - 1];
+        const month = months.at(-1);
         const glob = `${ctx.dataDir}/aws/raw/${tier}-${String(month)}/*.parquet`;
         const rows = await ctx.db.runQuery(`DESCRIBE SELECT * FROM read_parquet('${glob}') LIMIT 0`);
         const cols = new Set<string>();

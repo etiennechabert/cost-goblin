@@ -26,7 +26,7 @@ function ruleToYaml(r: ExclusionRule): YamlRule {
   return {
     id: r.id,
     name: r.name,
-    ...(r.description !== undefined ? { description: r.description } : {}),
+    ...(r.description === undefined ? {} : { description: r.description }),
     enabled: r.enabled,
     builtIn: r.builtIn,
     conditions: r.conditions.map(conditionToYaml),
@@ -39,10 +39,10 @@ export function costScopeToYaml(cfg: CostScopeConfig): YamlCostScope {
     costMetric: cfg.costMetric,
     // Only emit when non-default — keeps legacy YAMLs from churning
     // when the serializer round-trips them.
-    ...(cfg.costPerspective !== undefined && cfg.costPerspective !== 'gross'
-      ? { costPerspective: cfg.costPerspective }
-      : {}),
-    ...(lagDays !== DEFAULT_LAG_DAYS ? { lagDays } : {}),
+    ...(cfg.costPerspective === undefined || cfg.costPerspective === 'gross'
+      ? {}
+      : { costPerspective: cfg.costPerspective }),
+    ...(lagDays === DEFAULT_LAG_DAYS ? {} : { lagDays }),
     rules: cfg.rules.map(ruleToYaml),
   };
 }

@@ -96,8 +96,8 @@ export async function syncRegionNames(profile: string): Promise<RegionNameMap> {
         if (value.length === 0) continue;
         // /aws/service/global-infrastructure/regions/<code>/<field>
         const parts = name.split('/');
-        const code = parts[parts.length - 2] ?? '';
-        const field = parts[parts.length - 1] ?? '';
+        const code = parts.at(-2) ?? '';
+        const field = parts.at(-1) ?? '';
         if (code.length === 0) continue;
         const entry = partial.get(code) ?? {};
         if (field === 'longName') entry.longName = value;

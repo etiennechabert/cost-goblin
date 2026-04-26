@@ -619,7 +619,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
                 .replace(/^user_/i, '')
                 .replaceAll('_', ' ')
                 .replaceAll('-', ' ')
-                .replace(/\b\w/g, c => c.toUpperCase());
+                .replaceAll(/\b\w/g, c => c.toUpperCase());
               setState(s => ({ ...s, tagName: name, label: s.label.length === 0 ? label : s.label }));
             }}
             className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
@@ -736,8 +736,8 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           switch (state.normalize) {
             case 'lowercase': return v.toLowerCase();
             case 'uppercase': return v.toUpperCase();
-            case 'lowercase-kebab': return v.replace(/([a-z])([A-Z])/g, '$1-$2').replaceAll('_', '-').replaceAll(' ', '-').toLowerCase();
-            case 'lowercase-underscore': return v.replace(/([a-z])([A-Z])/g, '$1_$2').replaceAll('-', '_').replaceAll(' ', '_').toLowerCase();
+            case 'lowercase-kebab': return v.replaceAll(/([a-z])([A-Z])/g, '$1-$2').replaceAll('_', '-').replaceAll(' ', '-').toLowerCase();
+            case 'lowercase-underscore': return v.replaceAll(/([a-z])([A-Z])/g, '$1_$2').replaceAll('-', '_').replaceAll(' ', '_').toLowerCase();
             case 'camelCase': return v.replaceAll(/[-_\s]+(.)/g, (_, c: string) => c.toUpperCase()).replace(/^(.)/, (_, c: string) => c.toLowerCase());
             default: return v;
           }
