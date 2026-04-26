@@ -142,22 +142,19 @@ function AppShell(): React.JSX.Element {
 
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
-    // Read views.yaml. The handler seeds it lazily on first access so this
-    // call also bootstraps the file for new installations.
-    api.getViewsConfig()
-      .then((cfg) => {
-        const resolved = cfg.views.length > 0 ? cfg : FALLBACK_VIEWS;
-        setViewsConfig(resolved);
-        setView(prev => {
-          if (prev.page !== 'custom') return prev;
-          const exists = resolved.views.some(v => v.id === prev.viewId);
-          const firstId = resolved.views[0]?.id;
-          return exists || firstId === undefined ? prev : { page: 'custom', viewId: firstId };
-        });
-      })
-      .catch(() => {
-        setViewsConfig(FALLBACK_VIEWS);
+    function applyViews(cfg: ViewsConfig): void {
+      const resolved = cfg.views.length > 0 ? cfg : FALLBACK_VIEWS;
+      setViewsConfig(resolved);
+      setView(prev => {
+        if (prev.page !== 'custom') return prev;
+        const exists = resolved.views.some(v => v.id === prev.viewId);
+        const firstId = resolved.views[0]?.id;
+        return exists || firstId === undefined ? prev : { page: 'custom', viewId: firstId };
       });
+    }
+    api.getViewsConfig()
+      .then(applyViews)
+      .catch(() => { setViewsConfig(FALLBACK_VIEWS); });
   }, [api, setupCheck]);
 
   useEffect(() => {

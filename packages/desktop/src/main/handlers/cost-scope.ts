@@ -23,10 +23,52 @@ import type {
   CostScopeSampleRow,
   DimensionsConfig,
 } from '@costgoblin/core';
+import type { RawRow } from '../duckdb-client.js';
 import type { AppContext } from './context.js';
 import { toNum } from './query-utils.js';
 
 const SAMPLE_ROW_LIMIT = 500;
+
+function toStr(v: unknown): string {
+  if (typeof v === 'string') return v;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return '';
+}
+
+function mapSampleRow(
+  r: RawRow,
+  tagColumns: readonly { id: string; label: string }[],
+): CostScopeSampleRow {
+  const tags: Record<string, string> = {};
+  for (const t of tagColumns) {
+    const v = r[t.id];
+    tags[t.id] = typeof v === 'string' ? v : '';
+  }
+  return {
+    date: toStr(r['usage_date']),
+    accountId: toStr(r['account_id']),
+    accountName: toStr(r['account_name']),
+    region: toStr(r['region']),
+    service: toStr(r['service']),
+    serviceFamily: toStr(r['service_family']),
+    lineItemType: toStr(r['line_item_type']),
+    operation: toStr(r['operation']),
+    usageType: toStr(r['usage_type']),
+    description: toStr(r['description']),
+    resourceId: toStr(r['resource_id']),
+    usageAmount: toNum(r['usage_amount']),
+    cost: toNum(r['cost']),
+    listCost: toNum(r['list_cost']),
+    excluded: toNum(r['excluded']) === 1,
+    tags,
+  };
+}
+
+function logSettledError(label: string, result: PromiseSettledResult<unknown>): void {
+  if (result.status === 'rejected') {
+    logger.warn(`cost-scope: ${label} query failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
+  }
+}
 
 // Every rule's dimensionId must resolve to a known built-in or tag dimension.
 // Dangling references silently become a bogus column reference in SQL, which
@@ -243,57 +285,24 @@ export function registerCostScopeHandlers(app: AppContext): void {
           excludedRows: toNum(row?.[`rule_${String(i)}_rows`]),
         };
       }
-    } else {
-      logger.warn(`cost-scope: agg query failed: ${aggResult.reason instanceof Error ? aggResult.reason.message : String(aggResult.reason)}`);
     }
+    logSettledError('agg', aggResult);
 
     let dailyTotals: readonly CostScopeDailyRow[] = [];
     if (dailyResult.status === 'fulfilled') {
-      dailyTotals = dailyResult.value.map(r => {
-        const raw = r['date'];
-        let date = '';
-        if (typeof raw === 'string') date = raw;
-        else if (raw instanceof Date) date = raw.toISOString().slice(0, 10);
-        return { date, keptCost: toNum(r['kept_cost']), excludedCost: toNum(r['excluded_cost']) };
-      });
-    } else {
-      logger.warn(`cost-scope: daily query failed: ${dailyResult.reason instanceof Error ? dailyResult.reason.message : String(dailyResult.reason)}`);
+      dailyTotals = dailyResult.value.map(r => ({
+        date: toStr(r['date']),
+        keptCost: toNum(r['kept_cost']),
+        excludedCost: toNum(r['excluded_cost']),
+      }));
     }
+    logSettledError('daily', dailyResult);
 
     let sampleRows: readonly CostScopeSampleRow[] = [];
     if (sampleResult.status === 'fulfilled') {
-      sampleRows = sampleResult.value.map(r => {
-        const tags: Record<string, string> = {};
-        for (const t of tagColumns) {
-          const v = r[t.id];
-          tags[t.id] = typeof v === 'string' ? v : '';
-        }
-        const rawDate = r['usage_date'];
-        let date = '';
-        if (typeof rawDate === 'string') date = rawDate;
-        else if (rawDate instanceof Date) date = rawDate.toISOString().slice(0, 10);
-        return {
-          date,
-          accountId: typeof r['account_id'] === 'string' ? r['account_id'] : '',
-          accountName: typeof r['account_name'] === 'string' ? r['account_name'] : '',
-          region: typeof r['region'] === 'string' ? r['region'] : '',
-          service: typeof r['service'] === 'string' ? r['service'] : '',
-          serviceFamily: typeof r['service_family'] === 'string' ? r['service_family'] : '',
-          lineItemType: typeof r['line_item_type'] === 'string' ? r['line_item_type'] : '',
-          operation: typeof r['operation'] === 'string' ? r['operation'] : '',
-          usageType: typeof r['usage_type'] === 'string' ? r['usage_type'] : '',
-          description: typeof r['description'] === 'string' ? r['description'] : '',
-          resourceId: typeof r['resource_id'] === 'string' ? r['resource_id'] : '',
-          usageAmount: toNum(r['usage_amount']),
-          cost: toNum(r['cost']),
-          listCost: toNum(r['list_cost']),
-          excluded: toNum(r['excluded']) === 1,
-          tags,
-        };
-      });
-    } else {
-      logger.warn(`cost-scope: sample query failed: ${sampleResult.reason instanceof Error ? sampleResult.reason.message : String(sampleResult.reason)}`);
+      sampleRows = sampleResult.value.map(r => mapSampleRow(r, tagColumns));
     }
+    logSettledError('sample', sampleResult);
 
     return {
       windowDays,

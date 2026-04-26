@@ -155,6 +155,38 @@ function makeLineHandler(
   };
 }
 
+async function syncDateGroup(
+  date: string,
+  dateFiles: readonly ManifestFileEntry[],
+  s3Bucket: string,
+  dataDir: string,
+  outputDir: string,
+  profile: string,
+  signal: AbortSignal | undefined,
+  onLine: (line: string) => void,
+): Promise<number> {
+  const firstFile = dateFiles[0];
+  if (firstFile === undefined) return 0;
+
+  const datePrefix = extractPeriodPrefix(firstFile.key);
+  const s3Source = `s3://${s3Bucket}/${datePrefix}`;
+  const stagingDir = join(dataDir, 'aws', 'raw', `cost-opt-${date}`);
+  await mkdir(stagingDir, { recursive: true });
+
+  await runAwsS3Sync({ source: s3Source, dest: stagingDir, profile, signal, onLine });
+
+  const dateDir = join(outputDir, `usage_date=${date}`);
+  await mkdir(dateDir, { recursive: true });
+
+  const downloaded = await readdir(stagingDir);
+  for (const f of downloaded) {
+    if (f.endsWith('.parquet')) {
+      await copyFile(join(stagingDir, f), join(dateDir, 'data.parquet'));
+    }
+  }
+  return dateFiles.length;
+}
+
 async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
   const { bucketPath, profile, dataDir, files, onProgress } = options;
   const s3Path = parseS3Path(bucketPath);
@@ -175,34 +207,10 @@ async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ fi
 
     for (const [date, dateFiles] of dateGroups) {
       if (options.signal?.aborted) break;
-
-      const firstFile = dateFiles[0];
-      if (firstFile === undefined) continue;
-
-      const datePrefix = extractPeriodPrefix(firstFile.key);
-      const s3Source = `s3://${s3Path.bucket}/${datePrefix}`;
-      const stagingDir = join(dataDir, 'aws', 'raw', `cost-opt-${date}`);
-      await mkdir(stagingDir, { recursive: true });
-
-      await runAwsS3Sync({
-        source: s3Source,
-        dest: stagingDir,
-        profile,
-        signal: options.signal,
-        onLine: makeLineHandler(onProgress, totalFiles, counter),
-      });
-
-      const dateDir = join(outputDir, `usage_date=${date}`);
-      await mkdir(dateDir, { recursive: true });
-
-      const downloaded = await readdir(stagingDir);
-      for (const f of downloaded) {
-        if (f.endsWith('.parquet')) {
-          await copyFile(join(stagingDir, f), join(dateDir, 'data.parquet'));
-        }
-      }
-
-      totalFilesDownloaded += dateFiles.length;
+      totalFilesDownloaded += await syncDateGroup(
+        date, dateFiles, s3Path.bucket, dataDir, outputDir, profile,
+        options.signal, makeLineHandler(onProgress, totalFiles, counter),
+      );
     }
 
     if (onProgress !== undefined) {

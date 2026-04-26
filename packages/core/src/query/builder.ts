@@ -129,6 +129,49 @@ function buildFilterClauses(
   return clauses;
 }
 
+/** Try to expand account display-names back to raw IDs via the reverse map.
+ *  Returns the SQL fragment if expansion was used, or null to fall through. */
+function tryExpandAccountIds(
+  values: readonly string[],
+  rawField: string,
+  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
+  qb: QueryBuilder | undefined,
+): string | null {
+  if (rawField !== 'account_id' || accountReverseMap === undefined) return null;
+  const expandedIds = new Set<string>();
+  let usedReverse = false;
+  for (const v of values) {
+    const ids = accountReverseMap.get(v);
+    if (ids !== undefined && ids.length > 0) {
+      for (const id of ids) expandedIds.add(id);
+      usedReverse = true;
+    } else {
+      expandedIds.add(v);
+    }
+  }
+  if (!usedReverse) return null;
+  const list = buildSqlList([...expandedIds], qb);
+  return `${rawField} IN (${list})`;
+}
+
+/** Build the SQL fragment for a single condition within a rule. Returns null
+ *  when the condition should be skipped (empty values, unknown dimension). */
+function buildConditionSql(
+  cond: ExclusionRule['conditions'][number],
+  dimensions: DimensionsConfig,
+  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
+  qb: QueryBuilder | undefined,
+): string | null {
+  if (cond.values.length === 0) return null;
+  const resolved = tryResolveField(cond.dimensionId, dimensions);
+  if (resolved === null) return null;
+  const expanded = tryExpandAccountIds(cond.values, resolved.rawField, accountReverseMap, qb);
+  if (expanded !== null) return expanded;
+  const normalizedValues = cond.values.map(v => normalizeRuleValue(v, resolved.dim));
+  const list = buildSqlList(normalizedValues, qb);
+  return `${resolved.fieldExpr} IN (${list})`;
+}
+
 /** Build the positive match expression for a single rule (AND of conditions,
  *  OR within each condition's values). Used both for NOT-exclusion in queries
  *  and for the positive preview queries. Returns null when the rule has no
@@ -141,40 +184,8 @@ export function buildRuleMatchExpr(
 ): string | null {
   const conditionSqls: string[] = [];
   for (const cond of rule.conditions) {
-    if (cond.values.length === 0) continue;
-    // Skip conditions whose dimension no longer exists — happens if a user
-    // deletes/renames a dimension while a rule references it. Emitting a
-    // bogus column reference here would crash every query that threads cost
-    // scope through (which is all of them). Save-time validation prevents
-    // this on new edits; this guard covers legacy on-disk rules.
-    const resolved = tryResolveField(cond.dimensionId, dimensions);
-    if (resolved === null) continue;
-    if (resolved.rawField === 'account_id' && accountReverseMap !== undefined) {
-      const expandedIds = new Set<string>();
-      let usedReverse = false;
-      for (const v of cond.values) {
-        const ids = accountReverseMap.get(v);
-        if (ids !== undefined && ids.length > 0) {
-          for (const id of ids) expandedIds.add(id);
-          usedReverse = true;
-        } else {
-          expandedIds.add(v);
-        }
-      }
-      if (usedReverse) {
-        const list = buildSqlList([...expandedIds], qb);
-        conditionSqls.push(`${resolved.rawField} IN (${list})`);
-        continue;
-      }
-    }
-    // Apply the dim's normalize + alias transformation to each value so
-    // rule conditions stay correct when the user normalises the target
-    // dimension (e.g. a lowercase rule on `line_item_type` would otherwise
-    // turn 'RIFee' in the built-in rule into a silent no-match). The
-    // field expression already bakes in the same transformation.
-    const normalizedValues = cond.values.map(v => normalizeRuleValue(v, resolved.dim));
-    const list = buildSqlList(normalizedValues, qb);
-    conditionSqls.push(`${resolved.fieldExpr} IN (${list})`);
+    const sql = buildConditionSql(cond, dimensions, accountReverseMap, qb);
+    if (sql !== null) conditionSqls.push(sql);
   }
   if (conditionSqls.length === 0) return null;
   return conditionSqls.join(' AND ');

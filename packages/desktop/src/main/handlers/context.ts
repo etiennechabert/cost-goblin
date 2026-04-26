@@ -157,6 +157,76 @@ export interface AppContext {
   readonly warmupBase: () => void;
 }
 
+async function loadAccountCsv(
+  rawDir: string,
+  fs: typeof import('node:fs/promises'),
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  try {
+    const entries = await fs.readdir(rawDir);
+    const csvFile = entries.find(e => e.toLowerCase().endsWith('.csv') && e.toLowerCase().includes('account'));
+    if (csvFile !== undefined) {
+      const content = await fs.readFile((await import('node:path')).join(rawDir, csvFile), 'utf-8');
+      const lines = content.split('\n').filter(l => l.trim().length > 0);
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        if (line === undefined) continue;
+        const cols = line.split(',').map(c => c.replaceAll(/^"|"$/g, '').trim());
+        const id = cols[0] ?? '';
+        const name = cols[4] ?? '';
+        if (id.length > 0 && name.length > 0) map.set(id, name);
+      }
+    }
+  } catch { /* no raw dir */ }
+  return map;
+}
+
+function applyAccountNameTransforms(
+  raw: Map<string, string>,
+  normalize: import('@costgoblin/core').NormalizationRule | undefined,
+  patterns: readonly string[] | undefined,
+): Map<string, string> {
+  if (normalize === undefined && (patterns === undefined || patterns.length === 0)) return raw;
+  return new Map([...raw].map(([id, name]) => {
+    let v = name;
+    if (normalize !== undefined) v = applyNormalizationRule(v, normalize);
+    if (patterns !== undefined && patterns.length > 0) v = applyStripPatterns(v, patterns);
+    return [id, v];
+  }));
+}
+
+function extractAccountTagEntry(acct: unknown): { id: string; tags: Record<string, string> } | null {
+  if (!isStringRecord(acct)) return null;
+  const id = acct['id'];
+  const tags = acct['tags'];
+  if (typeof id !== 'string' || !isStringRecord(tags)) return null;
+  const stringTags: Record<string, string> = {};
+  for (const [k, v] of Object.entries(tags)) {
+    if (typeof v === 'string') stringTags[k] = v;
+  }
+  return { id, tags: stringTags };
+}
+
+async function generateFlatOrgTags(baseDir: string, flatPath: string): Promise<string | undefined> {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  try {
+    const raw = await fs.readFile(path.join(baseDir, 'org-accounts.json'), 'utf-8');
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { return undefined; }
+    if (!isStringRecord(parsed) || !Array.isArray(parsed['accounts'])) return undefined;
+    const tagLookup: { id: string; tags: Record<string, string> }[] = [];
+    for (const acct of parsed['accounts']) {
+      const entry = extractAccountTagEntry(acct);
+      if (entry !== null) tagLookup.push(entry);
+    }
+    await fs.writeFile(flatPath, JSON.stringify(tagLookup));
+    return flatPath;
+  } catch {
+    return undefined;
+  }
+}
+
 export function createAppContext(ctx: IpcContext): AppContext {
   const state: AppState = {
     config: null,
@@ -211,15 +281,6 @@ export function createAppContext(ctx: IpcContext): AppContext {
   }
 
   async function getAccountMap(): Promise<Map<string, string>> {
-    // Returns the Account id→name map the handlers should use for display
-    // resolution. Source depends on the Account dim's config:
-    //   - useOrgAccounts=true + accountNameFromTag set  : org-sync tag value
-    //   - useOrgAccounts=true                           : org-sync Name field
-    //   - otherwise                                     : legacy account CSV
-    // Both org and CSV are optional — if the preferred source is missing we
-    // fall through to the other one before giving up and returning an empty
-    // map. Tag-based names silently fall back to the Name field for accounts
-    // that don't carry the tag.
     if (state.accountMap !== null) return state.accountMap;
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
@@ -230,54 +291,14 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const preferOrg = accountDim?.useOrgAccounts === true;
     const tagKey = accountDim?.accountNameFromTag;
 
-    async function fromOrg(): Promise<Map<string, string>> {
-      return loadOrgAccountsMap(ctx.dataDir, tagKey);
-    }
-
-    async function fromCsv(): Promise<Map<string, string>> {
-      const map = new Map<string, string>();
-      try {
-        const rawDir = path.join(baseDir, 'raw');
-        const entries = await fs.readdir(rawDir);
-        const csvFile = entries.find(e => e.toLowerCase().endsWith('.csv') && e.toLowerCase().includes('account'));
-        if (csvFile !== undefined) {
-          const content = await fs.readFile(path.join(rawDir, csvFile), 'utf-8');
-          const lines = content.split('\n').filter(l => l.trim().length > 0);
-          for (let i = 1; i < lines.length; i++) {
-            const line = lines[i];
-            if (line === undefined) continue;
-            const cols = line.split(',').map(c => c.replaceAll(/^"|"$/g, '').trim());
-            const id = cols[0] ?? '';
-            const name = cols[4] ?? '';
-            if (id.length > 0 && name.length > 0) map.set(id, name);
-          }
-        }
-      } catch { /* no raw dir */ }
-      return map;
-    }
+    const fromOrg = () => loadOrgAccountsMap(ctx.dataDir, tagKey);
+    const fromCsv = () => loadAccountCsv(path.join(baseDir, 'raw'), fs);
 
     const primary = preferOrg ? await fromOrg() : await fromCsv();
     const fallback = preferOrg ? await fromCsv() : await fromOrg();
     const raw = primary.size > 0 ? primary : fallback;
 
-    // Apply the dim's display-time transforms to every resolved name. Done
-    // once here so every downstream caller — queries, preview, sidecars —
-    // sees the cleaned name without re-implementing the rule.
-    //
-    // Order matches the editor's visual top-down flow: normalize first, then
-    // strip. Users writing strip patterns under kebab/snake normalization
-    // need to anchor against the post-normalize form (e.g. '-production$'
-    // rather than '\s+production$').
-    const patterns = accountDim?.nameStripPatterns;
-    const normalize = accountDim?.normalize;
-    const map = (normalize !== undefined || (patterns !== undefined && patterns.length > 0))
-      ? new Map([...raw].map(([id, name]) => {
-          let v = name;
-          if (normalize !== undefined) v = applyNormalizationRule(v, normalize);
-          if (patterns !== undefined && patterns.length > 0) v = applyStripPatterns(v, patterns);
-          return [id, v];
-        }))
-      : raw;
+    const map = applyAccountNameTransforms(raw, accountDim?.normalize, accountDim?.nameStripPatterns);
 
     if (map.size > 0) {
       logger.info(`Loaded account mapping (${preferOrg ? 'org-data' : 'csv'} preferred): ${String(map.size)} accounts`);
@@ -295,29 +316,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
       await fs.access(flatPath);
       return flatPath;
     } catch {
-      // Try to generate from org-accounts.json if it exists
-      try {
-        const raw = await fs.readFile(path.join(baseDir, 'org-accounts.json'), 'utf-8');
-        let parsed: unknown;
-        try { parsed = JSON.parse(raw); } catch { return undefined; }
-        if (!isStringRecord(parsed) || !Array.isArray(parsed['accounts'])) return undefined;
-        const tagLookup: { id: string; tags: Record<string, string> }[] = [];
-        for (const acct of parsed['accounts']) {
-          if (!isStringRecord(acct)) continue;
-          const id = acct['id'];
-          const tags = acct['tags'];
-          if (typeof id !== 'string' || !isStringRecord(tags)) continue;
-          const stringTags: Record<string, string> = {};
-          for (const [k, v] of Object.entries(tags)) {
-            if (typeof v === 'string') stringTags[k] = v;
-          }
-          tagLookup.push({ id, tags: stringTags });
-        }
-        await fs.writeFile(flatPath, JSON.stringify(tagLookup));
-        return flatPath;
-      } catch {
-        return undefined;
-      }
+      return generateFlatOrgTags(baseDir, flatPath);
     }
   }
 
@@ -490,6 +489,16 @@ export function createAppContext(ctx: IpcContext): AppContext {
 /** Read org-accounts.json and return an id→name map. When tagKey is set,
  *  each account's "name" is the value of that tag; accounts missing the tag
  *  fall back to the Name field. */
+function resolveAccountName(acct: Record<string, unknown>, tagKey: string | undefined): string | undefined {
+  if (tagKey !== undefined && tagKey.length > 0 && isStringRecord(acct['tags'])) {
+    const tagVal = acct['tags'][tagKey];
+    if (typeof tagVal === 'string' && tagVal.length > 0) return tagVal;
+  }
+  const name = acct['name'];
+  if (typeof name === 'string' && name.length > 0) return name;
+  return undefined;
+}
+
 export async function loadOrgAccountsMap(dataDir: string, tagKey?: string): Promise<Map<string, string>> {
   const fs = await import('node:fs/promises');
   const path = await import('node:path');
@@ -497,20 +506,13 @@ export async function loadOrgAccountsMap(dataDir: string, tagKey?: string): Prom
   try {
     const raw = await fs.readFile(path.join(path.dirname(dataDir), 'org-accounts.json'), 'utf-8');
     const parsed: unknown = JSON.parse(raw);
-    if (isStringRecord(parsed) && Array.isArray(parsed['accounts'])) {
-      for (const acct of parsed['accounts']) {
-        if (!isStringRecord(acct)) continue;
-        const id = acct['id'];
-        const name = acct['name'];
-        if (typeof id !== 'string' || id.length === 0) continue;
-        let resolved: string | undefined;
-        if (tagKey !== undefined && tagKey.length > 0 && isStringRecord(acct['tags'])) {
-          const tagVal = acct['tags'][tagKey];
-          if (typeof tagVal === 'string' && tagVal.length > 0) resolved = tagVal;
-        }
-        if (resolved === undefined && typeof name === 'string' && name.length > 0) resolved = name;
-        if (resolved !== undefined) map.set(id, resolved);
-      }
+    if (!isStringRecord(parsed) || !Array.isArray(parsed['accounts'])) return map;
+    for (const acct of parsed['accounts']) {
+      if (!isStringRecord(acct)) continue;
+      const id = acct['id'];
+      if (typeof id !== 'string' || id.length === 0) continue;
+      const resolved = resolveAccountName(acct, tagKey);
+      if (resolved !== undefined) map.set(id, resolved);
     }
   } catch { /* no org sync */ }
   return map;

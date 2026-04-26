@@ -74,6 +74,37 @@ export interface RegionEnrichment {
  *  compete. Codes with an empty value for the requested field are left alone
  *  so the raw code surfaces (better than collapsing everything unknown into
  *  a single bucket). */
+function pickRegionField(d: { name: string; useRegionNames?: boolean | undefined }): ((e: RegionEnrichment) => string) | null {
+  if (d.name === 'region_country') return (e) => e.country;
+  if (d.name === 'region_continent') return (e) => e.continent;
+  if (d.useRegionNames === true) return (e) => e.longName;
+  return null;
+}
+
+function mergeRegionAliases(
+  userAliases: Readonly<Record<string, readonly string[]>>,
+  regionMap: ReadonlyMap<string, RegionEnrichment>,
+  pick: (e: RegionEnrichment) => string,
+): Record<string, string[]> {
+  const userCovered = new Set<string>();
+  for (const list of Object.values(userAliases)) {
+    for (const a of list) userCovered.add(a);
+  }
+  const merged: Record<string, string[]> = {};
+  for (const [canonical, list] of Object.entries(userAliases)) {
+    merged[canonical] = [...list];
+  }
+  for (const [code, info] of regionMap) {
+    if (userCovered.has(code)) continue;
+    const label = pick(info);
+    if (label.length === 0) continue;
+    const existing = merged[label];
+    if (existing === undefined) merged[label] = [code];
+    else existing.push(code);
+  }
+  return merged;
+}
+
 export function applyRegionFriendlyNames(
   dims: import('../types/config.js').DimensionsConfig,
   regionMap: ReadonlyMap<string, RegionEnrichment>,
@@ -81,28 +112,9 @@ export function applyRegionFriendlyNames(
   if (regionMap.size === 0) return dims;
   const builtIn = dims.builtIn.map(d => {
     if (d.field !== 'region') return d;
-    let pick: ((e: RegionEnrichment) => string) | null = null;
-    if (d.name === 'region_country') pick = (e) => e.country;
-    else if (d.name === 'region_continent') pick = (e) => e.continent;
-    else if (d.useRegionNames === true) pick = (e) => e.longName;
+    const pick = pickRegionField(d);
     if (pick === null) return d;
-    const userAliases = d.aliases ?? {};
-    const userCovered = new Set<string>();
-    for (const list of Object.values(userAliases)) {
-      for (const a of list) userCovered.add(a);
-    }
-    const merged: Record<string, string[]> = {};
-    for (const [canonical, list] of Object.entries(userAliases)) {
-      merged[canonical] = [...list];
-    }
-    for (const [code, info] of regionMap) {
-      if (userCovered.has(code)) continue;
-      const label = pick(info);
-      if (label.length === 0) continue;
-      const existing = merged[label];
-      if (existing === undefined) merged[label] = [code];
-      else existing.push(code);
-    }
+    const merged = mergeRegionAliases(d.aliases ?? {}, regionMap, pick);
     return { ...d, aliases: merged };
   });
   return { ...dims, builtIn };
