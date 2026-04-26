@@ -5,9 +5,14 @@ import { LineChart } from '../components/line-chart.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { LineSeries } from '../components/line-chart.js';
 import { asTagValue } from '@costgoblin/core/browser';
-import type { DailyCostsResult } from '@costgoblin/core/browser';
+import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { dimensionLabelFor, filtersKey, mergeFilters } from './widget.js';
+import { dimensionLabelFor, filtersKey, getDimensionFallback, mergeFilters } from './widget.js';
+
+interface DailyQueryResult {
+  readonly result: DailyCostsResult;
+  readonly groupBy: DimensionId;
+}
 
 function buildSeries(data: DailyCostsResult | null, topN: number): LineSeries[] {
   if (data === null) return [];
@@ -45,18 +50,27 @@ export function LineWidget({
 
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
-  const query = useQuery(
-    () => api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity }),
+  const query = useQuery<DailyQueryResult>(
+    async () => {
+      const primary = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
+      const fallbackDim = getDimensionFallback(specGroupBy);
+      if (primary.groups.length <= 1 && fallbackDim !== undefined) {
+        const fallback = await api.queryDailyCosts({ groupBy: fallbackDim, dateRange, filters, granularity });
+        return { result: fallback, groupBy: fallbackDim };
+      }
+      return { result: primary, groupBy: specGroupBy };
+    },
     [specGroupBy, dateRange.start, dateRange.end, fk, granularity, api],
   );
 
+  const activeGroupBy = query.status === 'success' ? query.data.groupBy : specGroupBy;
   const topN = spec.topN ?? 6;
   const series = useMemo(
-    () => buildSeries(query.status === 'success' ? query.data : null, topN),
+    () => buildSeries(query.status === 'success' ? query.data.result : null, topN),
     [query, topN],
   );
 
-  const label = dimensionLabelFor(dimensions, specGroupBy);
+  const label = dimensionLabelFor(dimensions, activeGroupBy);
 
   if (query.status === 'loading') return <CoinRainLoader height={260} count={5} />;
 
@@ -65,7 +79,7 @@ export function LineWidget({
       series={series}
       title={spec.title ?? `${label} over time`}
       subtitle={`Top ${String(topN)} • Click to filter, dbl-click to hide`}
-      onSeriesClick={(name) => { onSetFilter(specGroupBy, asTagValue(name)); }}
+      onSeriesClick={(name) => { onSetFilter(activeGroupBy, asTagValue(name)); }}
     />
   );
 }

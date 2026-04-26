@@ -5,9 +5,14 @@ import { HeatmapChart } from '../components/heatmap-chart.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { HeatmapCell } from '../components/heatmap-chart.js';
 import { asTagValue } from '@costgoblin/core/browser';
-import type { DailyCostsResult } from '@costgoblin/core/browser';
+import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { dimensionLabelFor, filtersKey, mergeFilters } from './widget.js';
+import { dimensionLabelFor, filtersKey, getDimensionFallback, mergeFilters } from './widget.js';
+
+interface DailyQueryResult {
+  readonly result: DailyCostsResult;
+  readonly groupBy: DimensionId;
+}
 
 interface BuiltCells {
   readonly cells: readonly HeatmapCell[];
@@ -55,17 +60,26 @@ export function HeatmapWidget({
 
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
-  const query = useQuery(
-    () => api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity }),
+  const query = useQuery<DailyQueryResult>(
+    async () => {
+      const primary = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
+      const fallbackDim = getDimensionFallback(specGroupBy);
+      if (primary.groups.length <= 1 && fallbackDim !== undefined) {
+        const fallback = await api.queryDailyCosts({ groupBy: fallbackDim, dateRange, filters, granularity });
+        return { result: fallback, groupBy: fallbackDim };
+      }
+      return { result: primary, groupBy: specGroupBy };
+    },
     [specGroupBy, dateRange.start, dateRange.end, fk, granularity, api],
   );
 
+  const activeGroupBy = query.status === 'success' ? query.data.groupBy : specGroupBy;
   const { cells, groups, dates } = useMemo(
-    () => buildCells(query.status === 'success' ? query.data : null, topN),
+    () => buildCells(query.status === 'success' ? query.data.result : null, topN),
     [query, topN],
   );
 
-  const label = dimensionLabelFor(dimensions, specGroupBy);
+  const label = dimensionLabelFor(dimensions, activeGroupBy);
 
   if (query.status === 'loading') return <CoinRainLoader height={260} count={5} />;
 
@@ -76,7 +90,7 @@ export function HeatmapWidget({
       dates={dates}
       title={spec.title ?? `${label} × Day`}
       subtitle="Click a cell to filter"
-      onCellClick={(group) => { onSetFilter(specGroupBy, asTagValue(group)); }}
+      onCellClick={(group) => { onSetFilter(activeGroupBy, asTagValue(group)); }}
     />
   );
 }
