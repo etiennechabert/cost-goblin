@@ -27,7 +27,7 @@ export function DataManagement() {
   const autoSyncIntervalQuery = useQuery(() => api.getAutoSyncIntervalMinutes(), []);
   const [autoSync, setAutoSync] = useState(false);
   const [autoSyncLoaded, setAutoSyncLoaded] = useState(false);
-  const [autoSyncInterval, setAutoSyncIntervalState] = useState(24 * 60);
+  const [autoSyncInterval, setAutoSyncInterval] = useState(24 * 60);
   const [autoSyncIntervalLoaded, setAutoSyncIntervalLoaded] = useState(false);
 
   if (!autoSyncLoaded && autoSyncQuery.status === 'success') {
@@ -36,7 +36,7 @@ export function DataManagement() {
   }
   if (!autoSyncIntervalLoaded && autoSyncIntervalQuery.status === 'success') {
     setAutoSyncIntervalLoaded(true);
-    setAutoSyncIntervalState(autoSyncIntervalQuery.data);
+    setAutoSyncInterval(autoSyncIntervalQuery.data);
   }
   const [showDeleteAll, setShowDeleteAll] = useState(false);
   const [configureSource, setConfigureSource] = useState<'daily' | 'hourly' | 'costOptimization' | null>(null);
@@ -358,7 +358,7 @@ export function DataManagement() {
               disabled={!autoSync}
               onChange={e => {
                 const next = Number(e.target.value);
-                setAutoSyncIntervalState(next);
+                setAutoSyncInterval(next);
                 void api.setAutoSyncIntervalMinutes(next);
               }}
               title="How often auto-sync runs. Keep this at least a day unless you're debugging — each run hits S3."

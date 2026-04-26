@@ -36,11 +36,12 @@ export function registerAutoSyncHandlers(app: AppContext): void {
         const config = await getConfig();
         const provider = config.providers[0];
         if (provider === undefined) return { periods: [] };
+        const tierBucket = tier === 'cost-optimization'
+          ? provider.sync.costOptimization?.bucket ?? provider.sync.daily.bucket
+          : provider.sync.daily.bucket;
         const bucket = tier === 'hourly'
           ? provider.sync.hourly?.bucket ?? provider.sync.daily.bucket
-          : tier === 'cost-optimization'
-            ? provider.sync.costOptimization?.bucket ?? provider.sync.daily.bucket
-            : provider.sync.daily.bucket;
+          : tierBucket;
         const inv = await getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, asTier(tier));
         return {
           periods: inv.periods.map(p => ({
@@ -54,11 +55,12 @@ export function registerAutoSyncHandlers(app: AppContext): void {
         const config = await getConfig();
         const provider = config.providers[0];
         if (provider === undefined) return { filesDownloaded: 0, rowsProcessed: 0 };
+        const syncTierBucket = tier === 'cost-optimization'
+          ? provider.sync.costOptimization?.bucket ?? provider.sync.daily.bucket
+          : provider.sync.daily.bucket;
         const bucket = tier === 'hourly'
           ? provider.sync.hourly?.bucket ?? provider.sync.daily.bucket
-          : tier === 'cost-optimization'
-            ? provider.sync.costOptimization?.bucket ?? provider.sync.daily.bucket
-            : provider.sync.daily.bucket;
+          : syncTierBucket;
 
         // Use worker thread via SyncClient
         return syncClient.syncPeriods({

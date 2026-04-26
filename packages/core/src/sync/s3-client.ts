@@ -47,17 +47,17 @@ export async function createS3Handle(profile: string, region?: string, endpointO
   let credentialConfig: { credentials: { readonly accessKeyId: string; readonly secretAccessKey: string } } | { profile: string } | Record<string, never>;
   if (endpointOptions?.credentials !== undefined) {
     credentialConfig = { credentials: endpointOptions.credentials };
-  } else if (profile !== 'default') {
-    credentialConfig = { profile };
-  } else {
+  } else if (profile === 'default') {
     credentialConfig = {};
+  } else {
+    credentialConfig = { profile };
   }
 
   const client = new S3Client({
     region: region ?? 'eu-central-1',
     ...credentialConfig,
-    ...(endpointOptions?.endpoint !== undefined ? { endpoint: endpointOptions.endpoint } : {}),
-    ...(endpointOptions?.forcePathStyle !== undefined ? { forcePathStyle: endpointOptions.forcePathStyle } : {}),
+    ...(endpointOptions?.endpoint === undefined ? {} : { endpoint: endpointOptions.endpoint }),
+    ...(endpointOptions?.forcePathStyle === undefined ? {} : { forcePathStyle: endpointOptions.forcePathStyle }),
   });
 
   return {

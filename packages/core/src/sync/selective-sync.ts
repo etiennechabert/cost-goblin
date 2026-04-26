@@ -125,10 +125,10 @@ function groupFilesByDate(periodFiles: readonly ManifestFileEntry[]): Map<string
     const date = extractDate(file.key);
     if (date === undefined) continue;
     const existing = dateGroups.get(date);
-    if (existing !== undefined) {
-      existing.push(file);
-    } else {
+    if (existing === undefined) {
       dateGroups.set(date, [file]);
+    } else {
+      existing.push(file);
     }
   }
   return dateGroups;

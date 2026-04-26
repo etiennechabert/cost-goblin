@@ -371,9 +371,9 @@ function mergeDescendantCosts(
   baseServices?: Record<string, number>,
 ): { totalCost: number; mergedServices: Record<string, number> } {
   let totalCost = baseCost ?? 0;
-  const mergedServices: Record<string, number> = baseServices !== undefined
-    ? { ...baseServices }
-    : {};
+  const mergedServices: Record<string, number> = baseServices === undefined
+    ? {}
+    : { ...baseServices };
   for (const desc of descendants) {
     if (desc === skipName) continue;
     consumedEntities.add(desc);

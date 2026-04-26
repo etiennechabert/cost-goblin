@@ -7,6 +7,27 @@ import { useQuery } from '../hooks/use-query.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 
+function useClickOutsideDismiss(
+  containerRef: React.RefObject<HTMLDivElement | null>,
+  onCancel: () => void,
+  isDirty: boolean,
+  discardConfirm: boolean,
+  setDiscardConfirm: (v: boolean) => void,
+): void {
+  useEffect(() => {
+    function onDocClick(e: MouseEvent): void {
+      if (containerRef.current === null) return;
+      if (!(e.target instanceof Node)) return;
+      if (containerRef.current.contains(e.target)) return;
+      if (discardConfirm) return;
+      if (isDirty) { setDiscardConfirm(true); }
+      else { onCancel(); }
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => { document.removeEventListener('mousedown', onDocClick); };
+  }, [containerRef, onCancel, isDirty, discardConfirm, setDiscardConfirm]);
+}
+
 /** Drag/drop is now indexed by position in the unified `order` array,
  *  not by (type, index) into the split built-in/tag arrays. Keeps a single
  *  reorder space so a tag can be dropped above a built-in and vice-versa. */
@@ -166,21 +187,7 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
     [dim.field, dim.name, isAccountDim, isAnyRegionDim, state.useOrgAccounts, state.useRegionNames, state.accountNameFromTag, stripPatternsKey, normalize],
   );
 
-  useEffect(() => {
-    function onDocClick(e: MouseEvent): void {
-      if (containerRef.current === null) return;
-      if (!(e.target instanceof Node)) return;
-      if (containerRef.current.contains(e.target)) return;
-      // Don't dismiss while the discard-confirm modal is open — the modal
-      // lives outside the editor's DOM tree and would otherwise count as
-      // an outside click.
-      if (discardConfirm) return;
-      if (isDirty) setDiscardConfirm(true);
-      else onCancel();
-    }
-    document.addEventListener('mousedown', onDocClick);
-    return () => { document.removeEventListener('mousedown', onDocClick); };
-  }, [onCancel, isDirty, discardConfirm]);
+  useClickOutsideDismiss(containerRef, onCancel, isDirty, discardConfirm, setDiscardConfirm);
 
   const preview = valuesQuery.status === 'success' ? valuesQuery.data : null;
 
@@ -352,7 +359,7 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
       )}
       {showTransforms && (
         <div className="grid grid-cols-2 gap-4 items-stretch">
-          {(() => { if (isAccountDim) return nameSourceField; if (isRegionDim) return regionToggleField; return <div />; })()}
+          {(() => { if (isAccountDim) { return nameSourceField; } if (isRegionDim) { return regionToggleField; } return <div />; })()}
           {normalizationField}
         </div>
       )}
@@ -573,7 +580,7 @@ function TagValuePreview({ tagMatch, fallbackValues, missingValueTemplate, norma
   normalizeRule: string;
   aliasText: string;
 }>): React.JSX.Element | null {
-  const resourceVals = tagMatch !== undefined ? tagMatch.sampleValues : [];
+  const resourceVals = tagMatch === undefined ? [] : tagMatch.sampleValues;
   const accountVals = fallbackValues.map(([v]) => v);
   const fallbackFormat = missingValueTemplate.length > 0 ? missingValueTemplate : '{fallback}';
   const isPassthrough = fallbackFormat === '{fallback}';
@@ -649,23 +656,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   }
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Click outside the editor panel closes it (matches the collapse-on-outside
-  // pattern the rest of the app uses for popovers). A native 'click' listener
-  // on document fires after onClick handlers, so clicks on Save/Cancel/Remove
-  // inside the panel still work as expected. When the form is dirty we
-  // intercept and route through the discard-confirm modal instead.
-  useEffect(() => {
-    function onDocClick(e: MouseEvent): void {
-      if (containerRef.current === null) return;
-      if (!(e.target instanceof Node)) return;
-      if (containerRef.current.contains(e.target)) return;
-      if (discardConfirm) return;
-      if (isDirty) setDiscardConfirm(true);
-      else onCancel();
-    }
-    document.addEventListener('mousedown', onDocClick);
-    return () => { document.removeEventListener('mousedown', onDocClick); };
-  }, [onCancel, isDirty, discardConfirm]);
+  useClickOutsideDismiss(containerRef, onCancel, isDirty, discardConfirm, setDiscardConfirm);
 
   const tagOptions = state.tagName.length > 0 && !availableTags.includes(state.tagName)
     ? [state.tagName, ...availableTags]
@@ -1133,9 +1124,9 @@ export function DimensionsView() {
   const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
 
   // Account tag keys from org sync
-  const accountTagKeys = orgData !== null
-    ? [...new Set(orgData.accounts.flatMap(a => Object.keys(a.tags)))].sort((a, b) => a.localeCompare(b))
-    : [];
+  const accountTagKeys = orgData === null
+    ? []
+    : [...new Set(orgData.accounts.flatMap(a => Object.keys(a.tags)))].sort((a, b) => a.localeCompare(b));
 
   // Which resource tags are already mapped as dimensions
   const mappedTagNames = new Set(config?.tags.map(t => t.tagName) ?? []);
@@ -1202,13 +1193,12 @@ export function DimensionsView() {
         ...(d.displayField === undefined ? {} : { displayField: d.displayField }),
         ...(d.enabled === false ? { enabled: false as const } : {}),
         ...(description.length > 0 ? { description } : {}),
-        ...(normalize !== undefined ? { normalize } : {}),
-        ...(aliases !== undefined ? { aliases } : {}),
+        ...(normalize === undefined ? {} : { normalize }),
+        ...(aliases === undefined ? {} : { aliases }),
         // The account dim's picker always implies org-sync (both sources come
         // from it); force useOrgAccounts=true so legacy configs that had it
         // off get migrated the first time the dim is saved.
-        ...(d.field === 'account_id' ? { useOrgAccounts: true as const }
-          : edited.useOrgAccounts ? { useOrgAccounts: true as const } : {}),
+        ...((d.field === 'account_id' || edited.useOrgAccounts) ? { useOrgAccounts: true as const } : {}),
         ...(edited.accountNameFromTag.length > 0 ? { accountNameFromTag: edited.accountNameFromTag } : {}),
         ...(nameStripPatterns.length > 0 ? { nameStripPatterns } : {}),
         // Only the Region dim surfaces a useRegionNames toggle — write it
@@ -1297,7 +1287,11 @@ export function DimensionsView() {
           if (dragFrom !== null) applyReorder(dragFrom.orderIdx, orderIdx);
           setArmed(null); setDragFrom(null); setDragOver(null);
         },
-        style: isFrom ? { opacity: 0.4 } : isOver ? { boxShadow: 'inset 0 2px 0 var(--color-accent, #34d399)' } : undefined,
+        style: (() => {
+          if (isFrom) return { opacity: 0.4 };
+          if (isOver) return { boxShadow: 'inset 0 2px 0 var(--color-accent, #34d399)' };
+          return undefined;
+        })(),
       },
       grip: {
         onMouseDown: () => { setArmed({ orderIdx }); },
@@ -1419,7 +1413,7 @@ export function DimensionsView() {
       {config !== null && orderedRows.length > 0 && (
         <div className="flex flex-col gap-3">
           <h3 className="text-sm font-medium text-text-secondary">
-            Enabled dimensions
+            {'Enabled dimensions '}
             <span className="text-text-muted ml-2 font-normal text-xs">click to configure · drag or use arrows to reorder</span>
           </h3>
 
@@ -1584,7 +1578,7 @@ export function DimensionsView() {
 
           <DebugPanel
             title="Account Tags"
-            subtitle={orgData !== null ? `${String(accountTagKeys.length)} keys · across ${String(orgData.accounts.length)} accounts` : 'Requires an AWS Organization sync'}
+            subtitle={orgData === null ? 'Requires an AWS Organization sync' : `${String(accountTagKeys.length)} keys · across ${String(orgData.accounts.length)} accounts`}
             expanded={accountTagsExpanded}
             onToggle={() => { setAccountTagsExpanded(v => !v); }}
           >

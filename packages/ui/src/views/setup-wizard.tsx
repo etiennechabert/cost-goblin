@@ -336,12 +336,12 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
   );
 }
 
-function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
+function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'confirm' }>;
   onRetentionChange: (days: number) => void;
   onComplete: () => void;
   onBack: () => void;
-}) {
+}>) {
   const [saving, setSaving] = useState(false);
   const api = useCostApi();
 
@@ -438,7 +438,7 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: {
   );
 }
 
-export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile }: SetupWizardProps): React.JSX.Element {
+export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile }: Readonly<SetupWizardProps>): React.JSX.Element {
   const api = useCostApi();
   const isSourceMode = initialSource !== undefined && initialProfile !== undefined;
   const [wizard, setWizard] = useState<WizardStep>(
@@ -571,7 +571,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <BucketStep
               state={wizard}
               onSelect={handleBucketSelect}
-              onSkip={wizard.source !== 'daily' ? handleBrowseSkip : undefined}
+              onSkip={wizard.source === 'daily' ? undefined : handleBrowseSkip}
               onBack={handleBack}
             />
           )}
@@ -580,7 +580,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               state={wizard}
               onNavigate={handleNavigate}
               onConfirm={handleBrowseConfirm}
-              onSkip={wizard.source !== 'daily' ? handleBrowseSkip : undefined}
+              onSkip={wizard.source === 'daily' ? undefined : handleBrowseSkip}
               onBack={handleBack}
             />
           )}

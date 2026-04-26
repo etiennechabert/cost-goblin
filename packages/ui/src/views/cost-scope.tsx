@@ -466,8 +466,7 @@ function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loa
           )}
           {hasEnabledRules && !hideExcluded && (
             <span>
-              <span className="inline-block w-2 h-2 rounded-sm bg-negative/40 mr-1 align-middle" />{' '}
-              excluded
+              <span className="inline-block w-2 h-2 rounded-sm bg-negative/40 mr-1 align-middle" />{' excluded'}
             </span>
           )}
         </span>
@@ -753,8 +752,8 @@ export function CostScopeView(): React.JSX.Element {
 
   const enabledRules = draft.rules.filter(r => r.enabled);
   let combinedText: string;
-  if (preview.result !== null) combinedText = formatExcluded(preview.result.combined.excludedCost, preview.result.combined.excludedRows);
-  else combinedText = preview.loading ? 'loading…' : 'no data';
+  if (preview.result === null) combinedText = preview.loading ? 'loading…' : 'no data';
+  else combinedText = formatExcluded(preview.result.combined.excludedCost, preview.result.combined.excludedRows);
 
   function getPreviewRow(ruleId: string): CostScopePreviewRow | undefined {
     return preview.result?.perRule.find(p => p.ruleId === ruleId);
@@ -1013,13 +1012,13 @@ function PreviewPanel({ preview, loading, combinedText, metric, hasEnabledRules 
           <SummaryTile
             label="After scope"
             value={hasData ? formatDollars(result.scopedTotalCost) : placeholder}
-            hint={(() => { if (!hasData) return ''; return hasEnabledRules ? `${excludedPct.toFixed(1)}% excluded` : 'No rules enabled'; })()}
+            hint={(() => { if (!hasData) { return ''; } return hasEnabledRules ? `${excludedPct.toFixed(1)}% excluded` : 'No rules enabled'; })()}
             emphasis
           />
           <SummaryTile
             label="Excluded"
             value={hasData && hasEnabledRules ? combinedText : placeholder}
-            hint={(() => { if (!hasData) return ''; return hasEnabledRules ? 'Union of enabled rules' : 'Toggle a rule'; })()}
+            hint={(() => { if (!hasData) { return ''; } return hasEnabledRules ? 'Union of enabled rules' : 'Toggle a rule'; })()}
           />
         </div>
 
