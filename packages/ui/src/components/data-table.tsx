@@ -242,22 +242,17 @@ export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, 
     </div>
   );
 
+  let body: React.ReactNode;
   if (error !== null) {
-    return <div className="space-y-2">{headerRow}<div className="rounded-md border border-negative/40 bg-negative/5 text-xs text-negative px-3 py-2">{error}</div></div>;
-  }
-  if (loading) {
-    return <div className="space-y-2">{headerRow}<CoinRainLoader height={260} count={7} /></div>;
-  }
-  if (rows.length === 0) {
-    return <div className="space-y-2">{headerRow}<div className="text-xs text-text-muted py-4 text-center">No rows match the current filters.</div></div>;
-  }
-  if (columns.length === 0) {
-    return <div className="space-y-2 min-h-[200px]">{headerRow}<div className="text-xs text-text-muted py-16 text-center">All columns are hidden — open <em>Columns</em> to show some again.</div></div>;
-  }
-
-  return (
-    <div className="space-y-2">
-      {headerRow}
+    body = <div className="rounded-md border border-negative/40 bg-negative/5 text-xs text-negative px-3 py-2">{error}</div>;
+  } else if (loading) {
+    body = <CoinRainLoader height={260} count={7} />;
+  } else if (rows.length === 0) {
+    body = <div className="text-xs text-text-muted py-4 text-center">No rows match the current filters.</div>;
+  } else if (columns.length === 0) {
+    body = <div className="text-xs text-text-muted py-4 text-center">All columns are hidden — open <em>Columns</em> to show some again.</div>;
+  } else {
+    body = (
       <div className="border border-border rounded-md overflow-auto" style={{ maxHeight }}>
         <table className="text-[11px] w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-bg-tertiary/95 backdrop-blur-sm">
@@ -278,6 +273,13 @@ export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, 
           </tbody>
         </table>
       </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2" style={{ minHeight: maxHeight }}>
+      {headerRow}
+      {body}
     </div>
   );
 }
