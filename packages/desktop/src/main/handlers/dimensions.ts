@@ -21,11 +21,12 @@ async function applyRegionPreview(
   getRegionMap: () => Promise<ReadonlyMap<string, { longName: string; country: string; continent: string }>>,
 ): Promise<ValueCostPair[]> {
   const regionMap = await getRegionMap();
-  const pick: ((info: { longName: string; country: string; continent: string }) => string) | null =
-    opts?.dimName === 'region_country' ? (i) => i.country
-      : opts?.dimName === 'region_continent' ? (i) => i.continent
-        : opts?.useRegionNames === true ? (i) => i.longName
-          : null;
+  const pick: ((info: { longName: string; country: string; continent: string }) => string) | null = (() => {
+    if (opts?.dimName === 'region_country') return (i: { country: string }) => i.country;
+    if (opts?.dimName === 'region_continent') return (i: { continent: string }) => i.continent;
+    if (opts?.useRegionNames === true) return (i: { longName: string }) => i.longName;
+    return null;
+  })();
   if (pick === null || regionMap.size === 0) return values;
   return mergeValuesByLabel(values, (raw) => {
     const info = regionMap.get(raw);
@@ -67,14 +68,15 @@ export function registerDimensionsHandlers(app: AppContext): void {
       dirs = (await fs.readdir(dailyDir)).filter(d => d.startsWith('daily-')).sort((a, b) => a.localeCompare(b));
     } catch { /* no data */ }
     const recentDirs = dirs.slice(-2);
+    const parquetGlobs = recentDirs.map(d => `'${ctx.dataDir}/aws/raw/${d}/*.parquet'`).join(', ');
     const rawParquet = recentDirs.length > 0
-      ? `read_parquet([${recentDirs.map(d => `'${ctx.dataDir}/aws/raw/${d}/*.parquet'`).join(', ')}])`
+      ? `read_parquet([${parquetGlobs}])`
       : `read_parquet('${ctx.dataDir}/aws/raw/daily-*/*.parquet')`;
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
     const totalSql = `SELECT COUNT(*) AS total FROM ${rawParquet} WHERE line_item_usage_start_date >= '${thirtyDaysAgo}'`;
     const totalRows = await runQuery(totalSql);
-    const totalRowCount = totalRows[0] !== undefined ? toNum(totalRows[0]['total']) : 0;
+    const totalRowCount = totalRows[0] === undefined ? 0 : toNum(totalRows[0]['total']);
 
     const sql = `
       WITH tags AS (
@@ -176,7 +178,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
       LIMIT 200
     `;
     const [distinctRows, valueRows] = await Promise.all([runQuery(distinctSql), runQuery(valuesSql)]);
-    const distinctCount = distinctRows[0] !== undefined ? toNum(distinctRows[0]['n']) : 0;
+    const distinctCount = distinctRows[0] === undefined ? 0 : toNum(distinctRows[0]['n']);
     let values = valueRows.map(r => ({ value: toStr(r['val']), cost: toNum(r['cost']) }));
 
     if (field === 'account_id' && opts?.useOrgAccounts === true) {
@@ -233,7 +235,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
       // `order` lets the user interleave built-ins and tags freely in the
       // Dimensions view. Only written when set — absence means "use the
       // default built-ins-first-then-tags order in the UI".
-      ...(config.order !== undefined ? { order: [...config.order] } : {}),
+      ...(config.order === undefined ? {} : { order: [...config.order] }),
     });
     await fs.writeFile(ctx.dimensionsPath, output);
     invalidateDimensions();

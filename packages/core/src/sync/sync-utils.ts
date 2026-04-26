@@ -91,10 +91,10 @@ export function groupByPeriod(files: readonly ManifestFileEntry[]): Map<string, 
   for (const file of files) {
     const period = extractPeriod(file.key);
     const existing = groups.get(period);
-    if (existing !== undefined) {
-      existing.push(file);
-    } else {
+    if (existing === undefined) {
       groups.set(period, [file]);
+    } else {
+      existing.push(file);
     }
   }
   return groups;

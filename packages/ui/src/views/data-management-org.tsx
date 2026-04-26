@@ -102,14 +102,14 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
     }
   }
 
-  const allTagKeys = orgData !== null
-    ? [...new Set(orgData.accounts.flatMap(a => Object.keys(a.tags)))].sort((a, b) => a.localeCompare(b))
-    : [];
+  const allTagKeys = orgData === null
+    ? []
+    : [...new Set(orgData.accounts.flatMap(a => Object.keys(a.tags)))].sort((a, b) => a.localeCompare(b));
   // OU count is derivable from the per-account ouPath. Distinct non-empty
   // paths approximate the number of OUs the user has placed accounts into.
-  const ouCount = orgData !== null
-    ? new Set(orgData.accounts.map(a => a.ouPath).filter(p => p.length > 0)).size
-    : 0;
+  const ouCount = orgData === null
+    ? 0
+    : new Set(orgData.accounts.map(a => a.ouPath).filter(p => p.length > 0)).size;
 
   const filteredAccounts = orgData !== null && accountSearch.length > 0
     ? orgData.accounts.filter(a =>

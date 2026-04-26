@@ -203,15 +203,16 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
           </div>
         </div>
         );
-      })() : (
-        loading === true ? (
+      })() : (() => {
+        const placeholder = loading === true ? (
           <div className="flex-1 min-h-40 flex items-center justify-center">
             <CoinRainLoader height={expanded ? 340 : 160} count={6} />
           </div>
         ) : (
           <div className="flex items-center justify-center flex-1 min-h-40 text-sm text-text-muted">No daily data</div>
-        )
-      )}
+        );
+        return placeholder;
+      })()}
     </div>
   );
 }

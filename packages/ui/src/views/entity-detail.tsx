@@ -220,7 +220,8 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
                 <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4">
                   <p className="text-xs uppercase tracking-wider text-text-muted">vs Previous Period</p>
                   {(() => {
-                    const changeColor = isIncrease ? 'text-negative' : (isDecrease ? 'text-positive' : 'text-text-secondary');
+                    const neutralOrPositive = isDecrease ? 'text-positive' : 'text-text-secondary';
+                    const changeColor = isIncrease ? 'text-negative' : neutralOrPositive;
                     return (
                       <p className={`mt-1 text-2xl font-bold tabular-nums ${changeColor}`}>
                         {formatPercent(data.percentChange)}
