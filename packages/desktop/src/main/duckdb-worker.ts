@@ -1,14 +1,14 @@
 import { parentPort } from 'node:worker_threads';
 import { cpus } from 'node:os';
-import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
+import type { DuckDBConnection, DuckDBResult } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
 
 interface DuckDBModule {
-  DuckDBInstance: { create: () => Promise<DuckDBInstance> };
+  DuckDBInstance: { create: () => Promise<import('./duckdb-loader.js').DuckDBInstance> };
 }
 
-async function createDuckDB(): Promise<DuckDBInstance> {
+async function createDuckDB(): Promise<import('./duckdb-loader.js').DuckDBInstance> {
   const duckdb = (await import('@duckdb/node-api')) as unknown as DuckDBModule;
   return duckdb.DuckDBInstance.create();
 }
@@ -50,16 +50,23 @@ const cancelledIds = new Set<number>();
 const queuedIds = new Set<number>();  // waiting for pool.acquire()
 const runningIds = new Set<number>(); // executing in DuckDB
 
-async function fetchAllRows(
-  conn: DuckDBConnection,
-  sql: string,
+function collectChunkRows(
+  result: DuckDBResult,
   isCancelled: () => boolean,
 ): Promise<Readonly<Record<string, unknown>>[]> {
-  const result = await conn.run(sql);
   const cols = result.columnCount;
   const names: string[] = [];
   for (let i = 0; i < cols; i++) names.push(result.columnName(i));
 
+  return readChunks(result, names, cols, isCancelled);
+}
+
+async function readChunks(
+  result: DuckDBResult,
+  names: string[],
+  cols: number,
+  isCancelled: () => boolean,
+): Promise<Record<string, unknown>[]> {
   const rows: Record<string, unknown>[] = [];
   let chunk = await result.fetchChunk();
   while (chunk !== null && chunk.rowCount > 0) {
@@ -75,6 +82,15 @@ async function fetchAllRows(
     chunk = await result.fetchChunk();
   }
   return rows;
+}
+
+async function fetchAllRows(
+  conn: DuckDBConnection,
+  sql: string,
+  isCancelled: () => boolean,
+): Promise<Readonly<Record<string, unknown>>[]> {
+  const result = await conn.run(sql);
+  return collectChunkRows(result, isCancelled);
 }
 
 function bindParams(stmt: import('./duckdb-loader.js').DuckDBPreparedStatement, params: unknown[]): void {
@@ -109,25 +125,7 @@ async function fetchAllRowsPrepared(
   try {
     bindParams(stmt, params);
     const result = await stmt.run();
-    const cols = result.columnCount;
-    const names: string[] = [];
-    for (let i = 0; i < cols; i++) names.push(result.columnName(i));
-
-    const rows: Record<string, unknown>[] = [];
-    let chunk = await result.fetchChunk();
-    while (chunk !== null && chunk.rowCount > 0) {
-      if (isCancelled()) return [];
-      for (let r = 0; r < chunk.rowCount; r++) {
-        const row: Record<string, unknown> = {};
-        for (let c = 0; c < cols; c++) {
-          const name = names[c];
-          if (name !== undefined) row[name] = chunk.getColumnVector(c).getItem(r);
-        }
-        rows.push(row);
-      }
-      chunk = await result.fetchChunk();
-    }
-    return rows;
+    return await collectChunkRows(result, isCancelled);
   } finally {
     stmt.destroySync();
   }
@@ -169,86 +167,53 @@ void getPool().then(() => {
   send({ kind: 'error', id: -1, message: `DuckDB worker init failed: ${message}` });
 });
 
-async function handleRequest(req: { kind: 'query'; id: number; sql: string }): Promise<void> {
-  // Check before acquiring a pool connection
-  if (cancelledIds.has(req.id)) {
-    cancelledIds.delete(req.id);
-    send({ kind: 'rows', id: req.id, rows: [] });
+async function executeWithPool(
+  id: number,
+  execute: (conn: DuckDBConnection) => Promise<Readonly<Record<string, unknown>>[]>,
+): Promise<void> {
+  if (cancelledIds.has(id)) {
+    cancelledIds.delete(id);
+    send({ kind: 'rows', id, rows: [] });
     return;
   }
 
-  queuedIds.add(req.id);
+  queuedIds.add(id);
   const pool = await getPool();
   const conn = await pool.acquire();
-  queuedIds.delete(req.id);
-  send({ kind: 'started', id: req.id });
+  queuedIds.delete(id);
+  send({ kind: 'started', id });
 
   try {
-    // Check after acquiring — cancel may have arrived while queued
-    if (cancelledIds.has(req.id)) {
-      cancelledIds.delete(req.id);
-      send({ kind: 'rows', id: req.id, rows: [] });
+    if (cancelledIds.has(id)) {
+      cancelledIds.delete(id);
+      send({ kind: 'rows', id, rows: [] });
       return;
     }
 
-    runningIds.add(req.id);
-    const rows = await fetchAllRows(conn, req.sql, () => cancelledIds.has(req.id));
+    runningIds.add(id);
+    const rows = await execute(conn);
 
-    // Skip serialization if cancelled during execution
-    if (cancelledIds.has(req.id)) {
-      cancelledIds.delete(req.id);
-      send({ kind: 'rows', id: req.id, rows: [] });
+    if (cancelledIds.has(id)) {
+      cancelledIds.delete(id);
+      send({ kind: 'rows', id, rows: [] });
     } else {
-      send({ kind: 'rows', id: req.id, rows });
+      send({ kind: 'rows', id, rows });
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    send({ kind: 'error', id: req.id, message });
+    send({ kind: 'error', id, message });
   } finally {
-    runningIds.delete(req.id);
+    runningIds.delete(id);
     pool.release(conn);
   }
 }
 
-async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; sql: string; params: unknown[] }): Promise<void> {
-  // Check before acquiring a pool connection
-  if (cancelledIds.has(req.id)) {
-    cancelledIds.delete(req.id);
-    send({ kind: 'rows', id: req.id, rows: [] });
-    return;
-  }
+function handleRequest(req: { kind: 'query'; id: number; sql: string }): Promise<void> {
+  return executeWithPool(req.id, (conn) => fetchAllRows(conn, req.sql, () => cancelledIds.has(req.id)));
+}
 
-  queuedIds.add(req.id);
-  const pool = await getPool();
-  const conn = await pool.acquire();
-  queuedIds.delete(req.id);
-  send({ kind: 'started', id: req.id });
-
-  try {
-    // Check after acquiring — cancel may have arrived while queued
-    if (cancelledIds.has(req.id)) {
-      cancelledIds.delete(req.id);
-      send({ kind: 'rows', id: req.id, rows: [] });
-      return;
-    }
-
-    runningIds.add(req.id);
-    const rows = await fetchAllRowsPrepared(conn, req.sql, req.params, () => cancelledIds.has(req.id));
-
-    // Skip serialization if cancelled during execution
-    if (cancelledIds.has(req.id)) {
-      cancelledIds.delete(req.id);
-      send({ kind: 'rows', id: req.id, rows: [] });
-    } else {
-      send({ kind: 'rows', id: req.id, rows });
-    }
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    send({ kind: 'error', id: req.id, message });
-  } finally {
-    runningIds.delete(req.id);
-    pool.release(conn);
-  }
+function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; sql: string; params: unknown[] }): Promise<void> {
+  return executeWithPool(req.id, (conn) => fetchAllRowsPrepared(conn, req.sql, req.params, () => cancelledIds.has(req.id)));
 }
 
 function handleCancelPending(): void {

@@ -1,18 +1,12 @@
 import { useMemo } from 'react';
-import { useCostApi } from '../hooks/use-cost-api.js';
-import { useQuery } from '../hooks/use-query.js';
+import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
 import { HeatmapChart } from '../components/heatmap-chart.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { HeatmapCell } from '../components/heatmap-chart.js';
 import { asTagValue } from '@costgoblin/core/browser';
-import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
+import type { DailyCostsResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { dimensionLabelFor, filtersKey, getDimensionFallback, mergeFilters } from './widget.js';
-
-interface DailyQueryResult {
-  readonly result: DailyCostsResult;
-  readonly groupBy: DimensionId;
-}
+import { dimensionLabelFor } from './widget.js';
 
 interface BuiltCells {
   readonly cells: readonly HeatmapCell[];
@@ -53,34 +47,20 @@ export function HeatmapWidget({
   dimensions,
   onSetFilter,
 }: WidgetCommonProps) {
-  const api = useCostApi();
   const specGroupBy = spec.type === 'heatmap' ? spec.groupBy : undefined;
   const topN = spec.type === 'heatmap' ? (spec.topN ?? 12) : 12;
 
-  const filters = mergeFilters(globalFilters, spec.filters);
-  const fk = filtersKey(filters);
-  const fallbackDim = specGroupBy === undefined ? undefined : getDimensionFallback(specGroupBy);
-  const query = useQuery<DailyQueryResult | null>(
-    async () => {
-      if (specGroupBy === undefined) return null;
-      if (fallbackDim === undefined) {
-        const result = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
-        return { result, groupBy: specGroupBy };
-      }
-      const [primary, fallback] = await Promise.all([
-        api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity }),
-        api.queryDailyCosts({ groupBy: fallbackDim, dateRange, filters, granularity }),
-      ]);
-      if (primary.groups.length > 1) return { result: primary, groupBy: specGroupBy };
-      return { result: fallback, groupBy: fallbackDim };
-    },
-    [specGroupBy, fallbackDim, dateRange.start, dateRange.end, fk, granularity, api],
-  );
+  const { query, activeGroupBy, dailyResult } = useDailyWidgetQuery({
+    specGroupBy,
+    dateRange,
+    granularity,
+    globalFilters,
+    specFilters: spec.filters,
+  });
 
-  const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
   const { cells, groups, dates } = useMemo(
-    () => buildCells(query.status === 'success' && query.data !== null ? query.data.result : null, topN),
-    [query, topN],
+    () => buildCells(dailyResult, topN),
+    [dailyResult, topN],
   );
 
   if (spec.type !== 'heatmap' || specGroupBy === undefined || activeGroupBy === undefined) return null;

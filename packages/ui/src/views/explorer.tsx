@@ -17,6 +17,8 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
+import { ColumnsPicker } from '../components/data-table.js';
+import type { ColumnSpec } from '../components/data-table.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { getDimensionId } from '../lib/dimensions.js';
@@ -39,19 +41,6 @@ interface RowsState {
   data: ExplorerRowsResult | null;
   loading: boolean;
   error: string | null;
-}
-
-/** Columns the user can sort / filter on. Must line up with the server's
- *  SORTABLE_SCALAR_COLUMNS set and with the dim ids the handler emits as
- *  filter predicates. `dimId` is set when the column maps to a filter-able
- *  dimension — clicking a cell's value then adds it to the filter. */
-interface ColumnSpec {
-  readonly key: string;
-  readonly label: string;
-  readonly dimId: string | null;
-  readonly align: 'left' | 'right';
-  readonly mono?: boolean;
-  readonly truncate?: boolean;
 }
 
 const BASE_COLUMNS: readonly ColumnSpec[] = [
@@ -1018,198 +1007,6 @@ function RowsTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, onHidde
           </tbody>
         </table>
       </div>
-    </div>
-  );
-}
-
-interface ColumnsPickerProps {
-  readonly allColumns: readonly ColumnSpec[];
-  readonly hiddenColumns: readonly string[];
-  readonly autoHiddenKeys: ReadonlySet<string>;
-  readonly onChange: (next: readonly string[]) => void;
-  readonly onOrderChange: (next: readonly string[]) => void;
-}
-
-function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onChange, onOrderChange }: ColumnsPickerProps): React.JSX.Element {
-  const [open, setOpen] = useState(false);
-  // The row currently being hovered during a drag — we use this to draw a
-  // blue top-border drop indicator. Separate from the dragged key because
-  // browsers don't give us dragover coords relative to the list.
-  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
-  const [draggedKey, setDraggedKey] = useState<string | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const hiddenSet = useMemo(() => new Set(hiddenColumns), [hiddenColumns]);
-  // Picker count reflects what the table ACTUALLY renders — subtracting
-  // both manual hides and auto-hides keeps it honest. Otherwise "5/10
-  // shown" while the table renders 3 columns would be confusing.
-  const visibleCount = allColumns.filter(c => !hiddenSet.has(c.key) && !autoHiddenKeys.has(c.key)).length;
-
-  useEffect(() => {
-    if (!open) return;
-    function handleClickOutside(e: MouseEvent) {
-      if (containerRef.current !== null && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    function handleEsc(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false);
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('keydown', handleEsc);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleEsc);
-    };
-  }, [open]);
-
-  function toggle(key: string) {
-    if (hiddenSet.has(key)) {
-      onChange(hiddenColumns.filter(k => k !== key));
-    } else {
-      onChange([...hiddenColumns, key]);
-    }
-  }
-
-  function showAll() {
-    onChange([]);
-  }
-
-  function hideAll() {
-    onChange(allColumns.map(c => c.key));
-  }
-
-  function resetOrder() {
-    onOrderChange([]);
-  }
-
-  function handleDrop(targetKey: string) {
-    if (draggedKey === null || draggedKey === targetKey) return;
-    const keys = allColumns.map(c => c.key);
-    const from = keys.indexOf(draggedKey);
-    const to = keys.indexOf(targetKey);
-    if (from === -1 || to === -1) return;
-    const next = [...keys];
-    next.splice(from, 1);
-    next.splice(to, 0, draggedKey);
-    onOrderChange(next);
-  }
-
-  return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        onClick={() => { setOpen(prev => !prev); }}
-        className="inline-flex items-center gap-1.5 rounded border border-border bg-bg-tertiary/30 px-2.5 py-1 text-xs text-text-secondary hover:text-text-primary hover:border-border"
-        title="Choose and reorder columns"
-      >
-        <span>Columns</span>
-        <span className="tabular-nums text-text-muted">
-          {String(visibleCount)}/{String(allColumns.length)}
-        </span>
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-80 rounded-lg border border-border bg-bg-secondary shadow-lg">
-          <div className="flex items-center justify-between border-b border-border px-3 py-2 text-[11px]">
-            <span className="text-text-muted">Drag to reorder</span>
-            <span className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={showAll}
-                className="text-text-secondary hover:text-text-primary"
-                disabled={hiddenColumns.length === 0}
-              >
-                Show all
-              </button>
-              <span className="text-text-muted">·</span>
-              <button
-                type="button"
-                onClick={hideAll}
-                className="text-text-secondary hover:text-text-primary"
-                disabled={hiddenColumns.length === allColumns.length}
-              >
-                Hide all
-              </button>
-              <span className="text-text-muted">·</span>
-              <button
-                type="button"
-                onClick={resetOrder}
-                className="text-text-secondary hover:text-text-primary"
-                title="Restore the default column order"
-              >
-                Reset order
-              </button>
-            </span>
-          </div>
-          <div className="max-h-96 overflow-y-auto py-1">
-            {allColumns.map(col => {
-              const checked = !hiddenSet.has(col.key);
-              const autoHidden = autoHiddenKeys.has(col.key);
-              const isDragging = draggedKey === col.key;
-              const isDropTarget = dragOverKey === col.key && draggedKey !== null && draggedKey !== col.key;
-              return (
-                <label
-                  key={col.key}
-                  draggable
-                  onDragStart={(e) => {
-                    setDraggedKey(col.key);
-                    e.dataTransfer.effectAllowed = 'move';
-                    e.dataTransfer.setData('text/plain', col.key);
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                    if (dragOverKey !== col.key) setDragOverKey(col.key);
-                  }}
-                  onDragLeave={() => {
-                    if (dragOverKey === col.key) setDragOverKey(null);
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    handleDrop(col.key);
-                    setDragOverKey(null);
-                    setDraggedKey(null);
-                  }}
-                  onDragEnd={() => {
-                    setDragOverKey(null);
-                    setDraggedKey(null);
-                  }}
-                  className={[
-                    'flex items-center gap-2 px-2 py-1.5 text-xs select-none cursor-default',
-                    isDragging ? 'opacity-40' : '',
-                    isDropTarget ? 'border-t-2 border-t-accent' : 'border-t-2 border-t-transparent',
-                    'hover:bg-bg-tertiary',
-                  ].join(' ')}
-                >
-                  <span className="cursor-grab text-text-muted hover:text-text-secondary" title="Drag to reorder">⋮⋮</span>
-                  <input
-                    type="checkbox"
-                    className="accent-accent shrink-0"
-                    checked={checked}
-                    onChange={() => { toggle(col.key); }}
-                  />
-                  <span className={[
-                    'truncate flex-1',
-                    !checked || autoHidden ? 'text-text-muted' : 'text-text-primary',
-                  ].join(' ')}>
-                    {col.label}
-                  </span>
-                  {autoHidden && (
-                    <span
-                      className="text-[10px] text-text-muted uppercase tracking-wider shrink-0"
-                      title="Hidden because this column is pinned to a single filter value — clear or widen the filter to show it"
-                    >
-                      filtered
-                    </span>
-                  )}
-                  {!autoHidden && col.dimId !== null && col.dimId.startsWith('tag_') && (
-                    <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0">tag</span>
-                  )}
-                </label>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

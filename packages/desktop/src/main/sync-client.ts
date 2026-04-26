@@ -1,6 +1,6 @@
-import { Worker } from 'node:worker_threads';
 import { logger } from '@costgoblin/core';
 import type { ManifestFileEntry, SyncProgress } from '@costgoblin/core';
+import { initWorkerLifecycle } from './worker-lifecycle.js';
 
 export interface SyncOptions {
   readonly bucketPath: string;
@@ -58,29 +58,16 @@ interface PendingSync {
 }
 
 export async function createSyncClient(workerPath: string): Promise<SyncClient> {
-  const worker = new Worker(workerPath);
-  const pending = new Map<number, PendingSync>();
-  let nextId = 0;
-  let fatalError: Error | null = null;
-
-  const ready = new Promise<void>((resolve, reject) => {
-    const onMessage = (msg: unknown): void => {
-      if (!isWorkerResponse(msg)) return;
-      if (msg.kind === 'ready') {
-        worker.off('message', onMessage);
-        resolve();
-        return;
-      }
-      if (msg.kind === 'error' && msg.id === -1) {
-        worker.off('message', onMessage);
-        const err = new Error(msg.message);
-        fatalError = err;
-        reject(err);
-      }
-    };
-    worker.on('message', onMessage);
-    worker.once('error', (err) => { fatalError = err; reject(err); });
-  });
+  const lifecycle = await initWorkerLifecycle<PendingSync>(
+    workerPath,
+    (msg) => isWorkerResponse(msg) && msg.kind === 'ready',
+    (msg) => {
+      if (!isWorkerResponse(msg)) return null;
+      if (msg.kind === 'error' && msg.id === -1) return msg.message;
+      return null;
+    },
+  );
+  const { worker, pending } = lifecycle;
 
   worker.on('message', (msg: unknown) => {
     if (!isWorkerResponse(msg)) return;
@@ -106,27 +93,10 @@ export async function createSyncClient(workerPath: string): Promise<SyncClient> 
     }
   });
 
-  worker.on('error', (err) => {
-    fatalError = err;
-    for (const entry of pending.values()) entry.reject(err);
-    pending.clear();
-  });
-
-  worker.on('exit', (code) => {
-    if (code !== 0) {
-      const err = new Error(`Sync worker exited unexpectedly with code ${String(code)}`);
-      fatalError ??= err;
-      for (const entry of pending.values()) entry.reject(err);
-      pending.clear();
-    }
-  });
-
-  await ready;
-
   return {
     syncPeriods(options: SyncOptions): Promise<SyncResult> {
-      if (fatalError !== null) return Promise.reject(fatalError);
-      const id = nextId++;
+      if (lifecycle.fatalError !== null) return Promise.reject(lifecycle.fatalError);
+      const id = lifecycle.nextId++;
       const startedAt = Date.now();
       const startedAtIso = new Date(startedAt).toISOString();
       return new Promise<SyncResult>((resolve, reject) => {

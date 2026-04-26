@@ -1,18 +1,12 @@
 import { useMemo } from 'react';
-import { useCostApi } from '../hooks/use-cost-api.js';
-import { useQuery } from '../hooks/use-query.js';
+import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
 import { LineChart } from '../components/line-chart.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { LineSeries } from '../components/line-chart.js';
 import { asTagValue } from '@costgoblin/core/browser';
-import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
+import type { DailyCostsResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { dimensionLabelFor, filtersKey, getDimensionFallback, mergeFilters } from './widget.js';
-
-interface DailyQueryResult {
-  readonly result: DailyCostsResult;
-  readonly groupBy: DimensionId;
-}
+import { dimensionLabelFor } from './widget.js';
 
 function buildSeries(data: DailyCostsResult | null, topN: number): LineSeries[] {
   if (data === null) return [];
@@ -44,34 +38,20 @@ export function LineWidget({
   dimensions,
   onSetFilter,
 }: WidgetCommonProps) {
-  const api = useCostApi();
   const specGroupBy = spec.type === 'line' ? spec.groupBy : undefined;
-
-  const filters = mergeFilters(globalFilters, spec.filters);
-  const fk = filtersKey(filters);
-  const fallbackDim = specGroupBy === undefined ? undefined : getDimensionFallback(specGroupBy);
-  const query = useQuery<DailyQueryResult | null>(
-    async () => {
-      if (specGroupBy === undefined) return null;
-      if (fallbackDim === undefined) {
-        const result = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
-        return { result, groupBy: specGroupBy };
-      }
-      const [primary, fallback] = await Promise.all([
-        api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity }),
-        api.queryDailyCosts({ groupBy: fallbackDim, dateRange, filters, granularity }),
-      ]);
-      if (primary.groups.length > 1) return { result: primary, groupBy: specGroupBy };
-      return { result: fallback, groupBy: fallbackDim };
-    },
-    [specGroupBy, fallbackDim, dateRange.start, dateRange.end, fk, granularity, api],
-  );
-
-  const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
   const topN = spec.type === 'line' ? (spec.topN ?? 6) : 6;
+
+  const { query, activeGroupBy, dailyResult } = useDailyWidgetQuery({
+    specGroupBy,
+    dateRange,
+    granularity,
+    globalFilters,
+    specFilters: spec.filters,
+  });
+
   const series = useMemo(
-    () => buildSeries(query.status === 'success' && query.data !== null ? query.data.result : null, topN),
-    [query, topN],
+    () => buildSeries(dailyResult, topN),
+    [dailyResult, topN],
   );
 
   if (spec.type !== 'line' || specGroupBy === undefined || activeGroupBy === undefined) return null;
