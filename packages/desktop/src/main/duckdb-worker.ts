@@ -160,15 +160,13 @@ function send(msg: WorkerResponse): void {
   port.postMessage(msg);
 }
 
-void (async () => {
-  try {
-    await getPool();
-    send({ kind: 'ready' });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    send({ kind: 'error', id: -1, message: `DuckDB worker init failed: ${message}` });
-  }
-})();
+try {
+  await getPool();
+  send({ kind: 'ready' });
+} catch (err: unknown) {
+  const message = err instanceof Error ? err.message : String(err);
+  send({ kind: 'error', id: -1, message: `DuckDB worker init failed: ${message}` });
+}
 
 async function executeWithPool(
   id: number,
