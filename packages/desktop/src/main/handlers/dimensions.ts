@@ -4,6 +4,53 @@ import type { DimensionsConfig, NormalizationRule } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { toNum, toStr } from './query-utils.js';
 
+type ValueCostPair = { value: string; cost: number };
+
+function mergeValuesByLabel(values: ValueCostPair[], labelFn: (v: string) => string): ValueCostPair[] {
+  const merged = new Map<string, number>();
+  for (const v of values) {
+    const label = labelFn(v.value);
+    merged.set(label, (merged.get(label) ?? 0) + v.cost);
+  }
+  return [...merged.entries()].map(([value, cost]) => ({ value, cost })).sort((a, b) => b.cost - a.cost);
+}
+
+async function applyRegionPreview(
+  values: ValueCostPair[],
+  opts: { dimName?: string; useRegionNames?: boolean } | undefined,
+  getRegionMap: () => Promise<ReadonlyMap<string, { longName: string; country: string; continent: string }>>,
+): Promise<ValueCostPair[]> {
+  const regionMap = await getRegionMap();
+  const pick: ((info: { longName: string; country: string; continent: string }) => string) | null =
+    opts?.dimName === 'region_country' ? (i) => i.country
+      : opts?.dimName === 'region_continent' ? (i) => i.continent
+        : opts?.useRegionNames === true ? (i) => i.longName
+          : null;
+  if (pick === null || regionMap.size === 0) return values;
+  return mergeValuesByLabel(values, (raw) => {
+    const info = regionMap.get(raw);
+    if (info === undefined) return raw;
+    const label = pick(info);
+    return label.length > 0 ? label : raw;
+  });
+}
+
+function applyNormalizeAndStrip(
+  values: ValueCostPair[],
+  field: string,
+  opts: { normalize?: NormalizationRule; nameStripPatterns?: readonly string[] } | undefined,
+): ValueCostPair[] {
+  const stripPatterns = field === 'account_id' ? opts?.nameStripPatterns : undefined;
+  const normalize = opts?.normalize;
+  if (normalize === undefined && (stripPatterns === undefined || stripPatterns.length === 0)) return values;
+  return mergeValuesByLabel(values, (raw) => {
+    let key = raw;
+    if (normalize !== undefined) key = applyNormalizationRule(key, normalize);
+    if (stripPatterns !== undefined && stripPatterns.length > 0) key = applyStripPatterns(key, stripPatterns);
+    return key;
+  });
+}
+
 export function registerDimensionsHandlers(app: AppContext): void {
   const { ctx, getConfig, getDimensions, getRegionMap, invalidateDimensions, runQuery } = app;
 
@@ -132,56 +179,18 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const distinctCount = distinctRows[0] !== undefined ? toNum(distinctRows[0]['n']) : 0;
     let values = valueRows.map(r => ({ value: toStr(r['val']), cost: toNum(r['cost']) }));
 
-    // Account-specific: map each id to its org-data name for the preview. We
-    // read org-accounts.json fresh every call so the preview reflects the
-    // toggle before the config is saved (otherwise the cached accountMap
-    // might be from the wrong source).
     if (field === 'account_id' && opts?.useOrgAccounts === true) {
       const orgMap = await loadOrgAccountsMap(ctx.dataDir, opts.accountNameFromTag);
       if (orgMap.size > 0) {
         values = values.map(v => ({ value: orgMap.get(v.value) ?? v.value, cost: v.cost }));
       }
     }
-    // Region: facet the preview by the dim the user is editing.
-    //   - region (with useRegionNames=true): long names from SSM
-    //   - region_country: ISO country code
-    //   - region_continent: AWS geo bucket
-    //   - anything else: raw codes fall through
-    // Rows with an empty value for the requested facet get collapsed together
-    // so the preview chips match what the live query will produce.
+
     if (field === 'region') {
-      const regionMap = await getRegionMap();
-      const pick: ((info: { longName: string; country: string; continent: string }) => string) | null =
-        opts?.dimName === 'region_country' ? (i) => i.country
-          : opts?.dimName === 'region_continent' ? (i) => i.continent
-            : opts?.useRegionNames === true ? (i) => i.longName
-              : null;
-      if (pick !== null && regionMap.size > 0) {
-        const merged = new Map<string, number>();
-        for (const v of values) {
-          const info = regionMap.get(v.value);
-          const label = info === undefined ? v.value : (pick(info).length > 0 ? pick(info) : v.value);
-          merged.set(label, (merged.get(label) ?? 0) + v.cost);
-        }
-        values = [...merged.entries()].map(([value, cost]) => ({ value, cost })).sort((a, b) => b.cost - a.cost);
-      }
+      values = await applyRegionPreview(values, opts, getRegionMap);
     }
-    // Apply the same display-time transforms the live queries use. Order
-    // matches the editor's visual top-down flow: normalize first, then strip.
-    // After either runs, re-aggregate by the resulting key so two raw values
-    // that collapse to the same display value don't show up as duplicate chips.
-    const stripPatterns = field === 'account_id' ? opts?.nameStripPatterns : undefined;
-    const normalize = opts?.normalize;
-    if (normalize !== undefined || (stripPatterns !== undefined && stripPatterns.length > 0)) {
-      const merged = new Map<string, number>();
-      for (const v of values) {
-        let key = v.value;
-        if (normalize !== undefined) key = applyNormalizationRule(key, normalize);
-        if (stripPatterns !== undefined && stripPatterns.length > 0) key = applyStripPatterns(key, stripPatterns);
-        merged.set(key, (merged.get(key) ?? 0) + v.cost);
-      }
-      values = [...merged.entries()].map(([value, cost]) => ({ value, cost })).sort((a, b) => b.cost - a.cost);
-    }
+
+    values = applyNormalizeAndStrip(values, field, opts);
 
     return { values, distinctCount, period: latest.replace(/^daily-/, '') };
   });

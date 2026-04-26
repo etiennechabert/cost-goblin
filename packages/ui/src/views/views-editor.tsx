@@ -170,40 +170,32 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
   }
 
   function updateWidget(rowIdx: number, widgetIdx: number, w: WidgetSpec): void {
-    updateSelectedView(v => ({
-      ...v,
-      rows: v.rows.map((r, i) =>
-        i === rowIdx
-          ? { widgets: r.widgets.map((ww, j) => j === widgetIdx ? w : ww) }
-          : r,
-      ),
-    }));
+    updateSelectedView(v => {
+      const widgets = v.rows[rowIdx]?.widgets.map((ww, j) => j === widgetIdx ? w : ww);
+      if (widgets === undefined) return v;
+      return { ...v, rows: v.rows.map((r, i) => i === rowIdx ? { widgets } : r) };
+    });
   }
 
   function deleteWidget(rowIdx: number, widgetIdx: number): void {
-    updateSelectedView(v => ({
-      ...v,
-      rows: v.rows.map((r, i) =>
-        i === rowIdx
-          ? { widgets: r.widgets.filter((_, j) => j !== widgetIdx) }
-          : r,
-      ),
-    }));
+    updateSelectedView(v => {
+      const widgets = v.rows[rowIdx]?.widgets.filter((_, j) => j !== widgetIdx);
+      if (widgets === undefined) return v;
+      return { ...v, rows: v.rows.map((r, i) => i === rowIdx ? { widgets } : r) };
+    });
   }
 
   function moveWidget(rowIdx: number, widgetIdx: number, dir: -1 | 1): void {
-    updateSelectedView(v => ({
-      ...v,
-      rows: v.rows.map((r, i) => {
-        if (i !== rowIdx) return r;
-        const target = widgetIdx + dir;
-        if (target < 0 || target >= r.widgets.length) return r;
-        const next = [...r.widgets];
-        const [moved] = next.splice(widgetIdx, 1);
-        if (moved !== undefined) next.splice(target, 0, moved);
-        return { widgets: next };
-      }),
-    }));
+    updateSelectedView(v => {
+      const row = v.rows[rowIdx];
+      if (row === undefined) return v;
+      const target = widgetIdx + dir;
+      if (target < 0 || target >= row.widgets.length) return v;
+      const next = [...row.widgets];
+      const [moved] = next.splice(widgetIdx, 1);
+      if (moved !== undefined) next.splice(target, 0, moved);
+      return { ...v, rows: v.rows.map((r, i) => i === rowIdx ? { widgets: next } : r) };
+    });
   }
 
   async function handleSave(): Promise<void> {

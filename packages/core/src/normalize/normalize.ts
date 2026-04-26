@@ -132,43 +132,36 @@ interface NormalizableDimension {
   readonly aliases?: Readonly<Record<string, readonly string[]>> | undefined;
 }
 
+const NORMALIZE_SQL: Record<NormalizationRule, (expr: string) => string> = {
+  'lowercase': (expr) => `LOWER(${expr})`,
+  'uppercase': (expr) => `UPPER(${expr})`,
+  'lowercase-kebab': (expr) => `LOWER(REGEXP_REPLACE(REGEXP_REPLACE(${expr}, '([a-z])([A-Z])', '\\1-\\2'), '[_\\s]+', '-', 'g'))`,
+  'lowercase-underscore': (expr) => `LOWER(REGEXP_REPLACE(REGEXP_REPLACE(${expr}, '([a-z])([A-Z])', '\\1_\\2'), '[-\\s]+', '_', 'g'))`,
+  'camelCase': (expr) => `LOWER(REPLACE(REPLACE(REPLACE(${expr}, '-', ''), '_', ''), ' ', ''))`,
+};
+
+function buildAliasCases(
+  fieldExpr: string,
+  aliases: Readonly<Record<string, readonly string[]>>,
+): string[] {
+  return Object.entries(aliases).map(([canonical, aliasList]) => {
+    const allValues = aliasList.map(a => `'${a.replaceAll("'", "''")}'`).join(', ');
+    return `WHEN ${fieldExpr} IN (${allValues}) THEN '${canonical.replaceAll("'", "''")}'`;
+  });
+}
+
 export function buildAliasSqlCase(
   fieldExpr: string,
   dimension: NormalizableDimension,
 ): string {
-  const cases: string[] = [];
-
   if (dimension.normalize !== undefined) {
-    switch (dimension.normalize) {
-      case 'lowercase':
-        fieldExpr = `LOWER(${fieldExpr})`;
-        break;
-      case 'uppercase':
-        fieldExpr = `UPPER(${fieldExpr})`;
-        break;
-      case 'lowercase-kebab':
-        fieldExpr = `LOWER(REGEXP_REPLACE(REGEXP_REPLACE(${fieldExpr}, '([a-z])([A-Z])', '\\1-\\2'), '[_\\s]+', '-', 'g'))`;
-        break;
-      case 'lowercase-underscore':
-        fieldExpr = `LOWER(REGEXP_REPLACE(REGEXP_REPLACE(${fieldExpr}, '([a-z])([A-Z])', '\\1_\\2'), '[-\\s]+', '_', 'g'))`;
-        break;
-      case 'camelCase':
-        // SQL approximation for grouping — true camelCase applied in TypeScript
-        fieldExpr = `LOWER(REPLACE(REPLACE(REPLACE(${fieldExpr}, '-', ''), '_', ''), ' ', ''))`;
-        break;
-    }
+    fieldExpr = NORMALIZE_SQL[dimension.normalize](fieldExpr);
   }
 
-  if (dimension.aliases !== undefined) {
-    for (const [canonical, aliasList] of Object.entries(dimension.aliases)) {
-      const allValues = aliasList.map(a => `'${a.replaceAll("'", "''")}'`).join(', ');
-      cases.push(`WHEN ${fieldExpr} IN (${allValues}) THEN '${canonical.replaceAll("'", "''")}'`);
-    }
-  }
+  if (dimension.aliases === undefined) return fieldExpr;
 
-  if (cases.length === 0) {
-    return fieldExpr;
-  }
+  const cases = buildAliasCases(fieldExpr, dimension.aliases);
+  if (cases.length === 0) return fieldExpr;
 
   return `CASE ${cases.join(' ')} ELSE ${fieldExpr} END`;
 }

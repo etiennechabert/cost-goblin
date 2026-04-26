@@ -2,6 +2,31 @@ import { ipcMain, shell } from 'electron';
 import { logger, parseS3Path, isStringRecord, parseJsonObject } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 
+const REQUIRED_CUR_COLUMNS = [
+  'line_item_usage_start_date', 'line_item_usage_account_id',
+  'line_item_unblended_cost', 'product_servicecode',
+  'product_product_family', 'product_region_code', 'resource_tags',
+];
+
+function classifyManifestColumns(columnNames: string[]): { detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] } {
+  if (columnNames.includes('recommendation_id') || columnNames.includes('estimated_monthly_savings')) {
+    return { detectedType: 'cost-optimization', missingColumns: [] };
+  }
+  if (columnNames.includes('line_item_usage_start_date')) {
+    return { detectedType: 'daily', missingColumns: REQUIRED_CUR_COLUMNS.filter(c => !columnNames.includes(c)) };
+  }
+  return { detectedType: 'unknown', missingColumns: [] };
+}
+
+function parseManifestColumnNames(body: string): string[] {
+  const columns = parseJsonObject(body)?.['columns'];
+  if (!Array.isArray(columns)) return [];
+  return columns
+    .filter(isStringRecord)
+    .map(c => typeof c['name'] === 'string' ? c['name'] : '')
+    .filter(n => n.length > 0);
+}
+
 export function registerSetupHandlers(app: AppContext): void {
   const { ctx, invalidateConfig, invalidateDimensions } = app;
 
@@ -108,18 +133,10 @@ export function registerSetupHandlers(app: AppContext): void {
         })
         .filter(p => p.length > 0);
 
-      const hasData = prefixes.includes('data');
-      const hasMetadata = prefixes.includes('metadata');
-      const isCurReport = hasData && hasMetadata;
+      const isCurReport = prefixes.includes('data') && prefixes.includes('metadata');
 
       let detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown' = 'unknown';
       let missingColumns: string[] = [];
-
-      const requiredCurColumns = [
-        'line_item_usage_start_date', 'line_item_usage_account_id',
-        'line_item_unblended_cost', 'product_servicecode',
-        'product_product_family', 'product_region_code', 'resource_tags',
-      ];
 
       if (isCurReport) {
         try {
@@ -128,26 +145,15 @@ export function registerSetupHandlers(app: AppContext): void {
             Prefix: `${params.prefix}metadata/`,
             MaxKeys: 10,
           }));
-
           const manifestKey = (metaList.Contents ?? []).find(c => c.Key?.endsWith('.json'))?.Key;
           if (manifestKey !== undefined) {
             const manifestResponse = await client.send(new GetObjectCommand({ Bucket: params.bucket, Key: manifestKey }));
             const body = await manifestResponse.Body?.transformToString();
             if (body !== undefined) {
-              const columns = parseJsonObject(body)?.['columns'];
-              const columnNames: string[] = Array.isArray(columns)
-                ? columns
-                  .filter(isStringRecord)
-                  .map(c => typeof c['name'] === 'string' ? c['name'] : '')
-                  .filter(n => n.length > 0)
-                : [];
-
-              if (columnNames.includes('recommendation_id') || columnNames.includes('estimated_monthly_savings')) {
-                detectedType = 'cost-optimization';
-              } else if (columnNames.includes('line_item_usage_start_date')) {
-                detectedType = 'daily';
-                missingColumns = requiredCurColumns.filter(c => !columnNames.includes(c));
-              }
+              const columnNames = parseManifestColumnNames(body);
+              const classification = classifyManifestColumns(columnNames);
+              detectedType = classification.detectedType;
+              missingColumns = classification.missingColumns;
             }
           }
         } catch {

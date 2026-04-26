@@ -119,6 +119,42 @@ async function saveEtags(
   await writeFile(etagPath, JSON.stringify(savedEtags, null, 2));
 }
 
+function groupFilesByDate(periodFiles: readonly ManifestFileEntry[]): Map<string, ManifestFileEntry[]> {
+  const dateGroups = new Map<string, ManifestFileEntry[]>();
+  for (const file of periodFiles) {
+    const date = extractDate(file.key);
+    if (date === undefined) continue;
+    const existing = dateGroups.get(date);
+    if (existing !== undefined) {
+      existing.push(file);
+    } else {
+      dateGroups.set(date, [file]);
+    }
+  }
+  return dateGroups;
+}
+
+function makeLineHandler(
+  onProgress: ProgressCallback | undefined,
+  totalFiles: number,
+  counter: { filesDone: number },
+): (line: string) => void {
+  return (line) => {
+    logger.info(`[aws] ${line}`);
+    if (line.startsWith('download:')) {
+      counter.filesDone++;
+    }
+    if (onProgress !== undefined) {
+      onProgress({
+        phase: 'downloading',
+        filesTotal: totalFiles,
+        filesDone: counter.filesDone,
+        message: line.startsWith('Completed') ? line : undefined,
+      });
+    }
+  };
+}
+
 async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
   const { bucketPath, profile, dataDir, files, onProgress } = options;
   const s3Path = parseS3Path(bucketPath);
@@ -128,25 +164,13 @@ async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ fi
   const periods = groupByPeriod(files);
   const periodList = [...periods.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   const totalFiles = files.length;
-  let globalFilesDone = 0;
+  const counter = { filesDone: 0 };
   let totalFilesDownloaded = 0;
 
   for (const [period, periodFiles] of periodList) {
     if (options.signal?.aborted) break;
 
-    // Group files by date within the period
-    const dateGroups = new Map<string, ManifestFileEntry[]>();
-    for (const file of periodFiles) {
-      const date = extractDate(file.key);
-      if (date === undefined) continue;
-      const existing = dateGroups.get(date);
-      if (existing !== undefined) {
-        existing.push(file);
-      } else {
-        dateGroups.set(date, [file]);
-      }
-    }
-
+    const dateGroups = groupFilesByDate(periodFiles);
     logger.info(`Processing cost optimization period ${period}: ${String(dateGroups.size)} dates`);
 
     for (const [date, dateFiles] of dateGroups) {
@@ -165,23 +189,9 @@ async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ fi
         dest: stagingDir,
         profile,
         signal: options.signal,
-        onLine: (line) => {
-          logger.info(`[aws] ${line}`);
-          if (line.startsWith('download:')) {
-            globalFilesDone++;
-          }
-          if (onProgress !== undefined) {
-            onProgress({
-              phase: 'downloading',
-              filesTotal: totalFiles,
-              filesDone: globalFilesDone,
-              message: line.startsWith('Completed') ? line : undefined,
-            });
-          }
-        },
+        onLine: makeLineHandler(onProgress, totalFiles, counter),
       });
 
-      // Move downloaded files to the output dir (already daily-partitioned)
       const dateDir = join(outputDir, `usage_date=${date}`);
       await mkdir(dateDir, { recursive: true });
 

@@ -12,16 +12,9 @@ import { ConfirmModal } from '../components/confirm-modal.js';
  *  reorder space so a tag can be dropped above a built-in and vice-versa. */
 interface DragRef { orderIdx: number }
 
-/** Stable identifiers for the unified `order` array in DimensionsConfig.
- *  A built-in is keyed by its name; a tag is keyed by its tagName. The
- *  `builtin:`/`tag:` prefix avoids any chance of collision if a user names
- *  a tag after a built-in. Keep in sync with the YAML schema. */
 function builtInKey(name: string): string { return `builtin:${name}`; }
 function tagKey(tagName: string): string { return `tag:${tagName}`; }
 
-/** Default order for configs that predate the `order` field: built-ins
- *  first in config order, then tags. Restricted to enabled items only —
- *  disabled dims aren't part of the unified ordering. */
 function defaultOrder(config: DimensionsConfig): string[] {
   const keys: string[] = [];
   for (const d of config.builtIn) {
@@ -33,10 +26,7 @@ function defaultOrder(config: DimensionsConfig): string[] {
   return keys;
 }
 
-/** Normalize the current `order` against the live config: drop entries
- *  pointing at disabled/removed dims, append any newly-enabled dims at
- *  the end so they show up without requiring an explicit write. */
-function reconcileOrder(config: DimensionsConfig): string[] {
+function collectValidKeys(config: DimensionsConfig): Set<string> {
   const valid = new Set<string>();
   for (const d of config.builtIn) {
     if (d.enabled !== false) valid.add(builtInKey(d.name));
@@ -44,6 +34,11 @@ function reconcileOrder(config: DimensionsConfig): string[] {
   for (const t of config.tags) {
     if (t.enabled !== false) valid.add(tagKey(t.tagName));
   }
+  return valid;
+}
+
+function reconcileOrder(config: DimensionsConfig): string[] {
+  const valid = collectValidKeys(config);
   const seen = new Set<string>();
   const out: string[] = [];
   for (const key of config.order ?? defaultOrder(config)) {
@@ -512,6 +507,125 @@ function textToAliases(text: string): Record<string, readonly string[]> | undefi
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+type TagSource = 'resource' | 'account' | 'both' | 'template';
+
+function sourceColor(source: TagSource, aliased: boolean): string {
+  if (aliased) return 'bg-rose-500/10 border-rose-500/30 text-rose-300';
+  switch (source) {
+    case 'template': return 'bg-warning/10 border-warning/30 text-warning italic';
+    case 'both': return 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
+    case 'account': return 'bg-violet-500/10 border-violet-500/30 text-violet-300';
+    case 'resource': return 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300';
+  }
+}
+
+function applyPreviewNormalize(v: string, rule: string): string {
+  switch (rule) {
+    case 'lowercase': return v.toLowerCase();
+    case 'uppercase': return v.toUpperCase();
+    case 'lowercase-kebab': return v.replaceAll(/([a-z])([A-Z])/g, '$1-$2').replaceAll('_', '-').replaceAll(' ', '-').toLowerCase();
+    case 'lowercase-underscore': return v.replaceAll(/([a-z])([A-Z])/g, '$1_$2').replaceAll('-', '_').replaceAll(' ', '_').toLowerCase();
+    case 'camelCase': return v.replaceAll(/[-_\s]+(.)/g, (_, c: string) => c.toUpperCase()).replace(/^(.)/, (_, c: string) => c.toLowerCase());
+    default: return v;
+  }
+}
+
+function TagValuePreview({ tagMatch, fallbackValues, missingValueTemplate, normalizeRule, aliasText }: Readonly<{
+  tagMatch: { sampleValues: string[] } | undefined;
+  fallbackValues: [string, number][];
+  missingValueTemplate: string;
+  normalizeRule: string;
+  aliasText: string;
+}>): React.JSX.Element | null {
+  const resourceVals = tagMatch !== undefined ? tagMatch.sampleValues : [];
+  const accountVals = fallbackValues.map(([v]) => v);
+  const fallbackFormat = missingValueTemplate.length > 0 ? missingValueTemplate : '{fallback}';
+  const isPassthrough = fallbackFormat === '{fallback}';
+
+  const templateVals: string[] = [];
+  if (!isPassthrough && accountVals.length > 0) {
+    if (fallbackFormat.includes('{fallback}')) {
+      for (const acctVal of accountVals) templateVals.push(fallbackFormat.replaceAll('{fallback}', acctVal));
+    } else {
+      templateVals.push(fallbackFormat);
+    }
+  }
+
+  const resourceSet = new Set(resourceVals);
+  const templateSet = new Set(templateVals);
+  const allRaw = isPassthrough
+    ? [...new Set([...resourceVals, ...accountVals])]
+    : [...new Set([...resourceVals, ...templateVals])];
+  const accountSet = isPassthrough ? new Set(accountVals) : new Set<string>();
+  if (allRaw.length === 0) return null;
+
+  const normalize = (v: string): string => applyPreviewNormalize(v, normalizeRule);
+  const aliasMap = new Map<string, string>();
+  const parsed = textToAliases(aliasText);
+  if (parsed !== undefined) {
+    for (const [canonical, alts] of Object.entries(parsed)) {
+      for (const alt of alts) aliasMap.set(normalize(alt), canonical);
+    }
+  }
+
+  const transformed = allRaw.map(raw => {
+    const normalized = normalize(raw);
+    const resolved = aliasMap.get(normalized) ?? normalized;
+    const fromResource = resourceSet.has(raw);
+    const fromAccount = accountSet.has(raw);
+    const fromTemplate = templateSet.has(raw);
+    let source: TagSource;
+    if (fromTemplate) source = 'template';
+    else if (fromResource && fromAccount) source = 'both';
+    else if (fromResource) source = 'resource';
+    else source = 'account';
+    return { raw, resolved, aliased: aliasMap.has(normalized), source };
+  });
+
+  const aliasPreviewCount = transformed.filter(t => t.aliased).length;
+
+  const resolvedMap = new Map<string, TagSource>();
+  for (const t of transformed) {
+    const existing = resolvedMap.get(t.resolved);
+    if (existing === undefined) resolvedMap.set(t.resolved, t.source);
+    else if (existing !== 'both' && existing !== t.source) resolvedMap.set(t.resolved, 'both');
+  }
+  const unique = [...resolvedMap.entries()]
+    .map(([resolved, source]) => ({
+      resolved,
+      aliased: transformed.some(t => t.resolved === resolved && t.aliased),
+      source,
+    }))
+    .sort((a, b) => a.resolved.localeCompare(b.resolved));
+
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-xs text-text-muted">
+        Preview — {String(allRaw.length)} raw → {String(unique.length)} resolved
+        {normalizeRule.length > 0 ? ` (${normalizeRule})` : ''}
+        {aliasPreviewCount > 0 ? ` · ${String(aliasPreviewCount)} aliased` : ''}
+      </span>
+      <div className="flex items-center gap-3 text-[9px] text-text-muted mb-1">
+        <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-cyan-500/30 border border-cyan-500/50" /> resource</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-violet-500/30 border border-violet-500/50" /> account</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-500/30 border border-emerald-500/50" /> both</span>
+        {aliasPreviewCount > 0 && <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-rose-500/30 border border-rose-500/50" /> aliased</span>}
+        {!isPassthrough && <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-warning/30 border border-warning/50" /> formatted</span>}
+      </div>
+      <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+        {unique.map(({ resolved, aliased, source }) => (
+          <span
+            key={resolved}
+            className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${sourceColor(source, aliased)}`}
+          >
+            {resolved}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredTags: discovered, accountTagKeys: acctTags, orgAccounts }: Readonly<{
   tag: EditingTag;
   onSave: (tag: EditingTag) => void;
@@ -701,134 +815,13 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
       </div>
 
       {/* Row 5: Merged + normalized preview of all values */}
-      {(() => {
-        // Collect values with source tracking
-        const resourceVals = tagMatch !== undefined ? tagMatch.sampleValues : [];
-        const accountVals = fallbackValues.map(([v]) => v);
-        // Fallback format: {fallback} = raw account value, or custom like "unknown-{fallback}"
-        const fallbackFormat = state.missingValueTemplate.length > 0 ? state.missingValueTemplate : '{fallback}';
-        const isPassthrough = fallbackFormat === '{fallback}';
-
-        // Generate formatted fallback values
-        const templateVals: string[] = [];
-        if (!isPassthrough && accountVals.length > 0) {
-          if (fallbackFormat.includes('{fallback}')) {
-            for (const acctVal of accountVals) {
-              templateVals.push(fallbackFormat.replaceAll('{fallback}', acctVal));
-            }
-          } else {
-            // Static string, no variable
-            templateVals.push(fallbackFormat);
-          }
-        }
-
-        const resourceSet = new Set(resourceVals);
-        const templateSet = new Set(templateVals);
-        // When format changes the value, show template vals instead of raw account vals
-        const allRaw = isPassthrough
-          ? [...new Set([...resourceVals, ...accountVals])]
-          : [...new Set([...resourceVals, ...templateVals])];
-        const accountSet = isPassthrough ? new Set(accountVals) : new Set<string>();
-        if (allRaw.length === 0) return null;
-
-        // Apply normalization
-        const normalize = (v: string): string => {
-          switch (state.normalize) {
-            case 'lowercase': return v.toLowerCase();
-            case 'uppercase': return v.toUpperCase();
-            case 'lowercase-kebab': return v.replaceAll(/([a-z])([A-Z])/g, '$1-$2').replaceAll('_', '-').replaceAll(' ', '-').toLowerCase();
-            case 'lowercase-underscore': return v.replaceAll(/([a-z])([A-Z])/g, '$1_$2').replaceAll('-', '_').replaceAll(' ', '_').toLowerCase();
-            case 'camelCase': return v.replaceAll(/[-_\s]+(.)/g, (_, c: string) => c.toUpperCase()).replace(/^(.)/, (_, c: string) => c.toLowerCase());
-            default: return v;
-          }
-        };
-
-        // Build alias reverse map
-        const aliasMap = new Map<string, string>();
-        const parsed = textToAliases(state.aliases);
-        if (parsed !== undefined) {
-          for (const [canonical, alts] of Object.entries(parsed)) {
-            for (const alt of alts) {
-              aliasMap.set(normalize(alt), canonical);
-            }
-          }
-        }
-
-        // Transform: normalize → alias resolve → track source
-        type Source = 'resource' | 'account' | 'both' | 'template';
-        const transformed = allRaw.map(raw => {
-          const normalized = normalize(raw);
-          const resolved = aliasMap.get(normalized) ?? normalized;
-          const fromResource = resourceSet.has(raw);
-          const fromAccount = accountSet.has(raw);
-          const fromTemplate = templateSet.has(raw);
-          let source: Source;
-          if (fromTemplate) source = 'template';
-          else if (fromResource && fromAccount) source = 'both';
-          else if (fromResource) source = 'resource';
-          else source = 'account';
-          const aliased = aliasMap.has(normalized);
-          return { raw, resolved, aliased, source };
-        });
-
-        const aliasPreviewCount = transformed.filter(t => t.aliased).length;
-
-        // Deduplicate by resolved value, merge sources, sort alphabetically
-        const resolvedMap = new Map<string, Source>();
-        for (const t of transformed) {
-          const existing = resolvedMap.get(t.resolved);
-          if (existing === undefined) {
-            resolvedMap.set(t.resolved, t.source);
-          } else if (existing !== 'both' && existing !== t.source) {
-            resolvedMap.set(t.resolved, 'both');
-          }
-        }
-        const unique = [...resolvedMap.entries()]
-          .map(([resolved, source]) => ({
-            resolved,
-            aliased: transformed.some(t => t.resolved === resolved && t.aliased),
-            source,
-          }))
-          .sort((a, b) => a.resolved.localeCompare(b.resolved));
-
-        return (
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-text-muted">
-              Preview — {String(allRaw.length)} raw → {String(unique.length)} resolved
-              {state.normalize.length > 0 ? ` (${state.normalize})` : ''}
-              {aliasPreviewCount > 0 ? ` · ${String(aliasPreviewCount)} aliased` : ''}
-            </span>
-            <div className="flex items-center gap-3 text-[9px] text-text-muted mb-1">
-              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-cyan-500/30 border border-cyan-500/50" /> resource</span>
-              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-violet-500/30 border border-violet-500/50" /> account</span>
-              <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-emerald-500/30 border border-emerald-500/50" /> both</span>
-              {aliasPreviewCount > 0 && <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-rose-500/30 border border-rose-500/50" /> aliased</span>}
-              {!isPassthrough && <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-sm bg-warning/30 border border-warning/50" /> formatted</span>}
-            </div>
-            <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
-              {unique.map(({ resolved, aliased, source }) => {
-                const colors = aliased
-                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-300'
-                  : source === 'template'
-                    ? 'bg-warning/10 border-warning/30 text-warning italic'
-                    : source === 'both'
-                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                      : source === 'account'
-                        ? 'bg-violet-500/10 border-violet-500/30 text-violet-300'
-                        : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300';
-                return (
-                <span
-                  key={resolved}
-                  className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${colors}`}
-                >
-                  {resolved}
-                </span>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })()}
+      <TagValuePreview
+        tagMatch={tagMatch}
+        fallbackValues={fallbackValues}
+        missingValueTemplate={state.missingValueTemplate}
+        normalizeRule={state.normalize}
+        aliasText={state.aliases}
+      />
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -855,6 +848,192 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           onConfirm={() => { setDiscardConfirm(false); onCancel(); }}
           onCancel={() => { setDiscardConfirm(false); }}
         />
+      )}
+    </div>
+  );
+}
+
+function ToggleButton({ itemKey, hidden, onToggle }: Readonly<{ itemKey: string; hidden: boolean; onToggle: () => void }>): React.JSX.Element {
+  return (
+    <button
+      key={itemKey}
+      type="button"
+      onClick={onToggle}
+      className={[
+        'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
+        hidden
+          ? 'border-border bg-bg-tertiary/20 text-text-muted line-through'
+          : 'border-accent/40 bg-accent/10 text-accent',
+      ].join(' ')}
+    >
+      {itemKey}
+    </button>
+  );
+}
+
+type DiscoveredTag = { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number };
+
+function ResourceTagsContent({ tagsQuery, discoveredTags, hiddenResourceCols, setHiddenResourceCols }: Readonly<{
+  tagsQuery: { status: string; data?: unknown; error?: Error };
+  discoveredTags: readonly DiscoveredTag[];
+  hiddenResourceCols: Set<string>;
+  setHiddenResourceCols: React.Dispatch<React.SetStateAction<Set<string>>>;
+}>): React.JSX.Element | null {
+  if (tagsQuery.status === 'loading') {
+    return (
+      <div className="rounded-xl border border-border bg-bg-secondary/50 p-8 text-center">
+        <CoinRainLoader height={80} count={4} />
+        <p className="text-xs text-text-muted mt-2">Scanning billing data for tags...</p>
+      </div>
+    );
+  }
+  if (tagsQuery.status === 'error' && tagsQuery.error !== undefined) {
+    return (
+      <div className="rounded-xl border border-negative/50 bg-negative-muted p-4 text-sm text-negative">
+        {tagsQuery.error.message}
+      </div>
+    );
+  }
+  if (tagsQuery.status !== 'success' || discoveredTags.length === 0) return null;
+
+  const visibleTags = discoveredTags.filter(t => !hiddenResourceCols.has(t.key));
+  const toggleCol = (key: string) => {
+    setHiddenResourceCols(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap gap-1.5">
+        {[...discoveredTags].sort((a, b) => {
+          const aH = hiddenResourceCols.has(a.key) ? 1 : 0;
+          const bH = hiddenResourceCols.has(b.key) ? 1 : 0;
+          return aH - bH;
+        }).map(t => (
+          <ToggleButton key={t.key} itemKey={t.key} hidden={hiddenResourceCols.has(t.key)} onToggle={() => { toggleCol(t.key); }} />
+        ))}
+      </div>
+      {visibleTags.length > 0 && (
+        <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-auto max-h-96">
+          <table className="text-xs">
+            <thead>
+              <tr className="border-b border-border text-left text-text-muted sticky top-0 bg-bg-secondary z-10">
+                {visibleTags.map(t => (
+                  <th key={t.key} className="px-3 py-2 font-medium whitespace-nowrap">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-mono">{t.key}</span>
+                      <span className="text-[9px] text-text-muted font-normal">{String(t.coveragePct)}% · {String(t.distinctCount)} values</span>
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: Math.max(...visibleTags.map(t => t.sampleValues.length), 0) }, (_, rowIdx) => (
+                <tr key={rowIdx} className="border-b border-border-subtle">
+                  {visibleTags.map(t => (
+                    <td key={t.key} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
+                      {t.sampleValues[rowIdx] ?? ''}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function computeAccountColumnValues(
+  accounts: readonly { tags: Readonly<Record<string, string>> }[],
+  visibleKeys: string[],
+): string[][] {
+  return visibleKeys.map(key => {
+    const counts = new Map<string, number>();
+    for (const acct of accounts) {
+      const val = acct.tags[key];
+      if (val !== undefined && val.length > 0) {
+        counts.set(val, (counts.get(val) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([v, c]) => `${v} (${String(c)})`);
+  });
+}
+
+function AccountTagsContent({ orgData, accountTagKeys, hiddenAccountCols, setHiddenAccountCols }: Readonly<{
+  orgData: { accounts: readonly { tags: Readonly<Record<string, string>> }[] } | null;
+  accountTagKeys: string[];
+  hiddenAccountCols: Set<string>;
+  setHiddenAccountCols: React.Dispatch<React.SetStateAction<Set<string>>>;
+}>): React.JSX.Element {
+  if (orgData === null) {
+    return <p className="text-xs text-text-muted">No Organization sync data yet. Run it from Data Management to populate account-level tags.</p>;
+  }
+  if (accountTagKeys.length === 0) {
+    return <p className="text-xs text-text-muted">No tags found on any accounts.</p>;
+  }
+
+  const visibleKeys = accountTagKeys.filter(k => !hiddenAccountCols.has(k));
+  const toggleCol = (key: string) => {
+    setHiddenAccountCols(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const columnValues = visibleKeys.length > 0 ? computeAccountColumnValues(orgData.accounts, visibleKeys) : [];
+  const maxRows = Math.max(...columnValues.map(c => c.length), 0);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap gap-1.5">
+        {[...accountTagKeys].sort((a, b) => {
+          const aH = hiddenAccountCols.has(a) ? 1 : 0;
+          const bH = hiddenAccountCols.has(b) ? 1 : 0;
+          return aH - bH;
+        }).map(key => (
+          <ToggleButton key={key} itemKey={key} hidden={hiddenAccountCols.has(key)} onToggle={() => { toggleCol(key); }} />
+        ))}
+      </div>
+      {visibleKeys.length > 0 && (
+        <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-auto max-h-96">
+          <table className="text-xs">
+            <thead>
+              <tr className="border-b border-border text-left text-text-muted sticky top-0 bg-bg-secondary z-10">
+                {visibleKeys.map(key => {
+                  const count = orgData.accounts.filter(a => a.tags[key] !== undefined && a.tags[key] !== '').length;
+                  return (
+                    <th key={key} className="px-3 py-2 font-medium whitespace-nowrap">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-mono">{key}</span>
+                        <span className="text-[9px] text-text-muted font-normal">{String(count)}/{String(orgData.accounts.length)} accts</span>
+                      </div>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: Math.min(maxRows, 15) }, (_, rowIdx) => (
+                <tr key={rowIdx} className="border-b border-border-subtle">
+                  {columnValues.map((vals, colIdx) => (
+                    <td key={visibleKeys[colIdx]} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
+                      {vals[rowIdx] ?? ''}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -1383,77 +1562,12 @@ export function DimensionsView() {
             expanded={resourceTagsExpanded}
             onToggle={() => { setResourceTagsExpanded(v => !v); }}
           >
-            {tagsQuery.status === 'loading' && (
-              <div className="rounded-xl border border-border bg-bg-secondary/50 p-8 text-center">
-                <CoinRainLoader height={80} count={4} />
-                <p className="text-xs text-text-muted mt-2">Scanning billing data for tags...</p>
-              </div>
-            )}
-            {tagsQuery.status === 'error' && (
-              <div className="rounded-xl border border-negative/50 bg-negative-muted p-4 text-sm text-negative">
-                {tagsQuery.error.message}
-              </div>
-            )}
-            {tagsQuery.status === 'success' && discoveredTags.length > 0 && (() => {
-              const visibleTags = discoveredTags.filter(t => !hiddenResourceCols.has(t.key));
-              return (
-                <div className="flex flex-col gap-3">
-                  <div className="flex flex-wrap gap-1.5">
-                    {[...discoveredTags].sort((a, b) => {
-                      const aHidden = hiddenResourceCols.has(a.key) ? 1 : 0;
-                      const bHidden = hiddenResourceCols.has(b.key) ? 1 : 0;
-                      return aHidden - bHidden;
-                    }).map(t => {
-                      const hidden = hiddenResourceCols.has(t.key);
-                      return (
-                        <button
-                          key={t.key}
-                          type="button"
-                          onClick={() => { setHiddenResourceCols(prev => { const next = new Set(prev); if (hidden) { next.delete(t.key); } else { next.add(t.key); } return next; }); }}
-                          className={[
-                            'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
-                            hidden
-                              ? 'border-border bg-bg-tertiary/20 text-text-muted line-through'
-                              : 'border-accent/40 bg-accent/10 text-accent',
-                          ].join(' ')}
-                        >
-                          {t.key}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {visibleTags.length > 0 && (
-                    <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-auto max-h-96">
-                      <table className="text-xs">
-                        <thead>
-                          <tr className="border-b border-border text-left text-text-muted sticky top-0 bg-bg-secondary z-10">
-                            {visibleTags.map(t => (
-                              <th key={t.key} className="px-3 py-2 font-medium whitespace-nowrap">
-                                <div className="flex flex-col gap-0.5">
-                                  <span className="font-mono">{t.key}</span>
-                                  <span className="text-[9px] text-text-muted font-normal">{String(t.coveragePct)}% · {String(t.distinctCount)} values</span>
-                                </div>
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {Array.from({ length: Math.max(...visibleTags.map(t => t.sampleValues.length), 0) }, (_, rowIdx) => (
-                            <tr key={rowIdx} className="border-b border-border-subtle">
-                              {visibleTags.map(t => (
-                                <td key={t.key} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
-                                  {t.sampleValues[rowIdx] ?? ''}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+            <ResourceTagsContent
+              tagsQuery={tagsQuery}
+              discoveredTags={discoveredTags}
+              hiddenResourceCols={hiddenResourceCols}
+              setHiddenResourceCols={setHiddenResourceCols}
+            />
           </DebugPanel>
 
           <DebugPanel
@@ -1462,86 +1576,12 @@ export function DimensionsView() {
             expanded={accountTagsExpanded}
             onToggle={() => { setAccountTagsExpanded(v => !v); }}
           >
-            {orgData === null ? (
-              <p className="text-xs text-text-muted">No Organization sync data yet. Run it from Data Management to populate account-level tags.</p>
-            ) : accountTagKeys.length === 0 ? (
-              <p className="text-xs text-text-muted">No tags found on any accounts.</p>
-            ) : (() => {
-              const visibleKeys = accountTagKeys.filter(k => !hiddenAccountCols.has(k));
-              return (
-                <div className="flex flex-col gap-3">
-                  <div className="flex flex-wrap gap-1.5">
-                    {[...accountTagKeys].sort((a, b) => {
-                      const aH = hiddenAccountCols.has(a) ? 1 : 0;
-                      const bH = hiddenAccountCols.has(b) ? 1 : 0;
-                      return aH - bH;
-                    }).map(key => {
-                      const hidden = hiddenAccountCols.has(key);
-                      return (
-                        <button
-                          key={key}
-                          type="button"
-                          onClick={() => { setHiddenAccountCols(prev => { const next = new Set(prev); if (hidden) { next.delete(key); } else { next.add(key); } return next; }); }}
-                          className={[
-                            'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
-                            hidden
-                              ? 'border-border bg-bg-tertiary/20 text-text-muted line-through'
-                              : 'border-accent/40 bg-accent/10 text-accent',
-                          ].join(' ')}
-                        >
-                          {key}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {visibleKeys.length > 0 && (
-                    <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-auto max-h-96">
-                      <table className="text-xs">
-                        <thead>
-                          <tr className="border-b border-border text-left text-text-muted sticky top-0 bg-bg-secondary z-10">
-                            {visibleKeys.map(key => {
-                              const count = orgData.accounts.filter(a => a.tags[key] !== undefined && a.tags[key] !== '').length;
-                              return (
-                                <th key={key} className="px-3 py-2 font-medium whitespace-nowrap">
-                                  <div className="flex flex-col gap-0.5">
-                                    <span className="font-mono">{key}</span>
-                                    <span className="text-[9px] text-text-muted font-normal">{String(count)}/{String(orgData.accounts.length)} accts</span>
-                                  </div>
-                                </th>
-                              );
-                            })}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(() => {
-                            const columnValues = visibleKeys.map(key => {
-                              const counts = new Map<string, number>();
-                              for (const acct of orgData.accounts) {
-                                const val = acct.tags[key];
-                                if (val !== undefined && val.length > 0) {
-                                  counts.set(val, (counts.get(val) ?? 0) + 1);
-                                }
-                              }
-                              return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([v, c]) => `${v} (${String(c)})`);
-                            });
-                            const maxRows = Math.max(...columnValues.map(c => c.length), 0);
-                            return Array.from({ length: Math.min(maxRows, 15) }, (_, rowIdx) => (
-                              <tr key={rowIdx} className="border-b border-border-subtle">
-                                {columnValues.map((vals, colIdx) => (
-                                  <td key={visibleKeys[colIdx]} className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
-                                    {vals[rowIdx] ?? ''}
-                                  </td>
-                                ))}
-                              </tr>
-                            ));
-                          })()}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+            <AccountTagsContent
+              orgData={orgData}
+              accountTagKeys={accountTagKeys}
+              hiddenAccountCols={hiddenAccountCols}
+              setHiddenAccountCols={setHiddenAccountCols}
+            />
           </DebugPanel>
         </div>
       )}

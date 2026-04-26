@@ -22,6 +22,35 @@ function phaseLabel(phase: string, total: number): string {
   }
 }
 
+function SyncStatusBanner({ syncState }: Readonly<{ syncState: OrgSyncState }>): React.JSX.Element | null {
+  if (syncState.status === 'syncing') {
+    return (
+      <div className="mt-3 rounded-lg border border-accent/50 bg-positive-muted px-3 py-2">
+        <div className="flex items-center gap-2 text-xs text-accent">
+          <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
+          <span className="capitalize">{syncState.phase}</span>
+          {syncState.total > 0 && <span>— {String(syncState.done)}/{String(syncState.total)}</span>}
+        </div>
+      </div>
+    );
+  }
+  if (syncState.status === 'error') {
+    return (
+      <div className="mt-3 rounded-lg border border-negative/50 bg-negative-muted px-3 py-2 text-xs text-negative">
+        {syncState.message}
+      </div>
+    );
+  }
+  if (syncState.status === 'done') {
+    return (
+      <div className="mt-3 rounded-lg border border-accent/50 bg-positive-muted px-3 py-2 text-xs text-accent">
+        Synced {String(syncState.count)} accounts
+      </div>
+    );
+  }
+  return null;
+}
+
 export function OrgAccountsSection({ profile }: Readonly<{ profile: string | null }>) {
   const api = useCostApi();
   const [refreshKey, setRefreshKey] = useState(0);
@@ -101,25 +130,7 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
               This replaces the manual CSV export.
             </p>
 
-            {syncState.status === 'syncing' && (
-              <div className="mt-3 rounded-lg border border-accent/50 bg-positive-muted px-3 py-2">
-                <div className="flex items-center gap-2 text-xs text-accent">
-                  <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
-                  <span className="capitalize">{syncState.phase}</span>
-                  {syncState.total > 0 && <span>— {String(syncState.done)}/{String(syncState.total)}</span>}
-                </div>
-              </div>
-            )}
-            {syncState.status === 'error' && (
-              <div className="mt-3 rounded-lg border border-negative/50 bg-negative-muted px-3 py-2 text-xs text-negative">
-                {syncState.message}
-              </div>
-            )}
-            {syncState.status === 'done' && (
-              <div className="mt-3 rounded-lg border border-accent/50 bg-positive-muted px-3 py-2 text-xs text-accent">
-                Synced {String(syncState.count)} accounts
-              </div>
-            )}
+            <SyncStatusBanner syncState={syncState} />
 
             {profile !== null && syncState.status !== 'syncing' && (
               <button
