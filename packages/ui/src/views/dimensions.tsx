@@ -457,7 +457,7 @@ function DebugPanel({ title, subtitle, expanded, onToggle, children }: Readonly<
   );
 }
 
-function DimensionToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }): React.JSX.Element {
+function DimensionToggle({ enabled, onToggle }: Readonly<{ enabled: boolean; onToggle: () => void }>): React.JSX.Element {
   return (
     <button
       type="button"
@@ -1075,7 +1075,7 @@ export function DimensionsView() {
     };
   }
 
-  function GripHandle({ attrs }: { attrs: React.HTMLAttributes<HTMLButtonElement> }): React.JSX.Element {
+  function GripHandle({ attrs }: Readonly<{ attrs: React.HTMLAttributes<HTMLButtonElement> }>): React.JSX.Element {
     return (
       <button
         type="button"
@@ -1088,7 +1088,7 @@ export function DimensionsView() {
     );
   }
 
-  function ReorderArrows({ orderIdx, total }: { orderIdx: number; total: number }): React.JSX.Element {
+  function ReorderArrows({ orderIdx, total }: Readonly<{ orderIdx: number; total: number }>): React.JSX.Element {
     const canUp = orderIdx > 0;
     const canDown = orderIdx < total - 1;
     return (

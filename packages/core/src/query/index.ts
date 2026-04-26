@@ -10,6 +10,7 @@ export {
   buildRuleMatchExpr,
   computePeriodsInRange,
 } from './builder.js';
+export type { QueryContextOptions } from './builder.js';
 
 export { costExprFor } from './cost-metric.js';
 

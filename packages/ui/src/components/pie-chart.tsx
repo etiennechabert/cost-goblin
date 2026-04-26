@@ -15,18 +15,18 @@ export interface PieSlice {
 }
 
 interface PieChartProps {
-  data: readonly PieSlice[];
-  title: string;
-  subtitle?: string;
-  onSliceClick?: (name: string) => void;
-  onSliceHover?: (name: string | null) => void;
-  externalHoveredName?: string | null;
-  collapsed?: boolean;
-  onExpandToggle?: () => void;
-  maxSlices?: number;
-  dimensions?: readonly Dimension[] | undefined;
-  activeDimensionId?: string | undefined;
-  onDimensionChange?: ((dimId: string) => void) | undefined;
+  readonly data: readonly PieSlice[];
+  readonly title: string;
+  readonly subtitle?: string;
+  readonly onSliceClick?: (name: string) => void;
+  readonly onSliceHover?: (name: string | null) => void;
+  readonly externalHoveredName?: string | null;
+  readonly collapsed?: boolean;
+  readonly onExpandToggle?: () => void;
+  readonly maxSlices?: number;
+  readonly dimensions?: readonly Dimension[] | undefined;
+  readonly activeDimensionId?: string | undefined;
+  readonly onDimensionChange?: ((dimId: string) => void) | undefined;
 }
 
 const OTHER_KEY = 'Other';

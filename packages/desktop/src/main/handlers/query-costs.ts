@@ -17,6 +17,7 @@ import type {
   Dollars,
   EntityDetailParams,
   EntityDetailResult,
+  QueryContextOptions,
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import {
@@ -44,7 +45,8 @@ export function registerCostHandlers(app: AppContext): void {
     const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, tier, params.dateRange);
     if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
     const matSource = materializedBase.getSource(params.dateRange, tier);
-    const { sql, params: queryParams } = buildCostQuery(params, ctx.dataDir, dimensions, undefined, orgPath, available, accountReverseMap, costScope, availableColumns, matSource);
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
+    const { sql, params: queryParams } = buildCostQuery(params, qcOpts);
     logger.info('query:costs', { groupBy: params.groupBy, materialized: matSource !== undefined });
 
     const rows = await runPreparedQuery(sql, queryParams);
@@ -78,7 +80,8 @@ export function registerCostHandlers(app: AppContext): void {
     const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, tier, params.dateRange);
     if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
     const matSource = materializedBase.getSource(params.dateRange, tier);
-    const { sql, params: queryParams } = buildDailyCostsQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns, matSource);
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
+    const { sql, params: queryParams } = buildDailyCostsQuery(params, qcOpts);
     logger.info('query:daily-costs', { groupBy: params.groupBy, materialized: matSource !== undefined });
 
     const rows = await runPreparedQuery(sql, queryParams);
@@ -148,7 +151,8 @@ export function registerCostHandlers(app: AppContext): void {
       };
     }
     const matSource = materializedBase.getSource(params.dateRange, tier);
-    const { sql, params: queryParams } = buildEntityDetailQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns, matSource);
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
+    const { sql, params: queryParams } = buildEntityDetailQuery(params, qcOpts);
     logger.info('query:entity-detail', { entity: params.entity, materialized: matSource !== undefined });
 
     const rows = await runPreparedQuery(sql, queryParams);

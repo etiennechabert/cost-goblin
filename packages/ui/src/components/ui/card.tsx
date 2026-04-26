@@ -4,7 +4,7 @@ import { cn } from '../../lib/utils.js';
 export function Card({
   className,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
+}: Readonly<React.HTMLAttributes<HTMLDivElement>>) {
   return (
     <div
       className={cn(
@@ -19,7 +19,7 @@ export function Card({
 export function CardHeader({
   className,
   ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
+}: Readonly<React.HTMLAttributes<HTMLDivElement>>) {
   return (
     <div
       className={cn('flex flex-col space-y-1.5 p-6', className)}

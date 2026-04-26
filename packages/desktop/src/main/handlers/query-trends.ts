@@ -8,6 +8,7 @@ import {
 import type {
   TrendQueryParams,
   TrendResult,
+  QueryContextOptions,
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import {
@@ -30,7 +31,8 @@ export function registerTrendHandlers(app: AppContext): void {
     const availableColumns = await getAvailableColumns('daily');
     const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, 'daily', params.dateRange);
     if (empty) return { increases: [], savings: [], totalIncrease: asDollars(0), totalSavings: asDollars(0) };
-    const { sql, params: queryParams } = buildTrendQuery(params, ctx.dataDir, dimensions, orgPath, available, accountReverseMap, costScope, availableColumns);
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns };
+    const { sql, params: queryParams } = buildTrendQuery(params, qcOpts);
     logger.info('query:trends', { groupBy: params.groupBy });
 
     const rows = await runPreparedQuery(sql, queryParams);

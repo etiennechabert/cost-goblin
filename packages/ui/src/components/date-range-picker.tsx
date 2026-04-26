@@ -23,15 +23,15 @@ export interface DateRange {
 }
 
 interface DateRangePickerProps {
-  value: DateRange;
-  granularity: Granularity;
-  onChange: (range: DateRange, granularity: Granularity) => void;
+  readonly value: DateRange;
+  readonly granularity: Granularity;
+  readonly onChange: (range: DateRange, granularity: Granularity) => void;
   /** Hide the "Hourly" preset row. Used by views that only query the
    *  daily tier (Explorer), where offering hourly presets would lead to
    *  empty result sets. */
-  hideHourly?: boolean;
+  readonly hideHourly?: boolean;
   /** Number of most-recent days excluded from ranges. */
-  lagDays?: number;
+  readonly lagDays?: number;
 }
 
 export function getDefaultDateRange(lagDays: number = DEFAULT_LAG_DAYS): DateRange {

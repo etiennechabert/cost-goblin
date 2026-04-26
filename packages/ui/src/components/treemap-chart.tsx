@@ -29,7 +29,7 @@ function TreemapInner({
   width,
   height,
   onCellClick,
-}: TreemapChartProps & { readonly width: number; readonly height: number }) {
+}: Omit<TreemapChartProps, 'title' | 'subtitle'> & { readonly width: number; readonly height: number }) {
   const root = useMemo(() => {
     const flat: FlatNode[] = [
       { id: 'root', parentId: null, cost: 0 },
@@ -128,8 +128,6 @@ export function TreemapChart({ data, title, subtitle, height = 320, onCellClick 
           {({ width, height: h }) => (
             <TreemapInner
               data={data}
-              title={title}
-              subtitle={subtitle}
               width={width}
               height={h}
               onCellClick={onCellClick}

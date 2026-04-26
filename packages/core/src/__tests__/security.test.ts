@@ -30,8 +30,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: { [asDimensionId('account')]: asTagValue("'; DROP TABLE users; --") },
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       // Value should be in params array, not interpolated in SQL
       expect(result.params).toContain("'; DROP TABLE users; --");
@@ -47,8 +46,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: { [asDimensionId('account')]: asTagValue('test"value"with"quotes') },
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain('test"value"with"quotes');
       expect(result.sql).toContain('account_id = $');
@@ -61,8 +59,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: { [asDimensionId('account')]: asTagValue('test--comment') },
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain('test--comment');
       expect(result.sql).toContain('account_id = $');
@@ -75,8 +72,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: { [asDimensionId('account')]: asTagValue('test\nvalue\nwith\nnewlines') },
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain('test\nvalue\nwith\nnewlines');
       expect(result.sql).toContain('account_id = $');
@@ -89,8 +85,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: { [asDimensionId('service')]: asTagValue("' UNION SELECT password FROM users --") },
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain("' UNION SELECT password FROM users --");
       expect(result.sql).not.toContain('UNION SELECT password');
@@ -103,8 +98,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: { [asDimensionId('service')]: asTagValue("test'; DELETE FROM accounts; SELECT '") },
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain("test'; DELETE FROM accounts; SELECT '");
       expect(result.sql).not.toContain('DELETE FROM');
@@ -119,8 +113,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString("2026-01-01' OR '1'='1"), end: asDateString('2026-01-31') },
           filters: {},
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       // Date should be in params, not interpolated
       expect(result.params).toContain("2026-01-01' OR '1'='1");
@@ -135,8 +128,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString("2026-01-31'; DROP TABLE costs; --") },
           filters: {},
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain("2026-01-31'; DROP TABLE costs; --");
       expect(result.sql).not.toContain('DROP TABLE');
@@ -151,8 +143,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: {},
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
         5, // topN
       );
       expect(result.params).toContain(5);
@@ -168,8 +159,7 @@ describe('SQL Injection Prevention', () => {
           deltaThreshold: asDollars(100),
           percentThreshold: 10,
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain(100);
       expect(result.sql).toContain('ABS(COALESCE(c.total_cost, 0) - COALESCE(p.total_cost, 0)) >= $');
@@ -183,8 +173,7 @@ describe('SQL Injection Prevention', () => {
           minCost: asDollars(50),
           tagDimension: asDimensionId('tag_org_team'),
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain(50);
       expect(result.sql).toContain('r.cost >= $');
@@ -200,8 +189,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: {},
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain("EC2'; DROP TABLE costs; --");
       expect(result.sql).not.toContain('DROP TABLE');
@@ -215,8 +203,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: {},
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain("test'value\"with;special--chars");
     });
@@ -233,8 +220,7 @@ describe('SQL Injection Prevention', () => {
             [asDimensionId('service')]: asTagValue("' UNION SELECT * FROM secrets --"),
           },
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       // All malicious values should be in params array
       expect(result.params).toContain("2026-01-01' OR 1=1 --");
@@ -258,8 +244,7 @@ describe('SQL Injection Prevention', () => {
             [asDimensionId('service')]: asTagValue("another'injection"),
           },
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       // Verify all parameters are present (filters are added first, then dates)
       expect(result.params).toContain("malicious'value");
@@ -279,8 +264,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: {},
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(validResult.sql).toContain('service AS entity');
     });
@@ -292,8 +276,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: {},
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       )).toThrow('Unknown dimension');
     });
   });
@@ -306,8 +289,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: { [asDimensionId('account')]: asTagValue('test\x00value') },
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain('test\x00value');
     });
@@ -319,8 +301,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: { [asDimensionId('account')]: asTagValue('test-值-🔒-value') },
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain('test-值-🔒-value');
     });
@@ -332,8 +313,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: { [asDimensionId('account')]: asTagValue('test\\value\\with\\backslashes') },
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain('test\\value\\with\\backslashes');
     });
@@ -345,8 +325,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: { [asDimensionId('account')]: asTagValue('%malicious%') },
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain('%malicious%');
     });
@@ -358,8 +337,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: { [asDimensionId('account')]: asTagValue('') },
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain('');
     });
@@ -374,8 +352,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: {},
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       // Path should be in SQL, not params
       expect(result.sql).toContain('/data/aws/raw/');
@@ -389,8 +366,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: {},
         },
-        '/custom/path',
-        dimensions,
+        { dataDir: '/custom/path', dimensions },
       );
       expect(result.sql).toContain('/custom/path/aws/raw/');
     });
@@ -404,8 +380,7 @@ describe('SQL Injection Prevention', () => {
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: { [asDimensionId('service')]: asTagValue("'; DROP TABLE x; SELECT '") },
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       // SQL should contain proper WHERE clause
       expect(result.sql).toContain('WHERE');
@@ -431,8 +406,7 @@ describe('SQL Injection Prevention', () => {
           deltaThreshold: asDollars(100),
           percentThreshold: 10,
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       // Extract all placeholders
       const placeholders = result.sql.match(/\$(\d+)/g);
@@ -459,8 +433,7 @@ describe('SQL Injection Prevention', () => {
           minCost: asDollars(0),
           tagDimension: asDimensionId('tag_org_team'),
         },
-        '/data',
-        dimensions,
+        { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain("2026-01-01' OR 1=1 --");
       expect(result.params).toContain("'; DROP TABLE x; --");

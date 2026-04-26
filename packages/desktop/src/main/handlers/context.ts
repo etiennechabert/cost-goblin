@@ -257,7 +257,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
     }
 
     const primary = preferOrg ? await fromOrg() : await fromCsv();
-    const raw = primary.size > 0 ? primary : (preferOrg ? await fromCsv() : await fromOrg());
+    const fallback = preferOrg ? await fromCsv() : await fromOrg();
+    const raw = primary.size > 0 ? primary : fallback;
 
     // Apply the dim's display-time transforms to every resolved name. Done
     // once here so every downstream caller — queries, preview, sidecars —
@@ -441,10 +442,10 @@ export function createAppContext(ctx: IpcContext): AppContext {
 
       const accountReverseMap = buildAccountReverseMap(accountMap);
       const hash = configHash(dimensions, costScope);
-      const sql = buildMaterializeBaseQuery(
-        ctx.dataDir, 'daily', dimensions, dateRange,
-        orgPath, periods, accountReverseMap, costScope, availableColumns,
-      );
+      const sql = buildMaterializeBaseQuery('daily', dateRange, {
+        dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath,
+        availablePeriods: periods, accountReverseMap, costScope, availableColumns,
+      });
       await materializedBase.materialize(
         (s) => ctx.db.runQuery(s),
         sql, dateRange, 'daily', hash,

@@ -31,7 +31,7 @@ function HeatmapInner({
   width,
   height,
   onCellClick,
-}: HeatmapChartProps & { readonly width: number; readonly height: number }) {
+}: Omit<HeatmapChartProps, 'title' | 'subtitle'> & { readonly width: number; readonly height: number }) {
   const innerW = Math.max(width - MARGIN.left - MARGIN.right, 10);
   const innerH = Math.max(height - MARGIN.top - MARGIN.bottom, 10);
 
