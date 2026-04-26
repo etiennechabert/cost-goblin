@@ -57,7 +57,7 @@ export function isOwnerGroupBy(groupBy: string, dimensions: DimensionsConfig): b
 
 export function resolveEntityName(entity: string, accountMap: Map<string, string>): string {
   const mapped = accountMap.get(entity);
-  return mapped === undefined ? entity : mapped;
+  return mapped ?? entity;
 }
 
 /** Reverse view of the id→name account map. When the user's strip/normalize

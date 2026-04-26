@@ -35,7 +35,7 @@ export class Logger {
       level,
       message,
       timestamp: new Date().toISOString(),
-      ...(context !== undefined ? { context } : {}),
+      ...(context === undefined ? {} : { context }),
     };
 
     for (const handler of this.handlers) {

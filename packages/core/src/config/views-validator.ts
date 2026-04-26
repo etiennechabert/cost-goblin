@@ -67,14 +67,14 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
   const id = raw['id'];
   const type = raw['type'];
   const size = raw['size'];
-  const title = raw['title'] !== undefined ? (assertString(raw['title'], `${ctx}.title`), raw['title']) : undefined;
+  const title = raw['title'] === undefined ? undefined : (assertString(raw['title'], `${ctx}.title`), raw['title']);
   const filters = validateFilters(raw['filters'], `${ctx}.filters`);
 
   const base = {
     id,
     size,
-    ...(title !== undefined ? { title } : {}),
-    ...(filters !== undefined ? { filters } : {}),
+    ...(title === undefined ? {} : { title }),
+    ...(filters === undefined ? {} : { filters }),
   };
 
   switch (type) {
@@ -89,7 +89,7 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
         }
         metric = raw['metric'];
       }
-      return { type, ...base, ...(metric !== undefined ? { metric } : {}) };
+      return { type, ...base, ...(metric === undefined ? {} : { metric }) };
     }
     case 'pie': {
       assertString(raw['groupBy'], `${ctx}.groupBy`);
@@ -104,7 +104,7 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
         : undefined;
       const groupBy = asDimensionId(raw['groupBy']);
       if (type === 'treemap') {
-        return { type, ...base, groupBy, ...(drillTo !== undefined ? { drillTo } : {}) };
+        return { type, ...base, groupBy, ...(drillTo === undefined ? {} : { drillTo }) };
       }
       return { type, ...base, groupBy };
     }
@@ -121,7 +121,7 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
         type,
         ...base,
         groupBy: asDimensionId(raw['groupBy']),
-        ...(topN !== undefined ? { topN } : {}),
+        ...(topN === undefined ? {} : { topN }),
       };
     }
     case 'table': {
@@ -136,7 +136,7 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
       return {
         type,
         ...base,
-        ...(enabledColumns !== undefined ? { enabledColumns } : {}),
+        ...(enabledColumns === undefined ? {} : { enabledColumns }),
       };
     }
   }
@@ -148,9 +148,9 @@ function validateView(raw: unknown, ctx: string): ViewSpec {
   assertString(raw['name'], `${ctx}.name`);
   assertArray(raw['rows'], `${ctx}.rows`);
 
-  const icon = raw['icon'] !== undefined
-    ? (assertString(raw['icon'], `${ctx}.icon`), raw['icon'])
-    : undefined;
+  const icon = raw['icon'] === undefined
+    ? undefined
+    : (assertString(raw['icon'], `${ctx}.icon`), raw['icon']);
   const builtIn = raw['builtIn'] === true || undefined;
 
   const rows = raw['rows'].map((rowRaw, i) => {
@@ -175,7 +175,7 @@ function validateView(raw: unknown, ctx: string): ViewSpec {
   return {
     id: raw['id'],
     name: raw['name'],
-    ...(icon !== undefined ? { icon } : {}),
+    ...(icon === undefined ? {} : { icon }),
     ...(builtIn === true ? { builtIn } : {}),
     rows,
   };

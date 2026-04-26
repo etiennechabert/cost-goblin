@@ -124,7 +124,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   const regionDimId = asDimensionId('region');
 
   const effectivePie1 = pie1DimId ?? accountDimId;
-  const effectivePie2 = pie2DimId ?? (productDim !== undefined ? getDimensionId(productDim) : regionDimId);
+  const effectivePie2 = pie2DimId ?? (productDim === undefined ? regionDimId : getDimensionId(productDim));
   const effectivePie3 = pie3DimId ?? serviceDimId;
 
   // Pie queries — same as overview but scoped to this entity via filter
@@ -159,7 +159,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   );
   const barDays = dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null);
 
-  const totalCost = data !== null ? data.totalCost : 0;
+  const totalCost = data === null ? 0 : data.totalCost;
   const isIncrease = data !== null && data.percentChange > 0;
   const isDecrease = data !== null && data.percentChange < 0;
 
@@ -259,7 +259,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
                   data={slices}
                   title={(() => {
                     const dim = rawDimensions.find(d => getDimensionId(d) === dimId);
-                    return dim !== undefined ? getDimensionLabel(dim) : dimId;
+                    return dim === undefined ? dimId : getDimensionLabel(dim);
                   })()}
                   subtitle="Click to filter"
                   dimensions={dimensions}

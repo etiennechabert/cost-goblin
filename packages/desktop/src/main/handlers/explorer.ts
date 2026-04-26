@@ -191,11 +191,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   let source: string;
   let whereStr: string;
 
-  if (matSource !== undefined) {
-    source = matSource;
-    const whereClauses: string[] = filterPredicate === null ? [] : [`(${filterPredicate})`];
-    whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-  } else {
+  if (matSource === undefined) {
     const orgPath = await getOrgAccountsPath();
     const availableColumns = await getAvailableColumns(tier);
     const applyCostScope = params.applyCostScope === true;
@@ -221,6 +217,10 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
       ...exclusionClauses,
     ];
     whereStr = `WHERE ${whereClauses.join(' AND ')}`;
+  } else {
+    source = matSource;
+    const whereClauses: string[] = filterPredicate === null ? [] : [`(${filterPredicate})`];
+    whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
   }
 
   return {
@@ -426,7 +426,7 @@ export function registerExplorerHandlers(app: AppContext): void {
       for (const [col, val] of Object.entries(params.rowFilters)) {
         if (val.length === 0) continue;
         if (!SORTABLE_SCALAR_COLUMNS.has(col) && !qc.tagIdSet.has(col)) continue;
-        const escaped = val.replace(/'/g, "''");
+        const escaped = val.replaceAll("'", "''");
         const colExpr = col === 'usage_date' ? `usage_date::VARCHAR` : col;
         extra.push(`${colExpr} = '${escaped}'`);
       }
@@ -496,7 +496,7 @@ export function registerExplorerHandlers(app: AppContext): void {
     `.trim();
 
     const [countResult, dataResult] = await Promise.all([runQuery(countSql), runQuery(dataSql)]);
-    const totalRows = countResult[0] !== undefined ? toNum(countResult[0]['n']) : 0;
+    const totalRows = countResult[0] === undefined ? 0 : toNum(countResult[0]['n']);
     const resultRows: AggregatedTableRow[] = dataResult.map(r => {
       const values: Record<string, string> = {};
       for (const col of groupByColumns) {

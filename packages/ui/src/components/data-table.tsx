@@ -327,7 +327,7 @@ function ColumnHeader({ spec, sort, onSort }: { spec: ColumnSpec; sort: Explorer
 
 function RowCell({ spec, row, onFilterAdd }: { spec: ColumnSpec; row: AggregatedTableRow; onFilterAdd: (dimId: string, value: string) => void }) {
   const display = renderCell(spec, row);
-  const rawValue = spec.dimId !== null ? (row.values[spec.key] ?? '') : null;
+  const rawValue = spec.dimId === null ? null : (row.values[spec.key] ?? '');
   const titleText = spec.truncate === true ? (row.values[spec.key] ?? '') : undefined;
   const classes = [
     'px-2 py-1 whitespace-nowrap',

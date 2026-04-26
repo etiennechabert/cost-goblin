@@ -59,13 +59,13 @@ function validateSyncTier(raw: unknown, context: string): SyncTierConfig {
 function validateSync(raw: unknown): SyncConfig {
   assertObject(raw, 'sync');
   const daily = validateSyncTier(raw['daily'], 'sync.daily');
-  const hourly = raw['hourly'] !== undefined ? validateSyncTier(raw['hourly'], 'sync.hourly') : undefined;
-  const costOptimization = raw['costOptimization'] !== undefined ? validateSyncTier(raw['costOptimization'], 'sync.costOptimization') : undefined;
+  const hourly = raw['hourly'] === undefined ? undefined : validateSyncTier(raw['hourly'], 'sync.hourly');
+  const costOptimization = raw['costOptimization'] === undefined ? undefined : validateSyncTier(raw['costOptimization'], 'sync.costOptimization');
   assertNumber(raw['intervalMinutes'], 'sync.intervalMinutes');
   return {
     daily,
-    ...(hourly !== undefined ? { hourly } : {}),
-    ...(costOptimization !== undefined ? { costOptimization } : {}),
+    ...(hourly === undefined ? {} : { hourly }),
+    ...(costOptimization === undefined ? {} : { costOptimization }),
     intervalMinutes: raw['intervalMinutes'],
   };
 }
@@ -121,9 +121,9 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
     assertString(dim['name'], `${ctx}.name`);
     assertString(dim['label'], `${ctx}.label`);
     assertString(dim['field'], `${ctx}.field`);
-    const displayField = dim['displayField'] !== undefined ? (assertString(dim['displayField'], `${ctx}.displayField`), dim['displayField']) : undefined;
+    const displayField = dim['displayField'] === undefined ? undefined : (assertString(dim['displayField'], `${ctx}.displayField`), dim['displayField']);
     const enabled = dim['enabled'] === false ? false : undefined;
-    const description = dim['description'] !== undefined ? (assertString(dim['description'], `${ctx}.description`), dim['description']) : undefined;
+    const description = dim['description'] === undefined ? undefined : (assertString(dim['description'], `${ctx}.description`), dim['description']);
     const useOrgAccounts = dim['useOrgAccounts'] === true ? true : undefined;
     const accountNameFromTag = typeof dim['accountNameFromTag'] === 'string' && dim['accountNameFromTag'].length > 0
       ? dim['accountNameFromTag']
@@ -136,13 +136,13 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
         return p;
       });
     }
-    const normalize = dim['normalize'] !== undefined ? (() => {
+    const normalize = dim['normalize'] === undefined ? undefined : (() => {
       assertString(dim['normalize'], `${ctx}.normalize`);
       if (!isValidNormalizationRule(dim['normalize'])) {
         throw new ConfigValidationError(`${ctx}.normalize must be 'lowercase', 'uppercase', 'lowercase-kebab', 'lowercase-underscore', or 'camelCase'`);
       }
       return dim['normalize'];
-    })() : undefined;
+    })();
     let aliases: Record<string, string[]> | undefined;
     if (dim['aliases'] !== undefined) {
       assertObject(dim['aliases'], `${ctx}.aliases`);
@@ -160,14 +160,14 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
       name: asDimensionId(dim['name']),
       label: dim['label'],
       field: dim['field'],
-      ...(displayField !== undefined ? { displayField } : {}),
+      ...(displayField === undefined ? {} : { displayField }),
       ...(enabled === false ? { enabled } : {}),
-      ...(description !== undefined ? { description } : {}),
-      ...(normalize !== undefined ? { normalize } : {}),
-      ...(aliases !== undefined ? { aliases } : {}),
+      ...(description === undefined ? {} : { description }),
+      ...(normalize === undefined ? {} : { normalize }),
+      ...(aliases === undefined ? {} : { aliases }),
       ...(useOrgAccounts === true ? { useOrgAccounts } : {}),
-      ...(accountNameFromTag !== undefined ? { accountNameFromTag } : {}),
-      ...(nameStripPatterns !== undefined && nameStripPatterns.length > 0 ? { nameStripPatterns } : {}),
+      ...(accountNameFromTag === undefined ? {} : { accountNameFromTag }),
+      ...(nameStripPatterns === undefined || nameStripPatterns.length === 0 ? {} : { nameStripPatterns }),
     };
   });
 
@@ -177,22 +177,22 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
     assertString(tag['tagName'], `${ctx}.tagName`);
     assertString(tag['label'], `${ctx}.label`);
 
-    const concept = tag['concept'] !== undefined ? (() => {
+    const concept = tag['concept'] === undefined ? undefined : (() => {
       assertString(tag['concept'], `${ctx}.concept`);
       const validConcepts = new Set(['owner', 'product', 'environment']);
       if (!validConcepts.has(tag['concept'])) {
         throw new ConfigValidationError(`${ctx}.concept must be 'owner', 'product', or 'environment'`);
       }
       return tag['concept'] as 'owner' | 'product' | 'environment';
-    })() : undefined;
-    const normalize = tag['normalize'] !== undefined ? (() => {
+    })();
+    const normalize = tag['normalize'] === undefined ? undefined : (() => {
       assertString(tag['normalize'], `${ctx}.normalize`);
       if (!isValidNormalizationRule(tag['normalize'])) {
         throw new ConfigValidationError(`${ctx}.normalize must be 'lowercase', 'uppercase', 'lowercase-kebab', 'lowercase-underscore', or 'camelCase'`);
       }
       return tag['normalize'];
-    })() : undefined;
-    const separator = tag['separator'] !== undefined ? (assertString(tag['separator'], `${ctx}.separator`), tag['separator']) : undefined;
+    })();
+    const separator = tag['separator'] === undefined ? undefined : (assertString(tag['separator'], `${ctx}.separator`), tag['separator']);
 
     let aliases: Record<string, string[]> | undefined;
     if (tag['aliases'] !== undefined) {
@@ -213,10 +213,10 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
     return {
       tagName: tag['tagName'],
       label: tag['label'],
-      ...(concept !== undefined ? { concept } : {}),
-      ...(normalize !== undefined ? { normalize } : {}),
-      ...(separator !== undefined ? { separator } : {}),
-      ...(aliases !== undefined ? { aliases } : {}),
+      ...(concept === undefined ? {} : { concept }),
+      ...(normalize === undefined ? {} : { normalize }),
+      ...(separator === undefined ? {} : { separator }),
+      ...(aliases === undefined ? {} : { aliases }),
       ...(typeof tag['accountTagFallback'] === 'string' ? { accountTagFallback: tag['accountTagFallback'] } : {}),
       ...(typeof tag['missingValueTemplate'] === 'string' ? { missingValueTemplate: tag['missingValueTemplate'] } : {}),
       ...(enabled === false ? { enabled } : {}),
@@ -232,7 +232,7 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
     });
   }
 
-  return { builtIn, tags, ...(order !== undefined ? { order } : {}) };
+  return { builtIn, tags, ...(order === undefined ? {} : { order }) };
 }
 
 function validateOrgNode(raw: unknown, path: string): OrgNode {
@@ -248,8 +248,8 @@ function validateOrgNode(raw: unknown, path: string): OrgNode {
 
   return {
     name: raw['name'],
-    ...(virtual !== undefined ? { virtual } : {}),
-    ...(children !== undefined ? { children } : {}),
+    ...(virtual === undefined ? {} : { virtual }),
+    ...(children === undefined ? {} : { children }),
   };
 }
 

@@ -28,7 +28,7 @@ function effortColor(effort: string): string {
 }
 
 function humanizeAction(action: string): string {
-  return action.replace(/([a-z])([A-Z])/g, '$1 $2');
+  return action.replaceAll(/([a-z])([A-Z])/g, '$1 $2');
 }
 
 interface ParsedDetails {

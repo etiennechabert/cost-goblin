@@ -72,5 +72,5 @@ export function filtersKey(filters: FilterMap): string {
 /** Resolve a DimensionId to a user-facing label, falling back to the id. */
 export function dimensionLabelFor(dimensions: readonly Dimension[], id: DimensionId): string {
   const dim = dimensions.find(d => getDimensionId(d) === id);
-  return dim !== undefined ? getDimensionLabel(dim) : id;
+  return dim === undefined ? id : getDimensionLabel(dim);
 }

@@ -76,7 +76,6 @@ export async function createSyncClient(workerPath: string): Promise<SyncClient> 
         const err = new Error(msg.message);
         fatalError = err;
         reject(err);
-        return;
       }
     };
     worker.on('message', onMessage);
@@ -95,7 +94,7 @@ export async function createSyncClient(workerPath: string): Promise<SyncClient> 
         phase: msg.phase,
         filesTotal: msg.filesTotal,
         filesDone: msg.filesDone,
-        ...(msg.message !== undefined ? { message: msg.message } : {}),
+        ...(msg.message === undefined ? {} : { message: msg.message }),
       });
     } else {
       pending.delete(msg.id);

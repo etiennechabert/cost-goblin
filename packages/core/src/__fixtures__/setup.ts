@@ -29,7 +29,7 @@ function weightedPick<T extends { costShare: number }>(arr: readonly T[], rand: 
     cumulative += item.costShare;
     if (r <= cumulative) return item;
   }
-  const last = arr[arr.length - 1];
+  const last = arr.at(-1);
   if (last === undefined) throw new Error(`weightedPick: empty array`);
   return last;
 }
@@ -49,8 +49,8 @@ export async function setup(): Promise<void> {
 
   const services = [
     { name: 'AmazonEC2', costShare: 0.25 },
-    { name: 'AmazonRDS', costShare: 0.20 },
-    { name: 'AmazonS3', costShare: 0.10 },
+    { name: 'AmazonRDS', costShare: 0.2 },
+    { name: 'AmazonS3', costShare: 0.1 },
     { name: 'AWSLambda', costShare: 0.08 },
     { name: 'AmazonCloudWatch', costShare: 0.07 },
     { name: 'AmazonDynamoDB', costShare: 0.06 },

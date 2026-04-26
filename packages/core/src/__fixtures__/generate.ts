@@ -123,7 +123,10 @@ async function profile(): Promise<void> {
 
   const profileData: Profile = {
     rowCount,
-    dateRange: { min: String(dateRow?.['mn'] ?? ''), max: String(dateRow?.['mx'] ?? '') },
+    dateRange: {
+      min: typeof dateRow?.['mn'] === 'string' ? dateRow['mn'] : '',
+      max: typeof dateRow?.['mx'] === 'string' ? dateRow['mx'] : '',
+    },
     services,
     accounts,
     regions,
@@ -162,7 +165,7 @@ function weightedPick<T extends { costShare: number }>(arr: readonly T[], rand: 
     cumulative += item.costShare;
     if (r <= cumulative) return item;
   }
-  return arr[arr.length - 1]!;
+  return arr.at(-1)!;
 }
 
 async function generate(): Promise<void> {
