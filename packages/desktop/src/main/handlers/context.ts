@@ -320,11 +320,18 @@ export function createAppContext(ctx: IpcContext): AppContext {
     }
   }
 
+  function parseRegionEntries(regions: Record<string, unknown>, map: Map<string, RegionEnrichment>): void {
+    for (const [code, info] of Object.entries(regions)) {
+      if (!isStringRecord(info)) continue;
+      const longName = info['longName'];
+      if (typeof longName !== 'string' || longName.length === 0) continue;
+      const country = typeof info['country'] === 'string' ? info['country'] : '';
+      const continent = typeof info['continent'] === 'string' ? info['continent'] : '';
+      map.set(code, { longName, country, continent });
+    }
+  }
+
   async function getRegionMap(): Promise<Map<string, RegionEnrichment>> {
-    // SSM-derived per-region metadata. Mirrors the org sync's caching pattern:
-    // read once, hold for the session, drop on dimensions invalidation.
-    // The map feeds applyRegionFriendlyNames which picks longName, country,
-    // or continent per dim based on the dim's name.
     if (state.regionMap !== null) return state.regionMap;
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
@@ -333,14 +340,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const raw = await fs.readFile(path.join(path.dirname(ctx.dataDir), 'region-names.json'), 'utf-8');
       const parsed: unknown = JSON.parse(raw);
       if (isStringRecord(parsed) && isStringRecord(parsed['regions'])) {
-        for (const [code, info] of Object.entries(parsed['regions'])) {
-          if (!isStringRecord(info)) continue;
-          const longName = info['longName'];
-          if (typeof longName !== 'string' || longName.length === 0) continue;
-          const country = typeof info['country'] === 'string' ? info['country'] : '';
-          const continent = typeof info['continent'] === 'string' ? info['continent'] : '';
-          map.set(code, { longName, country, continent });
-        }
+        parseRegionEntries(parsed['regions'], map);
       }
     } catch { /* no region sync yet */ }
     state.regionMap = map;
