@@ -151,7 +151,9 @@ export function validateTablePath(tablePath: string): void {
   // Strip read_parquet wrapper if present
   const cleanPath = tablePath
     .replace(/^read_parquet\s*\(\s*/, '')
-    .replace(/\s*\)\s*$/, '')
+    .trimEnd()
+    .replace(/\)$/, '')
+    .trimStart()
     .replace(/^\[/, '')
     .replace(/\]$/, '')
     .replace(/^['"]/, '')
@@ -159,7 +161,7 @@ export function validateTablePath(tablePath: string): void {
 
   // Match the tier and period pattern
   // Pattern: {anything}/aws/raw/{tier}-{period}/*.parquet
-  const tierPattern = /\/aws\/raw\/([a-z-]+)-([^/]+)\/\*\.parquet/;
+  const tierPattern = /\/aws\/raw\/([a-z]+(?:-[a-z]+)*)-([^/]+)\/\*\.parquet/;
   const match = tierPattern.exec(cleanPath);
 
   if (match === null) {

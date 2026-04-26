@@ -520,7 +520,7 @@ function applyPreviewNormalize(v: string, rule: string): string {
     case 'uppercase': return v.toUpperCase();
     case 'lowercase-kebab': return v.replaceAll(/([a-z])([A-Z])/g, '$1-$2').replaceAll('_', '-').replaceAll(' ', '-').toLowerCase();
     case 'lowercase-underscore': return v.replaceAll(/([a-z])([A-Z])/g, '$1_$2').replaceAll('-', '_').replaceAll(' ', '_').toLowerCase();
-    case 'camelCase': return v.replaceAll(/[-_\s]+(.)/g, (_, c: string) => c.toUpperCase()).replace(/^(.)/, (_, c: string) => c.toLowerCase());
+    case 'camelCase': return v.replaceAll(/[-_\s]+([^-_\s])/g, (_, c: string) => c.toUpperCase()).replace(/^(.)/, (_, c: string) => c.toLowerCase());
     default: return v;
   }
 }

@@ -76,12 +76,16 @@ export function registerSetupHandlers(app: AppContext): void {
       const filePath = path.join(os.homedir(), '.aws', filename);
       try {
         const content = await fs.readFile(filePath, 'utf-8');
-        const profileRegex = /\[(?:profile\s+)?([^\]]+)\]/g;
-        let match = profileRegex.exec(content);
+        const sectionRegex = /\[([^\]]+)\]/g;
+        let match = sectionRegex.exec(content);
         while (match !== null) {
-          const name = match[1];
-          if (name !== undefined) profiles.add(name.trim());
-          match = profileRegex.exec(content);
+          let name = match[1];
+          if (name !== undefined) {
+            name = name.trim();
+            if (name.startsWith('profile ')) name = name.slice('profile '.length).trim();
+            profiles.add(name);
+          }
+          match = sectionRegex.exec(content);
         }
       } catch {
         // file doesn't exist
