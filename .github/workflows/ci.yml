@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  check:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,12 +30,97 @@ jobs:
       - name: Lint
         run: npx eslint packages/*/src/
 
+  test-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
       - name: Build workers
         run: npm run build:worker --workspace=packages/desktop
 
       - name: Test with coverage
         run: npx vitest run --coverage --coverage.reporter=lcov --coverage.reportsDirectory=coverage
 
+      - name: Upload unit coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit
+          path: coverage/lcov.info
+          if-no-files-found: ignore
+
+  test-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [views-core, views-config, stress]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Generate fixtures
+        run: npx tsx packages/core/src/__fixtures__/generate.ts --generate
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+      - name: Build desktop
+        run: npm run build --workspace=packages/desktop
+      - name: Run E2E shard
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" npx playwright test e2e/${{ matrix.shard }}.test.ts
+      - name: Collect E2E coverage
+        if: always()
+        run: npx tsx e2e/collect-coverage.ts
+      - name: Upload E2E coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-e2e-${{ matrix.shard }}
+          path: coverage-e2e/lcov.info
+          if-no-files-found: ignore
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.shard }}
+          path: playwright-report/
+          retention-days: 30
+
+  sonarcloud:
+    runs-on: ubuntu-latest
+    needs: [lint, test-unit, test-e2e]
+    if: always() && needs.lint.result == 'success' && needs.test-unit.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download unit coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-unit
+          path: coverage
+      - name: Download E2E coverage shards
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-e2e-*
+          path: coverage-e2e-shards
+          merge-multiple: true
+        continue-on-error: true
+      - name: Merge E2E coverage
+        run: |
+          mkdir -p coverage-e2e
+          cat coverage-e2e-shards/lcov.info > coverage-e2e/lcov.info 2>/dev/null || true
+        continue-on-error: true
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@v5
         env:

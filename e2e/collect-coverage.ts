@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, resolve, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import v8ToIstanbul from 'v8-to-istanbul';
@@ -27,15 +27,25 @@ interface FileCoverage {
 async function main(): Promise<void> {
   mkdirSync(OUTPUT_DIR, { recursive: true });
 
-  let raw: string;
+  // Glob all coverage-*.json shard files (and legacy coverage.json)
+  let files: string[];
   try {
-    raw = readFileSync(join(V8_DIR, 'coverage.json'), 'utf-8');
+    files = readdirSync(V8_DIR).filter(f => f.match(/^coverage(-[\w-]+)?\.json$/));
   } catch {
+    files = [];
+  }
+
+  if (files.length === 0) {
     process.stderr.write('No V8 coverage found. Run E2E tests first.\n');
     process.exit(1);
   }
 
-  const entries = JSON.parse(raw) as V8CoverageEntry[];
+  const entries: V8CoverageEntry[] = [];
+  for (const file of files) {
+    const raw = readFileSync(join(V8_DIR, file), 'utf-8');
+    const parsed = JSON.parse(raw) as V8CoverageEntry[];
+    entries.push(...parsed);
+  }
   const relevant = entries.filter(e =>
     e.url.includes('/assets/index-') && e.url.endsWith('.js'),
   );
