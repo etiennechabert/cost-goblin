@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { stringify } from 'yaml';
 import {
   DEFAULT_COST_SCOPE,
+  DEFAULT_LAG_DAYS,
   ConfigValidationError,
   costScopeToYaml,
   validateCostScope,
@@ -83,7 +84,8 @@ export function registerCostScopeHandlers(app: AppContext): void {
     const enabledRules = config.rules.filter(r => r.enabled);
 
     const windowDays = 30;
-    const endDate = new Date();
+    const lagDays = config.lagDays ?? DEFAULT_LAG_DAYS;
+    const endDate = new Date(Date.now() - lagDays * 24 * 60 * 60 * 1000);
     const startDate = new Date(endDate.getTime() - (windowDays - 1) * 24 * 60 * 60 * 1000);
     const endStr = endDate.toISOString().slice(0, 10);
     const startStr = startDate.toISOString().slice(0, 10);

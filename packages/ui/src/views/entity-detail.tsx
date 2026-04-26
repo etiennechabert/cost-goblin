@@ -9,6 +9,7 @@ import type {
 } from '@costgoblin/core/browser';
 import { asDimensionId, asEntityRef, asTagValue } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
 import { formatDollars, formatPercent } from '../components/format.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
@@ -75,7 +76,8 @@ function handleCsvExport(data: EntityDetailResult, entity: string) {
 
 export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetailProps>) {
   const api = useCostApi();
-  const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange);
+  const lagDays = useLagDays();
+  const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [histogramTab, setHistogramTab] = useState<HistogramTab>('service');
   const [histogramExpanded, setHistogramExpanded] = useState(false);
@@ -181,7 +183,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <DateRangePicker value={dateRange} granularity={granularity} onChange={(range, g) => { setDateRange(range); setGranularity(g); }} />
+          <DateRangePicker value={dateRange} granularity={granularity} onChange={(range, g) => { setDateRange(range); setGranularity(g); }} lagDays={lagDays} />
           {data !== null && (
             <button
               type="button"

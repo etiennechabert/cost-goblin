@@ -1,4 +1,4 @@
-import { assertArray, assertObject, assertString, ConfigValidationError } from './validator.js';
+import { assertArray, assertNumber, assertObject, assertString, ConfigValidationError } from './validator.js';
 import { asDimensionId } from '../types/branded.js';
 import type {
   CostMetric,
@@ -78,11 +78,21 @@ export function validateCostScope(raw: unknown): CostScopeConfig {
     }
     costPerspective = raw['costPerspective'];
   }
+  let lagDays: number | undefined;
+  if (raw['lagDays'] !== undefined) {
+    assertNumber(raw['lagDays'], 'costScope.lagDays');
+    if (raw['lagDays'] < 0 || !Number.isInteger(raw['lagDays'])) {
+      throw new ConfigValidationError('costScope.lagDays must be a non-negative integer');
+    }
+    lagDays = raw['lagDays'];
+  }
+
   assertArray(raw['rules'], 'costScope.rules');
   const rules = raw['rules'].map((r, i) => validateRule(r, `costScope.rules[${String(i)}]`));
   return {
     costMetric: raw['costMetric'],
     ...(costPerspective !== undefined ? { costPerspective } : {}),
+    ...(lagDays !== undefined ? { lagDays } : {}),
     rules,
   };
 }

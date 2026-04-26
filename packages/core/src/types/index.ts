@@ -88,7 +88,7 @@ export type {
   CostScopePreviewResult,
   CostScopeSampleRow,
 } from './cost-scope.js';
-export { COST_METRICS, COST_PERSPECTIVES } from './cost-scope.js';
+export { COST_METRICS, COST_PERSPECTIVES, DEFAULT_LAG_DAYS } from './cost-scope.js';
 
 export type {
   ExplorerFilterMap,
