@@ -18,7 +18,6 @@
     "e2e:core": "npm run build --workspace=packages/desktop && npx playwright test e2e/views-core.test.ts && npx tsx e2e/collect-coverage.ts",
     "e2e:config": "npm run build --workspace=packages/desktop && npx playwright test e2e/views-config.test.ts && npx tsx e2e/collect-coverage.ts",
     "e2e:stress": "npm run build --workspace=packages/desktop && npx playwright test e2e/stress.test.ts",
-    "e2e:all": "npm run build --workspace=packages/desktop && npx playwright test e2e/views-core.test.ts e2e/views-config.test.ts e2e/stress.test.ts && npx tsx e2e/collect-coverage.ts",
     "perf": "npm run build --workspace=packages/desktop && npx playwright test e2e/perf.test.ts",
     "prepare": "husky"
   },
