@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { useCostApi } from './use-cost-api.js';
 import { useQuery } from './use-query.js';
-import type { CostApi } from '@costgoblin/core/browser';
 import type {
+  CostApi,
   CostResult,
   DailyCostsResult,
   DateRange,
