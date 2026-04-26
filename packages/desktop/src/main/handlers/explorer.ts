@@ -5,6 +5,7 @@ import {
   buildRuleMatchExpr,
   buildAliasSqlCase,
   computePeriodsInRange,
+  DEFAULT_LAG_DAYS,
   logger,
   listLocalMonths,
   parseJsonObject,
@@ -57,9 +58,9 @@ function resolveDateRange(raw: { start?: string; end?: string } | undefined): { 
     const days = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
     return { startStr: toIsoDate(start), endStr: toIsoDate(end), windowDays: days };
   }
-  const yesterday = new Date(Date.now() - 86_400_000);
-  const fallbackEnd = toIsoDate(yesterday);
-  const fallbackStart = toIsoDate(new Date(yesterday.getTime() - (DEFAULT_WINDOW_DAYS - 1) * 86_400_000));
+  const latestDate = new Date(Date.now() - DEFAULT_LAG_DAYS * 86_400_000);
+  const fallbackEnd = toIsoDate(latestDate);
+  const fallbackStart = toIsoDate(new Date(latestDate.getTime() - (DEFAULT_WINDOW_DAYS - 1) * 86_400_000));
   return { startStr: fallbackStart, endStr: fallbackEnd, windowDays: DEFAULT_WINDOW_DAYS };
 }
 

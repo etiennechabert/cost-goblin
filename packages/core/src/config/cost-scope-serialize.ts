@@ -1,4 +1,5 @@
 import type { CostScopeConfig, ExclusionCondition, ExclusionRule } from '../types/cost-scope.js';
+import { DEFAULT_LAG_DAYS } from '../types/cost-scope.js';
 
 interface YamlCondition { dimensionId: string; values: string[] }
 interface YamlRule {
@@ -13,6 +14,7 @@ interface YamlRule {
 export interface YamlCostScope {
   costMetric: string;
   costPerspective?: string;
+  lagDays?: number;
   rules: YamlRule[];
 }
 
@@ -32,6 +34,7 @@ function ruleToYaml(r: ExclusionRule): YamlRule {
 }
 
 export function costScopeToYaml(cfg: CostScopeConfig): YamlCostScope {
+  const lagDays = cfg.lagDays ?? DEFAULT_LAG_DAYS;
   return {
     costMetric: cfg.costMetric,
     // Only emit when non-default — keeps legacy YAMLs from churning
@@ -39,6 +42,7 @@ export function costScopeToYaml(cfg: CostScopeConfig): YamlCostScope {
     ...(cfg.costPerspective !== undefined && cfg.costPerspective !== 'gross'
       ? { costPerspective: cfg.costPerspective }
       : {}),
+    ...(lagDays !== DEFAULT_LAG_DAYS ? { lagDays } : {}),
     rules: cfg.rules.map(ruleToYaml),
   };
 }

@@ -10,6 +10,7 @@ import type {
   ViewSpec,
 } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
 import {
   CostFocusDispatchProvider,
@@ -57,7 +58,8 @@ function previousRangeFor(dr: DateRange): DateRange {
 
 function CustomViewInner({ spec, headerSubtitle, onEntityClick }: CustomViewProps) {
   const api = useCostApi();
-  const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange);
+  const lagDays = useLagDays();
+  const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [filters, setFilters] = useState<FilterMap>({});
 
@@ -96,6 +98,7 @@ function CustomViewInner({ spec, headerSubtitle, onEntityClick }: CustomViewProp
           value={dateRange}
           granularity={granularity}
           onChange={(range, g) => { setDateRange(range); setGranularity(g); }}
+          lagDays={lagDays}
         />
       </div>
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { DateString } from '@costgoblin/core/browser';
-import { asDateString } from '@costgoblin/core/browser';
+import { DEFAULT_LAG_DAYS, asDateString } from '@costgoblin/core/browser';
 import { daysAgo } from '../lib/dates.js';
 
 export type Granularity = 'daily' | 'hourly';
@@ -30,23 +30,25 @@ interface DateRangePickerProps {
    *  daily tier (Explorer), where offering hourly presets would lead to
    *  empty result sets. */
   hideHourly?: boolean;
+  /** Number of most-recent days excluded from ranges. */
+  lagDays?: number;
 }
 
-export function getDefaultDateRange(): DateRange {
-  return { start: daysAgo(31), end: daysAgo(1) };
+export function getDefaultDateRange(lagDays: number = DEFAULT_LAG_DAYS): DateRange {
+  return { start: daysAgo(30 + lagDays), end: daysAgo(lagDays) };
 }
 
-export function DateRangePicker({ value, granularity, onChange, hideHourly }: DateRangePickerProps) {
+export function DateRangePicker({ value, granularity, onChange, hideHourly, lagDays = DEFAULT_LAG_DAYS }: DateRangePickerProps) {
   const [showCustom, setShowCustom] = useState(false);
-  const yesterday = daysAgo(1);
+  const latestDate = daysAgo(lagDays);
 
   function isActive(days: number): boolean {
-    return value.start === daysAgo(days + 1) && value.end === yesterday;
+    return value.start === daysAgo(days + lagDays) && value.end === latestDate;
   }
 
   function handlePreset(days: number, g: Granularity) {
     setShowCustom(false);
-    onChange({ start: daysAgo(days + 1), end: yesterday }, g);
+    onChange({ start: daysAgo(days + lagDays), end: latestDate }, g);
   }
 
   function handleCustomToggle() {
@@ -118,6 +120,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly }: Da
           <input
             type="date"
             value={value.start}
+            max={latestDate}
             onChange={(e) => { onChange({ ...value, start: asDateString(e.target.value) }, 'daily'); }}
             className="rounded border border-border bg-bg-secondary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
           />
@@ -125,6 +128,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly }: Da
           <input
             type="date"
             value={value.end}
+            max={latestDate}
             onChange={(e) => { onChange({ ...value, end: asDateString(e.target.value) }, 'daily'); }}
             className="rounded border border-border bg-bg-secondary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
           />
