@@ -445,7 +445,17 @@ export function registerExplorerHandlers(app: AppContext): void {
       if (col === 'usage_date') return `usage_date::VARCHAR AS usage_date`;
       return col;
     });
-    const orderBy = buildOrderBy(params.sort, qc.tagIdSet);
+    const orderBy = (() => {
+      if (params.sort === undefined) return 'SUM(cost) DESC';
+      const dir = params.sort.direction === 'asc' ? 'ASC' : 'DESC';
+      const col = params.sort.column;
+      if (col === 'cost') return `SUM(cost) ${dir}`;
+      if (col === 'list_cost') return `SUM(list_cost) ${dir}`;
+      if (col === 'usage_amount') return `SUM(usage_amount) ${dir}`;
+      if (col === 'row_count') return `COUNT(*) ${dir}`;
+      if (groupByColumns.includes(col)) return `${col} ${dir}`;
+      return 'SUM(cost) DESC';
+    })();
 
     const countSql = `
       SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM (
