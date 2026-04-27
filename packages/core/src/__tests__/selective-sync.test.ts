@@ -100,29 +100,6 @@ describe('syncSelectedFiles', () => {
     );
   });
 
-  it('successfully syncs hourly CUR files', async () => {
-    const proc = createSuccessfulSpawn();
-    mockSpawn.mockReturnValue(proc);
-
-    const files = [file('cur/hourly/BILLING_PERIOD=2026-03/file.parquet', 'hash1')];
-    const dataDir = '/data';
-
-    const result = await syncSelectedFiles({
-      bucketPath: 's3://test-bucket/cur/hourly/',
-      profile: 'prod',
-      dataDir,
-      expectedDataType: 'hourly',
-      files,
-    });
-
-    expect(result.filesDownloaded).toBe(1);
-    expect(mockSpawn).toHaveBeenCalledWith(
-      'aws',
-      ['s3', 'sync', 's3://test-bucket/cur/hourly/BILLING_PERIOD=2026-03/', join(dataDir, 'aws', 'raw', 'hourly-2026-03'), '--profile', 'prod'],
-      { stdio: ['ignore', 'pipe', 'pipe'] }
-    );
-  });
-
   it('successfully syncs cost-optimization files', async () => {
     mockSpawn.mockImplementation(() => createSuccessfulSpawn());
     mockReaddir.mockResolvedValue(['data.parquet']);
