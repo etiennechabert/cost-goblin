@@ -35,9 +35,8 @@ test.afterAll(async () => {
 // Data Management
 // ---------------------------------------------------------------------------
 test.describe('Data Management', () => {
+  test.describe.configure({ timeout: 60_000 });
   test.beforeAll(async () => {
-    // Data management loads S3 inventory which can be slow — navigateTo's
-    // waitForQuerySettle gives it the 30s LOAD_TIMEOUT window.
     await navigateTo(page, 'Sync', 'Data Management');
   });
 
