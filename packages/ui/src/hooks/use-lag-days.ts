@@ -6,9 +6,9 @@ export function useLagDays(): number {
   const api = useCostApi();
   const [lagDays, setLagDays] = useState(DEFAULT_LAG_DAYS);
   useEffect(() => {
-    void api.getCostScope().then(scope => {
+    api.getCostScope().then(scope => {
       setLagDays(scope.lagDays ?? DEFAULT_LAG_DAYS);
-    });
+    }).catch(() => undefined);
   }, [api]);
   return lagDays;
 }

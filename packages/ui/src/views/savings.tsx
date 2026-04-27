@@ -166,7 +166,7 @@ export function Savings() {
         next.add(actionType);
         if (activeFilter === actionType) setActiveFilter(null);
       }
-      void api.saveSavingsPreferences({ hiddenActionTypes: [...next] });
+      api.saveSavingsPreferences({ hiddenActionTypes: [...next] }).catch(() => undefined);
       return next;
     });
   }

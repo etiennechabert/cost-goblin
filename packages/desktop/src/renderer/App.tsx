@@ -129,15 +129,15 @@ function AppShell(): React.JSX.Element {
   const inFlightCount = useDebugBadge();
 
   useEffect(() => {
-    void api.getSetupStatus().then(({ configured }) => {
+    api.getSetupStatus().then(({ configured }) => {
       setSetupCheck(configured ? { status: 'ready' } : { status: 'needs-setup' });
-    });
+    }).catch(() => undefined);
   }, [api]);
 
   useEffect(() => {
-    void api.getUIPreferences().then(prefs => {
+    api.getUIPreferences().then(prefs => {
       setIsDark(prefs.theme === 'dark');
-    });
+    }).catch(() => undefined);
   }, [api]);
 
   const applyViews = useCallback((cfg: ViewsConfig): void => {
@@ -169,12 +169,12 @@ function AppShell(): React.JSX.Element {
   function handleToggleTheme() {
     const next = !isDark;
     setIsDark(next);
-    void api.saveUIPreferences({ theme: next ? 'dark' : 'light' });
+    api.saveUIPreferences({ theme: next ? 'dark' : 'light' }).catch(() => undefined);
   }
 
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
-    void Promise.all([api.getDataInventory(), api.getConfig()]).then(([inv, config]) => {
+    Promise.all([api.getDataInventory(), api.getConfig()]).then(([inv, config]) => {
       const retentionDays = config.providers[0]?.sync.daily.retentionDays ?? 365;
       const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
       const cutoffPeriod = `${String(cutoff.getFullYear())}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
@@ -211,14 +211,14 @@ function AppShell(): React.JSX.Element {
         }
       } catch { /* transient */ }
     }
-    void tick();
-    const timer = setInterval(() => { void tick(); }, 10_000);
+    tick().catch(() => undefined);
+    const timer = setInterval(() => { tick().catch(() => undefined); }, 10_000);
     return () => { cancelled = true; clearInterval(timer); };
   }, [api, setupCheck]);
 
   function handleNavClick(id: string) {
     confirmLeave(() => {
-      void api.cancelPendingQueries();
+      api.cancelPendingQueries().catch(() => undefined);
       switch (id) {
         case 'trends': setView({ page: 'trends' }); break;
         case 'missing-tags': setView({ page: 'missing-tags' }); break;
@@ -238,14 +238,14 @@ function AppShell(): React.JSX.Element {
 
   function handleEntityClick(entity: string, dimension: string) {
     confirmLeave(() => {
-      void api.cancelPendingQueries();
+      api.cancelPendingQueries().catch(() => undefined);
       setView({ page: 'entity-detail', entity, dimension });
     });
   }
 
   function handleBack() {
     confirmLeave(() => {
-      void api.cancelPendingQueries();
+      api.cancelPendingQueries().catch(() => undefined);
       const firstId = viewsConfig?.views[0]?.id ?? OVERVIEW_SEED_VIEW.id;
       setView({ page: 'custom', viewId: firstId });
     });
