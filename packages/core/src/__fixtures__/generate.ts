@@ -34,6 +34,55 @@ interface Profile {
   lineItemTypes: Record<string, number>;
 }
 
+const DEFAULT_PROFILE: Profile = {
+  rowCount: 1000000,
+  dateRange: { min: '2026-01-01', max: '2026-03-01' },
+  services: [
+    { name: 'AmazonEC2', costShare: 0.25, avgDailyCost: 500 },
+    { name: 'AmazonRDS', costShare: 0.15, avgDailyCost: 300 },
+    { name: 'AmazonS3', costShare: 0.08, avgDailyCost: 160 },
+    { name: 'AmazonCloudWatch', costShare: 0.06, avgDailyCost: 120 },
+    { name: 'AmazonDynamoDB', costShare: 0.05, avgDailyCost: 100 },
+    { name: 'AWSELB', costShare: 0.05, avgDailyCost: 100 },
+    { name: 'AmazonECS', costShare: 0.04, avgDailyCost: 80 },
+    { name: 'AmazonVPC', costShare: 0.04, avgDailyCost: 80 },
+    { name: 'AWSBackup', costShare: 0.03, avgDailyCost: 60 },
+    { name: 'AmazonElastiCache', costShare: 0.03, avgDailyCost: 60 },
+    { name: 'awskms', costShare: 0.02, avgDailyCost: 40 },
+    { name: 'AWSXRay', costShare: 0.02, avgDailyCost: 40 },
+    { name: 'AmazonGuardDuty', costShare: 0.02, avgDailyCost: 40 },
+    { name: 'AWSSecurityHub', costShare: 0.01, avgDailyCost: 20 },
+    { name: 'AmazonConnect', costShare: 0.01, avgDailyCost: 20 },
+  ],
+  accounts: [
+    { id: '100000000000', name: 'Main Production', costShare: 0.45 },
+    { id: '100000000001', name: 'Data Platform', costShare: 0.12 },
+    { id: '100000000002', name: 'Payments Production', costShare: 0.08 },
+    { id: '100000000003', name: 'Identity Production', costShare: 0.06 },
+    { id: '100000000004', name: 'Platform Engineering', costShare: 0.05 },
+    { id: '100000000005', name: 'Security Operations', costShare: 0.04 },
+    { id: '100000000006', name: 'CI/CD Platform', costShare: 0.04 },
+    { id: '100000000007', name: 'Staging Shared', costShare: 0.04 },
+    { id: '100000000008', name: 'Development Sandbox', costShare: 0.03 },
+    { id: '100000000009', name: 'Networking', costShare: 0.03 },
+    { id: '100000000010', name: 'Disaster Recovery', costShare: 0.02 },
+    { id: '100000000011', name: 'Monitoring', costShare: 0.015 },
+    { id: '100000000012', name: 'Logging', costShare: 0.015 },
+    { id: '100000000013', name: 'Billing Production', costShare: 0.01 },
+    { id: '100000000014', name: 'Cards Production', costShare: 0.01 },
+  ],
+  regions: [
+    'us-east-1', 'us-west-2', 'eu-central-1', 'eu-west-1', 'ap-northeast-1',
+  ],
+  tags: {
+    owner: { values: ['backend', 'frontend', 'platform', 'data-eng', 'security', 'payments', 'identity', 'sre'], missingPercent: 0.08 },
+    product: { values: ['api-gateway', 'auth-service', 'billing-engine', 'data-pipeline', 'event-bus', 'ledger', 'payment-router', 'risk-engine'], missingPercent: 0.12 },
+    environment: { values: ['production', 'staging', 'testing', 'sandbox'], missingPercent: 0.03 },
+  },
+  costDistribution: { p50: 0.000005, p90: 0.012, p99: 0.86 },
+  lineItemTypes: { Usage: 0.81, Tax: 0.002, Fee: 0.06, Credit: 0.04, DiscountedUsage: 0.004, EdpDiscount: 0.084 },
+};
+
 async function queryAll(conn: { run: (sql: string) => Promise<{ columnCount: number; columnName: (i: number) => string; fetchChunk: () => Promise<{ rowCount: number; getColumnVector: (i: number) => { getItem: (r: number) => unknown } } | null> }> }, sql: string): Promise<Record<string, unknown>[]> {
   const result = await conn.run(sql);
   const cols = result.columnCount;
@@ -239,8 +288,8 @@ async function generate(): Promise<void> {
     const content = await import(`file://${PROFILE_PATH}`, { with: { type: 'json' } });
     profileData = content.default as Profile;
   } catch {
-    process.stderr.write('No profile.json found. Run with --profile first.\n');
-    process.exit(1);
+    process.stdout.write('No profile.json found, using default profile.\n');
+    profileData = DEFAULT_PROFILE;
   }
 
   const rand = seededRandom(42);
