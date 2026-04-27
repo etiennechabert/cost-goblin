@@ -106,8 +106,12 @@ export async function hasVisibleData(page: Page): Promise<boolean> {
 // Click a nav button, wait for the destination heading, and let initial
 // queries settle. Shared app launch means each describe block navigates
 // between views via clicks instead of relaunching Electron.
+export async function clickNavButton(page: Page, name: string): Promise<void> {
+  await page.getByRole('button', { name: new RegExp(name), exact: false }).first().click();
+}
+
 export async function navigateTo(page: Page, buttonName: string, headingName: string): Promise<void> {
-  await page.getByRole('button', { name: buttonName, exact: true }).first().click();
+  await clickNavButton(page, buttonName);
   await expect(page.getByRole('heading', { name: headingName, exact: true })).toBeVisible({ timeout: 5000 });
   await waitForQuerySettle(page);
 }
