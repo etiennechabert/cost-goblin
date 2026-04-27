@@ -364,7 +364,7 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: Readonly<
 
   function handleSave() {
     setSaving(true);
-    void api.writeConfig({
+    api.writeConfig({
       providerName: 'aws-main',
       profile: state.profile,
       dailyBucket: state.s3Path,
@@ -452,17 +452,17 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   useEffect(() => {
     if (isSourceMode && !bucketsLoaded) {
       setBucketsLoaded(true);
-      void api.listS3Buckets(initialProfile).then(result => {
+      api.listS3Buckets(initialProfile).then(result => {
         setWizard({ step: 'bucket', profile: initialProfile, source: initialSource, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
-      });
+      }).catch(() => undefined);
     }
   }, [isSourceMode, bucketsLoaded, api, initialProfile, initialSource]);
 
   function handleWelcomeNext() {
     setWizard({ step: 'profile', profiles: [], loading: true, selected: '' });
-    void api.listAwsProfiles().then(profiles => {
+    api.listAwsProfiles().then(profiles => {
       setWizard({ step: 'profile', profiles, loading: false, selected: '' });
-    });
+    }).catch(() => undefined);
   }
 
   function handleProfileSelect(profile: string) {
@@ -471,9 +471,9 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
 
   function startBucketStep(profile: string, source: DataSource) {
     setWizard({ step: 'bucket', profile, source, buckets: [], loading: true, selected: '', error: '' });
-    void api.listS3Buckets(profile).then(result => {
+    api.listS3Buckets(profile).then(result => {
       setWizard({ step: 'bucket', profile, source, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
-    });
+    }).catch(() => undefined);
   }
 
   function handleBucketSelect(bucket: string) {
@@ -484,9 +484,9 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   function browseTo(profile: string, source: DataSource, bucket: string, prefix: string) {
     const path = prefix.split('/').filter(s => s.length > 0);
     setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: [], loading: true, isCurReport: false, detectedType: 'unknown', missingColumns: [], path });
-    void api.browseS3({ profile, bucket, prefix }).then(result => {
+    api.browseS3({ profile, bucket, prefix }).then(result => {
       setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: result.prefixes, loading: false, isCurReport: result.isCurReport, detectedType: result.detectedType, missingColumns: result.missingColumns, path });
-    });
+    }).catch(() => undefined);
   }
 
   function handleNavigate(prefix: string) {

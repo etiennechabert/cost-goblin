@@ -256,7 +256,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => { void api.revealViewsFolder(); }}
+            onClick={() => { api.revealViewsFolder().catch(() => undefined); }}
             className="px-3 py-1.5 text-sm rounded-md border border-border text-text-secondary hover:text-text-primary"
             title="Reveal views.yaml in Finder"
           >
@@ -280,7 +280,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
           </button>
           <button
             type="button"
-            onClick={() => { void handleReset(); }}
+            onClick={() => { handleReset().catch(() => undefined); }}
             disabled={saving}
             className="px-3 py-1.5 text-sm rounded-md border border-border text-text-secondary hover:text-text-primary disabled:opacity-50"
           >
@@ -288,7 +288,7 @@ export function ViewsEditor({ onConfigPersisted }: ViewsEditorProps = {}): React
           </button>
           <button
             type="button"
-            onClick={() => { void handleSave(); }}
+            onClick={() => { handleSave().catch(() => undefined); }}
             disabled={saving || !state.dirty}
             className="px-4 py-1.5 text-sm rounded-md bg-accent text-bg-primary font-medium hover:opacity-90 disabled:opacity-40"
           >

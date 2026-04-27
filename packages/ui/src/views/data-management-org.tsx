@@ -81,7 +81,7 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
     setSyncState({ status: 'syncing', phase: 'accounts', done: 0, total: 0 });
 
     const pollInterval = setInterval(() => {
-      void api.getOrgSyncProgress().then(p => {
+      api.getOrgSyncProgress().then(p => {
         if (p !== null) {
           setSyncState({ status: 'syncing', phase: p.phase, done: p.done, total: p.total });
         }
@@ -135,7 +135,7 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
             {profile !== null && syncState.status !== 'syncing' && (
               <button
                 type="button"
-                onClick={() => { void handleSync(); }}
+                onClick={() => { handleSync().catch(() => undefined); }}
                 className="mt-3 rounded-md border border-accent/50 bg-accent/10 px-4 py-1.5 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
               >
                 Sync from AWS Organizations
@@ -165,7 +165,7 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
         {profile !== null && (
           <button
             type="button"
-            onClick={() => { void handleSync(); }}
+            onClick={() => { handleSync().catch(() => undefined); }}
             disabled={syncState.status === 'syncing'}
             className="text-xs text-text-muted hover:text-accent transition-colors disabled:opacity-50"
             title="Re-sync"
@@ -349,7 +349,7 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
           confirmLabel="Clear"
           cancelLabel="Cancel"
           destructive
-          onConfirm={() => { void handleClear(); }}
+          onConfirm={() => { handleClear().catch(() => undefined); }}
           onCancel={() => { setShowClearConfirm(false); }}
         />
       )}

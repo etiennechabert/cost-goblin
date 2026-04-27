@@ -150,7 +150,7 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
   }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    shell.openExternal(url).catch(() => undefined);
     return { action: 'deny' };
   });
 
@@ -175,7 +175,7 @@ async function main(): Promise<void> {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      void createWindow(db, syncClient);
+      createWindow(db, syncClient).catch(() => undefined);
     }
   });
 }
@@ -186,12 +186,10 @@ app.on('window-all-closed', () => {
   }
 });
 
-void (async () => {
-  try {
-    await main();
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`Fatal error: ${message}\n`);
-    process.exit(1);
-  }
-})();
+try {
+  await main();
+} catch (err: unknown) {
+  const message = err instanceof Error ? err.message : String(err);
+  process.stderr.write(`Fatal error: ${message}\n`);
+  process.exit(1);
+}

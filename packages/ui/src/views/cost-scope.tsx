@@ -618,12 +618,12 @@ export function CostScopeView(): React.JSX.Element {
   useUnsavedChanges(dirty, 'Cost Scope');
 
   useEffect(() => {
-    void api.getCostScope().then(cfg => {
+    api.getCostScope().then(cfg => {
       setDraft(cfg);
       setSaved(cfg);
-    });
-    void api.getDimensions().then(setDimensions);
-    void api.getCostScopeCapabilities().then(setCapabilities).catch(() => {
+    }).catch(() => undefined);
+    api.getDimensions().then(setDimensions).catch(() => undefined);
+    api.getCostScopeCapabilities().then(setCapabilities).catch(() => {
       // capabilities are advisory — if the probe fails, assume
       // everything is present (matches legacy behaviour).
       setCapabilities({ hasEffectiveCostColumns: true, hasBlendedColumn: true, hasNetColumns: true });
@@ -649,13 +649,13 @@ export function CostScopeView(): React.JSX.Element {
       const entries = await Promise.all(enabled.map(fetchDimValues));
       if (!cancelled) setSuggestionsByDim(new Map(entries));
     }
-    if (dimensions.length > 0) void run();
+    if (dimensions.length > 0) run().catch(() => undefined);
     return () => { cancelled = true; };
   }, [api, dimensions]);
 
   const refreshPreview = useCallback((config: CostScopeConfig) => {
     setPreview(p => ({ ...p, loading: true }));
-    void api.previewCostScope(config)
+    api.previewCostScope(config)
       .then(result => { setPreview({ result, loading: false }); })
       .catch(() => { setPreview({ result: null, loading: false }); });
   }, [api]);
@@ -785,7 +785,7 @@ export function CostScopeView(): React.JSX.Element {
             <button
               type="button"
               className="text-xs text-text-muted hover:text-text-secondary"
-              onClick={() => { void api.revealCostScopeFolder(); }}
+              onClick={() => { api.revealCostScopeFolder().catch(() => undefined); }}
             >
               Reveal YAML
             </button>
@@ -794,7 +794,7 @@ export function CostScopeView(): React.JSX.Element {
                 <Button variant="outline" size="sm" onClick={handleCancel} disabled={saving}>Cancel</Button>
                 <Button
                   size="sm"
-                  onClick={() => { void handleSave(); }}
+                  onClick={() => { handleSave().catch(() => undefined); }}
                   disabled={!canSave}
                   title={draftError ?? undefined}
                 >

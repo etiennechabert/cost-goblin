@@ -108,7 +108,7 @@ export function ExplorerView(): React.JSX.Element {
   // the preference won't survive a reload (rare edge case, not worth
   // surfacing). One helper keeps both fields in sync on every save.
   function saveColumnPrefs(hidden: readonly string[], order: readonly string[]) {
-    void api.saveExplorerPreferences({ hiddenColumns: hidden, columnOrder: order });
+    api.saveExplorerPreferences({ hiddenColumns: hidden, columnOrder: order }).catch(() => undefined);
   }
 
   function updateHiddenColumns(next: readonly string[]) {
