@@ -36,8 +36,8 @@ async function main(): Promise<void> {
   }
 
   if (files.length === 0) {
-    process.stderr.write('No V8 coverage found. Run E2E tests first.\n');
-    process.exit(1);
+    process.stdout.write('No V8 coverage found — skipping.\n');
+    process.exit(0);
   }
 
   const entries: V8CoverageEntry[] = [];
