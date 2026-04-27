@@ -12,15 +12,21 @@ mkdirSync(V8_DIR, { recursive: true });
 
 export const LOAD_TIMEOUT = 5_000;
 
-export function launchApp(): Promise<ElectronApplication> {
+const DEFAULT_DATA_DIR = join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'data');
+const DEFAULT_CONFIG_DIR = join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config');
+export const FIXTURE_DATA_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'synthetic');
+export const FIXTURE_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'config');
+
+export function launchApp(overrides?: { configDir?: string }): Promise<ElectronApplication> {
+  const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? DEFAULT_DATA_DIR;
+  const configDir = overrides?.configDir ?? process.env['COSTGOBLIN_CONFIG_DIR'] ?? DEFAULT_CONFIG_DIR;
   return _electron.launch({
     args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],
     env: {
       ...process.env,
       NODE_ENV: 'production',
-      // Point at the real Electron userData where synced data + config live
-      COSTGOBLIN_DATA_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'data'),
-      COSTGOBLIN_CONFIG_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config'),
+      COSTGOBLIN_DATA_DIR: dataDir,
+      COSTGOBLIN_CONFIG_DIR: configDir,
     },
   });
 }

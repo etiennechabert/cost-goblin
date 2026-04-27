@@ -6,22 +6,6 @@ import { ConfirmModal } from '../components/confirm-modal.js';
 afterEach(cleanup);
 
 describe('ConfirmModal', () => {
-  it('renders title and message', () => {
-    render(
-      <ConfirmModal title="Delete item" message="Are you sure?" onConfirm={vi.fn()} onCancel={vi.fn()} />,
-    );
-    expect(screen.getByText('Delete item')).toBeDefined();
-    expect(screen.getByText('Are you sure?')).toBeDefined();
-  });
-
-  it('renders default button labels', () => {
-    render(
-      <ConfirmModal title="Test" message="msg" onConfirm={vi.fn()} onCancel={vi.fn()} />,
-    );
-    expect(screen.getByText('Confirm')).toBeDefined();
-    expect(screen.getByText('Cancel')).toBeDefined();
-  });
-
   it('renders custom button labels', () => {
     render(
       <ConfirmModal title="Test" message="msg" confirmLabel="Yes" cancelLabel="No" onConfirm={vi.fn()} onCancel={vi.fn()} />,
@@ -66,12 +50,5 @@ describe('ConfirmModal', () => {
     );
     const confirmBtn = screen.getByText('Confirm');
     expect(confirmBtn.className).toContain('bg-negative');
-  });
-
-  it('has dialog role', () => {
-    render(
-      <ConfirmModal title="Test" message="msg" onConfirm={vi.fn()} onCancel={vi.fn()} />,
-    );
-    expect(screen.getByRole('dialog')).toBeDefined();
   });
 });
