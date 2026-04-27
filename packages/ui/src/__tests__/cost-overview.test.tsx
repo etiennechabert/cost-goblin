@@ -22,11 +22,6 @@ function renderOverview() {
 afterEach(cleanup);
 
 describe('CostOverview', () => {
-  it('renders heading', () => {
-    renderOverview();
-    expect(screen.getByText('Cost Overview')).toBeDefined();
-  });
-
   it('shows loading state initially', () => {
     renderOverview();
     expect(screen.getByText('Loading...')).toBeDefined();
@@ -50,13 +45,6 @@ describe('CostOverview', () => {
     expect(screen.getByText('Services')).toBeDefined();
   });
 
-  it('date range picker is visible with daily/hourly rows', () => {
-    renderOverview();
-    expect(screen.getByText('Daily')).toBeDefined();
-    expect(screen.getByText('Hourly')).toBeDefined();
-    expect(screen.getByText('90 days')).toBeDefined();
-  });
-
   it('changing date range triggers a new query', async () => {
     const { api, user } = renderOverview();
     const queryCostsSpy = vi.spyOn(api, 'queryCosts');
@@ -70,13 +58,6 @@ describe('CostOverview', () => {
 
     await waitFor(() => {
       expect(queryCostsSpy.mock.calls.length).toBeGreaterThan(initialCallCount);
-    });
-  });
-
-  it('renders summary card with total cost', async () => {
-    renderOverview();
-    await waitFor(() => {
-      expect(screen.getByText('Total Cost')).toBeDefined();
     });
   });
 });

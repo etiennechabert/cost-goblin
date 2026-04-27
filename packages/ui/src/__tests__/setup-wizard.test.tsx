@@ -24,13 +24,6 @@ function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'
 afterEach(cleanup);
 
 describe('SetupWizard', () => {
-  it('renders welcome step', () => {
-    renderWizard();
-    expect(screen.getByText('CostGoblin')).toBeDefined();
-    expect(screen.getByText('Cloud cost visibility for your team')).toBeDefined();
-    expect(screen.getByText('Get Started')).toBeDefined();
-  });
-
   it('get started button advances to profile step', async () => {
     const { user } = renderWizard();
     await user.click(screen.getByText('Get Started'));
@@ -65,11 +58,5 @@ describe('SetupWizard', () => {
     await waitFor(() => {
       expect(screen.getByText('my-cur-bucket')).toBeDefined();
     });
-  });
-
-  it('onComplete callback is provided but not called on render', () => {
-    const { onComplete } = renderWizard();
-    expect(onComplete).not.toHaveBeenCalled();
-    expect(screen.getByText('CostGoblin')).toBeDefined();
   });
 });

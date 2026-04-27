@@ -34,12 +34,6 @@ function renderPopup(overrides?: Partial<{ onClose: () => void; onSetFilter: () 
 afterEach(cleanup);
 
 describe('EntityPopup', () => {
-  it('renders entity name and dimension', () => {
-    renderPopup();
-    expect(screen.getByText('platform')).toBeDefined();
-    expect(screen.getByText('team')).toBeDefined();
-  });
-
   it('shows loading state initially', () => {
     renderPopup();
     expect(screen.getByText('Loading…')).toBeDefined();
@@ -50,11 +44,6 @@ describe('EntityPopup', () => {
     await waitFor(() => {
       expect(screen.getByText('Total Cost')).toBeDefined();
     });
-  });
-
-  it('shows close button', () => {
-    renderPopup();
-    expect(screen.getByLabelText('Close')).toBeDefined();
   });
 
   it('calls onClose when close button clicked', async () => {

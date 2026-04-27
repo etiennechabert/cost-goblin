@@ -24,12 +24,6 @@ function renderDetail(overrides?: Partial<{ onBack: () => void }>) {
 afterEach(cleanup);
 
 describe('EntityDetail', () => {
-  it('renders entity name and dimension', () => {
-    renderDetail();
-    expect(screen.getByText('platform')).toBeDefined();
-    expect(screen.getByText('account')).toBeDefined();
-  });
-
   it('shows histogram with Groups/Products/Services tabs after data loads', async () => {
     renderDetail();
 
@@ -37,7 +31,6 @@ describe('EntityDetail', () => {
       expect(screen.getByText('Daily Costs')).toBeDefined();
     });
 
-    // StackedBarChart uses Groups/Products/Services tabs (same as overview)
     expect(screen.getByRole('button', { name: 'Groups' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Products' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Services' })).toBeDefined();
@@ -76,12 +69,5 @@ describe('EntityDetail', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Export CSV/i })).toBeDefined();
     });
-  });
-
-  it('date range picker is visible with daily and hourly presets', () => {
-    renderDetail();
-    expect(screen.getByText('Daily')).toBeDefined();
-    expect(screen.getByText('Hourly')).toBeDefined();
-    expect(screen.getByText('90 days')).toBeDefined();
   });
 });

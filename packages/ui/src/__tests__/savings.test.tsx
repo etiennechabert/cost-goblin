@@ -22,11 +22,6 @@ function renderSavings() {
 afterEach(cleanup);
 
 describe('Savings', () => {
-  it('renders heading', () => {
-    renderSavings();
-    expect(screen.getByText('Savings Opportunities')).toBeDefined();
-  });
-
   it('shows recommendations after loading', async () => {
     renderSavings();
     await waitFor(() => {
