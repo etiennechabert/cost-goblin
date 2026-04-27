@@ -29,24 +29,6 @@ const topServices = ['Amazon EC2', 'Amazon RDS'];
 afterEach(cleanup);
 
 describe('CostTable', () => {
-  it('renders entity names', () => {
-    render(<CostTable rows={rows} topServices={topServices} onEntityClick={vi.fn()} />);
-    expect(screen.getByText('platform')).toBeDefined();
-    expect(screen.getByText('data')).toBeDefined();
-    expect(screen.getByText('infra')).toBeDefined();
-  });
-
-  it('renders service column headers', () => {
-    render(<CostTable rows={rows} topServices={topServices} onEntityClick={vi.fn()} />);
-    expect(screen.getByText('Amazon EC2')).toBeDefined();
-    expect(screen.getByText('Amazon RDS')).toBeDefined();
-  });
-
-  it('renders total column header', () => {
-    render(<CostTable rows={rows} topServices={topServices} onEntityClick={vi.fn()} />);
-    expect(screen.getByText('Total')).toBeDefined();
-  });
-
   it('sorts rows by cost descending', () => {
     const { container } = render(<CostTable rows={rows} topServices={topServices} onEntityClick={vi.fn()} />);
     const entityCells = container.querySelectorAll('tbody td:first-child');

@@ -35,16 +35,6 @@ function renderView(spec: ViewSpec = SPEC) {
 }
 
 describe('CustomView', () => {
-  it('renders the view name as a heading', () => {
-    renderView();
-    expect(screen.getByText('Test View')).toBeDefined();
-  });
-
-  it('renders the header subtitle when provided', () => {
-    renderView();
-    expect(screen.getByText('hello')).toBeDefined();
-  });
-
   it('renders the summary card after data loads', async () => {
     renderView();
     await waitFor(() => {

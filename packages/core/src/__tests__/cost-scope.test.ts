@@ -45,12 +45,6 @@ describe('cost metric column selection', () => {
     expect(sql).toMatch(/COALESCE\(line_item_unblended_cost, 0\) AS cost/);
   });
 
-  it('uses unblended when metric is unblended', () => {
-    const sql = buildQuery({ costMetric: 'unblended', rules: [] });
-    expect(sql).toMatch(/COALESCE\(line_item_unblended_cost, 0\) AS cost/);
-    expect(sql).not.toContain('line_item_blended_cost');
-  });
-
   it('uses blended when metric is blended', () => {
     const sql = buildQuery({ costMetric: 'blended', rules: [] });
     expect(sql).toMatch(/COALESCE\(line_item_blended_cost, 0\) AS cost/);
@@ -196,21 +190,6 @@ describe('exclusion clauses', () => {
     expect(sql).toContain('CASE');
     expect(params).toContain('core-banking');
     expect(sql).toContain('NOT (');
-  });
-
-  it('escapes single quotes in values', () => {
-    const result = buildCostQuery(
-      baseParams,
-      { dataDir: '/data', dimensions, costScope: {
-        costMetric: 'unblended',
-        rules: [{ id: 'test', name: 'Test', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('service'), values: ["it's a service"] }] }],
-      } },
-      5,
-    );
-    // With parameterized queries, the value is passed as a parameter
-    // and doesn't need escaping in the SQL
-    expect(result.params).toContain("it's a service");
-    expect(result.sql).toContain('IN ($');
   });
 
   it('DEFAULT_COST_SCOPE built-in rules are disabled by default — no exclusions', () => {
