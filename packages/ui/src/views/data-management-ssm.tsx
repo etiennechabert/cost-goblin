@@ -70,7 +70,7 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
         {profile !== null && (
           <button
             type="button"
-            onClick={() => { void handleSync(); }}
+            onClick={() => { handleSync().catch(() => undefined); }}
             disabled={syncState.status === 'syncing'}
             className="text-xs text-text-muted hover:text-accent transition-colors disabled:opacity-50"
             title={hasData ? 'Re-sync SSM region names' : 'Fetch SSM region names'}

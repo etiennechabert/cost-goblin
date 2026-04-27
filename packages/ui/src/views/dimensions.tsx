@@ -1220,7 +1220,7 @@ export function DimensionsView() {
   function applyOptimistic(next: DimensionsConfig): void {
     const reconciled = { ...next, order: reconcileOrder(next) };
     setConfig(reconciled);
-    void api.saveDimensionsConfig(reconciled);
+    api.saveDimensionsConfig(reconciled).catch(() => undefined);
   }
 
   function toggleBuiltInEnabled(idx: number): void {
@@ -1394,7 +1394,7 @@ export function DimensionsView() {
           {addingNew && (
             <TagEditor
               tag={quickAddState ?? { tagName: '', label: '', concept: '', normalize: '', aliases: '', fallbackTag: undefined, missingValueTemplate: '' }}
-              onSave={(edited) => { void handleAddTag(edited); }}
+              onSave={(edited) => { handleAddTag(edited).catch(() => undefined); }}
               onCancel={() => { setAddingNew(false); setQuickAddState(null); }}
               onRemove={undefined}
               availableTags={unmappedTagKeys}
@@ -1441,7 +1441,7 @@ export function DimensionsView() {
                         useRegionNames: d.useRegionNames === true,
                       },
                     }}
-                    onSave={(edited) => { void handleSaveBuiltIn(row.idx, edited); }}
+                    onSave={(edited) => { handleSaveBuiltIn(row.idx, edited).catch(() => undefined); }}
                     onCancel={() => { setEditingBuiltInIdx(null); }}
                     accountTagKeys={accountTagKeys}
                   />
@@ -1498,9 +1498,9 @@ export function DimensionsView() {
                     fallbackTag: tag.accountTagFallback,
                     missingValueTemplate: tag.missingValueTemplate ?? '',
                   }}
-                  onSave={(edited) => { void handleSaveTag(row.idx, edited); }}
+                  onSave={(edited) => { handleSaveTag(row.idx, edited).catch(() => undefined); }}
                   onCancel={() => { setEditingIdx(null); }}
-                  onRemove={() => { void handleRemoveTag(row.idx); }}
+                  onRemove={() => { handleRemoveTag(row.idx).catch(() => undefined); }}
                   availableTags={unmappedTagKeys}
                   discoveredTags={discoveredTags}
                   accountTagKeys={accountTagKeys}

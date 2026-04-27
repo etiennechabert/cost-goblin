@@ -91,7 +91,7 @@ export function DataManagement() {
     setDailySyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, message: '' });
 
     const pollInterval = setInterval(() => {
-      void api.getSyncStatus('daily').then((s) => {
+      api.getSyncStatus('daily').then((s) => {
         if (s.status === 'syncing') {
           if (s.phase === 'repartitioning') {
             setDailySyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
@@ -117,11 +117,11 @@ export function DataManagement() {
   }
 
   function handleDeleteDaily(period: string) {
-    void api.deleteLocalPeriod(period, 'daily').then(() => { setDailyRefreshKey(k => k + 1); }).catch(() => { /* deletion best-effort */ });
+    api.deleteLocalPeriod(period, 'daily').then(() => { setDailyRefreshKey(k => k + 1); }).catch(() => { /* deletion best-effort */ });
   }
 
   function handleDeleteHourly(period: string) {
-    void api.deleteLocalPeriod(period, 'hourly').then(() => { setHourlyRefreshKey(k => k + 1); }).catch(() => { /* deletion best-effort */ });
+    api.deleteLocalPeriod(period, 'hourly').then(() => { setHourlyRefreshKey(k => k + 1); }).catch(() => { /* deletion best-effort */ });
   }
 
   function handleDeleteAll() {
@@ -133,7 +133,7 @@ export function DataManagement() {
       ...hourly.map(p => api.deleteLocalPeriod(p.period, 'hourly')),
       ...costOpt.map(p => api.deleteLocalPeriod(p.period, 'cost-optimization')),
     ];
-    void Promise.all(promises).then(() => {
+    Promise.all(promises).then(() => {
       setDailyRefreshKey(k => k + 1);
       setHourlyRefreshKey(k => k + 1);
       setCostOptRefreshKey(k => k + 1);
@@ -219,7 +219,7 @@ export function DataManagement() {
     setHourlySyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, message: '' });
 
     const pollInterval = setInterval(() => {
-      void api.getSyncStatus('hourly').then((s) => {
+      api.getSyncStatus('hourly').then((s) => {
         if (s.status === 'syncing') {
           if (s.phase === 'repartitioning') {
             setHourlySyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
@@ -261,7 +261,7 @@ export function DataManagement() {
   }
 
   function handleDeleteCostOpt(period: string) {
-    void api.deleteLocalPeriod(period, 'cost-optimization').then(() => { setCostOptRefreshKey(k => k + 1); }).catch(() => { /* deletion best-effort */ });
+    api.deleteLocalPeriod(period, 'cost-optimization').then(() => { setCostOptRefreshKey(k => k + 1); }).catch(() => { /* deletion best-effort */ });
   }
 
   async function handleCostOptSync() {
@@ -272,7 +272,7 @@ export function DataManagement() {
     setCostOptSyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, message: '' });
 
     const pollInterval = setInterval(() => {
-      void api.getSyncStatus('cost-optimization').then((s) => {
+      api.getSyncStatus('cost-optimization').then((s) => {
         if (s.status === 'syncing') {
           if (s.phase === 'repartitioning') {
             setCostOptSyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
@@ -322,7 +322,7 @@ export function DataManagement() {
                 <p className="text-xs text-text-muted mb-2">Generate template config files and edit them with your S3 bucket path and tag mappings.</p>
                 <button
                   type="button"
-                  onClick={() => { void api.scaffoldConfig(); }}
+                  onClick={() => { api.scaffoldConfig().catch(() => undefined); }}
                   className="rounded-md border border-accent/50 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
                 >
                   Generate config templates & open folder
@@ -348,7 +348,7 @@ export function DataManagement() {
             <span className="text-xs text-text-secondary">Auto-sync</span>
             <button
               type="button"
-              onClick={() => { const next = !autoSync; setAutoSync(next); void api.setAutoSyncEnabled(next); }}
+              onClick={() => { const next = !autoSync; setAutoSync(next); api.setAutoSyncEnabled(next).catch(() => undefined); }}
               className={['relative h-5 w-9 rounded-full transition-colors', autoSync ? 'bg-accent' : 'bg-bg-tertiary'].join(' ')}
             >
               <span className={['absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', autoSync ? 'translate-x-4' : 'translate-x-0'].join(' ')} />
@@ -359,7 +359,7 @@ export function DataManagement() {
               onChange={e => {
                 const next = Number(e.target.value);
                 setAutoSyncInterval(next);
-                void api.setAutoSyncIntervalMinutes(next);
+                api.setAutoSyncIntervalMinutes(next).catch(() => undefined);
               }}
               title="How often auto-sync runs. Keep this at least a day unless you're debugging — each run hits S3."
               className="rounded-md border border-border bg-bg-tertiary/50 px-2 py-1 text-xs text-text-secondary disabled:opacity-40"
@@ -388,7 +388,7 @@ export function DataManagement() {
           >
             Delete All Data
           </button>
-          <button type="button" onClick={() => { void api.openDataFolder(); }} className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors">
+          <button type="button" onClick={() => { api.openDataFolder().catch(() => undefined); }} className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors">
             Open Folder
           </button>
           <button type="button" onClick={() => { setDailyRefreshKey(k => k + 1); setHourlyRefreshKey(k => k + 1); setCostOptRefreshKey(k => k + 1); }} className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors">
@@ -435,10 +435,10 @@ export function DataManagement() {
             onToggle={togglePeriod}
             onSelectAll={selectAll}
             onDeselectAll={deselectAll}
-            onDownload={() => { void handleSync(); }}
+            onDownload={() => { handleSync().catch(() => undefined); }}
             onDeletePeriod={handleDeleteDaily}
             syncState={dailySyncState}
-            onCancelSync={() => { void api.cancelSync('daily'); setDailySyncState({ status: 'idle' }); }}
+            onCancelSync={() => { api.cancelSync('daily').catch(() => undefined); setDailySyncState({ status: 'idle' }); }}
             onConfigure={() => { setConfigureSource('daily'); }}
 
           />
@@ -456,10 +456,10 @@ export function DataManagement() {
             onToggle={toggleHourlyPeriod}
             onSelectAll={selectAllHourly}
             onDeselectAll={deselectAllHourly}
-            onDownload={() => { void handleHourlySync(); }}
+            onDownload={() => { handleHourlySync().catch(() => undefined); }}
             onDeletePeriod={handleDeleteHourly}
             syncState={hourlySyncState}
-            onCancelSync={() => { void api.cancelSync('hourly'); setHourlySyncState({ status: 'idle' }); }}
+            onCancelSync={() => { api.cancelSync('hourly').catch(() => undefined); setHourlySyncState({ status: 'idle' }); }}
             onConfigure={() => { setConfigureSource('hourly'); }}
 
           />
@@ -477,10 +477,10 @@ export function DataManagement() {
             onToggle={toggleCostOptPeriod}
             onSelectAll={selectAllCostOpt}
             onDeselectAll={deselectAllCostOpt}
-            onDownload={() => { void handleCostOptSync(); }}
+            onDownload={() => { handleCostOptSync().catch(() => undefined); }}
             onDeletePeriod={handleDeleteCostOpt}
             syncState={costOptSyncState}
-            onCancelSync={() => { void api.cancelSync('cost-optimization'); setCostOptSyncState({ status: 'idle' }); }}
+            onCancelSync={() => { api.cancelSync('cost-optimization').catch(() => undefined); setCostOptSyncState({ status: 'idle' }); }}
             onConfigure={() => { setConfigureSource('costOptimization'); }}
 
           />
@@ -601,7 +601,7 @@ function ProfileSwapModal({ currentProfile, onClose, onSaved }: Readonly<{
           </button>
           <button
             type="button"
-            onClick={() => { void handleSave(); }}
+            onClick={() => { handleSave().catch(() => undefined); }}
             disabled={saving || selected.length === 0 || selected === currentProfile}
             className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
