@@ -77,6 +77,9 @@ jobs:
       - name: Build desktop
         run: npm run build --workspace=packages/desktop
       - name: Run E2E shard
+        env:
+          COSTGOBLIN_DATA_DIR: ${{ github.workspace }}/packages/core/src/__fixtures__/synthetic
+          COSTGOBLIN_CONFIG_DIR: ${{ github.workspace }}/packages/core/src/__fixtures__/config
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" npx playwright test e2e/${{ matrix.shard }}.test.ts
       - name: Collect E2E coverage
         if: always()

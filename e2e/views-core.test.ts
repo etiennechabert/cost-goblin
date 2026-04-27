@@ -798,6 +798,7 @@ test.describe('Full user journey', () => {
     const views = ['Trends', 'Cost Overview', 'Missing Tags', 'Savings', 'Dimensions', 'Sync', 'Cost Overview', 'Trends', 'Missing Tags'];
     for (const view of views) {
       await page.getByRole('button', { name: view, exact: true }).first().click();
+      await page.waitForTimeout(100);
     }
     await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
     await assertNoReactCrash(page);

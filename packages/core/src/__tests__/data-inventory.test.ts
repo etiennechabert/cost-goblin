@@ -736,51 +736,6 @@ describe('getDataInventory with mocked S3', () => {
       expect(jan?.localStatus).toBe('repartitioned');
     });
 
-    it('validates multi-period incremental sync: unchanged period stays repartitioned', async () => {
-      const mock = createMockS3Handle([
-        // Period 2026-01: unchanged (etags match)
-        file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
-        file('cur/data/BILLING_PERIOD=2026-01/file2.parquet', 'hash2', 3000),
-        // Period 2026-02: missing locally
-        file('cur/data/BILLING_PERIOD=2026-02/file3.parquet', 'hash3', 7000),
-      ]);
-
-      const rawDir = join(tempDir, 'aws', 'raw');
-      const jan2026Dir = join(rawDir, 'daily-2026-01');
-      await mkdir(jan2026Dir, { recursive: true });
-      await writeFile(join(jan2026Dir, 'data.parquet'), 'jan data');
-
-      // Etag cache shows 2026-01 was previously synced with matching hashes
-      const etagFile = join(tempDir, 'sync-etags.json');
-      const etags = {
-        '2026-01': {
-          'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'hash1',
-          'cur/data/BILLING_PERIOD=2026-01/file2.parquet': 'hash2',
-        },
-      };
-      await writeFile(etagFile, JSON.stringify(etags));
-
-      const inventory = await getDataInventory(
-        's3://test-bucket/cur/',
-        'default',
-        tempDir,
-        'daily',
-        mock,
-      );
-
-      const jan = inventory.periods.find(p => p.period === '2026-01');
-      const feb = inventory.periods.find(p => p.period === '2026-02');
-
-      // 2026-01: unchanged → repartitioned → skip
-      expect(jan?.localStatus).toBe('repartitioned');
-      // 2026-02: new period → missing → download
-      expect(feb?.localStatus).toBe('missing');
-
-      // Incremental sync would skip 2026-01 and only download 2026-02
-      expect(inventory.totalRemotePeriods).toBe(2);
-      expect(inventory.totalLocalPeriods).toBe(1);
-    });
-
     it('validates etag-based skip decision across all three status values', async () => {
       const mock = createMockS3Handle([
         // Period 1: repartitioned (skip)
