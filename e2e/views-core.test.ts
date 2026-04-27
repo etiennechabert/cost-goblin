@@ -8,6 +8,7 @@ import {
   waitForQuerySettle,
   hasVisibleData,
   navigateTo,
+  clickNavButton,
   writeCoverage,
   LOAD_TIMEOUT,
 } from './helpers.js';
@@ -42,9 +43,10 @@ test.describe('App shell', () => {
   });
 
   test('shows all navigation buttons', async () => {
-    for (const label of ['Cost Overview', 'Trends', 'Missing Tags', 'Savings', 'Cost Scope', 'Dimensions', 'Views', 'Sync']) {
+    for (const label of ['Cost Overview', 'Trends', 'Missing Tags', 'Savings', 'Cost Scope', 'Dimensions', 'Views']) {
       await expect(page.getByRole('button', { name: label })).toBeVisible();
     }
+    await expect(page.getByRole('button', { name: /Sync/ }).first()).toBeVisible();
   });
 
   test('has theme toggle button', async () => {
@@ -78,18 +80,14 @@ test.describe('App shell', () => {
     ];
 
     for (const { button, heading } of views) {
-      // Nav buttons are matched with exact:true — some views (Dimensions'
-      // account-tags card, for example) render buttons whose accessible
-      // names contain "Sync" as a substring, which otherwise resolves
-      // to multiple elements and fails strict mode.
-      await page.getByRole('button', { name: button, exact: true }).first().click();
+      await clickNavButton(page, button);
       await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible({ timeout: 5000 });
       await page.waitForTimeout(500);
       await assertNoReactCrash(page);
     }
 
     // go back to overview for subsequent tests
-    await page.getByRole('button', { name: 'Cost Overview', exact: true }).click();
+    await clickNavButton(page, 'Cost Overview');
     await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
   });
 });
@@ -765,30 +763,30 @@ test.describe('Full user journey', () => {
     await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
 
     // 2. Trends
-    await page.getByRole('button', { name: 'Trends' }).click();
+    await clickNavButton(page, 'Trends');
     await expect(page.getByRole('heading', { name: 'Cost Trends' })).toBeVisible();
     await waitForQuerySettle(page);
 
     // 3. Missing Tags
-    await page.getByRole('button', { name: 'Missing Tags' }).click();
+    await clickNavButton(page, 'Missing Tags');
     await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
     await waitForQuerySettle(page);
 
     // 4. Savings
-    await page.getByRole('button', { name: 'Savings' }).click();
+    await clickNavButton(page, 'Savings');
     await expect(page.getByRole('heading', { name: 'Savings Opportunities' })).toBeVisible();
     await waitForQuerySettle(page);
 
     // 5. Dimensions
-    await page.getByRole('button', { name: 'Dimensions' }).click();
+    await clickNavButton(page, 'Dimensions');
     await expect(page.getByRole('heading', { name: 'Dimensions', exact: true })).toBeVisible();
 
     // 6. Sync
-    await page.getByRole('button', { name: 'Sync' }).click();
+    await clickNavButton(page, 'Sync');
     await expect(page.getByRole('heading', { name: 'Data Management' })).toBeVisible();
 
     // 7. Back to Overview
-    await page.getByRole('button', { name: 'Cost Overview' }).click();
+    await clickNavButton(page, 'Cost Overview');
     await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
 
     await screenshot(page, 'journey-complete');
@@ -797,7 +795,7 @@ test.describe('Full user journey', () => {
   test('rapid navigation between views does not crash', async () => {
     const views = ['Trends', 'Cost Overview', 'Missing Tags', 'Savings', 'Dimensions', 'Sync', 'Cost Overview', 'Trends', 'Missing Tags'];
     for (const view of views) {
-      await page.getByRole('button', { name: view, exact: true }).first().click();
+      await clickNavButton(page, view);
       await page.waitForTimeout(100);
     }
     await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
