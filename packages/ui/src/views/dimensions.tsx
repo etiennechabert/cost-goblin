@@ -825,7 +825,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
             ref={aliasRef}
             value={state.aliases}
             onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
-            rows={2}
+            rows={Math.max(2, state.aliases.split('\n').length)}
             className="rounded border border-border bg-bg-primary px-3 py-1.5 text-[11px] text-text-primary font-mono outline-none focus:border-accent resize-y"
             placeholder="production: prod, prd&#10;staging: stg, stage"
           />
