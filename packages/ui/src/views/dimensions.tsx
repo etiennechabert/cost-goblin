@@ -956,7 +956,12 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
             }
             const base = s.aliases.trimEnd();
             const prefix = base.length > 0 ? base + '\n' : '';
-            return { ...s, aliases: prefix + value + ':' };
+            const newAliases = prefix + value + ':';
+            // Point active line at the newly created canonical so next click appends
+            const sorted = sortAliasText(newAliases).split('\n').filter(l => l.trim().length > 0);
+            const newIdx = sorted.findIndex(l => l.startsWith(value + ':'));
+            if (newIdx >= 0) setActiveAliasLine(newIdx);
+            return { ...s, aliases: newAliases };
           });
         }}
       />
