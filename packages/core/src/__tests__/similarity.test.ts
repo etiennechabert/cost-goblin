@@ -15,11 +15,11 @@ describe('generateAliasSuggestions', () => {
     expect(suggestions).toHaveLength(2);
   });
 
-  it('detects abbreviations', () => {
-    const suggestions = generateAliasSuggestions(['staging', 'stg']);
+  it('detects prefix abbreviations', () => {
+    const suggestions = generateAliasSuggestions(['staging', 'sta']);
     expect(suggestions).toHaveLength(1);
     const s = suggestions[0] as AliasSuggestion;
-    expect(s.canonical).toBe('stg');
+    expect(s.canonical).toBe('sta');
     expect(s.aliases).toContain('staging');
   });
 

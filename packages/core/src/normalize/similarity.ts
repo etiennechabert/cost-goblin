@@ -31,20 +31,10 @@ function isAbbreviation(full: string, abbrev: string): boolean {
   if (full.length <= abbrev.length) return false;
   const nFull = normalize(full);
   const nAbbrev = normalize(abbrev);
-  if (nAbbrev.length === 0) return false;
+  if (nAbbrev.length < 2) return false;
 
   // Prefix match (e.g. "prod" -> "production")
   if (nFull.startsWith(nAbbrev)) return true;
-
-  // Ordered subsequence (e.g. "stg" -> "staging")
-  let fi = 0;
-  for (let ai = 0; ai < nAbbrev.length; ai++) {
-    const ch = nAbbrev[ai];
-    while (fi < nFull.length && nFull[fi] !== ch) fi++;
-    if (fi >= nFull.length) return false;
-    fi++;
-  }
-  if (nAbbrev.length >= nFull.length / 2) return false;
 
   // First-letter initials (e.g. "cb" -> "core-banking")
   const words = full
@@ -56,9 +46,7 @@ function isAbbreviation(full: string, abbrev: string): boolean {
     .map(w => w[0]?.toLowerCase() ?? '')
     .filter(c => c.length > 0)
     .join('');
-  if (initials === nAbbrev) return true;
-
-  return true;
+  return initials === nAbbrev;
 }
 
 function hasPatternMatch(a: string, b: string): boolean {

@@ -246,7 +246,8 @@ export function registerDimensionsHandlers(app: AppContext): void {
     if (tagName.length === 0) return [];
 
     const config = await getDimensions();
-    if (!config.tags.some(t => t.tagName === tagName)) return [];
+    const tag = config.tags.find(t => t.tagName === tagName);
+    if (tag === undefined) return [];
 
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
@@ -272,15 +273,37 @@ export function registerDimensionsHandlers(app: AppContext): void {
         AND tag_val IS NOT NULL AND tag_val != ''
       ORDER BY tag_val
     `);
-    const values = rows.map(r => toStr(r['tag_val'])).filter(v => v.length > 0);
+    let values = rows.map(r => toStr(r['tag_val'])).filter(v => v.length > 0);
     if (values.length === 0) return [];
+
+    // Apply normalization before clustering so case/format variations
+    // already handled by the normalize rule don't produce noise
+    const normalizeRule = tag.normalize;
+    if (normalizeRule !== undefined) {
+      values = [...new Set(values.map(v => applyNormalizationRule(v, normalizeRule)))];
+    }
 
     const suggestions = generateAliasSuggestions(values);
 
+    // Filter out suggestions already covered by existing alias rules
+    const existingAliases = tag.aliases ?? {};
+    const coveredValues = new Set<string>();
+    for (const [canonical, aliases] of Object.entries(existingAliases)) {
+      coveredValues.add(canonical);
+      for (const a of aliases) coveredValues.add(a);
+    }
+
     const dismissed = await loadDismissedSuggestions(ctx.dataDir);
-    return suggestions.filter(
-      s => !isDismissed(dismissed, tagName, s.canonical, s.aliases),
-    );
+    const filtered: AliasSuggestion[] = [];
+    for (const s of suggestions) {
+      const uncovered = s.aliases.filter(a => !coveredValues.has(a));
+      if (uncovered.length === 0) continue;
+      if (coveredValues.has(s.canonical) && uncovered.length === 0) continue;
+      const candidate: AliasSuggestion = { canonical: s.canonical, aliases: uncovered };
+      if (isDismissed(dismissed, tagName, candidate.canonical, candidate.aliases)) continue;
+      filtered.push(candidate);
+    }
+    return filtered;
   });
 
   ipcMain.handle('dimensions:dismiss-suggestion', async (_event, tagName: string, canonical: string, aliases: string[]): Promise<void> => {
