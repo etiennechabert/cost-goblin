@@ -870,15 +870,31 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
               lineIdx = i;
             }
             const line = lines[lineIdx] ?? '';
+            let newAliases: string;
             if (line.includes(':')) {
               const trimmed = line.trimEnd();
               const sep = trimmed.endsWith(':') ? ' ' : ', ';
               lines[lineIdx] = trimmed + sep + value;
-              return { ...s, aliases: lines.join('\n') };
+              newAliases = lines.join('\n');
+            } else {
+              const base = s.aliases.trimEnd();
+              const prefix = base.length > 0 ? base + '\n' : '';
+              newAliases = prefix + value + ':';
             }
-            const base = s.aliases.trimEnd();
-            const prefix = base.length > 0 ? base + '\n' : '';
-            return { ...s, aliases: prefix + value + ':' };
+            requestAnimationFrame(() => {
+              const el = aliasRef.current;
+              if (el === null) return;
+              // Place cursor at end of the modified/new line
+              const newLines = newAliases.split('\n');
+              let endPos = 0;
+              const targetLine = line.includes(':') ? lineIdx : newLines.length - 1;
+              for (let i = 0; i <= targetLine && i < newLines.length; i++) {
+                endPos += (newLines[i]?.length ?? 0) + (i < targetLine ? 1 : 0);
+              }
+              el.focus();
+              el.setSelectionRange(endPos, endPos);
+            });
+            return { ...s, aliases: newAliases };
           });
         }}
       />
