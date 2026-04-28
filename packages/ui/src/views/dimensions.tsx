@@ -530,6 +530,7 @@ function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus
   onChange: (v: string) => void;
   onLineFocus: (lineIdx: number | null) => void;
 }>): React.JSX.Element {
+  const newLineRef = useRef<HTMLInputElement>(null);
   const sorted = sortAliasText(value);
   const savedLines = new Set(sortAliasText(savedValue).split('\n').filter(l => l.trim().length > 0));
   const lines = sorted.split('\n').filter(l => l.trim().length > 0);
@@ -548,6 +549,13 @@ function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus
               type="text"
               value={line}
               onFocus={() => { onLineFocus(i); }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  onLineFocus(null);
+                  newLineRef.current?.focus();
+                }
+              }}
               onChange={e => {
                 const newLines = [...lines];
                 newLines[i] = e.target.value;
@@ -570,6 +578,7 @@ function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus
       })}
       <div className={`px-3 py-1 ${lines.length > 0 ? 'border-t border-t-border/30' : ''}`}>
         <input
+          ref={newLineRef}
           type="text"
           placeholder="new-canonical: alias1, alias2"
           className="w-full bg-transparent text-[11px] font-mono text-text-primary outline-none placeholder:text-text-muted/50"
@@ -948,6 +957,17 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         onBadgeClick={(value) => {
           setState(s => {
             const lines = sortAliasText(s.aliases).split('\n').filter(l => l.trim().length > 0);
+
+            // If clicked value is already a canonical key, just focus that line
+            const existingIdx = lines.findIndex(l => {
+              const colonIdx = l.indexOf(':');
+              return colonIdx >= 0 && l.slice(0, colonIdx).trim() === value;
+            });
+            if (existingIdx >= 0) {
+              setActiveAliasLine(existingIdx);
+              return s;
+            }
+
             if (activeAliasLine !== null && activeAliasLine < lines.length) {
               const line = lines[activeAliasLine] ?? '';
               if (line.includes(':')) {
@@ -960,7 +980,6 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
             const base = s.aliases.trimEnd();
             const prefix = base.length > 0 ? base + '\n' : '';
             const newAliases = prefix + value + ':';
-            // Point active line at the newly created canonical so next click appends
             const sorted = sortAliasText(newAliases).split('\n').filter(l => l.trim().length > 0);
             const newIdx = sorted.findIndex(l => l.startsWith(value + ':'));
             if (newIdx >= 0) setActiveAliasLine(newIdx);
