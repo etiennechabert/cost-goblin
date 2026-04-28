@@ -670,6 +670,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
 }>) {
   const [state, setState] = useState(tag);
   const initialRef = useRef(tag);
+  const aliasRef = useRef<HTMLTextAreaElement>(null);
   const [discardConfirm, setDiscardConfirm] = useState(false);
   const isDirty = JSON.stringify(state) !== JSON.stringify(initialRef.current);
   useUnsavedChanges(isDirty, 'Tag editor');
@@ -821,6 +822,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         <label className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">Alias Rules (canonical: alias1, alias2)</span>
           <textarea
+            ref={aliasRef}
             value={state.aliases}
             onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
             rows={2}
@@ -858,19 +860,25 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         onBadgeClick={(value) => {
           setState(s => {
             const lines = s.aliases.split('\n');
-            const last = lines.at(-1) ?? '';
-            if (last.includes(':')) {
-              // Alias mode — append to current line
-              const trimmed = last.trimEnd();
-              const sep = trimmed.endsWith(':') ? ' ' : ', ';
-              lines[lines.length - 1] = trimmed + sep + value;
-            } else {
-              // Canonical mode — new line
-              const base = s.aliases.trimEnd();
-              const prefix = base.length > 0 ? base + '\n' : '';
-              return { ...s, aliases: prefix + value + ':' };
+            const cursor = aliasRef.current?.selectionStart ?? s.aliases.length;
+            let lineIdx = 0;
+            let pos = 0;
+            for (let i = 0; i < lines.length; i++) {
+              const lineLen = (lines[i]?.length ?? 0) + 1;
+              if (pos + lineLen > cursor) { lineIdx = i; break; }
+              pos += lineLen;
+              lineIdx = i;
             }
-            return { ...s, aliases: lines.join('\n') };
+            const line = lines[lineIdx] ?? '';
+            if (line.includes(':')) {
+              const trimmed = line.trimEnd();
+              const sep = trimmed.endsWith(':') ? ' ' : ', ';
+              lines[lineIdx] = trimmed + sep + value;
+              return { ...s, aliases: lines.join('\n') };
+            }
+            const base = s.aliases.trimEnd();
+            const prefix = base.length > 0 ? base + '\n' : '';
+            return { ...s, aliases: prefix + value + ':' };
           });
         }}
       />
