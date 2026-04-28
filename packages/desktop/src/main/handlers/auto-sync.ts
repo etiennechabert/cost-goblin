@@ -21,7 +21,7 @@ function asTier(s: string): Tier {
 }
 
 export function registerAutoSyncHandlers(app: AppContext): void {
-  const { ctx, getConfig } = app;
+  const { ctx, state, getConfig } = app;
 
   const autoSyncPrefsPath = () => prefsPath(ctx.dataDir, 'app-preferences');
 
@@ -62,15 +62,33 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           ? provider.sync.hourly?.bucket ?? provider.sync.daily.bucket
           : syncTierBucket;
 
-        // Use worker thread via SyncClient
-        return syncClient.syncPeriods({
-          bucketPath: bucket,
-          profile: provider.credentials.profile,
-          dataDir: ctx.dataDir,
-          tier: asTier(tier),
-          files,
-          // No onProgress for background sync (silent operation)
-        });
+        const syncId = asTier(tier);
+        state.syncStatuses[syncId] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: files.length, filesDone: 0, message: '' };
+        try {
+          const result = await syncClient.syncPeriods({
+            bucketPath: bucket,
+            profile: provider.credentials.profile,
+            dataDir: ctx.dataDir,
+            tier: syncId,
+            files,
+            onProgress: (progress) => {
+              state.syncStatuses[syncId] = {
+                status: 'syncing',
+                phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
+                progress: progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0,
+                filesTotal: progress.filesTotal,
+                filesDone: progress.filesDone,
+                message: progress.message ?? '',
+              };
+            },
+          });
+          state.syncStatuses[syncId] = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
+          return result;
+        } catch (err: unknown) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          state.syncStatuses[syncId] = { status: 'failed', error, lastSync: null };
+          throw err;
+        }
       },
     };
   }

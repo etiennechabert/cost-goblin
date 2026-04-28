@@ -69,3 +69,12 @@ body {
   background-color: var(--color-bg-primary);
   color: var(--color-text-primary);
 }
+
+@keyframes sync-blink {
+  0%, 100% { color: var(--color-accent); }
+  50% { color: var(--color-text-secondary); }
+}
+
+.animate-sync-blink {
+  animation: sync-blink 2s ease-in-out infinite;
+}

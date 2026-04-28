@@ -30,6 +30,28 @@ export function DataManagement() {
   const [autoSyncInterval, setAutoSyncInterval] = useState(24 * 60);
   const [autoSyncIntervalLoaded, setAutoSyncIntervalLoaded] = useState(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    function applyStatus(tier: 'daily' | 'hourly' | 'cost-optimization', setter: (s: SyncState) => void) {
+      api.getSyncStatus(tier).then(s => {
+        if (cancelled) return;
+        if (s.status === 'syncing') {
+          setter(s.phase === 'repartitioning'
+            ? { status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal }
+            : { status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, message: s.message });
+        }
+      }).catch(() => undefined);
+    }
+    function tick() {
+      applyStatus('daily', setDailySyncState);
+      applyStatus('hourly', setHourlySyncState);
+      applyStatus('cost-optimization', setCostOptSyncState);
+    }
+    tick();
+    const timer = setInterval(tick, 2_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [api]);
+
   if (!autoSyncLoaded && autoSyncQuery.status === 'success') {
     setAutoSyncLoaded(true);
     setAutoSync(autoSyncQuery.data);
@@ -46,6 +68,10 @@ export function DataManagement() {
   // and the user wants to retry with a different role without redoing the
   // bucket setup.
   const [showProfileSwap, setShowProfileSwap] = useState(false);
+
+  const anySyncing = dailySyncState.status === 'downloading' || dailySyncState.status === 'repartitioning'
+    || hourlySyncState.status === 'downloading' || hourlySyncState.status === 'repartitioning'
+    || costOptSyncState.status === 'downloading' || costOptSyncState.status === 'repartitioning';
 
   const inventory: DataInventoryResult | null =
     inventoryQuery.status === 'success' ? inventoryQuery.data : null;
@@ -403,7 +429,7 @@ export function DataManagement() {
       {/* SSM Parameter Store enrichment data — independent of Org sync */}
       <SsmParameterSection profile={awsProfile} />
 
-      {inventoryQuery.status === 'loading' && (
+      {inventoryQuery.status === 'loading' && !anySyncing && (
         <div className="rounded-xl border border-border bg-bg-secondary/50 p-12 text-center text-text-secondary">
           Checking S3 for available data...
         </div>
@@ -418,19 +444,19 @@ export function DataManagement() {
         </div>
       )}
 
-      {/* Two-column tier layout */}
-      {inventory !== null && (
+      {/* Two-column tier layout — show immediately if a sync is running */}
+      {(inventory !== null || anySyncing) && (
         <div className="flex gap-5">
           <TierPanel
             title="Daily"
             configured={dailyBucket !== null}
             bucket={dailyBucket}
             retentionDays={dailyRetention}
-            localPeriods={inventory.local.periods}
-            diskBytes={inventory.local.diskBytes}
-            oldestPeriod={inventory.local.oldestPeriod}
-            newestPeriod={inventory.local.newestPeriod}
-            periods={[...inventory.periods]}
+            localPeriods={inventory?.local.periods ?? []}
+            diskBytes={inventory?.local.diskBytes ?? 0}
+            oldestPeriod={inventory?.local.oldestPeriod ?? null}
+            newestPeriod={inventory?.local.newestPeriod ?? null}
+            periods={inventory === null ? [] : [...inventory.periods]}
             selected={selected}
             onToggle={togglePeriod}
             onSelectAll={selectAll}

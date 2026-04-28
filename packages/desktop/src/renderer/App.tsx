@@ -125,6 +125,8 @@ function AppShell(): React.JSX.Element {
   // most commonly expired credentials. Surfaced as a red dot on the Sync
   // nav button so the user notices without having to open the tab.
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncActivity, setSyncActivity] = useState<'idle' | 'syncing' | 'downloading'>('idle');
+  const [syncFilesRemaining, setSyncFilesRemaining] = useState(0);
   const [debugOpen, setDebugOpen] = useState(false);
   const inFlightCount = useDebugBadge();
 
@@ -200,21 +202,35 @@ function AppShell(): React.JSX.Element {
     let cancelled = false;
     async function tick(): Promise<void> {
       try {
-        const status = await api.getAutoSyncStatus();
+        const [autoStatus, daily, hourly, costOpt] = await Promise.all([
+          api.getAutoSyncStatus(),
+          api.getSyncStatus('daily'),
+          api.getSyncStatus('hourly'),
+          api.getSyncStatus('cost-optimization'),
+        ]);
         if (cancelled) return;
-        if (status.state === 'error') {
-          setSyncError(status.message);
+        const failed = [daily, hourly, costOpt].find(s => s.status === 'failed');
+        if (failed !== undefined || autoStatus.state === 'error') {
+          const msg = autoStatus.state === 'error' ? autoStatus.message : failed?.status === 'failed' ? failed.error.message : 'Sync failed';
+          setSyncError(msg);
+          setSyncActivity('idle');
         } else {
-          // Only clear errors that came from auto-sync itself — don't
-          // stomp a credentials error raised by the inventory fetch.
+          const downloading = daily.status === 'syncing' || hourly.status === 'syncing' || costOpt.status === 'syncing' || autoStatus.state === 'syncing';
+          setSyncActivity(downloading ? 'downloading' : autoStatus.state === 'checking' ? 'syncing' : 'idle');
+          let remaining = 0;
+          for (const s of [daily, hourly, costOpt]) {
+            if (s.status === 'syncing') remaining += s.filesTotal - s.filesDone;
+          }
+          setSyncFilesRemaining(remaining);
           setSyncError(prev => (prev?.includes('AWS credentials') ? prev : null));
         }
       } catch { /* transient */ }
     }
     tick().catch(() => undefined);
-    const timer = setInterval(() => { tick().catch(() => undefined); }, 10_000);
+    const interval = syncActivity !== 'idle' ? 2_000 : 10_000;
+    const timer = setInterval(() => { tick().catch(() => undefined); }, interval);
     return () => { cancelled = true; clearInterval(timer); };
-  }, [api, setupCheck]);
+  }, [api, setupCheck, syncActivity]);
 
   function handleNavClick(id: string) {
     confirmLeave(() => {
@@ -348,7 +364,8 @@ function AppShell(): React.JSX.Element {
             {RIGHT_NAV.map((item) => {
               const isSync = item.id === 'sync';
               const showError = isSync && syncError !== null;
-              const showMissing = isSync && !showError && missingPeriods > 0 && view.page !== 'sync';
+              const showActive = isSync && !showError && syncActivity !== 'idle';
+              const showMissing = isSync && !showError && syncActivity === 'idle' && missingPeriods > 0 && view.page !== 'sync';
               return (
                 <button
                   key={item.id}
@@ -360,16 +377,37 @@ function AppShell(): React.JSX.Element {
                       ? 'bg-bg-tertiary text-text-primary'
                       : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
                     showError ? 'ring-1 ring-negative/60' : '',
+                    showActive ? 'animate-sync-blink' : '',
                   ].join(' ')}
                   title={syncError === null ? undefined : `Sync error — ${syncError}`}
                 >
                   {showError && (
                     <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-negative animate-pulse" aria-label="sync error" />
                   )}
+                  {showActive && syncActivity === 'downloading' && (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                  )}
+                  {showActive && syncActivity === 'syncing' && (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 animate-spin">
+                      <polyline points="23 4 23 10 17 10" />
+                      <polyline points="1 20 1 14 7 14" />
+                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
+                      <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14" />
+                    </svg>
+                  )}
                   {item.label}
                   {showError && (
                     <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-negative px-1 text-[10px] font-bold text-white">
                       !
+                    </span>
+                  )}
+                  {showActive && syncFilesRemaining > 0 && (
+                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">
+                      {String(syncFilesRemaining)}
                     </span>
                   )}
                   {showMissing && (
