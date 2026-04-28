@@ -543,7 +543,7 @@ function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus
         return (
           <div
             key={i}
-            className={`flex items-center gap-1 px-3 py-1 text-[11px] font-mono border-l-2 ${isActive ? 'border-l-accent bg-accent/10' : isNew ? 'border-l-accent bg-accent/5' : 'border-l-transparent'} ${i > 0 ? 'border-t border-t-border/30' : ''}`}
+            className={`flex items-center gap-1 px-3 py-1 text-[11px] font-mono border-l-2 ${isActive ? 'border-l-accent bg-accent/10' : isNew ? 'border-l-warning bg-warning/5' : 'border-l-transparent'} ${i > 0 ? 'border-t border-t-border/30' : ''}`}
           >
             <input
               type="text"
