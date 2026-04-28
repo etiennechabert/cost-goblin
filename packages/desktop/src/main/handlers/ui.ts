@@ -12,14 +12,17 @@ export function registerUIHandlers(app: AppContext): void {
     const fs = await import('node:fs/promises');
     try {
       const raw = await fs.readFile(await uiPrefsPath(), 'utf-8');
-      const theme = parseJsonObject(raw)?.['theme'];
-      if (theme === 'light' || theme === 'dark') {
-        return { theme };
-      }
+      const parsed = parseJsonObject(raw);
+      const theme = parsed?.['theme'];
+      const palette = parsed?.['palette'];
+      return {
+        theme: theme === 'light' || theme === 'dark' ? theme : 'dark',
+        palette: palette === 'standard' || palette === 'colorblind' ? palette : 'standard',
+      };
     } catch {
       // file doesn't exist yet
     }
-    return { theme: 'dark' };
+    return { theme: 'dark', palette: 'standard' };
   });
 
   ipcMain.handle('ui:save-preferences', async (_event, prefs: UIPreferences): Promise<void> => {

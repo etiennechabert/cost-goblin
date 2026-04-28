@@ -4,6 +4,7 @@ import { Treemap, treemapSquarify, stratify } from '@visx/hierarchy';
 import { ParentSize } from '@visx/responsive';
 import { getColor } from '../lib/palette.js';
 import { formatDollars } from './format.js';
+import { usePalette } from '../hooks/use-palette.js';
 
 export interface TreemapCell {
   readonly name: string;
@@ -30,6 +31,7 @@ function TreemapInner({
   height,
   onCellClick,
 }: Omit<TreemapChartProps, 'title' | 'subtitle'> & { readonly width: number; readonly height: number }) {
+  const { palette } = usePalette();
   const root = useMemo(() => {
     const flat: FlatNode[] = [
       { id: 'root', parentId: null, cost: 0 },
@@ -60,7 +62,7 @@ function TreemapInner({
               if (node.depth === 0) return null;
               const w = node.x1 - node.x0;
               const h = node.y1 - node.y0;
-              const color = getColor(i);
+              const color = getColor(i, palette);
               const name = node.data.id;
               const cost = node.value ?? 0;
               const showLabel = w > 60 && h > 24;

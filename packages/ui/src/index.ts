@@ -58,5 +58,7 @@ export { SetupWizard } from './views/setup-wizard.js';
 export { getDimensionId, isTagDimension, isEnvironmentDimension, isOwnerDimension, isProductDimension } from './lib/dimensions.js';
 
 export { PALETTE_STANDARD, PALETTE_COLORBLIND, getActivePalette } from './lib/palette.js';
+export type { PaletteType } from './lib/palette.js';
+export { PaletteProvider, usePalette } from './hooks/use-palette.js';
 
 export { MockCostApi } from './__fixtures__/mock-api.js';

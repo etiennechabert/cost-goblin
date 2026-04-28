@@ -11,6 +11,7 @@ import { curveMonotoneX } from '@visx/curve';
 import { getColor } from '../lib/palette.js';
 import { TOOLTIP_STYLES } from '../lib/tooltip-styles.js';
 import { formatDollars } from './format.js';
+import { usePalette } from '../hooks/use-palette.js';
 
 export interface LineSeriesPoint {
   readonly date: string;
@@ -45,6 +46,7 @@ interface LineSvgProps {
 }
 
 function LineSvg({ series, visible, width, height }: LineSvgProps) {
+  const { palette } = usePalette();
   const {
     showTooltip, hideTooltip, tooltipData, tooltipLeft, tooltipTop, tooltipOpen,
   } = useTooltip<TooltipPayload>();
@@ -106,7 +108,7 @@ function LineSvg({ series, visible, width, height }: LineSvgProps) {
       .map((s) => {
         const p = s.points.find(x2 => x2.date === nearest);
         const colorIdx = seriesColorIndex.get(s.name) ?? 0;
-        const color = getColor(colorIdx);
+        const color = getColor(colorIdx, palette);
         return p === undefined ? null : { name: s.name, cost: p.cost, color };
       })
       .filter((e): e is { name: string; cost: number; color: string } => e !== null);
@@ -115,7 +117,7 @@ function LineSvg({ series, visible, width, height }: LineSvgProps) {
       tooltipLeft: point.x,
       tooltipTop: point.y,
     });
-  }, [innerW, sortedDates, visible, xScale, showTooltip, seriesColorIndex]);
+  }, [innerW, sortedDates, visible, xScale, showTooltip, seriesColorIndex, palette]);
 
   return (
     <div className="relative" style={{ width, height }}>
@@ -161,7 +163,7 @@ function LineSvg({ series, visible, width, height }: LineSvgProps) {
           />
           {visible.map((s) => {
             const colorIdx = seriesColorIndex.get(s.name) ?? 0;
-            const color = getColor(colorIdx);
+            const color = getColor(colorIdx, palette);
             return (
               <LinePath<LineSeriesPoint>
                 key={s.name}
@@ -203,6 +205,7 @@ function LineSvg({ series, visible, width, height }: LineSvgProps) {
 }
 
 export function LineChart({ series, title, subtitle, height = 320, onSeriesClick }: LineChartProps) {
+  const { palette } = usePalette();
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const visible = useMemo(
     () => series.filter(s => !hidden.has(s.name)),
@@ -238,7 +241,7 @@ export function LineChart({ series, title, subtitle, height = 320, onSeriesClick
       <div className="mt-2 flex flex-wrap gap-2 shrink-0">
         {series.map((s) => {
           const colorIdx = series.findIndex(x => x.name === s.name);
-          const color = getColor(colorIdx);
+          const color = getColor(colorIdx, palette);
           const off = hidden.has(s.name);
           return (
             <button
