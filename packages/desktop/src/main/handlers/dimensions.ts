@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, applyStripPatterns } from '@costgoblin/core';
-import type { DimensionsConfig, NormalizationRule } from '@costgoblin/core';
+import { applyNormalizationRule, applyStripPatterns, generateAliasSuggestions, isStringRecord } from '@costgoblin/core';
+import type { AliasSuggestion, DimensionsConfig, NormalizationRule } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { toNum, toStr } from './query-utils.js';
 
@@ -197,7 +197,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     return { values, distinctCount, period: latest.replace(/^daily-/, '') };
   });
 
-  ipcMain.handle('dimensions:save-config', async (_event, config: DimensionsConfig): Promise<void> => {
+  async function saveDimensionsConfig(config: DimensionsConfig): Promise<void> {
     const yaml = await import('yaml');
     const fs = await import('node:fs/promises');
 
@@ -232,12 +232,125 @@ export function registerDimensionsHandlers(app: AppContext): void {
         ...(t.description === undefined ? {} : { description: t.description }),
         ...(t.enabled === false ? { enabled: false } : {}),
       })),
-      // `order` lets the user interleave built-ins and tags freely in the
-      // Dimensions view. Only written when set — absence means "use the
-      // default built-ins-first-then-tags order in the UI".
       ...(config.order === undefined ? {} : { order: [...config.order] }),
     });
     await fs.writeFile(ctx.dimensionsPath, output);
     invalidateDimensions();
+  }
+
+  ipcMain.handle('dimensions:save-config', async (_event, config: DimensionsConfig): Promise<void> => {
+    await saveDimensionsConfig(config);
   });
+
+  ipcMain.handle('dimensions:get-alias-suggestions', async (_event, tagName: string): Promise<AliasSuggestion[]> => {
+    if (tagName.length === 0) return [];
+
+    const config = await getDimensions();
+    if (!config.tags.some(t => t.tagName === tagName)) return [];
+
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
+    let dirs: string[] = [];
+    try {
+      dirs = (await fs.readdir(rawDir)).filter(d => d.startsWith('daily-')).sort();
+    } catch { /* no data */ }
+    const latest = dirs.at(-1);
+    if (latest === undefined) return [];
+
+    const source = `read_parquet('${ctx.dataDir}/aws/raw/${latest}/*.parquet')`;
+    const rows = await runQuery(`
+      WITH tags AS (
+        SELECT unnest(map_keys(resource_tags)) AS tag_key,
+               unnest(map_values(resource_tags)) AS tag_val
+        FROM ${source}
+        WHERE resource_tags IS NOT NULL
+      )
+      SELECT DISTINCT tag_val
+      FROM tags
+      WHERE tag_key = '${tagName}'
+        AND tag_val IS NOT NULL AND tag_val != ''
+      ORDER BY tag_val
+    `);
+    const values = rows.map(r => toStr(r['tag_val'])).filter(v => v.length > 0);
+    if (values.length === 0) return [];
+
+    const suggestions = generateAliasSuggestions(values);
+
+    const dismissed = await loadDismissedSuggestions(ctx.dataDir);
+    return suggestions.filter(
+      s => !isDismissed(dismissed, tagName, s.canonical, s.aliases),
+    );
+  });
+
+  ipcMain.handle('dimensions:dismiss-suggestion', async (_event, tagName: string, canonical: string, aliases: string[]): Promise<void> => {
+    const state = await loadDismissedSuggestions(ctx.dataDir);
+    if (isDismissed(state, tagName, canonical, aliases)) return;
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const updated = [...state, { tagName, canonical, aliases, dismissedAt: new Date().toISOString() }];
+    await fs.writeFile(
+      path.join(path.dirname(ctx.dataDir), 'dismissed-suggestions.json'),
+      JSON.stringify({ dismissed: updated }, null, 2),
+    );
+  });
+
+  ipcMain.handle('dimensions:accept-suggestion', async (_event, tagName: string, canonical: string, aliases: string[]): Promise<void> => {
+    const config = await getDimensions();
+    const tagIndex = config.tags.findIndex(t => t.tagName === tagName);
+    if (tagIndex === -1) return;
+    const tag = config.tags[tagIndex];
+    if (tag === undefined) return;
+
+    const existing = tag.aliases ?? {};
+    const updatedAliases: Record<string, readonly string[]> = { ...existing, [canonical]: aliases };
+    const updatedTags = [
+      ...config.tags.slice(0, tagIndex),
+      { ...tag, aliases: updatedAliases },
+      ...config.tags.slice(tagIndex + 1),
+    ];
+    await saveDimensionsConfig({ ...config, tags: updatedTags });
+  });
+}
+
+interface DismissedEntry {
+  readonly tagName: string;
+  readonly canonical: string;
+  readonly aliases: readonly string[];
+  readonly dismissedAt: string;
+}
+
+async function loadDismissedSuggestions(dataDir: string): Promise<readonly DismissedEntry[]> {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  try {
+    const raw = await fs.readFile(path.join(path.dirname(dataDir), 'dismissed-suggestions.json'), 'utf-8');
+    const parsed: unknown = JSON.parse(raw);
+    if (!isStringRecord(parsed) || !Array.isArray(parsed['dismissed'])) return [];
+    return parsed['dismissed'].filter((d: unknown): d is DismissedEntry =>
+      isStringRecord(d) &&
+      typeof d['tagName'] === 'string' &&
+      typeof d['canonical'] === 'string' &&
+      Array.isArray(d['aliases']) &&
+      (d['aliases'] as unknown[]).every((a: unknown) => typeof a === 'string') &&
+      typeof d['dismissedAt'] === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function isDismissed(
+  entries: readonly DismissedEntry[],
+  tagName: string,
+  canonical: string,
+  aliases: readonly string[],
+): boolean {
+  const aliasSet = new Set(aliases);
+  return entries.some(
+    d => d.tagName === tagName &&
+      d.canonical === canonical &&
+      d.aliases.length === aliases.length &&
+      d.aliases.every(a => aliasSet.has(a)),
+  );
 }

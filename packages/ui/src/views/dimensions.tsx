@@ -6,6 +6,7 @@ import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { useQuery } from '../hooks/use-query.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
+import { AliasSuggestions } from '../components/alias-suggestions.js';
 
 function useClickOutsideDismiss(
   containerRef: React.RefObject<HTMLDivElement | null>,
@@ -806,6 +807,21 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           />
         </label>
       </div>
+
+      {state.tagName.length > 0 && (
+        <AliasSuggestions
+          dimensionId={state.tagName}
+          onAccepted={(canonical, aliases) => {
+            setState(s => {
+              const current = textToAliases(s.aliases) ?? {};
+              const existing: readonly string[] = current[canonical] ?? [];
+              const merged = [...new Set([...existing, ...aliases])];
+              const updated = { ...current, [canonical]: merged };
+              return { ...s, aliases: aliasesToText(updated) };
+            });
+          }}
+        />
+      )}
 
       {/* Row 5: Merged + normalized preview of all values */}
       <TagValuePreview
