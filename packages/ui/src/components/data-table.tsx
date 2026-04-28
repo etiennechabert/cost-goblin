@@ -386,43 +386,14 @@ export function DataTable<TData>({
               </tr>
             ))}
           </thead>
-          {virtualizer.getVirtualItems().length > 0 ? (
-            <tbody style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
-              {virtualizer.getVirtualItems().map(virtualRow => {
-                const row = rows[virtualRow.index];
-                if (row === undefined) return null;
-                const isExpanded = expandedIdx === virtualRow.index;
-                return (
-                  <TableRow
-                    key={row.id}
-                    row={row}
-                    virtualTop={virtualRow.start}
-                    expanded={isExpanded}
-                    onToggle={() => { setExpandedIdx(prev => prev === virtualRow.index ? null : virtualRow.index); }}
-                    onCellClick={onCellClick}
-                    renderExpandedRow={renderExpandedRow}
-                  />
-                );
-              })}
-            </tbody>
-          ) : (
-            <tbody>
-              {rows.map((row, i) => {
-                const isExpanded = expandedIdx === i;
-                return (
-                  <TableRow
-                    key={row.id}
-                    row={row}
-                    virtualTop={0}
-                    expanded={isExpanded}
-                    onToggle={() => { setExpandedIdx(prev => prev === i ? null : i); }}
-                    onCellClick={onCellClick}
-                    renderExpandedRow={renderExpandedRow}
-                  />
-                );
-              })}
-            </tbody>
-          )}
+          <TableBody
+            virtualizer={virtualizer}
+            rows={rows}
+            expandedIdx={expandedIdx}
+            setExpandedIdx={setExpandedIdx}
+            onCellClick={onCellClick}
+            renderExpandedRow={renderExpandedRow}
+          />
         </table>
       </div>
     );
@@ -437,18 +408,88 @@ export function DataTable<TData>({
 }
 
 // ---------------------------------------------------------------------------
-// TableRow + TableCell — virtualized row with optional expansion
+// TableBody — padding-based virtual scrolling (rows stay in normal table flow)
 // ---------------------------------------------------------------------------
 
-function TableRow<TData>({ row, virtualTop, expanded, onToggle, onCellClick, renderExpandedRow }: Readonly<{
+import type { Virtualizer } from '@tanstack/react-virtual';
+
+function TableBody<TData>({ virtualizer, rows, expandedIdx, setExpandedIdx, onCellClick, renderExpandedRow }: Readonly<{
+  virtualizer: Virtualizer<HTMLDivElement, Element>;
+  rows: Row<TData>[];
+  expandedIdx: number | null;
+  setExpandedIdx: (fn: (prev: number | null) => number | null) => void;
+  onCellClick?: ((row: TData, columnId: string, value: unknown) => void) | undefined;
+  renderExpandedRow?: ((row: TData) => React.ReactNode) | undefined;
+}>) {
+  const virtualItems = virtualizer.getVirtualItems();
+  const canExpand = renderExpandedRow !== undefined;
+
+  if (virtualItems.length === 0) {
+    return (
+      <tbody>
+        {rows.map((row, i) => {
+          const isExpanded = expandedIdx === i;
+          return (
+            <TableRow
+              key={row.id}
+              row={row}
+              expanded={isExpanded}
+              canExpand={canExpand}
+              onToggle={() => { setExpandedIdx(prev => prev === i ? null : i); }}
+              onCellClick={onCellClick}
+              renderExpandedRow={renderExpandedRow}
+            />
+          );
+        })}
+      </tbody>
+    );
+  }
+
+  const firstItem = virtualItems[0];
+  const lastItem = virtualItems[virtualItems.length - 1];
+  const paddingTop = firstItem !== undefined ? firstItem.start : 0;
+  const paddingBottom = lastItem !== undefined ? virtualizer.getTotalSize() - lastItem.end : 0;
+
+  return (
+    <tbody>
+      {paddingTop > 0 && (
+        <tr><td style={{ height: paddingTop, padding: 0, border: 'none' }} /></tr>
+      )}
+      {virtualItems.map(virtualRow => {
+        const row = rows[virtualRow.index];
+        if (row === undefined) return null;
+        const isExpanded = expandedIdx === virtualRow.index;
+        return (
+          <TableRow
+            key={row.id}
+            row={row}
+            expanded={isExpanded}
+            canExpand={canExpand}
+            onToggle={() => { setExpandedIdx(prev => prev === virtualRow.index ? null : virtualRow.index); }}
+            onCellClick={onCellClick}
+            renderExpandedRow={renderExpandedRow}
+          />
+        );
+      })}
+      {paddingBottom > 0 && (
+        <tr><td style={{ height: paddingBottom, padding: 0, border: 'none' }} /></tr>
+      )}
+    </tbody>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TableRow + TableCell
+// ---------------------------------------------------------------------------
+
+function TableRow<TData>({ row, expanded, canExpand, onToggle, onCellClick, renderExpandedRow }: Readonly<{
   row: Row<TData>;
-  virtualTop: number;
   expanded: boolean;
+  canExpand: boolean;
   onToggle: () => void;
   onCellClick?: ((row: TData, columnId: string, value: unknown) => void) | undefined;
   renderExpandedRow?: ((row: TData) => React.ReactNode) | undefined;
 }>) {
-  const canExpand = renderExpandedRow !== undefined;
   return (
     <>
       <tr
@@ -457,7 +498,6 @@ function TableRow<TData>({ row, virtualTop, expanded, onToggle, onCellClick, ren
           canExpand ? 'cursor-pointer' : '',
           expanded ? 'bg-bg-tertiary/40' : canExpand ? 'hover:bg-bg-tertiary/30' : '',
         ].join(' ')}
-        style={{ position: 'absolute', top: virtualTop, width: '100%', display: 'table-row' }}
         onClick={canExpand ? onToggle : undefined}
         onKeyDown={canExpand ? (e) => { if (e.key === 'Enter' || e.key === ' ') onToggle(); } : undefined}
         tabIndex={canExpand ? 0 : undefined}
@@ -468,7 +508,7 @@ function TableRow<TData>({ row, virtualTop, expanded, onToggle, onCellClick, ren
         ))}
       </tr>
       {expanded && renderExpandedRow !== undefined && (
-        <tr className="bg-bg-tertiary/20" style={{ position: 'absolute', top: virtualTop + 32, width: '100%' }}>
+        <tr className="bg-bg-tertiary/20">
           <td colSpan={row.getVisibleCells().length} className="px-3 py-2">
             {renderExpandedRow(row.original)}
           </td>
