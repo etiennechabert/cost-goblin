@@ -27,7 +27,7 @@ describe('Savings', () => {
     await waitFor(() => {
       expect(screen.getByText('$4.0k')).toBeDefined();
     });
-    expect(screen.getByText('3')).toBeDefined();
+    expect(screen.getAllByText('3').length).toBeGreaterThan(0);
   });
 
   it('displays action type filter badges', async () => {

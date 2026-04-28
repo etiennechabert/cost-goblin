@@ -1,10 +1,11 @@
 import type { SavingsResult, SavingsRecommendation } from '@costgoblin/core/browser';
+import type { SortingState } from '@tanstack/react-table';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { formatDollars } from '../components/format.js';
+import { DataTable } from '../components/data-table.js';
+import type { TableColumn } from '../lib/table-types.js';
 import { useState, useMemo, Fragment } from 'react';
-
-type SortField = 'monthlySavings' | 'savingsPercentage' | 'monthlyCost' | 'effort' | 'accountName';
 
 const EFFORT_ORDER: Record<string, number> = { 'VeryLow': 0, 'Low': 1, 'Medium': 2, 'High': 3 };
 
@@ -96,10 +97,8 @@ export function Savings() {
   const api = useCostApi();
   const savingsQuery = useQuery(() => api.querySavings(), [api]);
   const prefsQuery = useQuery(() => api.getSavingsPreferences(), [api]);
-  const [sortField, setSortField] = useState<SortField>('monthlySavings');
-  const [sortAsc, setSortAsc] = useState(false);
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'monthlySavings', desc: true }]);
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
-  const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [hiddenTypes, setHiddenTypes] = useState(new Set<string>());
   const [prefsLoaded, setPrefsLoaded] = useState(false);
@@ -172,38 +171,64 @@ export function Savings() {
   }
 
   const filtered = useMemo(() => {
-    const recs = activeFilter === null
-      ? [...visibleRecs]
-      : visibleRecs.filter(r => r.actionType === activeFilter);
-    return recs.sort((a, b) => {
-      let cmp: number;
-      switch (sortField) {
-        case 'monthlySavings': cmp = a.monthlySavings - b.monthlySavings; break;
-        case 'savingsPercentage': cmp = a.savingsPercentage - b.savingsPercentage; break;
-        case 'monthlyCost': cmp = a.monthlyCost - b.monthlyCost; break;
-        case 'effort': cmp = (EFFORT_ORDER[a.effort] ?? 4) - (EFFORT_ORDER[b.effort] ?? 4); break;
-        case 'accountName': cmp = a.accountName.localeCompare(b.accountName); break;
-        default: cmp = 0;
-      }
-      return sortAsc ? cmp : -cmp;
-    });
-  }, [visibleRecs, activeFilter, sortField, sortAsc]);
+    if (activeFilter === null) return visibleRecs;
+    return visibleRecs.filter(r => r.actionType === activeFilter);
+  }, [visibleRecs, activeFilter]);
 
   const filteredSavings = filtered.reduce((s, r) => s + r.monthlySavings, 0);
 
-  function handleSort(field: SortField) {
-    if (sortField === field) {
-      setSortAsc(prev => !prev);
-    } else {
-      setSortField(field);
-      setSortAsc(false);
-    }
-  }
-
-  function sortIndicator(field: SortField): string {
-    if (sortField !== field) return '';
-    return sortAsc ? ' \u25B2' : ' \u25BC';
-  }
+  const savingsColumns = useMemo<readonly TableColumn<SavingsRecommendation>[]>(() => [
+    {
+      id: 'recommendation', header: 'Recommendation', sortable: false,
+      accessorFn: r => r.actionType,
+      cell: (_v, row) => (
+        <div className="max-w-lg">
+          <div className="flex items-baseline gap-2">
+            <span className="text-text-primary text-xs font-medium shrink-0">{humanizeAction(row.actionType)}</span>
+            {row.resourceArn.length > 0 && (
+              <span className="text-text-muted text-[10px] font-mono truncate" title={row.resourceArn}>{row.resourceArn.split(':').pop() ?? row.resourceArn}</span>
+            )}
+          </div>
+          <p className="text-text-muted text-xs mt-0.5 truncate" title={row.summary}>{row.summary}</p>
+        </div>
+      ),
+    },
+    {
+      id: 'accountName', header: 'Account',
+      accessorFn: r => r.accountName,
+      cell: (_v, row) => (
+        <>
+          <p className="text-text-secondary text-xs">{row.accountName}</p>
+          <p className="text-text-muted text-[10px] font-mono">{row.accountId}</p>
+        </>
+      ),
+    },
+    { id: 'region', header: 'Region', accessorFn: r => r.region, sortable: false },
+    {
+      id: 'monthlyCost', header: 'Monthly Cost', align: 'right', mono: true,
+      accessorFn: r => r.monthlyCost,
+      cell: v => formatDollars(v as number),
+    },
+    {
+      id: 'monthlySavings', header: 'Savings/mo', align: 'right', mono: true,
+      accessorFn: r => r.monthlySavings,
+      cell: v => <span className="font-medium text-accent">{formatDollars(v as number)}</span>,
+    },
+    {
+      id: 'savingsPercentage', header: '%', align: 'right', mono: true,
+      accessorFn: r => r.savingsPercentage,
+      cell: v => `${String(Math.round(v as number))}%`,
+    },
+    {
+      id: 'effort', header: 'Effort',
+      accessorFn: r => EFFORT_ORDER[r.effort] ?? 4,
+      cell: (_v, row) => (
+        <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${effortColor(row.effort)}`}>
+          {effortLabel(row.effort)}
+        </span>
+      ),
+    },
+  ], []);
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -274,7 +299,7 @@ export function Savings() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => { setActiveFilter(null); setExpandedRow(null); }}
+            onClick={() => { setActiveFilter(null); }}
             className={[
               'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
               activeFilter === null
@@ -288,7 +313,7 @@ export function Savings() {
             <button
               key={at.type}
               type="button"
-              onClick={() => { setActiveFilter(activeFilter === at.type ? null : at.type); setExpandedRow(null); }}
+              onClick={() => { setActiveFilter(activeFilter === at.type ? null : at.type); }}
               className={[
                 'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
                 activeFilter === at.type
@@ -312,110 +337,15 @@ export function Savings() {
       )}
 
       {filtered.length > 0 && (
-        <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-text-secondary">
-                <th className="px-4 pb-3 pt-4 font-medium">Recommendation</th>
-                <th className="px-4 pb-3 pt-4 font-medium cursor-pointer hover:text-text-primary" onClick={() => { handleSort('accountName'); }}>
-                  Account{sortIndicator('accountName')}
-                </th>
-                <th className="px-4 pb-3 pt-4 font-medium">Region</th>
-                <th className="px-4 pb-3 pt-4 text-right font-medium cursor-pointer hover:text-text-primary" onClick={() => { handleSort('monthlyCost'); }}>
-                  Monthly Cost{sortIndicator('monthlyCost')}
-                </th>
-                <th className="px-4 pb-3 pt-4 text-right font-medium cursor-pointer hover:text-text-primary" onClick={() => { handleSort('monthlySavings'); }}>
-                  Savings/mo{sortIndicator('monthlySavings')}
-                </th>
-                <th className="px-4 pb-3 pt-4 text-right font-medium cursor-pointer hover:text-text-primary" onClick={() => { handleSort('savingsPercentage'); }}>
-                  %{sortIndicator('savingsPercentage')}
-                </th>
-                <th className="px-4 pb-3 pt-4 font-medium cursor-pointer hover:text-text-primary" onClick={() => { handleSort('effort'); }}>
-                  Effort{sortIndicator('effort')}
-                </th>
-              </tr>
-            </thead>
-              {filtered.map((rec: SavingsRecommendation, i: number) => {
-                const isExpanded = expandedRow === i;
-                const current = isExpanded ? parseResourceDetails(rec.currentDetails) : null;
-                const recommended = isExpanded ? parseResourceDetails(rec.recommendedDetails) : null;
-                return (
-                  <tbody key={`${rec.resourceArn}-${rec.accountId}-${String(i)}`}>
-                  <tr className={`border-b ${isExpanded ? 'border-border bg-bg-tertiary/20' : 'border-border-subtle'} hover:bg-bg-tertiary/30 transition-colors cursor-pointer`} onClick={() => { setExpandedRow(isExpanded ? null : i); }}>
-                    <td className="px-4 py-3 max-w-lg">
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-text-primary text-xs font-medium shrink-0">{humanizeAction(rec.actionType)}</span>
-                        {rec.resourceArn.length > 0 && (
-                          <span className="text-text-muted text-[10px] font-mono truncate" title={rec.resourceArn}>{rec.resourceArn.split(':').pop() ?? rec.resourceArn}</span>
-                        )}
-                      </div>
-                      <p className="text-text-muted text-xs mt-0.5 truncate" title={rec.summary}>{rec.summary}</p>
-                    </td>
-                    <td className="px-4 py-3">
-                      <p className="text-text-secondary text-xs">{rec.accountName}</p>
-                      <p className="text-text-muted text-[10px] font-mono">{rec.accountId}</p>
-                    </td>
-                    <td className="px-4 py-3 text-text-secondary text-xs">{rec.region}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-text-secondary">{formatDollars(rec.monthlyCost)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums font-medium text-accent">{formatDollars(rec.monthlySavings)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-text-secondary">{String(Math.round(rec.savingsPercentage))}%</td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${effortColor(rec.effort)}`}>
-                        {effortLabel(rec.effort)}
-                      </span>
-                    </td>
-                  </tr>
-                  {isExpanded && (
-                    <tr key={`detail-${rec.resourceArn}-${rec.accountId}`} className="border-b border-border bg-bg-tertiary/10">
-                      <td colSpan={7} className="px-6 py-4">
-                        <div className="grid grid-cols-2 gap-6 text-xs">
-                          <div className="space-y-3">
-                            <h4 className="text-text-muted uppercase tracking-wider text-[10px] font-medium">Current</h4>
-                            {rec.currentSummary.length > 0 && (
-                              <p className="text-text-secondary font-mono text-xs">{rec.currentSummary}</p>
-                            )}
-                            {current !== null && Object.keys(current.config).length > 0 && (
-                              <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-                                {Object.entries(current.config).map(([k, v]) => (
-                                  <Fragment key={`c-${k}`}><span className="text-text-muted">{k}</span><span className="text-text-secondary">{v}</span></Fragment>
-                                ))}
-                              </div>
-                            )}
-                            {current !== null && current.usages.length > 0 && (
-                              <div className="space-y-1 pt-1">
-                                <p className="text-text-muted text-[10px] uppercase tracking-wider">Usage</p>
-                                {current.usages.map((u) => (
-                                  <p key={`${u.type}-${u.amount}`} className="text-text-secondary">{u.amount} {u.unit} <span className="text-text-muted">({u.type.split('-').pop() ?? u.type})</span></p>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          <div className="space-y-3">
-                            <h4 className="text-accent uppercase tracking-wider text-[10px] font-medium">Recommended</h4>
-                            <p className="text-text-secondary">{rec.summary}</p>
-                            {recommended !== null && Object.keys(recommended.config).length > 0 && (
-                              <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-                                {Object.entries(recommended.config).map(([k, v]) => (
-                                  <Fragment key={`r-${k}`}><span className="text-text-muted">{k}</span><span className="text-accent">{v}</span></Fragment>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-6 mt-4 pt-3 border-t border-border-subtle text-xs text-text-muted">
-                          {rec.resourceArn.length > 0 && <span className="font-mono">{rec.resourceArn}</span>}
-                          <span>{rec.resourceType}</span>
-                          <span>{rec.recommendationSource}</span>
-                          <span>Restart: <span className={rec.restartNeeded ? 'text-warning' : 'text-text-secondary'}>{rec.restartNeeded ? 'Yes' : 'No'}</span></span>
-                          <span>Rollback: <span className={rec.rollbackPossible ? 'text-accent' : 'text-text-secondary'}>{rec.rollbackPossible ? 'Yes' : 'No'}</span></span>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                  </tbody>
-                );
-              })}
-          </table>
+        <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden p-4">
+          <DataTable<SavingsRecommendation>
+            data={filtered}
+            columns={savingsColumns}
+            sorting={sorting}
+            onSortingChange={setSorting}
+            renderExpandedRow={(rec) => <SavingsDetail rec={rec} />}
+            height={600}
+          />
         </div>
       )}
 
@@ -424,6 +354,57 @@ export function Savings() {
           No cost optimization data available. Download cost optimization data from the Data tab.
         </div>
       )}
+    </div>
+  );
+}
+
+function SavingsDetail({ rec }: Readonly<{ rec: SavingsRecommendation }>) {
+  const current = parseResourceDetails(rec.currentDetails);
+  const recommended = parseResourceDetails(rec.recommendedDetails);
+
+  return (
+    <div>
+      <div className="grid grid-cols-2 gap-6 text-xs">
+        <div className="space-y-3">
+          <h4 className="text-text-muted uppercase tracking-wider text-[10px] font-medium">Current</h4>
+          {rec.currentSummary.length > 0 && (
+            <p className="text-text-secondary font-mono text-xs">{rec.currentSummary}</p>
+          )}
+          {current !== null && Object.keys(current.config).length > 0 && (
+            <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+              {Object.entries(current.config).map(([k, v]) => (
+                <Fragment key={`c-${k}`}><span className="text-text-muted">{k}</span><span className="text-text-secondary">{v}</span></Fragment>
+              ))}
+            </div>
+          )}
+          {current !== null && current.usages.length > 0 && (
+            <div className="space-y-1 pt-1">
+              <p className="text-text-muted text-[10px] uppercase tracking-wider">Usage</p>
+              {current.usages.map((u) => (
+                <p key={`${u.type}-${u.amount}`} className="text-text-secondary">{u.amount} {u.unit} <span className="text-text-muted">({u.type.split('-').pop() ?? u.type})</span></p>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="space-y-3">
+          <h4 className="text-accent uppercase tracking-wider text-[10px] font-medium">Recommended</h4>
+          <p className="text-text-secondary">{rec.summary}</p>
+          {recommended !== null && Object.keys(recommended.config).length > 0 && (
+            <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+              {Object.entries(recommended.config).map(([k, v]) => (
+                <Fragment key={`r-${k}`}><span className="text-text-muted">{k}</span><span className="text-accent">{v}</span></Fragment>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-6 mt-4 pt-3 border-t border-border-subtle text-xs text-text-muted">
+        {rec.resourceArn.length > 0 && <span className="font-mono">{rec.resourceArn}</span>}
+        <span>{rec.resourceType}</span>
+        <span>{rec.recommendationSource}</span>
+        <span>Restart: <span className={rec.restartNeeded ? 'text-warning' : 'text-text-secondary'}>{rec.restartNeeded ? 'Yes' : 'No'}</span></span>
+        <span>Rollback: <span className={rec.rollbackPossible ? 'text-accent' : 'text-text-secondary'}>{rec.rollbackPossible ? 'Yes' : 'No'}</span></span>
+      </div>
     </div>
   );
 }
