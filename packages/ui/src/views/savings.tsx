@@ -344,7 +344,7 @@ export function Savings() {
             sorting={sorting}
             onSortingChange={setSorting}
             renderExpandedRow={(rec) => <SavingsDetail rec={rec} />}
-            maxHeight="600px"
+            height={600}
           />
         </div>
       )}

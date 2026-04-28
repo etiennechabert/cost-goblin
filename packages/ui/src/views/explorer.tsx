@@ -18,7 +18,7 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
-import { VirtualTable } from '../components/virtual-table.js';
+import { DataTable } from '../components/data-table.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { getDimensionId } from '../lib/dimensions.js';
@@ -424,7 +424,7 @@ export function ExplorerView(): React.JSX.Element {
 
       <Card>
         <CardContent className="pt-5">
-          <VirtualTable<ExplorerSampleRow>
+          <DataTable<ExplorerSampleRow>
             data={rows.data?.sampleRows ?? []}
             columns={visibleColumns}
             allColumns={availableColumns}

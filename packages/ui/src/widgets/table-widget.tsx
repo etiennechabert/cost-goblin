@@ -212,7 +212,7 @@ export function TableWidget({
         totalRows={aggregatedTotal}
         loading={loading}
         error={error}
-        maxHeight="400px"
+        height={400}
         renderExpandedRow={renderExpandedRow}
       />
     </div>

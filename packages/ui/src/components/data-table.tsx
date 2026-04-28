@@ -5,9 +5,11 @@ import {
   getSortedRowModel,
   flexRender,
 } from '@tanstack/react-table';
-import type { SortingState } from '@tanstack/react-table';
+import type { SortingState, Row, Cell } from '@tanstack/react-table';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ExplorerTagColumn } from '@costgoblin/core/browser';
 import { CoinRainLoader } from './coin-rain-loader.js';
+import { CsvExportButton } from './table-csv-export.js';
 import type { TableColumn } from '../lib/table-types.js';
 import { toColumnDefs } from '../lib/table-types.js';
 
@@ -206,7 +208,7 @@ export function ColumnsPicker<TData>({ allColumns, hiddenColumns, autoHiddenKeys
 }
 
 // ---------------------------------------------------------------------------
-// DataTable<TData> — generic TanStack Table wrapper
+// DataTable<TData> — generic TanStack Table with virtual scrolling
 // ---------------------------------------------------------------------------
 
 interface DataTableProps<TData> {
@@ -219,8 +221,11 @@ interface DataTableProps<TData> {
   readonly loading?: boolean | undefined;
   readonly error?: string | null | undefined;
   readonly emptyMessage?: string | undefined;
-  readonly maxHeight?: string | undefined;
+  readonly height?: number | undefined;
+  readonly rowHeight?: number | undefined;
+  readonly overscan?: number | undefined;
   readonly totalRows?: number | undefined;
+  readonly csvFilename?: string | undefined;
   // Column picker support
   readonly allColumns?: readonly TableColumn<TData>[] | undefined;
   readonly hiddenColumns?: readonly string[] | undefined;
@@ -241,8 +246,11 @@ export function DataTable<TData>({
   loading = false,
   error,
   emptyMessage = 'No rows match the current filters.',
-  maxHeight = '560px',
+  height = 560,
+  rowHeight = 32,
+  overscan = 10,
   totalRows,
+  csvFilename,
   allColumns,
   hiddenColumns,
   autoHiddenKeys,
@@ -250,6 +258,7 @@ export function DataTable<TData>({
   onColumnOrderChange,
   headerRight,
 }: DataTableProps<TData>) {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
   const columnDefs = useMemo(() => toColumnDefs(columns), [columns]);
@@ -280,6 +289,14 @@ export function DataTable<TData>({
   }, [mutableData, columnDefs, sorting, onSortingChange]);
 
   const table = useReactTable(tableOptions);
+  const rows = table.getRowModel().rows;
+
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => rowHeight,
+    overscan,
+  });
 
   const rowCount = data.length;
   const displayTotal = totalRows ?? rowCount;
@@ -298,8 +315,9 @@ export function DataTable<TData>({
               {' '}rows
             </>}
       </span>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
         {headerRight}
+        {csvFilename !== undefined && <CsvExportButton table={table} filename={csvFilename} />}
         {allColumns !== undefined && onHiddenColumnsChange !== undefined && onColumnOrderChange !== undefined && (
           <>
             <span className="hidden md:inline text-text-muted">Click a cell to add that value to filters.</span>
@@ -327,7 +345,7 @@ export function DataTable<TData>({
     body = <div className="text-xs text-text-muted py-4 text-center">All columns are hidden — open <em>Columns</em> to show some again.</div>;
   } else {
     body = (
-      <div className="border border-border rounded-md overflow-auto" style={{ maxHeight }}>
+      <div ref={scrollRef} className="border border-border rounded-md overflow-auto" style={{ height }}>
         <table className="text-[11px] w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-bg-tertiary/95 backdrop-blur-sm">
             {table.getHeaderGroups().map(headerGroup => (
@@ -368,28 +386,50 @@ export function DataTable<TData>({
               </tr>
             ))}
           </thead>
-          <tbody>
-            {table.getRowModel().rows.map((row, i) => {
-              const isExpanded = expandedIdx === i;
-              return (
-                <TableRow
-                  key={row.id}
-                  row={row}
-                  expanded={isExpanded}
-                  onToggle={() => { setExpandedIdx(prev => prev === i ? null : i); }}
-                  onCellClick={onCellClick}
-                  renderExpandedRow={renderExpandedRow}
-                />
-              );
-            })}
-          </tbody>
+          {virtualizer.getVirtualItems().length > 0 ? (
+            <tbody style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+              {virtualizer.getVirtualItems().map(virtualRow => {
+                const row = rows[virtualRow.index];
+                if (row === undefined) return null;
+                const isExpanded = expandedIdx === virtualRow.index;
+                return (
+                  <TableRow
+                    key={row.id}
+                    row={row}
+                    virtualTop={virtualRow.start}
+                    expanded={isExpanded}
+                    onToggle={() => { setExpandedIdx(prev => prev === virtualRow.index ? null : virtualRow.index); }}
+                    onCellClick={onCellClick}
+                    renderExpandedRow={renderExpandedRow}
+                  />
+                );
+              })}
+            </tbody>
+          ) : (
+            <tbody>
+              {rows.map((row, i) => {
+                const isExpanded = expandedIdx === i;
+                return (
+                  <TableRow
+                    key={row.id}
+                    row={row}
+                    virtualTop={0}
+                    expanded={isExpanded}
+                    onToggle={() => { setExpandedIdx(prev => prev === i ? null : i); }}
+                    onCellClick={onCellClick}
+                    renderExpandedRow={renderExpandedRow}
+                  />
+                );
+              })}
+            </tbody>
+          )}
         </table>
       </div>
     );
   }
 
   return (
-    <div className="space-y-2" style={{ minHeight: maxHeight }}>
+    <div className="space-y-2">
       {headerRow}
       {body}
     </div>
@@ -397,13 +437,12 @@ export function DataTable<TData>({
 }
 
 // ---------------------------------------------------------------------------
-// TableRow — row with optional expansion
+// TableRow + TableCell — virtualized row with optional expansion
 // ---------------------------------------------------------------------------
 
-import type { Row, Cell } from '@tanstack/react-table';
-
-function TableRow<TData>({ row, expanded, onToggle, onCellClick, renderExpandedRow }: Readonly<{
+function TableRow<TData>({ row, virtualTop, expanded, onToggle, onCellClick, renderExpandedRow }: Readonly<{
   row: Row<TData>;
+  virtualTop: number;
   expanded: boolean;
   onToggle: () => void;
   onCellClick?: ((row: TData, columnId: string, value: unknown) => void) | undefined;
@@ -418,6 +457,7 @@ function TableRow<TData>({ row, expanded, onToggle, onCellClick, renderExpandedR
           canExpand ? 'cursor-pointer' : '',
           expanded ? 'bg-bg-tertiary/40' : canExpand ? 'hover:bg-bg-tertiary/30' : '',
         ].join(' ')}
+        style={{ position: 'absolute', top: virtualTop, width: '100%', display: 'table-row' }}
         onClick={canExpand ? onToggle : undefined}
         onKeyDown={canExpand ? (e) => { if (e.key === 'Enter' || e.key === ' ') onToggle(); } : undefined}
         tabIndex={canExpand ? 0 : undefined}
@@ -428,7 +468,7 @@ function TableRow<TData>({ row, expanded, onToggle, onCellClick, renderExpandedR
         ))}
       </tr>
       {expanded && renderExpandedRow !== undefined && (
-        <tr className="bg-bg-tertiary/20">
+        <tr className="bg-bg-tertiary/20" style={{ position: 'absolute', top: virtualTop + 32, width: '100%' }}>
           <td colSpan={row.getVisibleCells().length} className="px-3 py-2">
             {renderExpandedRow(row.original)}
           </td>
