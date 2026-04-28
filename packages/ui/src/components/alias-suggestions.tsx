@@ -99,9 +99,10 @@ export function AliasSuggestions({
                     onClick={() => {
                       setSuggestions(prev => prev.map(x => {
                         if (x.canonical !== s.canonical) return x;
-                        const newCanonical = x.aliases[0];
-                        if (newCanonical === undefined) return x;
-                        return { ...x, canonical: newCanonical, aliases: [x.canonical, ...x.aliases.slice(1)] };
+                        const all = [x.canonical, ...x.aliases];
+                        const next = all[1];
+                        if (next === undefined) return x;
+                        return { ...x, canonical: next, aliases: [...all.slice(2), all[0] as string] };
                       }));
                     }}
                     disabled={isProcessing}
