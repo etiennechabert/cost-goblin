@@ -22,7 +22,6 @@ import type {
 import type { AppContext } from './context.js';
 import {
   applyOrgTreeRollup,
-  buildAccountReverseMap,
   buildCostResult,
   buildEntityDetailResult,
   isOwnerGroupBy,
@@ -32,12 +31,12 @@ import {
 } from './query-utils.js';
 
 export function registerCostHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getOrgAccountsPath, getOrgTreeConfig, getCostScope, getAvailableColumns, runPreparedQuery, materializedBase } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getCostScope, getAvailableColumns, runPreparedQuery, materializedBase } = app;
 
   ipcMain.handle('query:costs', async (_event, params: CostQueryParams): Promise<CostResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-    const accountReverseMap = buildAccountReverseMap(accountMap);
+    const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
@@ -71,8 +70,7 @@ export function registerCostHandlers(app: AppContext): void {
 
   ipcMain.handle('query:daily-costs', async (_event, params: DailyCostsParams): Promise<DailyCostsResult> => {
     const dimensions = await getDimensions();
-    const accountMap = await getAccountMap();
-    const accountReverseMap = buildAccountReverseMap(accountMap);
+    const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
@@ -132,7 +130,7 @@ export function registerCostHandlers(app: AppContext): void {
   ipcMain.handle('query:entity-detail', async (_event, params: EntityDetailParams): Promise<EntityDetailResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-    const accountReverseMap = buildAccountReverseMap(accountMap);
+    const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';

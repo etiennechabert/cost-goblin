@@ -118,7 +118,9 @@ export interface AppState {
   costScope: CostScopeConfig | null;
   syncStatuses: Record<string, SyncStatus>;
   accountMap: Map<string, string> | null;
+  accountReverseMap: Map<string, readonly string[]> | null;
   regionMap: Map<string, RegionEnrichment> | null;
+  orgAccountsPath: string | undefined | null;
 }
 
 export interface AppContext {
@@ -136,6 +138,7 @@ export interface AppContext {
   readonly getViews: () => Promise<ViewsConfig>;
   readonly getCostScope: () => Promise<CostScopeConfig>;
   readonly getAccountMap: () => Promise<Map<string, string>>;
+  readonly getAccountReverseMap: () => Promise<Map<string, readonly string[]>>;
   readonly getRegionMap: () => Promise<Map<string, RegionEnrichment>>;
   readonly getOrgAccountsPath: () => Promise<string | undefined>;
   /** Columns present in the user's CUR parquet files for the given tier.
@@ -236,7 +239,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
     costScope: null,
     syncStatuses: {},
     accountMap: null,
+    accountReverseMap: null,
     regionMap: null,
+    orgAccountsPath: null,
   };
 
   async function getConfig(): Promise<CostGoblinConfig> {
@@ -307,17 +312,29 @@ export function createAppContext(ctx: IpcContext): AppContext {
     return map;
   }
 
+  async function getAccountReverseMap(): Promise<Map<string, readonly string[]>> {
+    if (state.accountReverseMap !== null) return state.accountReverseMap;
+    const accountMap = await getAccountMap();
+    const reverseMap = buildAccountReverseMap(accountMap);
+    state.accountReverseMap = reverseMap;
+    return reverseMap;
+  }
+
   async function getOrgAccountsPath(): Promise<string | undefined> {
+    if (state.orgAccountsPath !== null) return state.orgAccountsPath;
     const path = await import('node:path');
     const fs = await import('node:fs/promises');
     const baseDir = path.dirname(ctx.dataDir);
     const flatPath = path.join(baseDir, 'org-account-tags.json');
+    let result: string | undefined;
     try {
       await fs.access(flatPath);
-      return flatPath;
+      result = flatPath;
     } catch {
-      return generateFlatOrgTags(baseDir, flatPath);
+      result = await generateFlatOrgTags(baseDir, flatPath);
     }
+    state.orgAccountsPath = result;
+    return result;
   }
 
   function parseRegionEntries(regions: Record<string, unknown>, map: Map<string, RegionEnrichment>): void {
@@ -420,7 +437,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const config = await getConfig();
       const dimensions = await getQueryDimensions();
       const costScope = await getCostScope().catch(() => undefined);
-      const accountMap = await getAccountMap();
+      const accountReverseMap = await getAccountReverseMap();
       const orgPath = await getOrgAccountsPath();
       const availableColumns = await getAvailableColumns('daily');
       const lagDays = costScope?.lagDays ?? DEFAULT_LAG_DAYS;
@@ -438,7 +455,6 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const periods = required.filter(p => available.includes(p));
       if (periods.length === 0) return;
 
-      const accountReverseMap = buildAccountReverseMap(accountMap);
       const hash = configHash(dimensions, costScope);
       const sql = buildMaterializeBaseQuery('daily', dateRange, {
         dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath,
@@ -463,6 +479,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getViews,
     getCostScope,
     getAccountMap,
+    getAccountReverseMap,
     getRegionMap,
     getOrgAccountsPath,
     getAvailableColumns,
@@ -472,7 +489,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     runPreparedQuery,
     invalidateConfig: () => { state.config = null; },
     invalidateDimensions: () => {
-      state.dimensions = null; state.accountMap = null; state.regionMap = null;
+      state.dimensions = null; state.accountMap = null; state.accountReverseMap = null; state.regionMap = null; state.orgAccountsPath = null;
       void materializedBase.drop((s) => ctx.db.runQuery(s)).then(() => { void warmupBase(); });
     },
     invalidateViews: () => { state.views = null; },

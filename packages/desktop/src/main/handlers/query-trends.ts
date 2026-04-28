@@ -12,7 +12,6 @@ import type {
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import {
-  buildAccountReverseMap,
   buildTrendResult,
   mergeTrendRowsByEntity,
   resolveAvailablePeriods,
@@ -20,12 +19,12 @@ import {
 } from './query-utils.js';
 
 export function registerTrendHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery } = app;
 
   ipcMain.handle('query:trends', async (_event, params: TrendQueryParams): Promise<TrendResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-    const accountReverseMap = buildAccountReverseMap(accountMap);
+    const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const availableColumns = await getAvailableColumns('daily');

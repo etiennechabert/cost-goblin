@@ -13,7 +13,6 @@ import type {
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import {
-  buildAccountReverseMap,
   buildMissingTagsResult,
   resolveAvailablePeriods,
   resolveEntityName,
@@ -23,12 +22,12 @@ import {
 } from './query-utils.js';
 
 export function registerRecommendationHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getOrgAccountsPath, getConfig, getCostScope, getAvailableColumns, runQuery, runPreparedQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getConfig, getCostScope, getAvailableColumns, runQuery, runPreparedQuery } = app;
 
   ipcMain.handle('query:missing-tags', async (_event, params: MissingTagsParams): Promise<MissingTagsResult> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-    const accountReverseMap = buildAccountReverseMap(accountMap);
+    const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const availableColumns = await getAvailableColumns('daily');
