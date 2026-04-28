@@ -48,7 +48,7 @@ describe('DateRangePicker', () => {
     const dailyButtons = screen.getAllByText('30 days');
     const dailyBtn = dailyButtons[0];
     expect(dailyBtn).toBeDefined();
-    expect(dailyBtn?.className).toContain('bg-bg-secondary');
+    expect(dailyBtn?.className).toContain('bg-bg-primary');
   });
 
   it('clicking hourly 7 days calls onChange with hourly granularity', async () => {

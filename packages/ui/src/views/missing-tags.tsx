@@ -123,7 +123,7 @@ export function MissingTags() {
                   className={[
                     'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
                     isSelected
-                      ? 'bg-bg-secondary text-text-primary shadow-sm'
+                      ? 'bg-bg-primary text-text-primary shadow-sm border border-border'
                       : 'text-text-secondary hover:text-text-primary',
                   ].join(' ')}
                 >
