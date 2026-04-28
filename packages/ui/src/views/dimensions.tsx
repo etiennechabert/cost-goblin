@@ -503,6 +503,82 @@ function textToAliases(text: string): Record<string, readonly string[]> | undefi
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+function sortAliasText(text: string): string {
+  const aliases = textToAliases(text);
+  if (aliases === undefined) return text;
+  return Object.entries(aliases)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}: ${[...v].sort((a, b) => a.localeCompare(b)).join(', ')}`)
+    .join('\n');
+}
+
+function AliasRulesEditor({ value, savedValue, onChange, onLineFocus }: Readonly<{
+  value: string;
+  savedValue: string;
+  onChange: (v: string) => void;
+  onLineFocus: (lineIdx: number | null) => void;
+}>): React.JSX.Element {
+  const sorted = sortAliasText(value);
+  const savedLines = new Set(sortAliasText(savedValue).split('\n').filter(l => l.trim().length > 0));
+  const lines = sorted.split('\n').filter(l => l.trim().length > 0);
+
+  return (
+    <div className="rounded border border-border bg-bg-primary overflow-hidden">
+      {lines.map((line, i) => {
+        const isNew = !savedLines.has(line);
+        return (
+          <div
+            key={i}
+            className={`flex items-center gap-1 px-3 py-1 text-[11px] font-mono border-l-2 ${isNew ? 'border-l-accent bg-accent/5' : 'border-l-transparent'} ${i > 0 ? 'border-t border-t-border/30' : ''}`}
+          >
+            <input
+              type="text"
+              value={line}
+              onFocus={() => { onLineFocus(i); }}
+              onChange={e => {
+                const newLines = [...lines];
+                newLines[i] = e.target.value;
+                onChange(newLines.join('\n'));
+              }}
+              className="flex-1 bg-transparent text-text-primary outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                onChange(lines.filter((_, j) => j !== i).join('\n'));
+              }}
+              className="text-text-muted hover:text-negative text-xs px-1 opacity-0 hover:opacity-100 transition-opacity"
+              aria-label="Remove rule"
+            >
+              ×
+            </button>
+          </div>
+        );
+      })}
+      <div className={`px-3 py-1 ${lines.length > 0 ? 'border-t border-t-border/30' : ''}`}>
+        <input
+          type="text"
+          placeholder="new-canonical: alias1, alias2"
+          className="w-full bg-transparent text-[11px] font-mono text-text-primary outline-none placeholder:text-text-muted/50"
+          onFocus={() => { onLineFocus(null); }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              const input = e.currentTarget;
+              const v = input.value.trim();
+              if (v.length > 0) {
+                const base = value.trimEnd();
+                onChange(base.length > 0 ? base + '\n' + v : v);
+                input.value = '';
+              }
+              e.preventDefault();
+            }
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function validateAliases(text: string): string[] {
   const aliases = textToAliases(text);
   if (aliases === undefined) return [];
@@ -670,7 +746,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
 }>) {
   const [state, setState] = useState(tag);
   const initialRef = useRef(tag);
-  const aliasRef = useRef<HTMLTextAreaElement>(null);
+  const [activeAliasLine, setActiveAliasLine] = useState<number | null>(null);
   const [discardConfirm, setDiscardConfirm] = useState(false);
   const isDirty = JSON.stringify(state) !== JSON.stringify(initialRef.current);
   useUnsavedChanges(isDirty, 'Tag editor');
@@ -819,20 +895,18 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
             {'{fallback}'} = account tag value
           </span>
         </div>
-        <label className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">Alias Rules (canonical: alias1, alias2)</span>
-          <textarea
-            ref={aliasRef}
+          <AliasRulesEditor
             value={state.aliases}
-            onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
-            rows={Math.max(2, state.aliases.split('\n').length)}
-            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-[11px] text-text-primary font-mono outline-none focus:border-accent resize-y"
-            placeholder="production: prod, prd&#10;staging: stg, stage"
+            savedValue={initialRef.current.aliases}
+            onChange={(v) => { setState(s => ({ ...s, aliases: v })); }}
+            onLineFocus={setActiveAliasLine}
           />
           {validateAliases(state.aliases).map(w => (
             <span key={w} className="text-[10px] text-warning">{w}</span>
           ))}
-        </label>
+        </div>
       </div>
 
       {state.tagName.length > 0 && (
@@ -859,42 +933,19 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         aliasText={state.aliases}
         onBadgeClick={(value) => {
           setState(s => {
-            const lines = s.aliases.split('\n');
-            const cursor = aliasRef.current?.selectionStart ?? s.aliases.length;
-            let lineIdx = 0;
-            let pos = 0;
-            for (let i = 0; i < lines.length; i++) {
-              const lineLen = (lines[i]?.length ?? 0) + 1;
-              if (pos + lineLen > cursor) { lineIdx = i; break; }
-              pos += lineLen;
-              lineIdx = i;
-            }
-            const line = lines[lineIdx] ?? '';
-            let newAliases: string;
-            if (line.includes(':')) {
-              const trimmed = line.trimEnd();
-              const sep = trimmed.endsWith(':') ? ' ' : ', ';
-              lines[lineIdx] = trimmed + sep + value;
-              newAliases = lines.join('\n');
-            } else {
-              const base = s.aliases.trimEnd();
-              const prefix = base.length > 0 ? base + '\n' : '';
-              newAliases = prefix + value + ':';
-            }
-            requestAnimationFrame(() => {
-              const el = aliasRef.current;
-              if (el === null) return;
-              // Place cursor at end of the modified/new line
-              const newLines = newAliases.split('\n');
-              let endPos = 0;
-              const targetLine = line.includes(':') ? lineIdx : newLines.length - 1;
-              for (let i = 0; i <= targetLine && i < newLines.length; i++) {
-                endPos += (newLines[i]?.length ?? 0) + (i < targetLine ? 1 : 0);
+            const lines = sortAliasText(s.aliases).split('\n').filter(l => l.trim().length > 0);
+            if (activeAliasLine !== null && activeAliasLine < lines.length) {
+              const line = lines[activeAliasLine] ?? '';
+              if (line.includes(':')) {
+                const trimmed = line.trimEnd();
+                const sep = trimmed.endsWith(':') ? ' ' : ', ';
+                lines[activeAliasLine] = trimmed + sep + value;
+                return { ...s, aliases: lines.join('\n') };
               }
-              el.focus();
-              el.setSelectionRange(endPos, endPos);
-            });
-            return { ...s, aliases: newAliases };
+            }
+            const base = s.aliases.trimEnd();
+            const prefix = base.length > 0 ? base + '\n' : '';
+            return { ...s, aliases: prefix + value + ':' };
           });
         }}
       />
