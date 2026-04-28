@@ -162,7 +162,7 @@ function TopNBarChartInner({
                   style={{
                     height: ROW_HEIGHT,
                     opacity: isDimmed ? 0.4 : 1,
-                    backgroundColor: isHovered ? 'rgba(255,255,255,0.05)' : 'transparent',
+                    backgroundColor: isHovered ? 'var(--color-accent-muted)' : 'transparent',
                   }}
                   title={`${row.name} — ${formatDollars(row.cost)}`}
                   onMouseEnter={() => { handleEnter(row.name); }}

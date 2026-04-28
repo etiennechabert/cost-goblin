@@ -149,8 +149,8 @@ export function TierPanel({
       {syncState.status === 'repartitioning' && (
         <div className="rounded-lg border border-violet-500/50 bg-violet-500/5 px-3 py-2">
           <div className="flex items-center justify-between mb-1">
-            <div className="flex items-center gap-2 text-xs text-violet-400">
-              <div className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-pulse" />
+            <div className="flex items-center gap-2 text-xs text-violet-700 dark:text-violet-400">
+              <div className="h-1.5 w-1.5 rounded-full bg-violet-600 dark:bg-violet-400 animate-pulse" />
               <span>Processing — repartitioning into daily partitions</span>
             </div>
             <span className="text-[10px] text-text-muted tabular-nums">
