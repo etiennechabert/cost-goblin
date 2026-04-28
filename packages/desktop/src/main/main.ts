@@ -155,9 +155,15 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
     titleBarStyle: 'hiddenInset',
     icon: join(__dirname, '..', '..', 'resources', 'icon.png'),
     webPreferences: {
+      // Preload script built as CJS (preload.cjs) using esbuild (build:preload)
+      // instead of electron-vite because sandbox: true requires CommonJS format.
       preload: join(__dirname, '..', 'worker', 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      // sandbox: true is defense-in-depth on top of contextIsolation and
+      // nodeIntegration: false. Prevents a compromised renderer from accessing
+      // Node.js APIs even if contextBridge is bypassed. Critical for handling
+      // sensitive billing data in a local-first app.
       sandbox: true,
     },
   });
