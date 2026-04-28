@@ -836,9 +836,9 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         </label>
       </div>
 
-      {/* Row 2: Tag Name + preview */}
-      <div className="grid grid-cols-[1fr_2fr] gap-4 items-start">
-        <div className="flex flex-col gap-1">
+      {/* Row 2: Tag Name + Fallback + Fallback format */}
+      <div className={`grid ${acctTags.length > 0 ? 'grid-cols-3' : 'grid-cols-1'} gap-4`}>
+        <label className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">Resource Tag</span>
           <select
             value={state.tagName}
@@ -856,25 +856,12 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
             <option value="">Select a tag...</option>
             {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
-        </div>
-        <div className="flex flex-col gap-1">
           {tagMatch !== undefined && (
-            <>
-              <span className="text-xs text-text-muted">{String(tagMatch.coveragePct)}% coverage · {String(tagMatch.distinctCount)} distinct values</span>
-              <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
-                {tagMatch.sampleValues.map(v => (
-                  <span key={v} className="rounded bg-bg-tertiary/50 px-1.5 py-0.5 text-[10px] text-text-secondary">{v}</span>
-                ))}
-              </div>
-            </>
+            <span className="text-[10px] text-text-muted">{String(tagMatch.coveragePct)}% coverage · {String(tagMatch.distinctCount)} distinct values</span>
           )}
-        </div>
-      </div>
-
-      {/* Row 3: Fallback + preview */}
-      {acctTags.length > 0 && (
-        <div className="grid grid-cols-[1fr_2fr] gap-4 items-start">
-          <div className="flex flex-col gap-1">
+        </label>
+        {acctTags.length > 0 && (
+          <label className="flex flex-col gap-1">
             <span className="text-xs text-text-muted">Fallback (account tag)</span>
             <select
               value={state.fallbackTag ?? ''}
@@ -884,52 +871,41 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
               <option value="">No fallback</option>
               {acctTags.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
-          </div>
-          <div className="flex flex-col gap-1">
             {fallbackValues.length > 0 && (
-              <>
-                <span className="text-xs text-text-muted">{String(fallbackValues.length)} distinct values</span>
-                <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
-                  {fallbackValues.map(([val, cnt]) => (
-                    <span key={val} className="rounded bg-bg-tertiary/50 px-1.5 py-0.5 text-[10px] text-text-secondary">
-                      {val} <span className="text-text-muted">({String(cnt)})</span>
-                    </span>
-                  ))}
-                </div>
-              </>
+              <span className="text-[10px] text-text-muted">{String(fallbackValues.length)} distinct values</span>
             )}
-          </div>
-        </div>
-      )}
+          </label>
+        )}
+        {acctTags.length > 0 && (
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-text-muted">Fallback format</span>
+            <input
+              type="text"
+              value={state.missingValueTemplate}
+              onChange={e => { setState(s => ({ ...s, missingValueTemplate: e.target.value })); }}
+              className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary font-mono outline-none focus:border-accent"
+              placeholder="{fallback}"
+            />
+            <span className="text-[10px] text-text-muted">
+              {'{fallback}'} = account tag value
+            </span>
+          </label>
+        )}
+      </div>
 
-      {/* Row 4: Fallback format + Alias rules side by side */}
-      <div className="grid grid-cols-[1fr_2fr] gap-4 items-start">
-        <div className="flex flex-col gap-1">
-          <span className="text-xs text-text-muted">Fallback format</span>
-          <input
-            type="text"
-            value={state.missingValueTemplate}
-            onChange={e => { setState(s => ({ ...s, missingValueTemplate: e.target.value })); }}
-            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary font-mono outline-none focus:border-accent"
-            placeholder="{fallback}"
-          />
-          <span className="text-[10px] text-text-muted">
-            {'{fallback}'} = account tag value
-          </span>
-        </div>
-        <div className="flex flex-col gap-1">
-          <span className="text-xs text-text-muted">Alias Rules (canonical: alias1, alias2)</span>
-          <AliasRulesEditor
-            value={state.aliases}
-            savedValue={initialRef.current.aliases}
-            activeLine={activeAliasLine}
-            onChange={(v) => { setState(s => ({ ...s, aliases: v })); }}
-            onLineFocus={setActiveAliasLine}
-          />
-          {validateAliases(state.aliases).map(w => (
-            <span key={w} className="text-[10px] text-warning">{w}</span>
-          ))}
-        </div>
+      {/* Alias rules */}
+      <div className="flex flex-col gap-1">
+        <span className="text-xs text-text-muted">Alias Rules (canonical: alias1, alias2)</span>
+        <AliasRulesEditor
+          value={state.aliases}
+          savedValue={initialRef.current.aliases}
+          activeLine={activeAliasLine}
+          onChange={(v) => { setState(s => ({ ...s, aliases: v })); }}
+          onLineFocus={setActiveAliasLine}
+        />
+        {validateAliases(state.aliases).map(w => (
+          <span key={w} className="text-[10px] text-warning">{w}</span>
+        ))}
       </div>
 
       {state.tagName.length > 0 && (
