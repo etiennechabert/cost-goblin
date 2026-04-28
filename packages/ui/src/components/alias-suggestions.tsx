@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { ArrowRightLeft, Check, ChevronDown, ChevronRight, X } from 'lucide-react';
 import type { AliasSuggestion } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -94,6 +94,22 @@ export function AliasSuggestions({
                   <div className="mt-1 text-xs text-text-muted">Merge: {s.aliases.join(', ')}</div>
                 </div>
                 <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSuggestions(prev => prev.map(x => {
+                        if (x.canonical !== s.canonical) return x;
+                        const newCanonical = x.aliases[0];
+                        if (newCanonical === undefined) return x;
+                        return { ...x, canonical: newCanonical, aliases: [x.canonical, ...x.aliases.slice(1)] };
+                      }));
+                    }}
+                    disabled={isProcessing}
+                    className="flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors bg-bg-tertiary text-text-muted hover:bg-bg-primary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label={`Flip alias suggestion for ${s.canonical}`}
+                  >
+                    <ArrowRightLeft className="h-3 w-3" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => { void handleAccept(s.canonical); }}
