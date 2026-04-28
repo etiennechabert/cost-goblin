@@ -213,7 +213,7 @@ export function TableWidget({
         loading={loading}
         error={error}
         height={400}
-        csvFilename="table-export"
+        csvFilename={`costgoblin-${spec.title ?? 'table'}-${dateRange.start}-${dateRange.end}`}
         renderExpandedRow={renderExpandedRow}
       />
     </div>

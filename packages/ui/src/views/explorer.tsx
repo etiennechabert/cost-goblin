@@ -440,7 +440,7 @@ export function ExplorerView(): React.JSX.Element {
             error={rows.error}
             height={560}
             rowHeight={28}
-            csvFilename="explorer-rows"
+            csvFilename={`costgoblin-explorer-${dateRange.start}-${dateRange.end}`}
             renderExpandedRow={(row) => <RowDetail row={row} allColumns={availableColumns} />}
           />
         </CardContent>
