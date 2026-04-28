@@ -1,4 +1,7 @@
-import { writeFile, mkdir } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+import { Readable, Transform } from 'node:stream';
 import { dirname } from 'node:path';
 import type { ManifestFileEntry } from './manifest.js';
 
@@ -96,22 +99,33 @@ export async function createS3Handle(profile: string, region?: string, endpointO
         throw new Error(`Empty response body for s3://${bucket}/${key}`);
       }
 
-      const chunks: Uint8Array[] = [];
       const body = response.Body;
-      let totalBytes = 0;
-      if (Symbol.asyncIterator in body) {
-        const iterable = body as AsyncIterable<Uint8Array>;
-        for await (const chunk of iterable) {
-          if (options?.signal?.aborted) {
-            throw new Error('Download cancelled');
-          }
-          chunks.push(chunk);
-          totalBytes += chunk.byteLength;
-          options?.onBytes?.(totalBytes);
-        }
+      if (!(Symbol.asyncIterator in body)) {
+        throw new Error(`S3 response body is not iterable for s3://${bucket}/${key}`);
       }
 
-      await writeFile(localPath, Buffer.concat(chunks.map(c => Buffer.from(c))));
+      const sourceStream = Readable.from(body as AsyncIterable<Uint8Array>);
+      const writeStream = createWriteStream(localPath);
+
+      if (options?.onBytes !== undefined) {
+        const onBytes = options.onBytes;
+        let totalBytes = 0;
+        const progressStream = new Transform({
+          transform(chunk: Buffer, _encoding, callback) {
+            totalBytes += chunk.byteLength;
+            onBytes(totalBytes);
+            callback(null, chunk);
+          },
+        });
+
+        await pipeline(sourceStream, progressStream, writeStream, {
+          signal: options?.signal,
+        });
+      } else {
+        await pipeline(sourceStream, writeStream, {
+          signal: options?.signal,
+        });
+      }
     },
   };
 }
