@@ -8,7 +8,6 @@ import {
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import {
-  buildAccountReverseMap,
   toNum,
   toStr,
 } from './query-utils.js';
@@ -84,12 +83,12 @@ function mergeAccountRows(
 }
 
 export function registerFilterHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runQuery } = app;
 
   ipcMain.handle('query:filter-values', async (_event, dimensionId: string, filterEntries: Record<string, string>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }): Promise<{ value: string; label: string; count: number }[]> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
-    const accountReverseMap = buildAccountReverseMap(accountMap);
+    const accountReverseMap = await getAccountReverseMap();
     const costScope = opts?.bypassCostScope === true
       ? undefined
       : await getCostScope().catch(() => undefined);
