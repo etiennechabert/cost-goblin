@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createS3Handle } from '../sync/s3-client.js';
 import type { S3Handle } from '../sync/s3-client.js';
+import { Writable } from 'node:stream';
+import type { WriteStream } from 'node:fs';
 
 const mockSend = vi.fn();
 
@@ -11,8 +13,15 @@ vi.mock('@aws-sdk/client-s3', () => ({
 }));
 
 vi.mock('node:fs/promises', () => ({
-  writeFile: vi.fn(),
   mkdir: vi.fn(),
+}));
+
+vi.mock('node:fs', () => ({
+  createWriteStream: vi.fn(),
+}));
+
+vi.mock('node:stream/promises', () => ({
+  pipeline: vi.fn(),
 }));
 
 describe('S3 client (mocked) - listFiles', () => {
@@ -200,12 +209,36 @@ describe('S3 client (mocked) - listFiles', () => {
 
 describe('S3 client (mocked) - downloadFile', () => {
   let s3: S3Handle;
+  let mockWriteStream: WriteStream;
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    const { mkdir, writeFile } = await import('node:fs/promises');
+    const { mkdir } = await import('node:fs/promises');
+    const { createWriteStream } = await import('node:fs');
+    const { pipeline } = await import('node:stream/promises');
+
     vi.mocked(mkdir).mockResolvedValue(undefined);
-    vi.mocked(writeFile).mockResolvedValue(undefined);
+
+    // Create a mock writable stream with WriteStream properties
+    mockWriteStream = Object.assign(
+      new Writable({
+        write(_chunk, _encoding, callback) {
+          callback();
+        },
+      }),
+      {
+        close: vi.fn(),
+        bytesWritten: 0,
+        path: '',
+        pending: false,
+      }
+    );
+
+    vi.mocked(createWriteStream).mockReturnValue(mockWriteStream);
+
+    // Default pipeline behavior: just resolve successfully
+    vi.mocked(pipeline).mockResolvedValue(undefined);
+
     s3 = await createS3Handle('default', 'us-east-1');
   });
 
@@ -221,7 +254,9 @@ describe('S3 client (mocked) - downloadFile', () => {
   }
 
   it('downloads file and writes to disk', async () => {
-    const { mkdir, writeFile } = await import('node:fs/promises');
+    const { mkdir } = await import('node:fs/promises');
+    const { createWriteStream } = await import('node:fs');
+    const { pipeline } = await import('node:stream/promises');
     const chunk1 = new Uint8Array([1, 2, 3, 4]);
     const chunk2 = new Uint8Array([5, 6, 7, 8]);
 
@@ -230,10 +265,8 @@ describe('S3 client (mocked) - downloadFile', () => {
     await s3.downloadFile('test-bucket', 'data/file.parquet', '/tmp/local.parquet');
 
     expect(vi.mocked(mkdir)).toHaveBeenCalledWith('/tmp', { recursive: true });
-    expect(vi.mocked(writeFile)).toHaveBeenCalledWith(
-      '/tmp/local.parquet',
-      Buffer.concat([Buffer.from(chunk1), Buffer.from(chunk2)])
-    );
+    expect(vi.mocked(createWriteStream)).toHaveBeenCalledWith('/tmp/local.parquet');
+    expect(vi.mocked(pipeline)).toHaveBeenCalledTimes(1);
   });
 
   it('passes correct parameters to GetObjectCommand', async () => {
@@ -254,52 +287,69 @@ describe('S3 client (mocked) - downloadFile', () => {
   });
 
   it('cancels when abort signal is already aborted', async () => {
-    const { writeFile } = await import('node:fs/promises');
+    const { createWriteStream } = await import('node:fs');
+    const { pipeline } = await import('node:stream/promises');
+
     mockSend.mockResolvedValueOnce({ Body: createMockBody([new Uint8Array([1, 2, 3])]) });
 
     const controller = new AbortController();
     controller.abort();
 
+    // Mock pipeline to reject with abort error when signal is aborted
+    vi.mocked(pipeline).mockRejectedValueOnce(new Error('Download cancelled'));
+
     await expect(
       s3.downloadFile('test-bucket', 'data/file.parquet', '/tmp/file.parquet', { signal: controller.signal })
     ).rejects.toThrow('Download cancelled');
 
-    expect(vi.mocked(writeFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(createWriteStream)).toHaveBeenCalledWith('/tmp/file.parquet');
   });
 
   it('aborts mid-stream and does not write partial file', async () => {
-    const { writeFile } = await import('node:fs/promises');
+    const { createWriteStream } = await import('node:fs');
+    const { pipeline } = await import('node:stream/promises');
     const controller = new AbortController();
-    let chunkCount = 0;
 
     const mockBody = {
       async *[Symbol.asyncIterator]() {
         await Promise.resolve();
         yield new Uint8Array([1, 2, 3]);
-        chunkCount++;
         yield new Uint8Array([4, 5, 6]);
-        chunkCount++;
         controller.abort();
         yield new Uint8Array([7, 8, 9]);
-        chunkCount++;
       },
     };
 
     mockSend.mockResolvedValueOnce({ Body: mockBody });
 
+    // Mock pipeline to reject when abort is called
+    vi.mocked(pipeline).mockRejectedValueOnce(new Error('Download cancelled'));
+
     await expect(
       s3.downloadFile('test-bucket', 'data/file.parquet', '/tmp/file.parquet', { signal: controller.signal })
     ).rejects.toThrow('Download cancelled');
 
-    expect(chunkCount).toBe(2);
-    expect(vi.mocked(writeFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(createWriteStream)).toHaveBeenCalledWith('/tmp/file.parquet');
   });
 
   it('calls onBytes callback with accumulated byte count', async () => {
+    const { pipeline } = await import('node:stream/promises');
     const chunks = [new Uint8Array([1, 2, 3, 4]), new Uint8Array([5, 6]), new Uint8Array([7, 8, 9])];
     mockSend.mockResolvedValueOnce({ Body: createMockBody(chunks) });
 
     const onBytes = vi.fn();
+
+    // Mock pipeline to simulate streaming with transform
+    vi.mocked(pipeline).mockImplementationOnce(async () => {
+      // Simulate chunks going through the transform stream
+      let totalBytes = 0;
+      for (const chunk of chunks) {
+        totalBytes += chunk.byteLength;
+        onBytes(totalBytes);
+      }
+      return Promise.resolve();
+    });
+
     await s3.downloadFile('test-bucket', 'data/file.parquet', '/tmp/file.parquet', { onBytes });
 
     expect(onBytes).toHaveBeenCalledTimes(3);
@@ -309,7 +359,9 @@ describe('S3 client (mocked) - downloadFile', () => {
   });
 
   it('does not write partial file on mid-stream network error', async () => {
-    const { writeFile } = await import('node:fs/promises');
+    const { createWriteStream } = await import('node:fs');
+    const { pipeline } = await import('node:stream/promises');
+
     const mockBody = {
       async *[Symbol.asyncIterator]() {
         await Promise.resolve();
@@ -320,11 +372,14 @@ describe('S3 client (mocked) - downloadFile', () => {
 
     mockSend.mockResolvedValueOnce({ Body: mockBody });
 
+    // Mock pipeline to reject with the stream error
+    vi.mocked(pipeline).mockRejectedValueOnce(new Error('Connection lost'));
+
     await expect(
       s3.downloadFile('test-bucket', 'data/file.parquet', '/tmp/file.parquet')
     ).rejects.toThrow('Connection lost');
 
-    expect(vi.mocked(writeFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(createWriteStream)).toHaveBeenCalledWith('/tmp/file.parquet');
   });
 
   it.each([
@@ -344,10 +399,12 @@ describe('S3 client (mocked) - downloadFile', () => {
   });
 
   it('throws on disk full during write', async () => {
-    const { writeFile } = await import('node:fs/promises');
+    const { pipeline } = await import('node:stream/promises');
+
     mockSend.mockResolvedValueOnce({ Body: createMockBody([new Uint8Array([1, 2, 3])]) });
 
-    vi.mocked(writeFile).mockRejectedValueOnce(new Error('ENOSPC: no space left on device'));
+    // Mock pipeline to reject with disk full error
+    vi.mocked(pipeline).mockRejectedValueOnce(new Error('ENOSPC: no space left on device'));
 
     await expect(
       s3.downloadFile('test-bucket', 'data/file.parquet', '/tmp/file.parquet')
