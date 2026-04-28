@@ -504,11 +504,22 @@ function textToAliases(text: string): Record<string, readonly string[]> | undefi
 }
 
 function sortAliasText(text: string): string {
-  const aliases = textToAliases(text);
-  if (aliases === undefined) return text;
-  return Object.entries(aliases)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}: ${[...v].sort((a, b) => a.localeCompare(b)).join(', ')}`)
+  if (text.trim().length === 0) return text;
+  const entries: { key: string; aliases: readonly string[] }[] = [];
+  for (const line of text.split('\n')) {
+    const idx = line.indexOf(':');
+    if (idx < 0) continue;
+    const key = line.slice(0, idx).trim();
+    if (key.length === 0) continue;
+    const vals = line.slice(idx + 1).split(',').map(s => s.trim()).filter(s => s.length > 0);
+    entries.push({ key, aliases: vals });
+  }
+  if (entries.length === 0) return text;
+  return entries
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .map(e => e.aliases.length > 0
+      ? `${e.key}: ${[...e.aliases].sort((a, b) => a.localeCompare(b)).join(', ')}`
+      : `${e.key}:`)
     .join('\n');
 }
 
