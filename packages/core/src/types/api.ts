@@ -1,4 +1,5 @@
 import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, NormalizationRule, OrgNode, TagDimension } from './config.js';
+import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { CostScopeCapabilities, CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
 import type {
@@ -182,6 +183,9 @@ export interface CostApi {
   /** Swap the AWS profile used to talk to AWS, leaving bucket paths and
    *  every other config field untouched. */
   updateAwsProfile(profile: string): Promise<void>;
+  getAliasSuggestions(tagName: string): Promise<AliasSuggestion[]>;
+  dismissSuggestion(tagName: string, canonical: string, aliases: readonly string[]): Promise<void>;
+  acceptSuggestion(tagName: string, canonical: string, aliases: readonly string[]): Promise<void>;
   /** Cancel all queued (not yet running) DuckDB queries. Call on view
    *  navigation so stale queries from the previous view don't hold pool
    *  connections and slow down the new view's queries. */
