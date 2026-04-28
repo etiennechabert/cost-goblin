@@ -32,10 +32,15 @@ export async function initWorkerLifecycle<P extends { reject: (err: Error) => vo
       }
     };
     worker.on('message', onMessage);
-    worker.once('error', (err) => { state.fatalError = err; reject(err); });
+    worker.once('error', (e: unknown) => {
+      const err = e instanceof Error ? e : new Error(String(e));
+      state.fatalError = err;
+      reject(err);
+    });
   });
 
-  worker.on('error', (err) => {
+  worker.on('error', (e: unknown) => {
+    const err = e instanceof Error ? e : new Error(String(e));
     state.fatalError = err;
     for (const entry of pending.values()) entry.reject(err);
     pending.clear();

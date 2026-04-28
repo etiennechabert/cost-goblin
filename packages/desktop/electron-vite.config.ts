@@ -1,9 +1,8 @@
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@costgoblin/core'] })],
     build: {
       outDir: 'out/main',
       commonjsOptions: {
@@ -15,7 +14,6 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
     build: {
       outDir: 'out/preload',
       lib: {

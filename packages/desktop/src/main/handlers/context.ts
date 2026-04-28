@@ -367,7 +367,6 @@ export function createAppContext(ctx: IpcContext): AppContext {
     if (cached !== undefined) return cached;
     const fetch = (async (): Promise<ReadonlySet<string>> => {
       try {
-        const { listLocalMonths } = await import('@costgoblin/core');
         const months = await listLocalMonths(ctx.dataDir, tier);
         if (months.length === 0) return new Set<string>();
         // First-month sample is enough — CUR schema is stable across
