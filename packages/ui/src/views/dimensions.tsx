@@ -593,12 +593,13 @@ function deduplicateResolved(
     .sort((a, b) => a.resolved.localeCompare(b.resolved));
 }
 
-function TagValuePreview({ tagMatch, fallbackValues, missingValueTemplate, normalizeRule, aliasText }: Readonly<{
+function TagValuePreview({ tagMatch, fallbackValues, missingValueTemplate, normalizeRule, aliasText, onBadgeClick }: Readonly<{
   tagMatch: { sampleValues: string[] } | undefined;
   fallbackValues: [string, number][];
   missingValueTemplate: string;
   normalizeRule: string;
   aliasText: string;
+  onBadgeClick?: (value: string) => void;
 }>): React.JSX.Element | null {
   const resourceVals = tagMatch === undefined ? [] : tagMatch.sampleValues;
   const accountVals = fallbackValues.map(([v]) => v);
@@ -643,12 +644,14 @@ function TagValuePreview({ tagMatch, fallbackValues, missingValueTemplate, norma
       </div>
       <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
         {unique.map(({ resolved, aliased, source }) => (
-          <span
+          <button
+            type="button"
             key={resolved}
-            className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${sourceColor(source, aliased)}`}
+            onClick={onBadgeClick !== undefined ? () => { onBadgeClick(resolved); } : undefined}
+            className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${sourceColor(source, aliased)} ${onBadgeClick !== undefined ? 'cursor-pointer hover:ring-1 hover:ring-accent/50' : ''}`}
           >
             {resolved}
-          </span>
+          </button>
         ))}
       </div>
     </div>
@@ -852,6 +855,24 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
         missingValueTemplate={state.missingValueTemplate}
         normalizeRule={state.normalize}
         aliasText={state.aliases}
+        onBadgeClick={(value) => {
+          setState(s => {
+            const lines = s.aliases.split('\n');
+            const last = lines.at(-1) ?? '';
+            if (last.includes(':')) {
+              // Alias mode — append to current line
+              const trimmed = last.trimEnd();
+              const sep = trimmed.endsWith(':') ? ' ' : ', ';
+              lines[lines.length - 1] = trimmed + sep + value;
+            } else {
+              // Canonical mode — new line
+              const base = s.aliases.trimEnd();
+              const prefix = base.length > 0 ? base + '\n' : '';
+              return { ...s, aliases: prefix + value + ':' };
+            }
+            return { ...s, aliases: lines.join('\n') };
+          });
+        }}
       />
 
       <div className="flex items-center justify-between">
