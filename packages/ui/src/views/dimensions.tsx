@@ -503,6 +503,25 @@ function textToAliases(text: string): Record<string, readonly string[]> | undefi
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+function validateAliases(text: string): string[] {
+  const aliases = textToAliases(text);
+  if (aliases === undefined) return [];
+  const warnings: string[] = [];
+  const allAliasValues = new Map<string, string>();
+  for (const [canonical, alts] of Object.entries(aliases)) {
+    for (const a of alts) {
+      allAliasValues.set(a, canonical);
+    }
+  }
+  for (const canonical of Object.keys(aliases)) {
+    const mappedTo = allAliasValues.get(canonical);
+    if (mappedTo !== undefined) {
+      warnings.push(`"${canonical}" is a canonical key but also an alias of "${mappedTo}"`);
+    }
+  }
+  return warnings;
+}
+
 type TagSource = 'resource' | 'account' | 'both' | 'template';
 
 function sourceColor(source: TagSource, aliased: boolean): string {
@@ -805,6 +824,9 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
             className="rounded border border-border bg-bg-primary px-3 py-1.5 text-[11px] text-text-primary font-mono outline-none focus:border-accent resize-y"
             placeholder="production: prod, prd&#10;staging: stg, stage"
           />
+          {validateAliases(state.aliases).map(w => (
+            <span key={w} className="text-[10px] text-warning">{w}</span>
+          ))}
         </label>
       </div>
 
