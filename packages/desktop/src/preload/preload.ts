@@ -283,7 +283,7 @@ const api: CostApi = {
 contextBridge.exposeInMainWorld('costgoblin', api);
 
 contextBridge.exposeInMainWorld('costgoblinDebug', {
-  isSandboxed(): boolean { return process.sandboxed === true; },
+  isSandboxed(): boolean { return process.sandboxed; },
   getInFlightCount(): number { return inFlightCount; },
   getQueryLog(): Promise<DebugQueryLogEntry[]> {
     return invoke<DebugQueryLogEntry[]>('debug:get-query-log');
