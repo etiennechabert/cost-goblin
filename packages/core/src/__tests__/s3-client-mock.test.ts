@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createS3Handle } from '../sync/s3-client.js';
 import type { S3Handle } from '../sync/s3-client.js';
 import { Writable } from 'node:stream';
+import type { WriteStream } from 'node:fs';
 
 const mockSend = vi.fn();
 
@@ -208,7 +209,7 @@ describe('S3 client (mocked) - listFiles', () => {
 
 describe('S3 client (mocked) - downloadFile', () => {
   let s3: S3Handle;
-  let mockWriteStream: Writable;
+  let mockWriteStream: WriteStream;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -218,12 +219,20 @@ describe('S3 client (mocked) - downloadFile', () => {
 
     vi.mocked(mkdir).mockResolvedValue(undefined);
 
-    // Create a mock writable stream
-    mockWriteStream = new Writable({
-      write(_chunk, _encoding, callback) {
-        callback();
-      },
-    });
+    // Create a mock writable stream with WriteStream properties
+    mockWriteStream = Object.assign(
+      new Writable({
+        write(_chunk, _encoding, callback) {
+          callback();
+        },
+      }),
+      {
+        close: vi.fn(),
+        bytesWritten: 0,
+        path: '',
+        pending: false,
+      }
+    );
 
     vi.mocked(createWriteStream).mockReturnValue(mockWriteStream);
 
@@ -331,7 +340,7 @@ describe('S3 client (mocked) - downloadFile', () => {
     const onBytes = vi.fn();
 
     // Mock pipeline to simulate streaming with transform
-    vi.mocked(pipeline).mockImplementationOnce(async (_source, transform, _writeStream) => {
+    vi.mocked(pipeline).mockImplementationOnce(async () => {
       // Simulate chunks going through the transform stream
       let totalBytes = 0;
       for (const chunk of chunks) {

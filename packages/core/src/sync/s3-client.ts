@@ -119,7 +119,7 @@ export async function createS3Handle(profile: string, region?: string, endpointO
         });
 
         await pipeline(sourceStream, progressStream, writeStream, {
-          signal: options?.signal,
+          signal: options.signal,
         });
       } else {
         await pipeline(sourceStream, writeStream, {
