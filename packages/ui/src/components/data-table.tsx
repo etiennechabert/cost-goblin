@@ -1,20 +1,27 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AggregatedTableRow, ExplorerSort, ExplorerTagColumn } from '@costgoblin/core/browser';
-import { formatDollars } from './format.js';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useReactTable,
+  getCoreRowModel,
+  getSortedRowModel,
+  flexRender,
+} from '@tanstack/react-table';
+import type { SortingState } from '@tanstack/react-table';
+import type { ExplorerTagColumn } from '@costgoblin/core/browser';
 import { CoinRainLoader } from './coin-rain-loader.js';
+import type { TableColumn } from '../lib/table-types.js';
+import { toColumnDefs } from '../lib/table-types.js';
 
-function formatSignedDollars(n: number): string {
-  if (n < 0) return `-${formatDollars(-n)}`;
-  return formatDollars(n);
-}
+// ---------------------------------------------------------------------------
+// ColumnSpec (backward compat — used by table-widget and explorer)
+// ---------------------------------------------------------------------------
 
 export interface ColumnSpec {
   readonly key: string;
   readonly label: string;
   readonly dimId: string | null;
   readonly align: 'left' | 'right';
-  readonly mono?: boolean;
-  readonly truncate?: boolean;
+  readonly mono?: boolean | undefined;
+  readonly truncate?: boolean | undefined;
 }
 
 export const BASE_COLUMNS: readonly ColumnSpec[] = [
@@ -36,7 +43,6 @@ export const TRAILING_COLUMNS: readonly ColumnSpec[] = [
   { key: 'resource_id', label: 'Resource', dimId: 'resource_id', align: 'left', mono: true, truncate: true },
   { key: 'description', label: 'Description', dimId: 'description', align: 'left', truncate: true },
 ];
-
 
 export function buildAllColumns(tagColumns: readonly ExplorerTagColumn[], granularity?: string): ColumnSpec[] {
   const base = granularity === 'hourly'
@@ -79,23 +85,25 @@ export function filterVisibleColumns(
   return columns.filter(c => !hiddenSet.has(c.key) && !autoHiddenKeys.has(c.key));
 }
 
-// --- ColumnsPicker ---
+// ---------------------------------------------------------------------------
+// ColumnsPicker — drag-to-reorder column visibility toggle
+// ---------------------------------------------------------------------------
 
-interface ColumnsPickerProps {
-  readonly allColumns: readonly ColumnSpec[];
+interface ColumnsPickerProps<TData> {
+  readonly allColumns: readonly TableColumn<TData>[];
   readonly hiddenColumns: readonly string[];
   readonly autoHiddenKeys: ReadonlySet<string>;
   readonly onChange: (next: readonly string[]) => void;
   readonly onOrderChange: (next: readonly string[]) => void;
 }
 
-export function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onChange, onOrderChange }: ColumnsPickerProps) {
+export function ColumnsPicker<TData>({ allColumns, hiddenColumns, autoHiddenKeys, onChange, onOrderChange }: ColumnsPickerProps<TData>) {
   const [open, setOpen] = useState(false);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const [draggedKey, setDraggedKey] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hiddenSet = useMemo(() => new Set(hiddenColumns), [hiddenColumns]);
-  const visibleCount = allColumns.filter(c => !hiddenSet.has(c.key) && !autoHiddenKeys.has(c.key)).length;
+  const visibleCount = allColumns.filter(c => !hiddenSet.has(c.id) && !autoHiddenKeys.has(c.id)).length;
 
   useEffect(() => {
     if (!open) return;
@@ -115,17 +123,17 @@ export function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onCha
     };
   }, [open]);
 
-  function toggle(key: string) {
-    if (hiddenSet.has(key)) {
-      onChange(hiddenColumns.filter(k => k !== key));
+  function toggle(id: string) {
+    if (hiddenSet.has(id)) {
+      onChange(hiddenColumns.filter(k => k !== id));
     } else {
-      onChange([...hiddenColumns, key]);
+      onChange([...hiddenColumns, id]);
     }
   }
 
   function handleDrop(targetKey: string) {
     if (draggedKey === null || draggedKey === targetKey) return;
-    const keys = allColumns.map(c => c.key);
+    const keys = allColumns.map(c => c.id);
     const from = keys.indexOf(draggedKey);
     const to = keys.indexOf(targetKey);
     if (from === -1 || to === -1) return;
@@ -154,26 +162,26 @@ export function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onCha
             <span className="text-text-muted">Drag to reorder</span>
             <span className="flex items-center gap-2">
               <button type="button" onClick={() => { onChange([]); }} className="text-text-secondary hover:text-text-primary" disabled={hiddenColumns.length === 0}>Show all</button>
-              <span className="text-text-muted">·</span>
-              <button type="button" onClick={() => { onChange(allColumns.map(c => c.key)); }} className="text-text-secondary hover:text-text-primary" disabled={hiddenColumns.length === allColumns.length}>Hide all</button>
-              <span className="text-text-muted">·</span>
+              <span className="text-text-muted">&middot;</span>
+              <button type="button" onClick={() => { onChange(allColumns.map(c => c.id)); }} className="text-text-secondary hover:text-text-primary" disabled={hiddenColumns.length === allColumns.length}>Hide all</button>
+              <span className="text-text-muted">&middot;</span>
               <button type="button" onClick={() => { onOrderChange([]); }} className="text-text-secondary hover:text-text-primary" title="Restore the default column order">Reset order</button>
             </span>
           </div>
           <div className="max-h-96 overflow-y-auto py-1">
             {allColumns.map(col => {
-              const checked = !hiddenSet.has(col.key);
-              const autoHidden = autoHiddenKeys.has(col.key);
-              const isDragging = draggedKey === col.key;
-              const isDropTarget = dragOverKey === col.key && draggedKey !== null && draggedKey !== col.key;
+              const checked = !hiddenSet.has(col.id);
+              const autoHidden = autoHiddenKeys.has(col.id);
+              const isDragging = draggedKey === col.id;
+              const isDropTarget = dragOverKey === col.id && draggedKey !== null && draggedKey !== col.id;
               return (
                 <label
-                  key={col.key}
+                  key={col.id}
                   draggable
-                  onDragStart={(e) => { setDraggedKey(col.key); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', col.key); }}
-                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragOverKey !== col.key) setDragOverKey(col.key); }}
-                  onDragLeave={() => { if (dragOverKey === col.key) setDragOverKey(null); }}
-                  onDrop={(e) => { e.preventDefault(); handleDrop(col.key); setDragOverKey(null); setDraggedKey(null); }}
+                  onDragStart={(e) => { setDraggedKey(col.id); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', col.id); }}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragOverKey !== col.id) setDragOverKey(col.id); }}
+                  onDragLeave={() => { if (dragOverKey === col.id) setDragOverKey(null); }}
+                  onDrop={(e) => { e.preventDefault(); handleDrop(col.id); setDragOverKey(null); setDraggedKey(null); }}
                   onDragEnd={() => { setDragOverKey(null); setDraggedKey(null); }}
                   className={[
                     'flex items-center gap-2 px-2 py-1.5 text-xs select-none cursor-default',
@@ -182,11 +190,11 @@ export function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onCha
                     'hover:bg-bg-tertiary',
                   ].join(' ')}
                 >
-                  <span className="cursor-grab text-text-muted hover:text-text-secondary" title="Drag to reorder">⋮⋮</span>
-                  <input type="checkbox" className="accent-accent shrink-0" checked={checked} onChange={() => { toggle(col.key); }} />
-                  <span className={['truncate flex-1', !checked || autoHidden ? 'text-text-muted' : 'text-text-primary'].join(' ')}>{col.label}</span>
+                  <span className="cursor-grab text-text-muted hover:text-text-secondary" title="Drag to reorder">&loz;&loz;</span>
+                  <input type="checkbox" className="accent-accent shrink-0" checked={checked} onChange={() => { toggle(col.id); }} />
+                  <span className={['truncate flex-1', !checked || autoHidden ? 'text-text-muted' : 'text-text-primary'].join(' ')}>{col.header}</span>
                   {autoHidden && <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0" title="Hidden because this column is pinned to a single filter value">filtered</span>}
-                  {!autoHidden && col.dimId !== null && col.dimId.startsWith('tag_') && <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0">tag</span>}
+                  {!autoHidden && col.dimId !== undefined && col.dimId !== null && col.dimId.startsWith('tag_') && <span className="text-[10px] text-text-muted uppercase tracking-wider shrink-0">tag</span>}
                 </label>
               );
             })}
@@ -197,66 +205,124 @@ export function ColumnsPicker({ allColumns, hiddenColumns, autoHiddenKeys, onCha
   );
 }
 
-// --- RowsTable ---
+// ---------------------------------------------------------------------------
+// DataTable<TData> — generic TanStack Table wrapper
+// ---------------------------------------------------------------------------
 
-interface DataTableProps {
-  readonly columns: readonly ColumnSpec[];
-  readonly allColumns: readonly ColumnSpec[];
-  readonly hiddenColumns: readonly string[];
-  readonly autoHiddenKeys: ReadonlySet<string>;
-  readonly onHiddenColumnsChange: (next: readonly string[]) => void;
-  readonly onColumnOrderChange: (next: readonly string[]) => void;
-  readonly rows: readonly AggregatedTableRow[];
-  readonly totalRows: number;
-  readonly sort: ExplorerSort | undefined;
-  readonly onSort: (columnKey: string) => void;
-  readonly onFilterAdd: (dimId: string, value: string) => void;
-  readonly loading: boolean;
-  readonly error: string | null;
-  readonly maxHeight?: string;
-  readonly fetchDetailRows?: ((row: AggregatedTableRow) => Promise<readonly AggregatedTableRow[]>) | undefined;
+interface DataTableProps<TData> {
+  readonly data: readonly TData[];
+  readonly columns: readonly TableColumn<TData>[];
+  readonly sorting?: SortingState | undefined;
+  readonly onSortingChange?: ((state: SortingState) => void) | undefined;
+  readonly onCellClick?: ((row: TData, columnId: string, value: unknown) => void) | undefined;
+  readonly renderExpandedRow?: ((row: TData) => React.ReactNode) | undefined;
+  readonly loading?: boolean | undefined;
+  readonly error?: string | null | undefined;
+  readonly emptyMessage?: string | undefined;
+  readonly maxHeight?: string | undefined;
+  readonly totalRows?: number | undefined;
+  // Column picker support
+  readonly allColumns?: readonly TableColumn<TData>[] | undefined;
+  readonly hiddenColumns?: readonly string[] | undefined;
+  readonly autoHiddenKeys?: ReadonlySet<string> | undefined;
+  readonly onHiddenColumnsChange?: ((next: readonly string[]) => void) | undefined;
+  readonly onColumnOrderChange?: ((next: readonly string[]) => void) | undefined;
+  // Slot for extra header content
+  readonly headerRight?: React.ReactNode;
 }
 
-export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, onHiddenColumnsChange, onColumnOrderChange, rows, totalRows, sort, onSort, onFilterAdd, loading, error, maxHeight = '560px', fetchDetailRows }: DataTableProps) {
+export function DataTable<TData>({
+  data,
+  columns,
+  sorting,
+  onSortingChange,
+  onCellClick,
+  renderExpandedRow,
+  loading = false,
+  error,
+  emptyMessage = 'No rows match the current filters.',
+  maxHeight = '560px',
+  totalRows,
+  allColumns,
+  hiddenColumns,
+  autoHiddenKeys,
+  onHiddenColumnsChange,
+  onColumnOrderChange,
+  headerRight,
+}: DataTableProps<TData>) {
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
-  const toggleExpand = useCallback((idx: number) => {
-    setExpandedIdx(prev => prev === idx ? null : idx);
-  }, []);
+  const columnDefs = useMemo(() => toColumnDefs(columns), [columns]);
+  const mutableData = useMemo(() => data.slice(), [data]);
+
+  const tableOptions = useMemo(() => {
+    const base = {
+      data: mutableData,
+      columns: columnDefs,
+      state: { sorting: sorting ?? [] },
+      getCoreRowModel: getCoreRowModel<TData>(),
+      enableMultiSort: true,
+      manualSorting: onSortingChange === undefined,
+    };
+    if (onSortingChange !== undefined) {
+      const handler = onSortingChange;
+      const currentSorting = sorting ?? [];
+      return {
+        ...base,
+        getSortedRowModel: getSortedRowModel<TData>(),
+        onSortingChange: (updater: SortingState | ((prev: SortingState) => SortingState)) => {
+          const next = typeof updater === 'function' ? updater(currentSorting) : updater;
+          handler(next);
+        },
+      };
+    }
+    return base;
+  }, [mutableData, columnDefs, sorting, onSortingChange]);
+
+  const table = useReactTable(tableOptions);
+
+  const rowCount = data.length;
+  const displayTotal = totalRows ?? rowCount;
+  const emptyAutoHidden = useMemo(() => new Set<string>(), []);
 
   const headerRow = (
     <div className="flex items-center justify-between gap-3 text-xs text-text-muted">
       <span>
-        {rows.length === 0
+        {rowCount === 0
           ? 'No rows'
           : <>
-              Showing <span className="text-text-secondary tabular-nums">{rows.length.toLocaleString()}</span>
-              {totalRows > rows.length && (
-                <> of <span className="text-text-secondary tabular-nums">{totalRows.toLocaleString()}</span></>
+              Showing <span className="text-text-secondary tabular-nums">{rowCount.toLocaleString()}</span>
+              {displayTotal > rowCount && (
+                <> of <span className="text-text-secondary tabular-nums">{displayTotal.toLocaleString()}</span></>
               )}
               {' '}rows
             </>}
       </span>
       <div className="flex items-center gap-3">
-        <span className="hidden md:inline text-text-muted">Click a cell to add that value to filters.</span>
-        <ColumnsPicker
-          allColumns={allColumns}
-          hiddenColumns={hiddenColumns}
-          autoHiddenKeys={autoHiddenKeys}
-          onChange={onHiddenColumnsChange}
-          onOrderChange={onColumnOrderChange}
-        />
+        {headerRight}
+        {allColumns !== undefined && onHiddenColumnsChange !== undefined && onColumnOrderChange !== undefined && (
+          <>
+            <span className="hidden md:inline text-text-muted">Click a cell to add that value to filters.</span>
+            <ColumnsPicker
+              allColumns={allColumns}
+              hiddenColumns={hiddenColumns ?? []}
+              autoHiddenKeys={autoHiddenKeys ?? emptyAutoHidden}
+              onChange={onHiddenColumnsChange}
+              onOrderChange={onColumnOrderChange}
+            />
+          </>
+        )}
       </div>
     </div>
   );
 
   let body: React.ReactNode;
-  if (error !== null) {
+  if (error !== undefined && error !== null) {
     body = <div className="rounded-md border border-negative/40 bg-negative/5 text-xs text-negative px-3 py-2">{error}</div>;
   } else if (loading) {
     body = <CoinRainLoader height={260} count={7} />;
-  } else if (rows.length === 0) {
-    body = <div className="text-xs text-text-muted py-4 text-center">No rows match the current filters.</div>;
+  } else if (rowCount === 0) {
+    body = <div className="text-xs text-text-muted py-4 text-center">{emptyMessage}</div>;
   } else if (columns.length === 0) {
     body = <div className="text-xs text-text-muted py-4 text-center">All columns are hidden — open <em>Columns</em> to show some again.</div>;
   } else {
@@ -264,26 +330,55 @@ export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, 
       <div className="border border-border rounded-md overflow-auto" style={{ maxHeight }}>
         <table className="text-[11px] w-full border-collapse">
           <thead className="sticky top-0 z-10 bg-bg-tertiary/95 backdrop-blur-sm">
-            <tr className="text-left text-text-secondary">
-              {columns.map(col => (
-                <ColumnHeader key={col.key} spec={col} sort={sort} onSort={() => { onSort(col.key); }} />
-              ))}
-            </tr>
+            {table.getHeaderGroups().map(headerGroup => (
+              <tr key={headerGroup.id} className="text-left text-text-secondary">
+                {headerGroup.headers.map(header => {
+                  const meta = header.column.columnDef.meta;
+                  const isSorted = header.column.getIsSorted();
+                  const canSort = header.column.getCanSort();
+                  const dirArrow = isSorted === 'asc' ? '\u2191' : isSorted === 'desc' ? '\u2193' : '';
+                  return (
+                    <th key={header.id} className="p-0 font-medium whitespace-nowrap">
+                      {canSort ? (
+                        <button
+                          type="button"
+                          onClick={header.column.getToggleSortingHandler()}
+                          className={[
+                            'w-full px-2 py-1.5 inline-flex items-center gap-1 hover:text-text-primary hover:bg-bg-secondary/40 cursor-pointer',
+                            meta?.align === 'right' ? 'justify-end' : 'justify-start',
+                            isSorted !== false ? 'text-text-primary' : '',
+                          ].join(' ')}
+                        >
+                          <span>{flexRender(header.column.columnDef.header, header.getContext())}</span>
+                          <span className={`text-accent ${dirArrow.length > 0 ? '' : 'opacity-0'}`}>
+                            {dirArrow.length > 0 ? dirArrow : '\u2195'}
+                          </span>
+                        </button>
+                      ) : (
+                        <span className={[
+                          'w-full px-2 py-1.5 inline-flex items-center',
+                          meta?.align === 'right' ? 'justify-end' : 'justify-start',
+                        ].join(' ')}>
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                        </span>
+                      )}
+                    </th>
+                  );
+                })}
+              </tr>
+            ))}
           </thead>
           <tbody>
-            {rows.map((r, i) => {
-              const rowKey = `${r.values['usage_date'] ?? ''}-${r.values['service'] ?? ''}-${r.values['account_name'] ?? ''}-${String(r.cost)}-${String(i)}`;
+            {table.getRowModel().rows.map((row, i) => {
               const isExpanded = expandedIdx === i;
               return (
-                <ExpandableRow
-                  key={rowKey}
-                  row={r}
-                  columns={columns}
-                  allColumns={allColumns}
+                <TableRow
+                  key={row.id}
+                  row={row}
                   expanded={isExpanded}
-                  onToggle={() => { toggleExpand(i); }}
-                  onFilterAdd={onFilterAdd}
-                  fetchDetailRows={fetchDetailRows}
+                  onToggle={() => { setExpandedIdx(prev => prev === i ? null : i); }}
+                  onCellClick={onCellClick}
+                  renderExpandedRow={renderExpandedRow}
                 />
               );
             })}
@@ -301,99 +396,41 @@ export function DataTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, 
   );
 }
 
-// --- Header + Cell ---
+// ---------------------------------------------------------------------------
+// TableRow — row with optional expansion
+// ---------------------------------------------------------------------------
 
-function ColumnHeader({ spec, sort, onSort }: Readonly<{ spec: ColumnSpec; sort: ExplorerSort | undefined; onSort: () => void }>) {
-  const isSorted = sort?.column === spec.key;
-  const dirArrow = sort?.direction === 'asc' ? '\u2191' : '\u2193';
-  const indicator = isSorted ? dirArrow : '';
-  return (
-    <th className="p-0 font-medium whitespace-nowrap">
-      <button
-        type="button"
-        onClick={onSort}
-        className={[
-          'w-full px-2 py-1.5 inline-flex items-center gap-1 hover:text-text-primary hover:bg-bg-secondary/40 cursor-pointer',
-          spec.align === 'right' ? 'justify-end' : 'justify-start',
-          isSorted ? 'text-text-primary' : '',
-        ].join(' ')}
-      >
-        <span>{spec.label}</span>
-        <span className={`text-accent ${indicator.length > 0 ? '' : 'opacity-0'}`}>
-          {indicator.length > 0 ? indicator : '↕'}
-        </span>
-      </button>
-    </th>
-  );
-}
+import type { Row, Cell } from '@tanstack/react-table';
 
-function RowCell({ spec, row, onFilterAdd }: Readonly<{ spec: ColumnSpec; row: AggregatedTableRow; onFilterAdd: (dimId: string, value: string) => void }>) {
-  const display = renderCell(spec, row);
-  const rawValue = spec.dimId === null ? null : (row.values[spec.key] ?? '');
-  const titleText = spec.truncate === true ? (row.values[spec.key] ?? '') : undefined;
-  const classes = [
-    'px-2 py-1 whitespace-nowrap',
-    spec.align === 'right' ? 'text-right' : '',
-    spec.mono === true ? 'tabular-nums font-mono' : '',
-    spec.truncate === true ? 'max-w-[260px] overflow-hidden text-ellipsis' : '',
-  ].filter(c => c.length > 0).join(' ');
-
-  if (spec.dimId !== null && rawValue !== null && rawValue.length > 0) {
-    const dimId = spec.dimId;
-    return (
-      <td className={classes} title={titleText}>
-        <button type="button" onClick={() => { onFilterAdd(dimId, rawValue); }} className="hover:underline hover:text-accent text-left" title={`Add "${rawValue}" to ${spec.label} filter`}>
-          {display}
-        </button>
-      </td>
-    );
-  }
-  return <td className={classes} title={titleText}>{display}</td>;
-}
-
-function renderCell(spec: ColumnSpec, row: AggregatedTableRow): React.ReactNode {
-  switch (spec.key) {
-    case 'cost': {
-      const cls = row.cost < 0 ? 'text-warning' : '';
-      return <span className={cls}>{formatSignedDollars(row.cost)}</span>;
-    }
-    case 'list_cost': return formatSignedDollars(row.listCost);
-    case 'usage_amount': return row.usageAmount === 0 ? '' : row.usageAmount.toLocaleString(undefined, { maximumFractionDigits: 4 });
-    default: return row.values[spec.key] ?? '';
-  }
-}
-
-// --- Expandable Row ---
-
-function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterAdd, fetchDetailRows }: Readonly<{
-  row: AggregatedTableRow;
-  columns: readonly ColumnSpec[];
-  allColumns: readonly ColumnSpec[];
+function TableRow<TData>({ row, expanded, onToggle, onCellClick, renderExpandedRow }: Readonly<{
+  row: Row<TData>;
   expanded: boolean;
   onToggle: () => void;
-  onFilterAdd: (dimId: string, value: string) => void;
-  fetchDetailRows?: ((r: AggregatedTableRow) => Promise<readonly AggregatedTableRow[]>) | undefined;
+  onCellClick?: ((row: TData, columnId: string, value: unknown) => void) | undefined;
+  renderExpandedRow?: ((row: TData) => React.ReactNode) | undefined;
 }>) {
+  const canExpand = renderExpandedRow !== undefined;
   return (
     <>
       <tr
         className={[
-          'border-t border-border/40 cursor-pointer',
-          expanded ? 'bg-bg-tertiary/40' : 'hover:bg-bg-tertiary/30',
+          'border-t border-border/40',
+          canExpand ? 'cursor-pointer' : '',
+          expanded ? 'bg-bg-tertiary/40' : canExpand ? 'hover:bg-bg-tertiary/30' : '',
         ].join(' ')}
-        onClick={onToggle}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onToggle(); }}
-        tabIndex={0}
+        onClick={canExpand ? onToggle : undefined}
+        onKeyDown={canExpand ? (e) => { if (e.key === 'Enter' || e.key === ' ') onToggle(); } : undefined}
+        tabIndex={canExpand ? 0 : undefined}
         role="row"
       >
-        {columns.map(col => (
-          <RowCell key={col.key} spec={col} row={row} onFilterAdd={onFilterAdd} />
+        {row.getVisibleCells().map(cell => (
+          <TableCell key={cell.id} cell={cell} row={row} onCellClick={onCellClick} />
         ))}
       </tr>
-      {expanded && (
+      {expanded && renderExpandedRow !== undefined && (
         <tr className="bg-bg-tertiary/20">
-          <td colSpan={columns.length} className="px-3 py-2">
-            <RowDetail row={row} allColumns={allColumns} fetchDetailRows={fetchDetailRows} />
+          <td colSpan={row.getVisibleCells().length} className="px-3 py-2">
+            {renderExpandedRow(row.original)}
           </td>
         </tr>
       )}
@@ -401,100 +438,38 @@ function ExpandableRow({ row, columns, allColumns, expanded, onToggle, onFilterA
   );
 }
 
-function RowDetail({ row, allColumns, fetchDetailRows }: Readonly<{
-  row: AggregatedTableRow;
-  allColumns: readonly ColumnSpec[];
-  fetchDetailRows?: ((r: AggregatedTableRow) => Promise<readonly AggregatedTableRow[]>) | undefined;
+function TableCell<TData>({ cell, row, onCellClick }: Readonly<{
+  cell: Cell<TData, unknown>;
+  row: Row<TData>;
+  onCellClick?: ((row: TData, columnId: string, value: unknown) => void) | undefined;
 }>) {
-  const [detailRows, setDetailRows] = useState<readonly AggregatedTableRow[] | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
+  const meta = cell.column.columnDef.meta;
+  const classes = [
+    'px-2 py-1 whitespace-nowrap',
+    meta?.align === 'right' ? 'text-right' : '',
+    meta?.mono === true ? 'tabular-nums font-mono' : '',
+    meta?.truncate === true ? 'max-w-[260px] overflow-hidden text-ellipsis' : '',
+  ].filter(c => c.length > 0).join(' ');
 
-  useEffect(() => {
-    if (fetchDetailRows === undefined) return;
-    setDetailLoading(true);
-    fetchDetailRows(row)
-      .then(rows => { setDetailRows(rows); })
-      .catch(() => { setDetailRows([]); })
-      .finally(() => { setDetailLoading(false); });
-  }, [row, fetchDetailRows]);
+  const display = flexRender(cell.column.columnDef.cell, cell.getContext());
+  const rawValue = cell.getValue();
+  const dimId = meta?.dimId;
+  const titleText = meta?.truncate === true && typeof rawValue === 'string' ? rawValue : undefined;
 
-  const entries = Object.entries(row.values).filter(([, v]) => v.length > 0);
-  const labelMap = new Map(allColumns.map(c => [c.key, c.label]));
+  if (onCellClick !== undefined && dimId !== undefined && dimId !== null && rawValue !== undefined && rawValue !== null && rawValue !== '') {
+    return (
+      <td className={classes} title={titleText}>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onCellClick(row.original, cell.column.id, rawValue); }}
+          className="hover:underline hover:text-accent text-left"
+          title={`Add "${typeof rawValue === 'string' ? rawValue : ''}" to filter`}
+        >
+          {display}
+        </button>
+      </td>
+    );
+  }
 
-  const detailColSpecs = useMemo(() => {
-    if (detailRows === null || detailRows.length === 0) return [];
-    const first = detailRows[0];
-    if (first === undefined) return [];
-    const dimCols = Object.keys(first.values)
-      .map(key => allColumns.find(c => c.key === key))
-      .filter((c): c is ColumnSpec => c !== undefined);
-    const costCol: ColumnSpec = { key: 'cost', label: 'Cost', dimId: null, align: 'right', mono: true };
-    const result = [...dimCols];
-    result.splice(1, 0, costCol);
-    return result;
-  }, [detailRows, allColumns]);
-
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-4 gap-y-0.5 text-[11px]">
-        {entries.map(([key, val]) => (
-          <div key={key} className="flex gap-1.5 py-0.5 min-w-0">
-            <span className="text-text-muted shrink-0">{labelMap.get(key) ?? key}</span>
-            <span className="text-text-primary truncate" title={val}>{val}</span>
-          </div>
-        ))}
-        <div className="flex gap-1.5 py-0.5 min-w-0">
-          <span className="text-text-muted shrink-0">Cost</span>
-          <span className="text-text-primary">{formatSignedDollars(row.cost)}</span>
-        </div>
-        <div className="flex gap-1.5 py-0.5 min-w-0">
-          <span className="text-text-muted shrink-0">Line Items</span>
-          <span className="text-text-primary">{row.rowCount.toLocaleString()}</span>
-        </div>
-      </div>
-
-      {fetchDetailRows !== undefined && (
-        <div>
-          {detailLoading && <CoinRainLoader height={80} count={3} />}
-          {detailRows !== null && detailRows.length > 0 && (
-            <div className="border border-border/60 rounded overflow-auto max-h-[300px]">
-              <table className="text-[10px] w-full border-collapse">
-                <thead className="sticky top-0 z-10 bg-bg-tertiary/95 backdrop-blur-sm">
-                  <tr className="text-left text-text-muted">
-                    {detailColSpecs.map(c => (
-                      <th key={c.key} className={`px-2 py-1 font-medium whitespace-nowrap ${c.align === 'right' ? 'text-right' : ''}`}>{c.label}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {detailRows.map((dr) => {
-                    const drKey = `${dr.values['usage_date'] ?? ''}-${dr.values['service'] ?? ''}-${String(dr.cost)}`;
-                    return (
-                    <tr key={drKey} className="border-t border-border/30 hover:bg-bg-tertiary/20">
-                      {detailColSpecs.map(c => {
-                        const val = c.key === 'cost' ? formatSignedDollars(dr.cost) : (dr.values[c.key] ?? '');
-                        return (
-                          <td
-                            key={c.key}
-                            className={`px-2 py-0.5 whitespace-nowrap ${c.align === 'right' ? 'text-right tabular-nums' : ''} ${c.truncate === true ? 'max-w-[200px] overflow-hidden text-ellipsis' : ''}`}
-                            title={val}
-                          >
-                            {val}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {detailRows !== null && detailRows.length === 0 && !detailLoading && (
-            <div className="text-[10px] text-text-muted text-center py-2">No detail rows available.</div>
-          )}
-        </div>
-      )}
-    </div>
-  );
+  return <td className={classes} title={titleText}>{display}</td>;
 }

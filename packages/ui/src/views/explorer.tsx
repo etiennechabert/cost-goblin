@@ -9,19 +9,20 @@ import type {
   ExplorerFilterValue,
   ExplorerOverviewResult,
   ExplorerRowsResult,
+  ExplorerSampleRow,
   ExplorerSort,
-  ExplorerSortDirection,
   Granularity,
 } from '@costgoblin/core/browser';
+import type { SortingState } from '@tanstack/react-table';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
-import { ColumnsPicker } from '../components/data-table.js';
-import type { ColumnSpec } from '../components/data-table.js';
+import { VirtualTable } from '../components/virtual-table.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { getDimensionId } from '../lib/dimensions.js';
+import type { TableColumn } from '../lib/table-types.js';
 
 const DEBOUNCE_MS = 250;
 const ROW_LIMIT = 500;
@@ -43,24 +44,47 @@ interface RowsState {
   error: string | null;
 }
 
-const BASE_COLUMNS: readonly ColumnSpec[] = [
-  { key: 'usage_date', label: 'Date', dimId: null, align: 'left', mono: true },
-  { key: 'line_item_type', label: 'Line type', dimId: 'line_item_type', align: 'left' },
-  { key: 'cost', label: 'Cost', dimId: null, align: 'right', mono: true },
-  { key: 'service_family', label: 'Family', dimId: 'service_family', align: 'left' },
-  { key: 'region', label: 'Region', dimId: 'region', align: 'left', mono: true },
-  { key: 'account_name', label: 'Account', dimId: 'account', align: 'left' },
-  { key: 'resource_id', label: 'Resource', dimId: 'resource_id', align: 'left', mono: true, truncate: true },
-  { key: 'description', label: 'Description', dimId: null, align: 'left', truncate: true },
-  { key: 'usage_type', label: 'Usage type', dimId: 'usage_type', align: 'left', mono: true },
-  { key: 'usage_hour', label: 'Hour', dimId: null, align: 'left', mono: true },
-  { key: 'list_cost', label: 'List', dimId: null, align: 'right', mono: true },
-  { key: 'service', label: 'Service', dimId: 'service', align: 'left' },
-  { key: 'usage_amount', label: 'Usage', dimId: null, align: 'right', mono: true },
-  { key: 'operation', label: 'Operation', dimId: 'operation', align: 'left' },
-];
+function hourDisplay(hour: string): string {
+  if (hour.length === 0) return '';
+  const time = hour.includes(' ') ? hour.split(' ')[1] ?? hour : hour;
+  return time.slice(0, 8);
+}
 
-const TRAILING_COLUMNS: readonly ColumnSpec[] = [];
+const BASE_COLUMNS: readonly TableColumn<ExplorerSampleRow>[] = [
+  { id: 'usage_date', header: 'Date', accessorFn: r => r.date, mono: true },
+  { id: 'line_item_type', header: 'Line type', dimId: 'line_item_type', accessorFn: r => r.lineItemType },
+  {
+    id: 'cost', header: 'Cost', align: 'right', mono: true,
+    accessorFn: r => r.cost,
+    cell: (v) => {
+      const n = v as number;
+      const cls = n < 0 ? 'text-warning' : '';
+      return <span className={cls}>{formatSignedDollars(n)}</span>;
+    },
+  },
+  { id: 'service_family', header: 'Family', dimId: 'service_family', accessorFn: r => r.serviceFamily },
+  { id: 'region', header: 'Region', dimId: 'region', accessorFn: r => r.region, mono: true },
+  { id: 'account_name', header: 'Account', dimId: 'account', accessorFn: r => r.accountName.length > 0 ? r.accountName : r.accountId },
+  { id: 'resource_id', header: 'Resource', dimId: 'resource_id', accessorFn: r => r.resourceId, mono: true, truncate: true },
+  { id: 'description', header: 'Description', accessorFn: r => r.description, truncate: true },
+  { id: 'usage_type', header: 'Usage type', dimId: 'usage_type', accessorFn: r => r.usageType, mono: true },
+  { id: 'usage_hour', header: 'Hour', accessorFn: r => hourDisplay(r.hour), mono: true },
+  {
+    id: 'list_cost', header: 'List', align: 'right', mono: true,
+    accessorFn: r => r.listCost,
+    cell: (v) => formatSignedDollars(v as number),
+  },
+  { id: 'service', header: 'Service', dimId: 'service', accessorFn: r => r.service },
+  {
+    id: 'usage_amount', header: 'Usage', align: 'right', mono: true,
+    accessorFn: r => r.usageAmount,
+    cell: (v) => {
+      const n = v as number;
+      return n === 0 ? '' : n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+    },
+  },
+  { id: 'operation', header: 'Operation', dimId: 'operation', accessorFn: r => r.operation },
+];
 
 const DEFAULT_HIDDEN: ReadonlySet<string> = new Set([
   'usage_hour', 'list_cost', 'service', 'usage_amount', 'operation',
@@ -218,29 +242,21 @@ export function ExplorerView(): React.JSX.Element {
   }, [filters, sort, dateRange, granularity, applyCostScope, costMetric, costPerspective, runRows]);
 
   const tagColumns = overview.data?.tagColumns ?? rows.data?.tagColumns ?? [];
-  // Default column list (built-ins + tags + trailing), before the user's
-  // stored order is applied. Hour is daily-irrelevant so we drop it for
-  // daily queries rather than showing an always-empty column.
-  const defaultColumns = useMemo<readonly ColumnSpec[]>(() => [
-    ...BASE_COLUMNS.filter(c => c.key !== 'usage_hour' || granularity === 'hourly'),
-    ...tagColumns.map<ColumnSpec>(t => ({
-      key: t.id,
-      label: t.label,
+  const defaultColumns = useMemo<readonly TableColumn<ExplorerSampleRow>[]>(() => [
+    ...BASE_COLUMNS.filter(c => c.id !== 'usage_hour' || granularity === 'hourly'),
+    ...tagColumns.map<TableColumn<ExplorerSampleRow>>(t => ({
+      id: t.id,
+      header: t.label,
       dimId: t.id,
-      align: 'left',
+      accessorFn: (r: ExplorerSampleRow) => r.tags[t.id] ?? '',
     })),
-    ...TRAILING_COLUMNS,
   ], [tagColumns, granularity]);
 
-  // Apply the user's stored column order to the default list. Keys the
-  // user has never reordered (e.g. a tag dim they added later) keep their
-  // default relative position by getting appended at the end — cheaper
-  // than interleaving and the user can drag them to taste.
-  const availableColumns = useMemo<readonly ColumnSpec[]>(() => {
+  const availableColumns = useMemo<readonly TableColumn<ExplorerSampleRow>[]>(() => {
     if (columnOrder.length === 0) return defaultColumns;
-    const byKey = new Map(defaultColumns.map(c => [c.key, c]));
+    const byKey = new Map(defaultColumns.map(c => [c.id, c]));
     const seen = new Set<string>();
-    const ordered: ColumnSpec[] = [];
+    const ordered: TableColumn<ExplorerSampleRow>[] = [];
     for (const key of columnOrder) {
       const col = byKey.get(key);
       if (col !== undefined && !seen.has(key)) {
@@ -249,7 +265,7 @@ export function ExplorerView(): React.JSX.Element {
       }
     }
     for (const col of defaultColumns) {
-      if (!seen.has(col.key)) ordered.push(col);
+      if (!seen.has(col.id)) ordered.push(col);
     }
     return ordered;
   }, [defaultColumns, columnOrder]);
@@ -266,14 +282,14 @@ export function ExplorerView(): React.JSX.Element {
     for (const [dimId, values] of Object.entries(filters)) {
       if (values.length !== 1) continue;
       for (const col of availableColumns) {
-        if (col.dimId === dimId) keys.add(col.key);
+        if (col.dimId === dimId) keys.add(col.id);
       }
     }
     return keys;
   }, [filters, availableColumns]);
 
   const visibleColumns = useMemo(
-    () => availableColumns.filter(c => !hiddenSet.has(c.key) && !autoHiddenSet.has(c.key)),
+    () => availableColumns.filter(c => !hiddenSet.has(c.id) && !autoHiddenSet.has(c.id)),
     [availableColumns, hiddenSet, autoHiddenSet],
   );
 
@@ -298,19 +314,28 @@ export function ExplorerView(): React.JSX.Element {
     setFilters({});
   }
 
-  function handleSort(columnKey: string) {
-    setSort(prev => {
-      if (prev?.column === columnKey) {
-        const nextDir: ExplorerSortDirection = prev.direction === 'asc' ? 'desc' : 'asc';
-        return { column: columnKey, direction: nextDir };
+  const tanstackSorting = useMemo<SortingState>(() => {
+    if (sort === undefined) return [];
+    return [{ id: sort.column, desc: sort.direction === 'desc' }];
+  }, [sort]);
+
+  function handleSortingChange(state: SortingState) {
+    if (state.length === 0) {
+      setSort(undefined);
+    } else {
+      const first = state[0];
+      if (first !== undefined) {
+        setSort({ column: first.id, direction: first.desc ? 'desc' : 'asc' });
       }
-      // First click: desc for numeric, asc for text. The table is a
-      // raw-rows view so "biggest first" is the natural default for cost /
-      // usage, while alphabetical feels right for text.
-      const numericCols = new Set(['cost', 'list_cost', 'usage_amount', 'usage_date']);
-      const dir: ExplorerSortDirection = numericCols.has(columnKey) ? 'desc' : 'asc';
-      return { column: columnKey, direction: dir };
-    });
+    }
+  }
+
+  function handleCellClick(_row: ExplorerSampleRow, columnId: string, value: unknown) {
+    const col = availableColumns.find(c => c.id === columnId);
+    const dimId = col?.dimId;
+    if (dimId !== undefined && dimId !== null && typeof value === 'string' && value.length > 0) {
+      addFilterValue(dimId, value);
+    }
   }
 
   const activeFilterCount = Object.values(filters).reduce((n, vs) => n + vs.length, 0);
@@ -399,20 +424,24 @@ export function ExplorerView(): React.JSX.Element {
 
       <Card>
         <CardContent className="pt-5">
-          <RowsTable
+          <VirtualTable<ExplorerSampleRow>
+            data={rows.data?.sampleRows ?? []}
             columns={visibleColumns}
             allColumns={availableColumns}
             hiddenColumns={hiddenColumns}
             autoHiddenKeys={autoHiddenSet}
             onHiddenColumnsChange={updateHiddenColumns}
             onColumnOrderChange={updateColumnOrder}
-            rows={rows.data?.sampleRows ?? []}
+            sorting={tanstackSorting}
+            onSortingChange={handleSortingChange}
+            onCellClick={handleCellClick}
             totalRows={overviewData?.totalRows ?? 0}
-            sort={sort}
-            onSort={handleSort}
-            onFilterAdd={addFilterValue}
             loading={rows.loading}
             error={rows.error}
+            height={560}
+            rowHeight={28}
+            csvFilename="explorer-rows"
+            renderExpandedRow={(row) => <RowDetail row={row} allColumns={availableColumns} />}
           />
         </CardContent>
       </Card>
@@ -878,276 +907,6 @@ function ValuesPicker({ dropdown, selected, onApply, onClose }: ValuesPickerProp
   );
 }
 
-interface RowsTableProps {
-  readonly columns: readonly ColumnSpec[];
-  readonly allColumns: readonly ColumnSpec[];
-  readonly hiddenColumns: readonly string[];
-  readonly autoHiddenKeys: ReadonlySet<string>;
-  readonly onHiddenColumnsChange: (next: readonly string[]) => void;
-  readonly onColumnOrderChange: (next: readonly string[]) => void;
-  readonly rows: readonly import('@costgoblin/core/browser').ExplorerSampleRow[];
-  readonly totalRows: number;
-  readonly sort: ExplorerSort | undefined;
-  readonly onSort: (columnKey: string) => void;
-  readonly onFilterAdd: (dimId: string, value: string) => void;
-  readonly loading: boolean;
-  readonly error: string | null;
-}
-
-function RowsTable({ columns, allColumns, hiddenColumns, autoHiddenKeys, onHiddenColumnsChange, onColumnOrderChange, rows, totalRows, sort, onSort, onFilterAdd, loading, error }: RowsTableProps): React.JSX.Element {
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
-  // Header (row count / columns picker) is always rendered — keeps the
-  // Columns button reachable even when the table is empty or loading, so
-  // a user who accidentally hid every column isn't stranded.
-  const headerRow = (
-    <div className="flex items-center justify-between gap-3 text-xs text-text-muted">
-      <span>
-        {rows.length === 0
-          ? 'No rows'
-          : <>
-              Showing <span className="text-text-secondary tabular-nums">{rows.length.toLocaleString()}</span>
-              {totalRows > rows.length && (
-                <> of <span className="text-text-secondary tabular-nums">{totalRows.toLocaleString()}</span></>
-              )}
-              {' '}rows
-            </>}
-      </span>
-      <div className="flex items-center gap-3">
-        <span className="hidden md:inline text-text-muted">Click a cell to add that value to filters.</span>
-        <ColumnsPicker
-          allColumns={allColumns}
-          hiddenColumns={hiddenColumns}
-          autoHiddenKeys={autoHiddenKeys}
-          onChange={onHiddenColumnsChange}
-          onOrderChange={onColumnOrderChange}
-        />
-      </div>
-    </div>
-  );
-
-  if (error !== null) {
-    return (
-      <div className="space-y-2">
-        {headerRow}
-        <div className="rounded-md border border-negative/40 bg-negative/5 text-xs text-negative px-3 py-2">
-          {error}
-        </div>
-      </div>
-    );
-  }
-  if (loading) {
-    return (
-      <div className="space-y-2">
-        {headerRow}
-        <CoinRainLoader height={260} count={7} />
-      </div>
-    );
-  }
-  if (rows.length === 0) {
-    return (
-      <div className="space-y-2">
-        {headerRow}
-        <div className="text-xs text-text-muted py-4 text-center">No rows match the current filters.</div>
-      </div>
-    );
-  }
-  if (columns.length === 0) {
-    return (
-      <div className="space-y-2">
-        {headerRow}
-        <div className="text-xs text-text-muted py-4 text-center">
-          All columns are hidden — open <em>Columns</em> to show some again.
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-2">
-      {headerRow}
-      <div className="border border-border rounded-md overflow-auto max-h-[560px]">
-        <table className="text-[11px] w-full border-collapse">
-          <thead className="sticky top-0 z-10 bg-bg-tertiary/95 backdrop-blur-sm">
-            <tr className="text-left text-text-secondary">
-              {columns.map(col => (
-                <ColumnHeader
-                  key={col.key}
-                  spec={col}
-                  sort={sort}
-                  onSort={() => { onSort(col.key); }}
-                />
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => {
-              const isExpanded = expandedIdx === i;
-              return (
-                <React.Fragment key={`${String(i)}-${r.resourceId}-${r.date}`}>
-                  <tr
-                    className={[
-                      'border-t border-border/40 cursor-pointer',
-                      isExpanded ? 'bg-bg-tertiary/40' : 'hover:bg-bg-tertiary/30',
-                    ].join(' ')}
-                    onClick={() => { setExpandedIdx(isExpanded ? null : i); }}
-                  >
-                    {columns.map(col => (
-                      <RowCell key={col.key} spec={col} row={r} onFilterAdd={onFilterAdd} />
-                    ))}
-                  </tr>
-                  {isExpanded && (
-                    <tr className="bg-bg-tertiary/20">
-                      <td colSpan={columns.length} className="px-3 py-2">
-                        <RowDetail row={r} allColumns={allColumns} />
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-interface ColumnHeaderProps {
-  readonly spec: ColumnSpec;
-  readonly sort: ExplorerSort | undefined;
-  readonly onSort: () => void;
-}
-
-function ColumnHeader({ spec, sort, onSort }: ColumnHeaderProps): React.JSX.Element {
-  const isSorted = sort?.column === spec.key;
-  const arrow = sort?.direction === 'asc' ? '↑' : '↓';
-  const indicator = isSorted ? arrow : '';
-  return (
-    <th className="p-0 font-medium whitespace-nowrap">
-      <button
-        type="button"
-        onClick={onSort}
-        className={[
-          'w-full px-2 py-1.5 inline-flex items-center gap-1 hover:text-text-primary hover:bg-bg-secondary/40 cursor-pointer',
-          spec.align === 'right' ? 'justify-end' : 'justify-start',
-          isSorted ? 'text-text-primary' : '',
-        ].join(' ')}
-      >
-        <span>{spec.label}</span>
-        <span className={`text-accent ${indicator.length > 0 ? '' : 'opacity-0'}`}>
-          {indicator.length > 0 ? indicator : '\u2195'}
-        </span>
-      </button>
-    </th>
-  );
-}
-
-
-
-interface RowCellProps {
-  readonly spec: ColumnSpec;
-  readonly row: import('@costgoblin/core/browser').ExplorerSampleRow;
-  readonly onFilterAdd: (dimId: string, value: string) => void;
-}
-
-function RowCell({ spec, row, onFilterAdd }: RowCellProps): React.JSX.Element {
-  const display = renderCell(spec, row);
-  const rawValue = filterValueFor(spec, row);
-  const titleText = spec.truncate === true ? stringValueFor(spec, row) : undefined;
-  const classes = [
-    'px-2 py-1 whitespace-nowrap',
-    spec.align === 'right' ? 'text-right' : '',
-    spec.mono === true ? 'tabular-nums font-mono' : '',
-    spec.truncate === true ? 'max-w-[260px] overflow-hidden text-ellipsis' : '',
-  ].filter(c => c.length > 0).join(' ');
-
-  if (spec.dimId !== null && rawValue !== null && rawValue.length > 0) {
-    const dimId = spec.dimId;
-    return (
-      <td className={classes} title={titleText}>
-        <button
-          type="button"
-          onClick={() => { onFilterAdd(dimId, rawValue); }}
-          className="hover:underline hover:text-accent text-left"
-          title={`Add "${rawValue}" to ${spec.label} filter`}
-        >
-          {display}
-        </button>
-      </td>
-    );
-  }
-  return (
-    <td className={classes} title={titleText}>
-      {display}
-    </td>
-  );
-}
-
-/** Plain-string value for the `title` (hover tooltip) on truncated cells.
- *  Kept separate from renderCell because renderCell may return JSX (e.g. the
- *  colored cost span) which can't be stringified usefully. */
-function stringValueFor(spec: ColumnSpec, row: import('@costgoblin/core/browser').ExplorerSampleRow): string {
-  switch (spec.key) {
-    case 'resource_id': return row.resourceId;
-    case 'description': return row.description;
-    default: {
-      const v = row.tags[spec.key];
-      return v ?? '';
-    }
-  }
-}
-
-/** Display-only rendering for a cell. Cost / list_cost / usage_amount get
- *  numeric formatting; everything else is the raw string. Separate from
- *  `filterValueFor` which returns the value the filter predicate wants. */
-function renderCell(spec: ColumnSpec, row: import('@costgoblin/core/browser').ExplorerSampleRow): React.ReactNode {
-  switch (spec.key) {
-    case 'usage_date': return row.date;
-    case 'usage_hour': {
-      // The handler sends the full TIMESTAMP (e.g. "2026-04-19 17:00:00").
-      // Trim to HH:MM:SS so the column stays narrow — the date is already
-      // in the Date column next to it.
-      if (row.hour.length === 0) return '';
-      const time = row.hour.includes(' ') ? row.hour.split(' ')[1] ?? row.hour : row.hour;
-      return time.slice(0, 8);
-    }
-    case 'cost': {
-      const cls = row.cost < 0 ? 'text-warning' : '';
-      return <span className={cls}>{formatSignedDollars(row.cost)}</span>;
-    }
-    case 'list_cost': return formatSignedDollars(row.listCost);
-    case 'service': return row.service;
-    case 'account_name': return row.accountName.length > 0 ? row.accountName : row.accountId;
-    case 'line_item_type': return row.lineItemType;
-    case 'region': return row.region;
-    case 'service_family': return row.serviceFamily;
-    case 'usage_type': return row.usageType;
-    case 'operation': return row.operation;
-    case 'usage_amount': return row.usageAmount === 0 ? '' : row.usageAmount.toLocaleString(undefined, { maximumFractionDigits: 4 });
-    case 'resource_id': return row.resourceId;
-    case 'description': return row.description;
-    default: return row.tags[spec.key] ?? '';
-  }
-}
-
-function filterValueFor(spec: ColumnSpec, row: import('@costgoblin/core/browser').ExplorerSampleRow): string | null {
-  switch (spec.key) {
-    case 'service': return row.service;
-    case 'account_name': return row.accountName.length > 0 ? row.accountName : row.accountId;
-    case 'line_item_type': return row.lineItemType;
-    case 'region': return row.region;
-    case 'service_family': return row.serviceFamily;
-    case 'usage_type': return row.usageType;
-    case 'operation': return row.operation;
-    case 'resource_id': return row.resourceId.length > 0 ? row.resourceId : null;
-    default: {
-      if (spec.dimId?.startsWith('tag_')) {
-        const v = row.tags[spec.key];
-        return v === undefined || v.length === 0 ? null : v;
-      }
-      return null;
-    }
-  }
-}
 
 const DETAIL_FIELDS: readonly { key: string; label: string; render: (r: import('@costgoblin/core/browser').ExplorerSampleRow) => string }[] = [
   { key: 'date', label: 'Date', render: r => r.date },
@@ -1167,9 +926,9 @@ const DETAIL_FIELDS: readonly { key: string; label: string; render: (r: import('
   { key: 'description', label: 'Description', render: r => r.description },
 ];
 
-function RowDetail({ row, allColumns }: Readonly<{ row: import('@costgoblin/core/browser').ExplorerSampleRow; allColumns: readonly ColumnSpec[] }>) {
+function RowDetail({ row, allColumns }: Readonly<{ row: ExplorerSampleRow; allColumns: readonly TableColumn<ExplorerSampleRow>[] }>) {
   const tagEntries = Object.entries(row.tags).filter(([, v]) => v.length > 0);
-  const tagLabels = new Map(allColumns.filter(c => c.dimId?.startsWith('tag_')).map(c => [c.key, c.label]));
+  const tagLabels = new Map(allColumns.filter(c => c.dimId?.startsWith('tag_')).map(c => [c.id, c.header]));
 
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-4 gap-y-0.5 text-[11px]">
