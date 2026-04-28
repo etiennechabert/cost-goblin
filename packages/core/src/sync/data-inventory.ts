@@ -31,22 +31,20 @@ export interface DataInventory {
 }
 
 async function getDirSize(dirPath: string): Promise<number> {
-  let total = 0;
   try {
     const entries = await readdir(dirPath, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = join(dirPath, entry.name);
-      if (entry.isDirectory()) {
-        total += await getDirSize(fullPath);
-      } else {
+    const sizes = await Promise.all(
+      entries.map(async (entry) => {
+        const fullPath = join(dirPath, entry.name);
+        if (entry.isDirectory()) return getDirSize(fullPath);
         const s = await stat(fullPath);
-        total += s.size;
-      }
-    }
+        return s.size;
+      }),
+    );
+    return sizes.reduce((sum, size) => sum + size, 0);
   } catch {
-    // dir may not exist
+    return 0;
   }
-  return total;
 }
 
 async function listRawPeriods(rawDir: string, tierPrefix: string): Promise<string[]> {
@@ -63,18 +61,16 @@ async function listRawPeriods(rawDir: string, tierPrefix: string): Promise<strin
 }
 
 async function getRawTierSize(rawDir: string, tierPrefix: string): Promise<number> {
-  let total = 0;
   try {
     const entries = await readdir(rawDir);
-    for (const entry of entries) {
-      if (entry.startsWith(`${tierPrefix}-`)) {
-        total += await getDirSize(join(rawDir, entry));
-      }
-    }
+    const tierDirs = entries.filter(e => e.startsWith(`${tierPrefix}-`));
+    const sizes = await Promise.all(
+      tierDirs.map(entry => getDirSize(join(rawDir, entry))),
+    );
+    return sizes.reduce((sum, size) => sum + size, 0);
   } catch {
-    // dir may not exist
+    return 0;
   }
-  return total;
 }
 
 export async function getDataInventory(
