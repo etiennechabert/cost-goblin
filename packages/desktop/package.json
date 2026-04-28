@@ -4,11 +4,12 @@
   "type": "module",
   "main": "out/main/main.js",
   "scripts": {
-    "build": "electron-vite build --sourcemap && npm run build:worker",
+    "build": "electron-vite build --sourcemap && npm run build:worker && npm run build:preload",
     "build:worker": "esbuild src/main/duckdb-worker.ts --bundle --platform=node --format=cjs --sourcemap --outfile=out/worker/duckdb-worker.cjs --external:@duckdb/node-api --external:electron && esbuild src/main/sync-worker.ts --bundle --platform=node --format=cjs --sourcemap --outfile=out/worker/sync-worker.cjs --external:@duckdb/node-api --external:@aws-sdk/client-s3 --external:electron",
+    "build:preload": "esbuild src/preload/preload.ts --bundle --platform=node --format=cjs --sourcemap --outfile=out/preload/preload.cjs --external:electron",
     "check": "tsc --noEmit && eslint src/ && vitest run",
     "test": "vitest run",
-    "dev": "npm run build:worker && electron-vite dev"
+    "dev": "npm run build:worker && npm run build:preload && electron-vite dev"
   },
   "dependencies": {
     "@aws-sdk/client-organizations": "^3.1029.0",

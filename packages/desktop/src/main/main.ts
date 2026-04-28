@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { Session } from 'node:inspector';
 import { tmpdir } from 'node:os';
@@ -101,6 +101,35 @@ function resolveConfigPath(base: string, name: string): string {
   return typeof env === 'string' && env.length > 0 ? env : join(base, `${name}.yaml`);
 }
 
+function installCSP(): void {
+  const csp = isDev
+    ? [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        "font-src 'self' data:",
+        "connect-src 'self' ws:",
+      ].join('; ')
+    : [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        "font-src 'self' data:",
+        "connect-src 'self'",
+      ].join('; ');
+
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [csp],
+      },
+    });
+  });
+}
+
 async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<void> {
   const userDataPath = app.getPath('userData');
   const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
@@ -126,14 +155,10 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
     titleBarStyle: 'hiddenInset',
     icon: join(__dirname, '..', '..', 'resources', 'icon.png'),
     webPreferences: {
-      preload: join(__dirname, '..', 'preload', 'preload.mjs'),
+      preload: join(__dirname, '..', 'preload', 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      // sandbox: true is the v1 target but breaks ESM preloads (electron-vite
-      // emits .mjs and the sandboxed loader is CJS-only). contextIsolation +
-      // nodeIntegration: false already prevent the main attack vectors;
-      // sandboxing remains a future hardening task.
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -171,6 +196,7 @@ async function main(): Promise<void> {
   const syncClient = await createSyncClient(syncWorkerPath);
   logger.info('Sync worker ready');
 
+  installCSP();
   await createWindow(db, syncClient);
 
   app.on('activate', () => {
