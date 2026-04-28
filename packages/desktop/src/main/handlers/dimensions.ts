@@ -296,9 +296,9 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const dismissed = await loadDismissedSuggestions(ctx.dataDir);
     const filtered: AliasSuggestion[] = [];
     for (const s of suggestions) {
+      if (coveredValues.has(s.canonical)) continue;
       const uncovered = s.aliases.filter(a => !coveredValues.has(a));
       if (uncovered.length === 0) continue;
-      if (coveredValues.has(s.canonical) && uncovered.length === 0) continue;
       const candidate: AliasSuggestion = { canonical: s.canonical, aliases: uncovered };
       if (isDismissed(dismissed, tagName, candidate.canonical, candidate.aliases)) continue;
       filtered.push(candidate);
