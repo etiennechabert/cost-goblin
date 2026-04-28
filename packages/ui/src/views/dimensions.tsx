@@ -523,9 +523,10 @@ function sortAliasText(text: string): string {
     .join('\n');
 }
 
-function AliasRulesEditor({ value, savedValue, onChange, onLineFocus }: Readonly<{
+function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus }: Readonly<{
   value: string;
   savedValue: string;
+  activeLine: number | null;
   onChange: (v: string) => void;
   onLineFocus: (lineIdx: number | null) => void;
 }>): React.JSX.Element {
@@ -537,10 +538,11 @@ function AliasRulesEditor({ value, savedValue, onChange, onLineFocus }: Readonly
     <div className="rounded border border-border bg-bg-primary overflow-hidden">
       {lines.map((line, i) => {
         const isNew = !savedLines.has(line);
+        const isActive = activeLine === i;
         return (
           <div
             key={i}
-            className={`flex items-center gap-1 px-3 py-1 text-[11px] font-mono border-l-2 ${isNew ? 'border-l-accent bg-accent/5' : 'border-l-transparent'} ${i > 0 ? 'border-t border-t-border/30' : ''}`}
+            className={`flex items-center gap-1 px-3 py-1 text-[11px] font-mono border-l-2 ${isActive ? 'border-l-accent bg-accent/10' : isNew ? 'border-l-accent bg-accent/5' : 'border-l-transparent'} ${i > 0 ? 'border-t border-t-border/30' : ''}`}
           >
             <input
               type="text"
@@ -911,6 +913,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           <AliasRulesEditor
             value={state.aliases}
             savedValue={initialRef.current.aliases}
+            activeLine={activeAliasLine}
             onChange={(v) => { setState(s => ({ ...s, aliases: v })); }}
             onLineFocus={setActiveAliasLine}
           />
