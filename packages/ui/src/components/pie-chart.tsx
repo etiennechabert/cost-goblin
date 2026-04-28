@@ -182,7 +182,7 @@ function PieChartInner({
                     width={width - legendX}
                     height={20}
                     rx={4}
-                    fill="rgba(255,255,255,0.08)"
+                    fill="var(--color-accent-muted)"
                   />
                 )}
                 <rect x={0} y={y} width={8} height={8} rx={2} fill={color} />
@@ -190,7 +190,7 @@ function PieChartInner({
                   x={14}
                   y={y + 8}
                   fontSize={isHovered ? 12 : 11}
-                  fill={(() => { if (isDimmed) { return '#4b5563'; } return isHovered ? '#f3f4f6' : '#9ca3af'; })()}
+                  fill={(() => { if (isDimmed) { return 'var(--color-text-muted)'; } return isHovered ? 'var(--color-text-primary)' : 'var(--color-text-secondary)'; })()}
                   fontWeight={isHovered ? 600 : 400}
                   style={{ transition: 'all 0.12s' }}
                 >

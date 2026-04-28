@@ -623,12 +623,12 @@ function validateAliases(text: string): string[] {
 type TagSource = 'resource' | 'account' | 'both' | 'template';
 
 function sourceColor(source: TagSource, aliased: boolean): string {
-  if (aliased) return 'bg-rose-500/10 border-rose-500/30 text-rose-300';
+  if (aliased) return 'bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-300';
   switch (source) {
     case 'template': return 'bg-warning/10 border-warning/30 text-warning italic';
-    case 'both': return 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
-    case 'account': return 'bg-violet-500/10 border-violet-500/30 text-violet-300';
-    case 'resource': return 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300';
+    case 'both': return 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300';
+    case 'account': return 'bg-violet-500/10 border-violet-500/30 text-violet-700 dark:text-violet-300';
+    case 'resource': return 'bg-cyan-500/10 border-cyan-500/30 text-cyan-700 dark:text-cyan-300';
   }
 }
 
