@@ -155,7 +155,7 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
     titleBarStyle: 'hiddenInset',
     icon: join(__dirname, '..', '..', 'resources', 'icon.png'),
     webPreferences: {
-      preload: join(__dirname, '..', 'preload', 'preload.cjs'),
+      preload: join(__dirname, '..', 'worker', 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
