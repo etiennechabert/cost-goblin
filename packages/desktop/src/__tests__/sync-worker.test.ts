@@ -54,7 +54,10 @@ describe('Sync Worker', () => {
         expect(msg).toEqual({ kind: 'ready' });
         resolve();
       });
-      worker.once('error', (err) => { clearTimeout(timeout); reject(err); });
+      worker.once('error', (e: unknown) => {
+        clearTimeout(timeout);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      });
     });
   });
 
