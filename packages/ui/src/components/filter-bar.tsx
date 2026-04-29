@@ -105,6 +105,12 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
     onFilterChange(withoutFilter(dimId));
   }
 
+  function handleChipKeyDown(dimId: DimensionId, e: React.KeyboardEvent) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    handleChipClick(dimId);
+  }
+
   function handleApply(dimId: DimensionId) {
     if (draft.length === 0) {
       onFilterChange(withoutFilter(dimId));
@@ -172,6 +178,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
               <button
                 type="button"
                 onClick={() => { handleChipClick(dimId); }}
+                onKeyDown={(e) => { handleChipKeyDown(dimId, e); }}
                 className="bg-transparent border-none p-0 text-inherit font-inherit cursor-pointer"
               >
                 {chipLabel(dim, activeValues)}
