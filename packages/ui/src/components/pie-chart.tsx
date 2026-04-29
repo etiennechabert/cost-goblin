@@ -50,7 +50,7 @@ function PieChartInner({
   onSliceHover,
   externalHoveredName,
   onExpandToggle,
-  maxSlices = 25,
+  maxSlices = 100,
   dimensions,
   activeDimensionId,
   onDimensionChange,
