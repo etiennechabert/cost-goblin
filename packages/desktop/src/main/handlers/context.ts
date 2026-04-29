@@ -433,7 +433,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     if (cached !== undefined) return Promise.resolve(cached);
     return dedup(sql, async () => {
       const result = await wrappedRunQuery(sql);
-      resultCache.set(sql, result);
+      if (result.length > 0) resultCache.set(sql, result);
       return result;
     });
   };
@@ -444,7 +444,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     if (cached !== undefined) return Promise.resolve(cached);
     return dedup(key, async () => {
       const result = await wrappedRunPreparedQuery(sql, params);
-      resultCache.set(key, result);
+      if (result.length > 0) resultCache.set(key, result);
       return result;
     });
   };
