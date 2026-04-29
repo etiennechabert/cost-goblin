@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, useKeyboardShortcuts } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, useKeyboardShortcuts, CommandPalette } from '@costgoblin/ui';
+import type { CommandPaletteAction } from '@costgoblin/ui';
 import type { CostApi, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 
@@ -141,6 +142,7 @@ function AppShell(): React.JSX.Element {
   const [syncActivity, setSyncActivity] = useState<'idle' | 'syncing' | 'downloading'>('idle');
   const [syncFilesRemaining, setSyncFilesRemaining] = useState(0);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const inFlightCount = useDebugBadge();
 
   useEffect(() => {
@@ -315,7 +317,7 @@ function AppShell(): React.JSX.Element {
   // Register global keyboard shortcuts for navigation and panel controls.
   // Number keys 1-9 navigate to the first 9 left-nav items, respecting
   // unsaved-changes guards via handleNavClick. Escape closes the debug
-  // panel when open.
+  // panel when open. Cmd/Ctrl+K opens the command palette.
   const shortcuts = useMemo(() => {
     const map: Record<string, () => void> = {};
 
@@ -328,6 +330,9 @@ function AppShell(): React.JSX.Element {
       }
     }
 
+    // Cmd/Ctrl+K opens command palette
+    map['mod+k'] = () => { setCommandPaletteOpen(true); };
+
     // Escape closes debug panel if open
     if (debugOpen) {
       map['Escape'] = () => { setDebugOpen(false); };
@@ -337,6 +342,33 @@ function AppShell(): React.JSX.Element {
   }, [leftNav, debugOpen]);
 
   useKeyboardShortcuts(shortcuts);
+
+  // Build command palette actions from all navigation items
+  const commandPaletteActions = useMemo(() => {
+    const actions: CommandPaletteAction[] = [];
+
+    // Add left nav items (custom views + static views)
+    for (const item of leftNav) {
+      actions.push({
+        id: item.id,
+        label: item.label,
+        onSelect: () => { handleNavClick(item.id); },
+        keywords: ['view', 'navigate'],
+      });
+    }
+
+    // Add right nav items (settings/utilities)
+    for (const item of RIGHT_NAV) {
+      actions.push({
+        id: item.id,
+        label: item.label,
+        onSelect: () => { handleNavClick(item.id); },
+        keywords: ['settings', 'configure'],
+      });
+    }
+
+    return actions;
+  }, [leftNav]);
 
   function activeNavId(): string | null {
     if (view.page === 'custom') return view.viewId;
@@ -540,6 +572,11 @@ function AppShell(): React.JSX.Element {
         </Profiler>
       )}
       {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} />}
+      <CommandPalette
+        open={commandPaletteOpen}
+        onOpenChange={setCommandPaletteOpen}
+        actions={commandPaletteActions}
+      />
       </div>
     </PaletteProvider>
   );
