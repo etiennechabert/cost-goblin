@@ -261,14 +261,24 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                 </div>
 
                 <div className="flex items-center justify-between border-t border-border p-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { setDraft([]); }}
-                    className="text-xs text-text-secondary hover:text-text-primary"
-                    disabled={draft.length === 0}
-                  >
-                    Clear
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setDraft([]); }}
+                      className="text-xs text-text-secondary hover:text-text-primary"
+                      disabled={draft.length === 0}
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setDraft(filteredValues.map(v => v.value)); }}
+                      className="text-xs text-text-secondary hover:text-text-primary"
+                      disabled={filteredValues.length === 0 || draft.length === filteredValues.length}
+                    >
+                      All
+                    </button>
+                  </div>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
