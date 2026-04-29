@@ -358,7 +358,7 @@ function AppShell(): React.JSX.Element {
             <img src="goblin.png" alt="" className="h-8 w-auto object-contain" />
             <span className="text-sm font-bold text-accent tracking-wider">CostGoblin</span>
           </div>
-          <div className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]">
+          <div className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]" role="navigation" aria-label="Configuration views">
             <button
               type="button"
               onClick={() => { setDebugOpen(prev => !prev); }}
