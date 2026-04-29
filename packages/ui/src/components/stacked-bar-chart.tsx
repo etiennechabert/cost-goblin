@@ -109,9 +109,68 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             ))}
           </div>
 
+          {/* Floating tooltip — anchored to top-right of chart area */}
+          {hoveredDay !== null && (() => {
+            const idx = days.findIndex(d => d.date === hoveredDay);
+            if (idx < 0) return null;
+            const day = days[idx];
+            if (day === undefined) return null;
+            const prev = idx > 0 ? days[idx - 1] : undefined;
+            const prevTotal = prev?.total ?? 0;
+            const totalDelta = prev !== undefined && prevTotal > 0
+              ? ((day.total - prevTotal) / prevTotal) * 100
+              : undefined;
+            const segs = breakdownKeys
+              .map((key, ki) => ({ key, value: day.breakdown[key] ?? 0, colorIdx: ki }))
+              .filter(s => s.value > 0)
+              .sort((a, b) => b.value - a.value);
+            const segTotal = segs.reduce((sum, s) => sum + s.value, 0);
+            return (
+              <div className="pointer-events-none absolute top-0 right-0 z-20 mr-1 mt-1">
+                <div className="rounded-lg bg-bg-secondary/95 px-4 py-3 text-[11px] text-text-primary whitespace-nowrap shadow-lg border border-border min-w-[280px]">
+                  <div className="flex items-center justify-between mb-2 pb-2 border-b border-border-subtle">
+                    <span className="font-semibold text-xs">{day.date}</span>
+                    <span className="font-semibold text-xs">
+                      Total: {formatDollars(day.total)}
+                      {totalDelta !== undefined && (
+                        <span className={`ml-1.5 text-[10px] font-normal ${totalDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                          {totalDelta >= 0 ? '↑' : '↓'}{Math.abs(totalDelta).toFixed(1)}%
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-px">
+                    {segs.slice(0, 12).map(seg => {
+                      const color = getColor(seg.colorIdx, palette);
+                      const isHigh = highlightedGroup === seg.key;
+                      const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
+                      const prevVal = prev?.breakdown[seg.key] ?? 0;
+                      const delta = prev !== undefined && prevVal > 0
+                        ? ((seg.value - prevVal) / prevVal) * 100
+                        : undefined;
+                      return (
+                        <div key={seg.key} className={`flex items-center gap-2 rounded py-0.5 px-1 -mx-1 ${isHigh ? 'bg-white/10' : ''}`}>
+                          <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                          <span className={`truncate flex-1 min-w-0 ${isHigh ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>{seg.key}</span>
+                          <span className={`tabular-nums shrink-0 ${isHigh ? 'font-semibold' : ''}`}>
+                            {formatDollars(seg.value)} <span className="text-text-muted">({pct.toFixed(1)}%)</span>
+                          </span>
+                          {delta !== undefined && (
+                            <span className={`tabular-nums text-[10px] shrink-0 ${delta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                              {delta >= 0 ? '↑' : '↓'}{Math.abs(delta).toFixed(1)}%
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="flex items-end ml-12 relative z-10 h-full" style={{ gap: '2px' }}>
-            {days.map((day, dayIdx) => {
-              const prevDay = dayIdx > 0 ? days[dayIdx - 1] : undefined;
+            {days.map((day) => {
               const barPct = maxCost > 0 ? (day.total / maxCost) * 100 : 0;
               const segments = breakdownKeys
                 .map((key, ki) => ({
@@ -122,7 +181,6 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                 .filter(s => s.value > 0)
                 .sort((a, b) => b.value - a.value);
               const segTotal = segments.reduce((sum, s) => sum + s.value, 0);
-              const isHovered = hoveredDay === day.date;
 
               return (
                 <button
@@ -155,59 +213,6 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                     })}
                   </div>
 
-                  {isHovered && (() => {
-                    const prevTotal = prevDay?.total ?? 0;
-                    const totalDelta = prevDay !== undefined && prevTotal > 0
-                      ? ((day.total - prevTotal) / prevTotal) * 100
-                      : undefined;
-                    return (
-                    <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20">
-                      <div className="rounded-lg bg-bg-secondary/95 px-4 py-3 text-[11px] text-text-primary whitespace-nowrap shadow-lg border border-border min-w-[280px]">
-                        <div className="flex items-center justify-between mb-2 pb-2 border-b border-border-subtle">
-                          <span className="font-semibold text-xs">{day.date}</span>
-                          <span className="font-semibold text-xs">
-                            Total: {formatDollars(day.total)}
-                            {totalDelta !== undefined && (
-                              <span className={`ml-1.5 text-[10px] font-normal ${totalDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
-                                {totalDelta >= 0 ? '↑' : '↓'}{Math.abs(totalDelta).toFixed(1)}%
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex flex-col gap-px">
-                          {segments
-                            .slice(0, 12)
-                            .map(seg => {
-                              const color = getColor(seg.colorIdx, palette);
-                              const isHigh = highlightedGroup === seg.key;
-                              const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
-                              const prevVal = prevDay?.breakdown[seg.key] ?? 0;
-                              const delta = prevDay !== undefined && prevVal > 0
-                                ? ((seg.value - prevVal) / prevVal) * 100
-                                : undefined;
-                              return (
-                                <div
-                                  key={seg.key}
-                                  className={`flex items-center gap-2 rounded py-0.5 px-1 -mx-1 ${isHigh ? 'bg-white/10' : ''}`}
-                                >
-                                  <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                                  <span className={`truncate flex-1 min-w-0 ${isHigh ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>{seg.key}</span>
-                                  <span className={`tabular-nums shrink-0 ${isHigh ? 'font-semibold' : ''}`}>
-                                    {formatDollars(seg.value)} <span className="text-text-muted">({pct.toFixed(1)}%)</span>
-                                  </span>
-                                  {delta !== undefined && (
-                                    <span className={`tabular-nums text-[10px] shrink-0 ${delta >= 0 ? 'text-negative' : 'text-positive'}`}>
-                                      {delta >= 0 ? '↑' : '↓'}{Math.abs(delta).toFixed(1)}%
-                                    </span>
-                                  )}
-                                </div>
-                              );
-                            })}
-                        </div>
-                      </div>
-                    </div>
-                    );
-                  })()}
                 </button>
               );
             })}
