@@ -42,8 +42,8 @@ jobs:
 
       - run: npm ci
 
-      - name: Run npm audit
-        run: npm audit --audit-level=high
+      - name: Run audit-ci
+        run: npx audit-ci --config audit-ci.json
 
   test-unit:
     runs-on: ubuntu-latest
