@@ -110,7 +110,8 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
           </div>
 
           <div className="flex items-end ml-12 relative z-10 h-full" style={{ gap: '2px' }}>
-            {days.map((day) => {
+            {days.map((day, dayIdx) => {
+              const prevDay = dayIdx > 0 ? days[dayIdx - 1] : undefined;
               const barPct = maxCost > 0 ? (day.total / maxCost) * 100 : 0;
               const segments = breakdownKeys
                 .map((key, ki) => ({
@@ -154,37 +155,59 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                     })}
                   </div>
 
-                  {isHovered && (
+                  {isHovered && (() => {
+                    const prevTotal = prevDay?.total ?? 0;
+                    const totalDelta = prevDay !== undefined && prevTotal > 0
+                      ? ((day.total - prevTotal) / prevTotal) * 100
+                      : undefined;
+                    return (
                     <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20">
-                      <div className="rounded-lg bg-bg-secondary/95 px-3 py-2 text-[11px] text-text-primary whitespace-nowrap shadow-lg border border-border min-w-[160px]">
-                        <div className="font-semibold mb-1.5 text-xs">{day.date}</div>
-                        <div className="flex items-center justify-between font-medium mb-1 pb-1 border-b border-border-subtle">
-                          <span>Total</span>
-                          <span>{formatDollars(day.total)}</span>
+                      <div className="rounded-lg bg-bg-secondary/95 px-4 py-3 text-[11px] text-text-primary whitespace-nowrap shadow-lg border border-border min-w-[280px]">
+                        <div className="flex items-center justify-between mb-2 pb-2 border-b border-border-subtle">
+                          <span className="font-semibold text-xs">{day.date}</span>
+                          <span className="font-semibold text-xs">
+                            Total: {formatDollars(day.total)}
+                            {totalDelta !== undefined && (
+                              <span className={`ml-1.5 text-[10px] font-normal ${totalDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                                {totalDelta >= 0 ? '↑' : '↓'}{Math.abs(totalDelta).toFixed(1)}%
+                              </span>
+                            )}
+                          </span>
                         </div>
-                        <div className="flex flex-col gap-0.5 mt-1">
+                        <div className="flex flex-col gap-px">
                           {segments
-                            .slice(0, 8)
+                            .slice(0, 12)
                             .map(seg => {
                               const color = getColor(seg.colorIdx, palette);
-                              const isHighlighted = highlightedGroup === seg.key;
+                              const isHigh = highlightedGroup === seg.key;
+                              const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
+                              const prevVal = prevDay?.breakdown[seg.key] ?? 0;
+                              const delta = prevDay !== undefined && prevVal > 0
+                                ? ((seg.value - prevVal) / prevVal) * 100
+                                : undefined;
                               return (
                                 <div
                                   key={seg.key}
-                                  className={`flex items-center justify-between gap-3 rounded px-1 -mx-1 ${isHighlighted ? 'bg-white/10' : ''}`}
+                                  className={`flex items-center gap-2 rounded py-0.5 px-1 -mx-1 ${isHigh ? 'bg-white/10' : ''}`}
                                 >
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
-                                    <span className={`truncate max-w-[120px] ${isHighlighted ? 'text-text-primary font-medium' : 'text-text-secondary'}`}>{seg.key}</span>
-                                  </div>
-                                  <span className={`tabular-nums ${isHighlighted ? 'text-text-primary font-medium' : 'text-text-primary'}`}>{formatDollars(seg.value)}</span>
+                                  <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                                  <span className={`truncate flex-1 min-w-0 ${isHigh ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>{seg.key}</span>
+                                  <span className={`tabular-nums shrink-0 ${isHigh ? 'font-semibold' : ''}`}>
+                                    {formatDollars(seg.value)} <span className="text-text-muted">({pct.toFixed(1)}%)</span>
+                                  </span>
+                                  {delta !== undefined && (
+                                    <span className={`tabular-nums text-[10px] shrink-0 ${delta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                                      {delta >= 0 ? '↑' : '↓'}{Math.abs(delta).toFixed(1)}%
+                                    </span>
+                                  )}
                                 </div>
                               );
                             })}
                         </div>
                       </div>
                     </div>
-                  )}
+                    );
+                  })()}
                 </button>
               );
             })}
