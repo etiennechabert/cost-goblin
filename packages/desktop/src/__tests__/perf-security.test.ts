@@ -15,9 +15,7 @@ interface MockSession {
   post: (method: string, callback?: (err: Error | null, result?: { profile: unknown }) => void) => void;
 }
 
-interface MockEvent {
-  // Empty mock event object
-}
+type MockEvent = Record<string, never>;
 
 // Helper to create a mock inspector session
 function createMockSession(shouldFail = false): MockSession {
@@ -62,13 +60,17 @@ function createHandler(session: MockSession) {
           );
         }
       } catch (err) {
-        reject(err);
+        reject(err instanceof Error ? err : new Error(String(err)));
         return;
       }
 
       session.post('Profiler.stop', (err, result) => {
         if (err !== null) {
           reject(err);
+          return;
+        }
+        if (result === undefined) {
+          reject(new Error('Profiler.stop returned no result'));
           return;
         }
         session.post('Profiler.disable');
