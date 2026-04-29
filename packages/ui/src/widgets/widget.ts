@@ -66,12 +66,7 @@ export function widgetFlexBasis(size: WidgetSize): string {
  *  conflict so a widget can pin a specific dimension while the FilterBar
  *  remains the user's primary control. */
 export function mergeFilters(global: FilterMap, overlay?: WidgetFilterOverlay): FilterMap {
-  if (overlay === undefined) return global;
-  const merged: Partial<Record<DimensionId, readonly TagValue[]>> = { ...global };
-  for (const [k, v] of Object.entries(overlay)) {
-    if (v !== undefined) merged[k as DimensionId] = [v];
-  }
-  return merged;
+  return overlay === undefined ? global : { ...global, ...overlay };
 }
 
 /** Stable key for a FilterMap. Used as a useQuery dep so widgets refetch on
