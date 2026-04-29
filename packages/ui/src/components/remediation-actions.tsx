@@ -53,7 +53,7 @@ function buildIssueTemplate(rows: readonly MissingTagRow[], tagName: string): st
     `# Missing ${tagName} Tag Remediation`,
     '',
     '## Summary',
-    `- **Total untagged resources:** ${rows.length}`,
+    `- **Total untagged resources:** ${String(rows.length)}`,
     `- **Total cost impact:** ${formatDollars(totalCost)}`,
     `- **Tag required:** \`${tagName}\``,
     '',

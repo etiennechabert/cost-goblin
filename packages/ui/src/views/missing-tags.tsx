@@ -5,12 +5,15 @@ import type {
   DateString,
   MissingTagsResult,
   MissingTagRow,
+  TagCoverageSnapshot,
 } from '@costgoblin/core/browser';
 import { asDimensionId, asDateString, asDollars } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { getDimensionId, isTagDimension } from '../lib/dimensions.js';
 import { formatDollars } from '../components/format.js';
+import { RemediationActions } from '../components/remediation-actions.js';
+import { TagCoverageChart } from '../components/tag-coverage-chart.js';
 
 function getDateRange(): { start: DateString; end: DateString } {
   const today = new Date();
@@ -111,7 +114,7 @@ export function MissingTags() {
   const [selectedTag, setSelectedTag] = useState<DimensionId | null>(null);
   const [showLikelyUntaggable, setShowLikelyUntaggable] = useState(false);
   const [nonResourceExpanded, setNonResourceExpanded] = useState(false);
-  const [selectedResources, setSelectedResources] = useState<Set<string>>(new Set());
+  const [selectedResources, setSelectedResources] = useState(new Set<string>());
 
   const handleToggleResource = (resourceId: string) => {
     setSelectedResources((prev) => {
@@ -161,11 +164,27 @@ export function MissingTags() {
     [activeTagId, minCost, api],
   );
 
+  const coverageHistoryQuery = useQuery(() => api.getTagCoverageHistory(), [api]);
+
   const data: MissingTagsResult | null =
     missingQuery.status === 'success' ? missingQuery.data : null;
 
   const actionableRows = data === null ? [] : data.rows.filter(r => r.bucket === 'actionable');
   const likelyUntaggableRows = data === null ? [] : data.rows.filter(r => r.bucket === 'likely-untaggable');
+
+  const coverageSnapshots: readonly TagCoverageSnapshot[] =
+    coverageHistoryQuery.status === 'success' ? coverageHistoryQuery.data : [];
+
+  const selectedRows: MissingTagRow[] = [];
+  const allRows = [...actionableRows, ...likelyUntaggableRows];
+  for (const row of allRows) {
+    if (selectedResources.has(row.resourceId)) {
+      selectedRows.push(row);
+    }
+  }
+
+  const activeTagDimension = tagDimensions.find(dim => getDimensionId(dim) === activeTagId);
+  const activeTagName = activeTagDimension !== undefined ? activeTagDimension.label : 'Tag';
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -220,6 +239,8 @@ export function MissingTags() {
           />
           <span>Show likely-untaggable categories</span>
         </label>
+
+        <RemediationActions selectedRows={selectedRows} tagName={activeTagName} />
       </div>
 
       {data !== null && (
@@ -250,6 +271,15 @@ export function MissingTags() {
             <p className="text-[11px] text-text-muted">
               tax, support, credits, and usage without a resource
             </p>
+          </div>
+        </div>
+      )}
+
+      {coverageSnapshots.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <h3 className="text-sm font-semibold text-text-primary">Tag Coverage Trend</h3>
+          <div className="rounded-xl border border-border bg-bg-secondary/50 p-4">
+            <TagCoverageChart snapshots={coverageSnapshots} height={240} />
           </div>
         </div>
       )}
