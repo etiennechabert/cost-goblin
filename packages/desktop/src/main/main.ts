@@ -80,15 +80,8 @@ if (perfMode) {
     });
   });
 
-  /**
-   * Stops CPU profiling and writes the profile to disk.
-   * The label parameter is validated to prevent path traversal attacks —
-   * only alphanumeric characters, hyphens, and underscores are allowed.
-   * This ensures the profile is written to the intended directory.
-   */
   ipcMain.handle('perf:stop-cpu-profile', (_event: unknown, label: string) => {
     return new Promise<{ path: string }>((resolve, reject) => {
-      // Validate label before constructing file path (prevents path traversal)
       try {
         validateProfileLabel(label);
       } catch (err) {
