@@ -55,7 +55,10 @@ function QueryRow({ entry }: Readonly<{ entry: DebugQueryLogEntry }>): React.JSX
   }, [entry.id]);
 
   return (
-    <div className="border-b border-border/50 last:border-b-0">
+    <div className={[
+      'border-b border-border/50 last:border-b-0',
+      (entry.status === 'running' || entry.status === 'queued') ? 'bg-accent/5 animate-pulse' : '',
+    ].join(' ')}>
       <button
         type="button"
         onClick={() => { setExpanded(!expanded); }}
@@ -112,6 +115,7 @@ function QueryRow({ entry }: Readonly<{ entry: DebugQueryLogEntry }>): React.JSX
 
 export function DebugPanel({ onClose }: Readonly<{ onClose: () => void }>): React.JSX.Element {
   const [entries, setEntries] = useState<DebugQueryLogEntry[]>([]);
+  const inFlightCount = useDebugBadge();
 
   useEffect(() => {
     let cancelled = false;
@@ -127,7 +131,10 @@ export function DebugPanel({ onClose }: Readonly<{ onClose: () => void }>): Reac
 
   const runningCount = entries.filter(e => e.status === 'running').length;
   const queuedCount = entries.filter(e => e.status === 'queued').length;
-  const reversed = [...entries].reverse();
+  const sorted = [...entries].reverse().sort((a, b) => {
+    const rank = (s: DebugQueryLogEntry['status']) => s === 'running' ? 0 : s === 'queued' ? 1 : 2;
+    return rank(a.status) - rank(b.status);
+  });
 
   return (
     <div className="fixed top-[4.5rem] right-0 bottom-0 z-40 w-[75vw] bg-bg-secondary border-l border-border shadow-xl flex flex-col">
@@ -145,6 +152,11 @@ export function DebugPanel({ onClose }: Readonly<{ onClose: () => void }>): Reac
               </span>
             )}
           </span>
+          {inFlightCount > 0 && (
+            <span className="text-xs text-text-muted" title="Total IPC calls in-flight (includes config, sync, and other non-SQL calls)">
+              <span className="text-accent">{String(inFlightCount)}</span> IPC in-flight
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -191,10 +203,10 @@ export function DebugPanel({ onClose }: Readonly<{ onClose: () => void }>): Reac
 
       {/* Query list */}
       <div className="flex-1 overflow-y-auto">
-        {reversed.length === 0 && (
+        {sorted.length === 0 && (
           <p className="text-xs text-text-muted text-center py-8">No queries yet</p>
         )}
-        {reversed.map(entry => (
+        {sorted.map(entry => (
           <QueryRow key={entry.id} entry={entry} />
         ))}
       </div>
