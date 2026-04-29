@@ -110,6 +110,7 @@ export function ExplorerView(): React.JSX.Element {
   const rowsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const overviewReqIdRef = useRef(0);
   const rowsReqIdRef = useRef(0);
+  const prefsLoadedRef = useRef(false);
 
   useEffect(() => {
     // Store ALL dims (not just enabled). The filter bar normally hides
@@ -121,29 +122,56 @@ export function ExplorerView(): React.JSX.Element {
     api.getExplorerPreferences().then(prefs => {
       setHiddenColumns(prefs.hiddenColumns);
       setColumnOrder(prefs.columnOrder);
+      if (prefs.lastUsedDateRange !== undefined) {
+        setDateRange(prefs.lastUsedDateRange);
+      }
+      if (prefs.lastUsedGranularity !== undefined) {
+        setGranularity(prefs.lastUsedGranularity);
+      }
+      prefsLoadedRef.current = true;
     }).catch(() => {
       setHiddenColumns([]);
       setColumnOrder([]);
+      prefsLoadedRef.current = true;
     });
   }, [api]);
 
-  // Persist column visibility / order on change. Fire-and-forget — the UI
-  // already reflects the new state locally, so a write failure just means
-  // the preference won't survive a reload (rare edge case, not worth
-  // surfacing). One helper keeps both fields in sync on every save.
-  function saveColumnPrefs(hidden: readonly string[], order: readonly string[]) {
-    api.saveExplorerPreferences({ hiddenColumns: hidden, columnOrder: order }).catch(() => undefined);
+  // Persist all preferences on change. Fire-and-forget — the UI already
+  // reflects the new state locally, so a write failure just means the
+  // preference won't survive a reload (rare edge case, not worth surfacing).
+  // One helper keeps all fields in sync on every save.
+  function saveAllPrefs(
+    hidden: readonly string[],
+    order: readonly string[],
+    range: DateRange,
+    gran: Granularity,
+  ) {
+    api.saveExplorerPreferences({
+      hiddenColumns: hidden,
+      columnOrder: order,
+      lastUsedDateRange: range,
+      lastUsedGranularity: gran,
+    }).catch(() => undefined);
   }
 
   function updateHiddenColumns(next: readonly string[]) {
     setHiddenColumns(next);
-    saveColumnPrefs(next, columnOrder);
+    saveAllPrefs(next, columnOrder, dateRange, granularity);
   }
 
   function updateColumnOrder(next: readonly string[]) {
     setColumnOrder(next);
-    saveColumnPrefs(hiddenColumns, next);
+    saveAllPrefs(hiddenColumns, next, dateRange, granularity);
   }
+
+  // Save date range / granularity whenever they change. Skip saves until
+  // after preferences have loaded — the prefsLoadedRef flag is set in the
+  // mount effect once the initial load completes (or fails). This prevents
+  // redundant writes when restoring persisted values on mount.
+  useEffect(() => {
+    if (!prefsLoadedRef.current) return;
+    saveAllPrefs(hiddenColumns, columnOrder, dateRange, granularity);
+  }, [dateRange, granularity]);
 
   // Back-off from a metric / perspective the CUR doesn't support. Happens
   // when a user's CUR export drops the effective-cost or net-cost columns
