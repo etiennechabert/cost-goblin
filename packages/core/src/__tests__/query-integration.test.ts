@@ -155,7 +155,7 @@ describe('DuckDB query integration', () => {
       {
         groupBy: asDimensionId('service'),
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-        filters: { [asDimensionId('region')]: asTagValue('eu-central-1') },
+        filters: { [asDimensionId('region')]: [asTagValue('eu-central-1')] },
       },
       { dataDir: SYNTHETIC_DIR, dimensions },
     );
