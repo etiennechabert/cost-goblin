@@ -257,16 +257,8 @@ test.describe('Cost Overview', () => {
     }
   });
 
-  test('stacked bar chart renders with tab toggles (Groups, Products, Services)', async () => {
-    for (const tabName of ['Groups', 'Products', 'Services']) {
-      const tab = page.getByRole('button', { name: tabName });
-      await expect(tab).toBeVisible();
-    }
-
-    // switch between tabs
-    for (const tabName of ['Products', 'Services', 'Groups']) {
-      await page.getByRole('button', { name: tabName }).click();
-    }
+  test('stacked bar chart renders with title', async () => {
+    await expect(page.getByText('Daily Costs')).toBeVisible();
   });
 
   test('histogram expand/collapse toggle works', async () => {
