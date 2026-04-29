@@ -91,7 +91,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
         const minChartHeight = expanded ? 360 : 180;
         const ticks = [1, 0.75, 0.5, 0.25, 0];
         return (
-        <div className="relative flex-1" style={{ minHeight: `${String(minChartHeight)}px` }}>
+        <div className="relative flex-1 pb-5" style={{ minHeight: `${String(minChartHeight)}px` }}>
           {/* Y axis ticks */}
           <div className="absolute left-0 top-0 w-10 h-full">
             {ticks.map(pct => (
@@ -230,15 +230,19 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
           </div>
 
           {/* X axis */}
-          <div className="flex ml-12 mt-1" style={{ gap: '2px' }}>
+          <div className="relative ml-12 h-4 mt-1">
             {days.map((day, idx) => {
               const step = Math.max(1, Math.ceil(days.length / 7));
+              if (idx % step !== 0) return null;
+              const pct = days.length > 1 ? (idx / (days.length - 1)) * 100 : 0;
               return (
-              <div key={day.date} className="flex-1 min-w-0 text-center overflow-hidden">
-                {idx % step === 0 ? (
-                  <span className="text-[10px] text-text-muted whitespace-nowrap">{day.date.slice(5)}</span>
-                ) : null}
-              </div>
+                <span
+                  key={day.date}
+                  className="absolute text-[10px] text-text-muted whitespace-nowrap -translate-x-1/2"
+                  style={{ left: `${String(pct)}%` }}
+                >
+                  {day.date.slice(5)}
+                </span>
               );
             })}
           </div>
