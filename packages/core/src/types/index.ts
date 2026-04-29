@@ -58,6 +58,7 @@ export type {
   SavingsResult,
   SyncStatus,
   QueryState,
+  TagCoverageSnapshot,
 } from './query.js';
 
 export type { Dimension, CostApi, DataInventoryResult, DataTier, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress } from './api.js';
