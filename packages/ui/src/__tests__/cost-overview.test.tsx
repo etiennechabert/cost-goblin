@@ -6,15 +6,15 @@ import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostOverview } from '../views/cost-overview.js';
 
-function renderOverview() {
-  const api = new MockCostApi();
+function renderOverview(api?: MockCostApi) {
+  const mockApi = api ?? new MockCostApi();
   const user = userEvent.setup();
   return {
-    api,
+    api: mockApi,
     user,
     ...render(
       <PaletteProvider>
-        <CostApiProvider value={api}>
+        <CostApiProvider value={mockApi}>
           <CostOverview />
         </CostApiProvider>
       </PaletteProvider>,
@@ -61,6 +61,52 @@ describe('CostOverview', () => {
 
     await waitFor(() => {
       expect(queryCostsSpy.mock.calls.length).toBeGreaterThan(initialCallCount);
+    });
+  });
+
+  it('shows no filter bar when dimensions are empty', async () => {
+    const api = MockCostApi.withEmptyData();
+    renderOverview(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).toBeNull();
+    });
+    expect(screen.queryByText('Filters')).toBeNull();
+  });
+
+  it('renders widgets with empty data', async () => {
+    const api = MockCostApi.withEmptyData();
+    renderOverview(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).toBeNull();
+    });
+    expect(screen.getByText('Cost Overview')).toBeDefined();
+  });
+
+  it('renders view header with empty data', async () => {
+    const api = MockCostApi.withEmptyData();
+    renderOverview(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).toBeNull();
+    });
+    expect(screen.getByText('Cost Overview')).toBeDefined();
+    expect(screen.getByText('Cloud spending visibility')).toBeDefined();
+  });
+
+  it('displays date range picker even with empty data', async () => {
+    const api = MockCostApi.withEmptyData();
+    renderOverview(api);
+    await waitFor(() => {
+      expect(screen.getByText('Cost Overview')).toBeDefined();
+    });
+    const buttons = screen.getAllByText('30 days');
+    expect(buttons.length).toBeGreaterThan(0);
+  });
+
+  it('shows loading indicator on initial render', async () => {
+    renderOverview();
+    expect(screen.getByText('Loading...')).toBeDefined();
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).toBeNull();
     });
   });
 });
