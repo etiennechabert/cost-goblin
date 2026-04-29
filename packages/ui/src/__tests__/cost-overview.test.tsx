@@ -130,4 +130,35 @@ describe('CostOverview', () => {
     expect(screen.getByText('Products')).toBeDefined();
     expect(screen.getByText('Services')).toBeDefined();
   });
+
+  it('renders correctly with zero-cost entities', async () => {
+    const api = MockCostApi.withZeroCostEntities();
+    renderOverview(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).toBeNull();
+    });
+    expect(screen.getByText('Cost Overview')).toBeDefined();
+    expect(screen.getByText('Total Cost')).toBeDefined();
+  });
+
+  it('displays zero total cost with zero-cost entities', async () => {
+    const api = MockCostApi.withZeroCostEntities();
+    renderOverview(api);
+    await waitFor(() => {
+      expect(screen.getByText('Total Cost')).toBeDefined();
+    });
+    const zeroValues = screen.getAllByText('$0.00');
+    expect(zeroValues.length).toBeGreaterThan(0);
+  });
+
+  it('renders daily costs chart with zero-cost entities', async () => {
+    const api = MockCostApi.withZeroCostEntities();
+    renderOverview(api);
+    await waitFor(() => {
+      expect(screen.getByText('Daily Costs')).toBeDefined();
+    });
+    expect(screen.getByText('Groups')).toBeDefined();
+    expect(screen.getByText('Products')).toBeDefined();
+    expect(screen.getByText('Services')).toBeDefined();
+  });
 });

@@ -64,4 +64,34 @@ describe('CostTrends', () => {
     expect(screen.queryByText('Current')).toBeNull();
     expect(screen.queryByText('Previous')).toBeNull();
   });
+
+  it('renders header with zero-cost entities', async () => {
+    const api = MockCostApi.withZeroCostEntities();
+    renderTrends(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading trends...')).toBeNull();
+    });
+    expect(screen.getByText('Cost Trends')).toBeDefined();
+    expect(screen.getByText('Period-over-period comparison')).toBeDefined();
+  });
+
+  it('does not render table headers with zero-cost entities', async () => {
+    const api = MockCostApi.withZeroCostEntities();
+    renderTrends(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading trends...')).toBeNull();
+    });
+    expect(screen.queryByText('Entity')).toBeNull();
+    expect(screen.queryByText('Current')).toBeNull();
+    expect(screen.queryByText('Previous')).toBeNull();
+  });
+
+  it('shows loading indicator before displaying zero-cost entities', async () => {
+    const api = MockCostApi.withZeroCostEntities();
+    renderTrends(api);
+    expect(screen.getByText('Loading trends...')).toBeDefined();
+    await waitFor(() => {
+      expect(screen.queryByText('Loading trends...')).toBeNull();
+    });
+  });
 });

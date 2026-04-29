@@ -270,6 +270,36 @@ const longNameEntityDetailResult: EntityDetailResult = {
   ],
 };
 
+const zeroCostResult: CostResult = {
+  rows: [
+    {
+      entity: asEntityRef('platform'),
+      totalCost: asDollars(0),
+      serviceCosts: {},
+    },
+    {
+      entity: asEntityRef('data'),
+      totalCost: asDollars(0),
+      serviceCosts: {},
+    },
+    {
+      entity: asEntityRef('growth'),
+      totalCost: asDollars(0),
+      serviceCosts: {},
+    },
+  ],
+  totalCost: asDollars(0),
+  topServices: [],
+  dateRange: { start: asDateString('2026-03-01'), end: asDateString('2026-03-31') },
+};
+
+const zeroCostTrendResult: TrendResult = {
+  increases: [],
+  savings: [],
+  totalIncrease: asDollars(0),
+  totalSavings: asDollars(0),
+};
+
 export class MockCostApi implements CostApi {
   private readonly errorMode: ErrorMode;
   private readonly customErrors: Partial<Record<keyof CostApi, Error>>;
@@ -310,6 +340,10 @@ export class MockCostApi implements CostApi {
     return new MockCostApi({ errorMode: 'long-names' });
   }
 
+  static withZeroCostEntities(): MockCostApi {
+    return new MockCostApi({ errorMode: 'zero-cost' });
+  }
+
   private checkError(method: keyof CostApi): void {
     const customError = this.customErrors[method];
     if (customError !== undefined) {
@@ -332,6 +366,9 @@ export class MockCostApi implements CostApi {
     }
     if (this.errorMode === 'long-names') {
       return Promise.resolve(longNameCostResult);
+    }
+    if (this.errorMode === 'zero-cost') {
+      return Promise.resolve(zeroCostResult);
     }
     return Promise.resolve(costResult);
   }
@@ -366,6 +403,26 @@ export class MockCostApi implements CostApi {
         totalCost: asDollars(days.reduce((s, d) => s + d.total, 0)),
       });
     }
+    if (this.errorMode === 'zero-cost') {
+      const days = Array.from({ length: 30 }, (_, i) => {
+        const d = new Date(2026, 2, i + 1);
+        const date = d.toISOString().slice(0, 10);
+        return {
+          date: asDateString(date),
+          total: asDollars(0),
+          breakdown: {
+            platform: asDollars(0),
+            data: asDollars(0),
+            growth: asDollars(0),
+          },
+        };
+      });
+      return Promise.resolve({
+        days,
+        groups: ['platform', 'data', 'growth'],
+        totalCost: asDollars(0),
+      });
+    }
     const days = Array.from({ length: 30 }, (_, i) => {
       const d = new Date(2026, 2, i + 1);
       const date = d.toISOString().slice(0, 10);
@@ -395,6 +452,9 @@ export class MockCostApi implements CostApi {
         totalIncrease: asDollars(0),
         totalSavings: asDollars(0),
       });
+    }
+    if (this.errorMode === 'zero-cost') {
+      return Promise.resolve(zeroCostTrendResult);
     }
     return Promise.resolve(trendResult);
   }
@@ -824,7 +884,7 @@ export class MockCostApi implements CostApi {
   }
 }
 
-type ErrorMode = 'none' | 'network' | 'empty' | 'long-names';
+type ErrorMode = 'none' | 'network' | 'empty' | 'long-names' | 'zero-cost';
 
 interface MockCostApiOptions {
   errorMode?: ErrorMode;
