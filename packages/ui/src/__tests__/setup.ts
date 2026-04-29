@@ -7,6 +7,8 @@ globalThis.ResizeObserver = class ResizeObserver {
   disconnect() { /* noop */ }
 };
 
+Element.prototype.scrollIntoView = () => { /* noop */ };
+
 afterEach(() => {
   cleanup();
 });

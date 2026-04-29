@@ -27,9 +27,11 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
   const [openDimId, setOpenDimId] = useState<DimensionId | null>(null);
   const [dropdown, setDropdown] = useState<DropdownState>({ status: 'closed' });
   const [search, setSearch] = useState('');
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const [labelMap, setLabelMap] = useState<Record<string, string>>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef(0);
+  const itemRefs = useRef(new Map<number, HTMLButtonElement>());
 
   const hasActiveFilters = Object.keys(filters).length > 0;
 
@@ -39,11 +41,25 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
         setOpenDimId(null);
         setDropdown({ status: 'closed' });
         setSearch('');
+        setHighlightedIndex(-1);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => { document.removeEventListener('mousedown', handleClickOutside); };
   }, []);
+
+  useEffect(() => {
+    setHighlightedIndex(-1);
+  }, [search]);
+
+  useEffect(() => {
+    if (highlightedIndex >= 0) {
+      const item = itemRefs.current.get(highlightedIndex);
+      if (item !== undefined) {
+        item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+  }, [highlightedIndex]);
 
   function withoutFilter(dimId: DimensionId): FilterMap {
     const next: Partial<Record<DimensionId, ReturnType<typeof asTagValue>>> = {};
@@ -61,11 +77,13 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
       setOpenDimId(null);
       setDropdown({ status: 'closed' });
       setSearch('');
+      setHighlightedIndex(-1);
       return;
     }
 
     setOpenDimId(dimId);
     setSearch('');
+    setHighlightedIndex(-1);
     setDropdown({ status: 'loading' });
 
     const filtersWithoutThis = withoutFilter(dimId);
@@ -106,6 +124,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
     setOpenDimId(null);
     setDropdown({ status: 'closed' });
     setSearch('');
+    setHighlightedIndex(-1);
   }
 
   function handleClearAll() {
@@ -170,6 +189,49 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                         setOpenDimId(null);
                         setDropdown({ status: 'closed' });
                         setSearch('');
+                        setHighlightedIndex(-1);
+                        return;
+                      }
+
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setHighlightedIndex((prev) => {
+                          const next = prev + 1;
+                          if (next >= filteredValues.length) return 0;
+                          return next;
+                        });
+                        return;
+                      }
+
+                      if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setHighlightedIndex((prev) => {
+                          const next = prev - 1;
+                          if (next < 0) return filteredValues.length - 1;
+                          return next;
+                        });
+                        return;
+                      }
+
+                      if (e.key === 'Home') {
+                        e.preventDefault();
+                        setHighlightedIndex(0);
+                        return;
+                      }
+
+                      if (e.key === 'End') {
+                        e.preventDefault();
+                        setHighlightedIndex(filteredValues.length - 1);
+                        return;
+                      }
+
+                      if (e.key === 'Enter' && highlightedIndex >= 0 && highlightedIndex < filteredValues.length) {
+                        e.preventDefault();
+                        const item = filteredValues[highlightedIndex];
+                        if (item !== undefined) {
+                          handleSelectValue(dimId, item.value, item.label);
+                        }
+                        return;
                       }
                     }}
                     className="w-full rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
@@ -196,17 +258,30 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                     </div>
                   )}
 
-                  {dropdown.status === 'ready' && filteredValues.map((item) => (
-                    <button
-                      key={item.value}
-                      type="button"
-                      onClick={() => { handleSelectValue(dimId, item.value, item.label); }}
-                      className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs text-text-primary hover:bg-bg-tertiary"
-                    >
-                      <span className="truncate">{item.label}</span>
-                      <span className="ml-2 shrink-0 text-text-muted">{formatDollars(item.count)}</span>
-                    </button>
-                  ))}
+                  {dropdown.status === 'ready' && filteredValues.map((item, index) => {
+                    const isHighlighted = index === highlightedIndex;
+                    return (
+                      <button
+                        key={item.value}
+                        ref={(el) => {
+                          if (el !== null) {
+                            itemRefs.current.set(index, el);
+                          } else {
+                            itemRefs.current.delete(index);
+                          }
+                        }}
+                        type="button"
+                        onClick={() => { handleSelectValue(dimId, item.value, item.label); }}
+                        className={[
+                          'flex w-full items-center justify-between px-3 py-1.5 text-left text-xs text-text-primary',
+                          isHighlighted ? 'bg-accent-muted' : 'hover:bg-bg-tertiary',
+                        ].join(' ')}
+                      >
+                        <span className="truncate">{item.label}</span>
+                        <span className="ml-2 shrink-0 text-text-muted">{formatDollars(item.count)}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
