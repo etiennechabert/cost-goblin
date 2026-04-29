@@ -14,6 +14,7 @@ export { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts.js';
 export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/card.js';
 export { Button, buttonVariants } from './components/ui/button.js';
 export type { ButtonProps } from './components/ui/button.js';
+export { Dialog, DialogTrigger, DialogPortal, DialogClose, DialogOverlay, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from './components/ui/dialog.js';
 
 export { ErrorBoundary } from './components/error-boundary.js';
 export { BubbleChart } from './components/bubble-chart.js';
@@ -36,6 +37,8 @@ export { TreemapChart } from './components/treemap-chart.js';
 export { HeatmapChart } from './components/heatmap-chart.js';
 export { FilterActiveBanner } from './components/filter-active-banner.js';
 export { CoinRainLoader } from './components/coin-rain-loader.js';
+export { CommandPalette } from './components/command-palette.js';
+export type { CommandPaletteAction } from './components/command-palette.js';
 export { useCostFocus, useCostFocusDispatch, useCostFocusReducer, CostFocusProvider, CostFocusDispatchProvider } from './hooks/use-cost-focus.js';
 
 export { WIDGET_REGISTRY, WIDGET_CATALOG } from './widgets/registry.js';
