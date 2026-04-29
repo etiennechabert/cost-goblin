@@ -93,7 +93,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
         return (
         <div className="relative flex-1 pb-5" style={{ minHeight: `${String(minChartHeight)}px` }}>
           {/* Y axis ticks */}
-          <div className="absolute left-0 top-0 w-10 h-full">
+          <div className="absolute left-0 top-0 bottom-5 w-10">
             {ticks.map(pct => (
               <div
                 key={pct}
@@ -106,7 +106,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
           </div>
 
           {/* Grid lines */}
-          <div className="absolute left-12 right-0 top-0 h-full">
+          <div className="absolute left-12 right-0 top-0 bottom-5">
             {ticks.map(pct => (
               <div
                 key={pct}
@@ -177,7 +177,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             );
           })()}
 
-          <div className="flex items-end ml-12 relative z-10 h-full" style={{ gap: '2px' }}>
+          <div className="absolute left-12 right-0 top-0 bottom-5 flex items-end z-10" style={{ gap: '2px' }}>
             {days.map((day) => {
               const barPct = maxCost > 0 ? (day.total / maxCost) * 100 : 0;
               const segments = breakdownKeys
