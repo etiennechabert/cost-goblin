@@ -277,6 +277,7 @@ export function registerSetupHandlers(app: AppContext): void {
         label: 'Operation',
         field: 'operation',
         description: 'API operation billed for (RunInstances, GetObject). Useful for API-level cost attribution.',
+        enabled: false,
       },
     ];
 
