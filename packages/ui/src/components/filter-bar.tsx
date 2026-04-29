@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Dimension, DimensionId, FilterMap } from '@costgoblin/core/browser';
+import type { Dimension, DimensionId, FilterMap, TagValue } from '@costgoblin/core/browser';
 import { asTagValue } from '@costgoblin/core/browser';
 import { getDimensionId } from '../lib/dimensions.js';
 import { formatDollars } from './format.js';
@@ -27,11 +27,10 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
   const [openDimId, setOpenDimId] = useState<DimensionId | null>(null);
   const [dropdown, setDropdown] = useState<DropdownState>({ status: 'closed' });
   const [search, setSearch] = useState('');
-  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const [draft, setDraft] = useState<readonly string[]>([]);
   const [labelMap, setLabelMap] = useState<Record<string, string>>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef(0);
-  const itemRefs = useRef(new Map<number, HTMLButtonElement>());
 
   const hasActiveFilters = Object.keys(filters).length > 0;
 
@@ -41,28 +40,14 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
         setOpenDimId(null);
         setDropdown({ status: 'closed' });
         setSearch('');
-        setHighlightedIndex(-1);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => { document.removeEventListener('mousedown', handleClickOutside); };
   }, []);
 
-  useEffect(() => {
-    setHighlightedIndex(-1);
-  }, [search]);
-
-  useEffect(() => {
-    if (highlightedIndex >= 0) {
-      const item = itemRefs.current.get(highlightedIndex);
-      if (item !== undefined) {
-        item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      }
-    }
-  }, [highlightedIndex]);
-
   function withoutFilter(dimId: DimensionId): FilterMap {
-    const next: Partial<Record<DimensionId, ReturnType<typeof asTagValue>>> = {};
+    const next: Partial<Record<DimensionId, readonly TagValue[]>> = {};
     for (const dim of dimensions) {
       const id = getDimensionId(dim);
       if (id === dimId) continue;
@@ -77,25 +62,27 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
       setOpenDimId(null);
       setDropdown({ status: 'closed' });
       setSearch('');
-      setHighlightedIndex(-1);
       return;
     }
 
     setOpenDimId(dimId);
     setSearch('');
-    setHighlightedIndex(-1);
+    setDraft([...(filters[dimId] ?? [])]);
     setDropdown({ status: 'loading' });
 
     const filtersWithoutThis = withoutFilter(dimId);
     const thisRequestId = ++requestIdRef.current;
 
+    const noActiveFilter = filters[dimId] === undefined || filters[dimId].length === 0;
     getFilterValues(dimId, filtersWithoutThis).then(
       (values) => {
         if (thisRequestId !== requestIdRef.current) return;
-        setDropdown({
-          status: 'ready',
-          values: [...values].sort((a, b) => b.count - a.count),
-        });
+        const newLabels: Record<string, string> = {};
+        for (const v of values) newLabels[v.value] = v.label;
+        setLabelMap(prev => ({ ...prev, ...newLabels }));
+        const sorted = [...values].sort((a, b) => b.count - a.count);
+        if (noActiveFilter) setDraft(sorted.map(v => v.value));
+        setDropdown({ status: 'ready', values: sorted });
       },
       (err: unknown) => {
         if (thisRequestId !== requestIdRef.current) return;
@@ -118,24 +105,51 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
     onFilterChange(withoutFilter(dimId));
   }
 
-  function handleSelectValue(dimId: DimensionId, value: string, label: string) {
-    setLabelMap(prev => ({ ...prev, [value]: label }));
-    onFilterChange({ ...filters, [dimId]: asTagValue(value) });
+  function handleApply(dimId: DimensionId) {
+    if (draft.length === 0) {
+      onFilterChange(withoutFilter(dimId));
+    } else {
+      onFilterChange({ ...filters, [dimId]: draft.map(v => asTagValue(v)) });
+    }
     setOpenDimId(null);
     setDropdown({ status: 'closed' });
     setSearch('');
-    setHighlightedIndex(-1);
+  }
+
+  function handleClose() {
+    setOpenDimId(null);
+    setDropdown({ status: 'closed' });
+    setSearch('');
+  }
+
+  function toggleValue(value: string) {
+    setDraft(prev => prev.includes(value) ? prev.filter(v => v !== value) : [...prev, value]);
+  }
+
+  function handleOnly(value: string) {
+    setDraft([value]);
   }
 
   function handleClearAll() {
     onFilterChange({});
   }
 
+  function chipLabel(dim: Dimension, active: readonly TagValue[] | undefined): string {
+    if (active === undefined || active.length === 0) return dim.label;
+    if (active.length === 1) {
+      const first = active[0];
+      if (first === undefined) return dim.label;
+      return `${dim.label}: ${labelMap[first] ?? first}`;
+    }
+    return `${dim.label} \u00b7 ${String(active.length)}`;
+  }
+
   return (
     <div ref={containerRef} className="relative flex flex-wrap items-center gap-2">
       {dimensions.map((dim) => {
         const dimId = getDimensionId(dim);
-        const activeValue = filters[dimId];
+        const activeValues = filters[dimId];
+        const isActive = activeValues !== undefined && activeValues.length > 0;
         const isOpen = openDimId === dimId;
 
         const filteredValues =
@@ -150,7 +164,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
             <div
               className={[
                 'flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                activeValue === undefined
+                !isActive
                   ? 'border-border bg-bg-tertiary/30 text-text-secondary hover:border-border hover:text-text-primary'
                   : 'border-accent bg-accent-muted text-accent',
               ].join(' ')}
@@ -160,9 +174,9 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                 onClick={() => { handleChipClick(dimId); }}
                 className="bg-transparent border-none p-0 text-inherit font-inherit cursor-pointer"
               >
-                {activeValue === undefined ? dim.label : `${dim.label}: ${labelMap[activeValue] ?? activeValue}`}
+                {chipLabel(dim, activeValues)}
               </button>
-              {activeValue !== undefined && (
+              {isActive && (
                 <button
                   type="button"
                   aria-label={`Clear ${dim.label} filter`}
@@ -176,7 +190,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
             </div>
 
             {isOpen && (
-              <div className="absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-border bg-bg-secondary shadow-lg">
+              <div className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-border bg-bg-secondary shadow-lg">
                 <div className="border-b border-border p-2">
                   <input
                     autoFocus
@@ -185,54 +199,8 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                     placeholder={`Search ${dim.label}…`}
                     onChange={(e) => { setSearch(e.target.value); }}
                     onKeyDown={(e) => {
-                      if (e.key === 'Escape') {
-                        setOpenDimId(null);
-                        setDropdown({ status: 'closed' });
-                        setSearch('');
-                        setHighlightedIndex(-1);
-                        return;
-                      }
-
-                      if (e.key === 'ArrowDown') {
-                        e.preventDefault();
-                        setHighlightedIndex((prev) => {
-                          const next = prev + 1;
-                          if (next >= filteredValues.length) return 0;
-                          return next;
-                        });
-                        return;
-                      }
-
-                      if (e.key === 'ArrowUp') {
-                        e.preventDefault();
-                        setHighlightedIndex((prev) => {
-                          const next = prev - 1;
-                          if (next < 0) return filteredValues.length - 1;
-                          return next;
-                        });
-                        return;
-                      }
-
-                      if (e.key === 'Home') {
-                        e.preventDefault();
-                        setHighlightedIndex(0);
-                        return;
-                      }
-
-                      if (e.key === 'End') {
-                        e.preventDefault();
-                        setHighlightedIndex(filteredValues.length - 1);
-                        return;
-                      }
-
-                      if (e.key === 'Enter' && highlightedIndex >= 0 && highlightedIndex < filteredValues.length) {
-                        e.preventDefault();
-                        const item = filteredValues[highlightedIndex];
-                        if (item !== undefined) {
-                          handleSelectValue(dimId, item.value, item.label);
-                        }
-                        return;
-                      }
+                      if (e.key === 'Escape') handleClose();
+                      if (e.key === 'Enter') handleApply(dimId);
                     }}
                     className="w-full rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
                   />
@@ -258,30 +226,75 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                     </div>
                   )}
 
-                  {dropdown.status === 'ready' && filteredValues.map((item, index) => {
-                    const isHighlighted = index === highlightedIndex;
+                  {dropdown.status === 'ready' && filteredValues.map((item) => {
+                    const checked = draft.includes(item.value);
                     return (
-                      <button
+                      <label
                         key={item.value}
-                        ref={(el) => {
-                          if (el !== null) {
-                            itemRefs.current.set(index, el);
-                          } else {
-                            itemRefs.current.delete(index);
-                          }
-                        }}
-                        type="button"
-                        onClick={() => { handleSelectValue(dimId, item.value, item.label); }}
                         className={[
-                          'flex w-full items-center justify-between px-3 py-1.5 text-left text-xs text-text-primary',
-                          isHighlighted ? 'bg-accent-muted' : 'hover:bg-bg-tertiary',
+                          'group flex items-center justify-between gap-2 px-3 py-1.5 text-xs cursor-pointer select-none',
+                          checked ? 'bg-accent-muted/50 text-text-primary' : 'text-text-secondary hover:bg-bg-tertiary',
                         ].join(' ')}
                       >
-                        <span className="truncate">{item.label}</span>
-                        <span className="ml-2 shrink-0 text-text-muted">{formatDollars(item.count)}</span>
-                      </button>
+                        <span className="flex items-center gap-2 min-w-0 flex-1">
+                          <input
+                            type="checkbox"
+                            className="accent-accent shrink-0"
+                            checked={checked}
+                            onChange={() => { toggleValue(item.value); }}
+                          />
+                          <span className="truncate">{item.label}</span>
+                        </span>
+                        <span className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleOnly(item.value); }}
+                            className="text-text-muted hover:text-accent opacity-0 group-hover:opacity-100 text-[10px] font-medium uppercase tracking-wide"
+                          >
+                            only
+                          </button>
+                          <span className="text-text-muted tabular-nums">{formatDollars(item.count)}</span>
+                        </span>
+                      </label>
                     );
                   })}
+                </div>
+
+                <div className="flex items-center justify-between border-t border-border p-2 gap-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setDraft([]); }}
+                      className="text-xs text-text-secondary hover:text-accent"
+                      disabled={draft.length === 0}
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setDraft(filteredValues.map(v => v.value)); }}
+                      className="text-xs text-text-secondary hover:text-accent"
+                      disabled={filteredValues.length === 0 || draft.length === filteredValues.length}
+                    >
+                      All
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleClose}
+                      className="rounded-md px-2 py-1 text-xs text-text-secondary hover:bg-bg-tertiary"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { handleApply(dimId); }}
+                      className="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-bg-primary hover:bg-accent/90"
+                    >
+                      Apply
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

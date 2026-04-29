@@ -48,7 +48,7 @@ describe('buildCostQuery', () => {
       {
         groupBy: asDimensionId('service'),
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-        filters: { [asDimensionId('account')]: asTagValue('111111111111') },
+        filters: { [asDimensionId('account')]: [asTagValue('111111111111')] },
       },
       { dataDir: '/data', dimensions },
     );

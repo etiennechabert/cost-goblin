@@ -112,19 +112,35 @@ function buildFilterClauses(
   qb: QueryBuilder,
 ): string[] {
   const clauses: string[] = [];
-  for (const [dimId, value] of Object.entries(filters)) {
-    if (value === undefined) continue;
+  for (const [dimId, values] of Object.entries(filters)) {
+    if (values === undefined || values.length === 0) continue;
     const resolved = resolveField(dimId as DimensionId, dimensions);
     if (resolved.rawField === 'account_id' && accountReverseMap !== undefined) {
-      const ids = accountReverseMap.get(String(value));
-      if (ids !== undefined && ids.length > 0) {
-        const list = buildSqlList(ids, qb);
+      const allIds = new Set<string>();
+      let usedReverse = false;
+      for (const v of values) {
+        const ids = accountReverseMap.get(String(v));
+        if (ids !== undefined && ids.length > 0) {
+          for (const id of ids) allIds.add(id);
+          usedReverse = true;
+        } else {
+          allIds.add(String(v));
+        }
+      }
+      if (usedReverse) {
+        const list = buildSqlList([...allIds], qb);
         clauses.push(`${resolved.rawField} IN (${list})`);
         continue;
       }
     }
-    const placeholder = qb.addParam(String(value));
-    clauses.push(`${resolved.fieldExpr} = ${placeholder}`);
+    const first = values[0];
+    if (values.length === 1 && first !== undefined) {
+      const placeholder = qb.addParam(String(first));
+      clauses.push(`${resolved.fieldExpr} = ${placeholder}`);
+    } else {
+      const list = buildSqlList(values.map(v => String(v)), qb);
+      clauses.push(`${resolved.fieldExpr} IN (${list})`);
+    }
   }
   return clauses;
 }

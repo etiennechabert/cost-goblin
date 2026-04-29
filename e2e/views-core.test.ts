@@ -198,11 +198,12 @@ test.describe('Cost Overview', () => {
       await expect(page.getByText('Loading…')).toBeHidden({ timeout: 10000 });
     } catch { /* may not appear */ }
 
-    const dropdownItems = dropdown.locator('button');
-    const itemCount = await dropdownItems.count();
+    // Multi-select: values are pre-checked. Use "Only" on the first item to filter to just that value.
+    const onlyButtons = dropdown.locator('button', { hasText: 'only' });
+    const onlyCount = await onlyButtons.count();
 
-    if (itemCount > 0) {
-      await dropdownItems.first().click();
+    if (onlyCount > 0) {
+      await onlyButtons.first().click();
       await waitForQuerySettle(page);
 
       // "Clear all" button should appear

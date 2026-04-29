@@ -28,7 +28,7 @@ describe('SQL Injection Prevention', () => {
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: asTagValue("'; DROP TABLE users; --") },
+          filters: { [asDimensionId('account')]: [asTagValue("'; DROP TABLE users; --")] },
         },
         { dataDir: '/data', dimensions },
       );
@@ -44,7 +44,7 @@ describe('SQL Injection Prevention', () => {
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: asTagValue('test"value"with"quotes') },
+          filters: { [asDimensionId('account')]: [asTagValue('test"value"with"quotes')] },
         },
         { dataDir: '/data', dimensions },
       );
@@ -57,7 +57,7 @@ describe('SQL Injection Prevention', () => {
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: asTagValue('test--comment') },
+          filters: { [asDimensionId('account')]: [asTagValue('test--comment')] },
         },
         { dataDir: '/data', dimensions },
       );
@@ -70,7 +70,7 @@ describe('SQL Injection Prevention', () => {
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: asTagValue('test\nvalue\nwith\nnewlines') },
+          filters: { [asDimensionId('account')]: [asTagValue('test\nvalue\nwith\nnewlines')] },
         },
         { dataDir: '/data', dimensions },
       );
@@ -83,7 +83,7 @@ describe('SQL Injection Prevention', () => {
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('service')]: asTagValue("' UNION SELECT password FROM users --") },
+          filters: { [asDimensionId('service')]: [asTagValue("' UNION SELECT password FROM users --")] },
         },
         { dataDir: '/data', dimensions },
       );
@@ -96,7 +96,7 @@ describe('SQL Injection Prevention', () => {
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('service')]: asTagValue("test'; DELETE FROM accounts; SELECT '") },
+          filters: { [asDimensionId('service')]: [asTagValue("test'; DELETE FROM accounts; SELECT '")] },
         },
         { dataDir: '/data', dimensions },
       );
@@ -216,8 +216,8 @@ describe('SQL Injection Prevention', () => {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString("2026-01-01' OR 1=1 --"), end: asDateString("2026-01-31'; DROP TABLE x; --") },
           filters: {
-            [asDimensionId('account')]: asTagValue("'; DELETE FROM users; --"),
-            [asDimensionId('service')]: asTagValue("' UNION SELECT * FROM secrets --"),
+            [asDimensionId('account')]: [asTagValue("'; DELETE FROM users; --")],
+            [asDimensionId('service')]: [asTagValue("' UNION SELECT * FROM secrets --")],
           },
         },
         { dataDir: '/data', dimensions },
@@ -240,8 +240,8 @@ describe('SQL Injection Prevention', () => {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: {
-            [asDimensionId('account')]: asTagValue("malicious'value"),
-            [asDimensionId('service')]: asTagValue("another'injection"),
+            [asDimensionId('account')]: [asTagValue("malicious'value")],
+            [asDimensionId('service')]: [asTagValue("another'injection")],
           },
         },
         { dataDir: '/data', dimensions },
@@ -287,7 +287,7 @@ describe('SQL Injection Prevention', () => {
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: asTagValue('test\x00value') },
+          filters: { [asDimensionId('account')]: [asTagValue('test\x00value')] },
         },
         { dataDir: '/data', dimensions },
       );
@@ -299,7 +299,7 @@ describe('SQL Injection Prevention', () => {
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: asTagValue('test-值-🔒-value') },
+          filters: { [asDimensionId('account')]: [asTagValue('test-值-🔒-value')] },
         },
         { dataDir: '/data', dimensions },
       );
@@ -311,7 +311,7 @@ describe('SQL Injection Prevention', () => {
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: asTagValue('test\\value\\with\\backslashes') },
+          filters: { [asDimensionId('account')]: [asTagValue('test\\value\\with\\backslashes')] },
         },
         { dataDir: '/data', dimensions },
       );
@@ -323,7 +323,7 @@ describe('SQL Injection Prevention', () => {
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: asTagValue('%malicious%') },
+          filters: { [asDimensionId('account')]: [asTagValue('%malicious%')] },
         },
         { dataDir: '/data', dimensions },
       );
@@ -335,7 +335,7 @@ describe('SQL Injection Prevention', () => {
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: asTagValue('') },
+          filters: { [asDimensionId('account')]: [asTagValue('')] },
         },
         { dataDir: '/data', dimensions },
       );
@@ -378,7 +378,7 @@ describe('SQL Injection Prevention', () => {
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('service')]: asTagValue("'; DROP TABLE x; SELECT '") },
+          filters: { [asDimensionId('service')]: [asTagValue("'; DROP TABLE x; SELECT '")] },
         },
         { dataDir: '/data', dimensions },
       );
@@ -400,8 +400,8 @@ describe('SQL Injection Prevention', () => {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-02-01'), end: asDateString('2026-02-28') },
           filters: {
-            [asDimensionId('account')]: asTagValue('test1'),
-            [asDimensionId('service')]: asTagValue('test2'),
+            [asDimensionId('account')]: [asTagValue('test1')],
+            [asDimensionId('service')]: [asTagValue('test2')],
           },
           deltaThreshold: asDollars(100),
           percentThreshold: 10,
@@ -429,7 +429,7 @@ describe('SQL Injection Prevention', () => {
       const result = buildNonResourceCostQuery(
         {
           dateRange: { start: asDateString("2026-01-01' OR 1=1 --"), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: asTagValue("'; DROP TABLE x; --") },
+          filters: { [asDimensionId('account')]: [asTagValue("'; DROP TABLE x; --")] },
           minCost: asDollars(0),
           tagDimension: asDimensionId('tag_org_team'),
         },
