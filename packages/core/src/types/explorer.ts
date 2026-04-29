@@ -145,6 +145,12 @@ export interface ExplorerPreferences {
    *  (e.g. a newly-added built-in, or a tag the user enabled after
    *  reordering) are appended afterwards in their default order. */
   readonly columnOrder: readonly string[];
+  /** Last date range the user selected. Persisted so the view opens with
+   *  the same range on the next session. */
+  readonly lastUsedDateRange?: DateRange;
+  /** Last granularity the user selected (`daily` or `hourly`). Persisted
+   *  so the view opens with the same granularity on the next session. */
+  readonly lastUsedGranularity?: Granularity;
 }
 
 export interface ExplorerFilterValuesParams {
