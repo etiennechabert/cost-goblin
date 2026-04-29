@@ -235,7 +235,9 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
               const step = Math.max(1, Math.ceil(days.length / 7));
               if (idx % step !== 0) return null;
               const frac = days.length > 1 ? idx / (days.length - 1) : 0;
-              const left = `calc(3rem + ${String(frac * 100)}% - ${String(frac * 3)}rem)`;
+              // Interpolate from Y axis edge (2.5rem) to right edge (100%).
+              // left = 2.5rem + frac * (100% - 2.5rem) = 2.5rem*(1-frac) + frac*100%
+              const left = `calc(${String((1 - frac) * 2.5)}rem + ${String(frac * 100)}%)`;
               const isFirst = idx === 0;
               const isLast = idx >= days.length - step;
               const align = isFirst ? '' : isLast ? '-translate-x-full' : '-translate-x-1/2';
