@@ -15,8 +15,8 @@ import { asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
 
 const DIMENSION_FALLBACK_CHAINS: ReadonlyMap<DimensionId, readonly DimensionId[]> = new Map([
-  [asDimensionId('service'), [asDimensionId('service_family'), asDimensionId('operation')]],
-  [asDimensionId('service_family'), [asDimensionId('service'), asDimensionId('operation')]],
+  [asDimensionId('service'), [asDimensionId('service_family'), asDimensionId('usage_type')]],
+  [asDimensionId('service_family'), [asDimensionId('service'), asDimensionId('usage_type')]],
 ]);
 
 // Fallback candidates are built-in CUR columns — always queryable regardless of enabled state.
