@@ -265,7 +265,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                     <button
                       type="button"
                       onClick={() => { setDraft([]); }}
-                      className="text-xs text-text-secondary hover:text-text-primary"
+                      className="text-xs text-text-secondary hover:text-accent"
                       disabled={draft.length === 0}
                     >
                       Clear
