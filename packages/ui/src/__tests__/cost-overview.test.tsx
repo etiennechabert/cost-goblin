@@ -109,4 +109,25 @@ describe('CostOverview', () => {
       expect(screen.queryByText('Loading...')).toBeNull();
     });
   });
+
+  it('renders correctly with very long entity names', async () => {
+    const api = MockCostApi.withLongEntityNames();
+    renderOverview(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).toBeNull();
+    });
+    expect(screen.getByText('Cost Overview')).toBeDefined();
+    expect(screen.getByText('Total Cost')).toBeDefined();
+  });
+
+  it('renders daily costs chart with very long entity names', async () => {
+    const api = MockCostApi.withLongEntityNames();
+    renderOverview(api);
+    await waitFor(() => {
+      expect(screen.getByText('Daily Costs')).toBeDefined();
+    });
+    expect(screen.getByText('Groups')).toBeDefined();
+    expect(screen.getByText('Products')).toBeDefined();
+    expect(screen.getByText('Services')).toBeDefined();
+  });
 });

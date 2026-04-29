@@ -188,6 +188,88 @@ const orgTree: OrgNode[] = [
   { name: 'infra', children: [{ name: 'networking' }, { name: 'security' }] },
 ];
 
+const longNameCostResult: CostResult = {
+  rows: [
+    {
+      entity: asEntityRef('enterprise-platform-infrastructure-orchestration-and-monitoring-system-v2'),
+      totalCost: asDollars(42_300.5),
+      serviceCosts: {
+        'Amazon Elastic Compute Cloud - Virtual Private Cloud Endpoint Service': asDollars(18_000),
+        'Amazon Relational Database Service Multi-AZ Deployment': asDollars(9_500),
+        'Amazon Simple Storage Service - Infrequent Access Tier': asDollars(6_200),
+        'AWS Lambda Edge Computing @ CloudFront Locations': asDollars(4_100),
+        'Amazon CloudFront Global Content Delivery Network Distribution': asDollars(4_500.5),
+      },
+    },
+    {
+      entity: asEntityRef('data-analytics-and-business-intelligence-processing-pipeline-infrastructure'),
+      totalCost: asDollars(31_750),
+      serviceCosts: {
+        'Amazon EC2': asDollars(10_000),
+        'Amazon RDS': asDollars(14_000),
+        'Amazon S3': asDollars(5_200),
+        'AWS Lambda': asDollars(1_500),
+        'Amazon CloudFront': asDollars(1_050),
+      },
+    },
+  ],
+  totalCost: asDollars(74_050.5),
+  topServices: [
+    'Amazon Elastic Compute Cloud - Virtual Private Cloud Endpoint Service',
+    'Amazon Relational Database Service Multi-AZ Deployment',
+    'Amazon Simple Storage Service - Infrequent Access Tier',
+  ],
+  dateRange: { start: asDateString('2026-03-01'), end: asDateString('2026-03-31') },
+};
+
+const longNameEntityDetailResult: EntityDetailResult = {
+  entity: asEntityRef('enterprise-platform-infrastructure-orchestration-and-monitoring-system-v2'),
+  totalCost: asDollars(42_300.5),
+  previousCost: asDollars(38_100),
+  percentChange: 11,
+  dailyCosts: [
+    {
+      date: asDateString('2026-03-29'),
+      cost: asDollars(1_380),
+      breakdown: {
+        'Amazon Elastic Compute Cloud - Virtual Private Cloud Endpoint Service': asDollars(580),
+        'Amazon Relational Database Service Multi-AZ Deployment': asDollars(310),
+      },
+      breakdownByAccount: {
+        'production-main-application-infrastructure-account': asDollars(900),
+        'production-secondary-disaster-recovery-account': asDollars(330),
+      },
+    },
+    {
+      date: asDateString('2026-03-30'),
+      cost: asDollars(1_420),
+      breakdown: {
+        'Amazon Elastic Compute Cloud - Virtual Private Cloud Endpoint Service': asDollars(600),
+        'Amazon Relational Database Service Multi-AZ Deployment': asDollars(320),
+      },
+      breakdownByAccount: {
+        'production-main-application-infrastructure-account': asDollars(930),
+        'production-secondary-disaster-recovery-account': asDollars(340),
+      },
+    },
+  ],
+  byAccount: [
+    { name: 'production-main-application-infrastructure-account-for-primary-workloads', cost: asDollars(28_000), percentage: 66.2 },
+    { name: 'production-secondary-disaster-recovery-and-backup-infrastructure-account', cost: asDollars(10_000), percentage: 23.6 },
+    { name: 'staging-environment-for-integration-and-performance-testing', cost: asDollars(4_300.5), percentage: 10.2 },
+  ],
+  byService: [
+    { name: 'Amazon Elastic Compute Cloud - Virtual Private Cloud Endpoint Service', cost: asDollars(18_000), percentage: 42.6 },
+    { name: 'Amazon Relational Database Service Multi-AZ Deployment', cost: asDollars(9_500), percentage: 22.5 },
+    { name: 'Amazon Simple Storage Service - Infrequent Access Tier', cost: asDollars(6_200), percentage: 14.7 },
+  ],
+  bySubEntity: [
+    { name: 'backend-microservices-orchestration-and-api-gateway-infrastructure', cost: asDollars(22_000), percentage: 52 },
+    { name: 'frontend-static-assets-and-content-delivery-network-distribution', cost: asDollars(12_000), percentage: 28.4 },
+    { name: 'shared-infrastructure-monitoring-logging-and-alerting-systems', cost: asDollars(8_300.5), percentage: 19.6 },
+  ],
+};
+
 export class MockCostApi implements CostApi {
   private readonly errorMode: ErrorMode;
   private readonly customErrors: Partial<Record<keyof CostApi, Error>>;
@@ -224,6 +306,10 @@ export class MockCostApi implements CostApi {
     return new MockCostApi({ customErrors: { queryCosts: error } });
   }
 
+  static withLongEntityNames(): MockCostApi {
+    return new MockCostApi({ errorMode: 'long-names' });
+  }
+
   private checkError(method: keyof CostApi): void {
     const customError = this.customErrors[method];
     if (customError !== undefined) {
@@ -244,6 +330,9 @@ export class MockCostApi implements CostApi {
         dateRange: { start: asDateString('2026-03-01'), end: asDateString('2026-03-31') },
       });
     }
+    if (this.errorMode === 'long-names') {
+      return Promise.resolve(longNameCostResult);
+    }
     return Promise.resolve(costResult);
   }
   queryDailyCosts(): Promise<DailyCostsResult> {
@@ -253,6 +342,28 @@ export class MockCostApi implements CostApi {
         days: [],
         groups: [],
         totalCost: asDollars(0),
+      });
+    }
+    if (this.errorMode === 'long-names') {
+      const days = Array.from({ length: 30 }, (_, i) => {
+        const d = new Date(2026, 2, i + 1);
+        const date = d.toISOString().slice(0, 10);
+        return {
+          date: asDateString(date),
+          total: asDollars(3000 + Math.random() * 2000),
+          breakdown: {
+            'enterprise-platform-infrastructure-orchestration-and-monitoring-system-v2': asDollars(1200 + Math.random() * 800),
+            'data-analytics-and-business-intelligence-processing-pipeline-infrastructure': asDollars(900 + Math.random() * 600),
+          },
+        };
+      });
+      return Promise.resolve({
+        days,
+        groups: [
+          'enterprise-platform-infrastructure-orchestration-and-monitoring-system-v2',
+          'data-analytics-and-business-intelligence-processing-pipeline-infrastructure',
+        ],
+        totalCost: asDollars(days.reduce((s, d) => s + d.total, 0)),
       });
     }
     const days = Array.from({ length: 30 }, (_, i) => {
@@ -332,6 +443,9 @@ export class MockCostApi implements CostApi {
         byService: [],
         bySubEntity: [],
       });
+    }
+    if (this.errorMode === 'long-names') {
+      return Promise.resolve(longNameEntityDetailResult);
     }
     return Promise.resolve(entityDetailResult);
   }
@@ -710,7 +824,7 @@ export class MockCostApi implements CostApi {
   }
 }
 
-type ErrorMode = 'none' | 'network' | 'empty';
+type ErrorMode = 'none' | 'network' | 'empty' | 'long-names';
 
 interface MockCostApiOptions {
   errorMode?: ErrorMode;

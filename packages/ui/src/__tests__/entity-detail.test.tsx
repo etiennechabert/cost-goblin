@@ -116,4 +116,34 @@ describe('EntityDetail', () => {
       expect(screen.queryByText('Loading...')).toBeNull();
     });
   });
+
+  it('renders correctly with very long entity name', async () => {
+    const api = MockCostApi.withLongEntityNames();
+    const onBack = vi.fn();
+    renderDetail({ api, onBack });
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).toBeNull();
+    });
+    expect(screen.getByText('platform')).toBeDefined();
+    expect(screen.getByRole('button', { name: /Back/i })).toBeDefined();
+  });
+
+  it('renders histogram with very long service labels', async () => {
+    const api = MockCostApi.withLongEntityNames();
+    renderDetail({ api });
+    await waitFor(() => {
+      expect(screen.getByText('Daily Costs')).toBeDefined();
+    });
+    expect(screen.getByRole('button', { name: 'Groups' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Products' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Services' })).toBeDefined();
+  });
+
+  it('export CSV button works with very long labels', async () => {
+    const api = MockCostApi.withLongEntityNames();
+    renderDetail({ api });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Export CSV/i })).toBeDefined();
+    });
+  });
 });
