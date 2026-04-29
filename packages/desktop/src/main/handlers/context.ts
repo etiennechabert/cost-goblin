@@ -515,7 +515,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
       void materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); }).then(() => { void warmupBase(); });
     },
     invalidateColumnCache: () => { columnCache.clear(); },
-    warmupBase: () => { void warmupBase(); },
+    warmupBase: () => { resultCache.clear(); void warmupBase(); },
   };
 }
 
