@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getColor } from '../lib/palette.js';
 import { formatDollars } from './format.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
@@ -21,11 +21,18 @@ interface StackedBarChartProps {
   readonly onExpandToggle?: (() => void) | undefined;
   readonly title?: string | undefined;
   readonly loading?: boolean | undefined;
+  readonly onSegmentClick?: ((name: string) => void) | undefined;
 }
 
-export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading }: StackedBarChartProps) {
+export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick }: StackedBarChartProps) {
   const { palette } = usePalette();
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
+  const [hoveredSegment, setHoveredSegment] = useState<string | null>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    highlightRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [hoveredSegment]);
 
   const allKeys = new Set<string>();
   for (const day of days) {
@@ -143,14 +150,14 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                   <div className="flex flex-col gap-px">
                     {segs.slice(0, 12).map(seg => {
                       const color = getColor(seg.colorIdx, palette);
-                      const isHigh = highlightedGroup === seg.key;
+                      const isHigh = highlightedGroup === seg.key || hoveredSegment === seg.key;
                       const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
                       const prevVal = prev?.breakdown[seg.key] ?? 0;
                       const delta = prev !== undefined && prevVal > 0
                         ? ((seg.value - prevVal) / prevVal) * 100
                         : undefined;
                       return (
-                        <div key={seg.key} className={`flex items-center gap-2 rounded py-0.5 px-1 -mx-1 ${isHigh ? 'bg-white/10' : ''}`}>
+                        <div key={seg.key} ref={isHigh ? highlightRef : undefined} className={`flex items-center gap-2 rounded py-0.5 px-1 -mx-1 ${isHigh ? 'bg-white/10' : ''}`}>
                           <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
                           <span className={`truncate flex-1 min-w-0 ${isHigh ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>{seg.key}</span>
                           <span className={`tabular-nums shrink-0 ${isHigh ? 'font-semibold' : ''}`}>
@@ -190,7 +197,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                   className="group relative flex-1 min-w-0"
                   style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
                   onMouseEnter={() => { setHoveredDay(day.date); }}
-                  onMouseLeave={() => { setHoveredDay(null); }}
+                  onMouseLeave={() => { setHoveredDay(null); setHoveredSegment(null); }}
                 >
                   <div
                     className="w-full overflow-hidden rounded-t-sm"
@@ -203,11 +210,14 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                       return (
                         <div
                           key={seg.key}
+                          onMouseEnter={() => { setHoveredSegment(seg.key); }}
+                          onClick={(e) => { e.stopPropagation(); onSegmentClick?.(seg.key); }}
                           style={{
                             height: `${String(pct)}%`,
                             backgroundColor: color,
                             opacity: isDimmed ? 0.25 : 0.85,
                             transition: 'opacity 0.15s',
+                            cursor: onSegmentClick !== undefined ? 'pointer' : undefined,
                           }}
                         />
                       );

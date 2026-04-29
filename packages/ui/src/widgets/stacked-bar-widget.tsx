@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { daysBetween } from '../lib/dates.js';
 import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
 import { StackedBarChart, type BarDay } from '../components/stacked-bar-chart.js';
+import { asTagValue } from '@costgoblin/core/browser';
 import { useCostFocus } from '../hooks/use-cost-focus.js';
 import type { DailyCostsResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
@@ -48,6 +49,7 @@ export function StackedBarWidget({
   dateRange,
   granularity,
   globalFilters,
+  onSetFilter,
 }: WidgetCommonProps) {
   const focus = useCostFocus();
   const specGroupBy = spec.type === 'stackedBar' ? spec.groupBy : undefined;
@@ -82,6 +84,7 @@ export function StackedBarWidget({
       highlightedGroup={focus.hoveredEntity}
       title={title}
       loading={loading}
+      onSegmentClick={specGroupBy !== undefined ? (name) => { onSetFilter(specGroupBy, asTagValue(name)); } : undefined}
     />
   );
 }
