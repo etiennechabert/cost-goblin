@@ -29,8 +29,10 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
   const [search, setSearch] = useState('');
   const [draft, setDraft] = useState<readonly string[]>([]);
   const [labelMap, setLabelMap] = useState<Record<string, string>>({});
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef(0);
+  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   const hasActiveFilters = Object.keys(filters).length > 0;
 
@@ -40,11 +42,22 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
         setOpenDimId(null);
         setDropdown({ status: 'closed' });
         setSearch('');
+        setHighlightedIndex(-1);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => { document.removeEventListener('mousedown', handleClickOutside); };
   }, []);
+
+  useEffect(() => {
+    if (highlightedIndex < 0) return;
+    const highlightedKey = Object.keys(itemRefs.current)[highlightedIndex];
+    if (highlightedKey === undefined) return;
+    const element = itemRefs.current[highlightedKey];
+    if (element !== null && element !== undefined) {
+      element.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [highlightedIndex]);
 
   function withoutFilter(dimId: DimensionId): FilterMap {
     const next: Partial<Record<DimensionId, readonly TagValue[]>> = {};
@@ -62,12 +75,14 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
       setOpenDimId(null);
       setDropdown({ status: 'closed' });
       setSearch('');
+      setHighlightedIndex(-1);
       return;
     }
 
     setOpenDimId(dimId);
     setSearch('');
     setDraft([...(filters[dimId] ?? [])]);
+    setHighlightedIndex(-1);
     setDropdown({ status: 'loading' });
 
     const filtersWithoutThis = withoutFilter(dimId);
@@ -120,6 +135,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
     setOpenDimId(null);
     setDropdown({ status: 'closed' });
     setSearch('');
+    setHighlightedIndex(-1);
   }
 
   function handleClose() {
@@ -138,6 +154,46 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
 
   function handleClearAll() {
     onFilterChange({});
+  }
+
+  function handleSearchKeyDown(dimId: DimensionId, filteredValues: FilterValue[], e: React.KeyboardEvent) {
+    if (e.key === 'Escape') {
+      setOpenDimId(null);
+      setDropdown({ status: 'closed' });
+      setSearch('');
+      setHighlightedIndex(-1);
+      return;
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightedIndex((prev) => {
+        const next = prev + 1;
+        return next >= filteredValues.length ? 0 : next;
+      });
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightedIndex((prev) => {
+        const next = prev - 1;
+        return next < 0 ? filteredValues.length - 1 : next;
+      });
+      return;
+    }
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (highlightedIndex >= 0 && highlightedIndex < filteredValues.length) {
+        const item = filteredValues[highlightedIndex];
+        if (item !== undefined) {
+          toggleValue(item.value);
+        }
+      } else {
+        handleApply(dimId);
+      }
+    }
   }
 
   function chipLabel(dim: Dimension, active: readonly TagValue[] | undefined): string {
@@ -204,11 +260,11 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                     type="text"
                     value={search}
                     placeholder={`Search ${dim.label}…`}
-                    onChange={(e) => { setSearch(e.target.value); }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape') handleClose();
-                      if (e.key === 'Enter') handleApply(dimId);
+                    onChange={(e) => {
+                      setSearch(e.target.value);
+                      setHighlightedIndex(-1);
                     }}
+                    onKeyDown={(e) => { handleSearchKeyDown(dimId, filteredValues, e); }}
                     className="w-full rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
                   />
                 </div>
@@ -233,14 +289,17 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                     </div>
                   )}
 
-                  {dropdown.status === 'ready' && filteredValues.map((item) => {
+                  {dropdown.status === 'ready' && filteredValues.map((item, index) => {
                     const checked = draft.includes(item.value);
+                    const isHighlighted = index === highlightedIndex;
                     return (
                       <label
                         key={item.value}
+                        ref={(el: HTMLLabelElement | null) => { itemRefs.current[item.value] = el as unknown as HTMLButtonElement | null; }}
                         className={[
                           'group flex items-center justify-between gap-2 px-3 py-1.5 text-xs cursor-pointer select-none',
                           checked ? 'bg-accent-muted/50 text-text-primary' : 'text-text-secondary hover:bg-bg-tertiary',
+                          isHighlighted ? 'ring-1 ring-accent' : '',
                         ].join(' ')}
                       >
                         <span className="flex items-center gap-2 min-w-0 flex-1">
