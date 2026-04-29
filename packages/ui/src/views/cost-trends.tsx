@@ -144,7 +144,7 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
               className={[
                 'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
                 state.periodDays === p.days
-                  ? 'bg-bg-primary text-text-primary shadow-sm border border-border'
+                  ? 'bg-accent text-bg-primary shadow-sm'
                   : 'text-text-secondary hover:text-text-primary',
               ].join(' ')}
             >
@@ -171,7 +171,7 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
                 className={[
                   'rounded-md px-3 py-1.5 text-xs font-medium transition-colors capitalize',
                   state.direction === d
-                    ? 'bg-bg-primary text-text-primary shadow-sm border border-border'
+                    ? 'bg-accent text-bg-primary shadow-sm'
                     : 'text-text-secondary hover:text-text-primary',
                 ].join(' ')}
               >

@@ -71,7 +71,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
             className={[
               'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
               granularity === 'daily' && isActive(preset.days)
-                ? 'bg-bg-primary text-text-primary shadow-sm border border-border'
+                ? 'bg-accent text-bg-primary shadow-sm'
                 : 'text-text-secondary hover:text-text-primary',
             ].join(' ')}
           >
@@ -84,7 +84,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
           className={[
             'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
             isCustom || showCustom
-              ? 'bg-bg-primary text-text-primary shadow-sm border border-border'
+              ? 'bg-accent text-bg-primary shadow-sm'
               : 'text-text-secondary hover:text-text-primary',
           ].join(' ')}
         >
@@ -104,7 +104,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
             className={[
               'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
               granularity === 'hourly' && isActive(preset.days)
-                ? 'bg-bg-primary text-text-primary shadow-sm border border-border'
+                ? 'bg-accent text-bg-primary shadow-sm'
                 : 'text-text-secondary hover:text-text-primary',
             ].join(' ')}
           >

@@ -91,7 +91,7 @@ describe('FilterBar', () => {
     expect(screen.getByText('$18.9k')).toBeDefined();
   });
 
-  it('checking a value and clicking Apply calls onFilterChange with array', async () => {
+  it('unchecking a value and clicking Apply excludes it', async () => {
     const onFilterChange = vi.fn();
     renderFilterBar({ onFilterChange });
 
@@ -102,15 +102,16 @@ describe('FilterBar', () => {
       expect(screen.getByText('platform')).toBeDefined();
     });
 
+    // All start checked when no filter active; uncheck platform to exclude it
     await user.click(screen.getByText('platform'));
     await user.click(screen.getByText('Apply'));
 
     expect(onFilterChange).toHaveBeenCalledOnce();
     const callArg = onFilterChange.mock.calls[0]?.[0] as FilterMap;
-    expect(callArg[asDimensionId('tag_team')]).toEqual([asTagValue('platform')]);
+    expect(callArg[asDimensionId('tag_team')]).toEqual([asTagValue('data'), asTagValue('growth')]);
   });
 
-  it('multi-select: checking multiple values applies all', async () => {
+  it('unchecking multiple values excludes all of them', async () => {
     const onFilterChange = vi.fn();
     renderFilterBar({ onFilterChange });
 
@@ -127,7 +128,7 @@ describe('FilterBar', () => {
 
     expect(onFilterChange).toHaveBeenCalledOnce();
     const callArg = onFilterChange.mock.calls[0]?.[0] as FilterMap;
-    expect(callArg[asDimensionId('tag_team')]).toEqual([asTagValue('platform'), asTagValue('data')]);
+    expect(callArg[asDimensionId('tag_team')]).toEqual([asTagValue('growth')]);
   });
 
   it('"Only" button selects just that value', async () => {

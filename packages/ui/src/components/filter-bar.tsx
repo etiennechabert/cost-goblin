@@ -73,16 +73,16 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
     const filtersWithoutThis = withoutFilter(dimId);
     const thisRequestId = ++requestIdRef.current;
 
+    const noActiveFilter = filters[dimId] === undefined || filters[dimId].length === 0;
     getFilterValues(dimId, filtersWithoutThis).then(
       (values) => {
         if (thisRequestId !== requestIdRef.current) return;
         const newLabels: Record<string, string> = {};
         for (const v of values) newLabels[v.value] = v.label;
         setLabelMap(prev => ({ ...prev, ...newLabels }));
-        setDropdown({
-          status: 'ready',
-          values: [...values].sort((a, b) => b.count - a.count),
-        });
+        const sorted = [...values].sort((a, b) => b.count - a.count);
+        if (noActiveFilter) setDraft(sorted.map(v => v.value));
+        setDropdown({ status: 'ready', values: sorted });
       },
       (err: unknown) => {
         if (thisRequestId !== requestIdRef.current) return;
