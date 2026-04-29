@@ -1,14 +1,37 @@
 import { useState } from 'react';
 import type { DateString } from '@costgoblin/core/browser';
 import { DEFAULT_LAG_DAYS, asDateString } from '@costgoblin/core/browser';
-import { daysAgo } from '../lib/dates.js';
+import { daysAgo, getThisMonth, getLastMonth, getLastQuarter, getYTD } from '../lib/dates.js';
 
 export type Granularity = 'daily' | 'hourly';
 
-const DAILY_PRESETS = [
-  { label: '30 days', days: 30 },
-  { label: '90 days', days: 90 },
-  { label: '365 days', days: 365 },
+type DayPreset = {
+  readonly label: string;
+  readonly type: 'days';
+  readonly days: number;
+};
+
+type CalendarPreset = {
+  readonly label: string;
+  readonly type: 'calendar';
+  readonly getRange: (lagDays: number) => { start: DateString; end: DateString };
+};
+
+type Preset = DayPreset | CalendarPreset;
+
+const DAILY_PRESETS: readonly Preset[] = [
+  { label: 'Last 7d', type: 'days', days: 7 },
+  { label: 'Last 30d', type: 'days', days: 30 },
+  { label: 'This month', type: 'calendar', getRange: (lagDays) => {
+    const range = getThisMonth();
+    return { ...range, end: lagDays > 0 ? daysAgo(lagDays) : range.end };
+  }},
+  { label: 'Last month', type: 'calendar', getRange: () => getLastMonth() },
+  { label: 'Last quarter', type: 'calendar', getRange: () => getLastQuarter() },
+  { label: 'YTD', type: 'calendar', getRange: (lagDays) => {
+    const range = getYTD();
+    return { ...range, end: lagDays > 0 ? daysAgo(lagDays) : range.end };
+  }},
 ];
 
 const HOURLY_PRESETS = [
@@ -42,20 +65,38 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
   const [showCustom, setShowCustom] = useState(false);
   const latestDate = daysAgo(lagDays);
 
-  function isActive(days: number): boolean {
+  function getPresetRange(preset: Preset): DateRange {
+    if (preset.type === 'days') {
+      return { start: daysAgo(preset.days + lagDays), end: latestDate };
+    }
+    return preset.getRange(lagDays);
+  }
+
+  function isActivePreset(preset: Preset): boolean {
+    const range = getPresetRange(preset);
+    return value.start === range.start && value.end === range.end;
+  }
+
+  function isActiveHourly(days: number): boolean {
     return value.start === daysAgo(days + lagDays) && value.end === latestDate;
   }
 
-  function handlePreset(days: number, g: Granularity) {
+  function handleDailyPreset(preset: Preset) {
     setShowCustom(false);
-    onChange({ start: daysAgo(days + lagDays), end: latestDate }, g);
+    const range = getPresetRange(preset);
+    onChange(range, 'daily');
+  }
+
+  function handleHourlyPreset(days: number) {
+    setShowCustom(false);
+    onChange({ start: daysAgo(days + lagDays), end: latestDate }, 'hourly');
   }
 
   function handleCustomToggle() {
     setShowCustom(prev => !prev);
   }
 
-  const isCustom = granularity === 'daily' && !DAILY_PRESETS.some(p => isActive(p.days))
+  const isCustom = granularity === 'daily' && !DAILY_PRESETS.some(p => isActivePreset(p))
     && !showCustom;
 
   return (
@@ -65,12 +106,12 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
         <span className="text-[10px] text-text-muted px-1.5">Daily</span>
         {DAILY_PRESETS.map(preset => (
           <button
-            key={preset.days}
+            key={preset.label}
             type="button"
-            onClick={() => { handlePreset(preset.days, 'daily'); }}
+            onClick={() => { handleDailyPreset(preset); }}
             className={[
               'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-              granularity === 'daily' && isActive(preset.days)
+              granularity === 'daily' && isActivePreset(preset)
                 ? 'bg-accent text-bg-primary shadow-sm'
                 : 'text-text-secondary hover:text-text-primary',
             ].join(' ')}
@@ -100,10 +141,10 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
           <button
             key={preset.days}
             type="button"
-            onClick={() => { handlePreset(preset.days, 'hourly'); }}
+            onClick={() => { handleHourlyPreset(preset.days); }}
             className={[
               'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-              granularity === 'hourly' && isActive(preset.days)
+              granularity === 'hourly' && isActiveHourly(preset.days)
                 ? 'bg-accent text-bg-primary shadow-sm'
                 : 'text-text-secondary hover:text-text-primary',
             ].join(' ')}
