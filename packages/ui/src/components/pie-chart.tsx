@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Group } from '@visx/group';
 import { Pie } from '@visx/shape';
 import { getColor } from '../lib/palette.js';
@@ -50,7 +50,7 @@ function PieChartInner({
   onSliceHover,
   externalHoveredName,
   onExpandToggle,
-  maxSlices = 15,
+  maxSlices = 50,
   dimensions,
   activeDimensionId,
   onDimensionChange,
@@ -60,12 +60,17 @@ function PieChartInner({
   const { palette } = usePalette();
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const hoveredName = externalHoveredName ?? localHovered;
+  const legendRefs = useRef(new Map<string, HTMLDivElement>());
+
+  useEffect(() => {
+    if (hoveredName !== null) {
+      legendRefs.current.get(hoveredName)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [hoveredName]);
 
   const displayData = aggregateOther(data, maxSlices);
-  const pieSize = Math.min(width * 0.42, height - 60);
+  const pieSize = Math.min(width * 0.38, height - 60);
   const radius = pieSize / 2;
-  const centerX = radius + 16;
-  const centerY = height / 2;
 
   const handleMouseEnter = useCallback((name: string) => {
     setLocalHovered(name);
@@ -77,10 +82,8 @@ function PieChartInner({
     onSliceHover?.(null);
   }, [onSliceHover]);
 
-  const legendX = pieSize + 44;
-
   return (
-    <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col">
+    <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col h-full">
       <div className="flex items-center justify-between mb-3">
         {dimensions !== undefined && dimensions.length > 0 && onDimensionChange !== undefined ? (
           <select
@@ -117,95 +120,86 @@ function PieChartInner({
           )}
         </div>
       </div>
-      <svg width={width} height={height - 50}>
-        <Group top={centerY - 25} left={centerX}>
-          <Pie<PieSlice>
-            data={displayData}
-            pieValue={(d) => d.cost}
-            outerRadius={radius}
-            innerRadius={0}
-            padAngle={0.015}
-          >
-            {(pie) =>
-              pie.arcs.map((arc, i) => {
-                const sliceName = arc.data.name;
-                const color = sliceName === OTHER_KEY ? '#374151' : getColor(i, palette);
-                const isHovered = hoveredName === sliceName;
-                const isDimmed = hoveredName !== null && !isHovered;
-                const path = pie.path(arc) ?? '';
+      <div className="flex flex-1 min-h-0 gap-2">
+        {/* Pie */}
+        <div className="shrink-0" style={{ width: pieSize + 32 }}>
+          <svg width={pieSize + 32} height={pieSize + 16}>
+            <Group top={radius + 8} left={radius + 16}>
+              <Pie<PieSlice>
+                data={displayData}
+                pieValue={(d) => d.cost}
+                outerRadius={radius}
+                innerRadius={0}
+                padAngle={0.015}
+              >
+                {(pie) =>
+                  pie.arcs.map((arc, i) => {
+                    const sliceName = arc.data.name;
+                    const color = sliceName === OTHER_KEY ? '#374151' : getColor(i, palette);
+                    const isHovered = hoveredName === sliceName;
+                    const isDimmed = hoveredName !== null && !isHovered;
+                    const path = pie.path(arc) ?? '';
 
-                return (
-                  <g
-                    key={sliceName}
-                    onMouseEnter={() => { handleMouseEnter(sliceName); }}
-                    onMouseLeave={handleMouseLeave}
-                    onClick={() => { if (sliceName !== OTHER_KEY) onSliceClick?.(sliceName); }}
-                    style={{ cursor: sliceName !== OTHER_KEY && onSliceClick !== undefined ? 'pointer' : 'default' }}
-                  >
-                    <path
-                      d={path}
-                      fill={color}
-                      opacity={isDimmed ? 0.3 : 1}
-                      stroke={isHovered ? '#ffffff' : 'transparent'}
-                      strokeWidth={isHovered ? 2 : 0}
-                      style={{
-                        filter: isHovered ? 'brightness(1.3)' : 'none',
-                        transition: 'all 0.15s ease',
-                      }}
-                    />
-                  </g>
-                );
-              })
-            }
-          </Pie>
-        </Group>
+                    return (
+                      <g
+                        key={sliceName}
+                        onMouseEnter={() => { handleMouseEnter(sliceName); }}
+                        onMouseLeave={handleMouseLeave}
+                        onClick={() => { if (sliceName !== OTHER_KEY) onSliceClick?.(sliceName); }}
+                        style={{ cursor: sliceName !== OTHER_KEY && onSliceClick !== undefined ? 'pointer' : 'default' }}
+                      >
+                        <path
+                          d={path}
+                          fill={color}
+                          opacity={isDimmed ? 0.3 : 1}
+                          stroke={isHovered ? '#ffffff' : 'transparent'}
+                          strokeWidth={isHovered ? 2 : 0}
+                          style={{
+                            filter: isHovered ? 'brightness(1.3)' : 'none',
+                            transition: 'all 0.15s ease',
+                          }}
+                        />
+                      </g>
+                    );
+                  })
+                }
+              </Pie>
+            </Group>
+          </svg>
+        </div>
 
-        {/* Legend */}
-        <Group top={6} left={legendX}>
+        {/* Legend — HTML for proper text truncation */}
+        <div className="flex-1 min-w-0 overflow-y-auto flex flex-col gap-0.5 py-1">
           {displayData.map((d, i) => {
             const color = d.name === OTHER_KEY ? '#374151' : getColor(i, palette);
             const isHovered = hoveredName === d.name;
             const isDimmed = hoveredName !== null && !isHovered;
-            const y = i * 22;
-            if (y > height - 80) return null;
 
             return (
-              <g
+              <div
                 key={d.name}
+                ref={(el) => { if (el !== null) { legendRefs.current.set(d.name, el); } else { legendRefs.current.delete(d.name); } }}
                 onMouseEnter={() => { handleMouseEnter(d.name); }}
                 onMouseLeave={handleMouseLeave}
                 onClick={() => { if (d.name !== OTHER_KEY) onSliceClick?.(d.name); }}
-                style={{ cursor: d.name !== OTHER_KEY && onSliceClick !== undefined ? 'pointer' : 'default' }}
+                className={[
+                  'flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[11px] transition-colors',
+                  d.name !== OTHER_KEY && onSliceClick !== undefined ? 'cursor-pointer' : '',
+                  isHovered ? 'bg-accent-muted/50' : '',
+                ].join(' ')}
               >
-                {isHovered && (
-                  <rect
-                    x={-6}
-                    y={y - 4}
-                    width={width - legendX}
-                    height={20}
-                    rx={4}
-                    fill="var(--color-accent-muted)"
-                  />
-                )}
-                <rect x={0} y={y} width={8} height={8} rx={2} fill={color} />
-                <text
-                  x={14}
-                  y={y + 8}
-                  fontSize={isHovered ? 12 : 11}
-                  fill={(() => { if (isDimmed) { return 'var(--color-text-muted)'; } return isHovered ? 'var(--color-text-primary)' : 'var(--color-text-secondary)'; })()}
-                  fontWeight={isHovered ? 600 : 400}
-                  style={{ transition: 'all 0.12s' }}
-                >
-                  {d.name.length > 22 ? `${d.name.slice(0, 21)}…` : d.name}
-                  {' — '}
-                  {formatDollars(d.cost)}
-                  {` (${d.percentage.toFixed(1)}%)`}
-                </text>
-              </g>
+                <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+                <span className={`truncate min-w-0 flex-1 ${isDimmed ? 'text-text-muted' : isHovered ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>
+                  {d.name}
+                </span>
+                <span className={`tabular-nums shrink-0 whitespace-nowrap ${isDimmed ? 'text-text-muted' : isHovered ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>
+                  {formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)
+                </span>
+              </div>
             );
           })}
-        </Group>
-      </svg>
+        </div>
+      </div>
     </div>
   );
 }
