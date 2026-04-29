@@ -507,12 +507,12 @@ export function createAppContext(ctx: IpcContext): AppContext {
     invalidateConfig: () => { state.config = null; },
     invalidateDimensions: () => {
       state.dimensions = null; state.accountMap = null; state.accountReverseMap = null; state.regionMap = null; state.orgAccountsPath = null;
-      void materializedBase.drop((s) => ctx.db.runQuery(s)).then(() => { void warmupBase(); });
+      void materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); }).then(() => { void warmupBase(); });
     },
     invalidateViews: () => { state.views = null; },
     invalidateCostScope: () => {
       state.costScope = null;
-      void materializedBase.drop((s) => ctx.db.runQuery(s)).then(() => { void warmupBase(); });
+      void materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); }).then(() => { void warmupBase(); });
     },
     invalidateColumnCache: () => { columnCache.clear(); },
     warmupBase: () => { void warmupBase(); },

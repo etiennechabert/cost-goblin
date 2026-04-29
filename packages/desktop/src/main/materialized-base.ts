@@ -49,9 +49,15 @@ export class MaterializedBase {
     return this.pending;
   }
 
-  async drop(runQuery: (sql: string) => Promise<RawRow[]>): Promise<void> {
+  async drop(
+    runQuery: (sql: string) => Promise<RawRow[]>,
+    onDrop?: () => void,
+  ): Promise<void> {
     this.state = null;
     this.pending = null;
+    if (onDrop !== undefined) {
+      onDrop();
+    }
     try {
       await runQuery('DROP TABLE IF EXISTS cost_base');
     } catch {
