@@ -417,7 +417,7 @@ function AppShell(): React.JSX.Element {
         <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
         <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
           <div className="flex items-center gap-1" role="navigation" aria-label="Analytical views">
-            {leftNav.map((item) => (
+            {leftNav.map((item, index) => (
               <button
                 key={item.id}
                 type="button"
@@ -429,6 +429,7 @@ function AppShell(): React.JSX.Element {
                     : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
                 ].join(' ')}
                 aria-current={active === item.id ? 'page' : undefined}
+                title={index < 9 ? `${item.label} (${String(index + 1)})` : item.label}
               >
                 {item.label}
               </button>
@@ -491,7 +492,7 @@ function AppShell(): React.JSX.Element {
                     showError ? 'ring-1 ring-negative/60' : '',
                     showActive ? 'animate-sync-blink' : '',
                   ].join(' ')}
-                  title={syncError === null ? undefined : `Sync error — ${syncError}`}
+                  title={syncError === null ? item.label : `Sync error — ${syncError}`}
                   aria-current={active === item.id ? 'page' : undefined}
                 >
                   {showError && (
