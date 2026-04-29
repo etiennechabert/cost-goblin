@@ -10,11 +10,11 @@ export const PALETTE_COLORBLIND: readonly string[] = [
 
 const PALETTE_FALLBACK = '#374151';
 
+export type PaletteType = 'standard' | 'colorblind';
+
 export function getColor(index: number, palette: readonly string[] = PALETTE_STANDARD): string {
   return palette[index % palette.length] ?? PALETTE_FALLBACK;
 }
-
-type PaletteType = 'standard' | 'colorblind';
 
 export function getActivePalette(type: PaletteType = 'standard'): readonly string[] {
   return type === 'colorblind' ? PALETTE_COLORBLIND : PALETTE_STANDARD;

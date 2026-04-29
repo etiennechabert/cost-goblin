@@ -7,6 +7,7 @@ import { useContainerWidth } from '../lib/use-container-width.js';
 import { formatDollars } from './format.js';
 import type { Dimension } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
+import { usePalette } from '../hooks/use-palette.js';
 
 export interface PieSlice {
   readonly name: string;
@@ -56,6 +57,7 @@ function PieChartInner({
   width,
   height,
 }: Omit<PieChartProps, 'collapsed'> & { width: number; height: number }) {
+  const { palette } = usePalette();
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const hoveredName = externalHoveredName ?? localHovered;
 
@@ -127,7 +129,7 @@ function PieChartInner({
             {(pie) =>
               pie.arcs.map((arc, i) => {
                 const sliceName = arc.data.name;
-                const color = sliceName === OTHER_KEY ? '#374151' : getColor(i);
+                const color = sliceName === OTHER_KEY ? '#374151' : getColor(i, palette);
                 const isHovered = hoveredName === sliceName;
                 const isDimmed = hoveredName !== null && !isHovered;
                 const path = pie.path(arc) ?? '';
@@ -161,7 +163,7 @@ function PieChartInner({
         {/* Legend */}
         <Group top={6} left={legendX}>
           {displayData.map((d, i) => {
-            const color = d.name === OTHER_KEY ? '#374151' : getColor(i);
+            const color = d.name === OTHER_KEY ? '#374151' : getColor(i, palette);
             const isHovered = hoveredName === d.name;
             const isDimmed = hoveredName !== null && !isHovered;
             const y = i * 22;

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider } from '@costgoblin/ui';
 import type { CostApi, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 
@@ -90,6 +90,18 @@ function TerminalIcon() {
   );
 }
 
+function PaletteIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+      <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+      <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
+    </svg>
+  );
+}
+
 type SetupCheck =
   | { status: 'checking' }
   | { status: 'needs-setup' }
@@ -119,6 +131,7 @@ function AppShell(): React.JSX.Element {
   const [view, setView] = useState<View>({ page: 'custom', viewId: 'overview' });
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [isDark, setIsDark] = useState(true);
+  const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
   // Sync-health signal. Non-null whenever something AWS-side is broken —
@@ -139,6 +152,7 @@ function AppShell(): React.JSX.Element {
   useEffect(() => {
     api.getUIPreferences().then(prefs => {
       setIsDark(prefs.theme === 'dark');
+      setPalette(prefs.palette);
     }).catch(() => undefined);
   }, [api]);
 
@@ -171,7 +185,13 @@ function AppShell(): React.JSX.Element {
   function handleToggleTheme() {
     const next = !isDark;
     setIsDark(next);
-    api.saveUIPreferences({ theme: next ? 'dark' : 'light' }).catch(() => undefined);
+    api.saveUIPreferences({ theme: next ? 'dark' : 'light', palette }).catch(() => undefined);
+  }
+
+  function handleTogglePalette() {
+    const next: 'standard' | 'colorblind' = palette === 'standard' ? 'colorblind' : 'standard';
+    setPalette(next);
+    api.saveUIPreferences({ theme: isDark ? 'dark' : 'light', palette: next }).catch(() => undefined);
   }
 
   useEffect(() => {
@@ -309,9 +329,10 @@ function AppShell(): React.JSX.Element {
   }
 
   return (
-    <div className="min-h-screen bg-bg-primary text-text-primary">
-      {/* Title bar + nav */}
-      <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
+    <PaletteProvider palette={palette}>
+      <div className="min-h-screen bg-bg-primary text-text-primary">
+        {/* Title bar + nav */}
+        <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
         <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
           <div className="flex items-center gap-1">
             {leftNav.map((item) => (
@@ -360,6 +381,14 @@ function AppShell(): React.JSX.Element {
               aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
             >
               {isDark ? <SunIcon /> : <MoonIcon />}
+            </button>
+            <button
+              type="button"
+              onClick={handleTogglePalette}
+              className="rounded-md p-1.5 text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
+              aria-label={palette === 'standard' ? 'Switch to colorblind palette' : 'Switch to standard palette'}
+            >
+              <PaletteIcon />
             </button>
             {RIGHT_NAV.map((item) => {
               const isSync = item.id === 'sync';
@@ -481,6 +510,7 @@ function AppShell(): React.JSX.Element {
         </Profiler>
       )}
       {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} />}
-    </div>
+      </div>
+    </PaletteProvider>
   );
 }

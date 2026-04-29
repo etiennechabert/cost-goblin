@@ -2,6 +2,7 @@ import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
+import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostOverview } from '../views/cost-overview.js';
 
@@ -12,9 +13,11 @@ function renderOverview() {
     api,
     user,
     ...render(
-      <CostApiProvider value={api}>
-        <CostOverview />
-      </CostApiProvider>,
+      <PaletteProvider>
+        <CostApiProvider value={api}>
+          <CostOverview />
+        </CostApiProvider>
+      </PaletteProvider>,
     ),
   };
 }

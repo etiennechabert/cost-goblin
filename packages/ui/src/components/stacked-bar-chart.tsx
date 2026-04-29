@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { getColor } from '../lib/palette.js';
 import { formatDollars } from './format.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
+import { usePalette } from '../hooks/use-palette.js';
 
 export interface BarDay {
   readonly date: string;
@@ -23,6 +24,7 @@ interface StackedBarChartProps {
 }
 
 export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading }: StackedBarChartProps) {
+  const { palette } = usePalette();
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
 
   const allKeys = new Set<string>();
@@ -136,7 +138,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                   >
                     {segments.map(seg => {
                       const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
-                      const color = getColor(seg.colorIdx);
+                      const color = getColor(seg.colorIdx, palette);
                       const isDimmed = highlightedGroup !== null && highlightedGroup !== undefined && highlightedGroup !== seg.key;
                       return (
                         <div
@@ -164,7 +166,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                           {segments
                             .slice(0, 8)
                             .map(seg => {
-                              const color = getColor(seg.colorIdx);
+                              const color = getColor(seg.colorIdx, palette);
                               const isHighlighted = highlightedGroup === seg.key;
                               return (
                                 <div
