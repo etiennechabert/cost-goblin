@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, useKeyboardShortcuts, CommandPalette } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, useKeyboardShortcuts, CommandPalette, KeyboardShortcutsOverlay } from '@costgoblin/ui';
 import type { CommandPaletteAction } from '@costgoblin/ui';
 import type { CostApi, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
@@ -143,6 +143,7 @@ function AppShell(): React.JSX.Element {
   const [syncFilesRemaining, setSyncFilesRemaining] = useState(0);
   const [debugOpen, setDebugOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [shortcutsOverlayOpen, setShortcutsOverlayOpen] = useState(false);
   const inFlightCount = useDebugBadge();
 
   useEffect(() => {
@@ -333,6 +334,9 @@ function AppShell(): React.JSX.Element {
     // Cmd/Ctrl+K opens command palette
     map['mod+k'] = () => { setCommandPaletteOpen(true); };
 
+    // Cmd/Ctrl+? opens keyboard shortcuts overlay
+    map['mod+/'] = () => { setShortcutsOverlayOpen(true); };
+
     // Escape closes debug panel if open
     if (debugOpen) {
       map['Escape'] = () => { setDebugOpen(false); };
@@ -369,6 +373,24 @@ function AppShell(): React.JSX.Element {
 
     return actions;
   }, [leftNav]);
+
+  // Build keyboard shortcuts configuration for the help overlay
+  const shortcutsConfig = useMemo(() => [
+    {
+      category: 'Navigation',
+      items: [
+        { keys: ['1', '2', '3', '...', '9'], description: 'Switch between views' },
+        { keys: ['mod+k'], description: 'Open command palette' },
+      ],
+    },
+    {
+      category: 'General',
+      items: [
+        { keys: ['Escape'], description: 'Close panels and dialogs' },
+        { keys: ['mod+/'], description: 'Show keyboard shortcuts' },
+      ],
+    },
+  ], []);
 
   function activeNavId(): string | null {
     if (view.page === 'custom') return view.viewId;
@@ -576,6 +598,11 @@ function AppShell(): React.JSX.Element {
         open={commandPaletteOpen}
         onOpenChange={setCommandPaletteOpen}
         actions={commandPaletteActions}
+      />
+      <KeyboardShortcutsOverlay
+        open={shortcutsOverlayOpen}
+        onOpenChange={setShortcutsOverlayOpen}
+        shortcuts={shortcutsConfig}
       />
       </div>
     </PaletteProvider>
