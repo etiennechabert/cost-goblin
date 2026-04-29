@@ -185,7 +185,7 @@ describe('LRUCache edge cases', () => {
   it('handles large maxSize', () => {
     const cache = new LRUCache<string, number>(1000);
     for (let i = 0; i < 1000; i++) {
-      cache.set(`key${i}`, i);
+      cache.set(`key${String(i)}`, i);
     }
     expect(cache.size).toBe(1000);
     cache.set('overflow', 9999);
@@ -261,7 +261,7 @@ describe('LRUCache stress tests', () => {
   it('handles rapid set/get cycles', () => {
     const cache = new LRUCache<string, number>(10);
     for (let i = 0; i < 100; i++) {
-      cache.set(`key${i % 15}`, i);
+      cache.set(`key${String(i % 15)}`, i);
     }
     expect(cache.size).toBe(10);
   });
