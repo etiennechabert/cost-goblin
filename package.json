@@ -34,7 +34,7 @@
     "eslint": "^9.0.0",
     "husky": "^9.1.7",
     "jsdom": "^29.0.1",
-    "postcss": "^8.5.8",
+    "postcss": "^8.5.12",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "v8-to-istanbul": "^9.3.0",
