@@ -11,6 +11,7 @@ import { createSyncClient } from './sync-client.js';
 import type { SyncClient } from './sync-client.js';
 import { registerIpcHandlers } from './ipc.js';
 import { validateUrl, SecurityError } from './url-validator.js';
+import { validateProfileLabel } from './validators/path-validator.js';
 
 // Log level: debug in dev (NODE_ENV=development or electron-vite serving
 // the renderer), or when COSTGOBLIN_LOG_LEVEL=debug. Otherwise info.
@@ -81,6 +82,13 @@ if (perfMode) {
 
   ipcMain.handle('perf:stop-cpu-profile', (_event: unknown, label: string) => {
     return new Promise<{ path: string }>((resolve, reject) => {
+      try {
+        validateProfileLabel(label);
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
+
       session.post('Profiler.stop', (err, result) => {
         if (err !== null) { reject(err); return; }
         session.post('Profiler.disable');
