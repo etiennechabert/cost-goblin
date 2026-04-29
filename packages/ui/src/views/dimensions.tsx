@@ -370,6 +370,20 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
           {aliasField}
         </div>
       ) : aliasField}
+
+      <AliasSuggestions
+        dimensionId={dim.name}
+        onAccepted={(canonical, aliases) => {
+          setState(s => {
+            const current = textToAliases(s.aliases) ?? {};
+            const existing: readonly string[] = current[canonical] ?? [];
+            const merged = [...new Set([...existing, ...aliases])];
+            const updated = { ...current, [canonical]: merged };
+            return { ...s, aliases: aliasesToText(updated) };
+          });
+        }}
+      />
+
       {preview !== null && (
         <div className="flex flex-col gap-2">
           <span className="text-xs text-text-muted">
