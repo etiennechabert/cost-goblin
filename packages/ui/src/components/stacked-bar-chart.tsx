@@ -229,8 +229,8 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             })}
           </div>
 
-          {/* X axis — aligned with bar area (ml-12) */}
-          <div className="relative ml-12 h-4 mt-1">
+          {/* X axis — pinned to bottom of pb-5 zone */}
+          <div className="absolute bottom-0 left-12 right-0 h-5">
             {days.map((day, idx) => {
               const step = Math.max(1, Math.ceil(days.length / 7));
               if (idx % step !== 0) return null;
