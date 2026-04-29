@@ -213,6 +213,18 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                         return;
                       }
 
+                      if (e.key === 'Home') {
+                        e.preventDefault();
+                        setHighlightedIndex(0);
+                        return;
+                      }
+
+                      if (e.key === 'End') {
+                        e.preventDefault();
+                        setHighlightedIndex(filteredValues.length - 1);
+                        return;
+                      }
+
                       if (e.key === 'Enter' && highlightedIndex >= 0 && highlightedIndex < filteredValues.length) {
                         e.preventDefault();
                         const item = filteredValues[highlightedIndex];
