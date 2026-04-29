@@ -110,6 +110,27 @@ export interface MissingTagsResult {
   readonly nonResourceRows: readonly NonResourceCostRow[];
 }
 
+/** Point-in-time snapshot of tag coverage metrics for trend tracking. Stored
+ *  in state/tag-coverage-history.json. */
+export interface TagCoverageSnapshot {
+  /** ISO 8601 date-time when this snapshot was captured. */
+  readonly timestamp: string;
+  /** Cost of actionable untagged resources at snapshot time. */
+  readonly totalActionableCost: Dollars;
+  /** Cost of resources in categories where nothing is ever tagged. */
+  readonly totalLikelyUntaggableCost: Dollars;
+  /** Cost of line items that are not resource-bound (tax, support, etc.). */
+  readonly totalNonResourceCost: Dollars;
+  /** Number of actionable untagged resources. */
+  readonly actionableCount: number;
+  /** Number of likely untaggable resources. */
+  readonly likelyUntaggableCount: number;
+  /** Coverage percentage (0-100): what fraction of taggable resources are
+   *  actually tagged. Calculated as:
+   *  (totalTaggedCost / (totalTaggedCost + totalActionableCost)) × 100 */
+  readonly coveragePercentage: number;
+}
+
 export interface EntityDetailParams {
   readonly entity: EntityRef;
   readonly dimension: DimensionId;

@@ -24,6 +24,7 @@ import type {
   MissingTagsResult,
   SavingsResult,
   SyncStatus,
+  TagCoverageSnapshot,
   TrendQueryParams,
   TrendResult,
 } from './query.js';
@@ -191,6 +192,17 @@ export interface CostApi {
    *  navigation so stale queries from the previous view don't hold pool
    *  connections and slow down the new view's queries. */
   cancelPendingQueries(): Promise<void>;
+  /** Load tag coverage history from state/tag-coverage-history.json.
+   *  Returns empty array if file doesn't exist. Snapshots are sorted by
+   *  timestamp descending (newest first). */
+  getTagCoverageHistory(): Promise<readonly TagCoverageSnapshot[]>;
+  /** Append a new coverage snapshot to state/tag-coverage-history.json.
+   *  Automatically deduplicates by timestamp (same-day snapshots replace
+   *  each other) and maintains descending sort order. */
+  saveTagCoverageSnapshot(snapshot: TagCoverageSnapshot): Promise<void>;
+  /** Delete all coverage snapshots from state/tag-coverage-history.json.
+   *  Idempotent — succeeds even if file doesn't exist. */
+  clearTagCoverageHistory(): Promise<void>;
 }
 
 export interface AccountMappingEntry {
