@@ -253,6 +253,8 @@ function AppShell(): React.JSX.Element {
   }, [api, setupCheck, syncActivity]);
 
   function handleNavClick(id: string) {
+    const alreadyActive = view.page === 'custom' ? view.viewId === id : view.page === id;
+    if (alreadyActive) return;
     confirmLeave(() => {
       api.cancelPendingQueries().catch(() => undefined);
       switch (id) {
