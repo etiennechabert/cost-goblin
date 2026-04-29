@@ -198,6 +198,69 @@ make lint       # run tsc + eslint
 make reset      # wipe app data, restart with wizard
 ```
 
+### Security Scanning
+
+The project includes automated dependency vulnerability scanning to detect known CVEs in the dependency tree.
+
+**CI Pipeline**
+
+The `security-audit` job runs on every push and pull request:
+- Scans all npm dependencies (including transitive dependencies)
+- Fails the build if high or critical vulnerabilities are detected
+- Runs in parallel with lint and test jobs
+
+**Thresholds**
+
+The project uses [audit-ci](https://github.com/IBM/audit-ci) with strict enforcement:
+- **Low vulnerabilities**: Allowed (won't fail CI)
+- **Moderate vulnerabilities**: Allowed (won't fail CI)
+- **High vulnerabilities**: ❌ Fails CI
+- **Critical vulnerabilities**: ❌ Fails CI
+
+Configuration is defined in `audit-ci.json`.
+
+**Dependabot**
+
+GitHub Dependabot is configured to:
+- Scan for security vulnerabilities daily
+- Create automated pull requests for dependency updates weekly (Mondays at 09:00 UTC)
+- Group related dependencies (dev tools, AWS SDK, React ecosystem) to reduce PR noise
+
+Security alerts appear in the **Security** tab of the GitHub repository.
+
+**Running Scans Locally**
+
+```bash
+# Run the same audit that CI uses
+npx audit-ci --config audit-ci.json
+
+# Get detailed vulnerability report
+npm audit
+
+# Automatically fix vulnerabilities (where possible)
+npm audit fix
+```
+
+**Handling Vulnerabilities**
+
+If the security-audit job fails:
+
+1. **Review the vulnerability**: Check the CI logs or run `npm audit` locally
+2. **Update the package**: Run `npm audit fix` or manually update in package.json
+3. **Wait for Dependabot**: Dependabot will automatically create a PR if a fix is available
+4. **Allowlist false positives**: Add the advisory ID to `allowlist` in `audit-ci.json` if the vulnerability is not applicable
+
+Example allowlist entry:
+```json
+{
+  "allowlist": [
+    "GHSA-xxxx-xxxx-xxxx"
+  ]
+}
+```
+
+Only allowlist vulnerabilities after careful review — document the reason in a comment above the config file.
+
 ## License
 
 CostGoblin is licensed under the **GNU Affero General Public License v3.0 only** (AGPL-3.0-only). See [`LICENSE`](./LICENSE) for the full text.
