@@ -15,7 +15,6 @@ if (!existsSync(workerPath)) {
   );
 }
 
-<<<<<<< HEAD
 // ---------------------------------------------------------------------------
 // Response types — mirrors WorkerResponse from sync-worker.ts
 // ---------------------------------------------------------------------------
@@ -53,9 +52,6 @@ function isSyncResultMsg(msg: unknown): msg is SyncResultMsg {
 // ---------------------------------------------------------------------------
 
 describe('Sync Worker', () => {
-=======
-describe.skipIf(!existsSync(workerPath))('Sync Worker', () => {
->>>>>>> dcf6f83 (Migrate palette preference to preferences.json via IPC)
   let worker: Worker;
   let testDataDir: string;
   let nextId = 1;
