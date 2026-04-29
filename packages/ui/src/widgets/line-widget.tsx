@@ -47,7 +47,6 @@ export function LineWidget({
     granularity,
     globalFilters,
     specFilters: spec.filters,
-    dimensions,
   });
 
   const series = useMemo(

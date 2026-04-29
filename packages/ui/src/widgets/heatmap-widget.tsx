@@ -56,7 +56,6 @@ export function HeatmapWidget({
     granularity,
     globalFilters,
     specFilters: spec.filters,
-    dimensions,
   });
 
   const { cells, groups, dates } = useMemo(

@@ -19,14 +19,9 @@ const DIMENSION_FALLBACK_CHAINS: ReadonlyMap<DimensionId, readonly DimensionId[]
   [asDimensionId('service_family'), [asDimensionId('service'), asDimensionId('operation')]],
 ]);
 
-export function getDimensionFallbacks(
-  dimId: DimensionId,
-  available: readonly Dimension[],
-): readonly DimensionId[] {
-  const chain = DIMENSION_FALLBACK_CHAINS.get(dimId);
-  if (chain === undefined) return [];
-  const ids = new Set(available.map(getDimensionId));
-  return chain.filter(d => ids.has(d));
+// Fallback candidates are built-in CUR columns — always queryable regardless of enabled state.
+export function getDimensionFallbacks(dimId: DimensionId): readonly DimensionId[] {
+  return DIMENSION_FALLBACK_CHAINS.get(dimId) ?? [];
 }
 
 /** Props every widget renderer receives. The host view owns the global

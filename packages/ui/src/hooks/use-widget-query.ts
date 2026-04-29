@@ -6,7 +6,6 @@ import type {
   CostResult,
   DailyCostsResult,
   DateRange,
-  Dimension,
   DimensionId,
   FilterMap,
   Granularity,
@@ -85,7 +84,6 @@ interface WidgetQueryArgs {
   readonly granularity: Granularity;
   readonly globalFilters: FilterMap;
   readonly specFilters: WidgetFilterOverlay | undefined;
-  readonly dimensions: readonly Dimension[];
 }
 
 interface DailyWidgetQueryResult {
@@ -101,14 +99,13 @@ export function useDailyWidgetQuery({
   granularity,
   globalFilters,
   specFilters,
-  dimensions,
 }: WidgetQueryArgs): DailyWidgetQueryResult {
   const api = useCostApi();
   const filters = mergeFilters(globalFilters, specFilters);
   const fk = filtersKey(filters);
   const fallbackDims = useMemo(
-    () => specGroupBy === undefined ? [] : getDimensionFallbacks(specGroupBy, dimensions),
-    [specGroupBy, dimensions],
+    () => specGroupBy === undefined ? [] : getDimensionFallbacks(specGroupBy),
+    [specGroupBy],
   );
 
   const query = useQuery<DailyQueryResult | null>(
@@ -140,14 +137,13 @@ export function useCostWidgetQuery({
   granularity,
   globalFilters,
   specFilters,
-  dimensions,
 }: WidgetQueryArgs): CostWidgetQueryResult {
   const api = useCostApi();
   const filters = mergeFilters(globalFilters, specFilters);
   const fk = filtersKey(filters);
   const fallbackDims = useMemo(
-    () => specGroupBy === undefined ? [] : getDimensionFallbacks(specGroupBy, dimensions),
-    [specGroupBy, dimensions],
+    () => specGroupBy === undefined ? [] : getDimensionFallbacks(specGroupBy),
+    [specGroupBy],
   );
 
   const query = useQuery<CostQueryResult | null>(
