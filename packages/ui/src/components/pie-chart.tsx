@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Group } from '@visx/group';
 import { Pie } from '@visx/shape';
 import { getColor } from '../lib/palette.js';
@@ -60,6 +60,13 @@ function PieChartInner({
   const { palette } = usePalette();
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const hoveredName = externalHoveredName ?? localHovered;
+  const legendRefs = useRef(new Map<string, HTMLDivElement>());
+
+  useEffect(() => {
+    if (hoveredName !== null) {
+      legendRefs.current.get(hoveredName)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [hoveredName]);
 
   const displayData = aggregateOther(data, maxSlices);
   const pieSize = Math.min(width * 0.38, height - 60);
@@ -76,7 +83,7 @@ function PieChartInner({
   }, [onSliceHover]);
 
   return (
-    <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col">
+    <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col h-full">
       <div className="flex items-center justify-between mb-3">
         {dimensions !== undefined && dimensions.length > 0 && onDimensionChange !== undefined ? (
           <select
@@ -171,6 +178,7 @@ function PieChartInner({
             return (
               <div
                 key={d.name}
+                ref={(el) => { if (el !== null) { legendRefs.current.set(d.name, el); } else { legendRefs.current.delete(d.name); } }}
                 onMouseEnter={() => { handleMouseEnter(d.name); }}
                 onMouseLeave={handleMouseLeave}
                 onClick={() => { if (d.name !== OTHER_KEY) onSliceClick?.(d.name); }}
