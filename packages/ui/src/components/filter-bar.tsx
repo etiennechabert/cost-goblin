@@ -273,7 +273,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                     <button
                       type="button"
                       onClick={() => { setDraft(filteredValues.map(v => v.value)); }}
-                      className="text-xs text-text-secondary hover:text-text-primary"
+                      className="text-xs text-text-secondary hover:text-accent"
                       disabled={filteredValues.length === 0 || draft.length === filteredValues.length}
                     >
                       All
