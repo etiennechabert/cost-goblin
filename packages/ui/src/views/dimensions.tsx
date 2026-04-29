@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronUp, ChevronDown, GripVertical } from 'lucide-react';
 import type { BuiltInDimension, DimensionsConfig, TagDimension, ConceptType, NormalizationRule } from '@costgoblin/core/browser';
+import { asDimensionId } from '@costgoblin/core/browser';
+
+// Core dimensions that cannot be disabled — they power the fallback chain and are always needed.
+const LOCKED_DIMENSIONS = new Set([asDimensionId('service'), asDimensionId('service_family'), asDimensionId('usage_type')]);
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -1388,7 +1392,7 @@ export function DimensionsView() {
   function toggleBuiltInEnabled(idx: number): void {
     if (config === null) return;
     const builtIn = config.builtIn.map((d, i) => {
-      if (i !== idx) return d;
+      if (i !== idx || LOCKED_DIMENSIONS.has(d.name)) return d;
       const nextEnabled = d.enabled === false ? undefined : false;
       const rest = { ...d };
       delete (rest as { enabled?: boolean }).enabled;
@@ -1509,14 +1513,15 @@ export function DimensionsView() {
             <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider">Built-in dimensions</h3>
             <div className="flex flex-wrap gap-1.5">
               {config.builtIn.map((d, idx) => {
-                const isOn = d.enabled !== false;
+                const locked = LOCKED_DIMENSIONS.has(d.name);
+                const isOn = locked || d.enabled !== false;
                 return (
                   <button
                     key={d.name}
                     type="button"
-                    onClick={() => { toggleBuiltInEnabled(idx); }}
-                    title={isOn ? 'Click to disable' : 'Click to enable'}
-                    className={pillClass(isOn)}
+                    onClick={locked ? undefined : () => { toggleBuiltInEnabled(idx); }}
+                    title={locked ? 'Always enabled' : isOn ? 'Click to disable' : 'Click to enable'}
+                    className={`${pillClass(isOn)}${locked ? ' cursor-default opacity-80' : ''}`}
                   >
                     {d.label}
                   </button>
