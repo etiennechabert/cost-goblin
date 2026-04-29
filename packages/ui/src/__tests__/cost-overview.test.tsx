@@ -161,4 +161,75 @@ describe('CostOverview', () => {
     expect(screen.getByText('Products')).toBeDefined();
     expect(screen.getByText('Services')).toBeDefined();
   });
+
+  it('changing date range with empty data does not crash', async () => {
+    const api = MockCostApi.withEmptyData();
+    const { user } = renderOverview(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).toBeNull();
+    });
+
+    await user.click(screen.getByText('7 days'));
+    await waitFor(() => {
+      expect(screen.getByText('Cost Overview')).toBeDefined();
+    });
+  });
+
+  it('date range picker remains functional with empty data after range change', async () => {
+    const api = MockCostApi.withEmptyData();
+    const { user } = renderOverview(api);
+    await waitFor(() => {
+      expect(screen.getByText('Cost Overview')).toBeDefined();
+    });
+
+    await user.click(screen.getByText('7 days'));
+    await waitFor(() => {
+      const buttons = screen.getAllByText('7 days');
+      expect(buttons.length).toBeGreaterThan(0);
+    });
+  });
+
+  it('renders data table after changing date range with no data', async () => {
+    const api = MockCostApi.withEmptyData();
+    const { user } = renderOverview(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).toBeNull();
+    });
+
+    await user.click(screen.getByText('7 days'));
+    await waitFor(() => {
+      expect(screen.getByText('No rows')).toBeDefined();
+    });
+  });
+
+  it('maintains UI structure when changing to date range with no data', async () => {
+    const api = MockCostApi.withEmptyData();
+    const { user } = renderOverview(api);
+    await waitFor(() => {
+      expect(screen.getByText('Cost Overview')).toBeDefined();
+    });
+
+    await user.click(screen.getByText('7 days'));
+    await waitFor(() => {
+      expect(screen.getByText('Cost Overview')).toBeDefined();
+    });
+    expect(screen.getByText('Cloud spending visibility')).toBeDefined();
+  });
+
+  it('triggers query when changing date range with empty data', async () => {
+    const api = MockCostApi.withEmptyData();
+    const { user } = renderOverview(api);
+    const queryCostsSpy = vi.spyOn(api, 'queryCosts');
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading...')).toBeNull();
+    });
+
+    const initialCallCount = queryCostsSpy.mock.calls.length;
+    await user.click(screen.getByText('7 days'));
+
+    await waitFor(() => {
+      expect(queryCostsSpy.mock.calls.length).toBeGreaterThan(initialCallCount);
+    });
+  });
 });
