@@ -4,10 +4,12 @@ export type {
 } from './api/CostApi.js';
 
 export { cn } from './lib/utils.js';
+export { isMac, getModifierKey, formatShortcut, matchesShortcut } from './lib/keyboard-utils.js';
 
 export { useCostApi, CostApiProvider } from './hooks/use-cost-api.js';
 export { useQuery } from './hooks/use-query.js';
 export { UnsavedChangesProvider, useUnsavedChanges, useConfirmLeave } from './hooks/use-unsaved-changes.js';
+export { useKeyboardShortcuts } from './hooks/use-keyboard-shortcuts.js';
 
 export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/card.js';
 export { Button, buttonVariants } from './components/ui/button.js';
