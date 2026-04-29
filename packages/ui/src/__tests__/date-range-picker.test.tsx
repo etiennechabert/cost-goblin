@@ -78,14 +78,18 @@ describe('DateRangePicker', () => {
     expect(granularity).toBe('daily');
   });
 
-  it('clicking Custom shows date inputs', async () => {
+  it('clicking Custom shows calendar pickers', async () => {
     const { container } = renderPicker();
 
-    expect(container.querySelectorAll('input[type="date"]').length).toBe(0);
+    // No calendar buttons visible initially
+    const initialButtons = container.querySelectorAll('button[class*="justify-start"]');
+    expect(initialButtons.length).toBe(0);
 
     const user = userEvent.setup();
     await user.click(screen.getByText('Custom'));
 
-    expect(container.querySelectorAll('input[type="date"]').length).toBe(2);
+    // Two calendar picker buttons should now be visible
+    const calendarButtons = container.querySelectorAll('button[class*="justify-start"]');
+    expect(calendarButtons.length).toBe(2);
   });
 });

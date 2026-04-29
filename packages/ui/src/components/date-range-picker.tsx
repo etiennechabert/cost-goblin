@@ -1,7 +1,11 @@
 import { useState } from 'react';
+import { CalendarIcon } from 'lucide-react';
 import type { DateString } from '@costgoblin/core/browser';
 import { DEFAULT_LAG_DAYS, asDateString } from '@costgoblin/core/browser';
 import { daysAgo, getThisMonth, getLastMonth, getLastQuarter, getYTD } from '../lib/dates.js';
+import { Calendar } from './ui/calendar.js';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover.js';
+import { Button } from './ui/button.js';
 
 export type Granularity = 'daily' | 'hourly';
 
@@ -63,6 +67,8 @@ export function getDefaultDateRange(lagDays: number = DEFAULT_LAG_DAYS): DateRan
 
 export function DateRangePicker({ value, granularity, onChange, hideHourly, lagDays = DEFAULT_LAG_DAYS }: DateRangePickerProps) {
   const [showCustom, setShowCustom] = useState(false);
+  const [startOpen, setStartOpen] = useState(false);
+  const [endOpen, setEndOpen] = useState(false);
   const latestDate = daysAgo(lagDays);
 
   function getPresetRange(preset: Preset): DateRange {
@@ -155,24 +161,70 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
       </div>
       )}
 
-      {/* Custom date inputs */}
+      {/* Custom date picker with Calendar */}
       {showCustom && (
         <div className="flex items-center gap-1.5">
-          <input
-            type="date"
-            value={value.start}
-            max={latestDate}
-            onChange={(e) => { onChange({ ...value, start: asDateString(e.target.value) }, 'daily'); }}
-            className="rounded border border-border bg-bg-secondary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
-          />
+          <Popover open={startOpen} onOpenChange={setStartOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="justify-start text-left font-normal"
+              >
+                <CalendarIcon className="mr-2 h-3 w-3" />
+                <span className="text-xs">{value.start}</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <Calendar
+                mode="single"
+                selected={new Date(value.start)}
+                onSelect={(date) => {
+                  if (date) {
+                    const dateStr = asDateString(date.toISOString().slice(0, 10));
+                    onChange({ ...value, start: dateStr }, 'daily');
+                    setStartOpen(false);
+                  }
+                }}
+                disabled={(date) => {
+                  const dateStr = date.toISOString().slice(0, 10);
+                  return dateStr > latestDate;
+                }}
+                autoFocus
+              />
+            </PopoverContent>
+          </Popover>
           <span className="text-xs text-text-muted">–</span>
-          <input
-            type="date"
-            value={value.end}
-            max={latestDate}
-            onChange={(e) => { onChange({ ...value, end: asDateString(e.target.value) }, 'daily'); }}
-            className="rounded border border-border bg-bg-secondary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
-          />
+          <Popover open={endOpen} onOpenChange={setEndOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="justify-start text-left font-normal"
+              >
+                <CalendarIcon className="mr-2 h-3 w-3" />
+                <span className="text-xs">{value.end}</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <Calendar
+                mode="single"
+                selected={new Date(value.end)}
+                onSelect={(date) => {
+                  if (date) {
+                    const dateStr = asDateString(date.toISOString().slice(0, 10));
+                    onChange({ ...value, end: dateStr }, 'daily');
+                    setEndOpen(false);
+                  }
+                }}
+                disabled={(date) => {
+                  const dateStr = date.toISOString().slice(0, 10);
+                  return dateStr > latestDate;
+                }}
+                autoFocus
+              />
+            </PopoverContent>
+          </Popover>
         </div>
       )}
     </div>
