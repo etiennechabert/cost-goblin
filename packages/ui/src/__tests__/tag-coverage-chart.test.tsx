@@ -102,7 +102,7 @@ describe('TagCoverageChart', () => {
   });
 
   it('renders with single snapshot without errors', () => {
-    const singleSnapshot = [mockSnapshots[0]!];
+    const singleSnapshot = mockSnapshots.slice(0, 1);
     const { container } = renderChart(singleSnapshot);
     const svg = container.querySelector('svg');
     expect(svg).toBeDefined();

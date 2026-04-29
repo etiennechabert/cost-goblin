@@ -55,7 +55,7 @@ describe('RemediationActions', () => {
 
   it('displays correct count for single resource', () => {
     render(
-      <RemediationActions selectedRows={[mockRows[0]!]} tagName="team" />,
+      <RemediationActions selectedRows={mockRows.slice(0, 1)} tagName="team" />,
     );
     expect(screen.getByText('1 resource selected')).toBeDefined();
   });
