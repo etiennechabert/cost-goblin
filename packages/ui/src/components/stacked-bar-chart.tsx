@@ -15,8 +15,8 @@ export type HistogramTab = 'owner' | 'product' | 'service';
 interface StackedBarChartProps {
   readonly days: readonly BarDay[];
   readonly highlightedGroup?: string | null;
-  readonly tab: HistogramTab;
-  readonly onTabChange: (tab: HistogramTab) => void;
+  readonly tab?: HistogramTab | undefined;
+  readonly onTabChange?: ((tab: HistogramTab) => void) | undefined;
   readonly expanded?: boolean | undefined;
   readonly onExpandToggle?: (() => void) | undefined;
   readonly title?: string | undefined;
@@ -37,34 +37,34 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
 
   const maxCost = days.reduce((m, d) => Math.max(m, d.total), 0);
 
-  const tabs: readonly { key: HistogramTab; label: string }[] = [
-    { key: 'owner', label: 'Groups' },
-    { key: 'product', label: 'Products' },
-    { key: 'service', label: 'Services' },
-  ];
-
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col h-full">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-medium text-text-secondary">{title ?? 'Daily Costs'}</h3>
         <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
-          {tabs.map(t => (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => { onTabChange(t.key); }}
-              className={[
-                'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors',
-                tab === t.key
-                  ? 'bg-accent text-bg-primary shadow-sm'
-                  : 'text-text-secondary hover:text-text-primary',
-              ].join(' ')}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        {tab !== undefined && onTabChange !== undefined && (
+          <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
+            {([
+              { key: 'owner' as const, label: 'Groups' },
+              { key: 'product' as const, label: 'Products' },
+              { key: 'service' as const, label: 'Services' },
+            ]).map(t => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => { onTabChange(t.key); }}
+                className={[
+                  'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors',
+                  tab === t.key
+                    ? 'bg-accent text-bg-primary shadow-sm'
+                    : 'text-text-secondary hover:text-text-primary',
+                ].join(' ')}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
         {onExpandToggle !== undefined && (
           <button
             type="button"

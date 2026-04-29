@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { daysBetween } from '../lib/dates.js';
 import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
-import { StackedBarChart, type BarDay, type HistogramTab } from '../components/stacked-bar-chart.js';
+import { StackedBarChart, type BarDay } from '../components/stacked-bar-chart.js';
 import { useCostFocus } from '../hooks/use-cost-focus.js';
 import type { DailyCostsResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
@@ -50,7 +50,6 @@ export function StackedBarWidget({
   globalFilters,
 }: WidgetCommonProps) {
   const focus = useCostFocus();
-  const [tab, setTab] = useState<HistogramTab>('service');
   const specGroupBy = spec.type === 'stackedBar' ? spec.groupBy : undefined;
 
   const { query, dailyResult } = useDailyWidgetQuery({
@@ -81,8 +80,6 @@ export function StackedBarWidget({
     <StackedBarChart
       days={barDays}
       highlightedGroup={focus.hoveredEntity}
-      tab={tab}
-      onTabChange={setTab}
       title={title}
       loading={loading}
     />
