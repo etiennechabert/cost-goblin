@@ -112,6 +112,7 @@ function QueryRow({ entry }: Readonly<{ entry: DebugQueryLogEntry }>): React.JSX
 
 export function DebugPanel({ onClose }: Readonly<{ onClose: () => void }>): React.JSX.Element {
   const [entries, setEntries] = useState<DebugQueryLogEntry[]>([]);
+  const inFlightCount = useDebugBadge();
 
   useEffect(() => {
     let cancelled = false;
@@ -145,6 +146,11 @@ export function DebugPanel({ onClose }: Readonly<{ onClose: () => void }>): Reac
               </span>
             )}
           </span>
+          {inFlightCount > 0 && (
+            <span className="text-xs text-text-muted" title="Total IPC calls in-flight (includes config, sync, and other non-SQL calls)">
+              <span className="text-accent">{String(inFlightCount)}</span> IPC in-flight
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button

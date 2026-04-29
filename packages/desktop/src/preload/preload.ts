@@ -276,7 +276,8 @@ const api: CostApi = {
   },
   cancelPendingQueries(): Promise<void> {
     void invoke<undefined>('debug:clear-completed');
-    return invoke<undefined>('query:cancel-pending').then(() => undefined);
+    // Use ipcRenderer directly — cancel calls shouldn't inflate the in-flight badge
+    return (ipcRenderer.invoke('query:cancel-pending') as Promise<undefined>).then(() => undefined);
   },
 };
 
