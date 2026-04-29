@@ -197,6 +197,33 @@ export class MockCostApi implements CostApi {
     this.customErrors = options.customErrors ?? {};
   }
 
+  static withNetworkError(): MockCostApi {
+    return new MockCostApi({ errorMode: 'network' });
+  }
+
+  static withEmptyData(): MockCostApi {
+    return new MockCostApi({ errorMode: 'empty' });
+  }
+
+  static withMethodError(method: keyof CostApi, error: Error): MockCostApi {
+    return new MockCostApi({ customErrors: { [method]: error } });
+  }
+
+  static withDatabaseError(): MockCostApi {
+    const error = new Error('Database error: Failed to execute query');
+    return new MockCostApi({ customErrors: { queryCosts: error } });
+  }
+
+  static withTimeoutError(): MockCostApi {
+    const error = new Error('Timeout error: Query exceeded maximum execution time');
+    return new MockCostApi({ customErrors: { queryCosts: error } });
+  }
+
+  static withPermissionError(): MockCostApi {
+    const error = new Error('Permission error: Insufficient privileges to access data');
+    return new MockCostApi({ customErrors: { queryCosts: error } });
+  }
+
   private checkError(method: keyof CostApi): void {
     const customError = this.customErrors[method];
     if (customError !== undefined) {
