@@ -1,0 +1,27 @@
+import { describe, it, expect } from 'vitest';
+import { SecurityError } from '@costgoblin/core';
+import { validateProfileLabel } from '../main/validators/path-validator.js';
+
+describe('validateProfileLabel', () => {
+  it('accepts valid labels', () => {
+    expect(() => { validateProfileLabel('query1'); }).not.toThrow();
+    expect(() => { validateProfileLabel('test-profile'); }).not.toThrow();
+    expect(() => { validateProfileLabel('benchmark_2024'); }).not.toThrow();
+  });
+
+  it('rejects path traversal', () => {
+    expect(() => { validateProfileLabel('../../../etc/passwd'); }).toThrow(SecurityError);
+    expect(() => { validateProfileLabel('..\\windows\\system32'); }).toThrow(SecurityError);
+    expect(() => { validateProfileLabel('/etc/passwd'); }).toThrow(SecurityError);
+  });
+
+  it('rejects special characters', () => {
+    expect(() => { validateProfileLabel('test;rm -rf /'); }).toThrow(SecurityError);
+    expect(() => { validateProfileLabel('test label'); }).toThrow(SecurityError);
+    expect(() => { validateProfileLabel('test.txt'); }).toThrow(SecurityError);
+  });
+
+  it('rejects empty string', () => {
+    expect(() => { validateProfileLabel(''); }).toThrow(SecurityError);
+  });
+});
