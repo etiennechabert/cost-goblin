@@ -5,19 +5,14 @@
 
 /**
  * Detects if the current platform is macOS.
- * Checks navigator.platform and navigator.userAgent for compatibility.
+ * Uses navigator.userAgent for platform detection.
  */
 export function isMac(): boolean {
   if (typeof navigator === 'undefined') {
     return false;
   }
 
-  // Check platform first (more reliable when available)
-  if (navigator.platform) {
-    return /Mac|iPhone|iPad|iPod/.test(navigator.platform);
-  }
-
-  // Fallback to userAgent
+  // Use userAgent for platform detection
   return /Mac|iPhone|iPad|iPod/.test(navigator.userAgent);
 }
 
