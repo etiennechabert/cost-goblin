@@ -206,7 +206,7 @@ export function PieChart(props: PieChartProps) {
   }
 
   return (
-    <div ref={containerRef} style={{ height: PIE_HEIGHT }}>
+    <div ref={containerRef} style={{ height: PIE_HEIGHT, overflow: 'hidden' }}>
       {width > 10 && <PieChartInner {...props} width={width} height={PIE_HEIGHT} />}
     </div>
   );
