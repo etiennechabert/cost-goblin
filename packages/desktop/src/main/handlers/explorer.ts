@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import {
   asDimensionId,
+  asDateString,
   buildSource,
   buildRuleMatchExpr,
   buildAliasSqlCase,
@@ -284,13 +285,40 @@ export function registerExplorerHandlers(app: AppContext): void {
       const obj = parseJsonObject(raw);
       const rawHidden = obj?.['hiddenColumns'];
       const rawOrder = obj?.['columnOrder'];
+      const rawDateRange = obj?.['lastUsedDateRange'];
+      const rawGranularity = obj?.['lastUsedGranularity'];
+
       const hiddenColumns = Array.isArray(rawHidden) && rawHidden.every((v): v is string => typeof v === 'string')
         ? rawHidden
         : [];
       const columnOrder = Array.isArray(rawOrder) && rawOrder.every((v): v is string => typeof v === 'string')
         ? rawOrder
         : [];
-      return { hiddenColumns, columnOrder };
+
+      // Validate lastUsedDateRange: must have start and end as strings matching ISO date format
+      const validDateRange =
+        rawDateRange !== null &&
+        typeof rawDateRange === 'object' &&
+        typeof (rawDateRange as Record<string, unknown>)['start'] === 'string' &&
+        typeof (rawDateRange as Record<string, unknown>)['end'] === 'string' &&
+        ISO_DATE_RE.test((rawDateRange as Record<string, unknown>)['start'] as string) &&
+        ISO_DATE_RE.test((rawDateRange as Record<string, unknown>)['end'] as string)
+          ? {
+              start: asDateString((rawDateRange as Record<string, unknown>)['start'] as string),
+              end: asDateString((rawDateRange as Record<string, unknown>)['end'] as string),
+            }
+          : null;
+
+      // Validate lastUsedGranularity: must be 'daily' or 'hourly'
+      const validGranularity =
+        rawGranularity === 'daily' || rawGranularity === 'hourly' ? rawGranularity : null;
+
+      return {
+        hiddenColumns,
+        columnOrder,
+        ...(validDateRange !== null && { lastUsedDateRange: validDateRange }),
+        ...(validGranularity !== null && { lastUsedGranularity: validGranularity }),
+      };
     } catch {
       // file doesn't exist yet — first-run defaults
     }
