@@ -11,6 +11,7 @@ import { createSyncClient } from './sync-client.js';
 import type { SyncClient } from './sync-client.js';
 import { registerIpcHandlers } from './ipc.js';
 import { validateUrl, SecurityError } from './url-validator.js';
+import { validateProfileLabel } from './validators/path-validator.js';
 
 // Log level: debug in dev (NODE_ENV=development or electron-vite serving
 // the renderer), or when COSTGOBLIN_LOG_LEVEL=debug. Otherwise info.
@@ -79,8 +80,22 @@ if (perfMode) {
     });
   });
 
+  /**
+   * Stops CPU profiling and writes the profile to disk.
+   * The label parameter is validated to prevent path traversal attacks —
+   * only alphanumeric characters, hyphens, and underscores are allowed.
+   * This ensures the profile is written to the intended directory.
+   */
   ipcMain.handle('perf:stop-cpu-profile', (_event: unknown, label: string) => {
     return new Promise<{ path: string }>((resolve, reject) => {
+      // Validate label before constructing file path (prevents path traversal)
+      try {
+        validateProfileLabel(label);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+
       session.post('Profiler.stop', (err, result) => {
         if (err !== null) { reject(err); return; }
         session.post('Profiler.disable');
