@@ -10,6 +10,7 @@ import type { DuckDBClient } from './duckdb-client.js';
 import { createSyncClient } from './sync-client.js';
 import type { SyncClient } from './sync-client.js';
 import { registerIpcHandlers } from './ipc.js';
+import { validateUrl, SecurityError } from './url-validator.js';
 
 // Log level: debug in dev (NODE_ENV=development or electron-vite serving
 // the renderer), or when COSTGOBLIN_LOG_LEVEL=debug. Otherwise info.
@@ -181,7 +182,14 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
   }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url).catch(() => undefined);
+    try {
+      validateUrl(url);
+      shell.openExternal(url).catch(() => undefined);
+    } catch (err) {
+      if (err instanceof SecurityError) {
+        logger.warn('Blocked dangerous URL in window.open', { url, error: err.message });
+      }
+    }
     return { action: 'deny' };
   });
 
