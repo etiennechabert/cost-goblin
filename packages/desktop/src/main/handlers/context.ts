@@ -1,4 +1,5 @@
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
+import { LRUCache } from '../lru-cache.js';
 import { QueryLog } from '../query-log.js';
 import { MaterializedBase, configHash } from '../materialized-base.js';
 import {
@@ -411,6 +412,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
 
   const queryLog = new QueryLog();
   const materializedBase = new MaterializedBase();
+  const resultCache = new LRUCache<string, RawRow[]>(50);
 
   const wrappedRunQuery = queryLog.wrapQuery((sql, onStarted) => ctx.db.runQuery(sql, onStarted));
   const wrappedRunPreparedQuery = queryLog.wrapPreparedQuery((sql, params, onStarted) => ctx.db.runPreparedQuery(sql, params, onStarted));
@@ -426,11 +428,26 @@ export function createAppContext(ctx: IpcContext): AppContext {
     return promise;
   }
 
-  const runQuery = (sql: string) => dedup(sql, () => wrappedRunQuery(sql));
-  const runPreparedQuery = (sql: string, params: readonly unknown[]) => dedup(
-    `${sql}\0${JSON.stringify(params)}`,
-    () => wrappedRunPreparedQuery(sql, params),
-  );
+  const runQuery = (sql: string): Promise<RawRow[]> => {
+    const cached = resultCache.get(sql);
+    if (cached !== undefined) return Promise.resolve(cached);
+    return dedup(sql, async () => {
+      const result = await wrappedRunQuery(sql);
+      resultCache.set(sql, result);
+      return result;
+    });
+  };
+
+  const runPreparedQuery = (sql: string, params: readonly unknown[]): Promise<RawRow[]> => {
+    const key = `${sql}\0${JSON.stringify(params)}`;
+    const cached = resultCache.get(key);
+    if (cached !== undefined) return Promise.resolve(cached);
+    return dedup(key, async () => {
+      const result = await wrappedRunPreparedQuery(sql, params);
+      resultCache.set(key, result);
+      return result;
+    });
+  };
 
   async function warmupBase(): Promise<void> {
     try {
