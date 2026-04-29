@@ -20,12 +20,41 @@ function getDateRange(): { start: DateString; end: DateString } {
   return { start, end };
 }
 
-function ResourceTable({ rows, showRatio }: Readonly<{ rows: readonly MissingTagRow[]; showRatio: boolean }>) {
+function ResourceTable({
+  rows,
+  showRatio,
+  selectedResources,
+  onToggleResource,
+  onToggleAll,
+}: Readonly<{
+  rows: readonly MissingTagRow[];
+  showRatio: boolean;
+  selectedResources: ReadonlySet<string>;
+  onToggleResource: (resourceId: string) => void;
+  onToggleAll: (rows: readonly MissingTagRow[]) => void;
+}>) {
+  const allSelected = rows.length > 0 && rows.every(row => selectedResources.has(row.resourceId));
+  const someSelected = rows.some(row => selectedResources.has(row.resourceId));
+  const indeterminate = someSelected && !allSelected;
+
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-left text-text-secondary">
+            <th className="px-4 pb-3 pt-4 w-10">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                ref={(el) => {
+                  if (el !== null) {
+                    el.indeterminate = indeterminate;
+                  }
+                }}
+                onChange={() => { onToggleAll(rows); }}
+                className="h-3.5 w-3.5 rounded accent-emerald-500"
+              />
+            </th>
             <th className="px-4 pb-3 pt-4 font-medium">Account</th>
             <th className="px-4 pb-3 pt-4 font-medium">Resource</th>
             <th className="px-4 pb-3 pt-4 font-medium">Service</th>
@@ -36,27 +65,38 @@ function ResourceTable({ rows, showRatio }: Readonly<{ rows: readonly MissingTag
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
-            <tr key={`${row.resourceId}-${String(i)}`} className="border-b border-border-subtle hover:bg-bg-tertiary/30 transition-colors">
-              <td className="px-4 py-3 text-text-primary">{row.accountName}</td>
-              <td className="px-4 py-3 text-text-secondary font-mono text-xs max-w-64 truncate" title={row.resourceId}>
-                {row.resourceId}
-              </td>
-              <td className="px-4 py-3 text-text-secondary">{row.service}</td>
-              <td className="px-4 py-3 text-text-secondary">{row.serviceFamily}</td>
-              <td className="px-4 py-3 text-right tabular-nums font-medium text-text-primary">
-                {formatDollars(row.cost)}
-              </td>
-              <td className="px-4 py-3 text-text-secondary">
-                {row.closestOwner ?? '—'}
-              </td>
-              {showRatio && (
-                <td className="px-4 py-3 text-right tabular-nums text-text-muted">
-                  {`${String(Math.round(row.categoryTaggedRatio * 100))}%`}
+          {rows.map((row, i) => {
+            const isSelected = selectedResources.has(row.resourceId);
+            return (
+              <tr key={`${row.resourceId}-${String(i)}`} className="border-b border-border-subtle hover:bg-bg-tertiary/30 transition-colors">
+                <td className="px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => { onToggleResource(row.resourceId); }}
+                    className="h-3.5 w-3.5 rounded accent-emerald-500"
+                  />
                 </td>
-              )}
-            </tr>
-          ))}
+                <td className="px-4 py-3 text-text-primary">{row.accountName}</td>
+                <td className="px-4 py-3 text-text-secondary font-mono text-xs max-w-64 truncate" title={row.resourceId}>
+                  {row.resourceId}
+                </td>
+                <td className="px-4 py-3 text-text-secondary">{row.service}</td>
+                <td className="px-4 py-3 text-text-secondary">{row.serviceFamily}</td>
+                <td className="px-4 py-3 text-right tabular-nums font-medium text-text-primary">
+                  {formatDollars(row.cost)}
+                </td>
+                <td className="px-4 py-3 text-text-secondary">
+                  {row.closestOwner ?? '—'}
+                </td>
+                {showRatio && (
+                  <td className="px-4 py-3 text-right tabular-nums text-text-muted">
+                    {`${String(Math.round(row.categoryTaggedRatio * 100))}%`}
+                  </td>
+                )}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -71,6 +111,33 @@ export function MissingTags() {
   const [selectedTag, setSelectedTag] = useState<DimensionId | null>(null);
   const [showLikelyUntaggable, setShowLikelyUntaggable] = useState(false);
   const [nonResourceExpanded, setNonResourceExpanded] = useState(false);
+  const [selectedResources, setSelectedResources] = useState<Set<string>>(new Set());
+
+  const handleToggleResource = (resourceId: string) => {
+    setSelectedResources((prev) => {
+      const next = new Set(prev);
+      if (next.has(resourceId)) {
+        next.delete(resourceId);
+      } else {
+        next.add(resourceId);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleAll = (rows: readonly MissingTagRow[]) => {
+    setSelectedResources((prev) => {
+      const allSelected = rows.every(row => prev.has(row.resourceId));
+      if (allSelected) {
+        const next = new Set(prev);
+        rows.forEach(row => { next.delete(row.resourceId); });
+        return next;
+      }
+      const next = new Set(prev);
+      rows.forEach(row => { next.add(row.resourceId); });
+      return next;
+    });
+  };
 
   const dimensions: Dimension[] =
     dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
@@ -204,7 +271,13 @@ export function MissingTags() {
               {String(actionableRows.length)} resources · {formatDollars(data.totalActionableCost)}
             </span>
           </h3>
-          <ResourceTable rows={actionableRows} showRatio />
+          <ResourceTable
+            rows={actionableRows}
+            showRatio
+            selectedResources={selectedResources}
+            onToggleResource={handleToggleResource}
+            onToggleAll={handleToggleAll}
+          />
         </div>
       )}
 
@@ -225,7 +298,13 @@ export function MissingTags() {
           <p className="text-xs text-text-muted -mt-2">
             No resource in these categories has been tagged in the selected period — either AWS doesn't allow tagging them, or your org never has.
           </p>
-          <ResourceTable rows={likelyUntaggableRows} showRatio={false} />
+          <ResourceTable
+            rows={likelyUntaggableRows}
+            showRatio={false}
+            selectedResources={selectedResources}
+            onToggleResource={handleToggleResource}
+            onToggleAll={handleToggleAll}
+          />
         </div>
       )}
 
