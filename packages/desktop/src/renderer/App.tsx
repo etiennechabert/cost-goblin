@@ -348,6 +348,7 @@ function AppShell(): React.JSX.Element {
                     ? 'bg-bg-tertiary text-text-primary'
                     : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
                 ].join(' ')}
+                aria-current={active === item.id ? 'page' : undefined}
               >
                 {item.label}
               </button>
@@ -411,6 +412,7 @@ function AppShell(): React.JSX.Element {
                     showActive ? 'animate-sync-blink' : '',
                   ].join(' ')}
                   title={syncError === null ? undefined : `Sync error — ${syncError}`}
+                  aria-current={active === item.id ? 'page' : undefined}
                 >
                   {showError && (
                     <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-negative animate-pulse" aria-label="sync error" />
