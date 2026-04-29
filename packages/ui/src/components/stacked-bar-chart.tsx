@@ -235,10 +235,13 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
               const step = Math.max(1, Math.ceil(days.length / 7));
               if (idx % step !== 0) return null;
               const pct = days.length > 1 ? (idx / (days.length - 1)) * 100 : 0;
+              const isFirst = idx === 0;
+              const isLast = idx >= days.length - step;
+              const align = isFirst ? '' : isLast ? '-translate-x-full' : '-translate-x-1/2';
               return (
                 <span
                   key={day.date}
-                  className="absolute text-[10px] text-text-muted whitespace-nowrap -translate-x-1/2"
+                  className={`absolute text-[10px] text-text-muted whitespace-nowrap ${align}`}
                   style={{ left: `${String(pct)}%` }}
                 >
                   {day.date.slice(5)}
