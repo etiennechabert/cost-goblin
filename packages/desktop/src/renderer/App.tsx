@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider } from '@costgoblin/ui';
+import { useState, useEffect, useCallback, useMemo, Profiler } from 'react';
+import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, useKeyboardShortcuts } from '@costgoblin/ui';
 import type { CostApi, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 
@@ -311,6 +311,32 @@ function AppShell(): React.JSX.Element {
   // views (Trends / Missing Tags / Savings).
   const customNav: { id: string; label: string }[] = views.views.map(v => ({ id: v.id, label: v.name }));
   const leftNav = [...customNav, ...STATIC_LEFT_NAV];
+
+  // Register global keyboard shortcuts for navigation and panel controls.
+  // Number keys 1-9 navigate to the first 9 left-nav items, respecting
+  // unsaved-changes guards via handleNavClick. Escape closes the debug
+  // panel when open.
+  const shortcuts = useMemo(() => {
+    const map: Record<string, () => void> = {};
+
+    // Number keys 1-9 for view navigation
+    for (let i = 0; i < Math.min(9, leftNav.length); i++) {
+      const navItem = leftNav[i];
+      if (navItem !== undefined) {
+        const key = String(i + 1);
+        map[key] = () => { handleNavClick(navItem.id); };
+      }
+    }
+
+    // Escape closes debug panel if open
+    if (debugOpen) {
+      map['Escape'] = () => { setDebugOpen(false); };
+    }
+
+    return map;
+  }, [leftNav, debugOpen]);
+
+  useKeyboardShortcuts(shortcuts);
 
   function activeNavId(): string | null {
     if (view.page === 'custom') return view.viewId;
