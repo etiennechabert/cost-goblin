@@ -123,4 +123,84 @@ describe('FilterBar', () => {
 
     expect(screen.getByText('Clear all')).toBeDefined();
   });
+
+  it('arrow down navigates through dropdown options', async () => {
+    renderFilterBar();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Team'));
+
+    await waitFor(() => {
+      expect(screen.getByText('platform')).toBeDefined();
+    });
+
+    await user.keyboard('{ArrowDown}');
+    const firstOption = screen.getByText('platform').closest('button');
+    expect(firstOption?.className).toContain('bg-accent-muted');
+
+    await user.keyboard('{ArrowDown}');
+    const secondOption = screen.getByText('data').closest('button');
+    expect(secondOption?.className).toContain('bg-accent-muted');
+
+    await user.keyboard('{ArrowDown}');
+    const thirdOption = screen.getByText('growth').closest('button');
+    expect(thirdOption?.className).toContain('bg-accent-muted');
+  });
+
+  it('arrow up navigates backwards through dropdown options', async () => {
+    renderFilterBar();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Team'));
+
+    await waitFor(() => {
+      expect(screen.getByText('platform')).toBeDefined();
+    });
+
+    await user.keyboard('{ArrowDown}');
+    await user.keyboard('{ArrowDown}');
+    const secondOption = screen.getByText('data').closest('button');
+    expect(secondOption?.className).toContain('bg-accent-muted');
+
+    await user.keyboard('{ArrowUp}');
+    const firstOption = screen.getByText('platform').closest('button');
+    expect(firstOption?.className).toContain('bg-accent-muted');
+  });
+
+  it('enter key selects highlighted option', async () => {
+    const onFilterChange = vi.fn();
+    renderFilterBar({ onFilterChange });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Team'));
+
+    await waitFor(() => {
+      expect(screen.getByText('platform')).toBeDefined();
+    });
+
+    await user.keyboard('{ArrowDown}');
+    await user.keyboard('{ArrowDown}');
+    await user.keyboard('{Enter}');
+
+    expect(onFilterChange).toHaveBeenCalledOnce();
+    const callArg = onFilterChange.mock.calls[0]?.[0] as FilterMap;
+    expect(callArg[asDimensionId('tag_team')]).toBe(asTagValue('data'));
+  });
+
+  it('escape key closes dropdown', async () => {
+    renderFilterBar();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Team'));
+
+    await waitFor(() => {
+      expect(screen.getByText('platform')).toBeDefined();
+    });
+
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(screen.queryByText('platform')).toBeNull();
+    });
+  });
 });
