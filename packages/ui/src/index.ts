@@ -39,6 +39,7 @@ export { FilterActiveBanner } from './components/filter-active-banner.js';
 export { CoinRainLoader } from './components/coin-rain-loader.js';
 export { CommandPalette } from './components/command-palette.js';
 export type { CommandPaletteAction } from './components/command-palette.js';
+export { KeyboardShortcutsOverlay } from './components/keyboard-shortcuts-overlay.js';
 export { useCostFocus, useCostFocusDispatch, useCostFocusReducer, CostFocusProvider, CostFocusDispatchProvider } from './hooks/use-cost-focus.js';
 
 export { WIDGET_REGISTRY, WIDGET_CATALOG } from './widgets/registry.js';
