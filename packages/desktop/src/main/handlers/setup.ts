@@ -270,7 +270,6 @@ export function registerSetupHandlers(app: AppContext): void {
         label: 'Usage Type',
         field: 'usage_type',
         description: 'Fine-grained usage string like USE2-BoxUsage:t3.medium. Use for instance/storage-tier breakdowns.',
-        enabled: false,
       },
       {
         name: 'operation',

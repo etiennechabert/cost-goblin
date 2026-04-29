@@ -242,6 +242,8 @@ function optionalTag(rand: () => number, missingRate: number, values: readonly s
   return rand() < missingRate ? null : pick(values, rand);
 }
 
+import { SERVICE_META, DEFAULT_META } from './service-meta.js';
+
 interface GenerateRowOpts {
   date: string;
   profileData: Profile;
@@ -271,13 +273,16 @@ function generateRow(opts: GenerateRowOpts): string {
   const usageAmount = Math.round(rand() * 1000 * 100) / 100;
   const resourceId = `arn:aws:${service.name.toLowerCase()}:${region}:${account.id}:resource/${String(Math.floor(rand() * 10000))}`;
 
+  const meta = SERVICE_META[service.name] ?? DEFAULT_META;
+  const operation = pick(meta.operations, rand);
+
   const tagEntries: string[] = [];
   if (owner !== null) tagEntries.push(`'user_team': '${owner}'`);
   if (product !== null) tagEntries.push(`'user_system': '${product}'`);
   if (env !== null) tagEntries.push(`'user_environment': '${env}'`);
   const tagsMap = `MAP {${tagEntries.join(', ')}}`;
 
-  return `(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', 'Compute', '${lineItemType}', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(listCost)}, '${lineItemType}', 'RunInstances', 'Usage', ${tagsMap})`;
+  return `(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', '${meta.family}', '${lineItemType}', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(listCost)}, '${lineItemType}', '${operation}', 'Usage', ${tagsMap})`;
 }
 
 async function generate(): Promise<void> {
