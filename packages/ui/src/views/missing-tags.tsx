@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type {
   Dimension,
   DimensionId,
@@ -168,6 +168,51 @@ export function MissingTags() {
 
   const data: MissingTagsResult | null =
     missingQuery.status === 'success' ? missingQuery.data : null;
+
+  // Save coverage snapshot when data loads successfully
+  useEffect(() => {
+    if (missingQuery.status !== 'success') return;
+    if (missingQuery.data === null) return;
+    if (activeTagId === null) return;
+
+    const snapshot = missingQuery.data;
+    const dateRange = getDateRange();
+
+    // Query total cost to calculate coverage percentage
+    api.queryCosts({
+      dateRange,
+      filters: {},
+      groupBy: activeTagId,
+    }).then((costResult) => {
+      const totalCost = costResult.totalCost;
+      const totalUntaggedCost = snapshot.totalActionableCost + snapshot.totalLikelyUntaggableCost + snapshot.totalNonResourceCost;
+      const totalTaggedCost = Math.max(0, totalCost - totalUntaggedCost);
+      const taggableCost = totalTaggedCost + snapshot.totalActionableCost;
+      const coveragePercentage = taggableCost > 0 ? (totalTaggedCost / taggableCost) * 100 : 0;
+
+      const coverageSnapshot: TagCoverageSnapshot = {
+        timestamp: new Date().toISOString(),
+        totalActionableCost: snapshot.totalActionableCost,
+        totalLikelyUntaggableCost: snapshot.totalLikelyUntaggableCost,
+        totalNonResourceCost: snapshot.totalNonResourceCost,
+        actionableCount: snapshot.actionableCount,
+        likelyUntaggableCount: snapshot.likelyUntaggableCount,
+        coveragePercentage,
+      };
+
+      api.saveTagCoverageSnapshot(coverageSnapshot).catch((error: unknown) => {
+        // Silently fail - this is background persistence
+        if (error instanceof Error) {
+          // Log would go here if we had a logger
+        }
+      });
+    }).catch((error: unknown) => {
+      // Silently fail - coverage calculation is not critical
+      if (error instanceof Error) {
+        // Log would go here if we had a logger
+      }
+    });
+  }, [missingQuery, activeTagId, api]);
 
   const actionableRows = data === null ? [] : data.rows.filter(r => r.bucket === 'actionable');
   const likelyUntaggableRows = data === null ? [] : data.rows.filter(r => r.bucket === 'likely-untaggable');
