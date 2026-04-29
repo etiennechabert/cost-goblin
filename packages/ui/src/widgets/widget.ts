@@ -14,13 +14,14 @@ import type {
 import { asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
 
-const DIMENSION_FALLBACKS: ReadonlyMap<DimensionId, DimensionId> = new Map([
-  [asDimensionId('service'), asDimensionId('service_family')],
-  [asDimensionId('service_family'), asDimensionId('service')],
+const DIMENSION_FALLBACK_CHAINS: ReadonlyMap<DimensionId, readonly DimensionId[]> = new Map([
+  [asDimensionId('service'), [asDimensionId('service_family'), asDimensionId('usage_type')]],
+  [asDimensionId('service_family'), [asDimensionId('service'), asDimensionId('usage_type')]],
 ]);
 
-export function getDimensionFallback(dimId: DimensionId): DimensionId | undefined {
-  return DIMENSION_FALLBACKS.get(dimId);
+// Fallback candidates are built-in CUR columns — always queryable regardless of enabled state.
+export function getDimensionFallbacks(dimId: DimensionId): readonly DimensionId[] {
+  return DIMENSION_FALLBACK_CHAINS.get(dimId) ?? [];
 }
 
 /** Props every widget renderer receives. The host view owns the global

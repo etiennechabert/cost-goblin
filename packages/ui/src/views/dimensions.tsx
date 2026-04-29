@@ -1,6 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronUp, ChevronDown, GripVertical } from 'lucide-react';
+import { ChevronUp, ChevronDown, GripVertical, Lock } from 'lucide-react';
 import type { BuiltInDimension, DimensionsConfig, TagDimension, ConceptType, NormalizationRule } from '@costgoblin/core/browser';
+import { asDimensionId } from '@costgoblin/core/browser';
+
+// Core dimensions that cannot be disabled — they power the fallback chain and are always needed.
+const LOCKED_DIMENSIONS = new Set([asDimensionId('service'), asDimensionId('service_family'), asDimensionId('usage_type')]);
+
+function migrateLocked(cfg: DimensionsConfig): { config: DimensionsConfig; changed: boolean } {
+  const needsFix = cfg.builtIn.some(d => LOCKED_DIMENSIONS.has(d.name) && d.enabled === false);
+  if (!needsFix) return { config: cfg, changed: false };
+  const builtIn = cfg.builtIn.map(d => {
+    if (!LOCKED_DIMENSIONS.has(d.name) || d.enabled !== false) return d;
+    const rest = { ...d };
+    delete (rest as { enabled?: boolean }).enabled;
+    return rest;
+  });
+  return { config: { ...cfg, builtIn }, changed: true };
+}
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -1281,8 +1297,14 @@ export function DimensionsView() {
   // the dimensions list for a frame after every reorder/toggle/save.
   const [config, setConfig] = useState<DimensionsConfig | null>(null);
   useEffect(() => {
-    if (configQuery.status === 'success') setConfig(configQuery.data);
-  }, [configQuery]);
+    if (configQuery.status !== 'success') return;
+    const { config: migrated, changed } = migrateLocked(configQuery.data);
+    setConfig(migrated);
+    if (changed) {
+      const reconciled = { ...migrated, order: reconcileOrder(migrated) };
+      api.saveDimensionsConfig(reconciled).catch(() => undefined);
+    }
+  }, [configQuery, api]);
   const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
 
   // Account tag keys from org sync
@@ -1388,7 +1410,7 @@ export function DimensionsView() {
   function toggleBuiltInEnabled(idx: number): void {
     if (config === null) return;
     const builtIn = config.builtIn.map((d, i) => {
-      if (i !== idx) return d;
+      if (i !== idx || LOCKED_DIMENSIONS.has(d.name)) return d;
       const nextEnabled = d.enabled === false ? undefined : false;
       const rest = { ...d };
       delete (rest as { enabled?: boolean }).enabled;
@@ -1508,16 +1530,24 @@ export function DimensionsView() {
           <div className="flex flex-col gap-2">
             <h3 className="text-xs font-medium text-text-muted uppercase tracking-wider">Built-in dimensions</h3>
             <div className="flex flex-wrap gap-1.5">
-              {config.builtIn.map((d, idx) => {
-                const isOn = d.enabled !== false;
+              {[...config.builtIn.entries()]
+                .sort(([, a], [, b]) => {
+                  const la = LOCKED_DIMENSIONS.has(a.name) ? 0 : 1;
+                  const lb = LOCKED_DIMENSIONS.has(b.name) ? 0 : 1;
+                  return la - lb;
+                })
+                .map(([idx, d]) => {
+                const locked = LOCKED_DIMENSIONS.has(d.name);
+                const isOn = locked || d.enabled !== false;
                 return (
                   <button
                     key={d.name}
                     type="button"
-                    onClick={() => { toggleBuiltInEnabled(idx); }}
-                    title={isOn ? 'Click to disable' : 'Click to enable'}
-                    className={pillClass(isOn)}
+                    onClick={locked ? undefined : () => { toggleBuiltInEnabled(idx); }}
+                    title={locked ? 'Always enabled — required for cost breakdown' : isOn ? 'Click to disable' : 'Click to enable'}
+                    className={`${pillClass(isOn)}${locked ? ' cursor-default' : ''}`}
                   >
+                    {locked && <Lock className="inline-block w-3 h-3 mr-1 -mt-0.5" />}
                     {d.label}
                   </button>
                 );
