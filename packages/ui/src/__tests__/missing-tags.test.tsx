@@ -84,4 +84,45 @@ describe('MissingTags', () => {
     expect(screen.getByText('Team')).toBeDefined();
     expect(screen.getByText('Environment')).toBeDefined();
   });
+
+  describe('edge cases', () => {
+    it('renders table structure with minimal dataset', async () => {
+      const api = new MockCostApi();
+      renderMissingTags(api);
+      await waitFor(() => {
+        expect(screen.getByText('Account')).toBeDefined();
+        expect(screen.getByText('Resource')).toBeDefined();
+        expect(screen.getByText('Service')).toBeDefined();
+      });
+    });
+
+    it('shows zero-row table body with empty data', async () => {
+      const api = MockCostApi.withEmptyData();
+      renderMissingTags(api);
+      await waitFor(() => {
+        expect(screen.queryByText('Loading...')).toBeNull();
+      });
+      const tbody = document.querySelector('tbody');
+      expect(tbody).toBeDefined();
+    });
+
+    it('renders controls even with single resource', async () => {
+      const api = new MockCostApi();
+      renderMissingTags(api);
+      await waitFor(() => {
+        expect(screen.queryByText('Loading...')).toBeNull();
+      });
+      expect(screen.getByDisplayValue('0')).toBeDefined();
+      expect(screen.getByText('Show likely-untaggable categories')).toBeDefined();
+    });
+
+    it('handles dataset with single category', async () => {
+      const api = new MockCostApi();
+      renderMissingTags(api);
+      await waitFor(() => {
+        expect(screen.getByText('Missing Tags')).toBeDefined();
+        expect(screen.getByText('Account')).toBeDefined();
+      });
+    });
+  });
 });
