@@ -73,7 +73,7 @@ export function TableWidget({
   const explorerFilters = useMemo<ExplorerFilterMap>(() => {
     const map: Record<string, readonly string[]> = {};
     for (const [k, v] of Object.entries(widgetFilters)) {
-      if (v !== undefined) map[k] = [v];
+      if (v !== undefined) map[k] = v;
     }
     return map;
   }, [widgetFilters]);

@@ -76,11 +76,11 @@ function CustomViewInner({ spec, headerSubtitle, onEntityClick }: CustomViewProp
   );
 
   function handleSetFilter(dim: DimensionId, value: TagValue) {
-    setFilters(prev => ({ ...prev, [dim]: value }));
+    setFilters(prev => ({ ...prev, [dim]: [value] }));
   }
 
   function handleGetFilterValues(dimensionId: DimensionId, currentFilters: FilterMap): Promise<{ value: string; label: string; count: number }[]> {
-    const plain: Record<string, string> = {};
+    const plain: Record<string, readonly string[]> = {};
     for (const [k, v] of Object.entries(currentFilters)) if (v !== undefined) plain[k] = v;
     return api.getFilterValues(dimensionId, plain, dateRange);
   }

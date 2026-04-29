@@ -91,7 +91,7 @@ describe('FilterBar', () => {
     expect(screen.getByText('$18.9k')).toBeDefined();
   });
 
-  it('selecting a value calls onFilterChange', async () => {
+  it('checking a value and clicking Apply calls onFilterChange with array', async () => {
     const onFilterChange = vi.fn();
     renderFilterBar({ onFilterChange });
 
@@ -103,22 +103,76 @@ describe('FilterBar', () => {
     });
 
     await user.click(screen.getByText('platform'));
+    await user.click(screen.getByText('Apply'));
 
     expect(onFilterChange).toHaveBeenCalledOnce();
     const callArg = onFilterChange.mock.calls[0]?.[0] as FilterMap;
-    expect(callArg[asDimensionId('tag_team')]).toBe(asTagValue('platform'));
+    expect(callArg[asDimensionId('tag_team')]).toEqual([asTagValue('platform')]);
+  });
+
+  it('multi-select: checking multiple values applies all', async () => {
+    const onFilterChange = vi.fn();
+    renderFilterBar({ onFilterChange });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Team'));
+
+    await waitFor(() => {
+      expect(screen.getByText('platform')).toBeDefined();
+    });
+
+    await user.click(screen.getByText('platform'));
+    await user.click(screen.getByText('data'));
+    await user.click(screen.getByText('Apply'));
+
+    expect(onFilterChange).toHaveBeenCalledOnce();
+    const callArg = onFilterChange.mock.calls[0]?.[0] as FilterMap;
+    expect(callArg[asDimensionId('tag_team')]).toEqual([asTagValue('platform'), asTagValue('data')]);
+  });
+
+  it('"Only" button selects just that value', async () => {
+    const onFilterChange = vi.fn();
+    renderFilterBar({
+      onFilterChange,
+      filters: { [asDimensionId('tag_team')]: [asTagValue('platform'), asTagValue('data')] },
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText(/Team/));
+
+    await waitFor(() => {
+      expect(screen.getByText('platform')).toBeDefined();
+    });
+
+    const onlyButtons = screen.getAllByText('only');
+    const secondOnly = onlyButtons[1];
+    expect(secondOnly).toBeDefined();
+    if (secondOnly === undefined) return;
+    await user.click(secondOnly);
+    await user.click(screen.getByText('Apply'));
+
+    expect(onFilterChange).toHaveBeenCalledOnce();
+    const callArg = onFilterChange.mock.calls[0]?.[0] as FilterMap;
+    expect(callArg[asDimensionId('tag_team')]).toEqual([asTagValue('data')]);
   });
 
   it('active filter shows value and clear button', () => {
-    const filters: FilterMap = { [asDimensionId('tag_team')]: asTagValue('platform') };
+    const filters: FilterMap = { [asDimensionId('tag_team')]: [asTagValue('platform')] };
     renderFilterBar({ filters });
 
     expect(screen.getByText('Team: platform')).toBeDefined();
     expect(screen.getByLabelText('Clear Team filter')).toBeDefined();
   });
 
+  it('multi-value badge shows count', () => {
+    const filters: FilterMap = { [asDimensionId('tag_team')]: [asTagValue('platform'), asTagValue('data')] };
+    renderFilterBar({ filters });
+
+    expect(screen.getByText('Team \u00b7 2')).toBeDefined();
+  });
+
   it('clear all button appears when filters are active', () => {
-    const filters: FilterMap = { [asDimensionId('tag_team')]: asTagValue('platform') };
+    const filters: FilterMap = { [asDimensionId('tag_team')]: [asTagValue('platform')] };
     renderFilterBar({ filters });
 
     expect(screen.getByText('Clear all')).toBeDefined();

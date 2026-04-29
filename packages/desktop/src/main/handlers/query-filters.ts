@@ -26,12 +26,13 @@ function resolveFieldExpr(
 }
 
 function buildFilterWhereClauses(
-  filterEntries: Record<string, string>,
+  filterEntries: Record<string, readonly string[]>,
   dimensions: import('@costgoblin/core').DimensionsConfig,
   accountReverseMap: Map<string, readonly string[]>,
 ): string[] {
   const clauses: string[] = [];
-  for (const [key, value] of Object.entries(filterEntries)) {
+  for (const [key, values] of Object.entries(filterEntries)) {
+    if (values.length === 0) continue;
     const fb = dimensions.builtIn.find(d => d.name === key);
     const ft = dimensions.tags.find(d => tagColumnName(d.tagName) === key);
     const ff = fb === undefined ? key : fb.field;
@@ -40,14 +41,31 @@ function buildFilterWhereClauses(
     else if (ft !== undefined) ffExpr = buildAliasSqlCase(ff, ft);
 
     if (ff === 'account_id') {
-      const ids = accountReverseMap.get(value);
-      if (ids !== undefined && ids.length > 0) {
-        const list = ids.map(id => `'${id.replaceAll("'", "''")}'`).join(', ');
+      const allIds = new Set<string>();
+      let usedReverse = false;
+      for (const v of values) {
+        const ids = accountReverseMap.get(v);
+        if (ids !== undefined && ids.length > 0) {
+          for (const id of ids) allIds.add(id);
+          usedReverse = true;
+        } else {
+          allIds.add(v);
+        }
+      }
+      if (usedReverse) {
+        const list = [...allIds].map(id => `'${id.replaceAll("'", "''")}'`).join(', ');
         clauses.push(`${ff} IN (${list})`);
         continue;
       }
     }
-    clauses.push(`${ffExpr} = '${value.replaceAll("'", "''")}'`);
+    if (values.length === 1) {
+      const first = values[0];
+      if (first === undefined) continue;
+      clauses.push(`${ffExpr} = '${first.replaceAll("'", "''")}'`);
+    } else {
+      const list = values.map(v => `'${v.replaceAll("'", "''")}'`).join(', ');
+      clauses.push(`${ffExpr} IN (${list})`);
+    }
   }
   return clauses;
 }
@@ -85,7 +103,7 @@ function mergeAccountRows(
 export function registerFilterHandlers(app: AppContext): void {
   const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runQuery } = app;
 
-  ipcMain.handle('query:filter-values', async (_event, dimensionId: string, filterEntries: Record<string, string>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }): Promise<{ value: string; label: string; count: number }[]> => {
+  ipcMain.handle('query:filter-values', async (_event, dimensionId: string, filterEntries: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }): Promise<{ value: string; label: string; count: number }[]> => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();

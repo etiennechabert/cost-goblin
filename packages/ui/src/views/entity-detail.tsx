@@ -86,7 +86,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   const [pie3DimId, setPie3DimId] = useState<DimensionId | null>(null);
 
   const dateRangeKey = `${dateRange.start}_${dateRange.end}`;
-  const entityFilter: FilterMap = { [asDimensionId(dimension)]: asTagValue(entity) };
+  const entityFilter: FilterMap = { [asDimensionId(dimension)]: [asTagValue(entity)] };
   const filterKey = JSON.stringify(entityFilter);
 
   // Entity detail summary (total, previous, percent change)

@@ -7,7 +7,7 @@ export interface DateRange {
   readonly end: DateString;
 }
 
-export type FilterMap = Readonly<Partial<Record<DimensionId, TagValue>>>;
+export type FilterMap = Readonly<Partial<Record<DimensionId, readonly TagValue[]>>>;
 
 export interface CostQueryParams {
   readonly groupBy: DimensionId;
