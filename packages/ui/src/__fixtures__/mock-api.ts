@@ -189,8 +189,45 @@ const orgTree: OrgNode[] = [
 ];
 
 export class MockCostApi implements CostApi {
-  queryCosts(): Promise<CostResult> { return Promise.resolve(costResult); }
+  private readonly errorMode: ErrorMode;
+  private readonly customErrors: Partial<Record<keyof CostApi, Error>>;
+
+  constructor(options: MockCostApiOptions = {}) {
+    this.errorMode = options.errorMode ?? 'none';
+    this.customErrors = options.customErrors ?? {};
+  }
+
+  private checkError(method: keyof CostApi): void {
+    const customError = this.customErrors[method];
+    if (customError !== undefined) {
+      throw customError;
+    }
+    if (this.errorMode === 'network') {
+      throw new Error('Network error: Failed to connect to service');
+    }
+  }
+
+  queryCosts(): Promise<CostResult> {
+    this.checkError('queryCosts');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({
+        rows: [],
+        totalCost: asDollars(0),
+        topServices: [],
+        dateRange: { start: asDateString('2026-03-01'), end: asDateString('2026-03-31') },
+      });
+    }
+    return Promise.resolve(costResult);
+  }
   queryDailyCosts(): Promise<DailyCostsResult> {
+    this.checkError('queryDailyCosts');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({
+        days: [],
+        groups: [],
+        totalCost: asDollars(0),
+      });
+    }
     const days = Array.from({ length: 30 }, (_, i) => {
       const d = new Date(2026, 2, i + 1);
       const date = d.toISOString().slice(0, 10);
@@ -211,9 +248,41 @@ export class MockCostApi implements CostApi {
       totalCost: asDollars(days.reduce((s, d) => s + d.total, 0)),
     });
   }
-  queryTrends(): Promise<TrendResult> { return Promise.resolve(trendResult); }
-  queryMissingTags(): Promise<MissingTagsResult> { return Promise.resolve(missingTagsResult); }
+  queryTrends(): Promise<TrendResult> {
+    this.checkError('queryTrends');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({
+        increases: [],
+        savings: [],
+        totalIncrease: asDollars(0),
+        totalSavings: asDollars(0),
+      });
+    }
+    return Promise.resolve(trendResult);
+  }
+  queryMissingTags(): Promise<MissingTagsResult> {
+    this.checkError('queryMissingTags');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({
+        rows: [],
+        totalActionableCost: asDollars(0),
+        totalLikelyUntaggableCost: asDollars(0),
+        totalNonResourceCost: asDollars(0),
+        actionableCount: 0,
+        likelyUntaggableCount: 0,
+        nonResourceRows: [],
+      });
+    }
+    return Promise.resolve(missingTagsResult);
+  }
   querySavings(): Promise<SavingsResult> {
+    this.checkError('querySavings');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({
+        recommendations: [],
+        totalMonthlySavings: asDollars(0),
+      });
+    }
     return Promise.resolve({
       recommendations: [
         { accountId: '111111111111', accountName: 'Production', actionType: 'PurchaseReservedInstances', resourceType: 'RdsReservedInstances', summary: '10 db.t4g.micro MariaDB in eu-central-1', region: 'eu-central-1', monthlySavings: asDollars(3000), monthlyCost: asDollars(5500), savingsPercentage: 55, effort: 'VeryLow', resourceArn: '', currentDetails: '', recommendedDetails: '', currentSummary: '', restartNeeded: false, rollbackPossible: false, recommendationSource: 'CostExplorer' },
@@ -223,52 +292,245 @@ export class MockCostApi implements CostApi {
       totalMonthlySavings: asDollars(3950),
     });
   }
-  queryEntityDetail(): Promise<EntityDetailResult> { return Promise.resolve(entityDetailResult); }
-  getSyncStatus(): Promise<SyncStatus> { return Promise.resolve(syncStatus); }
-  getConfig(): Promise<CostGoblinConfig> { return Promise.resolve(config); }
-  getDimensions(): Promise<Dimension[]> { return Promise.resolve(mockDimensions); }
-  getOrgTree(): Promise<OrgNode[]> { return Promise.resolve(orgTree); }
-  getFilterValues(): Promise<{ value: string; label: string; count: number }[]> { return Promise.resolve([]); }
-  getDataInventory(): Promise<DataInventoryResult> { return Promise.resolve({ periods: [], totalRemoteSize: 0, totalLocalPeriods: 0, totalRemotePeriods: 0, local: { periods: [], diskBytes: 0, oldestPeriod: null, newestPeriod: null } }); }
-  syncPeriods(): Promise<{ filesDownloaded: number; rowsProcessed: number }> { return Promise.resolve({ filesDownloaded: 0, rowsProcessed: 0 }); }
-  cancelSync(): Promise<void> { return Promise.resolve(); }
-  deleteLocalPeriod(): Promise<void> { return Promise.resolve(); }
-  openDataFolder(): Promise<void> { return Promise.resolve(); }
-  getAccountMapping(): Promise<AccountMappingStatus> { return Promise.resolve({ status: 'missing' }); }
-  getSetupStatus(): Promise<{ configured: boolean }> { return Promise.resolve({ configured: true }); }
-  testConnection(): Promise<{ ok: boolean; error?: string | undefined }> { return Promise.resolve({ ok: true }); }
-  listAwsProfiles(): Promise<string[]> { return Promise.resolve(['default', 'prod', 'staging']); }
-  listS3Buckets(): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> { return Promise.resolve({ buckets: [{ name: 'my-cur-bucket', region: 'eu-central-1' }] }); }
-  browseS3(): Promise<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }> { return Promise.resolve({ prefixes: ['data', 'metadata'], isCurReport: true, detectedType: 'daily', missingColumns: [] }); }
-  scaffoldConfig(): Promise<void> { return Promise.resolve(); }
-  writeConfig(): Promise<void> { return Promise.resolve(); }
-  updateAwsProfile(): Promise<void> { return Promise.resolve(); }
-  getSavingsPreferences(): Promise<{ hiddenActionTypes: readonly string[] }> { return Promise.resolve({ hiddenActionTypes: [] }); }
-  saveSavingsPreferences(): Promise<void> { return Promise.resolve(); }
-  getUIPreferences(): Promise<{ theme: 'dark' | 'light'; palette: 'standard' | 'colorblind' }> { return Promise.resolve({ theme: 'dark', palette: 'standard' }); }
-  saveUIPreferences(): Promise<void> { return Promise.resolve(); }
-  syncOrgAccounts(): Promise<{ accounts: readonly never[]; orgId: string; syncedAt: string }> { return Promise.resolve({ accounts: [], orgId: 'mock', syncedAt: new Date().toISOString() }); }
-  getOrgSyncResult(): Promise<null> { return Promise.resolve(null); }
-  getOrgSyncProgress(): Promise<null> { return Promise.resolve(null); }
-  getRegionNamesInfo(): Promise<null> { return Promise.resolve(null); }
-  clearOrgData(): Promise<void> { return Promise.resolve(); }
-  syncRegionNames(): Promise<{ count: number; syncedAt: string }> { return Promise.resolve({ count: 0, syncedAt: '' }); }
-  discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> { return Promise.resolve({ tags: [{ key: 'team', sampleValues: ['platform', 'payments'], rowCount: 500, distinctCount: 8, coveragePct: 45 }, { key: 'environment', sampleValues: ['production', 'staging'], rowCount: 400, distinctCount: 4, coveragePct: 36 }], samplePeriod: '2026-04' }); }
-  discoverColumnValues(): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> { return Promise.resolve({ values: [{ value: 'Usage', cost: 12345 }, { value: 'Tax', cost: 234 }, { value: 'Credit', cost: -100 }], distinctCount: 3, period: '2026-04' }); }
-  getDimensionsConfig(): Promise<DimensionsConfig> { return Promise.resolve({ builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name' }], tags: [{ tagName: 'team', label: 'Team', concept: 'owner' as const }] }); }
-  saveDimensionsConfig(): Promise<void> { return Promise.resolve(); }
-  getAutoSyncEnabled(): Promise<boolean> { return Promise.resolve(false); }
-  setAutoSyncEnabled(): Promise<void> { return Promise.resolve(); }
-  getAutoSyncIntervalMinutes(): Promise<number> { return Promise.resolve(24 * 60); }
-  setAutoSyncIntervalMinutes(): Promise<void> { return Promise.resolve(); }
-  getAutoSyncStatus(): Promise<{ state: 'disabled' }> { return Promise.resolve({ state: 'disabled' }); }
-  getViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
-  saveViewsConfig(): Promise<void> { return Promise.resolve(); }
-  resetViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
-  revealViewsFolder(): Promise<void> { return Promise.resolve(); }
-  getCostScope(): Promise<CostScopeConfig> { return Promise.resolve(DEFAULT_COST_SCOPE); }
-  saveCostScope(): Promise<void> { return Promise.resolve(); }
+  queryEntityDetail(): Promise<EntityDetailResult> {
+    this.checkError('queryEntityDetail');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({
+        entity: asEntityRef(''),
+        totalCost: asDollars(0),
+        previousCost: asDollars(0),
+        percentChange: 0,
+        dailyCosts: [],
+        byAccount: [],
+        byService: [],
+        bySubEntity: [],
+      });
+    }
+    return Promise.resolve(entityDetailResult);
+  }
+  getSyncStatus(): Promise<SyncStatus> {
+    this.checkError('getSyncStatus');
+    return Promise.resolve(syncStatus);
+  }
+  getConfig(): Promise<CostGoblinConfig> {
+    this.checkError('getConfig');
+    return Promise.resolve(config);
+  }
+  getDimensions(): Promise<Dimension[]> {
+    this.checkError('getDimensions');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve([]);
+    }
+    return Promise.resolve(mockDimensions);
+  }
+  getOrgTree(): Promise<OrgNode[]> {
+    this.checkError('getOrgTree');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve([]);
+    }
+    return Promise.resolve(orgTree);
+  }
+  getFilterValues(): Promise<{ value: string; label: string; count: number }[]> {
+    this.checkError('getFilterValues');
+    return Promise.resolve([]);
+  }
+  getDataInventory(): Promise<DataInventoryResult> {
+    this.checkError('getDataInventory');
+    return Promise.resolve({ periods: [], totalRemoteSize: 0, totalLocalPeriods: 0, totalRemotePeriods: 0, local: { periods: [], diskBytes: 0, oldestPeriod: null, newestPeriod: null } });
+  }
+  syncPeriods(): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
+    this.checkError('syncPeriods');
+    return Promise.resolve({ filesDownloaded: 0, rowsProcessed: 0 });
+  }
+  cancelSync(): Promise<void> {
+    this.checkError('cancelSync');
+    return Promise.resolve();
+  }
+  deleteLocalPeriod(): Promise<void> {
+    this.checkError('deleteLocalPeriod');
+    return Promise.resolve();
+  }
+  openDataFolder(): Promise<void> {
+    this.checkError('openDataFolder');
+    return Promise.resolve();
+  }
+  getAccountMapping(): Promise<AccountMappingStatus> {
+    this.checkError('getAccountMapping');
+    return Promise.resolve({ status: 'missing' });
+  }
+  getSetupStatus(): Promise<{ configured: boolean }> {
+    this.checkError('getSetupStatus');
+    return Promise.resolve({ configured: true });
+  }
+  testConnection(): Promise<{ ok: boolean; error?: string | undefined }> {
+    this.checkError('testConnection');
+    return Promise.resolve({ ok: true });
+  }
+  listAwsProfiles(): Promise<string[]> {
+    this.checkError('listAwsProfiles');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve([]);
+    }
+    return Promise.resolve(['default', 'prod', 'staging']);
+  }
+  listS3Buckets(): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> {
+    this.checkError('listS3Buckets');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({ buckets: [] });
+    }
+    return Promise.resolve({ buckets: [{ name: 'my-cur-bucket', region: 'eu-central-1' }] });
+  }
+  browseS3(): Promise<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }> {
+    this.checkError('browseS3');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({ prefixes: [], isCurReport: false, detectedType: 'unknown', missingColumns: [] });
+    }
+    return Promise.resolve({ prefixes: ['data', 'metadata'], isCurReport: true, detectedType: 'daily', missingColumns: [] });
+  }
+  scaffoldConfig(): Promise<void> {
+    this.checkError('scaffoldConfig');
+    return Promise.resolve();
+  }
+  writeConfig(): Promise<void> {
+    this.checkError('writeConfig');
+    return Promise.resolve();
+  }
+  updateAwsProfile(): Promise<void> {
+    this.checkError('updateAwsProfile');
+    return Promise.resolve();
+  }
+  getSavingsPreferences(): Promise<{ hiddenActionTypes: readonly string[] }> {
+    this.checkError('getSavingsPreferences');
+    return Promise.resolve({ hiddenActionTypes: [] });
+  }
+  saveSavingsPreferences(): Promise<void> {
+    this.checkError('saveSavingsPreferences');
+    return Promise.resolve();
+  }
+  getUIPreferences(): Promise<{ theme: 'dark' | 'light'; palette: 'standard' | 'colorblind' }> {
+    this.checkError('getUIPreferences');
+    return Promise.resolve({ theme: 'dark', palette: 'standard' });
+  }
+  saveUIPreferences(): Promise<void> {
+    this.checkError('saveUIPreferences');
+    return Promise.resolve();
+  }
+  syncOrgAccounts(): Promise<{ accounts: readonly never[]; orgId: string; syncedAt: string }> {
+    this.checkError('syncOrgAccounts');
+    return Promise.resolve({ accounts: [], orgId: 'mock', syncedAt: new Date().toISOString() });
+  }
+  getOrgSyncResult(): Promise<null> {
+    this.checkError('getOrgSyncResult');
+    return Promise.resolve(null);
+  }
+  getOrgSyncProgress(): Promise<null> {
+    this.checkError('getOrgSyncProgress');
+    return Promise.resolve(null);
+  }
+  getRegionNamesInfo(): Promise<null> {
+    this.checkError('getRegionNamesInfo');
+    return Promise.resolve(null);
+  }
+  clearOrgData(): Promise<void> {
+    this.checkError('clearOrgData');
+    return Promise.resolve();
+  }
+  syncRegionNames(): Promise<{ count: number; syncedAt: string }> {
+    this.checkError('syncRegionNames');
+    return Promise.resolve({ count: 0, syncedAt: '' });
+  }
+  discoverTagKeys(): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> {
+    this.checkError('discoverTagKeys');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({ tags: [], samplePeriod: '' });
+    }
+    return Promise.resolve({ tags: [{ key: 'team', sampleValues: ['platform', 'payments'], rowCount: 500, distinctCount: 8, coveragePct: 45 }, { key: 'environment', sampleValues: ['production', 'staging'], rowCount: 400, distinctCount: 4, coveragePct: 36 }], samplePeriod: '2026-04' });
+  }
+  discoverColumnValues(): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> {
+    this.checkError('discoverColumnValues');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({ values: [], distinctCount: 0, period: '' });
+    }
+    return Promise.resolve({ values: [{ value: 'Usage', cost: 12345 }, { value: 'Tax', cost: 234 }, { value: 'Credit', cost: -100 }], distinctCount: 3, period: '2026-04' });
+  }
+  getDimensionsConfig(): Promise<DimensionsConfig> {
+    this.checkError('getDimensionsConfig');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({ builtIn: [], tags: [] });
+    }
+    return Promise.resolve({ builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name' }], tags: [{ tagName: 'team', label: 'Team', concept: 'owner' as const }] });
+  }
+  saveDimensionsConfig(): Promise<void> {
+    this.checkError('saveDimensionsConfig');
+    return Promise.resolve();
+  }
+  getAutoSyncEnabled(): Promise<boolean> {
+    this.checkError('getAutoSyncEnabled');
+    return Promise.resolve(false);
+  }
+  setAutoSyncEnabled(): Promise<void> {
+    this.checkError('setAutoSyncEnabled');
+    return Promise.resolve();
+  }
+  getAutoSyncIntervalMinutes(): Promise<number> {
+    this.checkError('getAutoSyncIntervalMinutes');
+    return Promise.resolve(24 * 60);
+  }
+  setAutoSyncIntervalMinutes(): Promise<void> {
+    this.checkError('setAutoSyncIntervalMinutes');
+    return Promise.resolve();
+  }
+  getAutoSyncStatus(): Promise<{ state: 'disabled' }> {
+    this.checkError('getAutoSyncStatus');
+    return Promise.resolve({ state: 'disabled' });
+  }
+  getViewsConfig(): Promise<ViewsConfig> {
+    this.checkError('getViewsConfig');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({ views: [] });
+    }
+    return Promise.resolve(MOCK_VIEWS_CONFIG);
+  }
+  saveViewsConfig(): Promise<void> {
+    this.checkError('saveViewsConfig');
+    return Promise.resolve();
+  }
+  resetViewsConfig(): Promise<ViewsConfig> {
+    this.checkError('resetViewsConfig');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({ views: [] });
+    }
+    return Promise.resolve(MOCK_VIEWS_CONFIG);
+  }
+  revealViewsFolder(): Promise<void> {
+    this.checkError('revealViewsFolder');
+    return Promise.resolve();
+  }
+  getCostScope(): Promise<CostScopeConfig> {
+    this.checkError('getCostScope');
+    return Promise.resolve(DEFAULT_COST_SCOPE);
+  }
+  saveCostScope(): Promise<void> {
+    this.checkError('saveCostScope');
+    return Promise.resolve();
+  }
   previewCostScope(): Promise<CostScopePreviewResult> {
+    this.checkError('previewCostScope');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({
+        windowDays: 30,
+        startDate: '',
+        endDate: '',
+        perRule: [],
+        combined: { excludedCost: 0, excludedRows: 0 },
+        unscopedTotalCost: 0,
+        scopedTotalCost: 0,
+        dailyTotals: [],
+        sampleRows: [],
+        sampleTotalRowCount: 0,
+        tagColumns: [],
+      });
+    }
     return Promise.resolve({
       windowDays: 30,
       startDate: '2026-03-20',
@@ -284,10 +546,26 @@ export class MockCostApi implements CostApi {
     });
   }
   getCostScopeCapabilities(): Promise<CostScopeCapabilities> {
+    this.checkError('getCostScopeCapabilities');
     return Promise.resolve({ hasEffectiveCostColumns: true, hasBlendedColumn: true, hasNetColumns: true });
   }
-  revealCostScopeFolder(): Promise<void> { return Promise.resolve(); }
+  revealCostScopeFolder(): Promise<void> {
+    this.checkError('revealCostScopeFolder');
+    return Promise.resolve();
+  }
   queryExplorerOverview(): Promise<ExplorerOverviewResult> {
+    this.checkError('queryExplorerOverview');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({
+        windowDays: 30,
+        startDate: '',
+        endDate: '',
+        dailyTotals: [],
+        totalRows: 0,
+        totalCost: 0,
+        tagColumns: [],
+      });
+    }
     const today = new Date();
     const end = today.toISOString().slice(0, 10);
     const start = new Date(today.getTime() - 29 * 86_400_000).toISOString().slice(0, 10);
@@ -313,6 +591,13 @@ export class MockCostApi implements CostApi {
     });
   }
   queryExplorerRows(): Promise<ExplorerRowsResult> {
+    this.checkError('queryExplorerRows');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({
+        sampleRows: [],
+        tagColumns: [],
+      });
+    }
     const today = new Date();
     const end = today.toISOString().slice(0, 10);
     const start = new Date(today.getTime() - 29 * 86_400_000).toISOString().slice(0, 10);
@@ -330,6 +615,14 @@ export class MockCostApi implements CostApi {
     });
   }
   queryAggregatedTable(): Promise<import('@costgoblin/core/browser').AggregatedTableResult> {
+    this.checkError('queryAggregatedTable');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve({
+        rows: [],
+        totalRows: 0,
+        tagColumns: [],
+      });
+    }
     return Promise.resolve({
       rows: [
         { values: { service: 'Amazon EC2', region: 'eu-central-1' }, cost: 1_180.5, listCost: 1_200, usageAmount: 24, rowCount: 500 },
@@ -340,6 +633,10 @@ export class MockCostApi implements CostApi {
     });
   }
   getExplorerFilterValues(): Promise<ExplorerFilterValue[]> {
+    this.checkError('getExplorerFilterValues');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve([]);
+    }
     return Promise.resolve([
       { value: 'Amazon EC2', label: 'Amazon EC2', cost: 18_000, rows: 8_400 },
       { value: 'Amazon RDS', label: 'Amazon RDS', cost: 9_500, rows: 3_200 },
@@ -348,10 +645,18 @@ export class MockCostApi implements CostApi {
     ]);
   }
   getExplorerPreferences(): Promise<{ hiddenColumns: readonly string[]; columnOrder: readonly string[] }> {
+    this.checkError('getExplorerPreferences');
     return Promise.resolve({ hiddenColumns: [], columnOrder: [] });
   }
-  saveExplorerPreferences(): Promise<void> { return Promise.resolve(); }
+  saveExplorerPreferences(): Promise<void> {
+    this.checkError('saveExplorerPreferences');
+    return Promise.resolve();
+  }
   getAliasSuggestions(tagName: string): Promise<AliasSuggestion[]> {
+    this.checkError('getAliasSuggestions');
+    if (this.errorMode === 'empty') {
+      return Promise.resolve([]);
+    }
     const suggestions: Record<string, AliasSuggestion[]> = {
       'team': [
         { canonical: 'platform', aliases: ['Platform', 'platform-eng', 'plt'] },
@@ -364,9 +669,25 @@ export class MockCostApi implements CostApi {
     };
     return Promise.resolve(suggestions[tagName] ?? []);
   }
-  dismissSuggestion(): Promise<void> { return Promise.resolve(); }
-  acceptSuggestion(): Promise<void> { return Promise.resolve(); }
-  cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
+  dismissSuggestion(): Promise<void> {
+    this.checkError('dismissSuggestion');
+    return Promise.resolve();
+  }
+  acceptSuggestion(): Promise<void> {
+    this.checkError('acceptSuggestion');
+    return Promise.resolve();
+  }
+  cancelPendingQueries(): Promise<void> {
+    this.checkError('cancelPendingQueries');
+    return Promise.resolve();
+  }
+}
+
+type ErrorMode = 'none' | 'network' | 'empty';
+
+interface MockCostApiOptions {
+  errorMode?: ErrorMode;
+  customErrors?: Partial<Record<keyof CostApi, Error>>;
 }
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {
