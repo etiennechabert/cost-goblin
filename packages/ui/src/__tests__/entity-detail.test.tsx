@@ -2,6 +2,7 @@ import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
+import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { EntityDetail } from '../views/entity-detail.js';
 
@@ -14,9 +15,11 @@ function renderDetail(overrides?: Partial<{ onBack: () => void }>) {
     onBack,
     user,
     ...render(
-      <CostApiProvider value={api}>
-        <EntityDetail entity="platform" dimension="account" onBack={onBack} />
-      </CostApiProvider>,
+      <PaletteProvider>
+        <CostApiProvider value={api}>
+          <EntityDetail entity="platform" dimension="account" onBack={onBack} />
+        </CostApiProvider>
+      </PaletteProvider>,
     ),
   };
 }

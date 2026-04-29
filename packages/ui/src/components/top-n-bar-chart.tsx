@@ -5,6 +5,7 @@ import { useContainerWidth } from '../lib/use-container-width.js';
 import { formatDollars } from './format.js';
 import type { Dimension } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
+import { usePalette } from '../hooks/use-palette.js';
 
 export interface TopNBar {
   readonly name: string;
@@ -52,6 +53,7 @@ function TopNBarChartInner({
   onDimensionChange,
   width,
 }: Omit<TopNBarChartProps, 'collapsed'> & { width: number }) {
+  const { palette } = usePalette();
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const hoveredName = externalHoveredName ?? localHovered;
 
@@ -122,7 +124,7 @@ function TopNBarChartInner({
               const isDimmed = hoveredName !== null && !isHovered;
               const ratio = max > 0 ? row.cost / max : 0;
               const barW = Math.max(ratio * barAreaWidth, 1);
-              const color = getColor(i);
+              const color = getColor(i, palette);
 
               const barContent = (
                 <>

@@ -58,12 +58,12 @@ test.describe('App shell', () => {
     const html = page.locator('html');
     const hadDark = await html.evaluate(el => el.classList.contains('dark'));
 
-    await page.getByRole('button', { name: /Switch to/ }).click();
+    await page.getByRole('button', { name: /Switch to (light|dark) mode/ }).click();
     const hasToggled = await html.evaluate(el => el.classList.contains('dark'));
     expect(hasToggled).toBe(!hadDark);
 
     // toggle back
-    await page.getByRole('button', { name: /Switch to/ }).click();
+    await page.getByRole('button', { name: /Switch to (light|dark) mode/ }).click();
     const restored = await html.evaluate(el => el.classList.contains('dark'));
     expect(restored).toBe(hadDark);
   });
