@@ -189,7 +189,6 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
       if (err instanceof SecurityError) {
         logger.warn('Blocked dangerous URL in window.open', { url, error: err.message });
       }
-      // If it's not a SecurityError, it's unexpected — still don't open the URL
     }
     return { action: 'deny' };
   });
