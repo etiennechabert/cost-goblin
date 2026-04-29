@@ -29,6 +29,7 @@ export function TreemapWidget({
     granularity,
     globalFilters,
     specFilters: spec.filters,
+    dimensions,
   });
 
   const cells = useMemo(

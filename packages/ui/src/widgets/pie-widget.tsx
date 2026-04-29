@@ -38,6 +38,7 @@ export function PieWidget({
     granularity,
     globalFilters,
     specFilters: spec.filters,
+    dimensions,
   });
 
   const slices = useMemo(

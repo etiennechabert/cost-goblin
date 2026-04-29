@@ -48,6 +48,7 @@ export function StackedBarWidget({
   dateRange,
   granularity,
   globalFilters,
+  dimensions,
 }: WidgetCommonProps) {
   const focus = useCostFocus();
   const [tab, setTab] = useState<HistogramTab>('service');
@@ -59,6 +60,7 @@ export function StackedBarWidget({
     granularity,
     globalFilters,
     specFilters: spec.filters,
+    dimensions,
   });
 
   const periodDays = daysBetween(dateRange.start, dateRange.end);

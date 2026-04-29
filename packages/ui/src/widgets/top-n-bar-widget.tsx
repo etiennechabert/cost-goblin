@@ -37,6 +37,7 @@ export function TopNBarWidget({
     granularity,
     globalFilters,
     specFilters: spec.filters,
+    dimensions,
   });
 
   const bars = useMemo(

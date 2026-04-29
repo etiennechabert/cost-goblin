@@ -6,12 +6,14 @@ import type {
   CostResult,
   DailyCostsResult,
   DateRange,
+  Dimension,
   DimensionId,
   FilterMap,
   Granularity,
   QueryState,
+  WidgetFilterOverlay,
 } from '@costgoblin/core/browser';
-import { filtersKey, getDimensionFallback, mergeFilters } from '../widgets/widget.js';
+import { filtersKey, getDimensionFallbacks, mergeFilters } from '../widgets/widget.js';
 
 interface DailyQueryResult {
   readonly result: DailyCostsResult;
@@ -26,41 +28,55 @@ interface CostQueryResult {
 async function fetchDailyWithFallback(
   api: CostApi,
   specGroupBy: DimensionId,
-  fallbackDim: DimensionId | undefined,
+  fallbackDims: readonly DimensionId[],
   dateRange: DateRange,
   filters: FilterMap,
   granularity: Granularity,
 ): Promise<DailyQueryResult> {
-  if (fallbackDim === undefined) {
+  if (fallbackDims.length === 0) {
     const result = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
     return { result, groupBy: specGroupBy };
   }
-  const [primary, fallback] = await Promise.all([
-    api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity }),
-    api.queryDailyCosts({ groupBy: fallbackDim, dateRange, filters, granularity }),
-  ]);
-  if (primary.groups.length > 1) return { result: primary, groupBy: specGroupBy };
-  return { result: fallback, groupBy: fallbackDim };
+  const allDims = [specGroupBy, ...fallbackDims];
+  const candidates = await Promise.all(
+    allDims.map(async dim => ({
+      dim,
+      result: await api.queryDailyCosts({ groupBy: dim, dateRange, filters, granularity }),
+    })),
+  );
+  for (const c of candidates.slice(0, -1)) {
+    if (c.result.groups.length > 1) return { result: c.result, groupBy: c.dim };
+  }
+  const last = candidates[candidates.length - 1];
+  if (last === undefined) throw new Error('empty fallback chain');
+  return { result: last.result, groupBy: last.dim };
 }
 
 async function fetchCostsWithFallback(
   api: CostApi,
   specGroupBy: DimensionId,
-  fallbackDim: DimensionId | undefined,
+  fallbackDims: readonly DimensionId[],
   dateRange: DateRange,
   filters: FilterMap,
   granularity: Granularity,
 ): Promise<CostQueryResult> {
-  if (fallbackDim === undefined) {
+  if (fallbackDims.length === 0) {
     const result = await api.queryCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
     return { result, groupBy: specGroupBy };
   }
-  const [primary, fallback] = await Promise.all([
-    api.queryCosts({ groupBy: specGroupBy, dateRange, filters, granularity }),
-    api.queryCosts({ groupBy: fallbackDim, dateRange, filters, granularity }),
-  ]);
-  if (primary.rows.length > 1) return { result: primary, groupBy: specGroupBy };
-  return { result: fallback, groupBy: fallbackDim };
+  const allDims = [specGroupBy, ...fallbackDims];
+  const candidates = await Promise.all(
+    allDims.map(async dim => ({
+      dim,
+      result: await api.queryCosts({ groupBy: dim, dateRange, filters, granularity }),
+    })),
+  );
+  for (const c of candidates.slice(0, -1)) {
+    if (c.result.rows.length > 1) return { result: c.result, groupBy: c.dim };
+  }
+  const last = candidates[candidates.length - 1];
+  if (last === undefined) throw new Error('empty fallback chain');
+  return { result: last.result, groupBy: last.dim };
 }
 
 interface WidgetQueryArgs {
@@ -68,7 +84,8 @@ interface WidgetQueryArgs {
   readonly dateRange: DateRange;
   readonly granularity: Granularity;
   readonly globalFilters: FilterMap;
-  readonly specFilters: FilterMap | undefined;
+  readonly specFilters: WidgetFilterOverlay | undefined;
+  readonly dimensions: readonly Dimension[];
 }
 
 interface DailyWidgetQueryResult {
@@ -84,17 +101,21 @@ export function useDailyWidgetQuery({
   granularity,
   globalFilters,
   specFilters,
+  dimensions,
 }: WidgetQueryArgs): DailyWidgetQueryResult {
   const api = useCostApi();
   const filters = mergeFilters(globalFilters, specFilters);
   const fk = filtersKey(filters);
-  const fallbackDim = specGroupBy === undefined ? undefined : getDimensionFallback(specGroupBy);
+  const fallbackDims = useMemo(
+    () => specGroupBy === undefined ? [] : getDimensionFallbacks(specGroupBy, dimensions),
+    [specGroupBy, dimensions],
+  );
 
   const query = useQuery<DailyQueryResult | null>(
     () => specGroupBy === undefined
       ? Promise.resolve(null)
-      : fetchDailyWithFallback(api, specGroupBy, fallbackDim, dateRange, filters, granularity),
-    [specGroupBy, fallbackDim, dateRange.start, dateRange.end, fk, granularity, api],
+      : fetchDailyWithFallback(api, specGroupBy, fallbackDims, dateRange, filters, granularity),
+    [specGroupBy, fallbackDims, dateRange.start, dateRange.end, fk, granularity, api],
   );
 
   const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
@@ -119,17 +140,21 @@ export function useCostWidgetQuery({
   granularity,
   globalFilters,
   specFilters,
+  dimensions,
 }: WidgetQueryArgs): CostWidgetQueryResult {
   const api = useCostApi();
   const filters = mergeFilters(globalFilters, specFilters);
   const fk = filtersKey(filters);
-  const fallbackDim = specGroupBy === undefined ? undefined : getDimensionFallback(specGroupBy);
+  const fallbackDims = useMemo(
+    () => specGroupBy === undefined ? [] : getDimensionFallbacks(specGroupBy, dimensions),
+    [specGroupBy, dimensions],
+  );
 
   const query = useQuery<CostQueryResult | null>(
     () => specGroupBy === undefined
       ? Promise.resolve(null)
-      : fetchCostsWithFallback(api, specGroupBy, fallbackDim, dateRange, filters, granularity),
-    [specGroupBy, fallbackDim, dateRange.start, dateRange.end, fk, granularity, api],
+      : fetchCostsWithFallback(api, specGroupBy, fallbackDims, dateRange, filters, granularity),
+    [specGroupBy, fallbackDims, dateRange.start, dateRange.end, fk, granularity, api],
   );
 
   const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;

@@ -34,6 +34,30 @@ function weightedPick<T extends { costShare: number }>(arr: readonly T[], rand: 
   return last;
 }
 
+interface ServiceMeta {
+  readonly family: string;
+  readonly operations: readonly string[];
+}
+
+const SERVICE_META: Record<string, ServiceMeta> = {
+  AmazonEC2:        { family: 'Compute',            operations: ['RunInstances', 'StartInstances', 'StopInstances'] },
+  AmazonRDS:        { family: 'Database',            operations: ['CreateDBInstance', 'CreateDBSnapshot', 'BackupRetention'] },
+  AmazonS3:         { family: 'Storage',             operations: ['PutObject', 'GetObject', 'ListBucket'] },
+  AWSLambda:        { family: 'Compute',             operations: ['Invoke', 'GetFunction'] },
+  AmazonCloudWatch: { family: 'Management & Governance', operations: ['PutMetricData', 'GetMetricData', 'PutLogEvents'] },
+  AmazonDynamoDB:   { family: 'Database',            operations: ['GetItem', 'PutItem', 'Query'] },
+  AmazonVPC:        { family: 'Networking',          operations: ['CreateVpc', 'NatGateway', 'VPNConnection'] },
+  AWSBackup:        { family: 'Storage',             operations: ['CreateBackupVault', 'StartBackupJob'] },
+  AmazonECR:        { family: 'Compute',             operations: ['PutImage', 'GetDownloadUrlForLayer'] },
+  AmazonSNS:        { family: 'Application Integration', operations: ['Publish', 'Subscribe'] },
+  AmazonSQS:        { family: 'Application Integration', operations: ['SendMessage', 'ReceiveMessage'] },
+  AWSCloudTrail:    { family: 'Management & Governance', operations: ['LookupEvents', 'CreateTrail'] },
+  AmazonRoute53:    { family: 'Networking',          operations: ['ChangeResourceRecordSets', 'GetHostedZone'] },
+  AmazonEFS:        { family: 'Storage',             operations: ['CreateFileSystem', 'ClientMount'] },
+};
+
+const DEFAULT_META: ServiceMeta = { family: 'General', operations: ['Unknown'] };
+
 interface FixtureConfig {
   services: { name: string; costShare: number }[];
   accounts: { id: string; name: string; costShare: number }[];
@@ -66,13 +90,16 @@ function generateFixtureRow(date: string, cfg: FixtureConfig, rand: () => number
   const usageAmount = Math.round(rand() * 1000 * 100) / 100;
   const resourceId = `arn:aws:${service.name.toLowerCase()}:${region}:${account.id}:resource/${String(Math.floor(rand() * 10000))}`;
 
+  const meta = SERVICE_META[service.name] ?? DEFAULT_META;
+  const operation = pick(meta.operations, rand);
+
   const tagEntries: string[] = [];
   if (owner !== null) tagEntries.push(`'user_team': '${owner}'`);
   if (product !== null) tagEntries.push(`'user_system': '${product}'`);
   if (env !== null) tagEntries.push(`'user_environment': '${env}'`);
 
   const netCost = Math.round(cost * 0.97 * 100) / 100;
-  return `(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', 'Compute', 'Usage', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(cost)}, ${String(netCost)}, ${String(listCost)}, NULL, NULL, NULL, NULL, 'Usage', 'RunInstances', 'Usage', MAP {${tagEntries.join(', ')}})`;
+  return `(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', '${meta.family}', '${operation}', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(cost)}, ${String(netCost)}, ${String(listCost)}, NULL, NULL, NULL, NULL, 'Usage', '${operation}', 'Usage', MAP {${tagEntries.join(', ')}})`;
 }
 
 export async function setup(): Promise<void> {

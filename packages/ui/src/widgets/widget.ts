@@ -14,13 +14,19 @@ import type {
 import { asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
 
-const DIMENSION_FALLBACKS: ReadonlyMap<DimensionId, DimensionId> = new Map([
-  [asDimensionId('service'), asDimensionId('service_family')],
-  [asDimensionId('service_family'), asDimensionId('service')],
+const DIMENSION_FALLBACK_CHAINS: ReadonlyMap<DimensionId, readonly DimensionId[]> = new Map([
+  [asDimensionId('service'), [asDimensionId('service_family'), asDimensionId('operation')]],
+  [asDimensionId('service_family'), [asDimensionId('service'), asDimensionId('operation')]],
 ]);
 
-export function getDimensionFallback(dimId: DimensionId): DimensionId | undefined {
-  return DIMENSION_FALLBACKS.get(dimId);
+export function getDimensionFallbacks(
+  dimId: DimensionId,
+  available: readonly Dimension[],
+): readonly DimensionId[] {
+  const chain = DIMENSION_FALLBACK_CHAINS.get(dimId);
+  if (chain === undefined) return [];
+  const ids = new Set(available.map(getDimensionId));
+  return chain.filter(d => ids.has(d));
 }
 
 /** Props every widget renderer receives. The host view owns the global
@@ -60,7 +66,12 @@ export function widgetFlexBasis(size: WidgetSize): string {
  *  conflict so a widget can pin a specific dimension while the FilterBar
  *  remains the user's primary control. */
 export function mergeFilters(global: FilterMap, overlay?: WidgetFilterOverlay): FilterMap {
-  return overlay === undefined ? global : { ...global, ...overlay };
+  if (overlay === undefined) return global;
+  const merged: Partial<Record<DimensionId, readonly TagValue[]>> = { ...global };
+  for (const [k, v] of Object.entries(overlay)) {
+    if (v !== undefined) merged[k as DimensionId] = [v];
+  }
+  return merged;
 }
 
 /** Stable key for a FilterMap. Used as a useQuery dep so widgets refetch on
