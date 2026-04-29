@@ -109,12 +109,13 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             ))}
           </div>
 
-          {/* Floating tooltip — anchored to top-right of chart area */}
+          {/* Floating tooltip — opposite side of hovered bar, full height */}
           {hoveredDay !== null && (() => {
             const idx = days.findIndex(d => d.date === hoveredDay);
             if (idx < 0) return null;
             const day = days[idx];
             if (day === undefined) return null;
+            const onLeft = idx < days.length / 2;
             const prev = idx > 0 ? days[idx - 1] : undefined;
             const prevTotal = prev?.total ?? 0;
             const totalDelta = prev !== undefined && prevTotal > 0
@@ -126,8 +127,8 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
               .sort((a, b) => b.value - a.value);
             const segTotal = segs.reduce((sum, s) => sum + s.value, 0);
             return (
-              <div className="pointer-events-none absolute top-0 right-0 z-20 mr-1 mt-1">
-                <div className="rounded-lg bg-bg-secondary/95 px-4 py-3 text-[11px] text-text-primary whitespace-nowrap shadow-lg border border-border min-w-[280px]">
+              <div className={`pointer-events-none absolute top-0 bottom-0 z-20 ${onLeft ? 'right-0 mr-1' : 'left-12 ml-1'}`}>
+                <div className="rounded-lg bg-bg-secondary/95 px-4 py-3 text-[11px] text-text-primary whitespace-nowrap shadow-lg border border-border min-w-[280px] max-h-full overflow-y-auto">
                   <div className="flex items-center justify-between mb-2 pb-2 border-b border-border-subtle">
                     <span className="font-semibold text-xs">{day.date}</span>
                     <span className="font-semibold text-xs">
