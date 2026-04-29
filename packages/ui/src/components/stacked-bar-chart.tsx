@@ -229,12 +229,13 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             })}
           </div>
 
-          {/* X axis */}
-          <div className="relative ml-12 h-4 mt-1">
+          {/* X axis — full width so first label aligns with Y axis ticks */}
+          <div className="relative h-4 mt-1">
             {days.map((day, idx) => {
               const step = Math.max(1, Math.ceil(days.length / 7));
               if (idx % step !== 0) return null;
-              const pct = days.length > 1 ? (idx / (days.length - 1)) * 100 : 0;
+              const frac = days.length > 1 ? idx / (days.length - 1) : 0;
+              const left = `calc(3rem + ${String(frac * 100)}% - ${String(frac * 3)}rem)`;
               const isFirst = idx === 0;
               const isLast = idx >= days.length - step;
               const align = isFirst ? '' : isLast ? '-translate-x-full' : '-translate-x-1/2';
@@ -242,7 +243,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                 <span
                   key={day.date}
                   className={`absolute text-[10px] text-text-muted whitespace-nowrap ${align}`}
-                  style={{ left: `${String(pct)}%` }}
+                  style={{ left }}
                 >
                   {day.date.slice(5)}
                 </span>
