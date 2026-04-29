@@ -23,7 +23,7 @@
     "@costgoblin/core": "*",
     "@costgoblin/ui": "*",
     "@tailwindcss/vite": "^4.2.4",
-    "@types/react": "^19.0.0",
+    "@types/react": "^19.2.14",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.0.0",
     "electron": "^41.0.0",
