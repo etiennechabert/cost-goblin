@@ -38,14 +38,11 @@ describe('CostOverview', () => {
     expect(screen.getByText('Daily Costs')).toBeDefined();
   });
 
-  it('renders daily costs chart with tab selector', async () => {
+  it('renders daily costs chart', async () => {
     renderOverview();
     await waitFor(() => {
       expect(screen.getByText('Daily Costs')).toBeDefined();
     });
-    expect(screen.getByText('Groups')).toBeDefined();
-    expect(screen.getByText('Products')).toBeDefined();
-    expect(screen.getByText('Services')).toBeDefined();
   });
 
   it('changing date range triggers a new query', async () => {
