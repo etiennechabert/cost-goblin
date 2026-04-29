@@ -40,6 +40,7 @@ import type {
   AggregatedTableParams,
   AggregatedTableResult,
   AliasSuggestion,
+  TagCoverageSnapshot,
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
@@ -273,6 +274,15 @@ const api: CostApi = {
   },
   acceptSuggestion(tagName: string, canonical: string, aliases: readonly string[]): Promise<void> {
     return invoke<undefined>('dimensions:accept-suggestion', tagName, canonical, aliases).then(() => undefined);
+  },
+  getTagCoverageHistory(): Promise<readonly TagCoverageSnapshot[]> {
+    return invoke<readonly TagCoverageSnapshot[]>('tag-remediation:get-history');
+  },
+  saveTagCoverageSnapshot(snapshot: TagCoverageSnapshot): Promise<void> {
+    return invoke<undefined>('tag-remediation:save-snapshot', snapshot).then(() => undefined);
+  },
+  clearTagCoverageHistory(): Promise<void> {
+    return invoke<undefined>('tag-remediation:clear-history').then(() => undefined);
   },
   cancelPendingQueries(): Promise<void> {
     void invoke<undefined>('debug:clear-completed');

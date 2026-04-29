@@ -12,6 +12,7 @@ import { registerViewsHandlers } from './handlers/views.js';
 import { registerCostScopeHandlers } from './handlers/cost-scope.js';
 import { registerExplorerHandlers } from './handlers/explorer.js';
 import { registerDebugHandlers } from './handlers/debug.js';
+import { registerTagRemediationHandlers } from './handlers/tag-remediation.js';
 
 export type { IpcContext } from './handlers/context.js';
 
@@ -29,6 +30,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   registerViewsHandlers(app);
   registerCostScopeHandlers(app);
   registerExplorerHandlers(app);
+  registerTagRemediationHandlers(app);
   registerDebugHandlers(app);
 
   app.warmupBase();

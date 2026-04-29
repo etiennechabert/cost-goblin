@@ -26,6 +26,7 @@ import {
   type ExplorerOverviewResult,
   type ExplorerRowsResult,
   type AliasSuggestion,
+  type TagCoverageSnapshot,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE } from '@costgoblin/core/browser';
 
@@ -366,6 +367,9 @@ export class MockCostApi implements CostApi {
   }
   dismissSuggestion(): Promise<void> { return Promise.resolve(); }
   acceptSuggestion(): Promise<void> { return Promise.resolve(); }
+  getTagCoverageHistory(): Promise<readonly TagCoverageSnapshot[]> { return Promise.resolve([]); }
+  saveTagCoverageSnapshot(): Promise<void> { return Promise.resolve(); }
+  clearTagCoverageHistory(): Promise<void> { return Promise.resolve(); }
   cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
 }
 
