@@ -336,7 +336,7 @@ function AppShell(): React.JSX.Element {
         {/* Title bar + nav */}
         <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
         <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1" role="navigation" aria-label="Analytical views">
             {leftNav.map((item) => (
               <button
                 key={item.id}
