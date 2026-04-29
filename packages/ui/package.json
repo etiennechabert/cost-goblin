@@ -10,8 +10,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "check": "tsc --noEmit && eslint src/ && vitest run",
-    "test": "vitest run"
+    "check": "tsc --noEmit && eslint src/ && vitest run --project=ui --root=../..",
+    "test": "vitest run --project=ui --root=../.."
   },
   "dependencies": {
     "@costgoblin/core": "*",
