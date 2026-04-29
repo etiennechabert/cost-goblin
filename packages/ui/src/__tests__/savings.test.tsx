@@ -5,14 +5,14 @@ import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { Savings } from '../views/savings.js';
 
-function renderSavings() {
-  const api = new MockCostApi();
+function renderSavings(api?: MockCostApi) {
+  const mockApi = api ?? new MockCostApi();
   const user = userEvent.setup();
   return {
-    api,
+    api: mockApi,
     user,
     ...render(
-      <CostApiProvider value={api}>
+      <CostApiProvider value={mockApi}>
         <Savings />
       </CostApiProvider>,
     ),
@@ -111,5 +111,57 @@ describe('Savings', () => {
       expect(screen.getByText('Low')).toBeDefined();
       expect(screen.getByText('Medium')).toBeDefined();
     });
+  });
+
+  it('shows loading state initially', () => {
+    renderSavings();
+    expect(screen.getByText('Loading recommendations...')).toBeDefined();
+  });
+
+  it('shows loading indicator on initial render', async () => {
+    renderSavings();
+    expect(screen.getByText('Loading recommendations...')).toBeDefined();
+    await waitFor(() => {
+      expect(screen.queryByText('Loading recommendations...')).toBeNull();
+    });
+  });
+
+  it('renders view header with empty data', async () => {
+    const api = MockCostApi.withEmptyData();
+    renderSavings(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading recommendations...')).toBeNull();
+    });
+    expect(screen.getByText('Savings Opportunities')).toBeDefined();
+    expect(screen.getByText('AWS cost optimization recommendations')).toBeDefined();
+  });
+
+  it('renders with empty recommendations', async () => {
+    const api = MockCostApi.withEmptyData();
+    renderSavings(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading recommendations...')).toBeNull();
+    });
+    expect(screen.getByText('Savings Opportunities')).toBeDefined();
+    expect(screen.getByText('No cost optimization data available. Download cost optimization data from the Data tab.')).toBeDefined();
+  });
+
+  it('shows zero total savings with empty data', async () => {
+    const api = MockCostApi.withEmptyData();
+    renderSavings(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading recommendations...')).toBeNull();
+    });
+    expect(screen.getByText('$0.00')).toBeDefined();
+  });
+
+  it('shows zero recommendations count with empty data', async () => {
+    const api = MockCostApi.withEmptyData();
+    renderSavings(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading recommendations...')).toBeNull();
+    });
+    const zeros = screen.getAllByText('0');
+    expect(zeros.length).toBeGreaterThan(0);
   });
 });
