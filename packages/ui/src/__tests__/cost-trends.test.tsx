@@ -4,14 +4,14 @@ import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostTrends } from '../views/cost-trends.js';
 
-function renderTrends() {
-  const api = new MockCostApi();
+function renderTrends(api?: MockCostApi) {
+  const mockApi = api ?? new MockCostApi();
   const onEntityClick = vi.fn();
   return {
-    api,
+    api: mockApi,
     onEntityClick,
     ...render(
-      <CostApiProvider value={api}>
+      <CostApiProvider value={mockApi}>
         <CostTrends onEntityClick={onEntityClick} />
       </CostApiProvider>,
     ),
@@ -21,6 +21,11 @@ function renderTrends() {
 afterEach(cleanup);
 
 describe('CostTrends', () => {
+  it('shows loading state initially', () => {
+    renderTrends();
+    expect(screen.getByText('Loading trends...')).toBeDefined();
+  });
+
   it('shows trend data and columns after loading', async () => {
     renderTrends();
     await waitFor(() => {
@@ -29,5 +34,34 @@ describe('CostTrends', () => {
       expect(screen.getByText('Current')).toBeDefined();
       expect(screen.getByText('Previous')).toBeDefined();
     });
+  });
+
+  it('renders header with empty data', async () => {
+    const api = MockCostApi.withEmptyData();
+    renderTrends(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading trends...')).toBeNull();
+    });
+    expect(screen.getByText('Cost Trends')).toBeDefined();
+    expect(screen.getByText('Period-over-period comparison')).toBeDefined();
+  });
+
+  it('shows loading indicator on initial render', async () => {
+    renderTrends();
+    expect(screen.getByText('Loading trends...')).toBeDefined();
+    await waitFor(() => {
+      expect(screen.queryByText('Loading trends...')).toBeNull();
+    });
+  });
+
+  it('does not render table headers with empty data', async () => {
+    const api = MockCostApi.withEmptyData();
+    renderTrends(api);
+    await waitFor(() => {
+      expect(screen.queryByText('Loading trends...')).toBeNull();
+    });
+    expect(screen.queryByText('Entity')).toBeNull();
+    expect(screen.queryByText('Current')).toBeNull();
+    expect(screen.queryByText('Previous')).toBeNull();
   });
 });
