@@ -118,6 +118,20 @@ describe('Savings', () => {
     });
   });
 
+  it('expands row with Space key', async () => {
+    const { user } = renderSavings();
+    await waitFor(() => {
+      expect(screen.getByText(/Detach and delete/)).toBeDefined();
+    });
+    const row = screen.getByText(/Detach and delete/).closest('tr');
+    expect(row).not.toBeNull();
+    (row as HTMLElement).focus();
+    await user.keyboard(' ');
+    await waitFor(() => {
+      expect(screen.getByText('vol-abc123')).toBeDefined();
+    });
+  });
+
   it('shows effort badges with correct labels', async () => {
     renderSavings();
     await waitFor(() => {
