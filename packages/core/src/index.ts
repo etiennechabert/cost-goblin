@@ -6,3 +6,4 @@ export * from './query/index.js';
 export * from './sync/index.js';
 export * from './logger/index.js';
 export * from './utils/index.js';
+export * from './telemetry/index.js';
