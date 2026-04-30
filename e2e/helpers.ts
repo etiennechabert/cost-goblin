@@ -122,6 +122,15 @@ export async function navigateToText(page: Page, buttonName: string, visibleText
   await waitForQuerySettle(page);
 }
 
+/** Open the date picker popover and click a preset by label. */
+export async function selectDatePreset(page: Page, presetLabel: string): Promise<void> {
+  // The trigger is a button containing a calendar icon + current label + chevron
+  const trigger = page.locator('button:has(svg.lucide-calendar)');
+  await trigger.click();
+  // Inside the popover, click the preset text
+  await page.getByText(presetLabel, { exact: true }).click();
+}
+
 export function writeCoverage(shardName: string, allCoverage: unknown[]): void {
   if (allCoverage.length > 0) {
     writeFileSync(join(V8_DIR, `coverage-${shardName}.json`), JSON.stringify(allCoverage));
