@@ -120,7 +120,7 @@ test.describe('Cost Overview', () => {
 
   test('renders date range picker popover with presets', async () => {
     // Trigger button shows active preset
-    const trigger = page.locator('button:has(svg.lucide-calendar)');
+    const trigger = page.locator('button:has(svg.lucide-chevron-down)');
     await expect(trigger).toBeVisible();
 
     // Open popover and verify sections exist inside it
@@ -149,7 +149,7 @@ test.describe('Cost Overview', () => {
   });
 
   test('custom date range inputs appear when Custom range is clicked', async () => {
-    const trigger = page.locator('button:has(svg.lucide-calendar)');
+    const trigger = page.locator('button:has(svg.lucide-chevron-down)');
     await trigger.click();
     await page.getByText('Custom range…').click();
 

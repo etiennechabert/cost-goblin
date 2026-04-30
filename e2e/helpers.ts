@@ -125,7 +125,7 @@ export async function navigateToText(page: Page, buttonName: string, visibleText
 /** Open the date picker popover and click a preset by label. */
 export async function selectDatePreset(page: Page, presetLabel: string): Promise<void> {
   // The trigger is a button containing a calendar icon + current label + chevron
-  const trigger = page.locator('button:has(svg.lucide-calendar)');
+  const trigger = page.locator('button:has(svg.lucide-chevron-down)');
   await trigger.click();
   // Inside the popover, click the preset text
   await page.getByText(presetLabel, { exact: true }).click();
