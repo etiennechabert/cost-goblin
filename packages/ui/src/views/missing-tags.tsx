@@ -17,7 +17,8 @@ import { DataTable } from '../components/data-table.js';
 import type { TableColumn } from '../lib/table-types.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
-import { ClipboardCopy, Check } from 'lucide-react';
+import { ClipboardCopy, Check, ChevronDown, CheckIcon } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover.js';
 
 function buildColumns(showRatio: boolean, dimLabel: string): readonly TableColumn<MissingTagRow>[] {
   const cols: TableColumn<MissingTagRow>[] = [
@@ -289,21 +290,55 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
         </label>
 
         {closestOptions.length > 0 && (
-          <label className="flex items-center gap-1.5 text-xs text-text-secondary">
-            <span>Fallback {activeDimLabel}</span>
-            <select
-              value={selectedClosest ?? '__all__'}
-              onChange={(e) => { setSelectedClosest(e.target.value === '__all__' ? null : e.target.value); }}
-              className="rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-primary"
-            >
-              <option value="__all__">All</option>
-              {closestOptions.map(opt => (
-                <option key={`opt-${opt.entity}`} value={opt.entity}>
-                  {opt.entity.length === 0 ? '(none)' : opt.entity} — {formatDollars(opt.cost)}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-tertiary/30 px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-bg-tertiary/50 transition-colors"
+              >
+                <span className="text-text-muted">Fallback {activeDimLabel}</span>
+                <span>{selectedClosest === null ? 'All' : (selectedClosest.length === 0 ? '(none)' : selectedClosest)}</span>
+                <ChevronDown className="h-3 w-3 text-text-muted" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 p-1 max-h-80 overflow-y-auto" align="start">
+              <button
+                type="button"
+                onClick={() => { setSelectedClosest(null); }}
+                className={[
+                  'w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors',
+                  selectedClosest === null
+                    ? 'bg-accent/10 text-accent font-medium'
+                    : 'text-text-secondary hover:bg-bg-tertiary/50 hover:text-text-primary',
+                ].join(' ')}
+              >
+                {selectedClosest === null && <CheckIcon className="h-3 w-3" />}
+                {selectedClosest !== null && <span className="w-3" />}
+                <span>All</span>
+              </button>
+              {closestOptions.map(opt => {
+                const label = opt.entity.length === 0 ? '(none)' : opt.entity;
+                const isSelected = selectedClosest === opt.entity;
+                return (
+                  <button
+                    key={`opt-${opt.entity}`}
+                    type="button"
+                    onClick={() => { setSelectedClosest(opt.entity); }}
+                    className={[
+                      'w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors',
+                      isSelected
+                        ? 'bg-accent/10 text-accent font-medium'
+                        : 'text-text-secondary hover:bg-bg-tertiary/50 hover:text-text-primary',
+                    ].join(' ')}
+                  >
+                    {isSelected ? <CheckIcon className="h-3 w-3" /> : <span className="w-3" />}
+                    <span className="truncate">{label}</span>
+                    <span className="ml-auto tabular-nums text-text-muted">{formatDollars(opt.cost)}</span>
+                  </button>
+                );
+              })}
+            </PopoverContent>
+          </Popover>
         )}
 
       </div>
