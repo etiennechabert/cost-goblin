@@ -54,6 +54,7 @@ export { DimensionsView } from './views/dimensions.js';
 export { CostScopeView } from './views/cost-scope.js';
 export { ExplorerView } from './views/explorer.js';
 export { SetupWizard } from './views/setup-wizard.js';
+export { Preferences } from './views/preferences.js';
 
 export { getDimensionId, isTagDimension, isEnvironmentDimension, isOwnerDimension, isProductDimension } from './lib/dimensions.js';
 
