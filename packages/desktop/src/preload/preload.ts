@@ -40,6 +40,8 @@ import type {
   AggregatedTableParams,
   AggregatedTableResult,
   AliasSuggestion,
+  UpdateInfo,
+  UpdateStatus,
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
@@ -278,6 +280,21 @@ const api: CostApi = {
     void invoke<undefined>('debug:clear-completed');
     // Use ipcRenderer directly — cancel calls shouldn't inflate the in-flight badge
     return (ipcRenderer.invoke('query:cancel-pending') as Promise<undefined>).then(() => undefined);
+  },
+  checkForUpdates(): Promise<void> {
+    return invoke<undefined>('update:check-for-updates').then(() => undefined);
+  },
+  downloadUpdate(): Promise<void> {
+    return invoke<undefined>('update:download-update').then(() => undefined);
+  },
+  quitAndInstall(): Promise<void> {
+    return invoke<undefined>('update:quit-and-install').then(() => undefined);
+  },
+  getUpdateStatus(): Promise<UpdateStatus> {
+    return invoke<UpdateStatus>('update:get-status');
+  },
+  getUpdateInfo(): Promise<UpdateInfo | null> {
+    return invoke<UpdateInfo | null>('update:get-info');
   },
 };
 

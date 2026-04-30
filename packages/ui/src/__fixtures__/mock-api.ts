@@ -372,6 +372,11 @@ export class MockCostApi implements CostApi {
   dismissSuggestion(): Promise<void> { return Promise.resolve(); }
   acceptSuggestion(): Promise<void> { return Promise.resolve(); }
   cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
+  checkForUpdates(): Promise<void> { return Promise.resolve(); }
+  downloadUpdate(): Promise<void> { return Promise.resolve(); }
+  quitAndInstall(): Promise<void> { return Promise.resolve(); }
+  getUpdateStatus(): Promise<{ state: 'idle' }> { return Promise.resolve({ state: 'idle' }); }
+  getUpdateInfo(): Promise<null> { return Promise.resolve(null); }
 }
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {
