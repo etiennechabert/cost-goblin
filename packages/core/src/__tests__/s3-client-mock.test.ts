@@ -6,11 +6,19 @@ import type { WriteStream } from 'node:fs';
 
 const mockSend = vi.fn();
 
-vi.mock('@aws-sdk/client-s3', () => ({
-  S3Client: vi.fn(() => ({ send: mockSend })),
-  ListObjectsV2Command: vi.fn((params) => ({ name: 'ListObjectsV2Command', params })),
-  GetObjectCommand: vi.fn((params) => ({ name: 'GetObjectCommand', params })),
-}));
+vi.mock('@aws-sdk/client-s3', () => {
+  const S3ClientMock = vi.fn();
+  S3ClientMock.prototype.send = mockSend;
+  const ListMock = vi.fn();
+  ListMock.prototype.name = 'ListObjectsV2Command';
+  const GetMock = vi.fn();
+  GetMock.prototype.name = 'GetObjectCommand';
+  return {
+    S3Client: S3ClientMock,
+    ListObjectsV2Command: ListMock,
+    GetObjectCommand: GetMock,
+  };
+});
 
 vi.mock('node:fs/promises', () => ({
   mkdir: vi.fn(),
