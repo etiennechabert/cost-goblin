@@ -12,6 +12,7 @@ import { registerViewsHandlers } from './handlers/views.js';
 import { registerCostScopeHandlers } from './handlers/cost-scope.js';
 import { registerExplorerHandlers } from './handlers/explorer.js';
 import { registerDebugHandlers } from './handlers/debug.js';
+import { registerTelemetryHandlers } from './handlers/telemetry.js';
 
 export type { IpcContext } from './handlers/context.js';
 
@@ -30,6 +31,7 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   registerCostScopeHandlers(app);
   registerExplorerHandlers(app);
   registerDebugHandlers(app);
+  registerTelemetryHandlers(app);
 
   app.warmupBase();
 }
