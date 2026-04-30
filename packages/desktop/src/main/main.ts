@@ -3,8 +3,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { Session } from 'node:inspector';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { logger } from '@costgoblin/core';
-import type { LogEntry } from '@costgoblin/core';
+import { logger, loadConfig } from '@costgoblin/core';
+import type { LogEntry, AnalyticsEventType } from '@costgoblin/core';
 import { createDuckDBClient } from './duckdb-client.js';
 import type { DuckDBClient } from './duckdb-client.js';
 import { createSyncClient } from './sync-client.js';
@@ -12,6 +12,12 @@ import type { SyncClient } from './sync-client.js';
 import { registerIpcHandlers } from './ipc.js';
 import { validateUrl, SecurityError } from './url-validator.js';
 import { validateProfileLabel } from './validators/path-validator.js';
+import { createSentryClient } from './telemetry/sentry-client.js';
+import type { SentryClient } from './telemetry/sentry-client.js';
+import { createPostHogClient } from './telemetry/posthog-client.js';
+import type { PostHogClient } from './telemetry/posthog-client.js';
+import { createAuditLogWriter } from './telemetry/audit-log.js';
+import type { AuditLogWriter } from './telemetry/audit-log.js';
 
 // Log level: debug in dev (NODE_ENV=development or electron-vite serving
 // the renderer), or when COSTGOBLIN_LOG_LEVEL=debug. Otherwise info.
@@ -58,6 +64,183 @@ function formatEntry(entry: LogEntry): string {
 logger.addHandler((entry: LogEntry) => {
   process.stdout.write(formatEntry(entry));
 });
+
+// ---------------------------------------------------------------------------
+// Telemetry clients (PostHog, Sentry, audit log) — initialized after config load
+// ---------------------------------------------------------------------------
+let telemetryClients: {
+  posthog: PostHogClient | null;
+  sentry: SentryClient | null;
+  auditLog: AuditLogWriter | null;
+} = {
+  posthog: null,
+  sentry: null,
+  auditLog: null,
+};
+
+/**
+ * Initialize telemetry clients based on config.
+ * All telemetry is opt-in and defaulted off. Clients are only created if
+ * their respective channels are enabled in costgoblin.yaml.
+ */
+async function initializeTelemetry(configPath: string, userDataPath: string): Promise<void> {
+  try {
+    const config = await loadConfig(configPath);
+    const telemetryConfig = config.telemetry;
+
+    // Skip if no telemetry config
+    if (telemetryConfig === undefined) {
+      logger.debug('telemetry:init-skipped', { reason: 'no telemetry config' });
+      return;
+    }
+
+    // Create audit log writer for local event inspection
+    const auditLogPath = join(userDataPath, 'telemetry-audit.jsonl');
+    const auditLog = createAuditLogWriter(auditLogPath);
+    telemetryClients.auditLog = auditLog;
+
+    // Initialize PostHog client for analytics
+    const analyticsConfig = telemetryConfig.analytics;
+    const posthogApiKey = process.env['POSTHOG_API_KEY'];
+    if (analyticsConfig !== undefined && typeof posthogApiKey === 'string' && posthogApiKey.length > 0) {
+      const posthog = createPostHogClient(
+        analyticsConfig,
+        posthogApiKey,
+        (eventType, sanitizedProperties) => {
+          void auditLog.write('analytics', eventType, sanitizedProperties);
+        },
+      );
+      telemetryClients.posthog = posthog;
+      logger.info('telemetry:posthog-initialized', { enabled: analyticsConfig.enabled });
+    }
+
+    // Initialize Sentry client for crash reporting and performance monitoring
+    const crashConfig = telemetryConfig.crashReporting;
+    const performanceConfig = telemetryConfig.performance;
+    const sentryDsn = process.env['SENTRY_DSN'];
+    if (
+      (crashConfig !== undefined || performanceConfig !== undefined) &&
+      typeof sentryDsn === 'string' &&
+      sentryDsn.length > 0
+    ) {
+      const sentry = createSentryClient(
+        crashConfig ?? { enabled: false },
+        performanceConfig ?? { enabled: false },
+        sentryDsn,
+        app.getVersion(),
+        isDev ? 'development' : 'production',
+        (eventType, sanitizedEvent) => {
+          void auditLog.write('crashReporting', eventType, sanitizedEvent);
+        },
+      );
+      telemetryClients.sentry = sentry;
+      logger.info('telemetry:sentry-initialized', {
+        crashReporting: crashConfig?.enabled ?? false,
+        performance: performanceConfig?.enabled ?? false,
+      });
+    }
+
+    logger.debug('telemetry:init-complete', { auditLogPath });
+  } catch (error) {
+    // Log errors but don't throw - telemetry failures should not break the app
+    logger.error('telemetry:init-error', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * Install global error handlers to send unhandled errors to Sentry if enabled.
+ * Errors are sanitized via Sentry's beforeSend hook before transmission.
+ */
+function installGlobalErrorHandlers(): void {
+  process.on('uncaughtException', (error: Error) => {
+    logger.error('uncaught-exception', {
+      error: error.message,
+      stack: error.stack,
+    });
+
+    // Send to Sentry if crash reporting is enabled
+    if (telemetryClients.sentry !== null) {
+      telemetryClients.sentry.captureError(error, 'error', {
+        errorType: 'uncaughtException',
+      });
+    }
+
+    // Exit gracefully after logging
+    process.exit(1);
+  });
+
+  process.on('unhandledRejection', (reason: unknown) => {
+    const error = reason instanceof Error ? reason : new Error(String(reason));
+    logger.error('unhandled-rejection', {
+      error: error.message,
+      stack: error.stack,
+    });
+
+    // Send to Sentry if crash reporting is enabled
+    if (telemetryClients.sentry !== null) {
+      telemetryClients.sentry.captureError(error, 'error', {
+        errorType: 'unhandledRejection',
+      });
+    }
+  });
+
+  logger.debug('telemetry:global-error-handlers-installed');
+}
+
+/**
+ * Register telemetry IPC handler for tracking events.
+ * This handler is registered separately from the config handlers because it
+ * needs access to the PostHog client initialized in main.ts.
+ */
+function registerTelemetryTrackHandler(): void {
+  ipcMain.handle(
+    'telemetry:track-event',
+    async (
+      _event,
+      eventType: AnalyticsEventType,
+      properties?: Readonly<Record<string, unknown>>,
+    ): Promise<void> => {
+      // Track event with PostHog if analytics telemetry is enabled
+      if (telemetryClients.posthog !== null) {
+        await telemetryClients.posthog.track(eventType, properties ?? {});
+      } else {
+        logger.debug('telemetry:track-event-skipped', {
+          eventType,
+          reason: 'PostHog client not initialized',
+        });
+      }
+    },
+  );
+
+  logger.debug('telemetry:track-handler-registered');
+}
+
+/**
+ * Cleanup telemetry clients on app quit.
+ * Flush pending events and close connections.
+ */
+async function shutdownTelemetry(): Promise<void> {
+  try {
+    if (telemetryClients.posthog !== null) {
+      await telemetryClients.posthog.shutdown();
+      logger.debug('telemetry:posthog-shutdown');
+    }
+
+    if (telemetryClients.sentry !== null) {
+      await telemetryClients.sentry.close();
+      logger.debug('telemetry:sentry-shutdown');
+    }
+
+    telemetryClients = { posthog: null, sentry: null, auditLog: null };
+  } catch (error) {
+    // Log errors but don't throw - telemetry failures should not break shutdown
+    logger.error('telemetry:shutdown-error', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // CPU profiling — active only when COSTGOBLIN_PERF_MODE=1
@@ -207,6 +390,19 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
 async function main(): Promise<void> {
   await app.whenReady();
 
+  const userDataPath = app.getPath('userData');
+  const configBase = process.env['COSTGOBLIN_CONFIG_DIR'] ?? join(userDataPath, 'config');
+  const configPath = resolveConfigPath(configBase, 'costgoblin');
+
+  // Install global error handlers before anything else
+  installGlobalErrorHandlers();
+
+  // Initialize telemetry clients based on config
+  await initializeTelemetry(configPath, userDataPath);
+
+  // Register telemetry track handler (must be after initializeTelemetry)
+  registerTelemetryTrackHandler();
+
   // Worker bundles are built by `npm run build:worker` (esbuild) into out/worker/
   // — sibling to out/main/ where this file lives. We resolve up one level then
   // into out/worker/ to find them.
@@ -232,6 +428,13 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('will-quit', (event) => {
+  event.preventDefault();
+  void shutdownTelemetry().then(() => {
+    app.exit(0);
+  });
 });
 
 void (async () => {
