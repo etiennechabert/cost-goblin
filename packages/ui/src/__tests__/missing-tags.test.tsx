@@ -28,8 +28,8 @@ describe('MissingTags', () => {
     });
   });
 
-  it('has min cost filter input defaulting to 0', () => {
+  it('has min cost filter input defaulting to 1', () => {
     renderMissingTags();
-    expect(screen.getByDisplayValue('0')).toBeDefined();
+    expect(screen.getByDisplayValue('1')).toBeDefined();
   });
 });

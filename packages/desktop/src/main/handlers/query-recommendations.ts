@@ -37,11 +37,16 @@ export function registerRecommendationHandlers(app: AppContext): void {
     if (empty) {
       return {
         rows: [],
+        totalRows: 0,
         totalActionableCost: asDollars(0),
         totalLikelyUntaggableCost: asDollars(0),
         totalNonResourceCost: asDollars(0),
         actionableCount: 0,
         likelyUntaggableCount: 0,
+        unfilteredActionableCount: 0,
+        unfilteredActionableCost: asDollars(0),
+        unfilteredLikelyUntaggableCount: 0,
+        unfilteredLikelyUntaggableCost: asDollars(0),
         nonResourceRows: [],
       };
     }
@@ -52,7 +57,7 @@ export function registerRecommendationHandlers(app: AppContext): void {
       runPreparedQuery(resourceQuery.sql, resourceQuery.params),
       runPreparedQuery(nonResourceQuery.sql, nonResourceQuery.params),
     ]);
-    const result = buildMissingTagsResult(resourceRows, nonResourceRows);
+    const result = buildMissingTagsResult(resourceRows, nonResourceRows, Number(params.minCost));
     return {
       ...result,
       rows: result.rows.map(r => ({

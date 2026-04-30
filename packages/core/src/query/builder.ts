@@ -265,14 +265,28 @@ export interface BuildSourceOptions {
   readonly costMetric?: CostMetric | undefined;
   readonly availableColumns?: ReadonlySet<string> | undefined;
   readonly costPerspective?: CostPerspective | undefined;
+  /** When true, tags with accountTagFallback also emit a raw_<col> column
+   *  containing the resource-level value before COALESCE fallback. Used by
+   *  the missing-tags query to detect truly untagged resources. */
+  readonly includeRawTags?: boolean | undefined;
 }
 
 export function buildSource(opts: BuildSourceOptions): string {
-  const { dataDir, tier, dimensions, orgAccountsPath, periods, costMetric = 'unblended', availableColumns, costPerspective } = opts;
+  const { dataDir, tier, dimensions, orgAccountsPath, periods, costMetric = 'unblended', availableColumns, costPerspective, includeRawTags } = opts;
   const hasFallbacks = dimensions.tags.some(t => t.accountTagFallback !== undefined);
   const needsOrgJoin = hasFallbacks && orgAccountsPath !== undefined;
 
   const tagSelects = dimensions.tags.map(t => buildTagSelect(t, needsOrgJoin));
+
+  if (includeRawTags === true && needsOrgJoin) {
+    for (const t of dimensions.tags) {
+      if (t.accountTagFallback !== undefined) {
+        const curKey = t.tagName.startsWith('user_') ? t.tagName : `user_${t.tagName}`;
+        const colName = tagColumnName(t.tagName);
+        tagSelects.push(`element_at(cur.resource_tags, '${curKey}')[1] AS raw_${colName}`);
+      }
+    }
+  }
 
   const tagClause = tagSelects.length > 0 ? `,\n      ${tagSelects.join(',\n      ')}` : '';
 
@@ -379,6 +393,7 @@ function setupQuery(
   params: CommonQueryArgs,
   tier: string,
   opts: QueryContextOptions,
+  extraSourceOpts?: Partial<BuildSourceOptions>,
 ): CommonQuerySetup {
   const { dataDir, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns, materializedSource } = opts;
   const qb = new QueryBuilder();
@@ -392,7 +407,7 @@ function setupQuery(
   const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective });
+  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, ...extraSourceOpts });
   return { qb, filterClauses, exclusionClauses, source, costMetric };
 }
 
@@ -568,8 +583,14 @@ export function buildMissingTagsQuery(
   opts: QueryContextOptions,
 ): ParameterizedQuery {
   assertFiniteNumber(Number(params.minCost), 'minCost');
-  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, 'daily', opts);
+  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, 'daily', opts, { includeRawTags: true });
   const tagResolved = resolveField(params.tagDimension, opts.dimensions);
+
+  // Use the raw_ column (before COALESCE fallback) when available, so that
+  // resources with only an account-level fallback are still reported as untagged.
+  const tagDim = tagResolved.dim !== null && 'tagName' in tagResolved.dim ? tagResolved.dim : undefined;
+  const hasRawColumn = tagDim?.accountTagFallback !== undefined && opts.orgAccountsPath !== undefined;
+  const tagCheckField = hasRawColumn ? `raw_${tagResolved.rawField}` : tagResolved.rawField;
 
   const startDatePlaceholder = qb.addParam(params.dateRange.start);
   const endDatePlaceholder = qb.addParam(params.dateRange.end);
@@ -581,8 +602,6 @@ export function buildMissingTagsQuery(
     ...exclusionClauses,
   ];
 
-  const minCostPlaceholder = qb.addParam(Number(params.minCost));
-
   const sql = `
     WITH resources AS (
       SELECT
@@ -592,7 +611,8 @@ export function buildMissingTagsQuery(
         service_family,
         resource_id,
         SUM(cost) AS cost,
-        MAX(CASE WHEN ${tagResolved.rawField} IS NOT NULL AND ${tagResolved.rawField} != '' THEN 1 ELSE 0 END) AS has_tag
+        MAX(CASE WHEN ${tagCheckField} IS NOT NULL AND ${tagCheckField} != '' THEN 1 ELSE 0 END) AS has_tag,
+        MAX(${tagResolved.rawField}) AS closest_owner
       FROM ${source}
       WHERE ${whereConditions.join(' AND ')}
       GROUP BY account_id, account_name, service, service_family, resource_id
@@ -615,12 +635,12 @@ export function buildMissingTagsQuery(
       r.service,
       r.service_family,
       r.cost,
+      r.closest_owner,
       c.tagged_ratio,
       CASE WHEN c.tagged_ratio > 0 THEN 'actionable' ELSE 'likely-untaggable' END AS bucket
     FROM resources r
     JOIN category_coverage c USING (service, service_family)
     WHERE r.has_tag = 0
-      AND r.cost >= ${minCostPlaceholder}
     ORDER BY r.cost DESC
   `.trim();
 
