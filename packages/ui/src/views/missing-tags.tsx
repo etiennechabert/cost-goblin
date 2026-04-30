@@ -104,10 +104,6 @@ interface CopyContext {
   readonly totalCost: number;
 }
 
-function rowLine(r: MissingTagRow): string {
-  return `${r.accountName} | ${r.resourceId} | ${r.service} — ${r.serviceFamily} | ${formatDollars(r.cost)}`;
-}
-
 function header(ctx: CopyContext): { title: string; subtitle: string } {
   const owner = ctx.selectedOwner !== null && ctx.selectedOwner.length > 0
     ? ` — ${ctx.selectedOwner}`
@@ -149,27 +145,11 @@ function buildSlack(ctx: CopyContext): string {
   return lines.join('\n');
 }
 
-function buildPlainText(ctx: CopyContext): string {
-  const h = header(ctx);
-  const lines = [
-    h.title,
-    h.subtitle,
-    '',
-    'Account | Resource | Service | Cost',
-    '-'.repeat(60),
-    ...ctx.rows.map(rowLine),
-    '',
-    `Please add the ${ctx.tagLabel} tag to these resources.`,
-  ];
-  return lines.join('\n');
-}
-
-type CopyFormat = 'jira' | 'slack' | 'text';
-const FORMAT_LABELS: Record<CopyFormat, string> = { jira: 'Jira', slack: 'Slack', text: 'Plain text' };
+type CopyFormat = 'jira' | 'slack';
+const FORMAT_LABELS: Record<CopyFormat, string> = { jira: 'Jira', slack: 'Slack' };
 const FORMAT_BUILDERS: Record<CopyFormat, (ctx: CopyContext) => string> = {
   jira: buildJira,
   slack: buildSlack,
-  text: buildPlainText,
 };
 
 function CopyButton({ ctx }: Readonly<{ ctx: CopyContext }>) {
@@ -200,7 +180,7 @@ function CopyButton({ ctx }: Readonly<{ ctx: CopyContext }>) {
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-40 p-1" align="end">
-        {(['jira', 'slack', 'text'] as const).map(format => (
+        {(['jira', 'slack'] as const).map(format => (
           <button
             key={format}
             type="button"
