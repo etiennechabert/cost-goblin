@@ -199,21 +199,16 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
     [data],
   );
 
-  const visibleRows = useMemo(
-    () => [...actionableRows, ...likelyUntaggableRows],
-    [actionableRows, likelyUntaggableRows],
-  );
-
   const closestOptions = useMemo(() => {
     const totals = new Map<string, number>();
-    for (const r of visibleRows) {
+    for (const r of actionableRows) {
       const key = r.closestOwner ?? '';
       totals.set(key, (totals.get(key) ?? 0) + Number(r.cost));
     }
     return [...totals.entries()]
       .sort((a, b) => b[1] - a[1])
       .map(([entity, cost]) => ({ entity, cost }));
-  }, [visibleRows]);
+  }, [actionableRows]);
 
   const filteredActionable = useMemo(
     () => selectedClosest === null ? actionableRows : actionableRows.filter(r => (r.closestOwner ?? '') === selectedClosest),
