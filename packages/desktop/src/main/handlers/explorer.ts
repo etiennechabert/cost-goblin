@@ -251,7 +251,9 @@ function appendRowFilters(
     extra.push(`${colExpr} = '${escaped}'`);
   }
   if (extra.length === 0) return baseWhere;
-  return `${baseWhere} AND ${extra.join(' AND ')}`;
+  const joined = extra.join(' AND ');
+  if (baseWhere.length === 0) return `WHERE ${joined}`;
+  return `${baseWhere} AND ${joined}`;
 }
 
 const AGG_SORT_COLUMNS: Record<string, (dir: string) => string> = {
