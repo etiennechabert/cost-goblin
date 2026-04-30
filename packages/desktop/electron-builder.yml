@@ -1,0 +1,75 @@
+# electron-builder configuration for CostGoblin
+# Builds distributable packages for macOS and Windows with auto-update support
+
+appId: com.etiennechabert.costgoblin
+productName: CostGoblin
+copyright: Copyright © 2026 Etienne Chabert
+
+# Directory configuration
+directories:
+  output: dist
+  buildResources: resources
+
+# Files to include in the app package
+files:
+  - out/**/*
+  - package.json
+
+# Files to never include
+asarUnpack:
+  - "**/node_modules/@duckdb/node-api/**/*"
+
+# macOS configuration
+mac:
+  category: public.app-category.finance
+  icon: resources/icon.png
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: null
+  entitlementsInherit: null
+
+dmg:
+  sign: false
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+# Windows configuration
+win:
+  icon: resources/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: CostGoblin
+
+# Auto-update configuration - publish to GitHub Releases
+publish:
+  provider: github
+  owner: etiennechabert
+  repo: cost-goblin
+  releaseType: release
+
+# Code signing placeholders (configure in CI environment)
+# macOS: set CSC_LINK and CSC_KEY_PASSWORD environment variables
+# Windows: set WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD environment variables
