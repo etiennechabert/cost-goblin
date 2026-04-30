@@ -221,7 +221,7 @@ function registerTelemetryTrackHandler(): void {
 function registerTelemetryCaptureErrorHandler(): void {
   ipcMain.handle(
     'telemetry:capture-error',
-    async (
+    (
       _event,
       error: { message: string; stack?: string },
       context?: Readonly<Record<string, unknown>>,
@@ -234,7 +234,7 @@ function registerTelemetryCaptureErrorHandler(): void {
           errorObj.stack = error.stack;
         }
 
-        await telemetryClients.sentry.captureError(errorObj, 'error', {
+        telemetryClients.sentry.captureError(errorObj, 'error', {
           errorType: 'react-error-boundary',
           ...context,
         });
@@ -244,6 +244,7 @@ function registerTelemetryCaptureErrorHandler(): void {
           reason: 'Sentry client not initialized',
         });
       }
+      return Promise.resolve();
     },
   );
 

@@ -370,13 +370,13 @@ export class MockCostApi implements CostApi {
   getTelemetryConfig(): Promise<import('@costgoblin/core').TelemetryConfig | undefined> {
     return Promise.resolve(undefined);
   }
-  updateTelemetryChannel(_channel: import('@costgoblin/core').TelemetryChannel, _enabled: boolean): Promise<void> {
+  updateTelemetryChannel(): Promise<void> {
     return Promise.resolve();
   }
   getTelemetryAuditLogPath(): Promise<string> {
     return Promise.resolve('/mock/path/to/telemetry-audit.jsonl');
   }
-  captureError(_error: Error, _context?: Readonly<Record<string, unknown>>): Promise<void> {
+  captureError(): Promise<void> {
     return Promise.resolve();
   }
 }

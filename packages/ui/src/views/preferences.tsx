@@ -97,7 +97,7 @@ export function Preferences() {
       });
       // Refresh from server to ensure consistency
       setRefreshKey(k => k + 1);
-    } catch (err: unknown) {
+    } catch {
       // On error, revert optimistic update by refreshing
       setRefreshKey(k => k + 1);
     } finally {

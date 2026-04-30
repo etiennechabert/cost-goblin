@@ -107,7 +107,7 @@ export function registerTelemetryHandlers(app: AppContext): void {
   // This handler will be wired up to the Sentry client in main.ts
   ipcMain.handle(
     'telemetry:capture-error',
-    async (
+    (
       _event,
       error: { message: string; stack?: string },
       context?: Readonly<Record<string, unknown>>,
@@ -115,6 +115,7 @@ export function registerTelemetryHandlers(app: AppContext): void {
       logger.debug('telemetry:capture-error', { message: error.message, context });
       // The actual Sentry client will be wired up in main.ts
       // This handler exists for type safety and IPC interface
+      return Promise.resolve();
     },
   );
 }
