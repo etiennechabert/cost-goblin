@@ -30,10 +30,14 @@ describe('DateRangePicker', () => {
     expect(screen.getByText('Hourly')).toBeDefined();
   });
 
-  it('shows daily presets (30, 90, 365 days + Custom)', () => {
+  it('shows daily presets (Last 7d, Last 30d, This month, Last month, Last quarter, YTD + Custom)', () => {
     renderPicker();
-    expect(screen.getByText('90 days')).toBeDefined();
-    expect(screen.getByText('365 days')).toBeDefined();
+    expect(screen.getByText('Last 7d')).toBeDefined();
+    expect(screen.getByText('Last 30d')).toBeDefined();
+    expect(screen.getByText('This month')).toBeDefined();
+    expect(screen.getByText('Last month')).toBeDefined();
+    expect(screen.getByText('Last quarter')).toBeDefined();
+    expect(screen.getByText('YTD')).toBeDefined();
     expect(screen.getByText('Custom')).toBeDefined();
   });
 
@@ -43,12 +47,11 @@ describe('DateRangePicker', () => {
     expect(screen.getByText('14 days')).toBeDefined();
   });
 
-  it('30 days daily is selected by default', () => {
+  it('Last 30d daily is selected by default', () => {
     renderPicker();
-    const dailyButtons = screen.getAllByText('30 days');
-    const dailyBtn = dailyButtons[0];
+    const dailyBtn = screen.getByText('Last 30d');
     expect(dailyBtn).toBeDefined();
-    expect(dailyBtn?.className).toContain('bg-accent');
+    expect(dailyBtn.className).toContain('bg-accent');
   });
 
   it('clicking hourly 7 days calls onChange with hourly granularity', async () => {
@@ -63,26 +66,30 @@ describe('DateRangePicker', () => {
     expect(granularity).toBe('hourly');
   });
 
-  it('clicking daily 90 days calls onChange with daily granularity', async () => {
+  it('clicking daily Last 7d calls onChange with daily granularity', async () => {
     const onChange = vi.fn();
     renderPicker({ onChange });
 
     const user = userEvent.setup();
-    await user.click(screen.getByText('90 days'));
+    await user.click(screen.getByText('Last 7d'));
 
     expect(onChange).toHaveBeenCalledOnce();
     const granularity = onChange.mock.calls[0]?.[1] as Granularity;
     expect(granularity).toBe('daily');
   });
 
-  it('clicking Custom shows date inputs', async () => {
+  it('clicking Custom shows calendar pickers', async () => {
     const { container } = renderPicker();
 
-    expect(container.querySelectorAll('input[type="date"]').length).toBe(0);
+    // No calendar buttons visible initially
+    const initialButtons = container.querySelectorAll('button[class*="justify-start"]');
+    expect(initialButtons.length).toBe(0);
 
     const user = userEvent.setup();
     await user.click(screen.getByText('Custom'));
 
-    expect(container.querySelectorAll('input[type="date"]').length).toBe(2);
+    // Two calendar picker buttons should now be visible
+    const calendarButtons = container.querySelectorAll('button[class*="justify-start"]');
+    expect(calendarButtons.length).toBe(2);
   });
 });

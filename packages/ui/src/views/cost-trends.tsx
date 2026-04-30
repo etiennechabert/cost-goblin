@@ -131,10 +131,7 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-text-primary">Cost Trends</h2>
-          <p className="text-sm text-text-secondary mt-1">Period-over-period comparison</p>
-        </div>
+        <p className="text-base font-medium text-text-secondary">Period-over-period comparison</p>
         <div className="flex items-center gap-0.5 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
           {PERIOD_PRESETS.map(p => (
             <button

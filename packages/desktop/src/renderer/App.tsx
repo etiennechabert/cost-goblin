@@ -45,8 +45,8 @@ type View =
 
 const STATIC_LEFT_NAV: { id: string; label: string }[] = [
   { id: 'trends', label: 'Trends' },
+  { id: 'savings', label: 'Findings' },
   { id: 'missing-tags', label: 'Missing Tags' },
-  { id: 'savings', label: 'Savings' },
   { id: 'explorer', label: 'Explorer' },
 ];
 
@@ -465,7 +465,7 @@ function AppShell(): React.JSX.Element {
       )}
       {view.page === 'missing-tags' && (
         <Profiler id="missing-tags" onRender={onPerfRender}>
-          <MissingTags />
+          <MissingTags onEntityClick={handleEntityClick} />
         </Profiler>
       )}
       {view.page === 'savings' && (

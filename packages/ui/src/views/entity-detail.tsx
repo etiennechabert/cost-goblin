@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   CostResult,
   DailyCostsResult,
@@ -84,10 +84,50 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   const [pie1DimId, setPie1DimId] = useState<DimensionId | null>(null);
   const [pie2DimId, setPie2DimId] = useState<DimensionId | null>(null);
   const [pie3DimId, setPie3DimId] = useState<DimensionId | null>(null);
+  const prefsLoadedRef = useRef(false);
+  const columnPrefsRef = useRef<{ hiddenColumns: readonly string[]; columnOrder: readonly string[] }>({
+    hiddenColumns: [],
+    columnOrder: [],
+  });
 
   const dateRangeKey = `${dateRange.start}_${dateRange.end}`;
   const entityFilter: FilterMap = { [asDimensionId(dimension)]: [asTagValue(entity)] };
   const filterKey = JSON.stringify(entityFilter);
+
+  // Load persisted date range and granularity on mount
+  useEffect(() => {
+    api.getExplorerPreferences().then(prefs => {
+      // Store column preferences to preserve them when saving
+      columnPrefsRef.current = {
+        hiddenColumns: prefs.hiddenColumns,
+        columnOrder: prefs.columnOrder,
+      };
+      if (prefs.lastUsedDateRange !== undefined) {
+        setDateRange(prefs.lastUsedDateRange);
+      }
+      if (prefs.lastUsedGranularity !== undefined) {
+        setGranularity(prefs.lastUsedGranularity);
+      }
+      prefsLoadedRef.current = true;
+    }).catch(() => {
+      prefsLoadedRef.current = true;
+    });
+  }, [api]);
+
+  // Save date range and granularity whenever they change. Skip saves until
+  // after preferences have loaded — the prefsLoadedRef flag is set in the
+  // mount effect once the initial load completes (or fails). This prevents
+  // redundant writes when restoring persisted values on mount. Preserve
+  // column preferences from Explorer to avoid overwriting them.
+  useEffect(() => {
+    if (!prefsLoadedRef.current) return;
+    api.saveExplorerPreferences({
+      hiddenColumns: columnPrefsRef.current.hiddenColumns,
+      columnOrder: columnPrefsRef.current.columnOrder,
+      lastUsedDateRange: dateRange,
+      lastUsedGranularity: granularity,
+    }).catch(() => undefined);
+  }, [dateRange, granularity, api]);
 
   // Entity detail summary (total, previous, percent change)
   const detailQuery = useQuery(

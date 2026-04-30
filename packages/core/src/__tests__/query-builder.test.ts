@@ -194,11 +194,9 @@ describe('buildMissingTagsQuery', () => {
     expect(result.sql).toContain("ELSE 'likely-untaggable'");
   });
 
-  it('applies minCost to the per-resource cost after classification', () => {
+  it('does not filter by minCost in SQL (filtering is done in JS for distribution)', () => {
     const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions });
-    expect(result.sql).toContain('r.cost >= $');
-    // Verify minCost parameter
-    expect(result.params).toContain(50);
+    expect(result.sql).not.toContain('r.cost >= $');
   });
 });
 
