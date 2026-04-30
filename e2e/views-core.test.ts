@@ -119,18 +119,18 @@ test.describe('Cost Overview', () => {
   });
 
   test('renders date range picker popover with presets', async () => {
-    // Trigger button shows active preset
     const trigger = page.locator('button:has(svg.lucide-calendar)');
     await expect(trigger).toBeVisible();
 
-    // Open popover and verify sections
     await trigger.click();
-    await expect(page.getByText('Daily')).toBeVisible();
-    await expect(page.getByText('Hourly')).toBeVisible();
-    await expect(page.getByText('Period')).toBeVisible();
-    await expect(page.getByText('Custom range…')).toBeVisible();
+    const popover = page.locator('[data-radix-popper-content-wrapper]');
+    await expect(popover).toBeVisible({ timeout: 5000 });
 
-    // Close by clicking trigger again
+    await expect(popover.getByText('Daily')).toBeVisible();
+    await expect(popover.getByText('Hourly')).toBeVisible();
+    await expect(popover.getByText('Period')).toBeVisible();
+    await expect(popover.getByText('Custom range…')).toBeVisible();
+
     await trigger.click();
   });
 
@@ -148,15 +148,16 @@ test.describe('Cost Overview', () => {
   });
 
   test('custom date range inputs appear when Custom range is clicked', async () => {
-    const trigger = page.locator('button:has(svg.lucide-calendar)');
+    const trigger = page.locator('button:has(svg.lucide-calendar)').first();
     await trigger.click();
-    await page.getByText('Custom range…').click();
+    const popover = page.locator('[data-radix-popper-content-wrapper]');
+    await expect(popover).toBeVisible({ timeout: 5000 });
+    await popover.getByText('Custom range…').click();
 
-    await expect(page.getByText('From')).toBeVisible();
-    await expect(page.getByText('To')).toBeVisible();
+    await expect(popover.getByText('From', { exact: true })).toBeVisible();
+    await expect(popover.getByText('To', { exact: true })).toBeVisible();
 
-    // close popover
-    await trigger.click();
+    await page.keyboard.press('Escape');
   });
 
   test('filter bar shows dimension chips and they are clickable', async () => {
