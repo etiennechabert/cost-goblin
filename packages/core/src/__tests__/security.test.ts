@@ -175,8 +175,7 @@ describe('SQL Injection Prevention', () => {
         },
         { dataDir: '/data', dimensions },
       );
-      expect(result.params).toContain(50);
-      expect(result.sql).toContain('r.cost >= $');
+      expect(result.sql).not.toContain('50');
     });
   });
 

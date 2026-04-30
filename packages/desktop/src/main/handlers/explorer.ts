@@ -1,11 +1,13 @@
 import { ipcMain } from 'electron';
 import {
   asDimensionId,
+  asDateString,
   buildSource,
   buildRuleMatchExpr,
   buildAliasSqlCase,
   computePeriodsInRange,
   DEFAULT_LAG_DAYS,
+  isStringRecord,
   logger,
   listLocalMonths,
   parseJsonObject,
@@ -40,6 +42,11 @@ const DEFAULT_WINDOW_DAYS = 30;
 const MAX_ROW_LIMIT = 1000;
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function isDateRange(value: unknown): value is { start: string; end: string } {
+  if (!isStringRecord(value)) return false;
+  return typeof value['start'] === 'string' && typeof value['end'] === 'string';
+}
 
 function parseDate(s: string | undefined): Date | null {
   if (s === undefined || !ISO_DATE_RE.test(s)) return null;
@@ -284,13 +291,31 @@ export function registerExplorerHandlers(app: AppContext): void {
       const obj = parseJsonObject(raw);
       const rawHidden = obj?.['hiddenColumns'];
       const rawOrder = obj?.['columnOrder'];
+      const rawDateRange = obj?.['lastUsedDateRange'];
+      const rawGranularity = obj?.['lastUsedGranularity'];
+
       const hiddenColumns = Array.isArray(rawHidden) && rawHidden.every((v): v is string => typeof v === 'string')
         ? rawHidden
         : [];
       const columnOrder = Array.isArray(rawOrder) && rawOrder.every((v): v is string => typeof v === 'string')
         ? rawOrder
         : [];
-      return { hiddenColumns, columnOrder };
+
+      const validDateRange =
+        isDateRange(rawDateRange) && ISO_DATE_RE.test(rawDateRange.start) && ISO_DATE_RE.test(rawDateRange.end)
+          ? { start: asDateString(rawDateRange.start), end: asDateString(rawDateRange.end) }
+          : null;
+
+      // Validate lastUsedGranularity: must be 'daily' or 'hourly'
+      const validGranularity =
+        rawGranularity === 'daily' || rawGranularity === 'hourly' ? rawGranularity : null;
+
+      return {
+        hiddenColumns,
+        columnOrder,
+        ...(validDateRange !== null && { lastUsedDateRange: validDateRange }),
+        ...(validGranularity !== null && { lastUsedGranularity: validGranularity }),
+      };
     } catch {
       // file doesn't exist yet — first-run defaults
     }

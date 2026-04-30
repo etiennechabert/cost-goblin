@@ -241,12 +241,13 @@ function toMissingTagBucket(v: unknown): MissingTagBucket {
 export function buildMissingTagsResult(
   resourceRows: RawRow[],
   nonResourceRawRows: RawRow[],
+  minCost: number,
 ): MissingTagsResult {
-  const missingRows: MissingTagRow[] = [];
-  let totalActionableCost = 0;
-  let totalLikelyUntaggableCost = 0;
-  let actionableCount = 0;
-  let likelyUntaggableCount = 0;
+  const allRows: MissingTagRow[] = [];
+  let unfilteredActionableCost = 0;
+  let unfilteredLikelyUntaggableCost = 0;
+  let unfilteredActionableCount = 0;
+  let unfilteredLikelyUntaggableCount = 0;
 
   for (const row of resourceRows) {
     const cost = toNum(row['cost']);
@@ -255,7 +256,7 @@ export function buildMissingTagsResult(
       ? asEntityRef(row['closest_owner'])
       : null;
 
-    missingRows.push({
+    allRows.push({
       accountId: toStr(row['account_id']),
       accountName: toStr(row['account_name']),
       resourceId: toStr(row['resource_id']),
@@ -268,6 +269,22 @@ export function buildMissingTagsResult(
     });
 
     if (bucket === 'actionable') {
+      unfilteredActionableCost += cost;
+      unfilteredActionableCount += 1;
+    } else {
+      unfilteredLikelyUntaggableCost += cost;
+      unfilteredLikelyUntaggableCount += 1;
+    }
+  }
+
+  const filtered = minCost > 0 ? allRows.filter(r => Number(r.cost) >= minCost) : allRows;
+  let totalActionableCost = 0;
+  let totalLikelyUntaggableCost = 0;
+  let actionableCount = 0;
+  let likelyUntaggableCount = 0;
+  for (const r of filtered) {
+    const cost = Number(r.cost);
+    if (r.bucket === 'actionable') {
       totalActionableCost += cost;
       actionableCount += 1;
     } else {
@@ -290,12 +307,17 @@ export function buildMissingTagsResult(
   }
 
   return {
-    rows: missingRows,
+    rows: filtered.slice(0, 5000),
+    totalRows: filtered.length,
     totalActionableCost: asDollars(totalActionableCost),
     totalLikelyUntaggableCost: asDollars(totalLikelyUntaggableCost),
     totalNonResourceCost: asDollars(totalNonResourceCost),
     actionableCount,
     likelyUntaggableCount,
+    unfilteredActionableCount,
+    unfilteredActionableCost: asDollars(unfilteredActionableCost),
+    unfilteredLikelyUntaggableCount,
+    unfilteredLikelyUntaggableCost: asDollars(unfilteredLikelyUntaggableCost),
     nonResourceRows,
   };
 }

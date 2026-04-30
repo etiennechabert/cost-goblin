@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { asDateString, asTagValue } from '@costgoblin/core/browser';
 import { daysBetween } from '../lib/dates.js';
 import type {
@@ -62,6 +62,11 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
   const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [filters, setFilters] = useState<FilterMap>(initialFilter ?? {});
+  const prefsLoadedRef = useRef(false);
+  const columnPrefsRef = useRef<{ hiddenColumns: readonly string[]; columnOrder: readonly string[] }>({
+    hiddenColumns: [],
+    columnOrder: [],
+  });
 
   const dimensionsQuery = useQuery(() => api.getDimensions(), [api]);
   const rawDimensions: Dimension[] = dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
@@ -74,6 +79,41 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     () => previousRangeFor(dateRange),
     [dateRange],
   );
+
+  // Load persisted date range and granularity on mount
+  useEffect(() => {
+    api.getExplorerPreferences().then(prefs => {
+      // Store column preferences to preserve them when saving
+      columnPrefsRef.current = {
+        hiddenColumns: prefs.hiddenColumns,
+        columnOrder: prefs.columnOrder,
+      };
+      if (prefs.lastUsedDateRange !== undefined) {
+        setDateRange(prefs.lastUsedDateRange);
+      }
+      if (prefs.lastUsedGranularity !== undefined) {
+        setGranularity(prefs.lastUsedGranularity);
+      }
+      prefsLoadedRef.current = true;
+    }).catch(() => {
+      prefsLoadedRef.current = true;
+    });
+  }, [api]);
+
+  // Save date range and granularity whenever they change. Skip saves until
+  // after preferences have loaded — the prefsLoadedRef flag is set in the
+  // mount effect once the initial load completes (or fails). This prevents
+  // redundant writes when restoring persisted values on mount. Preserve
+  // column preferences from Explorer to avoid overwriting them.
+  useEffect(() => {
+    if (!prefsLoadedRef.current) return;
+    api.saveExplorerPreferences({
+      hiddenColumns: columnPrefsRef.current.hiddenColumns,
+      columnOrder: columnPrefsRef.current.columnOrder,
+      lastUsedDateRange: dateRange,
+      lastUsedGranularity: granularity,
+    }).catch(() => undefined);
+  }, [dateRange, granularity, api]);
 
   function handleSetFilter(dim: DimensionId, value: TagValue) {
     setFilters(prev => ({ ...prev, [dim]: [value] }));

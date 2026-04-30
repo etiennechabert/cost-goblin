@@ -233,10 +233,7 @@ export function Savings() {
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-text-primary">Savings Opportunities</h2>
-          <p className="text-sm text-text-secondary mt-1">AWS cost optimization recommendations</p>
-        </div>
+        <p className="text-base font-medium text-text-secondary">AWS cost optimization recommendations</p>
         {data !== null && (
           <button
             type="button"
