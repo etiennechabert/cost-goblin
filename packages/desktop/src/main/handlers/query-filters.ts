@@ -5,6 +5,7 @@ import {
   buildRuleMatchExpr,
   computePeriodsInRange,
   tagColumnName,
+  QueryBuilder,
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import {
@@ -25,10 +26,16 @@ function resolveFieldExpr(
   return { field, fieldExpr };
 }
 
+/** Build a SQL IN-list using parameterized placeholders. */
+function buildSqlList(values: readonly string[], qb: QueryBuilder): string {
+  return values.map(v => qb.addParam(v)).join(', ');
+}
+
 function buildFilterWhereClauses(
   filterEntries: Record<string, readonly string[]>,
   dimensions: import('@costgoblin/core').DimensionsConfig,
   accountReverseMap: Map<string, readonly string[]>,
+  qb: QueryBuilder,
 ): string[] {
   const clauses: string[] = [];
   for (const [key, values] of Object.entries(filterEntries)) {
@@ -53,7 +60,7 @@ function buildFilterWhereClauses(
         }
       }
       if (usedReverse) {
-        const list = [...allIds].map(id => `'${id.replaceAll("'", "''")}'`).join(', ');
+        const list = buildSqlList([...allIds], qb);
         clauses.push(`${ff} IN (${list})`);
         continue;
       }
@@ -61,9 +68,10 @@ function buildFilterWhereClauses(
     if (values.length === 1) {
       const first = values[0];
       if (first === undefined) continue;
-      clauses.push(`${ffExpr} = '${first.replaceAll("'", "''")}'`);
+      const placeholder = qb.addParam(first);
+      clauses.push(`${ffExpr} = ${placeholder}`);
     } else {
-      const list = values.map(v => `'${v.replaceAll("'", "''")}'`).join(', ');
+      const list = buildSqlList(values, qb);
       clauses.push(`${ffExpr} IN (${list})`);
     }
   }
@@ -74,12 +82,13 @@ function buildExclusionWhereClauses(
   costScope: import('@costgoblin/core').CostScopeConfig | undefined,
   dimensions: import('@costgoblin/core').DimensionsConfig,
   accountReverseMap: Map<string, readonly string[]>,
+  qb: QueryBuilder,
 ): string[] {
   if (costScope === undefined) return [];
   const clauses: string[] = [];
   for (const rule of costScope.rules) {
     if (!rule.enabled) continue;
-    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
+    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap, qb);
     if (matchExpr !== null) clauses.push(`NOT (${matchExpr})`);
   }
   return clauses;
@@ -101,7 +110,7 @@ function mergeAccountRows(
 }
 
 export function registerFilterHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery } = app;
 
   ipcMain.handle('query:filter-values', async (_event, dimensionId: string, filterEntries: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }): Promise<{ value: string; label: string; count: number }[]> => {
     const dimensions = await getDimensions();
@@ -111,13 +120,16 @@ export function registerFilterHandlers(app: AppContext): void {
       ? undefined
       : await getCostScope().catch(() => undefined);
 
+    const qb = new QueryBuilder();
     const { fieldExpr } = resolveFieldExpr(dimensionId, dimensions);
     const whereClauses = [
-      ...buildFilterWhereClauses(filterEntries, dimensions, accountReverseMap),
-      ...buildExclusionWhereClauses(costScope, dimensions, accountReverseMap),
+      ...buildFilterWhereClauses(filterEntries, dimensions, accountReverseMap, qb),
+      ...buildExclusionWhereClauses(costScope, dimensions, accountReverseMap, qb),
     ];
     if (dateRange !== undefined) {
-      whereClauses.push(`usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}'`);
+      const startParam = qb.addParam(dateRange.start);
+      const endParam = qb.addParam(dateRange.end);
+      whereClauses.push(`usage_date BETWEEN ${startParam} AND ${endParam}`);
     }
 
     const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
@@ -135,7 +147,8 @@ export function registerFilterHandlers(app: AppContext): void {
       LIMIT 100
     `;
 
-    const rows = await runQuery(sql);
+    const params = qb.build().params;
+    const rows = await runPreparedQuery(sql, params);
     const isAccountDim = dimensionId === 'account' || dimensionId === 'account_id';
     if (isAccountDim) return mergeAccountRows(rows, accountMap);
 
