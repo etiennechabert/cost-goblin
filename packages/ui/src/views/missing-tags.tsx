@@ -97,53 +97,123 @@ function ExpandedRow({ row }: Readonly<{ row: MissingTagRow }>) {
   );
 }
 
-function buildIssueTemplate(rows: readonly MissingTagRow[], tagLabel: string): string {
-  const sections = rows.map(row => {
-    const owner = row.closestOwner !== null && row.closestOwner.length > 0
-      ? String(row.closestOwner)
-      : 'Unknown';
-    return [
-      `## Missing Tags: ${row.service} / ${row.resourceId}`,
-      '',
-      `**Resource:** ${row.resourceId}`,
-      `**Account:** ${row.accountName} (${row.accountId})`,
-      `**Service:** ${row.service} — ${row.serviceFamily}`,
-      `**Owner (fallback):** ${owner}`,
-      `**Monthly Cost:** ${formatDollars(row.cost)}`,
-      '',
-      '### Action Required',
-      `Please add the following tag to this resource:`,
-      `- ${tagLabel}: TBD`,
-    ].join('\n');
-  });
-  return sections.join('\n\n---\n\n');
+interface CopyContext {
+  readonly rows: readonly MissingTagRow[];
+  readonly tagLabel: string;
+  readonly selectedOwner: string | null;
+  readonly totalCost: number;
 }
 
-function CopyIssueTemplateButton({ rows, tagLabel }: Readonly<{ rows: readonly MissingTagRow[]; tagLabel: string }>) {
-  const [copied, setCopied] = useState(false);
+function rowLine(r: MissingTagRow): string {
+  return `${r.accountName} | ${r.resourceId} | ${r.service} — ${r.serviceFamily} | ${formatDollars(r.cost)}`;
+}
+
+function header(ctx: CopyContext): { title: string; subtitle: string } {
+  const owner = ctx.selectedOwner !== null && ctx.selectedOwner.length > 0
+    ? ` — ${ctx.selectedOwner}`
+    : '';
+  return {
+    title: `Missing ${ctx.tagLabel} Tag${owner}`,
+    subtitle: `${String(ctx.rows.length)} resources | ${formatDollars(ctx.totalCost)} total`,
+  };
+}
+
+function buildJira(ctx: CopyContext): string {
+  const h = header(ctx);
+  const lines = [
+    `h2. ${h.title}`,
+    h.subtitle,
+    '',
+    '||Account||Resource||Service||Cost||',
+    ...ctx.rows.map(r =>
+      `|${r.accountName}|${r.resourceId}|${r.service} — ${r.serviceFamily}|${formatDollars(r.cost)}|`
+    ),
+    '',
+    `Please add the *${ctx.tagLabel}* tag to these resources.`,
+  ];
+  return lines.join('\n');
+}
+
+function buildSlack(ctx: CopyContext): string {
+  const h = header(ctx);
+  const lines = [
+    `*${h.title}*`,
+    h.subtitle,
+    '',
+    '```',
+    'Account | Resource | Service | Cost',
+    ...ctx.rows.map(rowLine),
+    '```',
+    '',
+    `Please add the *${ctx.tagLabel}* tag to these resources.`,
+  ];
+  return lines.join('\n');
+}
+
+function buildPlainText(ctx: CopyContext): string {
+  const h = header(ctx);
+  const lines = [
+    h.title,
+    h.subtitle,
+    '',
+    'Account | Resource | Service | Cost',
+    '-'.repeat(60),
+    ...ctx.rows.map(rowLine),
+    '',
+    `Please add the ${ctx.tagLabel} tag to these resources.`,
+  ];
+  return lines.join('\n');
+}
+
+type CopyFormat = 'jira' | 'slack' | 'text';
+const FORMAT_LABELS: Record<CopyFormat, string> = { jira: 'Jira', slack: 'Slack', text: 'Plain text' };
+const FORMAT_BUILDERS: Record<CopyFormat, (ctx: CopyContext) => string> = {
+  jira: buildJira,
+  slack: buildSlack,
+  text: buildPlainText,
+};
+
+function CopyButton({ ctx }: Readonly<{ ctx: CopyContext }>) {
+  const [copied, setCopied] = useState<CopyFormat | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleCopy = useCallback(() => {
-    if (rows.length === 0) return;
-    const text = buildIssueTemplate(rows, tagLabel);
+  const handleCopy = useCallback((format: CopyFormat) => {
+    if (ctx.rows.length === 0) return;
+    const text = FORMAT_BUILDERS[format](ctx);
     void navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
+      setCopied(format);
       if (timerRef.current !== null) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => { setCopied(false); }, 1500);
+      timerRef.current = setTimeout(() => { setCopied(null); }, 1500);
     });
-  }, [rows, tagLabel]);
+  }, [ctx]);
 
   return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      disabled={rows.length === 0}
-      className="inline-flex items-center gap-1.5 rounded border border-border bg-bg-tertiary/30 px-2.5 py-1 text-xs text-text-secondary hover:text-text-primary hover:border-border disabled:opacity-40 disabled:cursor-not-allowed"
-      title="Copy issue template for all visible rows"
-    >
-      {copied ? <Check size={12} /> : <ClipboardCopy size={12} />}
-      <span>{copied ? 'Copied!' : 'Issue template'}</span>
-    </button>
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={ctx.rows.length === 0}
+          className="inline-flex items-center gap-1.5 rounded border border-border bg-bg-tertiary/30 px-2.5 py-1 text-xs text-text-secondary hover:text-text-primary hover:border-border disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          <ClipboardCopy size={12} />
+          <span>Copy as…</span>
+          <ChevronDown className="h-3 w-3 text-text-muted" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-40 p-1" align="end">
+        {(['jira', 'slack', 'text'] as const).map(format => (
+          <button
+            key={format}
+            type="button"
+            onClick={() => { handleCopy(format); }}
+            className="w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-text-secondary hover:bg-bg-tertiary/50 hover:text-text-primary transition-colors"
+          >
+            {copied === format ? <Check size={12} className="text-accent" /> : <span className="w-3" />}
+            <span>{copied === format ? 'Copied!' : FORMAT_LABELS[format]}</span>
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -392,7 +462,7 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
                 renderExpandedRow={renderExpandedRow}
                 height={Math.max(200, window.innerHeight - 520)}
                 csvFilename={`costgoblin-missing-tags-actionable-${dateRange.start}-${dateRange.end}`}
-                headerRight={<CopyIssueTemplateButton rows={filteredActionable} tagLabel={activeDimLabel} />}
+                headerRight={<CopyButton ctx={{ rows: filteredActionable, tagLabel: activeDimLabel, selectedOwner: selectedClosest, totalCost: filteredActionable.reduce((s, r) => s + Number(r.cost), 0) }} />}
               />
             </div>
           )}
