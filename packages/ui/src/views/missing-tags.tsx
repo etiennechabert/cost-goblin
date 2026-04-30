@@ -2,23 +2,17 @@ import { useState } from 'react';
 import type {
   Dimension,
   DimensionId,
-  DateString,
   MissingTagsResult,
   MissingTagRow,
 } from '@costgoblin/core/browser';
-import { asDimensionId, asDateString, asDollars } from '@costgoblin/core/browser';
+import { asDimensionId, asDollars } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
 import { getDimensionId, isTagDimension } from '../lib/dimensions.js';
 import { formatDollars } from '../components/format.js';
-
-function getDateRange(): { start: DateString; end: DateString } {
-  const today = new Date();
-  const end = asDateString(today.toISOString().slice(0, 10));
-  const startDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const start = asDateString(startDate.toISOString().slice(0, 10));
-  return { start, end };
-}
+import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
+import type { DateRange, Granularity } from '../components/date-range-picker.js';
 
 function ResourceTable({ rows, showRatio }: Readonly<{ rows: readonly MissingTagRow[]; showRatio: boolean }>) {
   return (
@@ -65,8 +59,11 @@ function ResourceTable({ rows, showRatio }: Readonly<{ rows: readonly MissingTag
 
 export function MissingTags() {
   const api = useCostApi();
+  const lagDays = useLagDays();
   const dimensionsQuery = useQuery(() => api.getDimensions(), []);
 
+  const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
+  const [granularity, setGranularity] = useState<Granularity>('daily');
   const [minCost, setMinCost] = useState(0);
   const [selectedTag, setSelectedTag] = useState<DimensionId | null>(null);
   const [showLikelyUntaggable, setShowLikelyUntaggable] = useState(false);
@@ -85,13 +82,13 @@ export function MissingTags() {
     () => {
       if (activeTagId === null) return Promise.resolve(null);
       return api.queryMissingTags({
-        dateRange: getDateRange(),
+        dateRange,
         filters: {},
         minCost: asDollars(minCost),
         tagDimension: activeTagId,
       });
     },
-    [activeTagId, minCost, api],
+    [activeTagId, minCost, dateRange.start, dateRange.end, api],
   );
 
   const data: MissingTagsResult | null =
@@ -102,11 +99,19 @@ export function MissingTags() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <div>
-        <h2 className="text-xl font-semibold text-text-primary">Missing Tags</h2>
-        <p className="text-sm text-text-secondary mt-1">
-          Resources without the selected allocation tag, classified by whether other resources in the same service category are tagged.
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-text-primary">Missing Tags</h2>
+          <p className="text-sm text-text-secondary mt-1">
+            Resources without the selected allocation tag, classified by whether other resources in the same service category are tagged.
+          </p>
+        </div>
+        <DateRangePicker
+          value={dateRange}
+          granularity={granularity}
+          onChange={(range, g) => { setDateRange(range); setGranularity(g); }}
+          lagDays={lagDays}
+        />
       </div>
 
       <div className="flex flex-wrap items-center gap-4">
