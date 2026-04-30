@@ -154,8 +154,8 @@ test.describe('Cost Overview', () => {
     await page.getByText('Custom range…').click();
 
     const popover = page.locator('[data-radix-popper-content-wrapper]');
-    await expect(popover.getByText('From')).toBeVisible();
-    await expect(popover.getByText('To')).toBeVisible();
+    await expect(popover.getByText('From', { exact: true })).toBeVisible();
+    await expect(popover.getByText('To', { exact: true })).toBeVisible();
 
     // close popover
     await trigger.click();
