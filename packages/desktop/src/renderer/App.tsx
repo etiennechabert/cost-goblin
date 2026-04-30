@@ -336,7 +336,7 @@ function AppShell(): React.JSX.Element {
         {/* Title bar + nav */}
         <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
         <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1" role="navigation" aria-label="Analytical views">
             {leftNav.map((item) => (
               <button
                 key={item.id}
@@ -348,6 +348,7 @@ function AppShell(): React.JSX.Element {
                     ? 'bg-bg-tertiary text-text-primary'
                     : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
                 ].join(' ')}
+                aria-current={active === item.id ? 'page' : undefined}
               >
                 {item.label}
               </button>
@@ -357,7 +358,7 @@ function AppShell(): React.JSX.Element {
             <img src="goblin.png" alt="" className="h-8 w-auto object-contain" />
             <span className="text-sm font-bold text-accent tracking-wider">CostGoblin</span>
           </div>
-          <div className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]">
+          <div className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]" role="navigation" aria-label="Configuration views">
             <button
               type="button"
               onClick={() => { setDebugOpen(prev => !prev); }}
@@ -411,6 +412,7 @@ function AppShell(): React.JSX.Element {
                     showActive ? 'animate-sync-blink' : '',
                   ].join(' ')}
                   title={syncError === null ? undefined : `Sync error — ${syncError}`}
+                  aria-current={active === item.id ? 'page' : undefined}
                 >
                   {showError && (
                     <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-negative animate-pulse" aria-label="sync error" />
