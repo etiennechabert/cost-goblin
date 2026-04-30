@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider } from '@costgoblin/ui';
-import type { CostApi, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider } from '@costgoblin/ui';
+import type { CostApi, FilterMap, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
+import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 
 // ---------------------------------------------------------------------------
@@ -32,7 +33,7 @@ function getApi(): CostApi {
 
 type View =
   | { page: 'setup' }
-  | { page: 'custom'; viewId: string }
+  | { page: 'custom'; viewId: string; initialFilter?: FilterMap }
   | { page: 'trends' }
   | { page: 'missing-tags' }
   | { page: 'savings' }
@@ -40,8 +41,7 @@ type View =
   | { page: 'dimensions' }
   | { page: 'cost-scope' }
   | { page: 'views-editor' }
-  | { page: 'sync' }
-  | { page: 'entity-detail'; entity: string; dimension: string };
+  | { page: 'sync' };
 
 const STATIC_LEFT_NAV: { id: string; label: string }[] = [
   { id: 'trends', label: 'Trends' },
@@ -277,15 +277,9 @@ function AppShell(): React.JSX.Element {
   function handleEntityClick(entity: string, dimension: string) {
     confirmLeave(() => {
       api.cancelPendingQueries().catch(() => undefined);
-      setView({ page: 'entity-detail', entity, dimension });
-    });
-  }
-
-  function handleBack() {
-    confirmLeave(() => {
-      api.cancelPendingQueries().catch(() => undefined);
       const firstId = viewsConfig?.views[0]?.id ?? OVERVIEW_SEED_VIEW.id;
-      setView({ page: 'custom', viewId: firstId });
+      const initialFilter: FilterMap = { [asDimensionId(dimension)]: [asTagValue(entity)] };
+      setView({ page: 'custom', viewId: firstId, initialFilter });
     });
   }
 
@@ -460,7 +454,7 @@ function AppShell(): React.JSX.Element {
         const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
         return (
           <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
-            <CustomView spec={spec} headerSubtitle="Cloud spending visibility" onEntityClick={handleEntityClick} />
+            <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} />
           </Profiler>
         );
       })()}
@@ -504,15 +498,6 @@ function AppShell(): React.JSX.Element {
           <DataManagement />
         </Profiler>
       </div>
-      {view.page === 'entity-detail' && (
-        <Profiler id="entity-detail" onRender={onPerfRender}>
-          <EntityDetail
-            entity={view.entity}
-            dimension={view.dimension}
-            onBack={handleBack}
-          />
-        </Profiler>
-      )}
       {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} />}
       </div>
     </PaletteProvider>

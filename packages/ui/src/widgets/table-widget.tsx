@@ -10,6 +10,7 @@ import type { AggregatedTableRow, ExplorerFilterMap, ExplorerSort } from '@costg
 import type { SortingState } from '@tanstack/react-table';
 import type { WidgetCommonProps } from './widget.js';
 import { filtersKey, mergeFilters } from './widget.js';
+import { getDimensionId } from '../lib/dimensions.js';
 import type { TableColumn } from '../lib/table-types.js';
 
 const ROW_LIMIT = 500;
@@ -22,11 +23,12 @@ function formatSignedDollars(n: number): string {
   return formatDollars(n);
 }
 
-function specToTableColumn(spec: ColumnSpec): TableColumn<AggregatedTableRow> {
+function specToTableColumn(spec: ColumnSpec, activeDimIds: ReadonlySet<string>): TableColumn<AggregatedTableRow> {
   return {
     id: spec.key,
     header: spec.label,
     dimId: spec.dimId,
+    clickable: spec.dimId !== null && activeDimIds.has(spec.dimId),
     align: spec.align,
     mono: spec.mono,
     truncate: spec.truncate,
@@ -61,6 +63,7 @@ export function TableWidget({
   dateRange,
   granularity,
   globalFilters,
+  dimensions,
   onSetFilter,
 }: WidgetCommonProps) {
   const api = useCostApi();
@@ -115,16 +118,22 @@ export function TableWidget({
     [fk, dateRange.start, dateRange.end, granularity, groupByKey, sort?.column, sort?.direction, api],
   );
 
+  const activeDimIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const d of dimensions) ids.add(getDimensionId(d));
+    return ids;
+  }, [dimensions]);
+
   const allTableColumns = useMemo(
-    () => allColumnSpecs.map(specToTableColumn),
-    [allColumnSpecs],
+    () => allColumnSpecs.map(s => specToTableColumn(s, activeDimIds)),
+    [allColumnSpecs, activeDimIds],
   );
 
   const visibleTableColumns = useMemo(() => {
     const enabled = allColumnSpecs.filter(c => enabledSet.has(c.key));
     const ordered = applyColumnOrder(enabled, [...enabledColumns]);
-    return ordered.map(specToTableColumn);
-  }, [allColumnSpecs, enabledSet, enabledColumns]);
+    return ordered.map(s => specToTableColumn(s, activeDimIds));
+  }, [allColumnSpecs, enabledSet, enabledColumns, activeDimIds]);
 
   const hiddenColumns = useMemo(
     () => allColumnSpecs.filter(c => !enabledSet.has(c.key)).map(c => c.key),
@@ -151,10 +160,10 @@ export function TableWidget({
 
   const handleCellClick = useCallback((_row: AggregatedTableRow, columnId: string, value: unknown) => {
     const col = allColumnSpecs.find(c => c.key === columnId);
-    if (col?.dimId !== undefined && col.dimId !== null && typeof value === 'string' && value.length > 0) {
+    if (col?.dimId !== undefined && col.dimId !== null && activeDimIds.has(col.dimId) && typeof value === 'string' && value.length > 0) {
       onSetFilter(asDimensionId(col.dimId), asTagValue(value));
     }
-  }, [allColumnSpecs, onSetFilter]);
+  }, [allColumnSpecs, onSetFilter, activeDimIds]);
 
   const handleHiddenChange = useCallback((nextHidden: readonly string[]) => {
     const hiddenSet = new Set(nextHidden);

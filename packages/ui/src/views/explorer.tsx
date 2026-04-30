@@ -52,7 +52,7 @@ function hourDisplay(hour: string): string {
 
 const BASE_COLUMNS: readonly TableColumn<ExplorerSampleRow>[] = [
   { id: 'usage_date', header: 'Date', accessorFn: r => r.date, mono: true },
-  { id: 'line_item_type', header: 'Line type', dimId: 'line_item_type', accessorFn: r => r.lineItemType },
+  { id: 'line_item_type', header: 'Line type', dimId: 'line_item_type', clickable: true, accessorFn: r => r.lineItemType },
   {
     id: 'cost', header: 'Cost', align: 'right', mono: true,
     accessorFn: r => r.cost,
@@ -62,19 +62,19 @@ const BASE_COLUMNS: readonly TableColumn<ExplorerSampleRow>[] = [
       return <span className={cls}>{formatSignedDollars(n)}</span>;
     },
   },
-  { id: 'service_family', header: 'Family', dimId: 'service_family', accessorFn: r => r.serviceFamily },
-  { id: 'region', header: 'Region', dimId: 'region', accessorFn: r => r.region, mono: true },
-  { id: 'account_name', header: 'Account', dimId: 'account', accessorFn: r => r.accountName.length > 0 ? r.accountName : r.accountId },
-  { id: 'resource_id', header: 'Resource', dimId: 'resource_id', accessorFn: r => r.resourceId, mono: true, truncate: true },
+  { id: 'service_family', header: 'Family', dimId: 'service_family', clickable: true, accessorFn: r => r.serviceFamily },
+  { id: 'region', header: 'Region', dimId: 'region', clickable: true, accessorFn: r => r.region, mono: true },
+  { id: 'account_name', header: 'Account', dimId: 'account', clickable: true, accessorFn: r => r.accountName.length > 0 ? r.accountName : r.accountId },
+  { id: 'resource_id', header: 'Resource', dimId: 'resource_id', clickable: true, accessorFn: r => r.resourceId, mono: true, truncate: true },
   { id: 'description', header: 'Description', accessorFn: r => r.description, truncate: true },
-  { id: 'usage_type', header: 'Usage type', dimId: 'usage_type', accessorFn: r => r.usageType, mono: true },
+  { id: 'usage_type', header: 'Usage type', dimId: 'usage_type', clickable: true, accessorFn: r => r.usageType, mono: true },
   { id: 'usage_hour', header: 'Hour', accessorFn: r => hourDisplay(r.hour), mono: true },
   {
     id: 'list_cost', header: 'List', align: 'right', mono: true,
     accessorFn: r => r.listCost,
     cell: (v) => formatSignedDollars(v as number),
   },
-  { id: 'service', header: 'Service', dimId: 'service', accessorFn: r => r.service },
+  { id: 'service', header: 'Service', dimId: 'service', clickable: true, accessorFn: r => r.service },
   {
     id: 'usage_amount', header: 'Usage', align: 'right', mono: true,
     accessorFn: r => r.usageAmount,
@@ -83,7 +83,7 @@ const BASE_COLUMNS: readonly TableColumn<ExplorerSampleRow>[] = [
       return n === 0 ? '' : n.toLocaleString(undefined, { maximumFractionDigits: 4 });
     },
   },
-  { id: 'operation', header: 'Operation', dimId: 'operation', accessorFn: r => r.operation },
+  { id: 'operation', header: 'Operation', dimId: 'operation', clickable: true, accessorFn: r => r.operation },
 ];
 
 const DEFAULT_HIDDEN: ReadonlySet<string> = new Set([
@@ -248,6 +248,7 @@ export function ExplorerView(): React.JSX.Element {
       id: t.id,
       header: t.label,
       dimId: t.id,
+      clickable: true,
       accessorFn: (r: ExplorerSampleRow) => r.tags[t.id] ?? '',
     })),
   ], [tagColumns, granularity]);
