@@ -1,0 +1,27 @@
+appId: com.costgoblin.app
+productName: CostGoblin
+directories:
+  buildResources: build
+  output: dist
+files:
+  - "packages/desktop/dist/**/*"
+  - "packages/ui/dist/**/*"
+  - "packages/core/dist/**/*"
+  - "node_modules/**/*"
+asar: true
+asarUnpack:
+  - "node_modules/duckdb/**"
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.business
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage
+    - deb
+publish:
+  provider: github
