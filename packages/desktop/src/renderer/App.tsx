@@ -323,21 +323,8 @@ function AppShell(): React.JSX.Element {
     setView({ page: 'sync' });
   }
 
-  if (setupCheck.status === 'checking') {
-    return <div className="min-h-screen bg-bg-primary" />;
-  }
-
-  if (setupCheck.status === 'needs-setup') {
-    return <SetupWizard onComplete={handleSetupComplete} />;
-  }
-
-  // Use fallback while views.yaml loads — but DON'T render custom-view
-  // widgets until the real config arrives to avoid double-mount queries.
   const views = viewsConfig ?? FALLBACK_VIEWS;
   const viewsReady = viewsConfig !== null;
-
-  // User-defined views populate the left nav before the static analytical
-  // views (Trends / Missing Tags / Savings).
   const customNav: { id: string; label: string }[] = views.views.map(v => ({ id: v.id, label: v.name }));
   const leftNav = [...customNav, ...STATIC_LEFT_NAV];
 
@@ -346,6 +333,14 @@ function AppShell(): React.JSX.Element {
     ...STATIC_LEFT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Analysis' })),
     ...RIGHT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Settings' })),
   ], [customNav]);
+
+  if (setupCheck.status === 'checking') {
+    return <div className="min-h-screen bg-bg-primary" />;
+  }
+
+  if (setupCheck.status === 'needs-setup') {
+    return <SetupWizard onComplete={handleSetupComplete} />;
+  }
 
   function activeNavId(): string | null {
     if (view.page === 'custom') return view.viewId;
