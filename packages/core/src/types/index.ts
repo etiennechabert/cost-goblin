@@ -107,3 +107,14 @@ export type {
   AggregatedTableRow,
   AggregatedTableResult,
 } from './explorer.js';
+
+export type {
+  TelemetryConfig,
+  TelemetryChannelConfig,
+  TelemetryChannel,
+  AnalyticsEventType,
+  CrashEventType,
+  PerformanceEventType,
+  TelemetryEventType,
+  AuditLogEntry,
+} from '../telemetry/types.js';

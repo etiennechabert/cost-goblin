@@ -1,4 +1,5 @@
 import type { BucketPath, DimensionId } from './branded.js';
+import type { TelemetryConfig } from '../telemetry/types.js';
 
 export type NormalizationRule = 'lowercase' | 'uppercase' | 'lowercase-kebab' | 'lowercase-underscore' | 'camelCase';
 
@@ -36,6 +37,9 @@ export interface DefaultsConfig {
 export interface CostGoblinConfig {
   readonly providers: readonly ProviderConfig[];
   readonly defaults: DefaultsConfig;
+  /** Opt-in telemetry configuration (analytics, crash reporting, performance).
+   *  All channels are disabled by default. When undefined, treated as all disabled. */
+  readonly telemetry?: TelemetryConfig | undefined;
 }
 
 export interface BuiltInDimension {
