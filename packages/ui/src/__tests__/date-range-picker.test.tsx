@@ -24,75 +24,74 @@ function renderPicker(overrides?: Partial<{
 afterEach(cleanup);
 
 describe('DateRangePicker', () => {
-  it('shows daily, period, and hourly rows', () => {
+  it('shows active preset label on trigger button', () => {
     renderPicker();
+    expect(screen.getByText('Last 30 days')).toBeDefined();
+  });
+
+  it('opens popover with preset sections on click', async () => {
+    renderPicker();
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Last 30 days'));
+
     expect(screen.getByText('Daily')).toBeDefined();
     expect(screen.getByText('Period')).toBeDefined();
     expect(screen.getByText('Hourly')).toBeDefined();
   });
 
-  it('shows daily presets (30d, 90d, 365d, Current month, Last month, Quarter, YTD + Custom)', () => {
+  it('shows all presets when open', async () => {
     renderPicker();
-    expect(screen.getByText('30d')).toBeDefined();
-    expect(screen.getByText('90d')).toBeDefined();
-    expect(screen.getByText('365d')).toBeDefined();
-    expect(screen.getByText('Month')).toBeDefined();
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Last 30 days'));
+
+    expect(screen.getByText('Last 90 days')).toBeDefined();
+    expect(screen.getByText('Last 365 days')).toBeDefined();
+    expect(screen.getByText('This month')).toBeDefined();
     expect(screen.getByText('Last month')).toBeDefined();
-    expect(screen.getByText('Quarter')).toBeDefined();
-    expect(screen.getByText('YTD')).toBeDefined();
-    expect(screen.getByText('Custom')).toBeDefined();
+    expect(screen.getByText('This quarter')).toBeDefined();
+    expect(screen.getByText('Last quarter')).toBeDefined();
+    expect(screen.getByText('This year')).toBeDefined();
+    expect(screen.getByText('Last year')).toBeDefined();
+    expect(screen.getByText('Last 7 days')).toBeDefined();
+    expect(screen.getByText('Last 14 days')).toBeDefined();
+    expect(screen.getByText('Last 28 days')).toBeDefined();
+    expect(screen.getByText('Custom range…')).toBeDefined();
   });
 
-  it('shows hourly presets (7, 14, 28 days)', () => {
-    renderPicker();
-    expect(screen.getByText('7 days')).toBeDefined();
-    expect(screen.getByText('14 days')).toBeDefined();
-    expect(screen.getByText('28 days')).toBeDefined();
-  });
-
-  it('30d daily is selected by default', () => {
-    renderPicker();
-    const dailyBtn = screen.getByText('30d');
-    expect(dailyBtn).toBeDefined();
-    expect(dailyBtn.className).toContain('bg-accent');
-  });
-
-  it('clicking hourly 7 days calls onChange with hourly granularity', async () => {
+  it('clicking a preset calls onChange and closes popover', async () => {
     const onChange = vi.fn();
     renderPicker({ onChange });
-
     const user = userEvent.setup();
-    await user.click(screen.getByText('7 days'));
 
-    expect(onChange).toHaveBeenCalledOnce();
-    const granularity = onChange.mock.calls[0]?.[1] as Granularity;
-    expect(granularity).toBe('hourly');
-  });
-
-  it('clicking daily 90d calls onChange with daily granularity', async () => {
-    const onChange = vi.fn();
-    renderPicker({ onChange });
-
-    const user = userEvent.setup();
-    await user.click(screen.getByText('90d'));
+    await user.click(screen.getByText('Last 30 days'));
+    await user.click(screen.getByText('Last 90 days'));
 
     expect(onChange).toHaveBeenCalledOnce();
     const granularity = onChange.mock.calls[0]?.[1] as Granularity;
     expect(granularity).toBe('daily');
   });
 
-  it('clicking Custom shows calendar pickers', async () => {
-    const { container } = renderPicker();
-
-    // No calendar buttons visible initially
-    const initialButtons = container.querySelectorAll('button[class*="justify-start"]');
-    expect(initialButtons.length).toBe(0);
-
+  it('clicking hourly preset calls onChange with hourly granularity', async () => {
+    const onChange = vi.fn();
+    renderPicker({ onChange });
     const user = userEvent.setup();
-    await user.click(screen.getByText('Custom'));
 
-    // Two calendar picker buttons should now be visible
-    const calendarButtons = container.querySelectorAll('button[class*="justify-start"]');
-    expect(calendarButtons.length).toBe(2);
+    await user.click(screen.getByText('Last 30 days'));
+    await user.click(screen.getByText('Last 7 days'));
+
+    expect(onChange).toHaveBeenCalledOnce();
+    const granularity = onChange.mock.calls[0]?.[1] as Granularity;
+    expect(granularity).toBe('hourly');
+  });
+
+  it('shows custom range inputs when Custom range is clicked', async () => {
+    renderPicker();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByText('Last 30 days'));
+    await user.click(screen.getByText('Custom range…'));
+
+    expect(screen.getByText('From')).toBeDefined();
+    expect(screen.getByText('To')).toBeDefined();
   });
 });

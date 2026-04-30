@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { daysBetween, daysAgo, getThisMonth, getLastMonth, getCurrentQuarter, getYTD } from '../lib/dates.js';
+import { daysBetween, daysAgo, getThisMonth, getLastMonth, getCurrentQuarter, getLastQuarter, getYTD } from '../lib/dates.js';
 
 describe('daysBetween', () => {
   it('calculates inclusive days between dates', () => {
@@ -116,6 +116,25 @@ describe('getCurrentQuarter', () => {
   });
 });
 
+describe('getLastQuarter', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('returns Q4 when in Q1', () => {
+    vi.setSystemTime(new Date('2024-02-15'));
+    const { start, end } = getLastQuarter();
+    expect(start).toBe('2023-10-01');
+    expect(end).toBe('2023-12-31');
+  });
+
+  it('returns Q1 when in Q2', () => {
+    vi.setSystemTime(new Date('2024-05-15'));
+    const { start, end } = getLastQuarter();
+    expect(start).toBe('2024-01-01');
+    expect(end).toBe('2024-03-31');
+  });
+});
+
 describe('getYTD', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -125,22 +144,8 @@ describe('getYTD', () => {
     vi.useRealTimers();
   });
 
-  it('returns year start to today', () => {
+  it('returns full current calendar year', () => {
     vi.setSystemTime(new Date('2024-03-15'));
-    const { start, end } = getYTD();
-    expect(start).toBe('2024-01-01');
-    expect(end).toBe('2024-03-15');
-  });
-
-  it('handles first day of year', () => {
-    vi.setSystemTime(new Date('2024-01-01'));
-    const { start, end } = getYTD();
-    expect(start).toBe('2024-01-01');
-    expect(end).toBe('2024-01-01');
-  });
-
-  it('handles last day of year', () => {
-    vi.setSystemTime(new Date('2024-12-31'));
     const { start, end } = getYTD();
     expect(start).toBe('2024-01-01');
     expect(end).toBe('2024-12-31');

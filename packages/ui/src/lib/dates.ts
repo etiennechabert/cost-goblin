@@ -67,15 +67,40 @@ export function getCurrentQuarter(): { start: DateString; end: DateString } {
   };
 }
 
-/** Returns start of year to today (Year To Date). */
-export function getYTD(): { start: DateString; end: DateString } {
+/** Returns start and end of previous quarter. */
+export function getLastQuarter(): { start: DateString; end: DateString } {
   const now = new Date();
   const year = now.getUTCFullYear();
+  const currentQuarter = Math.floor(now.getUTCMonth() / 3);
+  const prevQuarter = currentQuarter === 0 ? 3 : currentQuarter - 1;
+  const prevYear = currentQuarter === 0 ? year - 1 : year;
+  const startMonth = prevQuarter * 3;
 
-  const start = new Date(Date.UTC(year, 0, 1)); // January 1st
+  const start = new Date(Date.UTC(prevYear, startMonth, 1));
+  const end = new Date(Date.UTC(prevYear, startMonth + 3, 0));
 
   return {
     start: formatDateUTC(start),
-    end: formatDateUTC(now),
+    end: formatDateUTC(end),
+  };
+}
+
+/** Returns full current calendar year (Jan 1 – Dec 31). */
+export function getYTD(): { start: DateString; end: DateString } {
+  const year = new Date().getUTCFullYear();
+
+  return {
+    start: formatDateUTC(new Date(Date.UTC(year, 0, 1))),
+    end: formatDateUTC(new Date(Date.UTC(year, 11, 31))),
+  };
+}
+
+/** Returns start and end of previous calendar year. */
+export function getLastYear(): { start: DateString; end: DateString } {
+  const year = new Date().getUTCFullYear() - 1;
+
+  return {
+    start: formatDateUTC(new Date(Date.UTC(year, 0, 1))),
+    end: formatDateUTC(new Date(Date.UTC(year, 11, 31))),
   };
 }
