@@ -148,7 +148,7 @@ test.describe('Cost Overview', () => {
   });
 
   test('custom date range inputs appear when Custom range is clicked', async () => {
-    const trigger = page.locator('button:has(svg.lucide-calendar)');
+    const trigger = page.locator('button:has(svg.lucide-calendar)').first();
     await trigger.click();
     const popover = page.locator('[data-radix-popper-content-wrapper]');
     await expect(popover).toBeVisible({ timeout: 5000 });
@@ -157,7 +157,7 @@ test.describe('Cost Overview', () => {
     await expect(popover.getByText('From', { exact: true })).toBeVisible();
     await expect(popover.getByText('To', { exact: true })).toBeVisible();
 
-    await trigger.click();
+    await page.keyboard.press('Escape');
   });
 
   test('filter bar shows dimension chips and they are clickable', async () => {
