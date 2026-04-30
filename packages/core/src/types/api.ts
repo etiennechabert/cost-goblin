@@ -66,6 +66,21 @@ export interface OrgSyncProgress {
   readonly total: number;
 }
 
+export interface UpdateInfo {
+  readonly version: string;
+  readonly releaseDate: string;
+  readonly releaseNotes: string | null;
+}
+
+export type UpdateStatus =
+  | { readonly state: 'idle' }
+  | { readonly state: 'checking' }
+  | { readonly state: 'available'; readonly info: UpdateInfo }
+  | { readonly state: 'downloading'; readonly percent: number }
+  | { readonly state: 'downloaded'; readonly info: UpdateInfo }
+  | { readonly state: 'not-available' }
+  | { readonly state: 'error'; readonly message: string };
+
 export type Dimension = BuiltInDimension | TagDimension;
 
 export type DataTier = 'daily' | 'hourly' | 'cost-optimization';
