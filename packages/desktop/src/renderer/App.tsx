@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider } from '@costgoblin/ui';
+import { useState, useEffect, useCallback, useMemo, Profiler } from 'react';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette } from '@costgoblin/ui';
+import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, FilterMap, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
@@ -340,6 +341,12 @@ function AppShell(): React.JSX.Element {
   const customNav: { id: string; label: string }[] = views.views.map(v => ({ id: v.id, label: v.name }));
   const leftNav = [...customNav, ...STATIC_LEFT_NAV];
 
+  const paletteItems: NavItem[] = useMemo(() => [
+    ...customNav.map(n => ({ id: n.id, label: n.label, group: 'Dashboards' })),
+    ...STATIC_LEFT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Analysis' })),
+    ...RIGHT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Settings' })),
+  ], [customNav]);
+
   function activeNavId(): string | null {
     if (view.page === 'custom') return view.viewId;
     if (view.page === 'trends') return 'trends';
@@ -360,6 +367,7 @@ function AppShell(): React.JSX.Element {
 
   return (
     <PaletteProvider palette={palette}>
+      <CommandPalette items={paletteItems} onNavigate={handleNavClick} />
       <div className="min-h-screen bg-bg-primary text-text-primary">
         <SyncAnnouncer
           syncError={syncError}
