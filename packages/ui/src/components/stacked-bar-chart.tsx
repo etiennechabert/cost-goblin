@@ -24,6 +24,28 @@ interface StackedBarChartProps {
   readonly onSegmentClick?: ((name: string) => void) | undefined;
 }
 
+export function bucketBars(bars: readonly BarDay[], maxBuckets: number): readonly BarDay[] {
+  if (bars.length <= maxBuckets) return bars;
+  const size = Math.ceil(bars.length / maxBuckets);
+  const result: BarDay[] = [];
+  for (let i = 0; i < bars.length; i += size) {
+    const chunk = bars.slice(i, i + size);
+    const merged: Record<string, number> = {};
+    let total = 0;
+    for (const bar of chunk) {
+      total += bar.total;
+      for (const [key, val] of Object.entries(bar.breakdown)) {
+        merged[key] = (merged[key] ?? 0) + val;
+      }
+    }
+    const first = chunk[0];
+    if (first !== undefined) {
+      result.push({ date: first.date, total, breakdown: merged });
+    }
+  }
+  return result;
+}
+
 export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick }: StackedBarChartProps) {
   const { palette } = usePalette();
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
@@ -177,7 +199,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             );
           })()}
 
-          <div className="absolute left-12 right-0 top-0 bottom-7 flex items-end z-10" style={{ gap: '2px' }}>
+          <div className="absolute left-12 right-0 top-0 bottom-7 flex items-end z-10" style={{ gap: days.length > 100 ? '1px' : '2px' }}>
             {days.map((day) => {
               const barPct = maxCost > 0 ? (day.total / maxCost) * 100 : 0;
               const segments = breakdownKeys

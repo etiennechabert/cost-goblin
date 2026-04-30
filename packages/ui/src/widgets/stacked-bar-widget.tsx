@@ -1,47 +1,36 @@
 import { useMemo } from 'react';
-import { daysBetween } from '../lib/dates.js';
 import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
-import { StackedBarChart, type BarDay } from '../components/stacked-bar-chart.js';
+import { StackedBarChart, bucketBars, type BarDay } from '../components/stacked-bar-chart.js';
 import { asTagValue } from '@costgoblin/core/browser';
 import { useCostFocus } from '../hooks/use-cost-focus.js';
 import type { DailyCostsResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 
-function getISOWeekStart(dateStr: string): string {
-  const d = new Date(dateStr);
-  const day = d.getUTCDay();
-  const diff = (day === 0 ? -6 : 1) - day;
-  d.setUTCDate(d.getUTCDate() + diff);
-  return d.toISOString().slice(0, 10);
-}
+const MAX_BARS = 170;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-function aggregateToWeekly(days: BarDay[]): BarDay[] {
-  const weeks = new Map<string, { total: number; breakdown: Record<string, number> }>();
-  for (const day of days) {
-    const weekStart = getISOWeekStart(day.date);
-    let week = weeks.get(weekStart);
-    if (week === undefined) {
-      week = { total: 0, breakdown: {} };
-      weeks.set(weekStart, week);
+function fillDateRange(bars: BarDay[], start: string, end: string): BarDay[] {
+  const existing = new Set(bars.map(b => b.date));
+  const result = [...bars];
+  const current = new Date(start + 'T00:00:00Z');
+  const last = new Date(end + 'T00:00:00Z');
+  while (current <= last) {
+    const dateStr = current.toISOString().slice(0, 10);
+    if (!existing.has(dateStr)) {
+      result.push({ date: dateStr, total: 0, breakdown: {} });
     }
-    week.total += day.total;
-    for (const [key, val] of Object.entries(day.breakdown)) {
-      week.breakdown[key] = (week.breakdown[key] ?? 0) + val;
-    }
+    current.setTime(current.getTime() + DAY_MS);
   }
-  return [...weeks.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([date, data]) => ({ date, total: data.total, breakdown: data.breakdown }));
+  return result.sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function dailyToBarDays(data: DailyCostsResult | null, useWeekly: boolean): BarDay[] {
+function dailyToBarDays(data: DailyCostsResult | null): BarDay[] {
   if (data === null) return [];
-  const daily = data.days.map(d => ({
+  return data.days.map(d => ({
     date: d.date,
     total: d.total,
     breakdown: { ...d.breakdown },
   }));
-  return useWeekly ? aggregateToWeekly(daily) : daily;
 }
 
 export function StackedBarWidget({
@@ -62,20 +51,20 @@ export function StackedBarWidget({
     specFilters: spec.filters,
   });
 
-  const periodDays = daysBetween(dateRange.start, dateRange.end);
-  const useWeekly = periodDays > 90;
   const barDays = useMemo(
-    () => dailyToBarDays(dailyResult, useWeekly),
-    [dailyResult, useWeekly],
+    () => {
+      const raw = dailyToBarDays(dailyResult);
+      const filled = granularity === 'daily' ? fillDateRange(raw, dateRange.start, dateRange.end) : raw;
+      return bucketBars(filled, MAX_BARS);
+    },
+    [dailyResult, granularity, dateRange.start, dateRange.end],
   );
 
   if (spec.type !== 'stackedBar') return null;
 
   const loading = query.status === 'loading';
 
-  let defaultTitle = 'Daily Costs';
-  if (granularity === 'hourly') defaultTitle = 'Hourly Costs';
-  else if (useWeekly) defaultTitle = 'Weekly Costs';
+  const defaultTitle = granularity === 'hourly' ? 'Hourly Costs' : 'Daily Costs';
   const title = spec.title ?? defaultTitle;
 
   return (

@@ -2,39 +2,28 @@ import { useState } from 'react';
 import type {
   Dimension,
   DimensionId,
-  DateString,
   TrendResult,
   TrendRow,
   EntityRef,
 } from '@costgoblin/core/browser';
-import { DEFAULT_LAG_DAYS, asDimensionId, asDollars } from '@costgoblin/core/browser';
+import { asDimensionId, asDollars } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
-import { daysAgo } from '../lib/dates.js';
 import { getDimensionId } from '../lib/dimensions.js';
 import { BubbleChart } from '../components/bubble-chart.js';
+import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
+import type { DateRange, Granularity } from '../components/date-range-picker.js';
 import { DimensionSelector } from '../components/dimension-selector.js';
 import { formatDollars, formatPercent } from '../components/format.js';
-
-const PERIOD_PRESETS = [
-  { label: '7d', days: 7 },
-  { label: '14d', days: 14 },
-  { label: '30d', days: 30 },
-  { label: '90d', days: 90 },
-  { label: '180d', days: 180 },
-] as const;
-
-function getDateRange(days: number, lagDays: number = DEFAULT_LAG_DAYS): { start: DateString; end: DateString } {
-  return { start: daysAgo(days + lagDays), end: daysAgo(lagDays) };
-}
 
 type Direction = 'increases' | 'savings';
 
 interface TrendsState {
   selectedDimensionId: DimensionId | null;
   direction: Direction;
-  periodDays: number;
+  dateRange: DateRange;
+  granularity: Granularity;
   deltaThreshold: number;
   percentThreshold: number;
 }
@@ -77,13 +66,14 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
   const lagDays = useLagDays();
   const dimensionsQuery = useQuery(() => api.getDimensions(), []);
 
-  const [state, setState] = useState<TrendsState>({
+  const [state, setState] = useState<TrendsState>(() => ({
     selectedDimensionId: null,
     direction: 'increases',
-    periodDays: 30,
+    dateRange: getDefaultDateRange(lagDays),
+    granularity: 'daily' satisfies Granularity,
     deltaThreshold: 10,
     percentThreshold: 1,
-  });
+  }));
 
   const dimensions: Dimension[] =
     dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
@@ -98,13 +88,13 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
       if (activeDimensionId === null) return Promise.resolve(null);
       return api.queryTrends({
         groupBy: activeDimensionId,
-        dateRange: getDateRange(state.periodDays, lagDays),
+        dateRange: state.dateRange,
         filters: {},
         deltaThreshold: asDollars(state.deltaThreshold),
         percentThreshold: state.percentThreshold,
       });
     },
-    [activeDimensionId, state.periodDays, state.deltaThreshold, state.percentThreshold, lagDays, api],
+    [activeDimensionId, state.dateRange.start, state.dateRange.end, state.deltaThreshold, state.percentThreshold, api],
   );
 
   const trendData: TrendResult | null =
@@ -132,23 +122,13 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
     <div className="flex flex-col gap-6 p-6">
       <div className="flex items-center justify-between">
         <p className="text-base font-medium text-text-secondary">Period-over-period comparison</p>
-        <div className="flex items-center gap-0.5 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
-          {PERIOD_PRESETS.map(p => (
-            <button
-              key={p.days}
-              type="button"
-              onClick={() => { setState(s => ({ ...s, periodDays: p.days })); }}
-              className={[
-                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-                state.periodDays === p.days
-                  ? 'bg-accent text-bg-primary shadow-sm'
-                  : 'text-text-secondary hover:text-text-primary',
-              ].join(' ')}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
+        <DateRangePicker
+          value={state.dateRange}
+          granularity={state.granularity}
+          onChange={(range, g) => { setState(s => ({ ...s, dateRange: range, granularity: g })); }}
+          hideHourly
+          lagDays={lagDays}
+        />
       </div>
 
       {dimensions.length > 0 && (
