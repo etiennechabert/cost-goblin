@@ -104,44 +104,79 @@ interface CopyContext {
   readonly totalCost: number;
 }
 
-function buildMessage(ctx: CopyContext): string {
+function buildMessageParts(ctx: CopyContext) {
   const owner = ctx.selectedOwner !== null && ctx.selectedOwner.length > 0
     ? ctx.selectedOwner
     : null;
-  const lines = [
-    `${String(ctx.rows.length)} resources are missing the ${ctx.tagLabel} tag`,
-    owner !== null ? `(filtered to ${owner})` : null,
-    `representing ${formatDollars(ctx.totalCost)}/month in unattributed spend.`,
-    '',
-    'The full list is in the attached CSV. Please tag these resources or confirm they should be excluded.',
-  ];
-  return lines.filter(l => l !== null).join(' ').replace('  ', '\n\n');
+  return { count: String(ctx.rows.length), tag: ctx.tagLabel, owner, cost: formatDollars(ctx.totalCost) };
 }
 
+function buildSlack(ctx: CopyContext): string {
+  const p = buildMessageParts(ctx);
+  const scope = p.owner !== null ? ` (filtered to *${p.owner}*)` : '';
+  return [
+    `*${p.count} resources* are missing the \`${p.tag}\` tag${scope}, representing *${p.cost}/month* in unattributed spend.`,
+    '',
+    'Full list in the attached CSV — please tag these resources or confirm they should be excluded.',
+  ].join('\n');
+}
+
+function buildJira(ctx: CopyContext): string {
+  const p = buildMessageParts(ctx);
+  const scope = p.owner !== null ? ` (filtered to *${p.owner}*)` : '';
+  return [
+    `h3. Missing {{${p.tag}}} tag`,
+    '',
+    `*${p.count} resources*${scope} representing *${p.cost}/month* in unattributed spend.`,
+    '',
+    'Full list in the attached CSV — please tag these resources or confirm they should be excluded.',
+  ].join('\n');
+}
+
+type CopyFormat = 'jira' | 'slack';
+const FORMAT_LABELS: Record<CopyFormat, string> = { jira: 'Jira', slack: 'Slack' };
+const FORMAT_BUILDERS: Record<CopyFormat, (ctx: CopyContext) => string> = { jira: buildJira, slack: buildSlack };
+
 function CopyMessageButton({ ctx }: Readonly<{ ctx: CopyContext }>) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<CopyFormat | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleCopy = useCallback(() => {
+  const handleCopy = useCallback((format: CopyFormat) => {
     if (ctx.rows.length === 0) return;
-    void navigator.clipboard.writeText(buildMessage(ctx)).then(() => {
-      setCopied(true);
+    void navigator.clipboard.writeText(FORMAT_BUILDERS[format](ctx)).then(() => {
+      setCopied(format);
       if (timerRef.current !== null) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => { setCopied(false); }, 1500);
+      timerRef.current = setTimeout(() => { setCopied(null); }, 1500);
     });
   }, [ctx]);
 
   return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      disabled={ctx.rows.length === 0}
-      className="inline-flex items-center gap-1.5 rounded border border-border bg-bg-tertiary/30 px-2.5 py-1 text-xs text-text-secondary hover:text-text-primary hover:border-border disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-      title="Copy a message to accompany the CSV export"
-    >
-      {copied ? <Check size={12} className="text-accent" /> : <ClipboardCopy size={12} />}
-      <span>{copied ? 'Copied!' : 'Copy message'}</span>
-    </button>
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={ctx.rows.length === 0}
+          className="inline-flex items-center gap-1.5 rounded border border-border bg-bg-tertiary/30 px-2.5 py-1 text-xs text-text-secondary hover:text-text-primary hover:border-border disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          <ClipboardCopy size={12} />
+          <span>Copy message</span>
+          <ChevronDown className="h-3 w-3 text-text-muted" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-36 p-1" align="end">
+        {(['slack', 'jira'] as const).map(format => (
+          <button
+            key={format}
+            type="button"
+            onClick={() => { handleCopy(format); }}
+            className="w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-text-secondary hover:bg-bg-tertiary/50 hover:text-text-primary transition-colors"
+          >
+            {copied === format ? <Check size={12} className="text-accent" /> : <span className="w-3" />}
+            <span>{copied === format ? 'Copied!' : FORMAT_LABELS[format]}</span>
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
   );
 }
 
