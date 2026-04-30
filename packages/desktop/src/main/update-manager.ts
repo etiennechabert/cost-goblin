@@ -1,6 +1,15 @@
-import { autoUpdater } from 'electron-updater';
 import { logger, isStringRecord } from '@costgoblin/core';
 import type { UpdateInfo, UpdateStatus } from '@costgoblin/core';
+
+// Lazy-loaded — electron-updater crashes in dev/CI when app is not packaged
+let _updater: import('electron-updater').AppUpdater | null = null;
+async function loadUpdater(): Promise<import('electron-updater').AppUpdater> {
+  if (_updater === null) {
+    const mod = await import('electron-updater');
+    _updater = mod.autoUpdater;
+  }
+  return _updater;
+}
 
 type StatusListener = (status: UpdateStatus) => void;
 
@@ -42,51 +51,55 @@ function toUpdateInfo(info: { version: string; releaseDate: string; releaseNotes
 
 let currentInfo: UpdateInfo | null = null;
 
-export function initAutoUpdater(): void {
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = false;
+export async function initAutoUpdater(): Promise<void> {
+  const updater = await loadUpdater();
+  updater.autoDownload = false;
+  updater.autoInstallOnAppQuit = false;
 
-  autoUpdater.on('checking-for-update', () => {
+  updater.on('checking-for-update', () => {
     setStatus({ state: 'checking' });
   });
 
-  autoUpdater.on('update-available', (info) => {
+  updater.on('update-available', (info) => {
     currentInfo = toUpdateInfo(info);
     setStatus({ state: 'available', info: currentInfo });
   });
 
-  autoUpdater.on('update-not-available', () => {
+  updater.on('update-not-available', () => {
     setStatus({ state: 'idle' });
   });
 
-  autoUpdater.on('download-progress', (progress) => {
+  updater.on('download-progress', (progress) => {
     if (currentInfo === null) return;
     setStatus({ state: 'downloading', percent: Math.round(progress.percent), info: currentInfo });
   });
 
-  autoUpdater.on('update-downloaded', (info) => {
+  updater.on('update-downloaded', (info) => {
     const downloadedInfo = toUpdateInfo(info);
     currentInfo = downloadedInfo;
     setStatus({ state: 'downloaded', info: downloadedInfo });
   });
 
-  autoUpdater.on('error', (err) => {
+  updater.on('error', (err) => {
     setStatus({ state: 'error', error: err.message });
   });
 
   logger.info('Auto-updater initialized');
 }
 
-export function checkForUpdates(): Promise<void> {
-  return autoUpdater.checkForUpdates().then(() => undefined);
+export async function checkForUpdates(): Promise<void> {
+  const updater = await loadUpdater();
+  await updater.checkForUpdates();
 }
 
-export function downloadUpdate(): Promise<void> {
-  return autoUpdater.downloadUpdate().then(() => undefined);
+export async function downloadUpdate(): Promise<void> {
+  const updater = await loadUpdater();
+  await updater.downloadUpdate();
 }
 
-export function quitAndInstall(): void {
-  autoUpdater.quitAndInstall();
+export async function quitAndInstall(): Promise<void> {
+  const updater = await loadUpdater();
+  updater.quitAndInstall();
 }
 
 export function onStatusChanged(callback: StatusListener): () => void {

@@ -221,7 +221,9 @@ async function main(): Promise<void> {
   logger.info('Sync worker ready');
 
   installCSP();
-  initAutoUpdater();
+  if (app.isPackaged) {
+    await initAutoUpdater();
+  }
   registerUpdateHandlers();
   await createWindow(db, syncClient);
 
