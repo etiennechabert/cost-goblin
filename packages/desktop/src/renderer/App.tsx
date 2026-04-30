@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider } from '@costgoblin/ui';
+import { useState, useEffect, useCallback, useMemo, Profiler } from 'react';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette } from '@costgoblin/ui';
+import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, FilterMap, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
@@ -322,6 +323,17 @@ function AppShell(): React.JSX.Element {
     setView({ page: 'sync' });
   }
 
+  const views = viewsConfig ?? FALLBACK_VIEWS;
+  const viewsReady = viewsConfig !== null;
+  const customNav: { id: string; label: string }[] = views.views.map(v => ({ id: v.id, label: v.name }));
+  const leftNav = [...customNav, ...STATIC_LEFT_NAV];
+
+  const paletteItems: NavItem[] = useMemo(() => [
+    ...customNav.map(n => ({ id: n.id, label: n.label, group: 'Dashboards' })),
+    ...STATIC_LEFT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Analysis' })),
+    ...RIGHT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Settings' })),
+  ], [customNav]);
+
   if (setupCheck.status === 'checking') {
     return <div className="min-h-screen bg-bg-primary" />;
   }
@@ -329,16 +341,6 @@ function AppShell(): React.JSX.Element {
   if (setupCheck.status === 'needs-setup') {
     return <SetupWizard onComplete={handleSetupComplete} />;
   }
-
-  // Use fallback while views.yaml loads — but DON'T render custom-view
-  // widgets until the real config arrives to avoid double-mount queries.
-  const views = viewsConfig ?? FALLBACK_VIEWS;
-  const viewsReady = viewsConfig !== null;
-
-  // User-defined views populate the left nav before the static analytical
-  // views (Trends / Missing Tags / Savings).
-  const customNav: { id: string; label: string }[] = views.views.map(v => ({ id: v.id, label: v.name }));
-  const leftNav = [...customNav, ...STATIC_LEFT_NAV];
 
   function activeNavId(): string | null {
     if (view.page === 'custom') return view.viewId;
@@ -360,6 +362,7 @@ function AppShell(): React.JSX.Element {
 
   return (
     <PaletteProvider palette={palette}>
+      <CommandPalette items={paletteItems} onNavigate={handleNavClick} />
       <div className="min-h-screen bg-bg-primary text-text-primary">
         <SyncAnnouncer
           syncError={syncError}

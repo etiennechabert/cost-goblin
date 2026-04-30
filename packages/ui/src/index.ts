@@ -64,4 +64,9 @@ export { PALETTE_STANDARD, PALETTE_COLORBLIND, getActivePalette } from './lib/pa
 export type { PaletteType } from './lib/palette.js';
 export { PaletteProvider, usePalette } from './hooks/use-palette.js';
 
+export { CommandPalette } from './components/command-palette.js';
+export type { NavItem } from './components/command-palette.js';
+export { useKeyboardShortcuts, matchesShortcut, formatShortcutLabel } from './hooks/use-keyboard-shortcuts.js';
+export type { Shortcut } from './hooks/use-keyboard-shortcuts.js';
+
 export { MockCostApi } from './__fixtures__/mock-api.js';
