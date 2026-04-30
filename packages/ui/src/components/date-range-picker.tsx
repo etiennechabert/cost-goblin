@@ -178,7 +178,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
             <PopoverContent className="w-auto p-0" align="start">
               <Calendar
                 mode="single"
-                selected={new Date(value.start)}
+                selected={new Date(value.start + 'T00:00:00')}
                 onSelect={(date) => {
                   if (date) {
                     const dateStr = asDateString(date.toISOString().slice(0, 10));
@@ -209,7 +209,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
             <PopoverContent className="w-auto p-0" align="start">
               <Calendar
                 mode="single"
-                selected={new Date(value.end)}
+                selected={new Date(value.end + 'T00:00:00')}
                 onSelect={(date) => {
                   if (date) {
                     const dateStr = asDateString(date.toISOString().slice(0, 10));

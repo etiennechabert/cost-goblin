@@ -7,6 +7,7 @@ import {
   buildAliasSqlCase,
   computePeriodsInRange,
   DEFAULT_LAG_DAYS,
+  isStringRecord,
   logger,
   listLocalMonths,
   parseJsonObject,
@@ -41,6 +42,11 @@ const DEFAULT_WINDOW_DAYS = 30;
 const MAX_ROW_LIMIT = 1000;
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function isDateRange(value: unknown): value is { start: string; end: string } {
+  if (!isStringRecord(value)) return false;
+  return typeof value['start'] === 'string' && typeof value['end'] === 'string';
+}
 
 function parseDate(s: string | undefined): Date | null {
   if (s === undefined || !ISO_DATE_RE.test(s)) return null;
@@ -295,18 +301,9 @@ export function registerExplorerHandlers(app: AppContext): void {
         ? rawOrder
         : [];
 
-      // Validate lastUsedDateRange: must have start and end as strings matching ISO date format
       const validDateRange =
-        rawDateRange !== null &&
-        typeof rawDateRange === 'object' &&
-        typeof (rawDateRange as Record<string, unknown>)['start'] === 'string' &&
-        typeof (rawDateRange as Record<string, unknown>)['end'] === 'string' &&
-        ISO_DATE_RE.test((rawDateRange as Record<string, unknown>)['start'] as string) &&
-        ISO_DATE_RE.test((rawDateRange as Record<string, unknown>)['end'] as string)
-          ? {
-              start: asDateString((rawDateRange as Record<string, unknown>)['start'] as string),
-              end: asDateString((rawDateRange as Record<string, unknown>)['end'] as string),
-            }
+        isDateRange(rawDateRange) && ISO_DATE_RE.test(rawDateRange.start) && ISO_DATE_RE.test(rawDateRange.end)
+          ? { start: asDateString(rawDateRange.start), end: asDateString(rawDateRange.end) }
           : null;
 
       // Validate lastUsedGranularity: must be 'daily' or 'hourly'
