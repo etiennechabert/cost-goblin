@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Profiler } from 'react';
+import { useState, useEffect, useCallback, useRef, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider } from '@costgoblin/ui';
 import type { CostApi, FilterMap, UpdateStatus, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
@@ -112,12 +112,82 @@ function DownloadIcon() {
   );
 }
 
-function UpdateNotification({ status, onDownload, onInstall }: { status: UpdateStatus; onDownload: () => void; onInstall: () => void }): React.JSX.Element | null {
+interface ReleaseNotesModalProps {
+  readonly version: string;
+  readonly releaseDate: string;
+  readonly releaseNotes: string | null;
+  readonly onInstall: () => void;
+  readonly onDismiss: () => void;
+}
+
+function ReleaseNotesModal({ version, releaseDate, releaseNotes, onInstall, onDismiss }: ReleaseNotesModalProps): React.JSX.Element {
+  const dismissRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    dismissRef.current?.focus();
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onDismiss();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => { document.removeEventListener('keydown', handleKey); };
+  }, [onDismiss]);
+
+  return (
+    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none" aria-modal="true">
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        onClick={onDismiss}
+        aria-hidden="true"
+      />
+
+      <div className="relative rounded-xl border border-border bg-bg-secondary p-6 shadow-2xl max-w-2xl w-full mx-4 flex flex-col gap-4">
+        <div>
+          <h3 className="text-base font-semibold text-text-primary">Update Available</h3>
+          <div className="mt-1 text-sm text-text-secondary">
+            Version {version} — {new Date(releaseDate).toLocaleDateString()}
+          </div>
+        </div>
+
+        {releaseNotes !== null && releaseNotes.trim() !== '' ? (
+          <div className="rounded-md border border-border bg-bg-primary p-4 max-h-96 overflow-y-auto">
+            <pre className="text-sm text-text-primary whitespace-pre-wrap font-sans leading-relaxed">
+              {releaseNotes}
+            </pre>
+          </div>
+        ) : (
+          <div className="rounded-md border border-border bg-bg-primary p-4 text-sm text-text-muted italic">
+            No release notes available for this version.
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2">
+          <button
+            ref={dismissRef}
+            type="button"
+            onClick={onDismiss}
+            className="rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary hover:bg-bg-tertiary transition-colors"
+          >
+            Dismiss
+          </button>
+          <button
+            type="button"
+            onClick={onInstall}
+            className="rounded-md px-3 py-1.5 text-sm font-medium text-white bg-accent hover:bg-accent-hover transition-colors"
+          >
+            Install Update
+          </button>
+        </div>
+      </div>
+    </dialog>
+  );
+}
+
+function UpdateNotification({ status, onShowReleaseNotes }: { status: UpdateStatus; onShowReleaseNotes: () => void }): React.JSX.Element | null {
   if (status.state === 'available') {
     return (
       <button
         type="button"
-        onClick={onDownload}
+        onClick={onShowReleaseNotes}
         className="rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50 transition-colors flex items-center gap-2"
         title={`Update available: v${status.info.version}`}
       >
@@ -144,7 +214,7 @@ function UpdateNotification({ status, onDownload, onInstall }: { status: UpdateS
     return (
       <button
         type="button"
-        onClick={onInstall}
+        onClick={onShowReleaseNotes}
         className="rounded-md px-3 py-1.5 text-sm font-medium bg-accent text-white hover:bg-accent/90 transition-colors flex items-center gap-2"
         title={`Update ready: v${status.info.version}`}
       >
@@ -195,6 +265,7 @@ function AppShell(): React.JSX.Element {
   const [syncActivity, setSyncActivity] = useState<'idle' | 'syncing' | 'downloading'>('idle');
   const [syncFilesRemaining, setSyncFilesRemaining] = useState(0);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
+  const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const inFlightCount = useDebugBadge();
 
@@ -356,12 +427,24 @@ function AppShell(): React.JSX.Element {
     });
   }
 
-  function handleDownloadUpdate() {
-    api.downloadUpdate().catch(() => undefined);
+  function handleShowReleaseNotes() {
+    setShowReleaseNotes(true);
+  }
+
+  function handleDismissReleaseNotes() {
+    setShowReleaseNotes(false);
   }
 
   function handleInstallUpdate() {
-    api.quitAndInstall().catch(() => undefined);
+    // If update is available but not downloaded, download it first
+    if (updateStatus.state === 'available') {
+      api.downloadUpdate().catch(() => undefined);
+      setShowReleaseNotes(false);
+    } else if (updateStatus.state === 'downloaded') {
+      // Update is downloaded, quit and install
+      api.quitAndInstall().catch(() => undefined);
+      setShowReleaseNotes(false);
+    }
   }
 
   function handleSetupComplete() {
@@ -470,8 +553,7 @@ function AppShell(): React.JSX.Element {
             </button>
             <UpdateNotification
               status={updateStatus}
-              onDownload={handleDownloadUpdate}
-              onInstall={handleInstallUpdate}
+              onShowReleaseNotes={handleShowReleaseNotes}
             />
             {RIGHT_NAV.map((item) => {
               const isSync = item.id === 'sync';
@@ -585,6 +667,15 @@ function AppShell(): React.JSX.Element {
         </Profiler>
       </div>
       {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} />}
+      {showReleaseNotes && (updateStatus.state === 'available' || updateStatus.state === 'downloaded') && (
+        <ReleaseNotesModal
+          version={updateStatus.info.version}
+          releaseDate={updateStatus.info.releaseDate}
+          releaseNotes={updateStatus.info.releaseNotes}
+          onInstall={handleInstallUpdate}
+          onDismiss={handleDismissReleaseNotes}
+        />
+      )}
       </div>
     </PaletteProvider>
   );
