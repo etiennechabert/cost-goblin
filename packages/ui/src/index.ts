@@ -15,6 +15,7 @@ export type { ButtonProps } from './components/ui/button.js';
 export { Calendar } from './components/ui/calendar.js';
 export type { CalendarProps } from './components/ui/calendar.js';
 export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor } from './components/ui/popover.js';
+export { Dialog, DialogPortal, DialogOverlay, DialogTrigger, DialogClose, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from './components/ui/dialog.js';
 
 export { ErrorBoundary } from './components/error-boundary.js';
 export { BubbleChart } from './components/bubble-chart.js';

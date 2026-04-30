@@ -12,7 +12,7 @@ import type { SyncClient } from './sync-client.js';
 import { registerIpcHandlers } from './ipc.js';
 import { validateUrl, SecurityError } from './url-validator.js';
 import { validateProfileLabel } from './validators/path-validator.js';
-import { startUpdateChecker } from './update-manager.js';
+import { startUpdateChecker, onStatusChanged } from './update-manager.js';
 
 // Log level: debug in dev (NODE_ENV=development or electron-vite serving
 // the renderer), or when COSTGOBLIN_LOG_LEVEL=debug. Otherwise info.
@@ -222,8 +222,12 @@ async function main(): Promise<void> {
   installCSP();
   await createWindow(db, syncClient);
 
-  // Start the update checker (checks on launch after 10s delay, then every 6 hours)
   startUpdateChecker();
+  onStatusChanged((status) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      w.webContents.send('update:status-changed', status);
+    }
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

@@ -1,12 +1,10 @@
-import { useState, useEffect, useCallback, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider } from '@costgoblin/ui';
+import { useState, useEffect, useCallback, Profiler } from 'react';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, Button } from '@costgoblin/ui';
 import type { CostApi, FilterMap, UpdateStatus, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
+import { Download, RefreshCw } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 
-// ---------------------------------------------------------------------------
-// React Profiler — collects render timings when perf mode is active
-// ---------------------------------------------------------------------------
 const perfEnabled = globalThis.costgoblinPerf !== undefined;
 const renderTimings: RenderTiming[] = [];
 
@@ -29,6 +27,10 @@ function onPerfRender(
 
 function getApi(): CostApi {
   return globalThis.costgoblin;
+}
+
+function getUpdateApi() {
+  return globalThis.costgoblinUpdate;
 }
 
 type View =
@@ -102,16 +104,6 @@ function PaletteIcon() {
   );
 }
 
-function DownloadIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <polyline points="7 10 12 15 17 10" />
-      <line x1="12" y1="15" x2="12" y2="3" />
-    </svg>
-  );
-}
-
 interface ReleaseNotesModalProps {
   readonly version: string;
   readonly releaseDate: string;
@@ -121,32 +113,15 @@ interface ReleaseNotesModalProps {
 }
 
 function ReleaseNotesModal({ version, releaseDate, releaseNotes, onInstall, onDismiss }: ReleaseNotesModalProps): React.JSX.Element {
-  const dismissRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    dismissRef.current?.focus();
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onDismiss();
-    }
-    document.addEventListener('keydown', handleKey);
-    return () => { document.removeEventListener('keydown', handleKey); };
-  }, [onDismiss]);
-
   return (
-    <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none" aria-modal="true">
-      <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={onDismiss}
-        aria-hidden="true"
-      />
-
-      <div className="relative rounded-xl border border-border bg-bg-secondary p-6 shadow-2xl max-w-2xl w-full mx-4 flex flex-col gap-4">
-        <div>
-          <h3 className="text-base font-semibold text-text-primary">Update Available</h3>
-          <div className="mt-1 text-sm text-text-secondary">
+    <Dialog open onOpenChange={(open) => { if (!open) onDismiss(); }}>
+      <DialogContent className="flex flex-col gap-4">
+        <DialogHeader>
+          <DialogTitle>Update Available</DialogTitle>
+          <DialogDescription>
             Version {version} — {new Date(releaseDate).toLocaleDateString()}
-          </div>
-        </div>
+          </DialogDescription>
+        </DialogHeader>
 
         {releaseNotes !== null && releaseNotes.trim() !== '' ? (
           <div className="rounded-md border border-border bg-bg-primary p-4 max-h-96 overflow-y-auto">
@@ -160,29 +135,16 @@ function ReleaseNotesModal({ version, releaseDate, releaseNotes, onInstall, onDi
           </div>
         )}
 
-        <div className="flex items-center justify-end gap-2">
-          <button
-            ref={dismissRef}
-            type="button"
-            onClick={onDismiss}
-            className="rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary hover:bg-bg-tertiary transition-colors"
-          >
-            Dismiss
-          </button>
-          <button
-            type="button"
-            onClick={onInstall}
-            className="rounded-md px-3 py-1.5 text-sm font-medium text-white bg-accent hover:bg-accent-hover transition-colors"
-          >
-            Install Update
-          </button>
-        </div>
-      </div>
-    </dialog>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onDismiss}>Dismiss</Button>
+          <Button onClick={onInstall}>Install Update</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-function UpdateNotification({ status, onShowReleaseNotes }: { status: UpdateStatus; onShowReleaseNotes: () => void }): React.JSX.Element | null {
+function UpdateNotification({ status, onShowReleaseNotes }: { readonly status: UpdateStatus; readonly onShowReleaseNotes: () => void }): React.JSX.Element | null {
   if (status.state === 'available') {
     return (
       <button
@@ -191,7 +153,7 @@ function UpdateNotification({ status, onShowReleaseNotes }: { status: UpdateStat
         className="rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50 transition-colors flex items-center gap-2"
         title={`Update available: v${status.info.version}`}
       >
-        <DownloadIcon />
+        <Download size={16} />
         <span>Update Available</span>
       </button>
     );
@@ -200,11 +162,7 @@ function UpdateNotification({ status, onShowReleaseNotes }: { status: UpdateStat
   if (status.state === 'downloading') {
     return (
       <div className="rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary flex items-center gap-2">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
-          <polyline points="23 4 23 10 17 10" />
-          <polyline points="1 20 1 14 7 14" />
-          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-        </svg>
+        <RefreshCw size={16} className="animate-spin" />
         <span>Downloading {Math.round(status.percent)}%</span>
       </div>
     );
@@ -378,23 +336,11 @@ function AppShell(): React.JSX.Element {
     return () => { cancelled = true; clearInterval(timer); };
   }, [api, setupCheck, syncActivity]);
 
-  // Update status polling — checks for app updates in the background.
-  // Polls more frequently when an update is downloading to track progress.
   useEffect(() => {
-    if (setupCheck.status !== 'ready') return;
-    let cancelled = false;
-    async function tick(): Promise<void> {
-      try {
-        const status = await api.getUpdateStatus();
-        if (cancelled) return;
-        setUpdateStatus(status);
-      } catch { /* transient */ }
-    }
-    tick().catch(() => undefined);
-    const interval = updateStatus.state === 'downloading' ? 5_000 : 30_000;
-    const timer = setInterval(() => { tick().catch(() => undefined); }, interval);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [api, setupCheck, updateStatus.state]);
+    const updateApi = getUpdateApi();
+    updateApi.getUpdateStatus().then(setUpdateStatus).catch(() => undefined);
+    return updateApi.onStatusChanged(setUpdateStatus);
+  }, []);
 
   function handleNavClick(id: string) {
     const alreadyActive = view.page === 'custom' ? view.viewId === id : view.page === id;
@@ -436,13 +382,12 @@ function AppShell(): React.JSX.Element {
   }
 
   function handleInstallUpdate() {
-    // If update is available but not downloaded, download it first
+    const updateApi = getUpdateApi();
     if (updateStatus.state === 'available') {
-      api.downloadUpdate().catch(() => undefined);
+      updateApi.downloadUpdate().catch(() => undefined);
       setShowReleaseNotes(false);
     } else if (updateStatus.state === 'downloaded') {
-      // Update is downloaded, quit and install
-      api.quitAndInstall().catch(() => undefined);
+      updateApi.quitAndInstall().catch(() => undefined);
       setShowReleaseNotes(false);
     }
   }

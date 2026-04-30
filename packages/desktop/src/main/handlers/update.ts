@@ -1,15 +1,15 @@
 import { ipcMain } from 'electron';
-import type { AppContext } from './context.js';
+import type { UpdateInfo, UpdateStatus } from '@costgoblin/core';
 import {
   checkForUpdates,
   downloadUpdate,
   quitAndInstall,
   getUpdateStatus,
   getUpdateInfo,
+  onStatusChanged,
 } from '../update-manager.js';
-import type { UpdateStatus, UpdateInfo } from '../update-manager.js';
 
-export function registerUpdateHandlers(_app: AppContext): void {
+export function registerUpdateHandlers(): void {
   ipcMain.handle('update:check-for-updates', async (): Promise<void> => {
     await checkForUpdates();
   });
@@ -30,3 +30,5 @@ export function registerUpdateHandlers(_app: AppContext): void {
     return getUpdateInfo();
   });
 }
+
+export { onStatusChanged };

@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { UpdateInfo as ElectronUpdaterUpdateInfo } from 'electron-updater';
 import { EventEmitter } from 'events';
 
-// Mock electron-updater before importing UpdateManager
 const mockAutoUpdater = new EventEmitter() as EventEmitter & {
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
@@ -20,7 +19,6 @@ vi.mock('electron-updater', () => ({
   autoUpdater: mockAutoUpdater,
 }));
 
-// Mock logger
 vi.mock('@costgoblin/core', () => ({
   logger: {
     info: vi.fn(),
@@ -29,7 +27,6 @@ vi.mock('@costgoblin/core', () => ({
   },
 }));
 
-// Import after mocks are set up
 const {
   getUpdateStatus,
   getUpdateInfo,
@@ -42,7 +39,6 @@ const {
 
 describe('UpdateManager', () => {
   beforeEach(() => {
-    // Stop any running checker and clear state
     stopUpdateChecker();
     vi.clearAllMocks();
     mockAutoUpdater.removeAllListeners();
@@ -56,9 +52,6 @@ describe('UpdateManager', () => {
 
   describe('getUpdateStatus', () => {
     it('returns idle or not-available state after no update found', () => {
-      // Note: Due to module-level state, this might be idle or not-available
-      // depending on whether other tests have run. Testing the not-available
-      // state explicitly is more reliable.
       startUpdateChecker();
       mockAutoUpdater.emit('update-not-available');
       const status = getUpdateStatus();
@@ -302,7 +295,6 @@ describe('UpdateManager', () => {
   describe('quitAndInstall', () => {
     it('calls autoUpdater.quitAndInstall with correct flags', () => {
       quitAndInstall();
-      // Use vi.runAllTimers to execute setImmediate callbacks
       vi.runAllTimers();
       expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
     });
@@ -318,8 +310,6 @@ describe('UpdateManager', () => {
     it('checks for updates after initial delay', async () => {
       startUpdateChecker();
       expect(mockAutoUpdater.checkForUpdates).not.toHaveBeenCalled();
-
-      // Advance 10 seconds (INITIAL_CHECK_DELAY_MS)
       await vi.advanceTimersByTimeAsync(10000);
       expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledOnce();
     });
@@ -327,15 +317,12 @@ describe('UpdateManager', () => {
     it('checks for updates every 6 hours after initial check', async () => {
       startUpdateChecker();
 
-      // Initial check at 10 seconds
       await vi.advanceTimersByTimeAsync(10000);
       expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledOnce();
 
-      // First recurring check at 6 hours
       await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000);
       expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
 
-      // Second recurring check at 12 hours
       await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000);
       expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledTimes(3);
     });
@@ -346,8 +333,6 @@ describe('UpdateManager', () => {
       expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledOnce();
 
       stopUpdateChecker();
-
-      // Advance 6 more hours — should not trigger another check
       await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000);
       expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledOnce();
     });
@@ -367,7 +352,6 @@ describe('UpdateManager', () => {
       await vi.advanceTimersByTimeAsync(10000);
       expect(mockAutoUpdater.checkForUpdates).toHaveBeenCalledOnce();
 
-      // Stop and restart
       stopUpdateChecker();
       startUpdateChecker();
       await vi.advanceTimersByTimeAsync(10000);

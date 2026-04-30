@@ -1,31 +1,29 @@
 import { autoUpdater } from 'electron-updater';
 import type { UpdateInfo as ElectronUpdaterUpdateInfo } from 'electron-updater';
 import { logger } from '@costgoblin/core';
-
-export interface UpdateInfo {
-  version: string;
-  releaseDate: string;
-  releaseNotes: string | null;
-}
-
-export type UpdateStatus =
-  | { state: 'idle' }
-  | { state: 'checking' }
-  | { state: 'available'; info: UpdateInfo }
-  | { state: 'downloading'; percent: number }
-  | { state: 'downloaded'; info: UpdateInfo }
-  | { state: 'not-available' }
-  | { state: 'error'; message: string };
+import type { UpdateInfo, UpdateStatus } from '@costgoblin/core';
 
 let status: UpdateStatus = { state: 'idle' };
 let timer: ReturnType<typeof setTimeout> | null = null;
 let latestUpdateInfo: UpdateInfo | null = null;
 
-/** Check for updates every 6 hours */
-const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+type StatusListener = (status: UpdateStatus) => void;
+const statusListeners = new Set<StatusListener>();
 
-/** Initial delay before first check (let the app finish loading) */
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const INITIAL_CHECK_DELAY_MS = 10000;
+
+function setStatus(next: UpdateStatus): void {
+  status = next;
+  for (const listener of statusListeners) {
+    listener(next);
+  }
+}
+
+export function onStatusChanged(callback: StatusListener): () => void {
+  statusListeners.add(callback);
+  return () => { statusListeners.delete(callback); };
+}
 
 export function getUpdateStatus(): UpdateStatus {
   return status;
@@ -40,15 +38,13 @@ function errorMessage(err: unknown): string {
 }
 
 function convertUpdateInfo(info: ElectronUpdaterUpdateInfo): UpdateInfo {
-  // Extract release notes from the update info
-  // electron-updater provides releaseNotes as string, array, or null
   let notes: string | null = null;
   if (typeof info.releaseNotes === 'string') {
     notes = info.releaseNotes;
   } else if (Array.isArray(info.releaseNotes) && info.releaseNotes.length > 0) {
-    // Join array of release notes
     notes = info.releaseNotes
-      .map(n => (typeof n === 'object' && n !== null && 'note' in n ? String(n['note']) : String(n)))
+      .map((n: string | { readonly note: string | null }) =>
+        typeof n === 'string' ? n : (n.note ?? ''))
       .join('\n\n');
   }
 
@@ -62,38 +58,38 @@ function convertUpdateInfo(info: ElectronUpdaterUpdateInfo): UpdateInfo {
 function setupAutoUpdaterEvents(): void {
   autoUpdater.on('checking-for-update', () => {
     logger.info('Update: checking for updates');
-    status = { state: 'checking' };
+    setStatus({ state: 'checking' });
   });
 
   autoUpdater.on('update-available', (info: ElectronUpdaterUpdateInfo) => {
     const updateInfo = convertUpdateInfo(info);
     latestUpdateInfo = updateInfo;
     logger.info('Update: update available', { version: updateInfo.version });
-    status = { state: 'available', info: updateInfo };
+    setStatus({ state: 'available', info: updateInfo });
   });
 
   autoUpdater.on('update-not-available', () => {
     logger.info('Update: no update available');
-    status = { state: 'not-available' };
     latestUpdateInfo = null;
+    setStatus({ state: 'not-available' });
   });
 
   autoUpdater.on('download-progress', (progressObj) => {
     const percent = Math.round(progressObj.percent);
     logger.debug('Update: download progress', { percent });
-    status = { state: 'downloading', percent };
+    setStatus({ state: 'downloading', percent });
   });
 
   autoUpdater.on('update-downloaded', (info: ElectronUpdaterUpdateInfo) => {
     const updateInfo = convertUpdateInfo(info);
     latestUpdateInfo = updateInfo;
-    logger.info('Update: update downloaded, ready to install', { version: updateInfo.version });
-    status = { state: 'downloaded', info: updateInfo };
+    logger.info('Update: downloaded, ready to install', { version: updateInfo.version });
+    setStatus({ state: 'downloaded', info: updateInfo });
   });
 
   autoUpdater.on('error', (err: Error) => {
     logger.info('Update: error', { error: errorMessage(err) });
-    status = { state: 'error', message: errorMessage(err) };
+    setStatus({ state: 'error', message: errorMessage(err) });
   });
 }
 
@@ -102,7 +98,7 @@ async function checkForUpdatesOnce(): Promise<void> {
     await autoUpdater.checkForUpdates();
   } catch (err: unknown) {
     logger.info('Update: check failed', { error: errorMessage(err) });
-    status = { state: 'error', message: errorMessage(err) };
+    setStatus({ state: 'error', message: errorMessage(err) });
   }
 }
 
@@ -110,14 +106,11 @@ export function startUpdateChecker(): void {
   stopUpdateChecker();
   setupAutoUpdaterEvents();
 
-  // Configure autoUpdater
-  autoUpdater.autoDownload = false; // Manual download control
-  autoUpdater.autoInstallOnAppQuit = false; // Manual install control
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
 
-  // Initial check after short delay
   timer = setTimeout(() => {
     void checkForUpdatesOnce().then(() => {
-      // Schedule recurring checks
       timer = setInterval(() => {
         void checkForUpdatesOnce();
       }, UPDATE_CHECK_INTERVAL_MS);
@@ -133,7 +126,6 @@ export function stopUpdateChecker(): void {
     clearInterval(timer);
     timer = null;
   }
-  // Remove all listeners to avoid duplicates if restarted
   autoUpdater.removeAllListeners();
 }
 
@@ -143,17 +135,16 @@ export async function checkForUpdates(): Promise<void> {
 
 export async function downloadUpdate(): Promise<void> {
   try {
-    status = { state: 'downloading', percent: 0 };
+    setStatus({ state: 'downloading', percent: 0 });
     await autoUpdater.downloadUpdate();
   } catch (err: unknown) {
     logger.info('Update: download failed', { error: errorMessage(err) });
-    status = { state: 'error', message: errorMessage(err) };
+    setStatus({ state: 'error', message: errorMessage(err) });
     throw err;
   }
 }
 
 export function quitAndInstall(): void {
-  // setImmediate ensures all windows can save state before quitting
   setImmediate(() => {
     autoUpdater.quitAndInstall(false, true);
   });

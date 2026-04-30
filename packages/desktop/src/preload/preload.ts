@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   CostApi,
+  UpdateApi,
   Dimension,
   CostGoblinConfig,
   OrgNode,
@@ -278,9 +279,12 @@ const api: CostApi = {
   },
   cancelPendingQueries(): Promise<void> {
     void invoke<undefined>('debug:clear-completed');
-    // Use ipcRenderer directly — cancel calls shouldn't inflate the in-flight badge
+    // Cancel calls shouldn't inflate the in-flight badge
     return (ipcRenderer.invoke('query:cancel-pending') as Promise<undefined>).then(() => undefined);
   },
+};
+
+const updateApi: UpdateApi = {
   checkForUpdates(): Promise<void> {
     return invoke<undefined>('update:check-for-updates').then(() => undefined);
   },
@@ -296,9 +300,17 @@ const api: CostApi = {
   getUpdateInfo(): Promise<UpdateInfo | null> {
     return invoke<UpdateInfo | null>('update:get-info');
   },
+  onStatusChanged(callback: (status: UpdateStatus) => void): () => void {
+    const handler = (_event: unknown, status: UpdateStatus): void => {
+      callback(status);
+    };
+    ipcRenderer.on('update:status-changed', handler);
+    return () => { ipcRenderer.removeListener('update:status-changed', handler); };
+  },
 };
 
 contextBridge.exposeInMainWorld('costgoblin', api);
+contextBridge.exposeInMainWorld('costgoblinUpdate', updateApi);
 
 contextBridge.exposeInMainWorld('costgoblinDebug', {
   isSandboxed(): boolean { return process.sandboxed; },
