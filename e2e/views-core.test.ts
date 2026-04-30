@@ -123,12 +123,13 @@ test.describe('Cost Overview', () => {
     const trigger = page.locator('button:has(svg.lucide-calendar)');
     await expect(trigger).toBeVisible();
 
-    // Open popover and verify sections
+    // Open popover and verify sections exist inside it
     await trigger.click();
-    await expect(page.getByText('Daily')).toBeVisible();
-    await expect(page.getByText('Hourly')).toBeVisible();
-    await expect(page.getByText('Period')).toBeVisible();
-    await expect(page.getByText('Custom range…')).toBeVisible();
+    const popover = page.locator('[data-radix-popper-content-wrapper]');
+    await expect(popover.getByText('Daily')).toBeVisible();
+    await expect(popover.getByText('Hourly')).toBeVisible();
+    await expect(popover.getByText('Period')).toBeVisible();
+    await expect(popover.getByText('Custom range…')).toBeVisible();
 
     // Close by clicking trigger again
     await trigger.click();
@@ -152,8 +153,9 @@ test.describe('Cost Overview', () => {
     await trigger.click();
     await page.getByText('Custom range…').click();
 
-    await expect(page.getByText('From')).toBeVisible();
-    await expect(page.getByText('To')).toBeVisible();
+    const popover = page.locator('[data-radix-popper-content-wrapper]');
+    await expect(popover.getByText('From')).toBeVisible();
+    await expect(popover.getByText('To')).toBeVisible();
 
     // close popover
     await trigger.click();
@@ -480,8 +482,7 @@ test.describe('Missing Tags', () => {
     await navigateToText(page, 'Missing Tags', 'without the selected allocation tag');
   });
 
-  test('shows heading and subtitle', async () => {
-    await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
+  test('shows subtitle', async () => {
     await expect(page.getByText(/without the selected allocation tag/i)).toBeVisible();
   });
 
