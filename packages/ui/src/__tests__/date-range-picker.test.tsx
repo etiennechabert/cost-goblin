@@ -24,32 +24,35 @@ function renderPicker(overrides?: Partial<{
 afterEach(cleanup);
 
 describe('DateRangePicker', () => {
-  it('shows daily and hourly rows', () => {
+  it('shows daily, period, and hourly rows', () => {
     renderPicker();
     expect(screen.getByText('Daily')).toBeDefined();
+    expect(screen.getByText('Period')).toBeDefined();
     expect(screen.getByText('Hourly')).toBeDefined();
   });
 
-  it('shows daily presets (Last 7d, Last 30d, This month, Last month, Last quarter, YTD + Custom)', () => {
+  it('shows daily presets (30d, 90d, 365d, Current month, Last month, Quarter, YTD + Custom)', () => {
     renderPicker();
-    expect(screen.getByText('Last 7d')).toBeDefined();
-    expect(screen.getByText('Last 30d')).toBeDefined();
-    expect(screen.getByText('This month')).toBeDefined();
+    expect(screen.getByText('30d')).toBeDefined();
+    expect(screen.getByText('90d')).toBeDefined();
+    expect(screen.getByText('365d')).toBeDefined();
+    expect(screen.getByText('Month')).toBeDefined();
     expect(screen.getByText('Last month')).toBeDefined();
-    expect(screen.getByText('Last quarter')).toBeDefined();
+    expect(screen.getByText('Quarter')).toBeDefined();
     expect(screen.getByText('YTD')).toBeDefined();
     expect(screen.getByText('Custom')).toBeDefined();
   });
 
-  it('shows hourly presets (7, 14, 30 days)', () => {
+  it('shows hourly presets (7, 14, 28 days)', () => {
     renderPicker();
     expect(screen.getByText('7 days')).toBeDefined();
     expect(screen.getByText('14 days')).toBeDefined();
+    expect(screen.getByText('28 days')).toBeDefined();
   });
 
-  it('Last 30d daily is selected by default', () => {
+  it('30d daily is selected by default', () => {
     renderPicker();
-    const dailyBtn = screen.getByText('Last 30d');
+    const dailyBtn = screen.getByText('30d');
     expect(dailyBtn).toBeDefined();
     expect(dailyBtn.className).toContain('bg-accent');
   });
@@ -66,12 +69,12 @@ describe('DateRangePicker', () => {
     expect(granularity).toBe('hourly');
   });
 
-  it('clicking daily Last 7d calls onChange with daily granularity', async () => {
+  it('clicking daily 90d calls onChange with daily granularity', async () => {
     const onChange = vi.fn();
     renderPicker({ onChange });
 
     const user = userEvent.setup();
-    await user.click(screen.getByText('Last 7d'));
+    await user.click(screen.getByText('90d'));
 
     expect(onChange).toHaveBeenCalledOnce();
     const granularity = onChange.mock.calls[0]?.[1] as Granularity;

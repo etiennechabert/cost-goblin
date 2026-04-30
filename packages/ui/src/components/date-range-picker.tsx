@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { CalendarIcon } from 'lucide-react';
 import type { DateString } from '@costgoblin/core/browser';
 import { DEFAULT_LAG_DAYS, asDateString } from '@costgoblin/core/browser';
-import { daysAgo, getThisMonth, getLastMonth, getLastQuarter, getYTD } from '../lib/dates.js';
+import { daysAgo, getThisMonth, getLastMonth, getCurrentQuarter, getYTD } from '../lib/dates.js';
 import { Calendar } from './ui/calendar.js';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover.js';
 import { Button } from './ui/button.js';
@@ -23,25 +23,25 @@ type CalendarPreset = {
 
 type Preset = DayPreset | CalendarPreset;
 
-const DAILY_PRESETS: readonly Preset[] = [
-  { label: 'Last 7d', type: 'days', days: 7 },
-  { label: 'Last 30d', type: 'days', days: 30 },
-  { label: 'This month', type: 'calendar', getRange: (lagDays) => {
-    const range = getThisMonth();
-    return { ...range, end: lagDays > 0 ? daysAgo(lagDays) : range.end };
-  }},
-  { label: 'Last month', type: 'calendar', getRange: () => getLastMonth() },
-  { label: 'Last quarter', type: 'calendar', getRange: () => getLastQuarter() },
-  { label: 'YTD', type: 'calendar', getRange: (lagDays) => {
-    const range = getYTD();
-    return { ...range, end: lagDays > 0 ? daysAgo(lagDays) : range.end };
-  }},
+const DAILY_ROLLING: readonly Preset[] = [
+  { label: '30d', type: 'days', days: 30 },
+  { label: '90d', type: 'days', days: 90 },
+  { label: '365d', type: 'days', days: 365 },
 ];
+
+const DAILY_CALENDAR: readonly Preset[] = [
+  { label: 'Month', type: 'calendar', getRange: () => getThisMonth() },
+  { label: 'Last month', type: 'calendar', getRange: () => getLastMonth() },
+  { label: 'Quarter', type: 'calendar', getRange: () => getCurrentQuarter() },
+  { label: 'YTD', type: 'calendar', getRange: () => getYTD() },
+];
+
+const ALL_DAILY_PRESETS: readonly Preset[] = [...DAILY_ROLLING, ...DAILY_CALENDAR];
 
 const HOURLY_PRESETS = [
   { label: '7 days', days: 7 },
   { label: '14 days', days: 14 },
-  { label: '30 days', days: 30 },
+  { label: '28 days', days: 28 },
 ];
 
 export interface DateRange {
@@ -102,15 +102,15 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
     setShowCustom(prev => !prev);
   }
 
-  const isCustom = granularity === 'daily' && !DAILY_PRESETS.some(p => isActivePreset(p))
+  const isCustom = granularity === 'daily' && !ALL_DAILY_PRESETS.some(p => isActivePreset(p))
     && !showCustom;
 
   return (
     <div className="flex flex-col items-end gap-1">
-      {/* Daily row */}
+      {/* Daily rolling row */}
       <div className="flex items-center gap-0.5 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
         <span className="text-[10px] text-text-muted px-1.5">Daily</span>
-        {DAILY_PRESETS.map(preset => (
+        {DAILY_ROLLING.map(preset => (
           <button
             key={preset.label}
             type="button"
@@ -137,6 +137,26 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
         >
           Custom
         </button>
+      </div>
+
+      {/* Daily calendar row */}
+      <div className="flex items-center gap-0.5 rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
+        <span className="text-[10px] text-text-muted px-1.5">Period</span>
+        {DAILY_CALENDAR.map(preset => (
+          <button
+            key={preset.label}
+            type="button"
+            onClick={() => { handleDailyPreset(preset); }}
+            className={[
+              'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+              granularity === 'daily' && isActivePreset(preset)
+                ? 'bg-accent text-bg-primary shadow-sm'
+                : 'text-text-secondary hover:text-text-primary',
+            ].join(' ')}
+          >
+            {preset.label}
+          </button>
+        ))}
       </div>
 
       {/* Hourly row */}

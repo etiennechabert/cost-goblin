@@ -51,25 +51,15 @@ export function getLastMonth(): { start: DateString; end: DateString } {
   };
 }
 
-/** Returns start and end of previous quarter (Q1: Jan-Mar, Q2: Apr-Jun, Q3: Jul-Sep, Q4: Oct-Dec). */
-export function getLastQuarter(): { start: DateString; end: DateString } {
+/** Returns start and end of current quarter (Q1: Jan-Mar, Q2: Apr-Jun, Q3: Jul-Sep, Q4: Oct-Dec). */
+export function getCurrentQuarter(): { start: DateString; end: DateString } {
   const now = new Date();
   const year = now.getUTCFullYear();
-  const month = now.getUTCMonth(); // 0-11
+  const quarter = Math.floor(now.getUTCMonth() / 3);
+  const startMonth = quarter * 3;
 
-  // Determine current quarter (0-3)
-  const currentQuarter = Math.floor(month / 3);
-
-  // Previous quarter
-  const prevQuarter = currentQuarter === 0 ? 3 : currentQuarter - 1;
-  const prevQuarterYear = currentQuarter === 0 ? year - 1 : year;
-
-  // Start month of previous quarter
-  const startMonth = prevQuarter * 3;
-  const start = new Date(Date.UTC(prevQuarterYear, startMonth, 1));
-
-  // End is last day of third month in quarter
-  const end = new Date(Date.UTC(prevQuarterYear, startMonth + 3, 0));
+  const start = new Date(Date.UTC(year, startMonth, 1));
+  const end = new Date(Date.UTC(year, startMonth + 3, 0));
 
   return {
     start: formatDateUTC(start),
