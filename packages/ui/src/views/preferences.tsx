@@ -6,7 +6,7 @@ import { useQuery } from '../hooks/use-query.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 
 // Component that intentionally throws an error for testing crash reporting
-function CrashTester() {
+function CrashTester(): null {
   throw new Error('Test crash with sensitive data: cost=$12345.67 account=123456789012 tag=cost-center-finance');
 }
 
@@ -228,30 +228,28 @@ export function Preferences() {
           </div>
         )}
 
-        {/* Developer Testing (only shown in dev mode) */}
-        {import.meta.env.DEV && (
-          <div className="rounded-lg border border-negative/50 bg-negative-muted p-5">
-            <div className="flex items-start gap-3">
-              <Bug className="w-4 h-4 text-negative flex-shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <h3 className="text-sm font-semibold text-negative mb-2">Developer Testing</h3>
-                <p className="text-xs text-text-secondary mb-3">
-                  Test crash reporting by triggering an intentional error. The error message
-                  contains sensitive data that should be redacted by privacy filters before
-                  transmission.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => { setTriggerCrash(true); }}
-                  className="text-xs bg-negative text-white px-3 py-2 rounded hover:bg-negative/90 transition-colors"
-                >
-                  Trigger Test Crash
-                </button>
-                {triggerCrash && <CrashTester />}
-              </div>
+        {/* Developer Testing */}
+        <div className="rounded-lg border border-negative/50 bg-negative-muted p-5">
+          <div className="flex items-start gap-3">
+            <Bug className="w-4 h-4 text-negative flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="text-sm font-semibold text-negative mb-2">Developer Testing</h3>
+              <p className="text-xs text-text-secondary mb-3">
+                Test crash reporting by triggering an intentional error. The error message
+                contains sensitive data that should be redacted by privacy filters before
+                transmission.
+              </p>
+              <button
+                type="button"
+                onClick={() => { setTriggerCrash(true); }}
+                className="text-xs bg-negative text-white px-3 py-2 rounded hover:bg-negative/90 transition-colors"
+              >
+                Trigger Test Crash
+              </button>
+              {triggerCrash && <CrashTester />}
             </div>
           </div>
-        )}
+        </div>
 
         {/* Footer note */}
         <div className="text-xs text-text-tertiary text-center pt-4">
