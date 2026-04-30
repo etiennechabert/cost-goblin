@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { asDateString } from '@costgoblin/core/browser';
+import { asDateString, asTagValue } from '@costgoblin/core/browser';
 import { daysBetween } from '../lib/dates.js';
 import type {
   Dimension,
@@ -35,7 +35,7 @@ import { widgetFlexBasis } from '../widgets/widget.js';
 interface CustomViewProps {
   readonly spec: ViewSpec;
   readonly headerSubtitle?: string | undefined;
-  readonly onEntityClick?: ((entity: EntityRef, dim: DimensionId) => void) | undefined;
+  readonly initialFilter?: FilterMap | undefined;
 }
 
 function priorityFor(d: Dimension): number {
@@ -56,12 +56,12 @@ function previousRangeFor(dr: DateRange): DateRange {
   };
 }
 
-function CustomViewInner({ spec, headerSubtitle, onEntityClick }: CustomViewProps) {
+function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProps) {
   const api = useCostApi();
   const lagDays = useLagDays();
   const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
   const [granularity, setGranularity] = useState<Granularity>('daily');
-  const [filters, setFilters] = useState<FilterMap>({});
+  const [filters, setFilters] = useState<FilterMap>(initialFilter ?? {});
 
   const dimensionsQuery = useQuery(() => api.getDimensions(), [api]);
   const rawDimensions: Dimension[] = dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
@@ -77,6 +77,10 @@ function CustomViewInner({ spec, headerSubtitle, onEntityClick }: CustomViewProp
 
   function handleSetFilter(dim: DimensionId, value: TagValue) {
     setFilters(prev => ({ ...prev, [dim]: [value] }));
+  }
+
+  function handleEntityClick(entity: EntityRef, dim: DimensionId) {
+    handleSetFilter(dim, asTagValue(entity));
   }
 
   function handleGetFilterValues(dimensionId: DimensionId, currentFilters: FilterMap): Promise<{ value: string; label: string; count: number }[]> {
@@ -135,7 +139,7 @@ function CustomViewInner({ spec, headerSubtitle, onEntityClick }: CustomViewProp
                   globalFilters={filters}
                   dimensions={dimensions}
                   onSetFilter={handleSetFilter}
-                  onEntityClick={onEntityClick}
+                  onEntityClick={handleEntityClick}
                 />
               </div>
             );

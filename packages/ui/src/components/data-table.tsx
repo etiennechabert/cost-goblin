@@ -536,13 +536,13 @@ function TableCell<TData>({ cell, row, onCellClick }: Readonly<{
   const dimId = meta?.dimId;
   const titleText = meta?.truncate === true && typeof rawValue === 'string' ? rawValue : undefined;
 
-  if (onCellClick !== undefined && dimId !== undefined && dimId !== null && rawValue !== undefined && rawValue !== null && rawValue !== '') {
+  if (onCellClick !== undefined && meta?.clickable === true && dimId !== undefined && dimId !== null && rawValue !== undefined && rawValue !== null && rawValue !== '') {
     return (
       <td className={classes} title={titleText}>
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onCellClick(row.original, cell.column.id, rawValue); }}
-          className="hover:underline hover:text-accent text-left"
+          className="text-accent hover:underline cursor-pointer text-left"
           title={`Add "${typeof rawValue === 'string' ? rawValue : ''}" to filter`}
         >
           {display}

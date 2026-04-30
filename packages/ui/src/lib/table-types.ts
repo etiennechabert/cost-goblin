@@ -7,6 +7,7 @@ declare module '@tanstack/react-table' {
     mono?: boolean | undefined;
     truncate?: boolean | undefined;
     dimId?: string | null | undefined;
+    clickable?: boolean | undefined;
   }
 }
 
@@ -19,6 +20,7 @@ export interface TableColumn<TData> {
   readonly mono?: boolean | undefined;
   readonly truncate?: boolean | undefined;
   readonly dimId?: string | null | undefined;
+  readonly clickable?: boolean | undefined;
   readonly sortable?: boolean | undefined;
   readonly hideable?: boolean | undefined;
   readonly pinnable?: boolean | undefined;
@@ -34,6 +36,7 @@ export function toColumnDefs<TData>(columns: readonly TableColumn<TData>[]): Col
         mono: col.mono,
         truncate: col.truncate,
         dimId: col.dimId,
+        clickable: col.clickable,
       },
       enableSorting: col.sortable !== false,
       enableHiding: col.hideable !== false,
