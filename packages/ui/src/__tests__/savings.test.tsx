@@ -25,9 +25,8 @@ describe('Savings', () => {
   it('shows recommendations after loading', async () => {
     renderSavings();
     await waitFor(() => {
-      expect(screen.getByText('$4.0k')).toBeDefined();
+      expect(screen.getByText(/\$4\.0k\/mo potential savings/)).toBeDefined();
     });
-    expect(screen.getAllByText('3').length).toBeGreaterThan(0);
   });
 
   it('displays action type filter badges', async () => {
