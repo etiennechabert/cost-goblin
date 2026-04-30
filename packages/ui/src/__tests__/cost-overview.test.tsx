@@ -54,7 +54,8 @@ describe('CostOverview', () => {
     });
 
     const initialCallCount = queryCostsSpy.mock.calls.length;
-    await user.click(screen.getByText('7 days'));
+    await user.click(screen.getByText('Last 30 days'));
+    await user.click(screen.getByText('Last 90 days'));
 
     await waitFor(() => {
       expect(queryCostsSpy.mock.calls.length).toBeGreaterThan(initialCallCount);

@@ -16,7 +16,7 @@ import { DateRangePicker, getDefaultDateRange } from '../components/date-range-p
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
 import { PieChart } from '../components/pie-chart.js';
 import type { PieSlice } from '../components/pie-chart.js';
-import { StackedBarChart } from '../components/stacked-bar-chart.js';
+import { StackedBarChart, bucketBars } from '../components/stacked-bar-chart.js';
 import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
 import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension } from '../lib/dimensions.js';
 
@@ -197,7 +197,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
     () => api.queryDailyCosts({ groupBy: histogramDimId, dateRange, filters: entityFilter, granularity }),
     [histogramDimId, dateRangeKey, filterKey, granularity, api],
   );
-  const barDays = dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null);
+  const barDays = bucketBars(dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null), 170);
 
   const totalCost = data === null ? 0 : data.totalCost;
   const isIncrease = data !== null && data.percentChange > 0;

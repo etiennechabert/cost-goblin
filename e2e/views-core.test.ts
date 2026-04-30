@@ -8,6 +8,8 @@ import {
   waitForQuerySettle,
   hasVisibleData,
   navigateTo,
+  navigateToText,
+  selectDatePreset,
   clickNavButton,
   writeCoverage,
   LOAD_TIMEOUT,
@@ -43,7 +45,7 @@ test.describe('App shell', () => {
   });
 
   test('shows all navigation buttons', async () => {
-    for (const label of ['Cost Overview', 'Trends', 'Missing Tags', 'Savings', 'Cost Scope', 'Dimensions', 'Views']) {
+    for (const label of ['Cost Overview', 'Trends', 'Missing Tags', 'Findings', 'Cost Scope', 'Dimensions', 'Views']) {
       await expect(page.getByRole('button', { name: label })).toBeVisible();
     }
     await expect(page.getByRole('button', { name: /Sync/ }).first()).toBeVisible();
@@ -69,19 +71,23 @@ test.describe('App shell', () => {
   });
 
   test('navigating between all views changes active content', async () => {
-    const views = [
-      { button: 'Cost Overview', heading: 'Cost Overview' },
-      { button: 'Trends', heading: 'Cost Trends' },
-      { button: 'Missing Tags', heading: 'Missing Tags' },
-      { button: 'Savings', heading: 'Savings Opportunities' },
-      { button: 'Cost Scope', heading: 'Cost Scope' },
-      { button: 'Dimensions', heading: 'Dimensions' },
-      { button: 'Sync', heading: 'Data Management' },
+    const views: { button: string; marker: { type: 'heading'; name: string } | { type: 'text'; text: string } }[] = [
+      { button: 'Cost Overview', marker: { type: 'heading', name: 'Cost Overview' } },
+      { button: 'Trends', marker: { type: 'text', text: 'Period-over-period comparison' } },
+      { button: 'Missing Tags', marker: { type: 'text', text: 'without the selected allocation tag' } },
+      { button: 'Findings', marker: { type: 'text', text: 'cost optimization recommendations' } },
+      { button: 'Cost Scope', marker: { type: 'heading', name: 'Cost Scope' } },
+      { button: 'Dimensions', marker: { type: 'heading', name: 'Dimensions' } },
+      { button: 'Sync', marker: { type: 'heading', name: 'Data Management' } },
     ];
 
-    for (const { button, heading } of views) {
+    for (const { button, marker } of views) {
       await clickNavButton(page, button);
-      await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible({ timeout: 5000 });
+      if (marker.type === 'heading') {
+        await expect(page.getByRole('heading', { name: marker.name, exact: true })).toBeVisible({ timeout: 5000 });
+      } else {
+        await expect(page.getByText(marker.text, { exact: false }).first()).toBeVisible({ timeout: 5000 });
+      }
       await page.waitForTimeout(500);
       await assertNoReactCrash(page);
     }
@@ -112,46 +118,47 @@ test.describe('Cost Overview', () => {
     await screenshot(page, 'overview-summary');
   });
 
-  test('renders date range picker with daily and hourly presets', async () => {
-    // daily presets
-    for (const preset of ['30 days', '90 days', '365 days']) {
-      await expect(page.getByRole('button', { name: preset }).first()).toBeVisible();
-    }
+  test('renders date range picker popover with presets', async () => {
+    // Trigger button shows active preset
+    const trigger = page.locator('button:has(svg.lucide-chevron-down)');
+    await expect(trigger).toBeVisible();
 
-    // hourly presets
-    for (const preset of ['7 days', '14 days']) {
-      await expect(page.getByRole('button', { name: preset }).first()).toBeVisible();
-    }
+    // Open popover and verify sections exist inside it
+    await trigger.click();
+    const popover = page.locator('[data-radix-popper-content-wrapper]');
+    await expect(popover.getByText('Daily')).toBeVisible();
+    await expect(popover.getByText('Hourly')).toBeVisible();
+    await expect(popover.getByText('Period')).toBeVisible();
+    await expect(popover.getByText('Custom range…')).toBeVisible();
 
-    // Custom button
-    await expect(page.getByRole('button', { name: 'Custom' })).toBeVisible();
+    // Close by clicking trigger again
+    await trigger.click();
   });
 
   test('switching date range preset triggers a reload', async () => {
-    const btn365 = page.getByRole('button', { name: '365 days' }).first();
-    await btn365.click();
+    await selectDatePreset(page, 'Last 90 days');
     await waitForQuerySettle(page);
 
-    // After switching, summary card shows either a dollar amount or "—"
     const costText = page.locator('.tabular-nums').first();
     const text = await costText.textContent();
     expect(text === '—' || (text !== null && text.includes('$'))).toBe(true);
 
     // switch back
-    await page.getByRole('button', { name: '30 days' }).first().click();
+    await selectDatePreset(page, 'Last 30 days');
     await waitForQuerySettle(page);
   });
 
-  test('custom date range inputs appear when Custom is clicked', async () => {
-    const customBtn = page.getByRole('button', { name: 'Custom' });
-    await customBtn.click();
+  test('custom date range inputs appear when Custom range is clicked', async () => {
+    const trigger = page.locator('button:has(svg.lucide-chevron-down)');
+    await trigger.click();
+    await page.getByText('Custom range…').click();
 
-    const dateInputs = page.locator('input[type="date"]');
-    await expect(dateInputs.first()).toBeVisible();
-    expect(await dateInputs.count()).toBeGreaterThanOrEqual(2);
+    const popover = page.locator('[data-radix-popper-content-wrapper]');
+    await expect(popover.getByText('From', { exact: true })).toBeVisible();
+    await expect(popover.getByText('To', { exact: true })).toBeVisible();
 
-    // click Custom again to dismiss
-    await customBtn.click();
+    // close popover
+    await trigger.click();
   });
 
   test('filter bar shows dimension chips and they are clickable', async () => {
@@ -297,8 +304,7 @@ test.describe('Cost Overview', () => {
   });
 
   test('breakdown table renders when data is available', async () => {
-    // switch to 365 days to maximize chance of having data
-    await page.getByRole('button', { name: '365 days' }).first().click();
+    await selectDatePreset(page, 'Last 365 days');
     await waitForQuerySettle(page);
 
     const tables = page.locator('table');
@@ -310,15 +316,13 @@ test.describe('Cost Overview', () => {
       const rowCount = await rows.count();
       expect(rowCount).toBeGreaterThan(0);
 
-      // hover a row
       if (rowCount > 0) {
         await rows.first().hover();
         await screenshot(page, 'overview-breakdown-hover');
       }
     }
 
-    // switch back
-    await page.getByRole('button', { name: '30 days' }).first().click();
+    await selectDatePreset(page, 'Last 30 days');
     await waitForQuerySettle(page);
   });
 
@@ -338,7 +342,7 @@ test.describe('Cost Overview', () => {
 // ---------------------------------------------------------------------------
 test.describe('Cost Trends', () => {
   test.beforeAll(async () => {
-    await navigateTo(page, 'Trends', 'Cost Trends');
+    await navigateToText(page, 'Trends', 'Period-over-period comparison');
   });
 
   test('shows heading and subtitle', async () => {
@@ -475,11 +479,10 @@ test.describe('Cost Trends', () => {
 // ---------------------------------------------------------------------------
 test.describe('Missing Tags', () => {
   test.beforeAll(async () => {
-    await navigateTo(page, 'Missing Tags', 'Missing Tags');
+    await navigateToText(page, 'Missing Tags', 'without the selected allocation tag');
   });
 
-  test('shows heading and subtitle', async () => {
-    await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
+  test('shows subtitle', async () => {
     await expect(page.getByText(/without the selected allocation tag/i)).toBeVisible();
   });
 
@@ -561,9 +564,9 @@ test.describe('Missing Tags', () => {
 // ---------------------------------------------------------------------------
 // Savings Opportunities
 // ---------------------------------------------------------------------------
-test.describe('Savings', () => {
+test.describe('Findings', () => {
   test.beforeAll(async () => {
-    await navigateTo(page, 'Savings', 'Savings Opportunities');
+    await navigateToText(page, 'Findings', 'cost optimization recommendations');
   });
 
   test('shows heading and subtitle', async () => {
@@ -644,7 +647,7 @@ test.describe('Entity Detail', () => {
 
   test.beforeAll(async () => {
     // Reach entity detail via Trends → click first entity link.
-    await navigateTo(page, 'Trends', 'Cost Trends');
+    await navigateToText(page, 'Trends', 'Period-over-period comparison');
 
     const entityLink = page.locator('table button.text-accent').first();
     const exists = await entityLink.isVisible().catch(() => false);
@@ -719,8 +722,7 @@ test.describe('Entity Detail', () => {
 
   test('date range picker works on entity detail', async () => {
     test.skip(!entityReached, 'No entity data available');
-    const btn90 = page.getByRole('button', { name: '90 days' }).first();
-    await btn90.click();
+    await selectDatePreset(page, 'Last 90 days');
     await waitForQuerySettle(page);
 
     const costValue = page.locator('.text-3xl.tabular-nums');
@@ -757,17 +759,17 @@ test.describe('Full user journey', () => {
 
     // 2. Trends
     await clickNavButton(page, 'Trends');
-    await expect(page.getByRole('heading', { name: 'Cost Trends' })).toBeVisible();
+    await expect(page.getByText('Period-over-period comparison').first()).toBeVisible();
     await waitForQuerySettle(page);
 
     // 3. Missing Tags
     await clickNavButton(page, 'Missing Tags');
-    await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
+    await expect(page.getByText('without the selected allocation tag').first()).toBeVisible();
     await waitForQuerySettle(page);
 
-    // 4. Savings
-    await clickNavButton(page, 'Savings');
-    await expect(page.getByRole('heading', { name: 'Savings Opportunities' })).toBeVisible();
+    // 4. Findings
+    await clickNavButton(page, 'Findings');
+    await expect(page.getByText('cost optimization recommendations').first()).toBeVisible();
     await waitForQuerySettle(page);
 
     // 5. Dimensions
@@ -786,12 +788,12 @@ test.describe('Full user journey', () => {
   });
 
   test('rapid navigation between views does not crash', async () => {
-    const views = ['Trends', 'Cost Overview', 'Missing Tags', 'Savings', 'Dimensions', 'Sync', 'Cost Overview', 'Trends', 'Missing Tags'];
+    const views = ['Trends', 'Cost Overview', 'Missing Tags', 'Findings', 'Dimensions', 'Sync', 'Cost Overview', 'Trends', 'Missing Tags'];
     for (const view of views) {
       await clickNavButton(page, view);
       await page.waitForTimeout(100);
     }
-    await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
+    await expect(page.getByText('without the selected allocation tag').first()).toBeVisible();
     await assertNoReactCrash(page);
   });
 });
