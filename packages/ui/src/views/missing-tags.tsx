@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type {
   Dimension,
   DimensionId,
@@ -17,6 +17,7 @@ import { DataTable } from '../components/data-table.js';
 import type { TableColumn } from '../lib/table-types.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
+import { ClipboardCopy, Check } from 'lucide-react';
 
 function buildColumns(showRatio: boolean, dimLabel: string): readonly TableColumn<MissingTagRow>[] {
   const cols: TableColumn<MissingTagRow>[] = [
@@ -92,6 +93,56 @@ function ExpandedRow({ row }: Readonly<{ row: MissingTagRow }>) {
         <span className="text-text-primary">{`${String(Math.round(row.categoryTaggedRatio * 100))}%`}</span>
       </div>
     </div>
+  );
+}
+
+function buildIssueTemplate(rows: readonly MissingTagRow[], tagLabel: string): string {
+  const sections = rows.map(row => {
+    const owner = row.closestOwner !== null && row.closestOwner.length > 0
+      ? String(row.closestOwner)
+      : 'Unknown';
+    return [
+      `## Missing Tags: ${row.service} / ${row.resourceId}`,
+      '',
+      `**Resource:** ${row.resourceId}`,
+      `**Account:** ${row.accountName} (${row.accountId})`,
+      `**Service:** ${row.service} — ${row.serviceFamily}`,
+      `**Owner (fallback):** ${owner}`,
+      `**Monthly Cost:** ${formatDollars(row.cost)}`,
+      '',
+      '### Action Required',
+      `Please add the following tag to this resource:`,
+      `- ${tagLabel}: TBD`,
+    ].join('\n');
+  });
+  return sections.join('\n\n---\n\n');
+}
+
+function CopyIssueTemplateButton({ rows, tagLabel }: Readonly<{ rows: readonly MissingTagRow[]; tagLabel: string }>) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopy = useCallback(() => {
+    if (rows.length === 0) return;
+    const text = buildIssueTemplate(rows, tagLabel);
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => { setCopied(false); }, 1500);
+    });
+  }, [rows, tagLabel]);
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      disabled={rows.length === 0}
+      className="inline-flex items-center gap-1.5 rounded border border-border bg-bg-tertiary/30 px-2.5 py-1 text-xs text-text-secondary hover:text-text-primary hover:border-border disabled:opacity-40 disabled:cursor-not-allowed"
+      title="Copy issue template for all visible rows"
+    >
+      {copied ? <Check size={12} /> : <ClipboardCopy size={12} />}
+      <span>{copied ? 'Copied!' : 'Issue template'}</span>
+    </button>
   );
 }
 
@@ -311,6 +362,7 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
                 renderExpandedRow={renderExpandedRow}
                 height={Math.max(200, window.innerHeight - 520)}
                 csvFilename={`costgoblin-missing-tags-actionable-${dateRange.start}-${dateRange.end}`}
+                headerRight={<CopyIssueTemplateButton rows={filteredActionable} tagLabel={activeDimLabel} />}
               />
             </div>
           )}
