@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider } from '@costgoblin/ui';
-import type { CostApi, FilterMap, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
+import type { CostApi, FilterMap, UpdateStatus, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 
@@ -140,6 +140,7 @@ function AppShell(): React.JSX.Element {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncActivity, setSyncActivity] = useState<'idle' | 'syncing' | 'downloading'>('idle');
   const [syncFilesRemaining, setSyncFilesRemaining] = useState(0);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
   const [debugOpen, setDebugOpen] = useState(false);
   const inFlightCount = useDebugBadge();
 
@@ -251,6 +252,24 @@ function AppShell(): React.JSX.Element {
     const timer = setInterval(() => { tick().catch(() => undefined); }, interval);
     return () => { cancelled = true; clearInterval(timer); };
   }, [api, setupCheck, syncActivity]);
+
+  // Update status polling — checks for app updates in the background.
+  // Polls more frequently when an update is downloading to track progress.
+  useEffect(() => {
+    if (setupCheck.status !== 'ready') return;
+    let cancelled = false;
+    async function tick(): Promise<void> {
+      try {
+        const status = await api.getUpdateStatus();
+        if (cancelled) return;
+        setUpdateStatus(status);
+      } catch { /* transient */ }
+    }
+    tick().catch(() => undefined);
+    const interval = updateStatus.state === 'downloading' ? 5_000 : 30_000;
+    const timer = setInterval(() => { tick().catch(() => undefined); }, interval);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [api, setupCheck, updateStatus.state]);
 
   function handleNavClick(id: string) {
     const alreadyActive = view.page === 'custom' ? view.viewId === id : view.page === id;
