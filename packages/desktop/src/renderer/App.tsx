@@ -102,6 +102,60 @@ function PaletteIcon() {
   );
 }
 
+function DownloadIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+
+function UpdateNotification({ status, onDownload, onInstall }: { status: UpdateStatus; onDownload: () => void; onInstall: () => void }): React.JSX.Element | null {
+  if (status.state === 'available') {
+    return (
+      <button
+        type="button"
+        onClick={onDownload}
+        className="rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50 transition-colors flex items-center gap-2"
+        title={`Update available: v${status.info.version}`}
+      >
+        <DownloadIcon />
+        <span>Update Available</span>
+      </button>
+    );
+  }
+
+  if (status.state === 'downloading') {
+    return (
+      <div className="rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary flex items-center gap-2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+          <polyline points="23 4 23 10 17 10" />
+          <polyline points="1 20 1 14 7 14" />
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+        </svg>
+        <span>Downloading {Math.round(status.percent)}%</span>
+      </div>
+    );
+  }
+
+  if (status.state === 'downloaded') {
+    return (
+      <button
+        type="button"
+        onClick={onInstall}
+        className="rounded-md px-3 py-1.5 text-sm font-medium bg-accent text-white hover:bg-accent/90 transition-colors flex items-center gap-2"
+        title={`Update ready: v${status.info.version}`}
+      >
+        <span>Restart to Update</span>
+      </button>
+    );
+  }
+
+  return null;
+}
+
 type SetupCheck =
   | { status: 'checking' }
   | { status: 'needs-setup' }
@@ -302,6 +356,14 @@ function AppShell(): React.JSX.Element {
     });
   }
 
+  function handleDownloadUpdate() {
+    api.downloadUpdate().catch(() => undefined);
+  }
+
+  function handleInstallUpdate() {
+    api.quitAndInstall().catch(() => undefined);
+  }
+
   function handleSetupComplete() {
     setSetupCheck({ status: 'ready' });
     setView({ page: 'sync' });
@@ -406,6 +468,11 @@ function AppShell(): React.JSX.Element {
             >
               <PaletteIcon />
             </button>
+            <UpdateNotification
+              status={updateStatus}
+              onDownload={handleDownloadUpdate}
+              onInstall={handleInstallUpdate}
+            />
             {RIGHT_NAV.map((item) => {
               const isSync = item.id === 'sync';
               const showError = isSync && syncError !== null;
