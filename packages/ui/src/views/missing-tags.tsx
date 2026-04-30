@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type {
   Dimension,
   DimensionId,
@@ -17,6 +17,8 @@ import { DataTable } from '../components/data-table.js';
 import type { TableColumn } from '../lib/table-types.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
+import { ClipboardCopy, Check, ChevronDown, CheckIcon } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover.js';
 
 function buildColumns(showRatio: boolean, dimLabel: string): readonly TableColumn<MissingTagRow>[] {
   const cols: TableColumn<MissingTagRow>[] = [
@@ -95,6 +97,89 @@ function ExpandedRow({ row }: Readonly<{ row: MissingTagRow }>) {
   );
 }
 
+interface CopyContext {
+  readonly rows: readonly MissingTagRow[];
+  readonly tagLabel: string;
+  readonly selectedOwner: string | null;
+  readonly totalCost: number;
+}
+
+function buildMessageParts(ctx: CopyContext) {
+  const owner = ctx.selectedOwner !== null && ctx.selectedOwner.length > 0
+    ? ctx.selectedOwner
+    : null;
+  return { count: String(ctx.rows.length), tag: ctx.tagLabel, owner, cost: formatDollars(ctx.totalCost) };
+}
+
+function buildSlack(ctx: CopyContext): string {
+  const p = buildMessageParts(ctx);
+  const scope = p.owner !== null ? ` (filtered to *${p.owner}*)` : '';
+  return [
+    `*${p.count} resources* are missing the \`${p.tag}\` tag${scope}, representing *${p.cost}/month* in unattributed spend.`,
+    '',
+    'Full list in the attached CSV — please tag these resources or confirm they should be excluded.',
+  ].join('\n');
+}
+
+function buildJira(ctx: CopyContext): string {
+  const p = buildMessageParts(ctx);
+  const scope = p.owner !== null ? ` (filtered to *${p.owner}*)` : '';
+  return [
+    `h3. Missing {{${p.tag}}} tag`,
+    '',
+    `*${p.count} resources*${scope} representing *${p.cost}/month* in unattributed spend.`,
+    '',
+    'Full list in the attached CSV — please tag these resources or confirm they should be excluded.',
+  ].join('\n');
+}
+
+type CopyFormat = 'jira' | 'slack';
+const FORMAT_LABELS: Record<CopyFormat, string> = { jira: 'Jira', slack: 'Slack' };
+const FORMAT_BUILDERS: Record<CopyFormat, (ctx: CopyContext) => string> = { jira: buildJira, slack: buildSlack };
+
+function CopyMessageButton({ ctx }: Readonly<{ ctx: CopyContext }>) {
+  const [copied, setCopied] = useState<CopyFormat | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopy = useCallback((format: CopyFormat) => {
+    if (ctx.rows.length === 0) return;
+    void navigator.clipboard.writeText(FORMAT_BUILDERS[format](ctx)).then(() => {
+      setCopied(format);
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => { setCopied(null); }, 1500);
+    });
+  }, [ctx]);
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={ctx.rows.length === 0}
+          className="inline-flex items-center gap-1.5 rounded border border-border bg-bg-tertiary/30 px-2.5 py-1 text-xs text-text-secondary hover:text-text-primary hover:border-border disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          <ClipboardCopy size={12} />
+          <span>Copy message</span>
+          <ChevronDown className="h-3 w-3 text-text-muted" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-36 p-1" align="end">
+        {(['slack', 'jira'] as const).map(format => (
+          <button
+            key={format}
+            type="button"
+            onClick={() => { handleCopy(format); }}
+            className="w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-text-secondary hover:bg-bg-tertiary/50 hover:text-text-primary transition-colors"
+          >
+            {copied === format ? <Check size={12} className="text-accent" /> : <span className="w-3" />}
+            <span>{copied === format ? 'Copied!' : FORMAT_LABELS[format]}</span>
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 interface MissingTagsProps {
   onEntityClick?: ((entity: string, dimension: string) => void) | undefined;
 }
@@ -148,21 +233,16 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
     [data],
   );
 
-  const visibleRows = useMemo(
-    () => [...actionableRows, ...likelyUntaggableRows],
-    [actionableRows, likelyUntaggableRows],
-  );
-
   const closestOptions = useMemo(() => {
     const totals = new Map<string, number>();
-    for (const r of visibleRows) {
+    for (const r of actionableRows) {
       const key = r.closestOwner ?? '';
       totals.set(key, (totals.get(key) ?? 0) + Number(r.cost));
     }
     return [...totals.entries()]
       .sort((a, b) => b[1] - a[1])
       .map(([entity, cost]) => ({ entity, cost }));
-  }, [visibleRows]);
+  }, [actionableRows]);
 
   const filteredActionable = useMemo(
     () => selectedClosest === null ? actionableRows : actionableRows.filter(r => (r.closestOwner ?? '') === selectedClosest),
@@ -243,21 +323,55 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
         </label>
 
         {closestOptions.length > 0 && (
-          <label className="flex items-center gap-1.5 text-xs text-text-secondary">
-            <span>Fallback {activeDimLabel}</span>
-            <select
-              value={selectedClosest ?? '__all__'}
-              onChange={(e) => { setSelectedClosest(e.target.value === '__all__' ? null : e.target.value); }}
-              className="rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-primary"
-            >
-              <option value="__all__">All</option>
-              {closestOptions.map(opt => (
-                <option key={`opt-${opt.entity}`} value={opt.entity}>
-                  {opt.entity.length === 0 ? '(none)' : opt.entity} — {formatDollars(opt.cost)}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-tertiary/30 px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-bg-tertiary/50 transition-colors"
+              >
+                <span className="text-text-muted">Fallback {activeDimLabel}</span>
+                <span>{selectedClosest === null ? 'All' : (selectedClosest.length === 0 ? '(none)' : selectedClosest)}</span>
+                <ChevronDown className="h-3 w-3 text-text-muted" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 p-1 max-h-80 overflow-y-auto" align="start">
+              <button
+                type="button"
+                onClick={() => { setSelectedClosest(null); }}
+                className={[
+                  'w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors',
+                  selectedClosest === null
+                    ? 'bg-accent/10 text-accent font-medium'
+                    : 'text-text-secondary hover:bg-bg-tertiary/50 hover:text-text-primary',
+                ].join(' ')}
+              >
+                {selectedClosest === null && <CheckIcon className="h-3 w-3" />}
+                {selectedClosest !== null && <span className="w-3" />}
+                <span>All</span>
+              </button>
+              {closestOptions.map(opt => {
+                const label = opt.entity.length === 0 ? '(none)' : opt.entity;
+                const isSelected = selectedClosest === opt.entity;
+                return (
+                  <button
+                    key={`opt-${opt.entity}`}
+                    type="button"
+                    onClick={() => { setSelectedClosest(opt.entity); }}
+                    className={[
+                      'w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-colors',
+                      isSelected
+                        ? 'bg-accent/10 text-accent font-medium'
+                        : 'text-text-secondary hover:bg-bg-tertiary/50 hover:text-text-primary',
+                    ].join(' ')}
+                  >
+                    {isSelected ? <CheckIcon className="h-3 w-3" /> : <span className="w-3" />}
+                    <span className="truncate">{label}</span>
+                    <span className="ml-auto tabular-nums text-text-muted">{formatDollars(opt.cost)}</span>
+                  </button>
+                );
+              })}
+            </PopoverContent>
+          </Popover>
         )}
 
       </div>
@@ -311,6 +425,7 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
                 renderExpandedRow={renderExpandedRow}
                 height={Math.max(200, window.innerHeight - 520)}
                 csvFilename={`costgoblin-missing-tags-actionable-${dateRange.start}-${dateRange.end}`}
+                headerRight={<CopyMessageButton ctx={{ rows: filteredActionable, tagLabel: activeDimLabel, selectedOwner: selectedClosest, totalCost: filteredActionable.reduce((s, r) => s + Number(r.cost), 0) }} />}
               />
             </div>
           )}
