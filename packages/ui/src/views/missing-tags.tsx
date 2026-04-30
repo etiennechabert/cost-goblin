@@ -140,10 +140,9 @@ function buildSlack(ctx: CopyContext): string {
     `*${h.title}*`,
     h.subtitle,
     '',
-    '```',
-    'Account | Resource | Service | Cost',
-    ...ctx.rows.map(rowLine),
-    '```',
+    ...ctx.rows.map(r =>
+      `• \`${r.accountName}\` — \`${r.resourceId}\` — ${r.service} / ${r.serviceFamily} — *${formatDollars(r.cost)}*`
+    ),
     '',
     `Please add the *${ctx.tagLabel}* tag to these resources.`,
   ];
