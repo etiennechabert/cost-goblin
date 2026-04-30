@@ -290,6 +290,14 @@ const api: CostApi = {
   getTelemetryAuditLogPath(): Promise<string> {
     return invoke<string>('telemetry:get-audit-log-path');
   },
+  captureError(error: Error, context?: Readonly<Record<string, unknown>>): Promise<void> {
+    // Serialize error for IPC (Error objects don't serialize automatically)
+    const serializedError = {
+      message: error.message,
+      stack: error.stack,
+    };
+    return invoke<undefined>('telemetry:capture-error', serializedError, context).then(() => undefined);
+  },
 };
 
 contextBridge.exposeInMainWorld('costgoblin', api);

@@ -198,6 +198,9 @@ export interface CostApi {
   updateTelemetryChannel(channel: TelemetryChannel, enabled: boolean): Promise<void>;
   /** Get the path to the telemetry audit log file for user inspection. */
   getTelemetryAuditLogPath(): Promise<string>;
+  /** Capture an error from the renderer process and send to crash reporting if enabled.
+   *  Errors are automatically sanitized via Sentry's beforeSend hook to remove PII. */
+  captureError(error: Error, context?: Readonly<Record<string, unknown>>): Promise<void>;
 }
 
 export interface AccountMappingEntry {

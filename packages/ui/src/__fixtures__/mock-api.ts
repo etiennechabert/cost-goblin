@@ -376,6 +376,9 @@ export class MockCostApi implements CostApi {
   getTelemetryAuditLogPath(): Promise<string> {
     return Promise.resolve('/mock/path/to/telemetry-audit.jsonl');
   }
+  captureError(_error: Error, _context?: Readonly<Record<string, unknown>>): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {

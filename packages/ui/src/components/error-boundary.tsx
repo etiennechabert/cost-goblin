@@ -1,5 +1,5 @@
 import { Component } from 'react';
-import type { ReactNode } from 'react';
+import type { ReactNode, ErrorInfo } from 'react';
 
 interface Props {
   children: ReactNode;
@@ -17,6 +17,19 @@ export class ErrorBoundary extends Component<Props, State> {
 
   static getDerivedStateFromError(error: Error): State {
     return { error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    // Send error to telemetry if crash reporting is enabled
+    // Privacy filters are applied in the main process before transmission
+    if (typeof window !== 'undefined' && 'costgoblin' in window) {
+      const api = window.costgoblin as { captureError?: (error: Error, context?: Readonly<Record<string, unknown>>) => Promise<void> };
+      if (typeof api.captureError === 'function') {
+        void api.captureError(error, {
+          componentStack: errorInfo.componentStack,
+        });
+      }
+    }
   }
 
   render(): ReactNode {

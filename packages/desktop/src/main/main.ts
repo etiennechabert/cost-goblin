@@ -214,6 +214,43 @@ function registerTelemetryTrackHandler(): void {
 }
 
 /**
+ * Register telemetry IPC handler for capturing errors from renderer process.
+ * This handler is registered separately because it needs access to the Sentry
+ * client initialized in main.ts.
+ */
+function registerTelemetryCaptureErrorHandler(): void {
+  ipcMain.handle(
+    'telemetry:capture-error',
+    async (
+      _event,
+      error: { message: string; stack?: string },
+      context?: Readonly<Record<string, unknown>>,
+    ): Promise<void> => {
+      // Send to Sentry if crash reporting is enabled
+      if (telemetryClients.sentry !== null) {
+        // Reconstruct Error object from serialized error
+        const errorObj = new Error(error.message);
+        if (error.stack !== undefined) {
+          errorObj.stack = error.stack;
+        }
+
+        await telemetryClients.sentry.captureError(errorObj, 'error', {
+          errorType: 'react-error-boundary',
+          ...context,
+        });
+      } else {
+        logger.debug('telemetry:capture-error-skipped', {
+          message: error.message,
+          reason: 'Sentry client not initialized',
+        });
+      }
+    },
+  );
+
+  logger.debug('telemetry:capture-error-handler-registered');
+}
+
+/**
  * Cleanup telemetry clients on app quit.
  * Flush pending events and close connections.
  */
@@ -398,6 +435,7 @@ async function main(): Promise<void> {
 
   // Register telemetry track handler (must be after initializeTelemetry)
   registerTelemetryTrackHandler();
+  registerTelemetryCaptureErrorHandler();
 
   // Worker bundles are built by `npm run build:worker` (esbuild) into out/worker/
   // — sibling to out/main/ where this file lives. We resolve up one level then
