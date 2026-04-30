@@ -194,7 +194,10 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
   return (
     <div className="flex flex-col gap-6 p-6">
       <div className="flex items-start justify-between">
-        <p className="text-base font-medium text-text-secondary">Resources without the selected allocation tag, classified by taggability.</p>
+        <div>
+          <h2 className="text-xl font-semibold text-text-primary">Missing Tags</h2>
+          <p className="text-sm text-text-secondary mt-0.5">Resources without the selected allocation tag, classified by taggability.</p>
+        </div>
         <DateRangePicker
           value={dateRange}
           granularity={granularity}
