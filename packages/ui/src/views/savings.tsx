@@ -232,8 +232,15 @@ export function Savings() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <div className="flex items-center justify-between">
-        <p className="text-base font-medium text-text-secondary">AWS cost optimization recommendations</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-base font-medium text-text-secondary">AWS cost optimization recommendations</p>
+          {data !== null && (
+            <p className="text-xs text-text-muted mt-1 tabular-nums">
+              {String(filtered.length)} recommendations · {formatDollars(filteredSavings)}/mo potential savings
+            </p>
+          )}
+        </div>
         {data !== null && (
           <button
             type="button"
@@ -276,19 +283,6 @@ export function Savings() {
               {String(hiddenTypes.size)} type{hiddenTypes.size > 1 ? 's' : ''} hidden. Settings saved automatically.
             </p>
           )}
-        </div>
-      )}
-
-      {data !== null && (
-        <div className="flex items-center gap-6">
-          <div className="rounded-xl border border-border bg-bg-secondary/50 px-6 py-4">
-            <p className="text-xs text-text-muted uppercase tracking-wider">Potential Monthly Savings</p>
-            <p className="text-2xl font-bold text-accent mt-1">{formatDollars(filteredSavings)}</p>
-          </div>
-          <div className="rounded-xl border border-border bg-bg-secondary/50 px-6 py-4">
-            <p className="text-xs text-text-muted uppercase tracking-wider">Recommendations</p>
-            <p className="text-2xl font-bold text-text-primary mt-1">{String(filtered.length)}</p>
-          </div>
         </div>
       )}
 

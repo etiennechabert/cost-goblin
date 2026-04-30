@@ -130,7 +130,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
   }
 
   return (
-    <div className="flex flex-col gap-5 p-6">
+    <div className="flex flex-col gap-6 p-6">
       <div className="flex items-start justify-between">
         <div>
           <h2 className="text-xl font-semibold text-text-primary">{spec.name}</h2>

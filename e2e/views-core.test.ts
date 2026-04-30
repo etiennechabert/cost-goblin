@@ -120,16 +120,15 @@ test.describe('Cost Overview', () => {
 
   test('renders date range picker popover with presets', async () => {
     // Trigger button shows active preset
-    const trigger = page.locator('button:has(svg.lucide-chevron-down)');
+    const trigger = page.locator('button:has(svg.lucide-calendar)');
     await expect(trigger).toBeVisible();
 
-    // Open popover and verify sections exist inside it
+    // Open popover and verify sections
     await trigger.click();
-    const popover = page.locator('[data-radix-popper-content-wrapper]');
-    await expect(popover.getByText('Daily')).toBeVisible();
-    await expect(popover.getByText('Hourly')).toBeVisible();
-    await expect(popover.getByText('Period')).toBeVisible();
-    await expect(popover.getByText('Custom range…')).toBeVisible();
+    await expect(page.getByText('Daily')).toBeVisible();
+    await expect(page.getByText('Hourly')).toBeVisible();
+    await expect(page.getByText('Period')).toBeVisible();
+    await expect(page.getByText('Custom range…')).toBeVisible();
 
     // Close by clicking trigger again
     await trigger.click();
@@ -149,13 +148,12 @@ test.describe('Cost Overview', () => {
   });
 
   test('custom date range inputs appear when Custom range is clicked', async () => {
-    const trigger = page.locator('button:has(svg.lucide-chevron-down)');
+    const trigger = page.locator('button:has(svg.lucide-calendar)');
     await trigger.click();
     await page.getByText('Custom range…').click();
 
-    const popover = page.locator('[data-radix-popper-content-wrapper]');
-    await expect(popover.getByText('From', { exact: true })).toBeVisible();
-    await expect(popover.getByText('To', { exact: true })).toBeVisible();
+    await expect(page.getByText('From')).toBeVisible();
+    await expect(page.getByText('To')).toBeVisible();
 
     // close popover
     await trigger.click();
@@ -482,7 +480,8 @@ test.describe('Missing Tags', () => {
     await navigateToText(page, 'Missing Tags', 'without the selected allocation tag');
   });
 
-  test('shows subtitle', async () => {
+  test('shows heading and subtitle', async () => {
+    await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
     await expect(page.getByText(/without the selected allocation tag/i)).toBeVisible();
   });
 

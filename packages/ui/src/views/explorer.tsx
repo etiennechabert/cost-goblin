@@ -391,22 +391,41 @@ export function ExplorerView(): React.JSX.Element {
         />
       </div>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Options</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ExplorerOptions
-            capabilities={capabilities}
-            applyCostScope={applyCostScope}
-            onApplyCostScopeChange={setApplyCostScope}
-            costMetric={costMetric}
-            onCostMetricChange={setCostMetric}
-            costPerspective={costPerspective}
-            onCostPerspectiveChange={setCostPerspective}
-          />
-        </CardContent>
-      </Card>
+      <ExplorerOptions
+        capabilities={capabilities}
+        applyCostScope={applyCostScope}
+        onApplyCostScopeChange={setApplyCostScope}
+        costMetric={costMetric}
+        onCostMetricChange={setCostMetric}
+        costPerspective={costPerspective}
+        onCostPerspectiveChange={setCostPerspective}
+      />
+
+      <div className="flex items-center justify-between">
+        <MultiFilterBar
+          dimensions={dimensions}
+          filters={filters}
+          onChange={setFilterValues}
+          fetchValues={(dimId) => api.getExplorerFilterValues({
+            dimensionId: dimId,
+            filters,
+            dateRange,
+            granularity,
+            applyCostScope,
+            costMetric,
+            costPerspective,
+          })}
+        />
+        {activeFilterCount > 0 && (
+          <button
+            type="button"
+            onClick={clearAll}
+            className="shrink-0 text-xs text-text-secondary hover:text-text-primary underline-offset-2 hover:underline"
+          >
+            Clear all ({String(activeFilterCount)})
+          </button>
+        )}
+      </div>
 
       <Card>
         <CardHeader className="pb-3">
@@ -414,37 +433,6 @@ export function ExplorerView(): React.JSX.Element {
         </CardHeader>
         <CardContent>
           <Histogram days={overviewData?.dailyTotals ?? []} loading={overview.loading} />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-3 flex flex-row items-center justify-between">
-          <CardTitle className="text-sm">Filters</CardTitle>
-          {activeFilterCount > 0 && (
-            <button
-              type="button"
-              onClick={clearAll}
-              className="text-xs text-text-secondary hover:text-text-primary underline-offset-2 hover:underline"
-            >
-              Clear all ({String(activeFilterCount)})
-            </button>
-          )}
-        </CardHeader>
-        <CardContent>
-          <MultiFilterBar
-            dimensions={dimensions}
-            filters={filters}
-            onChange={setFilterValues}
-            fetchValues={(dimId) => api.getExplorerFilterValues({
-              dimensionId: dimId,
-              filters,
-              dateRange,
-              granularity,
-              applyCostScope,
-              costMetric,
-              costPerspective,
-            })}
-          />
         </CardContent>
       </Card>
 
