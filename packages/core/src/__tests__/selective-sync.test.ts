@@ -24,12 +24,12 @@ class MockChildProcess extends EventEmitter {
 }
 
 describe('syncSelectedFiles', () => {
-  let mockSpawn: ReturnType<typeof vi.fn>;
-  let mockMkdir: ReturnType<typeof vi.fn>;
-  let mockReadFile: ReturnType<typeof vi.fn>;
-  let mockWriteFile: ReturnType<typeof vi.fn>;
-  let mockReaddir: ReturnType<typeof vi.fn>;
-  let mockCopyFile: ReturnType<typeof vi.fn>;
+  let mockSpawn: ReturnType<typeof vi.fn<(...args: unknown[]) => unknown>>;
+  let mockMkdir: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
+  let mockReadFile: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
+  let mockWriteFile: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
+  let mockReaddir: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
+  let mockCopyFile: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -37,20 +37,20 @@ describe('syncSelectedFiles', () => {
     const childProcess = await import('node:child_process');
     const fsPromises = await import('node:fs/promises');
 
-    mockSpawn = vi.fn();
-    childProcess.spawn = mockSpawn;
+    mockSpawn = vi.fn<(...args: unknown[]) => unknown>();
+    childProcess.spawn = mockSpawn as typeof childProcess.spawn;
 
-    mockMkdir = vi.fn().mockResolvedValue(undefined);
-    mockReadFile = vi.fn().mockRejectedValue(new Error('ENOENT'));
-    mockWriteFile = vi.fn().mockResolvedValue(undefined);
-    mockReaddir = vi.fn().mockResolvedValue([]);
-    mockCopyFile = vi.fn().mockResolvedValue(undefined);
+    mockMkdir = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined);
+    mockReadFile = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockRejectedValue(new Error('ENOENT'));
+    mockWriteFile = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined);
+    mockReaddir = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue([]);
+    mockCopyFile = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined);
 
-    fsPromises.mkdir = mockMkdir;
-    fsPromises.readFile = mockReadFile;
-    fsPromises.writeFile = mockWriteFile;
-    fsPromises.readdir = mockReaddir;
-    fsPromises.copyFile = mockCopyFile;
+    fsPromises.mkdir = mockMkdir as typeof fsPromises.mkdir;
+    fsPromises.readFile = mockReadFile as typeof fsPromises.readFile;
+    fsPromises.writeFile = mockWriteFile as typeof fsPromises.writeFile;
+    fsPromises.readdir = mockReaddir as typeof fsPromises.readdir;
+    fsPromises.copyFile = mockCopyFile as typeof fsPromises.copyFile;
   });
 
   afterEach(() => {
@@ -427,7 +427,8 @@ describe('syncSelectedFiles', () => {
     it('processes periods sequentially', async () => {
       const spawnOrder: string[] = [];
 
-      mockSpawn.mockImplementation((_cmd: unknown, args: string[]) => {
+      mockSpawn.mockImplementation((_cmd: unknown, rawArgs: unknown) => {
+        const args = rawArgs as string[];
         const period = args.find((arg) => arg.includes('BILLING_PERIOD='))?.match(/2026-\d{2}/)?.[0];
         if (period !== undefined) spawnOrder.push(period);
 
