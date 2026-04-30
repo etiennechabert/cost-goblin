@@ -140,4 +140,15 @@ describe('Savings', () => {
       expect(screen.getByText('Medium')).toBeDefined();
     });
   });
+
+  it('sets proper accessibility attributes on table rows', async () => {
+    renderSavings();
+    await waitFor(() => {
+      expect(screen.getByText(/Detach and delete/)).toBeDefined();
+    });
+    const row = screen.getByText(/Detach and delete/).closest('tr');
+    expect(row).not.toBeNull();
+    expect(row?.getAttribute('tabIndex')).toBe('0');
+    expect(row?.getAttribute('role')).toBe('row');
+  });
 });
