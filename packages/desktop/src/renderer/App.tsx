@@ -109,6 +109,40 @@ type SetupCheck =
 
 const FALLBACK_VIEWS: ViewsConfig = { views: [OVERVIEW_SEED_VIEW] };
 
+function SyncAnnouncer({
+  syncError,
+  syncActivity,
+  syncFilesRemaining,
+  missingPeriods,
+}: {
+  syncError: string | null;
+  syncActivity: 'idle' | 'syncing' | 'downloading';
+  syncFilesRemaining: number;
+  missingPeriods: number;
+}): React.JSX.Element {
+  const errorMessage = syncError !== null ? `Sync error: ${syncError}` : '';
+
+  let statusMessage = '';
+  if (syncActivity === 'downloading' && syncFilesRemaining > 0) {
+    statusMessage = `Downloading ${String(syncFilesRemaining)} file${syncFilesRemaining === 1 ? '' : 's'}`;
+  } else if (syncActivity === 'syncing') {
+    statusMessage = 'Checking for updates';
+  } else if (syncActivity === 'idle' && missingPeriods > 0) {
+    statusMessage = `${String(missingPeriods)} billing period${missingPeriods === 1 ? '' : 's'} not synced`;
+  }
+
+  return (
+    <>
+      <div aria-live="assertive" aria-atomic="true" className="sr-only">
+        {errorMessage}
+      </div>
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
+        {statusMessage}
+      </div>
+    </>
+  );
+}
+
 /** Top-level app shell — just establishes the context providers. All the
  *  state + navigation lives in `AppShell` below so it can call
  *  `useConfirmLeave()` from inside the UnsavedChangesProvider. */
@@ -327,6 +361,12 @@ function AppShell(): React.JSX.Element {
   return (
     <PaletteProvider palette={palette}>
       <div className="min-h-screen bg-bg-primary text-text-primary">
+        <SyncAnnouncer
+          syncError={syncError}
+          syncActivity={syncActivity}
+          syncFilesRemaining={syncFilesRemaining}
+          missingPeriods={missingPeriods}
+        />
         {/* Title bar + nav */}
         <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
         <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
