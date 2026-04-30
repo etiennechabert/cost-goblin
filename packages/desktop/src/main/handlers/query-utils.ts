@@ -290,7 +290,8 @@ export function buildMissingTagsResult(
   }
 
   return {
-    rows: missingRows,
+    rows: missingRows.slice(0, 5000),
+    totalRows: missingRows.length,
     totalActionableCost: asDollars(totalActionableCost),
     totalLikelyUntaggableCost: asDollars(totalLikelyUntaggableCost),
     totalNonResourceCost: asDollars(totalNonResourceCost),

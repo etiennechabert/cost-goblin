@@ -37,6 +37,7 @@ export function registerRecommendationHandlers(app: AppContext): void {
     if (empty) {
       return {
         rows: [],
+        totalRows: 0,
         totalActionableCost: asDollars(0),
         totalLikelyUntaggableCost: asDollars(0),
         totalNonResourceCost: asDollars(0),

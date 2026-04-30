@@ -112,6 +112,7 @@ const missingTagsResult: MissingTagsResult = {
     { accountId: '234567890123', accountName: 'prod-data', resourceId: 'arn:aws:rds:us-east-1:234567890123:db:analytics-prod', service: 'Amazon RDS', serviceFamily: 'Database', cost: asDollars(870), closestOwner: asEntityRef('data'), bucket: 'actionable', categoryTaggedRatio: 0.65 },
     { accountId: '345678901234', accountName: 'staging', resourceId: 'arn:aws:s3:::untagged-bucket-staging', service: 'Amazon S3', serviceFamily: 'Storage', cost: asDollars(340), closestOwner: null, bucket: 'likely-untaggable', categoryTaggedRatio: 0 },
   ],
+  totalRows: 3,
   totalActionableCost: asDollars(2_070),
   totalLikelyUntaggableCost: asDollars(340),
   totalNonResourceCost: asDollars(150),

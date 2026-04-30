@@ -99,6 +99,8 @@ export interface NonResourceCostRow {
 
 export interface MissingTagsResult {
   readonly rows: readonly MissingTagRow[];
+  /** Total untagged resources found (rows may be capped for performance). */
+  readonly totalRows: number;
   /** Cost of actionable untagged resources — the total to chase. */
   readonly totalActionableCost: Dollars;
   /** Cost of resources in categories where nothing is ever tagged. */

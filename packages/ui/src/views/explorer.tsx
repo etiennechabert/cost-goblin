@@ -374,12 +374,9 @@ export function ExplorerView(): React.JSX.Element {
     <div className="p-6 max-w-[1800px] mx-auto space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary">Explorer</h1>
-          <p className="text-sm text-text-secondary mt-1">
-            Inspect the raw CUR dataset. Filter on any dimension, sort any column, see daily totals over the selected range.
-          </p>
+          <p className="text-base font-medium text-text-secondary">Inspect the raw CUR dataset.</p>
           {overviewData !== null && (
-            <div className="mt-2 text-xs text-text-muted tabular-nums">
+            <div className="mt-1 text-xs text-text-muted tabular-nums">
               {formatDollars(overviewData.totalCost)} · {overviewData.totalRows.toLocaleString()} line items
               {' · '}
               {overviewData.startDate} → {overviewData.endDate}
