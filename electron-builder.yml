@@ -13,15 +13,27 @@ asarUnpack:
   - "node_modules/duckdb/**"
 mac:
   target:
-    - dmg
-    - zip
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
   category: public.app-category.business
 win:
   target:
-    - nsis
+    - target: nsis
+      arch:
+        - x64
 linux:
   target:
-    - AppImage
-    - deb
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
 publish:
   provider: github
