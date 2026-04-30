@@ -2,17 +2,11 @@ import { useState } from 'react';
 import { Download, Copy } from 'lucide-react';
 import type { MissingTagRow } from '@costgoblin/core/browser';
 import { formatDollars } from './format.js';
+import { escapeCell } from './csv-export.js';
 
 interface RemediationActionsProps {
   readonly selectedRows: readonly MissingTagRow[];
   readonly tagName: string;
-}
-
-function escapeCell(value: string): string {
-  if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-    return `"${value.replaceAll('"', '""')}"`;
-  }
-  return value;
 }
 
 function buildCsv(rows: readonly MissingTagRow[]): string {

@@ -6,7 +6,7 @@ interface CsvExportProps {
   filename?: string;
 }
 
-function escapeCell(value: string): string {
+export function escapeCell(value: string): string {
   if (value.includes(',') || value.includes('"') || value.includes('\n')) {
     return `"${value.replaceAll('"', '""')}"`;
   }

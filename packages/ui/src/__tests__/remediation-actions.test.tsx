@@ -1,7 +1,7 @@
 import { render, screen, cleanup } from '@testing-library/react';
 import { afterEach, describe, it, expect } from 'vitest';
 import { RemediationActions } from '../components/remediation-actions.js';
-import { asDollars } from '@costgoblin/core/browser';
+import { asDollars, asEntityRef } from '@costgoblin/core/browser';
 import type { MissingTagRow } from '@costgoblin/core/browser';
 
 const mockRows: MissingTagRow[] = [
@@ -12,7 +12,7 @@ const mockRows: MissingTagRow[] = [
     service: 'Amazon EC2',
     serviceFamily: 'Compute',
     cost: asDollars(1_200),
-    closestOwner: 'platform' as never,
+    closestOwner: asEntityRef('platform'),
     bucket: 'actionable',
     categoryTaggedRatio: 0.82,
   },
@@ -23,7 +23,7 @@ const mockRows: MissingTagRow[] = [
     service: 'Amazon RDS',
     serviceFamily: 'Database',
     cost: asDollars(870),
-    closestOwner: 'data' as never,
+    closestOwner: asEntityRef('data'),
     bucket: 'actionable',
     categoryTaggedRatio: 0.65,
   },

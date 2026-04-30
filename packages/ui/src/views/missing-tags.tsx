@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type {
   Dimension,
   DimensionId,
@@ -151,6 +151,10 @@ export function MissingTags() {
     : null;
   const activeTagId = selectedTag ?? firstTagId;
 
+  useEffect(() => {
+    setSelectedResources(new Set<string>());
+  }, [activeTagId]);
+
   const missingQuery = useQuery(
     () => {
       if (activeTagId === null) return Promise.resolve(null);
@@ -166,19 +170,22 @@ export function MissingTags() {
 
   const coverageHistoryQuery = useQuery(() => api.getTagCoverageHistory(), [api]);
 
-  const data: MissingTagsResult | null =
-    missingQuery.status === 'success' ? missingQuery.data : null;
+  const snapshotSavedRef = useRef<string | null>(null);
+  const missingData = missingQuery.status === 'success' ? missingQuery.data : null;
+  const data: MissingTagsResult | null = missingData;
 
   // Save coverage snapshot when data loads successfully
   useEffect(() => {
-    if (missingQuery.status !== 'success') return;
-    if (missingQuery.data === null) return;
+    if (missingData === null) return;
     if (activeTagId === null) return;
 
-    const snapshot = missingQuery.data;
+    const snapshotKey = `${activeTagId}-${String(missingData.actionableCount)}-${String(missingData.totalActionableCost)}`;
+    if (snapshotSavedRef.current === snapshotKey) return;
+    snapshotSavedRef.current = snapshotKey;
+
+    const snapshot = missingData;
     const dateRange = getDateRange();
 
-    // Query total cost to calculate coverage percentage
     api.queryCosts({
       dateRange,
       filters: {},
@@ -200,19 +207,9 @@ export function MissingTags() {
         coveragePercentage,
       };
 
-      api.saveTagCoverageSnapshot(coverageSnapshot).catch((error: unknown) => {
-        // Silently fail - this is background persistence
-        if (error instanceof Error) {
-          // Log would go here if we had a logger
-        }
-      });
-    }).catch((error: unknown) => {
-      // Silently fail - coverage calculation is not critical
-      if (error instanceof Error) {
-        // Log would go here if we had a logger
-      }
-    });
-  }, [missingQuery, activeTagId, api]);
+      api.saveTagCoverageSnapshot(coverageSnapshot).catch(() => { /* intentionally swallowed */ });
+    }).catch(() => { /* intentionally swallowed */ });
+  }, [missingData, activeTagId, api]);
 
   const actionableRows = data === null ? [] : data.rows.filter(r => r.bucket === 'actionable');
   const likelyUntaggableRows = data === null ? [] : data.rows.filter(r => r.bucket === 'likely-untaggable');

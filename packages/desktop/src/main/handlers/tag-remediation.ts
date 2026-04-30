@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { parseJsonObject } from '@costgoblin/core';
+import { isStringRecord } from '@costgoblin/core';
 import type { TagCoverageSnapshot } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 
@@ -21,21 +21,20 @@ async function ensureStateDir(dataDir: string): Promise<void> {
 }
 
 function isTagCoverageSnapshot(value: unknown): value is TagCoverageSnapshot {
-  if (typeof value !== 'object' || value === null) return false;
-  const obj = value as Record<string, unknown>;
+  if (!isStringRecord(value)) return false;
   return (
-    typeof obj['timestamp'] === 'string' &&
-    typeof obj['totalActionableCost'] === 'number' &&
-    typeof obj['totalLikelyUntaggableCost'] === 'number' &&
-    typeof obj['totalNonResourceCost'] === 'number' &&
-    typeof obj['actionableCount'] === 'number' &&
-    typeof obj['likelyUntaggableCount'] === 'number' &&
-    typeof obj['coveragePercentage'] === 'number'
+    typeof value['timestamp'] === 'string' &&
+    typeof value['totalActionableCost'] === 'number' &&
+    typeof value['totalLikelyUntaggableCost'] === 'number' &&
+    typeof value['totalNonResourceCost'] === 'number' &&
+    typeof value['actionableCount'] === 'number' &&
+    typeof value['likelyUntaggableCount'] === 'number' &&
+    typeof value['coveragePercentage'] === 'number'
   );
 }
 
 function parseTagCoverageSnapshots(raw: string): readonly TagCoverageSnapshot[] {
-  const parsed = parseJsonObject(raw);
+  const parsed: unknown = JSON.parse(raw);
   if (!Array.isArray(parsed)) return [];
   return parsed.filter(isTagCoverageSnapshot);
 }
