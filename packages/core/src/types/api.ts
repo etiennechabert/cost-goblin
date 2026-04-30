@@ -204,3 +204,24 @@ export interface AccountMappingEntry {
 export type AccountMappingStatus =
   | { readonly status: 'found'; readonly accounts: readonly AccountMappingEntry[]; readonly path: string }
   | { readonly status: 'missing' };
+
+export interface UpdateInfo {
+  readonly version: string;
+  readonly releaseDate: string;
+  readonly releaseNotes: string | null;
+}
+
+export type UpdateStatus =
+  | { readonly state: 'idle' }
+  | { readonly state: 'checking' }
+  | { readonly state: 'available'; readonly info: UpdateInfo }
+  | { readonly state: 'downloading'; readonly percent: number; readonly info: UpdateInfo }
+  | { readonly state: 'downloaded'; readonly info: UpdateInfo }
+  | { readonly state: 'error'; readonly error: string };
+
+export interface UpdateApi {
+  checkForUpdates(): Promise<void>;
+  downloadUpdate(): Promise<void>;
+  quitAndInstall(): void;
+  onStatusChanged(callback: (status: UpdateStatus) => void): () => void;
+}

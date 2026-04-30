@@ -283,6 +283,23 @@ const api: CostApi = {
 
 contextBridge.exposeInMainWorld('costgoblin', api);
 
+contextBridge.exposeInMainWorld('costgoblinUpdate', {
+  checkForUpdates(): Promise<void> {
+    return invoke<undefined>('update:check').then(() => undefined);
+  },
+  downloadUpdate(): Promise<void> {
+    return invoke<undefined>('update:download').then(() => undefined);
+  },
+  quitAndInstall(): void {
+    ipcRenderer.invoke('update:quit-and-install').catch(() => undefined);
+  },
+  onStatusChanged(callback: (status: unknown) => void): () => void {
+    const handler = (_event: unknown, status: unknown): void => { callback(status); };
+    ipcRenderer.on('update:status-changed', handler);
+    return () => { ipcRenderer.removeListener('update:status-changed', handler); };
+  },
+});
+
 contextBridge.exposeInMainWorld('costgoblinDebug', {
   isSandboxed(): boolean { return process.sandboxed; },
   getInFlightCount(): number { return inFlightCount; },

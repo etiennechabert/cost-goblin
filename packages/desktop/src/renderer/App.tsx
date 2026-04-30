@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
-import type { CostApi, FilterMap, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
+import type { CostApi, FilterMap, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
+import { Download, RefreshCw } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 
 // ---------------------------------------------------------------------------
@@ -144,6 +145,104 @@ function SyncAnnouncer({
   );
 }
 
+function UpdateNotification({
+  status,
+  onShowReleaseNotes,
+}: {
+  status: UpdateStatus;
+  onShowReleaseNotes: () => void;
+}): React.JSX.Element | null {
+  if (status.state === 'available') {
+    return (
+      <button
+        type="button"
+        onClick={onShowReleaseNotes}
+        className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-accent hover:bg-bg-tertiary/50 transition-colors"
+      >
+        <Download size={14} />
+        v{status.info.version} available
+      </button>
+    );
+  }
+  if (status.state === 'downloading') {
+    return (
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-text-secondary">
+        <RefreshCw size={14} className="animate-spin" />
+        Downloading {String(status.percent)}%
+      </div>
+    );
+  }
+  if (status.state === 'downloaded') {
+    return (
+      <button
+        type="button"
+        onClick={onShowReleaseNotes}
+        className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-positive hover:bg-bg-tertiary/50 transition-colors"
+      >
+        <Download size={14} />
+        Restart to update
+      </button>
+    );
+  }
+  return null;
+}
+
+function ReleaseNotesModal({
+  open,
+  onOpenChange,
+  status,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  status: UpdateStatus;
+}): React.JSX.Element | null {
+  if (status.state !== 'available' && status.state !== 'downloaded') return null;
+  const { info } = status;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogTitle>
+          {status.state === 'downloaded' ? 'Ready to Install' : 'Update Available'} &mdash; v{info.version}
+        </DialogTitle>
+        <DialogDescription>
+          Released {info.releaseDate}
+        </DialogDescription>
+        {info.releaseNotes !== null && (
+          <div className="mt-3 max-h-60 overflow-y-auto rounded-md bg-bg-primary p-3 text-sm text-text-secondary whitespace-pre-wrap">
+            {info.releaseNotes}
+          </div>
+        )}
+        <div className="mt-4 flex justify-end gap-2">
+          <DialogClose>
+            <Button variant="ghost" size="sm">Dismiss</Button>
+          </DialogClose>
+          {status.state === 'available' && (
+            <Button
+              size="sm"
+              onClick={() => {
+                globalThis.costgoblinUpdate.downloadUpdate().catch(() => undefined);
+                onOpenChange(false);
+              }}
+            >
+              <Download size={14} className="mr-1.5" />
+              Download
+            </Button>
+          )}
+          {status.state === 'downloaded' && (
+            <Button
+              size="sm"
+              onClick={() => { globalThis.costgoblinUpdate.quitAndInstall(); }}
+            >
+              <RefreshCw size={14} className="mr-1.5" />
+              Install and Restart
+            </Button>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /** Top-level app shell — just establishes the context providers. All the
  *  state + navigation lives in `AppShell` below so it can call
  *  `useConfirmLeave()` from inside the UnsavedChangesProvider. */
@@ -177,6 +276,12 @@ function AppShell(): React.JSX.Element {
   const [syncFilesRemaining, setSyncFilesRemaining] = useState(0);
   const [debugOpen, setDebugOpen] = useState(false);
   const inFlightCount = useDebugBadge();
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
+  const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
+
+  useEffect(() => {
+    return globalThis.costgoblinUpdate.onStatusChanged(setUpdateStatus);
+  }, []);
 
   useEffect(() => {
     api.getSetupStatus().then(({ configured }) => {
@@ -396,6 +501,7 @@ function AppShell(): React.JSX.Element {
             <span className="text-sm font-bold text-accent tracking-wider">CostGoblin</span>
           </div>
           <div className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]" role="navigation" aria-label="Configuration views">
+            <UpdateNotification status={updateStatus} onShowReleaseNotes={() => { setReleaseNotesOpen(true); }} />
             <button
               type="button"
               onClick={() => { setDebugOpen(prev => !prev); }}
@@ -542,6 +648,7 @@ function AppShell(): React.JSX.Element {
         </Profiler>
       </div>
       {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} />}
+      <ReleaseNotesModal open={releaseNotesOpen} onOpenChange={setReleaseNotesOpen} status={updateStatus} />
       </div>
     </PaletteProvider>
   );
