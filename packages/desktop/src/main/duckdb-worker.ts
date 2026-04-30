@@ -93,8 +93,10 @@ function bindParams(stmt: import('./duckdb-loader.js').DuckDBPreparedStatement, 
       }
     } else if (typeof val === 'boolean') {
       stmt.bindBoolean(idx, val);
+    } else if (typeof val === 'bigint') {
+      stmt.bindInteger(idx, Number(val));
     } else {
-      stmt.bindVarchar(idx, typeof val === 'object' ? JSON.stringify(val) : String(val as string | number | boolean));
+      stmt.bindVarchar(idx, JSON.stringify(val));
     }
   }
 }
