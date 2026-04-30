@@ -32,7 +32,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef(0);
-  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const itemRefs = useRef<Record<string, HTMLElement | null>>({});
 
   const hasActiveFilters = Object.keys(filters).length > 0;
 
@@ -83,6 +83,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
     setSearch('');
     setDraft([...(filters[dimId] ?? [])]);
     setHighlightedIndex(-1);
+    itemRefs.current = {};
     setDropdown({ status: 'loading' });
 
     const filtersWithoutThis = withoutFilter(dimId);
@@ -295,7 +296,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                     return (
                       <label
                         key={item.value}
-                        ref={(el: HTMLLabelElement | null) => { itemRefs.current[item.value] = el as unknown as HTMLButtonElement | null; }}
+                        ref={(el: HTMLLabelElement | null) => { itemRefs.current[item.value] = el; }}
                         className={[
                           'group flex items-center justify-between gap-2 px-3 py-1.5 text-xs cursor-pointer select-none',
                           checked ? 'bg-accent-muted/50 text-text-primary' : 'text-text-secondary hover:bg-bg-tertiary',

@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -29,23 +28,6 @@ export function KeyboardShortcutsOverlay({
   onOpenChange,
   shortcuts,
 }: Readonly<KeyboardShortcutsOverlayProps>) {
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        onOpenChange(false);
-      }
-    }
-
-    if (open) {
-      document.addEventListener('keydown', handleKey);
-      return () => {
-        document.removeEventListener('keydown', handleKey);
-      };
-    }
-
-    return undefined;
-  }, [open, onOpenChange]);
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">

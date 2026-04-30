@@ -255,7 +255,7 @@ function AppShell(): React.JSX.Element {
     return () => { cancelled = true; clearInterval(timer); };
   }, [api, setupCheck, syncActivity]);
 
-  function handleNavClick(id: string) {
+  const handleNavClick = useCallback((id: string) => {
     const alreadyActive = view.page === 'custom' ? view.viewId === id : view.page === id;
     if (alreadyActive) return;
     confirmLeave(() => {
@@ -270,12 +270,10 @@ function AppShell(): React.JSX.Element {
         case 'views-editor': setView({ page: 'views-editor' }); break;
         case 'sync': setView({ page: 'sync' }); break;
         default:
-          // Anything else is a custom view id (every left-nav entry that
-          // isn't one of the well-known static pages above).
           setView({ page: 'custom', viewId: id });
       }
     });
-  }
+  }, [view, confirmLeave, api]);
 
   function handleEntityClick(entity: string, dimension: string) {
     confirmLeave(() => {
@@ -315,14 +313,9 @@ function AppShell(): React.JSX.Element {
   const customNav: { id: string; label: string }[] = views.views.map(v => ({ id: v.id, label: v.name }));
   const leftNav = [...customNav, ...STATIC_LEFT_NAV];
 
-  // Register global keyboard shortcuts for navigation and panel controls.
-  // Number keys 1-9 navigate to the first 9 left-nav items, respecting
-  // unsaved-changes guards via handleNavClick. Escape closes the debug
-  // panel when open. Cmd/Ctrl+K opens the command palette.
   const shortcuts = useMemo(() => {
     const map: Record<string, () => void> = {};
 
-    // Number keys 1-9 for view navigation
     for (let i = 0; i < Math.min(9, leftNav.length); i++) {
       const navItem = leftNav[i];
       if (navItem !== undefined) {
@@ -331,27 +324,21 @@ function AppShell(): React.JSX.Element {
       }
     }
 
-    // Cmd/Ctrl+K opens command palette
     map['mod+k'] = () => { setCommandPaletteOpen(true); };
-
-    // Cmd/Ctrl+? opens keyboard shortcuts overlay
     map['mod+/'] = () => { setShortcutsOverlayOpen(true); };
 
-    // Escape closes debug panel if open
     if (debugOpen) {
       map['Escape'] = () => { setDebugOpen(false); };
     }
 
     return map;
-  }, [leftNav, debugOpen]);
+  }, [leftNav, debugOpen, handleNavClick]);
 
   useKeyboardShortcuts(shortcuts);
 
-  // Build command palette actions from all navigation items
   const commandPaletteActions = useMemo(() => {
     const actions: CommandPaletteAction[] = [];
 
-    // Add left nav items (custom views + static views)
     for (const item of leftNav) {
       actions.push({
         id: item.id,
@@ -361,7 +348,6 @@ function AppShell(): React.JSX.Element {
       });
     }
 
-    // Add right nav items (settings/utilities)
     for (const item of RIGHT_NAV) {
       actions.push({
         id: item.id,
@@ -372,7 +358,7 @@ function AppShell(): React.JSX.Element {
     }
 
     return actions;
-  }, [leftNav]);
+  }, [leftNav, handleNavClick]);
 
   // Build keyboard shortcuts configuration for the help overlay
   const shortcutsConfig = useMemo(() => [

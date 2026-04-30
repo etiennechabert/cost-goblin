@@ -173,7 +173,7 @@ export interface CommandItemProps
 
 export const CommandItem = React.forwardRef<HTMLDivElement, CommandItemProps>(
   ({ className, value, onSelect, disabled = false, children, ...props }, ref) => {
-    const { selectedIndex, setItemCount } = useCommandContext();
+    const { selectedIndex, setItemCount, search } = useCommandContext();
     const itemRef = React.useRef<HTMLDivElement>(null);
     const [itemIndex, setItemIndex] = React.useState(-1);
 
@@ -188,7 +188,7 @@ export const CommandItem = React.forwardRef<HTMLDivElement, CommandItemProps>(
       const index = items.indexOf(currentRef);
       setItemIndex(index);
       setItemCount(items.length);
-    }, [setItemCount]);
+    }, [setItemCount, search]);
 
     React.useEffect(() => {
       if (itemIndex === selectedIndex && itemRef.current !== null) {
