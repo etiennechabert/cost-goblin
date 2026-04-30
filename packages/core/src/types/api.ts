@@ -206,6 +206,25 @@ export interface CostApi {
    *  navigation so stale queries from the previous view don't hold pool
    *  connections and slow down the new view's queries. */
   cancelPendingQueries(): Promise<void>;
+  /** Manually trigger a check for application updates. The UpdateManager
+   *  checks automatically on app launch and every 6 hours, but this allows
+   *  the user to force an immediate check. */
+  checkForUpdates(): Promise<void>;
+  /** Download an available update in the background. Only valid when
+   *  UpdateStatus state is 'available'. Progress is tracked via
+   *  getUpdateStatus(). */
+  downloadUpdate(): Promise<void>;
+  /** Quit the application and install a downloaded update. Only valid when
+   *  UpdateStatus state is 'downloaded'. The app will restart automatically
+   *  after the update is applied. */
+  quitAndInstall(): Promise<void>;
+  /** Get the current update status (idle, checking, available, downloading,
+   *  downloaded, not-available, or error). Poll this to track update check
+   *  and download progress. */
+  getUpdateStatus(): Promise<UpdateStatus>;
+  /** Get information about an available or downloaded update. Returns null
+   *  when no update is available or the check hasn't completed yet. */
+  getUpdateInfo(): Promise<UpdateInfo | null>;
 }
 
 export interface AccountMappingEntry {
