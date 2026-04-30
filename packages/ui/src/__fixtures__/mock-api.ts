@@ -367,6 +367,15 @@ export class MockCostApi implements CostApi {
   dismissSuggestion(): Promise<void> { return Promise.resolve(); }
   acceptSuggestion(): Promise<void> { return Promise.resolve(); }
   cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
+  getTelemetryConfig(): Promise<import('@costgoblin/core').TelemetryConfig | undefined> {
+    return Promise.resolve(undefined);
+  }
+  updateTelemetryChannel(_channel: import('@costgoblin/core').TelemetryChannel, _enabled: boolean): Promise<void> {
+    return Promise.resolve();
+  }
+  getTelemetryAuditLogPath(): Promise<string> {
+    return Promise.resolve('/mock/path/to/telemetry-audit.jsonl');
+  }
 }
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {

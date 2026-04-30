@@ -40,6 +40,8 @@ import type {
   AggregatedTableParams,
   AggregatedTableResult,
   AliasSuggestion,
+  TelemetryConfig,
+  TelemetryChannel,
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
@@ -278,6 +280,15 @@ const api: CostApi = {
     void invoke<undefined>('debug:clear-completed');
     // Use ipcRenderer directly — cancel calls shouldn't inflate the in-flight badge
     return (ipcRenderer.invoke('query:cancel-pending') as Promise<undefined>).then(() => undefined);
+  },
+  getTelemetryConfig(): Promise<TelemetryConfig | undefined> {
+    return invoke<TelemetryConfig | undefined>('telemetry:get-config');
+  },
+  updateTelemetryChannel(channel: TelemetryChannel, enabled: boolean): Promise<void> {
+    return invoke<undefined>('telemetry:update-channel', channel, enabled).then(() => undefined);
+  },
+  getTelemetryAuditLogPath(): Promise<string> {
+    return invoke<string>('telemetry:get-audit-log-path');
   },
 };
 

@@ -96,4 +96,9 @@ export function registerTelemetryHandlers(app: AppContext): void {
       logger.debug('telemetry:track-event', { eventType, properties });
     },
   );
+
+  ipcMain.handle('telemetry:get-audit-log-path', async (): Promise<string> => {
+    const path = await import('node:path');
+    return path.join(ctx.userDataPath, 'telemetry-audit.jsonl');
+  });
 }

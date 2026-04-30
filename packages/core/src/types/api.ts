@@ -27,6 +27,7 @@ import type {
   TrendQueryParams,
   TrendResult,
 } from './query.js';
+import type { TelemetryConfig, TelemetryChannel } from '../telemetry/types.js';
 
 export interface SavingsPreferences {
   readonly hiddenActionTypes: readonly string[];
@@ -191,6 +192,12 @@ export interface CostApi {
    *  navigation so stale queries from the previous view don't hold pool
    *  connections and slow down the new view's queries. */
   cancelPendingQueries(): Promise<void>;
+  /** Get current telemetry configuration (opt-in analytics, crash reporting, performance monitoring). */
+  getTelemetryConfig(): Promise<TelemetryConfig | undefined>;
+  /** Update a single telemetry channel's enabled state. */
+  updateTelemetryChannel(channel: TelemetryChannel, enabled: boolean): Promise<void>;
+  /** Get the path to the telemetry audit log file for user inspection. */
+  getTelemetryAuditLogPath(): Promise<string>;
 }
 
 export interface AccountMappingEntry {
