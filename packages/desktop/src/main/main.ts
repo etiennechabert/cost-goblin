@@ -102,7 +102,7 @@ async function initializeTelemetry(configPath: string, userDataPath: string): Pr
     // Initialize PostHog client for analytics
     const analyticsConfig = telemetryConfig.analytics;
     const posthogApiKey = process.env['POSTHOG_API_KEY'];
-    if (analyticsConfig !== undefined && typeof posthogApiKey === 'string' && posthogApiKey.length > 0) {
+    if (typeof posthogApiKey === 'string' && posthogApiKey.length > 0) {
       const posthog = createPostHogClient(
         analyticsConfig,
         posthogApiKey,
@@ -118,14 +118,10 @@ async function initializeTelemetry(configPath: string, userDataPath: string): Pr
     const crashConfig = telemetryConfig.crashReporting;
     const performanceConfig = telemetryConfig.performance;
     const sentryDsn = process.env['SENTRY_DSN'];
-    if (
-      (crashConfig !== undefined || performanceConfig !== undefined) &&
-      typeof sentryDsn === 'string' &&
-      sentryDsn.length > 0
-    ) {
+    if (typeof sentryDsn === 'string' && sentryDsn.length > 0) {
       const sentry = createSentryClient(
-        crashConfig ?? { enabled: false },
-        performanceConfig ?? { enabled: false },
+        crashConfig,
+        performanceConfig,
         sentryDsn,
         app.getVersion(),
         isDev ? 'development' : 'production',
@@ -135,8 +131,8 @@ async function initializeTelemetry(configPath: string, userDataPath: string): Pr
       );
       telemetryClients.sentry = sentry;
       logger.info('telemetry:sentry-initialized', {
-        crashReporting: crashConfig?.enabled ?? false,
-        performance: performanceConfig?.enabled ?? false,
+        crashReporting: crashConfig.enabled,
+        performance: performanceConfig.enabled,
       });
     }
 

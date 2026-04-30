@@ -35,6 +35,15 @@ export default [
     },
   },
   {
+    files: ['packages/desktop/src/main/telemetry/*.ts'],
+    rules: {
+      // @sentry/electron types are not fully resolvable by @typescript-eslint
+      // but the code is type-safe according to tsc. Disable unsafe-call for
+      // Sentry.init and related calls.
+      '@typescript-eslint/no-unsafe-call': 'off',
+    },
+  },
+  {
     ignores: ['**/dist/**', '**/node_modules/**', '**/out/**', '**/*.config.*', '**/__fixtures__/generate.ts'],
   },
 ];

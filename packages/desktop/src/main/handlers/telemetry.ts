@@ -84,11 +84,11 @@ export function registerTelemetryHandlers(app: AppContext): void {
   // privacy filtering, audit logging, and transmission.
   ipcMain.handle(
     'telemetry:track-event',
-    async (
+    (
       _event,
       eventType: AnalyticsEventType,
       properties?: Readonly<Record<string, unknown>>,
-    ): Promise<void> => {
+    ): void => {
       // The main process telemetry manager will handle this event.
       // This handler exists primarily for type safety and to provide a clean
       // IPC interface. The actual implementation will be wired up when the
@@ -99,6 +99,7 @@ export function registerTelemetryHandlers(app: AppContext): void {
 
   ipcMain.handle('telemetry:get-audit-log-path', async (): Promise<string> => {
     const path = await import('node:path');
-    return path.join(ctx.userDataPath, 'telemetry-audit.jsonl');
+    const userDataPath = path.dirname(ctx.dataDir);
+    return path.join(userDataPath, 'telemetry-audit.jsonl');
   });
 }

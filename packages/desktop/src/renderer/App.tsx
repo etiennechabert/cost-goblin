@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, EntityDetail, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, Preferences } from '@costgoblin/ui';
 import type { CostApi, ViewsConfig, ViewSpec } from '@costgoblin/core/browser';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 
@@ -41,6 +41,7 @@ type View =
   | { page: 'cost-scope' }
   | { page: 'views-editor' }
   | { page: 'sync' }
+  | { page: 'preferences' }
   | { page: 'entity-detail'; entity: string; dimension: string };
 
 const STATIC_LEFT_NAV: { id: string; label: string }[] = [
@@ -55,6 +56,7 @@ const RIGHT_NAV: { id: string; label: string }[] = [
   { id: 'dimensions', label: 'Dimensions' },
   { id: 'views-editor', label: 'Views' },
   { id: 'sync', label: 'Sync' },
+  { id: 'preferences', label: 'Preferences' },
 ];
 
 function SunIcon() {
@@ -266,6 +268,7 @@ function AppShell(): React.JSX.Element {
         case 'dimensions': setView({ page: 'dimensions' }); break;
         case 'views-editor': setView({ page: 'views-editor' }); break;
         case 'sync': setView({ page: 'sync' }); break;
+        case 'preferences': setView({ page: 'preferences' }); break;
         default:
           // Anything else is a custom view id (every left-nav entry that
           // isn't one of the well-known static pages above).
@@ -322,6 +325,7 @@ function AppShell(): React.JSX.Element {
     if (view.page === 'dimensions') return 'dimensions';
     if (view.page === 'views-editor') return 'views-editor';
     if (view.page === 'sync') return 'sync';
+    if (view.page === 'preferences') return 'preferences';
     return null;
   }
   const active = activeNavId();
@@ -504,6 +508,11 @@ function AppShell(): React.JSX.Element {
           <DataManagement />
         </Profiler>
       </div>
+      {view.page === 'preferences' && (
+        <Profiler id="preferences" onRender={onPerfRender}>
+          <Preferences />
+        </Profiler>
+      )}
       {view.page === 'entity-detail' && (
         <Profiler id="entity-detail" onRender={onPerfRender}>
           <EntityDetail

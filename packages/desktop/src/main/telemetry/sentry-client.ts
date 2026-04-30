@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/electron/main';
-import type { Event, EventHint, Exception, StackFrame, Breadcrumb } from '@sentry/electron/main';
+import type { Event, Exception, StackFrame, Breadcrumb } from '@sentry/electron/main';
 import { logger, sanitizeError, sanitizeTelemetryPayload } from '@costgoblin/core';
 import type { TelemetryChannelConfig, CrashEventType } from '@costgoblin/core';
 
@@ -54,7 +54,7 @@ export function createSentryClient(
   ) => void,
 ): SentryClient {
   // Initialize Sentry
-  Sentry.init({
+  const options = {
     dsn: crashConfig.endpoint ?? dsn, // Use custom endpoint if provided
     release,
     environment,
@@ -63,7 +63,7 @@ export function createSentryClient(
     // Disable sending default PII (IP addresses, user agent)
     sendDefaultPii: false,
     // beforeSend hook to strip PII and filter disabled telemetry
-    beforeSend(event: Event, _hint: EventHint): Event | null {
+    beforeSend(event: Event): Event | null {
       // Skip if crash reporting is disabled
       if (!crashConfig.enabled) {
         logger.debug('sentry:beforeSend-skipped', {
@@ -106,9 +106,14 @@ export function createSentryClient(
 
         // Sanitize request data
         if (event.request !== undefined) {
-          event.request = sanitizeTelemetryPayload(
-            event.request,
-          ) as Sentry.Request;
+          const sanitized = sanitizeTelemetryPayload(event.request);
+          if (
+            typeof sanitized === 'object' &&
+            sanitized !== null &&
+            !Array.isArray(sanitized)
+          ) {
+            event.request = sanitized;
+          }
         }
 
         // Sanitize user context (remove any PII)
@@ -145,7 +150,7 @@ export function createSentryClient(
                 sanitizedData !== null &&
                 !Array.isArray(sanitizedData)
               ) {
-                sanitizedBreadcrumb.data = sanitizedData as Record<string, unknown>;
+                sanitizedBreadcrumb.data = sanitizedData;
               }
             }
             return sanitizedBreadcrumb;
@@ -174,7 +179,8 @@ export function createSentryClient(
         return null;
       }
     },
-  });
+  };
+  Sentry.init(options);
 
   return {
     captureError(
