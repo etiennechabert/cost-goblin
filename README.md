@@ -193,9 +193,31 @@ packages/
 ```bash
 make help       # show available commands
 make dev        # launch Electron in dev mode
+make prod       # build and launch in production mode
 make test       # run vitest
 make lint       # run tsc + eslint
 make reset      # wipe app data, restart with wizard
+```
+
+### E2E Tests
+
+```bash
+make e2e          # all E2E suites + coverage
+make e2e-core     # core views (Overview, Trends, Missing Tags, Savings, Explorer)
+make e2e-config   # config views (Sync, Dimensions, Cost Scope)
+make e2e-stress   # widget growth stress tests
+```
+
+### Performance Benchmarks
+
+`make perf` launches the app with `COSTGOBLIN_PERF_MODE=1` and runs a Playwright suite that measures every view and interaction:
+
+- Wall clock time, IPC call count/duration, React render count/duration, heap delta
+- CPU profiles per section (loadable in Chrome DevTools → Performance tab)
+- Outputs a markdown report to `/tmp/costgoblin-perf/report.md`
+
+```bash
+make perf       # build + run full benchmark suite
 ```
 
 ## License
