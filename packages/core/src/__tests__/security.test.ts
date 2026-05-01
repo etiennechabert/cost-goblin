@@ -162,7 +162,7 @@ describe('SQL Injection Prevention', () => {
         { dataDir: '/data', dimensions },
       );
       expect(result.params).toContain(100);
-      expect(result.sql).toContain('ABS(COALESCE(c.total_cost, 0) - COALESCE(p.total_cost, 0)) >= $');
+      expect(result.sql).toContain('ABS(current_cost - previous_cost) >= $');
     });
 
     it('prevents injection via minCost in buildMissingTagsQuery', () => {

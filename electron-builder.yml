@@ -42,3 +42,5 @@ linux:
         - arm64
 publish:
   provider: github
+  vPrefixedTagName: true
+  releaseType: release

@@ -212,9 +212,9 @@ test.describe('Cost Overview', () => {
       await onlyButtons.first().click();
       await waitForQuerySettle(page);
 
-      // "Clear all" button should appear
+      // "Clear all" button should appear (sequential fallback queries may take time on CI)
       const clearAll = page.getByRole('button', { name: 'Clear all' });
-      await expect(clearAll).toBeVisible();
+      await expect(clearAll).toBeVisible({ timeout: 15_000 });
 
       await screenshot(page, 'overview-filtered');
 

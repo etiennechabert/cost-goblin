@@ -19,7 +19,7 @@ import {
 } from './query-utils.js';
 
 export function registerTrendHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery, materializedBase } = app;
 
   ipcMain.handle('query:trends', async (_event, params: TrendQueryParams): Promise<TrendResult> => {
     const dimensions = await getDimensions();
@@ -30,9 +30,20 @@ export function registerTrendHandlers(app: AppContext): void {
     const availableColumns = await getAvailableColumns('daily');
     const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, 'daily', params.dateRange);
     if (empty) return { increases: [], savings: [], totalIncrease: asDollars(0), totalSavings: asDollars(0) };
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns };
+
+    // Compute the full date range (current + previous period) to check if
+    // the materialized base covers both spans.
+    const dayMs = 86_400_000;
+    const startMs = new Date(`${params.dateRange.start}T00:00:00Z`).getTime();
+    const endMs = new Date(`${params.dateRange.end}T00:00:00Z`).getTime();
+    const durationDays = Math.round((endMs - startMs) / dayMs) + 1;
+    const prevStart = new Date(startMs - durationDays * dayMs).toISOString().slice(0, 10);
+    const fullRange = { start: prevStart, end: params.dateRange.end };
+    const matSource = materializedBase.getSource(fullRange, 'daily');
+
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const { sql, params: queryParams } = buildTrendQuery(params, qcOpts);
-    logger.info('query:trends', { groupBy: params.groupBy });
+    logger.info('query:trends', { groupBy: params.groupBy, materialized: matSource !== undefined });
 
     const rows = await runPreparedQuery(sql, queryParams);
     const result = buildTrendResult(rows, params.deltaThreshold, params.percentThreshold);
