@@ -210,6 +210,9 @@ test.describe('Cost Overview', () => {
 
     if (onlyCount > 0) {
       await onlyButtons.first().click();
+      // "only" sets the draft — click Apply to commit the filter
+      const applyBtn = dropdown.getByRole('button', { name: 'Apply' });
+      await applyBtn.click();
       await waitForQuerySettle(page);
 
       // "Clear all" button should appear
