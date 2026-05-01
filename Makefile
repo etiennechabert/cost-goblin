@@ -42,7 +42,7 @@ dist: ## Build distributable installer for current platform
 
 dist-mac: ## Build macOS .dmg and .zip (current arch only)
 	npm run build --workspaces
-	npx --no-install electron-builder --mac --publish never --arch arm64
+	npx --no-install electron-builder --mac --arm64 --publish never
 
 dist-win: ## Build Windows .exe installer
 	npm run build --workspaces
