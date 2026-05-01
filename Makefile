@@ -1,4 +1,4 @@
-.PHONY: dev prod reset test e2e e2e-core e2e-config e2e-stress perf lint help
+.PHONY: dev prod reset test e2e e2e-core e2e-config e2e-stress perf lint dist dist-mac dist-win dist-linux release help
 .DEFAULT_GOAL := help
 
 BUILD = npm run build --workspace=packages/desktop
@@ -35,6 +35,45 @@ e2e-config: ## Build and run config views E2E (Sync, Dims, Scope)
 e2e-stress: ## Build and run widget growth stress tests
 	$(BUILD)
 	npx playwright test e2e/stress.test.ts
+
+dist: ## Build distributable installer for current platform
+	npm run build --workspaces
+	npx --no-install electron-builder --publish never
+
+dist-mac: ## Build macOS .dmg and .zip (current arch only)
+	npm run build --workspaces
+	npx --no-install electron-builder --mac --arm64 --publish never
+
+dist-win: ## Build Windows .exe installer
+	npm run build --workspaces
+	npx --no-install electron-builder --win --publish never
+
+dist-linux: ## Build Linux .AppImage and .deb
+	npm run build --workspaces
+	npx --no-install electron-builder --linux --publish never
+
+release: ## Bump version (patch/minor/major), tag, and push to trigger release
+	@echo "Current version: $$(node -p 'require("./package.json").version')"
+	@echo ""
+	@echo "  1) patch"
+	@echo "  2) minor"
+	@echo "  3) major"
+	@echo ""
+	@read -p "Select bump type [1/2/3]: " choice; \
+	case $$choice in \
+		1) bump=patch;; \
+		2) bump=minor;; \
+		3) bump=major;; \
+		*) echo "Invalid choice"; exit 1;; \
+	esac; \
+	npm version $$bump --no-git-tag-version && \
+	version=$$(node -p 'require("./package.json").version') && \
+	git add package.json package-lock.json && \
+	git commit -m "Release v$$version" && \
+	git tag "v$$version" && \
+	echo "" && \
+	echo "Tagged v$$version — push with:" && \
+	echo "  git push origin main --tags"
 
 perf: ## Build and run performance benchmarks
 	$(BUILD)

@@ -12,10 +12,16 @@ jobs:
         include:
           - os: macos-latest
             platform: mac
+            arch: arm64
+          - os: macos-13
+            platform: mac
+            arch: x64
           - os: windows-latest
             platform: win
+            arch: x64
           - os: ubuntu-latest
             platform: linux
+            arch: x64
 
     runs-on: ${{ matrix.os }}
 
@@ -35,6 +41,6 @@ jobs:
       - run: npm run build --workspaces
 
       - name: Build installers
-        run: npx electron-builder --${{ matrix.platform }} --publish always
+        run: npx --no-install electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
