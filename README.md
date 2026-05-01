@@ -196,7 +196,7 @@ make dev        # launch Electron in dev mode
 make prod       # build and launch in production mode
 make test       # run vitest
 make lint       # run tsc + eslint
-make reset      # wipe app data, restart with wizard
+make reset      # wipe app data and config (next launch shows wizard)
 ```
 
 ### E2E Tests
@@ -218,6 +218,16 @@ make e2e-stress   # widget growth stress tests
 
 ```bash
 make perf       # build + run full benchmark suite
+```
+
+### Packaging & Release
+
+```bash
+make dist         # build distributable installer for current platform
+make dist-mac     # build macOS .dmg and .zip (current arch)
+make dist-win     # build Windows .exe installer
+make dist-linux   # build Linux .AppImage and .deb
+make release      # interactive version bump (patch/minor/major), tag, and push
 ```
 
 ## License
