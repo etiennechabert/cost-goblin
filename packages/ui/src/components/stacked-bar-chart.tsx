@@ -22,6 +22,9 @@ interface StackedBarChartProps {
   readonly title?: string | undefined;
   readonly loading?: boolean | undefined;
   readonly onSegmentClick?: ((name: string) => void) | undefined;
+  /** Previous period daily totals, aligned by position index. Rendered as
+   *  a dashed line overlay when present. */
+  readonly previousTotals?: readonly number[] | undefined;
 }
 
 export function bucketBars(bars: readonly BarDay[], maxBuckets: number): readonly BarDay[] {
@@ -77,7 +80,7 @@ function BarSegment({ seg, segTotal, highlightedGroup, palette, onMouseEnter, on
   );
 }
 
-export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick }: StackedBarChartProps) {
+export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick, previousTotals }: StackedBarChartProps) {
   const { palette } = usePalette();
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
   const [hoveredSegment, setHoveredSegment] = useState<string | null>(null);
@@ -95,7 +98,8 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
   }
   const breakdownKeys = [...allKeys];
 
-  const maxCost = days.reduce((m, d) => Math.max(m, d.total), 0);
+  const prevMax = previousTotals !== undefined ? previousTotals.reduce((m, v) => Math.max(m, v), 0) : 0;
+  const maxCost = Math.max(days.reduce((m, d) => Math.max(m, d.total), 0), prevMax);
 
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col h-full">
@@ -273,6 +277,32 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
               );
             })}
           </div>
+
+          {/* Previous period overlay line */}
+          {previousTotals !== undefined && previousTotals.length > 0 && maxCost > 0 && (
+            <svg
+              className="absolute left-12 right-0 top-0 bottom-7 z-[11] pointer-events-none"
+              viewBox="0 0 1000 1000"
+              preserveAspectRatio="none"
+              style={{ width: '100%', height: '100%' }}
+            >
+              <polyline
+                fill="none"
+                stroke="var(--color-text-muted)"
+                strokeWidth="2"
+                strokeDasharray="6,4"
+                strokeOpacity="0.6"
+                vectorEffect="non-scaling-stroke"
+                points={previousTotals.map((val, i) => {
+                  const x = previousTotals.length > 1
+                    ? (i / (previousTotals.length - 1)) * 1000
+                    : 500;
+                  const y = (1 - val / maxCost) * 1000;
+                  return `${String(x)},${String(y)}`;
+                }).join(' ')}
+              />
+            </svg>
+          )}
 
           {/* X axis — pinned to bottom of pb-5 zone */}
           <div className="absolute bottom-0 left-12 right-0 h-5">

@@ -128,7 +128,7 @@ test.describe('Cost Overview', () => {
 
     await expect(popover.getByText('Daily')).toBeVisible();
     await expect(popover.getByText('Hourly')).toBeVisible();
-    await expect(popover.getByText('Period')).toBeVisible();
+    await expect(popover.getByText('Period', { exact: true })).toBeVisible();
     await expect(popover.getByText('Custom range…')).toBeVisible();
 
     await trigger.click();

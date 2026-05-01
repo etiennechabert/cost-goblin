@@ -151,6 +151,8 @@ export interface ExplorerPreferences {
   /** Last granularity the user selected (`daily` or `hourly`). Persisted
    *  so the view opens with the same granularity on the next session. */
   readonly lastUsedGranularity?: Granularity;
+  /** Whether the "compare to previous period" toggle is on. */
+  readonly compareEnabled?: boolean;
 }
 
 export interface ExplorerFilterValuesParams {

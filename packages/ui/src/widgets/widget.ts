@@ -33,6 +33,9 @@ export interface WidgetCommonProps {
   /** Date range covering the prior comparable period — used by widgets that
    *  need a delta (summary, trends-style charts). The host computes it. */
   readonly previousDateRange: DateRange;
+  /** When true, widgets should query the previous period and render
+   *  comparison overlays (delta %, ghost lines, etc.). */
+  readonly compareEnabled: boolean;
   readonly granularity: Granularity;
   readonly globalFilters: FilterMap;
   readonly dimensions: readonly Dimension[];

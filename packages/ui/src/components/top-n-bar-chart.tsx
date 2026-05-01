@@ -26,6 +26,9 @@ interface TopNBarChartProps {
   readonly dimensions?: readonly Dimension[] | undefined;
   readonly activeDimensionId?: string | undefined;
   readonly onDimensionChange?: ((dimId: string) => void) | undefined;
+  /** Previous period costs keyed by entity name. When present, delta %
+   *  badges are rendered next to each bar. */
+  readonly previousCosts?: ReadonlyMap<string, number> | undefined;
 }
 
 const ROW_HEIGHT = 24;
@@ -51,6 +54,7 @@ function TopNBarChartInner({
   dimensions,
   activeDimensionId,
   onDimensionChange,
+  previousCosts,
   width,
 }: Omit<TopNBarChartProps, 'collapsed'> & { width: number }) {
   const { palette } = usePalette();
@@ -126,6 +130,11 @@ function TopNBarChartInner({
               const barW = Math.max(ratio * barAreaWidth, 1);
               const color = getColor(i, palette);
 
+              const prevCost = previousCosts?.get(row.name);
+              const delta = prevCost !== undefined && prevCost > 0
+                ? ((row.cost - prevCost) / prevCost) * 100
+                : undefined;
+
               const barContent = (
                 <>
                   <span
@@ -154,6 +163,11 @@ function TopNBarChartInner({
                       ({row.percentage.toFixed(1)}%)
                     </span>
                   </span>
+                  {delta !== undefined && (
+                    <span className={`text-[10px] tabular-nums shrink-0 w-12 text-right ${delta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                      {delta >= 0 ? '↑' : '↓'}{Math.abs(delta).toFixed(1)}%
+                    </span>
+                  )}
                 </>
               );
 

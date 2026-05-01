@@ -25,6 +25,9 @@ export interface LineSeries {
 
 interface LineChartProps {
   readonly series: readonly LineSeries[];
+  /** Previous period series, rendered as dashed ghost lines. Dates should
+   *  be mapped onto the current period so lines overlay by position. */
+  readonly previousSeries?: readonly LineSeries[] | undefined;
   readonly title?: string | undefined;
   readonly subtitle?: string | undefined;
   readonly height?: number | undefined;
@@ -41,11 +44,12 @@ interface TooltipPayload {
 interface LineSvgProps {
   readonly series: readonly LineSeries[];
   readonly visible: readonly LineSeries[];
+  readonly previousSeries?: readonly LineSeries[] | undefined;
   readonly width: number;
   readonly height: number;
 }
 
-function LineSvg({ series, visible, width, height }: LineSvgProps) {
+function LineSvg({ series, visible, previousSeries, width, height }: LineSvgProps) {
   const { palette } = usePalette();
   const {
     showTooltip, hideTooltip, tooltipData, tooltipLeft, tooltipTop, tooltipOpen,
@@ -72,10 +76,15 @@ function LineSvg({ series, visible, width, height }: LineSvgProps) {
     });
   }, [minDate, maxDate, innerW]);
 
-  const maxY = useMemo(
-    () => visible.reduce((m, s) => s.points.reduce((mm, p) => Math.max(mm, p.cost), m), 0),
-    [visible],
-  );
+  const maxY = useMemo(() => {
+    let m = visible.reduce((acc, s) => s.points.reduce((mm, p) => Math.max(mm, p.cost), acc), 0);
+    if (previousSeries !== undefined) {
+      for (const s of previousSeries) {
+        for (const p of s.points) m = Math.max(m, p.cost);
+      }
+    }
+    return m;
+  }, [visible, previousSeries]);
 
   const yScale = useMemo(() => scaleLinear<number>({
     domain: [0, maxY * 1.1 || 1],
@@ -161,6 +170,23 @@ function LineSvg({ series, visible, width, height }: LineSvgProps) {
               dy: '0.33em',
             })}
           />
+          {previousSeries !== undefined && previousSeries.map((s) => {
+            const colorIdx = seriesColorIndex.get(s.name) ?? 0;
+            const color = getColor(colorIdx, palette);
+            return (
+              <LinePath<LineSeriesPoint>
+                key={`prev-${s.name}`}
+                data={[...s.points]}
+                x={(d) => xScale(new Date(d.date))}
+                y={(d) => yScale(d.cost)}
+                stroke={color}
+                strokeWidth={1.25}
+                strokeDasharray="4,3"
+                strokeOpacity={0.4}
+                curve={curveMonotoneX}
+              />
+            );
+          })}
           {visible.map((s) => {
             const colorIdx = seriesColorIndex.get(s.name) ?? 0;
             const color = getColor(colorIdx, palette);
@@ -204,12 +230,16 @@ function LineSvg({ series, visible, width, height }: LineSvgProps) {
   );
 }
 
-export function LineChart({ series, title, subtitle, height = 320, onSeriesClick }: LineChartProps) {
+export function LineChart({ series, previousSeries, title, subtitle, height = 320, onSeriesClick }: LineChartProps) {
   const { palette } = usePalette();
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const visible = useMemo(
     () => series.filter(s => !hidden.has(s.name)),
     [series, hidden],
+  );
+  const visiblePrev = useMemo(
+    () => previousSeries?.filter(s => !hidden.has(s.name)),
+    [previousSeries, hidden],
   );
 
   function toggle(name: string) {
@@ -233,7 +263,7 @@ export function LineChart({ series, title, subtitle, height = 320, onSeriesClick
         <ParentSize>
           {({ width, height: h }) => (
             width > 10 && h > 10 ? (
-              <LineSvg series={series} visible={visible} width={width} height={h} />
+              <LineSvg series={series} visible={visible} previousSeries={visiblePrev} width={width} height={h} />
             ) : null
           )}
         </ParentSize>

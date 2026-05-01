@@ -11,6 +11,7 @@ import { filtersKey, mergeFilters } from './widget.js';
 export function SummaryWidget({
   dateRange,
   previousDateRange,
+  compareEnabled,
   granularity,
   globalFilters,
   spec,
@@ -27,8 +28,8 @@ export function SummaryWidget({
     [isSummary, groupBy, dateRange.start, dateRange.end, fk, granularity, api],
   );
   const prev = useQuery<CostResult | null>(
-    () => isSummary ? api.queryCosts({ groupBy, dateRange: previousDateRange, filters, granularity }) : Promise.resolve(null),
-    [isSummary, groupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
+    () => isSummary && compareEnabled ? api.queryCosts({ groupBy, dateRange: previousDateRange, filters, granularity }) : Promise.resolve(null),
+    [isSummary, compareEnabled, groupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
   );
 
   if (!isSummary) return null;

@@ -349,11 +349,15 @@ export function registerExplorerHandlers(app: AppContext): void {
       const validGranularity =
         rawGranularity === 'daily' || rawGranularity === 'hourly' ? rawGranularity : null;
 
+      const rawCompare = obj?.['compareEnabled'];
+      const compareEnabled = rawCompare === true ? true : undefined;
+
       return {
         hiddenColumns,
         columnOrder,
         ...(validDateRange !== null && { lastUsedDateRange: validDateRange }),
         ...(validGranularity !== null && { lastUsedGranularity: validGranularity }),
+        ...(compareEnabled !== undefined && { compareEnabled }),
       };
     } catch {
       // file doesn't exist yet — first-run defaults
