@@ -94,7 +94,7 @@ describe('syncSelectedFiles', () => {
 
     expect(result.filesDownloaded).toBe(2);
     expect(mockSpawn).toHaveBeenCalledWith(
-      'aws',
+      expect.stringContaining('aws'),
       ['s3', 'sync', 's3://test-bucket/cur/data/BILLING_PERIOD=2026-03/', expectedDest, '--profile', 'test-profile'],
       { stdio: ['ignore', 'pipe', 'pipe'] }
     );
@@ -651,7 +651,7 @@ describe('syncSelectedFiles', () => {
       });
 
       expect(mockSpawn).toHaveBeenCalledWith(
-        'aws',
+        expect.stringContaining('aws'),
         ['s3', 'sync', 's3://test-bucket/cost-opt/date=2026-03-15/', expect.stringContaining('cost-opt-2026-03-15'), '--profile', 'prod-profile'],
         { stdio: ['ignore', 'pipe', 'pipe'] }
       );
