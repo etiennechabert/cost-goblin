@@ -4,13 +4,14 @@ directories:
   buildResources: build
   output: dist
 files:
-  - "packages/desktop/dist/**/*"
-  - "packages/ui/dist/**/*"
-  - "packages/core/dist/**/*"
+  - "packages/desktop/out/**/*"
   - "node_modules/**/*"
+buildDependenciesFromSource: false
+nodeGypRebuild: false
+npmRebuild: false
 asar: true
 asarUnpack:
-  - "node_modules/duckdb/**"
+  - "node_modules/@duckdb/**"
 mac:
   target:
     - target: dmg
@@ -29,6 +30,7 @@ win:
         - x64
         - arm64
 linux:
+  category: Office
   target:
     - target: AppImage
       arch:
