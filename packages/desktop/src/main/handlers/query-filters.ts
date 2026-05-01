@@ -110,7 +110,7 @@ function mergeAccountRows(
 }
 
 export function registerFilterHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery, materializedBase } = app;
 
   ipcMain.handle('query:filter-values', async (_event, dimensionId: string, filterEntries: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }): Promise<{ value: string; label: string; count: number }[]> => {
     const dimensions = await getDimensions();
@@ -122,21 +122,35 @@ export function registerFilterHandlers(app: AppContext): void {
 
     const qb = new QueryBuilder();
     const { fieldExpr } = resolveFieldExpr(dimensionId, dimensions);
-    const whereClauses = [
-      ...buildFilterWhereClauses(filterEntries, dimensions, accountReverseMap, qb),
-      ...buildExclusionWhereClauses(costScope, dimensions, accountReverseMap, qb),
-    ];
-    if (dateRange !== undefined) {
+
+    const matSource = dateRange !== undefined
+      ? materializedBase.getSource(dateRange, 'daily')
+      : undefined;
+
+    const filterClauses = buildFilterWhereClauses(filterEntries, dimensions, accountReverseMap, qb);
+    const exclusionClauses = matSource !== undefined
+      ? []
+      : buildExclusionWhereClauses(costScope, dimensions, accountReverseMap, qb);
+    const whereClauses = [...filterClauses, ...exclusionClauses];
+
+    if (dateRange !== undefined && matSource === undefined) {
       const startParam = qb.addParam(dateRange.start);
       const endParam = qb.addParam(dateRange.end);
       whereClauses.push(`usage_date BETWEEN ${startParam} AND ${endParam}`);
     }
 
     const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-    const orgPath = await getOrgAccountsPath();
-    const periods = dateRange === undefined ? undefined : computePeriodsInRange(dateRange);
-    const availableColumns = await getAvailableColumns('daily');
-    const source = buildSource({ dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath, periods, costMetric: 'unblended', availableColumns });
+
+    let source: string;
+    if (matSource !== undefined) {
+      source = matSource;
+    } else {
+      const orgPath = await getOrgAccountsPath();
+      const periods = dateRange === undefined ? undefined : computePeriodsInRange(dateRange);
+      const availableColumns = await getAvailableColumns('daily');
+      source = buildSource({ dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath, periods, costMetric: 'unblended', availableColumns });
+    }
+
     const sql = `
       SELECT ${fieldExpr} AS val, SUM(cost) AS total_cost
       FROM ${source}
