@@ -213,13 +213,54 @@ function buildExclusionClauses(
   accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
   qb: QueryBuilder,
 ): string[] {
-  const clauses: string[] = [];
+  // Optimization: merge single-condition exclusion rules that target the same
+  // dimension into one NOT IN clause. This avoids redundant COALESCE/CASE
+  // evaluation per rule — DuckDB evaluates each NOT(...) independently, so
+  // five separate NOT (line_item_type IN (...)) become five COALESCE calls on
+  // every row instead of one.
+  const singleConditionByDim = new Map<string, { resolved: ResolvedDimension; values: string[] }>();
+  const multiConditionRules: ExclusionRule[] = [];
+
   for (const rule of rules) {
     if (!rule.enabled) continue;
+    if (rule.conditions.length === 1) {
+      const cond = rule.conditions[0];
+      if (cond === undefined || cond.values.length === 0) continue;
+      const resolved = tryResolveField(cond.dimensionId, dimensions);
+      if (resolved === null) continue;
+      // Account dimension with reverse-map expansion can't be merged simply
+      if (resolved.rawField === 'account_id' && accountReverseMap !== undefined) {
+        multiConditionRules.push(rule);
+        continue;
+      }
+      const key = cond.dimensionId;
+      const existing = singleConditionByDim.get(key);
+      const normalizedValues = cond.values.map(v => normalizeRuleValue(v, resolved.dim));
+      if (existing !== undefined) {
+        existing.values.push(...normalizedValues);
+      } else {
+        singleConditionByDim.set(key, { resolved, values: [...normalizedValues] });
+      }
+    } else {
+      multiConditionRules.push(rule);
+    }
+  }
+
+  const clauses: string[] = [];
+
+  // Emit merged single-condition exclusions
+  for (const [, { resolved, values }] of singleConditionByDim) {
+    const list = buildSqlList(values, qb);
+    clauses.push(`${resolved.fieldExpr} NOT IN (${list})`);
+  }
+
+  // Emit multi-condition rules as before
+  for (const rule of multiConditionRules) {
     const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap, qb);
     if (matchExpr === null) continue;
     clauses.push(`NOT (${matchExpr})`);
   }
+
   return clauses;
 }
 
