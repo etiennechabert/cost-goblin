@@ -1,0 +1,19 @@
+{
+  "name": "@costgoblin/mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "costgoblin-mcp": "./src/server.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit && eslint src/"
+  },
+  "dependencies": {
+    "@costgoblin/core": "*",
+    "@duckdb/node-api": "^1.5.2-r.1",
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

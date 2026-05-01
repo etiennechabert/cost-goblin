@@ -10,10 +10,11 @@
   "workspaces": [
     "packages/core",
     "packages/ui",
-    "packages/desktop"
+    "packages/desktop",
+    "packages/mcp"
   ],
   "scripts": {
-    "check": "tsc --noEmit -p packages/core/tsconfig.json && tsc --noEmit -p packages/ui/tsconfig.json && tsc --noEmit -p packages/desktop/tsconfig.json && eslint packages/core/src/ packages/ui/src/ packages/desktop/src/ && vitest run",
+    "check": "tsc --noEmit -p packages/core/tsconfig.json && tsc --noEmit -p packages/ui/tsconfig.json && tsc --noEmit -p packages/desktop/tsconfig.json && tsc --noEmit -p packages/mcp/tsconfig.json && eslint packages/core/src/ packages/ui/src/ packages/desktop/src/ packages/mcp/src/ && vitest run",
     "dev": "COSTGOBLIN_DATA_DIR=$PWD/data/processed COSTGOBLIN_CONFIG_DIR=$PWD/data/config npm run dev --workspace=packages/desktop",
     "dev:fixtures": "COSTGOBLIN_DATA_DIR=$PWD/packages/core/src/__fixtures__/synthetic COSTGOBLIN_CONFIG_DIR=$PWD/packages/core/src/__fixtures__/config npm run dev --workspace=packages/desktop",
     "build": "npm run build --workspaces",
