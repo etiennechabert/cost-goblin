@@ -1,15 +1,7 @@
+import pkg from 'electron-updater';
+const { autoUpdater } = pkg;
 import { logger, isStringRecord } from '@costgoblin/core';
 import type { UpdateInfo, UpdateStatus } from '@costgoblin/core';
-
-// Lazy-loaded — electron-updater crashes in dev/CI when app is not packaged
-let _updater: import('electron-updater').AppUpdater | null = null;
-async function loadUpdater(): Promise<import('electron-updater').AppUpdater> {
-  if (_updater === null) {
-    const mod = await import('electron-updater');
-    _updater = mod.autoUpdater;
-  }
-  return _updater;
-}
 
 type StatusListener = (status: UpdateStatus) => void;
 
@@ -51,8 +43,8 @@ function toUpdateInfo(info: { version: string; releaseDate: string; releaseNotes
 
 let currentInfo: UpdateInfo | null = null;
 
-export async function initAutoUpdater(): Promise<void> {
-  const updater = await loadUpdater();
+export function initAutoUpdater(): void {
+  const updater = autoUpdater;
   updater.autoDownload = false;
   updater.autoInstallOnAppQuit = false;
 
@@ -87,19 +79,16 @@ export async function initAutoUpdater(): Promise<void> {
   logger.info('Auto-updater initialized');
 }
 
-export async function checkForUpdates(): Promise<void> {
-  const updater = await loadUpdater();
-  await updater.checkForUpdates();
+export function checkForUpdates(): Promise<void> {
+  return autoUpdater.checkForUpdates().then(() => undefined);
 }
 
-export async function downloadUpdate(): Promise<void> {
-  const updater = await loadUpdater();
-  await updater.downloadUpdate();
+export function downloadUpdate(): Promise<void> {
+  return autoUpdater.downloadUpdate().then(() => undefined);
 }
 
-export async function quitAndInstall(): Promise<void> {
-  const updater = await loadUpdater();
-  updater.quitAndInstall();
+export function quitAndInstall(): void {
+  autoUpdater.quitAndInstall();
 }
 
 export function onStatusChanged(callback: StatusListener): () => void {

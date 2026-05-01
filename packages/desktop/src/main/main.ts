@@ -222,7 +222,11 @@ async function main(): Promise<void> {
 
   installCSP();
   if (app.isPackaged) {
-    await initAutoUpdater();
+    try {
+      initAutoUpdater();
+    } catch {
+      logger.warn('Auto-updater unavailable');
+    }
   }
   registerUpdateHandlers();
   await createWindow(db, syncClient);
