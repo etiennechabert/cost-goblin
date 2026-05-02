@@ -461,7 +461,10 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const dayMs = 86_400_000;
       const end = new Date(Date.now() - lagDays * dayMs);
       const retentionDays = config.providers[0]?.sync.daily.retentionDays ?? 30;
-      const windowDays = Math.min(retentionDays, 30);
+      // Materialize 60 days (or retention limit) so the summary widget's
+      // previous-period comparison and the trends view can both hit the
+      // in-memory table instead of falling back to raw Parquet.
+      const windowDays = Math.min(retentionDays, 60);
       const start = new Date(Date.now() - (windowDays + lagDays) * dayMs);
       const dateRange = {
         start: start.toISOString().slice(0, 10),

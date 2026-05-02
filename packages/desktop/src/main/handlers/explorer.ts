@@ -162,9 +162,46 @@ function buildExclusionClauses(
   accountReverseMap: ReadonlyMap<string, readonly string[]>,
 ): string[] {
   if (costScope === undefined) return [];
-  const clauses: string[] = [];
+  // Merge single-condition exclusion rules that target the same dimension
+  // into one NOT IN clause. Avoids redundant COALESCE/CASE evaluation
+  // per rule when DuckDB evaluates each NOT(...) independently.
+  const singleByDim = new Map<string, { fieldExpr: string; values: string[] }>();
+  const multiRules: ExclusionRule[] = [];
+
   for (const rule of costScope.rules) {
     if (!rule.enabled) continue;
+    if (rule.conditions.length === 1) {
+      const cond = rule.conditions[0];
+      if (cond === undefined || cond.values.length === 0) continue;
+      const key = cond.dimensionId;
+      const existing = singleByDim.get(key);
+      if (existing !== undefined) {
+        existing.values.push(...cond.values.map(v => v.replaceAll("'", "''")));
+      } else {
+        // Build the field expression once per dimension
+        const probe: ExclusionRule = { ...rule, conditions: [cond] };
+        const expr = buildRuleMatchExpr(probe, dimensions, accountReverseMap);
+        if (expr === null) continue;
+        // Extract the field expression from "fieldExpr IN ('v1', 'v2')"
+        const inIdx = expr.indexOf(' IN (');
+        if (inIdx === -1) {
+          multiRules.push(rule);
+          continue;
+        }
+        const fieldExpr = expr.slice(0, inIdx);
+        singleByDim.set(key, { fieldExpr, values: cond.values.map(v => v.replaceAll("'", "''")) });
+      }
+    } else {
+      multiRules.push(rule);
+    }
+  }
+
+  const clauses: string[] = [];
+  for (const [, { fieldExpr, values }] of singleByDim) {
+    const list = values.map(v => `'${v}'`).join(', ');
+    clauses.push(`${fieldExpr} NOT IN (${list})`);
+  }
+  for (const rule of multiRules) {
     const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
     if (matchExpr !== null) clauses.push(`NOT (${matchExpr})`);
   }
