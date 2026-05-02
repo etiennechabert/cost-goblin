@@ -173,8 +173,13 @@ export function ExplorerView(): React.JSX.Element {
     saveAllPrefs(hiddenColumns, columnOrder, dateRange, granularity);
   }, [dateRange, granularity]);
 
+  const cancelReadyRef = useRef(false);
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
+    if (!cancelReadyRef.current) {
+      cancelReadyRef.current = true;
+      return;
+    }
     api.cancelPendingQueries().catch(() => undefined);
   }, [dateRange, granularity, api]);
 
