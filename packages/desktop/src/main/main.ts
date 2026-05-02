@@ -2,8 +2,12 @@ import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { Session } from 'node:inspector';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { logger } from '@costgoblin/core';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 import type { LogEntry } from '@costgoblin/core';
 import { createDuckDBClient } from './duckdb-client.js';
 import type { DuckDBClient } from './duckdb-client.js';
