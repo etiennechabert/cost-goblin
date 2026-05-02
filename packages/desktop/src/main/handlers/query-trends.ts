@@ -40,12 +40,13 @@ export function registerTrendHandlers(app: AppContext): void {
     const prevStart = new Date(startMs - durationDays * dayMs).toISOString().slice(0, 10);
     const fullRange = { start: prevStart, end: params.dateRange.end };
     const matSource = materializedBase.getSource(fullRange, 'daily');
+    const isMat = matSource !== undefined;
 
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const { sql, params: queryParams } = buildTrendQuery(params, qcOpts);
-    logger.info('query:trends', { groupBy: params.groupBy, materialized: matSource !== undefined });
+    logger.info('query:trends', { groupBy: params.groupBy, materialized: isMat });
 
-    const rows = await runPreparedQuery(sql, queryParams);
+    const rows = await runPreparedQuery(sql, queryParams, isMat);
     const result = buildTrendResult(rows, params.deltaThreshold, params.percentThreshold);
     if (params.groupBy === 'account' || params.groupBy === 'account_id') {
       return {

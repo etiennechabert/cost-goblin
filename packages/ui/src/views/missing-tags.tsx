@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Dimension,
   DimensionId,
@@ -207,6 +207,15 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
     ? getDimensionId(tagDimensions[0])
     : null;
   const activeTagId = selectedTag ?? firstTagId;
+
+  const missingFirstRef = useRef(true);
+  useEffect(() => {
+    if (missingFirstRef.current) {
+      missingFirstRef.current = false;
+      return;
+    }
+    api.cancelPendingQueries().catch(() => undefined);
+  }, [dateRange, granularity, api]);
 
   const missingQuery = useQuery(
     () => {

@@ -51,12 +51,13 @@ export function registerRecommendationHandlers(app: AppContext): void {
       };
     }
     const matSource = materializedBase.getSource(params.dateRange, 'daily');
+    const isMat = matSource !== undefined;
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const resourceQuery = buildMissingTagsQuery(params, qcOpts);
     const nonResourceQuery = buildNonResourceCostQuery(params, qcOpts);
     const [resourceRows, nonResourceRows] = await Promise.all([
-      runPreparedQuery(resourceQuery.sql, resourceQuery.params),
-      runPreparedQuery(nonResourceQuery.sql, nonResourceQuery.params),
+      runPreparedQuery(resourceQuery.sql, resourceQuery.params, isMat),
+      runPreparedQuery(nonResourceQuery.sql, nonResourceQuery.params, isMat),
     ]);
     const result = buildMissingTagsResult(resourceRows, nonResourceRows, Number(params.minCost));
     return {
