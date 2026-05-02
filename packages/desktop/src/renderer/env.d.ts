@@ -10,6 +10,8 @@ declare global {
     readonly durationMs: number | null;
     readonly rowCount: number | null;
     readonly error: string | null;
+    readonly materialized: boolean;
+    readonly cached: boolean;
   }
 
   interface DebugApi {
