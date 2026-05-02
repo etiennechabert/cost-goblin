@@ -22,7 +22,7 @@ import {
 } from './query-utils.js';
 
 export function registerRecommendationHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getConfig, getCostScope, getAvailableColumns, runQuery, runPreparedQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getConfig, getCostScope, getAvailableColumns, runQuery, runPreparedQuery, materializedBase } = app;
 
   ipcMain.handle('query:missing-tags', async (_event, params: MissingTagsParams): Promise<MissingTagsResult> => {
     const dimensions = await getDimensions();
@@ -50,7 +50,8 @@ export function registerRecommendationHandlers(app: AppContext): void {
         nonResourceRows: [],
       };
     }
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns };
+    const matSource = materializedBase.getSource(params.dateRange, 'daily');
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const resourceQuery = buildMissingTagsQuery(params, qcOpts);
     const nonResourceQuery = buildNonResourceCostQuery(params, qcOpts);
     const [resourceRows, nonResourceRows] = await Promise.all([

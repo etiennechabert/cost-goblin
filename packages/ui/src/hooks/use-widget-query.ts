@@ -32,23 +32,15 @@ async function fetchDailyWithFallback(
   filters: FilterMap,
   granularity: Granularity,
 ): Promise<DailyQueryResult> {
-  if (fallbackDims.length === 0) {
-    const result = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
-    return { result, groupBy: specGroupBy };
+  const primary = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
+  if (fallbackDims.length === 0 || primary.groups.length > 1) {
+    return { result: primary, groupBy: specGroupBy };
   }
-  const allDims = [specGroupBy, ...fallbackDims];
-  const candidates = await Promise.all(
-    allDims.map(async dim => ({
-      dim,
-      result: await api.queryDailyCosts({ groupBy: dim, dateRange, filters, granularity }),
-    })),
-  );
-  for (const c of candidates.slice(0, -1)) {
-    if (c.result.groups.length > 1) return { result: c.result, groupBy: c.dim };
+  for (const dim of fallbackDims) {
+    const result = await api.queryDailyCosts({ groupBy: dim, dateRange, filters, granularity });
+    if (result.groups.length > 1) return { result, groupBy: dim };
   }
-  const last = candidates[candidates.length - 1];
-  if (last === undefined) throw new Error('empty fallback chain');
-  return { result: last.result, groupBy: last.dim };
+  return { result: primary, groupBy: specGroupBy };
 }
 
 async function fetchCostsWithFallback(
@@ -59,23 +51,15 @@ async function fetchCostsWithFallback(
   filters: FilterMap,
   granularity: Granularity,
 ): Promise<CostQueryResult> {
-  if (fallbackDims.length === 0) {
-    const result = await api.queryCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
-    return { result, groupBy: specGroupBy };
+  const primary = await api.queryCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
+  if (fallbackDims.length === 0 || primary.rows.length > 1) {
+    return { result: primary, groupBy: specGroupBy };
   }
-  const allDims = [specGroupBy, ...fallbackDims];
-  const candidates = await Promise.all(
-    allDims.map(async dim => ({
-      dim,
-      result: await api.queryCosts({ groupBy: dim, dateRange, filters, granularity }),
-    })),
-  );
-  for (const c of candidates.slice(0, -1)) {
-    if (c.result.rows.length > 1) return { result: c.result, groupBy: c.dim };
+  for (const dim of fallbackDims) {
+    const result = await api.queryCosts({ groupBy: dim, dateRange, filters, granularity });
+    if (result.rows.length > 1) return { result, groupBy: dim };
   }
-  const last = candidates[candidates.length - 1];
-  if (last === undefined) throw new Error('empty fallback chain');
-  return { result: last.result, groupBy: last.dim };
+  return { result: primary, groupBy: specGroupBy };
 }
 
 interface WidgetQueryArgs {

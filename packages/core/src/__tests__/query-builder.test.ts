@@ -84,8 +84,8 @@ describe('buildTrendQuery', () => {
       },
       { dataDir: '/data', dimensions },
     );
-    expect(result.sql).toContain('current_period');
-    expect(result.sql).toContain('previous_period');
+    expect(result.sql).toContain('current_cost');
+    expect(result.sql).toContain('previous_cost');
     expect(result.sql).toContain('delta');
     // Verify date parameters
     expect(result.params).toContain('2026-02-01');

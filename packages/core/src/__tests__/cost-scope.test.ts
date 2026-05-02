@@ -112,6 +112,7 @@ describe('cost metric column selection', () => {
 describe('exclusion clauses', () => {
   it('produces no exclusion when rules array is empty', () => {
     const sql = buildQuery({ costMetric: 'unblended', rules: [] });
+    expect(sql).not.toContain('NOT IN');
     expect(sql).not.toContain('NOT (');
   });
 
@@ -128,6 +129,7 @@ describe('exclusion clauses', () => {
         },
       ],
     });
+    expect(sql).not.toContain('NOT IN');
     expect(sql).not.toContain('NOT (');
   });
 
@@ -140,11 +142,12 @@ describe('exclusion clauses', () => {
       } },
       5,
     );
-    expect(result.sql).toContain('NOT (service IN ($');
+    // Single-condition rules are merged into `dim NOT IN (...)` form
+    expect(result.sql).toContain('service NOT IN ($');
     expect(result.params).toContain('AWSSupport');
   });
 
-  it('rule with multiple values uses IN list', () => {
+  it('rule with multiple values uses NOT IN list', () => {
     const result = buildCostQuery(
       baseParams,
       { dataDir: '/data', dimensions, costScope: {
@@ -153,10 +156,10 @@ describe('exclusion clauses', () => {
       } },
       5,
     );
-    expect(result.sql).toContain('line_item_type IN ($');
+    // Single-condition rules merge into `dim NOT IN (...)` form
+    expect(result.sql).toContain('line_item_type NOT IN ($');
     expect(result.params).toContain('RIFee');
     expect(result.params).toContain('SavingsPlanRecurringFee');
-    expect(result.sql).toContain('NOT (');
   });
 
   it('rule with multiple conditions uses AND', () => {
@@ -186,14 +189,15 @@ describe('exclusion clauses', () => {
       } },
       5,
     );
-    // Tag dim resolves via CASE expression
+    // Tag dim resolves via CASE expression with merged NOT IN form
     expect(sql).toContain('CASE');
     expect(params).toContain('core-banking');
-    expect(sql).toContain('NOT (');
+    expect(sql).toContain('NOT IN ($');
   });
 
   it('DEFAULT_COST_SCOPE built-in rules are disabled by default — no exclusions', () => {
     const sql = buildQuery(DEFAULT_COST_SCOPE);
+    expect(sql).not.toContain('NOT IN');
     expect(sql).not.toContain('NOT (');
   });
 
@@ -213,6 +217,7 @@ describe('exclusion clauses', () => {
         },
       ],
     });
+    expect(sql).not.toContain('NOT IN');
     expect(sql).not.toContain('NOT (');
     expect(sql).not.toContain('nonexistent_dim');
   });
@@ -280,7 +285,8 @@ describe('buildDailyCostsQuery with costScope', () => {
         rules: [{ id: 'support', name: 'Support', enabled: true, builtIn: true, conditions: [{ dimensionId: asDimensionId('service_family'), values: ['Support'] }] }],
       } },
     );
-    expect(sql).toContain('NOT (service_family IN ($');
+    // Single-condition rules use merged NOT IN form
+    expect(sql).toContain('service_family NOT IN ($');
     expect(params).toContain('Support');
     expect(sql).toContain('line_item_blended_cost');
   });

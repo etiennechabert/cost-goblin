@@ -213,13 +213,54 @@ function buildExclusionClauses(
   accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
   qb: QueryBuilder,
 ): string[] {
-  const clauses: string[] = [];
+  // Optimization: merge single-condition exclusion rules that target the same
+  // dimension into one NOT IN clause. This avoids redundant COALESCE/CASE
+  // evaluation per rule — DuckDB evaluates each NOT(...) independently, so
+  // five separate NOT (line_item_type IN (...)) become five COALESCE calls on
+  // every row instead of one.
+  const singleConditionByDim = new Map<string, { resolved: ResolvedDimension; values: string[] }>();
+  const multiConditionRules: ExclusionRule[] = [];
+
   for (const rule of rules) {
     if (!rule.enabled) continue;
+    if (rule.conditions.length === 1) {
+      const cond = rule.conditions[0];
+      if (cond === undefined || cond.values.length === 0) continue;
+      const resolved = tryResolveField(cond.dimensionId, dimensions);
+      if (resolved === null) continue;
+      // Account dimension with reverse-map expansion can't be merged simply
+      if (resolved.rawField === 'account_id' && accountReverseMap !== undefined) {
+        multiConditionRules.push(rule);
+        continue;
+      }
+      const key = cond.dimensionId;
+      const existing = singleConditionByDim.get(key);
+      const normalizedValues = cond.values.map(v => normalizeRuleValue(v, resolved.dim));
+      if (existing !== undefined) {
+        existing.values.push(...normalizedValues);
+      } else {
+        singleConditionByDim.set(key, { resolved, values: [...normalizedValues] });
+      }
+    } else {
+      multiConditionRules.push(rule);
+    }
+  }
+
+  const clauses: string[] = [];
+
+  // Emit merged single-condition exclusions
+  for (const [, { resolved, values }] of singleConditionByDim) {
+    const list = buildSqlList(values, qb);
+    clauses.push(`${resolved.fieldExpr} NOT IN (${list})`);
+  }
+
+  // Emit multi-condition rules as before
+  for (const rule of multiConditionRules) {
     const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap, qb);
     if (matchExpr === null) continue;
     clauses.push(`NOT (${matchExpr})`);
   }
+
   return clauses;
 }
 
@@ -459,23 +500,14 @@ export function buildCostQuery(
         SUM(cost) AS total_cost
       FROM base
       GROUP BY entity
-    ),
-    entity_services AS (
-      SELECT
-        b.entity,
-        b.service,
-        SUM(b.cost) AS service_cost
-      FROM base b
-      INNER JOIN top_services ts ON b.service = ts.service
-      GROUP BY b.entity, b.service
     )
     SELECT
       et.entity,
       et.total_cost,
-      es.service,
-      COALESCE(es.service_cost, 0) AS service_cost
+      b.service,
+      COALESCE(b.cost, 0) AS service_cost
     FROM entity_totals et
-    LEFT JOIN entity_services es ON et.entity = es.entity
+    LEFT JOIN base b ON et.entity = b.entity AND b.service IN (SELECT service FROM top_services)
     ORDER BY et.total_cost DESC
   `.trim();
 
@@ -486,32 +518,40 @@ export function buildTrendQuery(
   params: TrendQueryParams,
   opts: QueryContextOptions,
 ): ParameterizedQuery {
-  const { dataDir, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns } = opts;
+  const { dataDir, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns, materializedSource } = opts;
   assertFiniteNumber(Number(params.deltaThreshold), 'deltaThreshold');
   const qb = new QueryBuilder();
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
-  const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
 
   const startDate = params.dateRange.start;
   const endDate = params.dateRange.end;
 
-  // Trend reads both the current period and the previous (same-duration)
-  // period, so the source needs to cover months from both spans. The previous
-  // span ends the day before `startDate`.
-  const currentPeriods = computePeriodsInRange(params.dateRange);
-  const dayMs = 24 * 60 * 60 * 1000;
-  const startMs = new Date(`${startDate}T00:00:00Z`).getTime();
-  const endMs = new Date(`${endDate}T00:00:00Z`).getTime();
-  const durationDays = Math.round((endMs - startMs) / dayMs) + 1;
-  const prevEndIso = new Date(startMs - dayMs).toISOString().slice(0, 10);
-  const prevStartIso = new Date(startMs - durationDays * dayMs).toISOString().slice(0, 10);
-  const previousPeriods = computePeriodsInRange({ start: prevStartIso, end: prevEndIso });
-  const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
-  const periods = availablePeriods === undefined ? required : required.filter(p => availablePeriods.includes(p));
-  const source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective });
+  let source: string;
+  let exclusionClauses: string[];
+  if (materializedSource !== undefined) {
+    source = materializedSource;
+    exclusionClauses = [];
+  } else {
+    exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
+
+    // Trend reads both the current period and the previous (same-duration)
+    // period, so the source needs to cover months from both spans. The previous
+    // span ends the day before `startDate`.
+    const currentPeriods = computePeriodsInRange(params.dateRange);
+    const dayMs = 24 * 60 * 60 * 1000;
+    const startMs = new Date(`${startDate}T00:00:00Z`).getTime();
+    const endMs = new Date(`${endDate}T00:00:00Z`).getTime();
+    const durationDays = Math.round((endMs - startMs) / dayMs) + 1;
+    const prevEndIso = new Date(startMs - dayMs).toISOString().slice(0, 10);
+    const prevStartIso = new Date(startMs - durationDays * dayMs).toISOString().slice(0, 10);
+    const previousPeriods = computePeriodsInRange({ start: prevStartIso, end: prevEndIso });
+    const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
+    const periods = availablePeriods === undefined ? required : required.filter(p => availablePeriods.includes(p));
+    source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective });
+  }
 
   const allFilterClauses = [...filterClauses, ...exclusionClauses];
   const filterWhere = allFilterClauses.length > 0 ? ` AND ${allFilterClauses.join(' AND ')}` : '';
@@ -520,41 +560,43 @@ export function buildTrendQuery(
   const endDatePlaceholder = qb.addParam(endDate);
   const deltaThresholdPlaceholder = qb.addParam(Number(params.deltaThreshold));
 
+  // Single-scan approach: read the combined date range once and bucket rows
+  // into current/previous via a CASE expression, avoiding scanning the
+  // source twice.
   const sql = `
-    WITH current_period AS (
+    WITH bucketed AS (
       SELECT
         ${groupByResolved.fieldExpr} AS entity,
-        SUM(cost) AS total_cost
-      FROM ${source}
-      WHERE usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder}${filterWhere}
-      GROUP BY entity
-    ),
-    period_length AS (
-      SELECT DATEDIFF('day', CAST(${startDatePlaceholder} AS DATE), CAST(${endDatePlaceholder} AS DATE)) + 1 AS days
-    ),
-    previous_period AS (
-      SELECT
-        ${groupByResolved.fieldExpr} AS entity,
-        SUM(cost) AS total_cost
+        CASE
+          WHEN usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder} THEN 'current'
+          ELSE 'previous'
+        END AS period,
+        cost
       FROM ${source}
       WHERE usage_date BETWEEN
-        CAST(${startDatePlaceholder} AS DATE) - (SELECT days FROM period_length) * INTERVAL '1 day'
-        AND CAST(${startDatePlaceholder} AS DATE) - INTERVAL '1 day'${filterWhere}
+        CAST(${startDatePlaceholder} AS DATE) - (DATEDIFF('day', CAST(${startDatePlaceholder} AS DATE), CAST(${endDatePlaceholder} AS DATE)) + 1) * INTERVAL '1 day'
+        AND ${endDatePlaceholder}${filterWhere}
+    ),
+    agg AS (
+      SELECT
+        entity,
+        SUM(CASE WHEN period = 'current' THEN cost ELSE 0 END) AS current_cost,
+        SUM(CASE WHEN period = 'previous' THEN cost ELSE 0 END) AS previous_cost
+      FROM bucketed
       GROUP BY entity
     )
     SELECT
-      COALESCE(c.entity, p.entity) AS entity,
-      COALESCE(c.total_cost, 0) AS current_cost,
-      COALESCE(p.total_cost, 0) AS previous_cost,
-      COALESCE(c.total_cost, 0) - COALESCE(p.total_cost, 0) AS delta,
+      entity,
+      current_cost,
+      previous_cost,
+      current_cost - previous_cost AS delta,
       CASE
-        WHEN COALESCE(p.total_cost, 0) = 0 THEN NULL
-        ELSE (COALESCE(c.total_cost, 0) - p.total_cost) / p.total_cost * 100
+        WHEN previous_cost = 0 THEN NULL
+        ELSE (current_cost - previous_cost) / previous_cost * 100
       END AS percent_change
-    FROM current_period c
-    FULL OUTER JOIN previous_period p ON c.entity = p.entity
-    WHERE ABS(COALESCE(c.total_cost, 0) - COALESCE(p.total_cost, 0)) >= ${deltaThresholdPlaceholder}
-    ORDER BY ABS(COALESCE(c.total_cost, 0) - COALESCE(p.total_cost, 0)) DESC
+    FROM agg
+    WHERE ABS(current_cost - previous_cost) >= ${deltaThresholdPlaceholder}
+    ORDER BY ABS(current_cost - previous_cost) DESC
   `.trim();
 
   return { sql, params: qb.build().params };
@@ -800,7 +842,7 @@ export function buildMaterializeBaseQuery(
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(dateRange, availablePeriods);
-  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective });
+  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, includeRawTags: true });
 
   const whereConditions = [
     `usage_date BETWEEN '${sqlEscapeString(dateRange.start)}' AND '${sqlEscapeString(dateRange.end)}'`,
