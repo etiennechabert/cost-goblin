@@ -53,7 +53,7 @@ export async function runSql(
   let costsCte: string;
 
   if (matSource !== undefined) {
-    costsCte = `costs AS (SELECT * FROM ${matSource})`;
+    costsCte = `costs AS (SELECT * FROM ${matSource} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
   } else {
     const available = await listLocalMonths(ctx.dataDir, 'daily');
     const required = computePeriodsInRange(dateRange);

@@ -61,9 +61,7 @@ export async function exploreData(
     availableColumns,
   });
 
-  const whereClause = matSource !== undefined
-    ? ''
-    : `WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}'`;
+  const whereClause = `WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}'`;
 
   const groupByColumns = params.groupByColumns?.filter(c => isValidColumn(c));
 
