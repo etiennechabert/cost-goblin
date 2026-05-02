@@ -1,4 +1,4 @@
-import { createAppContext, type IpcContext } from './handlers/context.js';
+import { createAppContext, type AppContext, type IpcContext } from './handlers/context.js';
 import { registerQueryHandlers } from './handlers/query.js';
 import { registerSyncHandlers } from './handlers/sync.js';
 import { registerConfigHandlers } from './handlers/config.js';
@@ -13,9 +13,9 @@ import { registerCostScopeHandlers } from './handlers/cost-scope.js';
 import { registerExplorerHandlers } from './handlers/explorer.js';
 import { registerDebugHandlers } from './handlers/debug.js';
 
-export type { IpcContext } from './handlers/context.js';
+export type { AppContext, IpcContext } from './handlers/context.js';
 
-export function registerIpcHandlers(ctx: IpcContext): void {
+export function registerIpcHandlers(ctx: IpcContext): AppContext {
   const app = createAppContext(ctx);
   registerQueryHandlers(app);
   registerSyncHandlers(app);
@@ -32,4 +32,6 @@ export function registerIpcHandlers(ctx: IpcContext): void {
   registerDebugHandlers(app);
 
   app.warmupBase();
+
+  return app;
 }
