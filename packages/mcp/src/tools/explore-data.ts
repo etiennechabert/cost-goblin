@@ -69,6 +69,9 @@ export async function exploreData(
 
   logger.info('explore-data', { dateRange, grouped: groupByColumns !== undefined && groupByColumns.length > 0 });
 
+  const isSlim = matSource !== undefined;
+  const hasListCost = !isSlim && availableColumns.has('pricing_public_on_demand_cost');
+
   if (groupByColumns !== undefined && groupByColumns.length > 0) {
     const selectCols = groupByColumns.map(col =>
       col === 'usage_date' ? `usage_date::VARCHAR AS usage_date` : col,
@@ -77,13 +80,17 @@ export async function exploreData(
       ? `${params.sort.column === 'cost' ? 'SUM(cost)' : params.sort.column} ${params.sort.direction === 'asc' ? 'ASC' : 'DESC'}`
       : 'SUM(cost) DESC';
 
+    const aggCols = [
+      'CAST(SUM(cost) AS DOUBLE) AS cost',
+      ...(hasListCost ? ['CAST(SUM(list_cost) AS DOUBLE) AS list_cost'] : []),
+      ...(!isSlim ? ['CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount'] : []),
+      'CAST(COUNT(*) AS DOUBLE) AS row_count',
+    ];
+
     const sql = `
       SELECT
         ${selectCols.join(', ')},
-        CAST(SUM(cost) AS DOUBLE) AS cost,
-        CAST(SUM(list_cost) AS DOUBLE) AS list_cost,
-        CAST(SUM(usage_amount) AS DOUBLE) AS usage_amount,
-        CAST(COUNT(*) AS DOUBLE) AS row_count
+        ${aggCols.join(',\n        ')}
       FROM ${source}
       ${whereClause}
       GROUP BY ${groupByColumns.join(', ')}
@@ -117,13 +124,17 @@ export async function exploreData(
     ? `${params.sort.column} ${params.sort.direction === 'asc' ? 'ASC' : 'DESC'}`
     : 'ABS(cost) DESC';
 
+  const rawCols = [
+    'usage_date::VARCHAR AS usage_date',
+    'account_id', 'account_name', 'region', 'service', 'service_family',
+    'line_item_type', 'resource_id',
+    'CAST(cost AS DOUBLE) AS cost',
+    ...(hasListCost ? ['CAST(list_cost AS DOUBLE) AS list_cost'] : []),
+  ];
+
   const sql = `
     SELECT
-      usage_date::VARCHAR AS usage_date,
-      account_id, account_name, region, service, service_family,
-      line_item_type, resource_id,
-      CAST(cost AS DOUBLE) AS cost,
-      CAST(list_cost AS DOUBLE) AS list_cost
+      ${rawCols.join(', ')}
     FROM ${source}
     ${whereClause}
     ORDER BY ${sortExpr}
