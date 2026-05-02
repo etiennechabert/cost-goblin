@@ -310,10 +310,15 @@ export interface BuildSourceOptions {
    *  containing the resource-level value before COALESCE fallback. Used by
    *  the missing-tags query to detect truly untagged resources. */
   readonly includeRawTags?: boolean | undefined;
+  /** When true, omits columns only needed by Explorer sample rows:
+   *  description, usage_amount, list_cost. Reduces Parquet I/O and
+   *  materialized table memory footprint significantly. */
+  readonly excludeExplorerColumns?: boolean | undefined;
 }
 
 export function buildSource(opts: BuildSourceOptions): string {
-  const { dataDir, tier, dimensions, orgAccountsPath, periods, costMetric = 'unblended', availableColumns, costPerspective, includeRawTags } = opts;
+  const { dataDir, tier, dimensions, orgAccountsPath, periods, costMetric = 'unblended', availableColumns, costPerspective, includeRawTags, excludeExplorerColumns } = opts;
+  const slim = excludeExplorerColumns === true;
   const hasFallbacks = dimensions.tags.some(t => t.accountTagFallback !== undefined);
   const needsOrgJoin = hasFallbacks && orgAccountsPath !== undefined;
 
@@ -370,6 +375,11 @@ export function buildSource(opts: BuildSourceOptions): string {
   const tablePrefix = needsOrgJoin ? 'cur.' : '';
   const costExpr = costExprFor(costMetric, tablePrefix, costPerspective, availableColumns);
 
+  const explorerColumns = slim ? '' : `
+      COALESCE(${tablePrefix}line_item_line_item_description, '') AS description,
+      COALESCE(${tablePrefix}line_item_usage_amount, 0) AS usage_amount,
+      COALESCE(${tablePrefix}pricing_public_on_demand_cost, 0) AS list_cost,`;
+
   return `(
     SELECT
       ${dateExpr},
@@ -377,12 +387,9 @@ export function buildSource(opts: BuildSourceOptions): string {
       COALESCE(${tablePrefix}line_item_usage_account_name, '') AS account_name,
       COALESCE(${tablePrefix}product_region_code, '') AS region,
       COALESCE(${tablePrefix}product_servicecode, '') AS service,
-      COALESCE(${tablePrefix}product_product_family, '') AS service_family,
-      COALESCE(${tablePrefix}line_item_line_item_description, '') AS description,
+      COALESCE(${tablePrefix}product_product_family, '') AS service_family,${explorerColumns}
       COALESCE(${tablePrefix}line_item_resource_id, '') AS resource_id,
-      COALESCE(${tablePrefix}line_item_usage_amount, 0) AS usage_amount,
       ${costExpr} AS cost,
-      COALESCE(${tablePrefix}pricing_public_on_demand_cost, 0) AS list_cost,
       COALESCE(${tablePrefix}line_item_line_item_type, '') AS line_item_type,
       COALESCE(${tablePrefix}line_item_operation, '') AS operation,
       COALESCE(${tablePrefix}line_item_usage_type, '') AS usage_type${tagClause}
@@ -448,7 +455,7 @@ function setupQuery(
   const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, ...extraSourceOpts });
+  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, excludeExplorerColumns: true, ...extraSourceOpts });
   return { qb, filterClauses, exclusionClauses, source, costMetric };
 }
 
@@ -842,7 +849,7 @@ export function buildMaterializeBaseQuery(
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(dateRange, availablePeriods);
-  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, includeRawTags: true });
+  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, includeRawTags: true, excludeExplorerColumns: true });
 
   const whereConditions = [
     `usage_date BETWEEN '${sqlEscapeString(dateRange.start)}' AND '${sqlEscapeString(dateRange.end)}'`,
