@@ -69,8 +69,16 @@ function QueryRow({ entry }: Readonly<{ entry: DebugQueryLogEntry }>): React.JSX
           <span className="flex-1 text-xs font-mono text-text-secondary truncate">
             {sqlPreview(entry.sql)}
           </span>
-          <span className="text-xs text-text-muted shrink-0">
-            {(() => { if (entry.durationMs !== null) { return formatDuration(entry.durationMs); } return entry.status === 'queued' ? 'queued' : '...'; })()}
+          <span className="flex items-center gap-1.5 shrink-0">
+            {entry.cached && (
+              <span className="text-[10px] font-medium px-1 rounded bg-accent/15 text-accent">CACHE</span>
+            )}
+            {entry.materialized && !entry.cached && (
+              <span className="text-[10px] font-medium px-1 rounded bg-positive/15 text-positive">MEM</span>
+            )}
+            <span className="text-xs text-text-muted">
+              {(() => { if (entry.durationMs !== null) { return formatDuration(entry.durationMs); } return entry.status === 'queued' ? 'queued' : '...'; })()}
+            </span>
           </span>
         </div>
         <div className="flex items-center gap-3 mt-0.5 ml-4">

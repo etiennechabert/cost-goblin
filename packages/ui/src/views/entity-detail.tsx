@@ -94,6 +94,16 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   const entityFilter: FilterMap = { [asDimensionId(dimension)]: [asTagValue(entity)] };
   const filterKey = JSON.stringify(entityFilter);
 
+  const cancelReadyRef = useRef(false);
+  useEffect(() => {
+    if (!prefsLoadedRef.current) return;
+    if (!cancelReadyRef.current) {
+      cancelReadyRef.current = true;
+      return;
+    }
+    api.cancelPendingQueries().catch(() => undefined);
+  }, [dateRange, granularity, api]);
+
   // Load persisted date range and granularity on mount
   useEffect(() => {
     api.getExplorerPreferences().then(prefs => {

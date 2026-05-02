@@ -1,5 +1,5 @@
 import { parentPort } from 'node:worker_threads';
-import { cpus } from 'node:os';
+import { cpus, totalmem } from 'node:os';
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
@@ -11,6 +11,19 @@ interface DuckDBModule {
 async function createDuckDB(): Promise<DuckDBInstance> {
   const duckdb = (await import('@duckdb/node-api')) as unknown as DuckDBModule;
   return duckdb.DuckDBInstance.create();
+}
+
+function computeMemoryLimitGB(): number {
+  const totalGB = totalmem() / (1024 * 1024 * 1024);
+  return Math.min(4, Math.max(1, Math.round(totalGB * 0.5)));
+}
+
+async function configureDuckDB(conn: DuckDBConnection, tempDir: string | undefined): Promise<void> {
+  const memGB = computeMemoryLimitGB();
+  await conn.run(`SET memory_limit = '${String(memGB)}GB'`);
+  if (tempDir !== undefined) {
+    await conn.run(`SET temp_directory = '${tempDir.replaceAll("'", "''")}'`);
+  }
 }
 
 if (parentPort === null) {
@@ -41,6 +54,11 @@ function isPreparedQueryRequest(msg: unknown): msg is { kind: 'prepared-query'; 
 function isCancelRequest(msg: unknown): msg is { kind: 'cancel-pending' } {
   if (!hasProps(msg)) return false;
   return msg['kind'] === 'cancel-pending';
+}
+
+function isConfigureRequest(msg: unknown): msg is { kind: 'configure'; tempDir: string } {
+  if (!hasProps(msg)) return false;
+  return msg['kind'] === 'configure' && typeof msg['tempDir'] === 'string';
 }
 
 // ---------------------------------------------------------------------------
@@ -135,15 +153,6 @@ async function fetchAllRowsPrepared(
   }
 }
 
-/**
- * Pool of DuckDB connections on one DuckDBInstance. A single connection
- * serializes queries internally — with N connections, independent queries
- * execute in parallel (bound by DuckDB's own thread scheduling). Queries
- * arriving while all connections are busy queue FIFO via ResourcePool.
- *
- * Size defaults to the number of logical CPUs (min 4, max 16). Override
- * with COSTGOBLIN_DUCKDB_POOL_SIZE.
- */
 function parsePoolSize(): number {
   const raw = process.env['COSTGOBLIN_DUCKDB_POOL_SIZE'];
   if (raw !== undefined) {
@@ -154,9 +163,19 @@ function parsePoolSize(): number {
 }
 
 let poolPromise: Promise<ResourcePool<DuckDBConnection>> | null = null;
+let dbInstance: DuckDBInstance | null = null;
 
 function getPool(): Promise<ResourcePool<DuckDBConnection>> {
-  poolPromise ??= createDuckDB().then(db => createResourcePool(parsePoolSize(), () => db.connect()));
+  poolPromise ??= createDuckDB().then(async (db) => {
+    dbInstance = db;
+    // Apply memory limit and thread count immediately using a temporary
+    // connection. The temp_directory is set later via the 'configure'
+    // message once the main thread knows the userData path.
+    const initConn = await db.connect();
+    await configureDuckDB(initConn, undefined);
+    initConn.disconnectSync();
+    return createResourcePool(parsePoolSize(), () => db.connect());
+  });
   return poolPromise;
 }
 
@@ -178,7 +197,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
   // Check before acquiring a pool connection
   if (cancelledIds.has(req.id)) {
     cancelledIds.delete(req.id);
-    send({ kind: 'rows', id: req.id, rows: [] });
+    send({ kind: 'error', id: req.id, message: 'Query cancelled' });
     return;
   }
 
@@ -192,7 +211,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
     // Check after acquiring — cancel may have arrived while queued
     if (cancelledIds.has(req.id)) {
       cancelledIds.delete(req.id);
-      send({ kind: 'rows', id: req.id, rows: [] });
+      send({ kind: 'error', id: req.id, message: 'Query cancelled' });
       return;
     }
 
@@ -202,7 +221,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
     // Skip serialization if cancelled during execution
     if (cancelledIds.has(req.id)) {
       cancelledIds.delete(req.id);
-      send({ kind: 'rows', id: req.id, rows: [] });
+      send({ kind: 'error', id: req.id, message: 'Query cancelled' });
     } else {
       send({ kind: 'rows', id: req.id, rows });
     }
@@ -219,7 +238,7 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
   // Check before acquiring a pool connection
   if (cancelledIds.has(req.id)) {
     cancelledIds.delete(req.id);
-    send({ kind: 'rows', id: req.id, rows: [] });
+    send({ kind: 'error', id: req.id, message: 'Query cancelled' });
     return;
   }
 
@@ -233,7 +252,7 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
     // Check after acquiring — cancel may have arrived while queued
     if (cancelledIds.has(req.id)) {
       cancelledIds.delete(req.id);
-      send({ kind: 'rows', id: req.id, rows: [] });
+      send({ kind: 'error', id: req.id, message: 'Query cancelled' });
       return;
     }
 
@@ -243,7 +262,7 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
     // Skip serialization if cancelled during execution
     if (cancelledIds.has(req.id)) {
       cancelledIds.delete(req.id);
-      send({ kind: 'rows', id: req.id, rows: [] });
+      send({ kind: 'error', id: req.id, message: 'Query cancelled' });
     } else {
       send({ kind: 'rows', id: req.id, rows });
     }
@@ -265,6 +284,16 @@ function handleCancelPending(): void {
   }
 }
 
+async function handleConfigure(req: { kind: 'configure'; tempDir: string }): Promise<void> {
+  if (dbInstance === null) return;
+  const conn = await dbInstance.connect();
+  try {
+    await conn.run(`SET temp_directory = '${req.tempDir.replaceAll("'", "''")}'`);
+  } finally {
+    conn.disconnectSync();
+  }
+}
+
 port.on('message', (msg: unknown) => {
   if (isQueryRequest(msg)) {
     handleRequest(msg).catch(() => undefined);
@@ -272,5 +301,35 @@ port.on('message', (msg: unknown) => {
     handlePreparedRequest(msg).catch(() => undefined);
   } else if (isCancelRequest(msg)) {
     handleCancelPending();
+  } else if (isConfigureRequest(msg)) {
+    handleConfigure(msg).catch(() => undefined);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Graceful error handling — prevent worker crashes from taking down Electron
+// ---------------------------------------------------------------------------
+process.on('uncaughtException', (err: unknown) => {
+  const message = err instanceof Error ? err.message : String(err);
+  // Notify all pending queries that they failed
+  for (const id of runningIds) {
+    send({ kind: 'error', id, message: `DuckDB worker error: ${message}` });
+  }
+  runningIds.clear();
+  for (const id of queuedIds) {
+    send({ kind: 'error', id, message: `DuckDB worker error: ${message}` });
+  }
+  queuedIds.clear();
+});
+
+process.on('unhandledRejection', (reason: unknown) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  for (const id of runningIds) {
+    send({ kind: 'error', id, message: `DuckDB worker rejection: ${message}` });
+  }
+  runningIds.clear();
+  for (const id of queuedIds) {
+    send({ kind: 'error', id, message: `DuckDB worker rejection: ${message}` });
+  }
+  queuedIds.clear();
 });

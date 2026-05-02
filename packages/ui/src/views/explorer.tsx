@@ -173,6 +173,16 @@ export function ExplorerView(): React.JSX.Element {
     saveAllPrefs(hiddenColumns, columnOrder, dateRange, granularity);
   }, [dateRange, granularity]);
 
+  const cancelReadyRef = useRef(false);
+  useEffect(() => {
+    if (!prefsLoadedRef.current) return;
+    if (!cancelReadyRef.current) {
+      cancelReadyRef.current = true;
+      return;
+    }
+    api.cancelPendingQueries().catch(() => undefined);
+  }, [dateRange, granularity, api]);
+
   // Back-off from a metric / perspective the CUR doesn't support. Happens
   // when a user's CUR export drops the effective-cost or net-cost columns
   // between sessions — we downgrade silently instead of returning bogus
