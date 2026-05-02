@@ -10,6 +10,7 @@ import type { DuckDBClient } from './duckdb-client.js';
 import { createSyncClient } from './sync-client.js';
 import type { SyncClient } from './sync-client.js';
 import { registerIpcHandlers } from './ipc.js';
+import { startMcpServer, stopMcpServer } from './mcp.js';
 import { initAutoUpdater } from './update-manager.js';
 import { registerUpdateHandlers } from './handlers/update.js';
 import { validateUrl, SecurityError } from './url-validator.js';
@@ -146,7 +147,7 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
   const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
   const configBase = process.env['COSTGOBLIN_CONFIG_DIR'] ?? join(userDataPath, 'config');
 
-  registerIpcHandlers({
+  const appContext = registerIpcHandlers({
     db,
     syncClient,
     configPath: resolveConfigPath(configBase, 'costgoblin'),
@@ -155,6 +156,10 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
     viewsPath: resolveConfigPath(configBase, 'views'),
     costScopePath: resolveConfigPath(configBase, 'cost-scope'),
     dataDir,
+  });
+
+  startMcpServer(appContext).catch((err: unknown) => {
+    logger.warn(`mcp: failed to start — ${err instanceof Error ? err.message : String(err)}`);
   });
 
   const win = new BrowserWindow({
@@ -246,6 +251,10 @@ async function main(): Promise<void> {
 
 app.on('window-all-closed', () => {
   app.quit();
+});
+
+app.on('will-quit', () => {
+  void stopMcpServer();
 });
 
 void (async () => {

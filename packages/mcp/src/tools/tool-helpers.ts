@@ -17,8 +17,7 @@ import type {
   QueryContextOptions,
   TagValue,
 } from '@costgoblin/core';
-import type { McpContext } from '../context.js';
-import type { RawRow } from '../duckdb.js';
+import type { McpContext, RawRow } from '../context.js';
 
 export function toNum(v: unknown): number {
   if (typeof v === 'number') return v;
