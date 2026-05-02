@@ -1,4 +1,3 @@
-import { logger } from '@costgoblin/core';
 import { initWorkerLifecycle } from './worker-lifecycle.js';
 
 export type RawRow = Readonly<Record<string, unknown>>;
@@ -64,51 +63,23 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
   function submitQuery(
     kind: string,
     sql: string,
-    logTag: string,
     extraPayload: Record<string, unknown>,
-    extraLogFields: Record<string, unknown>,
     onStarted?: () => void,
   ): Promise<RawRow[]> {
     if (lifecycle.fatalError !== null) return Promise.reject(lifecycle.fatalError);
     const id = lifecycle.nextId++;
-    const startedAt = Date.now();
-    const startedAtIso = new Date(startedAt).toISOString();
     return new Promise<RawRow[]>((resolve, reject) => {
-      pending.set(id, {
-        onStarted,
-        resolve: (rows) => {
-          logger.debug(logTag, {
-            id,
-            startedAt: startedAtIso,
-            durationMs: Date.now() - startedAt,
-            rows: rows.length,
-            sql,
-            ...extraLogFields,
-          });
-          resolve(rows);
-        },
-        reject: (err) => {
-          logger.debug(`${logTag}-failed`, {
-            id,
-            startedAt: startedAtIso,
-            durationMs: Date.now() - startedAt,
-            error: err.message,
-            sql,
-            ...extraLogFields,
-          });
-          reject(err);
-        },
-      });
+      pending.set(id, { onStarted, resolve, reject });
       worker.postMessage({ kind, id, sql, ...extraPayload });
     });
   }
 
   return {
     runQuery(sql: string, onStarted?: () => void): Promise<RawRow[]> {
-      return submitQuery('query', sql, 'duckdb:query', {}, {}, onStarted);
+      return submitQuery('query', sql, {}, onStarted);
     },
     runPreparedQuery(sql: string, params: readonly unknown[], onStarted?: () => void): Promise<RawRow[]> {
-      return submitQuery('prepared-query', sql, 'duckdb:prepared-query', { params }, { paramCount: params.length }, onStarted);
+      return submitQuery('prepared-query', sql, { params }, onStarted);
     },
     cancelPendingQueries(): void {
       worker.postMessage({ kind: 'cancel-pending' });
