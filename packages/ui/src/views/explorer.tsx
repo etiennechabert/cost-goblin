@@ -173,14 +173,8 @@ export function ExplorerView(): React.JSX.Element {
     saveAllPrefs(hiddenColumns, columnOrder, dateRange, granularity);
   }, [dateRange, granularity]);
 
-  // Cancel in-flight DuckDB queries when query parameters change so stale
-  // queries don't compete for memory with new ones.
-  const explorerFirstRenderRef = useRef(true);
   useEffect(() => {
-    if (explorerFirstRenderRef.current) {
-      explorerFirstRenderRef.current = false;
-      return;
-    }
+    if (!prefsLoadedRef.current) return;
     api.cancelPendingQueries().catch(() => undefined);
   }, [dateRange, granularity, api]);
 

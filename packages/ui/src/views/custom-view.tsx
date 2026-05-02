@@ -82,13 +82,10 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
 
   // Cancel in-flight DuckDB queries when the date range or granularity
   // changes so stale 30d queries don't compete for memory with new 365d
-  // queries. Skip the initial mount — there's nothing to cancel yet.
-  const isFirstRenderRef = useRef(true);
+  // queries. Skip until preferences have loaded — restoring a saved date
+  // range triggers a state change that would cancel the startup queries.
   useEffect(() => {
-    if (isFirstRenderRef.current) {
-      isFirstRenderRef.current = false;
-      return;
-    }
+    if (!prefsLoadedRef.current) return;
     api.cancelPendingQueries().catch(() => undefined);
   }, [dateRange, granularity, api]);
 
