@@ -162,7 +162,7 @@ export function registerFilterHandlers(app: AppContext): void {
     `;
 
     const params = qb.build().params;
-    const rows = await runPreparedQuery(sql, params);
+    const rows = await runPreparedQuery(sql, params, matSource !== undefined);
     const isAccountDim = dimensionId === 'account' || dimensionId === 'account_id';
     if (isAccountDim) return mergeAccountRows(rows, accountMap);
 

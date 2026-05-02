@@ -44,11 +44,12 @@ export function registerCostHandlers(app: AppContext): void {
     const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, tier, params.dateRange);
     if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
     const matSource = materializedBase.getSource(params.dateRange, tier);
+    const isMat = matSource !== undefined;
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const { sql, params: queryParams } = buildCostQuery(params, qcOpts);
-    logger.info('query:costs', { groupBy: params.groupBy, materialized: matSource !== undefined });
+    logger.info('query:costs', { groupBy: params.groupBy, materialized: isMat });
 
-    const rows = await runPreparedQuery(sql, queryParams);
+    const rows = await runPreparedQuery(sql, queryParams, isMat);
     let result = buildCostResult(rows, params.dateRange);
 
     if (params.groupBy === 'account' || params.groupBy === 'account_id') {
@@ -78,11 +79,12 @@ export function registerCostHandlers(app: AppContext): void {
     const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, tier, params.dateRange);
     if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
     const matSource = materializedBase.getSource(params.dateRange, tier);
+    const isMat = matSource !== undefined;
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const { sql, params: queryParams } = buildDailyCostsQuery(params, qcOpts);
-    logger.info('query:daily-costs', { groupBy: params.groupBy, materialized: matSource !== undefined });
+    logger.info('query:daily-costs', { groupBy: params.groupBy, materialized: isMat });
 
-    const rows = await runPreparedQuery(sql, queryParams);
+    const rows = await runPreparedQuery(sql, queryParams, isMat);
 
     const dayMap = new Map<string, Record<string, number>>();
     const groupSet = new Set<string>();
@@ -149,11 +151,12 @@ export function registerCostHandlers(app: AppContext): void {
       };
     }
     const matSource = materializedBase.getSource(params.dateRange, tier);
+    const isMat = matSource !== undefined;
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const { sql, params: queryParams } = buildEntityDetailQuery(params, qcOpts);
-    logger.info('query:entity-detail', { entity: params.entity, materialized: matSource !== undefined });
+    logger.info('query:entity-detail', { entity: params.entity, materialized: isMat });
 
-    const rows = await runPreparedQuery(sql, queryParams);
+    const rows = await runPreparedQuery(sql, queryParams, isMat);
     const result = buildEntityDetailResult(rows, params.entity);
     return {
       ...result,

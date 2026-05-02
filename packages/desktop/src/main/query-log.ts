@@ -11,6 +11,7 @@ export interface QueryLogEntry {
   readonly durationMs: number | null;
   readonly rowCount: number | null;
   readonly error: string | null;
+  readonly materialized: boolean;
 }
 
 interface InternalEntry {
@@ -23,6 +24,7 @@ interface InternalEntry {
   durationMs: number | null;
   rowCount: number | null;
   error: string | null;
+  materialized: boolean;
 }
 
 const MAX_ENTRIES = 200;
@@ -31,7 +33,7 @@ export class QueryLog {
   private entries: InternalEntry[] = [];
   private nextId = 0;
 
-  start(sql: string, params: readonly unknown[]): number {
+  start(sql: string, params: readonly unknown[], materialized: boolean = false): number {
     const id = this.nextId++;
     this.entries.push({
       id,
@@ -43,6 +45,7 @@ export class QueryLog {
       durationMs: null,
       rowCount: null,
       error: null,
+      materialized,
     });
     if (this.entries.length > MAX_ENTRIES) {
       this.entries = this.entries.slice(-MAX_ENTRIES);
@@ -83,6 +86,7 @@ export class QueryLog {
       durationMs: e.durationMs,
       rowCount: e.rowCount,
       error: e.error,
+      materialized: e.materialized,
     }));
   }
 
@@ -110,9 +114,9 @@ export class QueryLog {
     };
   }
 
-  wrapPreparedQuery(fn: (sql: string, params: readonly unknown[], onStarted?: () => void) => Promise<RawRow[]>): (sql: string, params: readonly unknown[]) => Promise<RawRow[]> {
-    return (sql: string, params: readonly unknown[]) => {
-      const id = this.start(sql, params);
+  wrapPreparedQuery(fn: (sql: string, params: readonly unknown[], onStarted?: () => void) => Promise<RawRow[]>): (sql: string, params: readonly unknown[], materialized?: boolean) => Promise<RawRow[]> {
+    return (sql: string, params: readonly unknown[], materialized?: boolean) => {
+      const id = this.start(sql, params, materialized === true);
       return fn(sql, params, () => { this.markRunning(id); }).then(
         (rows) => { this.complete(id, rows.length); return rows; },
         (err: unknown) => { this.fail(id, err instanceof Error ? err.message : String(err)); throw err; },

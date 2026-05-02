@@ -245,9 +245,7 @@ async function main(): Promise<void> {
 }
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  app.quit();
 });
 
 void (async () => {

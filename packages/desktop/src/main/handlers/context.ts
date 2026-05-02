@@ -152,7 +152,7 @@ export interface AppContext {
   readonly queryLog: QueryLog;
   readonly materializedBase: MaterializedBase;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
-  readonly runPreparedQuery: (sql: string, params: readonly unknown[]) => Promise<RawRow[]>;
+  readonly runPreparedQuery: (sql: string, params: readonly unknown[], materialized?: boolean) => Promise<RawRow[]>;
   readonly invalidateConfig: () => void;
   readonly invalidateDimensions: () => void;
   readonly invalidateViews: () => void;
@@ -438,12 +438,12 @@ export function createAppContext(ctx: IpcContext): AppContext {
     });
   };
 
-  const runPreparedQuery = (sql: string, params: readonly unknown[]): Promise<RawRow[]> => {
+  const runPreparedQuery = (sql: string, params: readonly unknown[], materialized?: boolean): Promise<RawRow[]> => {
     const key = `${sql}\0${JSON.stringify(params)}`;
     const cached = resultCache.get(key);
     if (cached !== undefined) return Promise.resolve(cached);
     return dedup(key, async () => {
-      const result = await wrappedRunPreparedQuery(sql, params);
+      const result = await wrappedRunPreparedQuery(sql, params, materialized);
       if (result.length > 0) resultCache.set(key, result);
       return result;
     });

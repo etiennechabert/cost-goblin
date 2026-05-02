@@ -197,7 +197,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
   // Check before acquiring a pool connection
   if (cancelledIds.has(req.id)) {
     cancelledIds.delete(req.id);
-    send({ kind: 'rows', id: req.id, rows: [] });
+    send({ kind: 'error', id: req.id, message: 'Query cancelled' });
     return;
   }
 
@@ -211,7 +211,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
     // Check after acquiring — cancel may have arrived while queued
     if (cancelledIds.has(req.id)) {
       cancelledIds.delete(req.id);
-      send({ kind: 'rows', id: req.id, rows: [] });
+      send({ kind: 'error', id: req.id, message: 'Query cancelled' });
       return;
     }
 
@@ -221,7 +221,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
     // Skip serialization if cancelled during execution
     if (cancelledIds.has(req.id)) {
       cancelledIds.delete(req.id);
-      send({ kind: 'rows', id: req.id, rows: [] });
+      send({ kind: 'error', id: req.id, message: 'Query cancelled' });
     } else {
       send({ kind: 'rows', id: req.id, rows });
     }
@@ -238,7 +238,7 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
   // Check before acquiring a pool connection
   if (cancelledIds.has(req.id)) {
     cancelledIds.delete(req.id);
-    send({ kind: 'rows', id: req.id, rows: [] });
+    send({ kind: 'error', id: req.id, message: 'Query cancelled' });
     return;
   }
 
@@ -252,7 +252,7 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
     // Check after acquiring — cancel may have arrived while queued
     if (cancelledIds.has(req.id)) {
       cancelledIds.delete(req.id);
-      send({ kind: 'rows', id: req.id, rows: [] });
+      send({ kind: 'error', id: req.id, message: 'Query cancelled' });
       return;
     }
 
@@ -262,7 +262,7 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
     // Skip serialization if cancelled during execution
     if (cancelledIds.has(req.id)) {
       cancelledIds.delete(req.id);
-      send({ kind: 'rows', id: req.id, rows: [] });
+      send({ kind: 'error', id: req.id, message: 'Query cancelled' });
     } else {
       send({ kind: 'rows', id: req.id, rows });
     }
