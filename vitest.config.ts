@@ -7,7 +7,7 @@ export default defineConfig({
       {
         test: {
           name: 'node',
-          include: ['packages/{core,desktop}/src/**/*.test.ts'],
+          include: ['packages/{core,desktop,mcp}/src/**/*.test.ts'],
           passWithNoTests: true,
         },
       },

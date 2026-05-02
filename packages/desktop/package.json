@@ -22,6 +22,7 @@
   },
   "devDependencies": {
     "@costgoblin/core": "*",
+    "@costgoblin/mcp": "*",
     "@costgoblin/ui": "*",
     "@tailwindcss/vite": "^4.2.4",
     "@types/react": "^19.2.14",
