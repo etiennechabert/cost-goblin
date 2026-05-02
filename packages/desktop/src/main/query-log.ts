@@ -12,6 +12,7 @@ export interface QueryLogEntry {
   readonly rowCount: number | null;
   readonly error: string | null;
   readonly materialized: boolean;
+  readonly cached: boolean;
 }
 
 interface InternalEntry {
@@ -25,6 +26,7 @@ interface InternalEntry {
   rowCount: number | null;
   error: string | null;
   materialized: boolean;
+  cached: boolean;
 }
 
 const MAX_ENTRIES = 200;
@@ -46,6 +48,7 @@ export class QueryLog {
       rowCount: null,
       error: null,
       materialized,
+      cached: false,
     });
     if (this.entries.length > MAX_ENTRIES) {
       this.entries = this.entries.slice(-MAX_ENTRIES);
@@ -60,12 +63,13 @@ export class QueryLog {
     }
   }
 
-  complete(id: number, rowCount: number): void {
+  complete(id: number, rowCount: number, cached: boolean = false): void {
     const entry = this.entries.find(e => e.id === id);
     if (entry === undefined) return;
     entry.status = 'success';
     entry.durationMs = Date.now() - entry.startedAt;
     entry.rowCount = rowCount;
+    entry.cached = cached;
   }
 
   fail(id: number, message: string): void {
@@ -87,6 +91,7 @@ export class QueryLog {
       rowCount: e.rowCount,
       error: e.error,
       materialized: e.materialized,
+      cached: e.cached,
     }));
   }
 

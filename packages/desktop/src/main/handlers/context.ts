@@ -441,7 +441,12 @@ export function createAppContext(ctx: IpcContext): AppContext {
   const runPreparedQuery = (sql: string, params: readonly unknown[], materialized?: boolean): Promise<RawRow[]> => {
     const key = `${sql}\0${JSON.stringify(params)}`;
     const cached = resultCache.get(key);
-    if (cached !== undefined) return Promise.resolve(cached);
+    if (cached !== undefined) {
+      const id = queryLog.start(sql, params, materialized === true);
+      queryLog.markRunning(id);
+      queryLog.complete(id, cached.length, true);
+      return Promise.resolve(cached);
+    }
     return dedup(key, async () => {
       const result = await wrappedRunPreparedQuery(sql, params, materialized);
       if (result.length > 0) resultCache.set(key, result);
