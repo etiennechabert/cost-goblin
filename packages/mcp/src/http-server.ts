@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -8,39 +9,117 @@ import type { McpContext } from './context.js';
 import { registerTools } from './tools/index.js';
 
 const DEFAULT_PORT = 19532;
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const REAP_INTERVAL_MS = 60 * 1000;    // check every minute
 
 export interface McpHttpServer {
   readonly port: number;
   close(): Promise<void>;
 }
 
+interface SessionEntry {
+  readonly transport: StreamableHTTPServerTransport;
+  lastActivity: number;
+}
+
 export async function createMcpHttpServer(ctx: McpContext, port?: number): Promise<McpHttpServer> {
   const resolvedPort = port ?? DEFAULT_PORT;
+  const sessions = new Map<string, SessionEntry>();
 
-  const mcpServer = new McpServer(
-    { name: 'costgoblin', version: '0.1.0' },
-    { capabilities: { tools: {} } },
-  );
+  function removeSession(sessionId: string): void {
+    const entry = sessions.get(sessionId);
+    if (entry === undefined) return;
+    sessions.delete(sessionId);
+    entry.transport.close().catch((err: unknown) => {
+      logger.warn(`mcp: session close error — ${err instanceof Error ? err.message : String(err)}`);
+    });
+    logger.info('mcp: session removed', { sessionId });
+  }
 
-  registerTools(mcpServer, ctx);
+  function touchSession(sessionId: string): void {
+    const entry = sessions.get(sessionId);
+    if (entry !== undefined) entry.lastActivity = Date.now();
+  }
 
-  const transport = new StreamableHTTPServerTransport({});
-  // The MCP SDK's Transport type declares onclose/onerror/onmessage as required
-  // but StreamableHTTPServerTransport initializes them as undefined internally.
-  // With exactOptionalPropertyTypes this is a type mismatch — cast through
-  // unknown since the runtime behavior is correct.
-  await mcpServer.connect(transport as unknown as Transport);
+  const reaper = setInterval(() => {
+    const now = Date.now();
+    for (const [sid, entry] of sessions) {
+      if (now - entry.lastActivity > SESSION_TTL_MS) {
+        logger.info('mcp: reaping idle session', { sessionId: sid });
+        removeSession(sid);
+      }
+    }
+  }, REAP_INTERVAL_MS);
+  reaper.unref();
+
+  function createSessionTransport(): StreamableHTTPServerTransport {
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sessionId) => {
+        sessions.set(sessionId, { transport, lastActivity: Date.now() });
+        logger.info('mcp: session created', { sessionId });
+      },
+    });
+
+    transport.onclose = () => {
+      const sid = transport.sessionId;
+      if (sid !== undefined) {
+        sessions.delete(sid);
+        logger.info('mcp: session closed', { sessionId: sid });
+      }
+    };
+
+    return transport;
+  }
+
+  async function connectTransport(transport: StreamableHTTPServerTransport): Promise<void> {
+    const mcpServer = new McpServer(
+      { name: 'costgoblin', version: '0.1.0' },
+      { capabilities: { tools: {} } },
+    );
+    registerTools(mcpServer, ctx);
+    await mcpServer.connect(transport as unknown as Transport);
+  }
 
   const httpServer: Server = createServer((req, res) => {
     const url = req.url ?? '';
 
     if (url === '/mcp' && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
-      transport.handleRequest(req, res).catch((err: unknown) => {
-        logger.warn(`mcp: transport error — ${err instanceof Error ? err.message : String(err)}`);
-        if (!res.headersSent) {
-          res.writeHead(500).end();
-        }
-      });
+      const sessionId = req.headers['mcp-session-id'];
+      const existing = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;
+
+      if (existing !== undefined) {
+        touchSession(sessionId as string);
+        existing.transport.handleRequest(req, res).catch((err: unknown) => {
+          logger.warn(`mcp: transport error — ${err instanceof Error ? err.message : String(err)}`);
+          if (!res.headersSent) {
+            res.writeHead(500).end();
+          }
+        });
+        return;
+      }
+
+      if (req.method === 'POST') {
+        const transport = createSessionTransport();
+        connectTransport(transport).then(() => {
+          transport.handleRequest(req, res).catch((err: unknown) => {
+            logger.warn(`mcp: transport error — ${err instanceof Error ? err.message : String(err)}`);
+            if (!res.headersSent) {
+              res.writeHead(500).end();
+            }
+          });
+        }).catch((err: unknown) => {
+          logger.warn(`mcp: connect error — ${err instanceof Error ? err.message : String(err)}`);
+          transport.close().catch(() => {});
+          if (!res.headersSent) {
+            res.writeHead(500).end();
+          }
+        });
+        return;
+      }
+
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+        .end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Bad Request: No valid session' }, id: null }));
       return;
     }
 
@@ -60,7 +139,10 @@ export async function createMcpHttpServer(ctx: McpContext, port?: number): Promi
   return {
     port: resolvedPort,
     async close(): Promise<void> {
-      await transport.close();
+      clearInterval(reaper);
+      const closePromises = [...sessions.values()].map((e) => e.transport.close());
+      await Promise.all(closePromises);
+      sessions.clear();
       await new Promise<void>((resolve) => {
         httpServer.close(() => { resolve(); });
       });

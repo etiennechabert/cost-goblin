@@ -22,6 +22,7 @@ export async function runSql(
   params: {
     sql: string;
     limit?: number | undefined;
+    dateRange?: { start: string; end: string } | undefined;
   },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
   const userSql = params.sql.trim();
@@ -35,13 +36,18 @@ export async function runSql(
   const orgPath = await ctx.getOrgAccountsPath();
   const availableColumns = await ctx.getAvailableColumns('daily');
 
-  const dayMs = 86_400_000;
-  const end = new Date(Date.now() - DEFAULT_LAG_DAYS * dayMs);
-  const start = new Date(end.getTime() - 59 * dayMs);
-  const dateRange = {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
-  };
+  let dateRange: { start: string; end: string };
+  if (params.dateRange !== undefined) {
+    dateRange = params.dateRange;
+  } else {
+    const dayMs = 86_400_000;
+    const end = new Date(Date.now() - DEFAULT_LAG_DAYS * dayMs);
+    const start = new Date(end.getTime() - 59 * dayMs);
+    dateRange = {
+      start: start.toISOString().slice(0, 10),
+      end: end.toISOString().slice(0, 10),
+    };
+  }
 
   const matSource = ctx.materializedBase.getSource(dateRange, 'daily');
   let costsCte: string;
@@ -53,7 +59,7 @@ export async function runSql(
     const required = computePeriodsInRange(dateRange);
     const periods = required.filter(p => available.includes(p));
     if (periods.length === 0) {
-      return toolError('No data available for the default 60-day window.');
+      return toolError(`No data available for ${dateRange.start} to ${dateRange.end}.`);
     }
     const source = buildSource({
       dataDir: ctx.dataDir,
@@ -67,7 +73,10 @@ export async function runSql(
     costsCte = `costs AS (SELECT * FROM ${source} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
   }
 
-  const wrappedSql = `WITH ${costsCte}\n${userSql}\nLIMIT ${String(limit)}`;
+  const hasLimit = /\bLIMIT\s+\d+\s*$/i.test(userSql);
+  const wrappedSql = hasLimit
+    ? `WITH ${costsCte}\n${userSql}`
+    : `WITH ${costsCte}\n${userSql}\nLIMIT ${String(limit)}`;
 
   logger.info('run-sql', { userSqlLength: userSql.length, limit });
 
