@@ -666,17 +666,25 @@ function Histogram({ days, loading }: HistogramProps): React.JSX.Element {
         </div>
       </div>
 
-      {/* X-axis labels */}
-      <div className="flex" style={{ paddingLeft: Y_AXIS_WIDTH, gap: 2 }}>
-        {days.map((d, idx) => (
-          <div key={d.date} className="flex-1 min-w-0 text-center overflow-hidden">
-            {idx % labelStep === 0 && (
-              <span className="text-[10px] text-text-muted whitespace-nowrap">
-                {formatBucketLabel(d.date)}
-              </span>
-            )}
-          </div>
-        ))}
+      {/* X-axis labels — positioned absolutely so they don't get clipped
+          by the flex-1 containers when there are hundreds of bars */}
+      <div className="relative h-4" style={{ marginLeft: Y_AXIS_WIDTH }}>
+        {days.map((d, idx) => {
+          if (idx % labelStep !== 0) return null;
+          const pct = days.length > 1 ? (idx / (days.length - 1)) * 100 : 0;
+          const isFirst = idx === 0;
+          const isLast = idx >= days.length - labelStep;
+          const align = isFirst ? '' : isLast ? '-translate-x-full' : '-translate-x-1/2';
+          return (
+            <span
+              key={d.date}
+              className={`absolute text-[10px] text-text-muted whitespace-nowrap ${align}`}
+              style={{ left: `${String(pct)}%` }}
+            >
+              {formatBucketLabel(d.date)}
+            </span>
+          );
+        })}
       </div>
     </div>
   );
