@@ -94,6 +94,16 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   const entityFilter: FilterMap = { [asDimensionId(dimension)]: [asTagValue(entity)] };
   const filterKey = JSON.stringify(entityFilter);
 
+  // Cancel in-flight DuckDB queries when the date range or granularity changes
+  const entityDetailFirstRef = useRef(true);
+  useEffect(() => {
+    if (entityDetailFirstRef.current) {
+      entityDetailFirstRef.current = false;
+      return;
+    }
+    api.cancelPendingQueries().catch(() => undefined);
+  }, [dateRange, granularity, api]);
+
   // Load persisted date range and granularity on mount
   useEffect(() => {
     api.getExplorerPreferences().then(prefs => {

@@ -6,6 +6,7 @@ export interface DuckDBClient {
   runQuery(sql: string, onStarted?: () => void): Promise<RawRow[]>;
   runPreparedQuery(sql: string, params: readonly unknown[], onStarted?: () => void): Promise<RawRow[]>;
   cancelPendingQueries(): void;
+  configure(tempDir: string): void;
   terminate(): Promise<void>;
 }
 
@@ -83,6 +84,9 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
     },
     cancelPendingQueries(): void {
       worker.postMessage({ kind: 'cancel-pending' });
+    },
+    configure(tempDir: string): void {
+      worker.postMessage({ kind: 'configure', tempDir });
     },
     async terminate(): Promise<void> {
       await worker.terminate();

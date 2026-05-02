@@ -214,6 +214,12 @@ async function main(): Promise<void> {
   // into out/worker/ to find them.
   const duckdbWorkerPath = join(__dirname, '..', 'worker', 'duckdb-worker.cjs');
   const db = await createDuckDBClient(duckdbWorkerPath);
+
+  const userDataPath = app.getPath('userData');
+  const tempDir = join(userDataPath, 'temp');
+  mkdirSync(tempDir, { recursive: true });
+  db.configure(tempDir);
+
   logger.info('DuckDB worker ready');
 
   const syncWorkerPath = join(__dirname, '..', 'worker', 'sync-worker.cjs');

@@ -173,6 +173,17 @@ export function ExplorerView(): React.JSX.Element {
     saveAllPrefs(hiddenColumns, columnOrder, dateRange, granularity);
   }, [dateRange, granularity]);
 
+  // Cancel in-flight DuckDB queries when query parameters change so stale
+  // queries don't compete for memory with new ones.
+  const explorerFirstRenderRef = useRef(true);
+  useEffect(() => {
+    if (explorerFirstRenderRef.current) {
+      explorerFirstRenderRef.current = false;
+      return;
+    }
+    api.cancelPendingQueries().catch(() => undefined);
+  }, [dateRange, granularity, api]);
+
   // Back-off from a metric / perspective the CUR doesn't support. Happens
   // when a user's CUR export drops the effective-cost or net-cost columns
   // between sessions — we downgrade silently instead of returning bogus

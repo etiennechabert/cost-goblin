@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   Dimension,
   DimensionId,
@@ -82,6 +82,15 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
     ? getDimensionId(dimensions[0])
     : null;
   const activeDimensionId = state.selectedDimensionId ?? firstDimId;
+
+  const trendsFirstRef = useRef(true);
+  useEffect(() => {
+    if (trendsFirstRef.current) {
+      trendsFirstRef.current = false;
+      return;
+    }
+    api.cancelPendingQueries().catch(() => undefined);
+  }, [state.dateRange.start, state.dateRange.end, state.granularity, api]);
 
   const trendsQuery = useQuery(
     () => {
