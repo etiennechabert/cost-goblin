@@ -266,14 +266,10 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
 
   const accountReverseMap = buildAccountReverseMap(accountMap);
   const filterPredicate = buildExplorerFilterPredicate(params.filters, dimensions, accountReverseMap);
-  const matSource = app.materializedBase.getSource({ start: startStr, end: endStr }, tier);
 
-  if (matSource !== undefined) {
-    const whereClauses: string[] = filterPredicate === null ? [] : [`(${filterPredicate})`];
-    const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-    return { empty: false, source: matSource, whereStr, ...shared };
-  }
-
+  // Explorer always reads Parquet directly — the materialized base uses a
+  // slim schema (no description, usage_amount, list_cost) that Explorer's
+  // aggregated table and sample rows need.
   const { source, whereStr } = await buildFreshSource({
     app, params, startStr, endStr, tier, periods, dimensions, filterPredicate, accountReverseMap,
   });
