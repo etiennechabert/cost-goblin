@@ -15,24 +15,12 @@ async function createDuckDB(): Promise<DuckDBInstance> {
 
 function computeMemoryLimitGB(): number {
   const totalGB = totalmem() / (1024 * 1024 * 1024);
-  // Cap DuckDB at 25% of system RAM (min 1 GB, max 4 GB). Electron itself,
-  // the renderer process, and the OS all need headroom — 25% keeps DuckDB
-  // from triggering the OOM killer while still being generous for aggregates
-  // spanning a full year of billing data.
-  return Math.min(4, Math.max(1, Math.round(totalGB * 0.25)));
-}
-
-function computeThreadCount(): number {
-  // Limit DuckDB's internal parallelism to half the logical CPUs (min 2,
-  // max 4). Combined with the connection pool, this prevents N-connections
-  // x M-threads memory explosions during concurrent hash aggregates.
-  return Math.min(4, Math.max(2, Math.floor(cpus().length / 2)));
+  return Math.min(4, Math.max(1, Math.round(totalGB * 0.5)));
 }
 
 async function configureDuckDB(conn: DuckDBConnection, tempDir: string | undefined): Promise<void> {
   const memGB = computeMemoryLimitGB();
   await conn.run(`SET memory_limit = '${String(memGB)}GB'`);
-  await conn.run(`SET threads = ${String(computeThreadCount())}`);
   if (tempDir !== undefined) {
     await conn.run(`SET temp_directory = '${tempDir.replaceAll("'", "''")}'`);
   }
@@ -165,23 +153,13 @@ async function fetchAllRowsPrepared(
   }
 }
 
-/**
- * Pool of DuckDB connections on one DuckDBInstance. A single connection
- * serializes queries internally — with N connections, independent queries
- * execute in parallel (bound by DuckDB's own thread scheduling). Queries
- * arriving while all connections are busy queue FIFO via ResourcePool.
- *
- * Size defaults to 4 (min 2, max 8). Previously defaulted to cpus().length
- * which caused N-connections x M-threads memory explosions during concurrent
- * hash aggregates on large date ranges. Override with COSTGOBLIN_DUCKDB_POOL_SIZE.
- */
 function parsePoolSize(): number {
   const raw = process.env['COSTGOBLIN_DUCKDB_POOL_SIZE'];
   if (raw !== undefined) {
     const n = Number.parseInt(raw, 10);
     if (Number.isFinite(n) && n >= 1 && n <= 32) return n;
   }
-  return Math.min(Math.max(2, Math.floor(cpus().length / 2)), 8);
+  return Math.min(Math.max(4, cpus().length), 16);
 }
 
 let poolPromise: Promise<ResourcePool<DuckDBConnection>> | null = null;
