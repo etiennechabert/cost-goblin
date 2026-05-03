@@ -15,25 +15,31 @@ export function useQuery<T>(
 
     setState({ status: 'loading' });
 
-    fetcher()
-      .then((data) => {
-        if (!cancelled) setState({ status: 'success', data });
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg === 'Query cancelled' && retryCount < MAX_CANCEL_RETRIES) {
-          setRetryCount(c => c + 1);
-          return;
-        }
-        setState({
-          status: 'error',
-          error: err instanceof Error ? err : new Error(msg),
+    const run = () => {
+      fetcher()
+        .then((data) => {
+          if (!cancelled) setState({ status: 'success', data });
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg === 'Query cancelled' && retryCount < MAX_CANCEL_RETRIES) {
+            setRetryCount(c => c + 1);
+            return;
+          }
+          setState({
+            status: 'error',
+            error: err instanceof Error ? err : new Error(msg),
+          });
         });
-      });
+    };
+
+    const delay = retryCount > 0 ? 150 : 0;
+    const timer = setTimeout(run, delay);
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [...deps, retryCount]);
 
