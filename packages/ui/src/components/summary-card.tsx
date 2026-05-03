@@ -73,6 +73,15 @@ export function SummaryCard({ totalCost, previousCost, dateRange, previousDateRa
           <p className="text-xs uppercase tracking-wider text-text-muted">Daily Average</p>
           <p className="mt-1 text-lg font-semibold tabular-nums text-text-primary">
             {dailyAvg === null ? PLACEHOLDER : formatDollars(dailyAvg)}
+            {dailyAvg !== null && prevDailyAvg !== null && prevDailyAvg > 0 && (() => {
+              const avgDiff = dailyAvg - prevDailyAvg;
+              const avgColor = avgDiff > 0 ? 'text-negative' : avgDiff < 0 ? 'text-positive' : 'text-text-secondary';
+              return (
+                <span className={`ml-2 text-xs font-medium ${avgColor}`}>
+                  ({avgDiff >= 0 ? '+' : ''}{formatDollars(avgDiff)}/day)
+                </span>
+              );
+            })()}
           </p>
           {prevDailyAvg !== null && (
             <p className="mt-0.5 text-xs text-text-muted">

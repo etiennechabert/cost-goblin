@@ -33,7 +33,7 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
     case 'summary':
       return { ...common, type: w.type, ...(w.metric === undefined ? {} : { metric: w.metric }) };
     case 'pie':
-      return { ...common, type: w.type, groupBy: w.groupBy };
+      return { ...common, type: w.type, groupBy: w.groupBy, ...(w.showLegend === false ? { showLegend: false } : {}) };
     case 'stackedBar':
     case 'bubble':
       return { ...common, type: w.type, groupBy: w.groupBy };
@@ -211,6 +211,25 @@ export function WidgetInspector({
           className="flex-1 bg-transparent border border-border rounded px-2 py-1 text-text-primary"
         />
       </label>
+
+      {widget.type === 'pie' && (
+        <label className="flex items-center gap-2">
+          <span className="text-text-muted shrink-0 w-14">Legend</span>
+          <button
+            type="button"
+            onClick={() => { onChange({ ...widget, showLegend: widget.showLegend === false ? undefined : false }); }}
+            className={[
+              'relative h-5 w-9 rounded-full transition-colors',
+              widget.showLegend !== false ? 'bg-accent' : 'bg-bg-tertiary',
+            ].join(' ')}
+          >
+            <span className={[
+              'absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform',
+              widget.showLegend !== false ? 'translate-x-4' : 'translate-x-0',
+            ].join(' ')} />
+          </button>
+        </label>
+      )}
 
       {(widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap') && (
         <label className="flex items-center gap-2">

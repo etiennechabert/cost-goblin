@@ -29,6 +29,7 @@ interface PieChartProps {
   readonly activeDimensionId?: string | undefined;
   readonly onDimensionChange?: ((dimId: string) => void) | undefined;
   readonly previousCosts?: ReadonlyMap<string, number> | undefined;
+  readonly showLegend?: boolean | undefined;
 }
 
 const OTHER_KEY = 'Other';
@@ -62,6 +63,7 @@ function PieChartInner({
   activeDimensionId,
   onDimensionChange,
   previousCosts,
+  showLegend = true,
   width,
   height,
 }: Omit<PieChartProps, 'collapsed'> & { width: number; height: number }) {
@@ -77,7 +79,7 @@ function PieChartInner({
   }, [hoveredName]);
 
   const displayData = aggregateOther(data, maxSlices);
-  const pieSize = Math.min(width * 0.38, height - 60);
+  const pieSize = showLegend ? Math.min(width * 0.38, height - 60) : Math.min(width - 32, height - 60);
   const radius = pieSize / 2;
 
   const handleMouseEnter = useCallback((name: string) => {
@@ -128,9 +130,9 @@ function PieChartInner({
           )}
         </div>
       </div>
-      <div className="flex flex-1 min-h-0 gap-2">
+      <div className="flex flex-1 min-h-0 gap-2 relative">
         {/* Pie */}
-        <div className="shrink-0" style={{ width: pieSize + 32 }}>
+        <div className={showLegend ? 'shrink-0' : 'flex-1 flex justify-center'} style={showLegend ? { width: pieSize + 32 } : undefined}>
           <svg width={pieSize + 32} height={pieSize + 16}>
             <Group top={radius + 8} left={radius + 16}>
               <Pie<PieSlice>
@@ -179,8 +181,27 @@ function PieChartInner({
           </svg>
         </div>
 
+        {/* Hover label for no-legend mode */}
+        {!showLegend && hoveredName !== null && (() => {
+          const d = displayData.find(s => s.name === hoveredName);
+          if (d === undefined) return null;
+          const prev = previousCosts?.get(d.name);
+          const pctDelta = prev !== undefined && prev > 0 ? ((d.cost - prev) / prev) * 100 : undefined;
+          return (
+            <div className="absolute left-1/2 -translate-x-1/2 bottom-2 z-10 rounded-lg bg-bg-secondary/95 border border-border shadow-lg px-3 py-2 text-xs pointer-events-none whitespace-nowrap">
+              <span className="font-semibold text-text-primary">{d.name}</span>
+              <span className="ml-2 tabular-nums text-text-secondary">{formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)</span>
+              {pctDelta !== undefined && (
+                <span className={`ml-1.5 tabular-nums text-[10px] ${pctDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                  {pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
+                </span>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Legend — HTML for proper text truncation */}
-        <div className="flex-1 min-w-0 overflow-y-auto flex flex-col gap-0.5 py-1">
+        {showLegend && <div className="flex-1 min-w-0 overflow-y-auto flex flex-col gap-0.5 py-1">
           {displayData.map((d, i) => {
             const color = d.name === OTHER_KEY ? '#374151' : getColor(i, palette);
             const isHovered = hoveredName === d.name;
@@ -246,7 +267,7 @@ function PieChartInner({
               </div>
             );
           })}
-        </div>
+        </div>}
       </div>
     </div>
   );

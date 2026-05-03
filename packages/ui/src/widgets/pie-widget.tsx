@@ -80,6 +80,8 @@ export function PieWidget({
     </div>
   );
 
+  const showLegend = spec.showLegend !== false;
+
   return (
     <PieChart
       data={slices}
@@ -89,6 +91,7 @@ export function PieWidget({
       onSliceHover={(name) => { dispatch({ type: 'HOVER', entity: name, dimension: activeGroupBy }); }}
       externalHoveredName={focus.hoveredDimension === activeGroupBy ? focus.hoveredEntity : null}
       previousCosts={compareEnabled ? previousCosts : undefined}
+      showLegend={showLegend}
     />
   );
 }

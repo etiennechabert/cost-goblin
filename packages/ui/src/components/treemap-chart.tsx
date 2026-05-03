@@ -88,7 +88,12 @@ function TreemapInner({
                     onMouseEnter={() => { onCellHover?.(name); }}
                     onMouseLeave={() => { onCellHover?.(null); }}
                   >
-                    <title>{`${name} — ${formatDollars(cost)}`}</title>
+                    <title>{(() => {
+                      const prev = previousCosts?.get(name);
+                      const d = prev !== undefined && prev > 0 ? ((cost - prev) / prev) * 100 : undefined;
+                      const base = `${name} — ${formatDollars(cost)}`;
+                      return d !== undefined ? `${base} (${d >= 0 ? '↑' : '↓'}${Math.abs(d).toFixed(1)}%)` : base;
+                    })()}</title>
                   </rect>
                   {showLabel && (() => {
                     const prev = previousCosts?.get(name);
@@ -100,8 +105,9 @@ function TreemapInner({
                         y={14}
                         fontSize={11}
                         fontWeight={600}
-                        fill="var(--color-bg-primary)"
+                        fill="white"
                         pointerEvents="none"
+                        style={{ textShadow: '0 1px 3px rgba(0,0,0,0.5)' }}
                       >
                         {name.length > Math.floor(w / 7) ? `${name.slice(0, Math.floor(w / 7) - 1)}…` : name}
                       </text>
@@ -110,13 +116,14 @@ function TreemapInner({
                           x={6}
                           y={28}
                           fontSize={10}
-                          fill="var(--color-bg-primary)"
-                          fillOpacity={0.85}
+                          fill="white"
+                          fillOpacity={0.9}
                           pointerEvents="none"
+                          style={{ textShadow: '0 1px 3px rgba(0,0,0,0.5)' }}
                         >
                           {formatDollars(cost)}
                           {pctDelta !== undefined && (
-                            <tspan fillOpacity={0.7}>
+                            <tspan fill={pctDelta >= 0 ? '#f87171' : '#4ade80'} fillOpacity={1}>
                               {' '}{pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
                             </tspan>
                           )}
