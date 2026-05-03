@@ -7,7 +7,7 @@ import { asTagValue } from '@costgoblin/core/browser';
 import { useCostFocus } from '../hooks/use-cost-focus.js';
 import type { DailyCostsResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { filtersKey, mergeFilters } from './widget.js';
+import { filtersKey, mergeFilters, hasSufficientDailyCoverage } from './widget.js';
 
 const MAX_BARS = 170;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -80,9 +80,21 @@ export function StackedBarWidget({
     [dailyResult, granularity, dateRange.start, dateRange.end],
   );
 
+  const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientDailyCoverage(prevQuery.data, previousDateRange);
   const previousTotals = useMemo(
-    () => dailyToTotals(prevQuery.status === 'success' ? prevQuery.data : null),
-    [prevQuery],
+    () => {
+      const raw = dailyToTotals(prevHasCoverage ? prevQuery.data : null);
+      if (raw.length <= MAX_BARS) return raw;
+      const size = Math.ceil(raw.length / MAX_BARS);
+      const bucketed: number[] = [];
+      for (let i = 0; i < raw.length; i += size) {
+        let sum = 0;
+        for (let j = i; j < Math.min(i + size, raw.length); j++) sum += raw[j] ?? 0;
+        bucketed.push(sum);
+      }
+      return bucketed;
+    },
+    [prevHasCoverage, prevQuery],
   );
 
   if (spec.type !== 'stackedBar') return null;

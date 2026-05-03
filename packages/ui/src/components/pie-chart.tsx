@@ -28,6 +28,7 @@ interface PieChartProps {
   readonly dimensions?: readonly Dimension[] | undefined;
   readonly activeDimensionId?: string | undefined;
   readonly onDimensionChange?: ((dimId: string) => void) | undefined;
+  readonly previousCosts?: ReadonlyMap<string, number> | undefined;
 }
 
 const OTHER_KEY = 'Other';
@@ -60,6 +61,7 @@ function PieChartInner({
   dimensions,
   activeDimensionId,
   onDimensionChange,
+  previousCosts,
   width,
   height,
 }: Omit<PieChartProps, 'collapsed'> & { width: number; height: number }) {
@@ -195,18 +197,52 @@ function PieChartInner({
                 role={d.name !== OTHER_KEY && onSliceClick !== undefined ? 'button' : undefined}
                 tabIndex={d.name !== OTHER_KEY && onSliceClick !== undefined ? 0 : undefined}
                 className={[
-                  'flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[11px] transition-colors',
+                  'rounded text-[11px] transition-colors',
                   d.name !== OTHER_KEY && onSliceClick !== undefined ? 'cursor-pointer' : '',
-                  isHovered ? 'bg-accent-muted/50' : '',
+                  isHovered ? 'bg-accent-muted/50 px-1.5 py-1' : 'flex items-center gap-1.5 px-1.5 py-0.5',
                 ].join(' ')}
               >
-                <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
-                <span className={`truncate min-w-0 flex-1 ${legendTextClass(isDimmed, isHovered)}`}>
-                  {d.name}
-                </span>
-                <span className={`tabular-nums shrink-0 whitespace-nowrap ${legendTextClass(isDimmed, isHovered)}`}>
-                  {formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)
-                </span>
+                {isHovered ? (
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+                      <span className="font-semibold text-text-primary text-xs break-all">{d.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2 pl-4">
+                      <span className="tabular-nums text-text-primary font-medium">{formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)</span>
+                      {(() => {
+                        const prev = previousCosts?.get(d.name);
+                        if (prev === undefined || prev <= 0) return null;
+                        const pctDelta = ((d.cost - prev) / prev) * 100;
+                        return (
+                          <span className={`text-[10px] tabular-nums ${pctDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                            {pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+                    <span className={`truncate min-w-0 flex-1 ${legendTextClass(isDimmed, isHovered)}`}>
+                      {d.name}
+                    </span>
+                    <span className={`tabular-nums shrink-0 whitespace-nowrap ${legendTextClass(isDimmed, isHovered)}`}>
+                      {formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)
+                    </span>
+                    {(() => {
+                      const prev = previousCosts?.get(d.name);
+                      if (prev === undefined || prev <= 0) return null;
+                      const pctDelta = ((d.cost - prev) / prev) * 100;
+                      return (
+                        <span className={`text-[10px] tabular-nums shrink-0 ${pctDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                          {pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
+                        </span>
+                      );
+                    })()}
+                  </>
+                )}
               </div>
             );
           })}

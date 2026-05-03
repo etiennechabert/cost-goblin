@@ -9,7 +9,7 @@ import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import { asTagValue } from '@costgoblin/core/browser';
 import type { CostResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { dimensionLabelFor, filtersKey, mergeFilters } from './widget.js';
+import { dimensionLabelFor, filtersKey, mergeFilters, hasSufficientCoverage } from './widget.js';
 
 function rowsToBars(data: CostResult | null): TopNBar[] {
   if (data === null) return [];
@@ -63,9 +63,10 @@ export function TopNBarWidget({
     [costResult],
   );
 
+  const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientCoverage(prevQuery.data, previousDateRange);
   const previousCosts = useMemo(
-    () => buildPreviousCostMap(prevQuery.status === 'success' ? prevQuery.data : null),
-    [prevQuery],
+    () => buildPreviousCostMap(prevHasCoverage ? prevQuery.data : null),
+    [prevHasCoverage, prevQuery],
   );
 
   if (spec.type !== 'topNBar' || specGroupBy === undefined || activeGroupBy === undefined) return null;

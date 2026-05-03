@@ -7,11 +7,12 @@ interface SummaryCardProps {
   totalCost: number | null;
   previousCost?: number | null | undefined;
   dateRange: { start: string; end: string };
+  previousDateRange?: { start: string; end: string } | undefined;
 }
 
 const PLACEHOLDER = '—';
 
-export function SummaryCard({ totalCost, previousCost, dateRange }: Readonly<SummaryCardProps>) {
+export function SummaryCard({ totalCost, previousCost, dateRange, previousDateRange }: Readonly<SummaryCardProps>) {
   const hasTotal = totalCost !== null;
   const hasPrevious = previousCost !== null && previousCost !== undefined;
   const delta =
@@ -24,6 +25,8 @@ export function SummaryCard({ totalCost, previousCost, dateRange }: Readonly<Sum
 
   const rangeDays = Math.max(1, daysBetween(dateRange.start, dateRange.end));
   const dailyAvg = hasTotal ? totalCost / rangeDays : null;
+  const prevRangeDays = previousDateRange !== undefined ? Math.max(1, daysBetween(previousDateRange.start, previousDateRange.end)) : rangeDays;
+  const prevDailyAvg = hasPrevious ? previousCost / prevRangeDays : null;
 
   return (
     <div className="flex flex-col justify-between rounded-xl border border-border bg-bg-secondary px-6 py-5 h-full">
@@ -67,6 +70,11 @@ export function SummaryCard({ totalCost, previousCost, dateRange }: Readonly<Sum
           <p className="mt-1 text-lg font-semibold tabular-nums text-text-primary">
             {dailyAvg === null ? PLACEHOLDER : formatDollars(dailyAvg)}
           </p>
+          {prevDailyAvg !== null && (
+            <p className="mt-0.5 text-xs text-text-muted">
+              Previous: {formatDollars(prevDailyAvg)}/day
+            </p>
+          )}
         </div>
       </div>
 

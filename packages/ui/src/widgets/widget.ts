@@ -1,6 +1,8 @@
 import type { ComponentType } from 'react';
 import type {
+  CostResult,
   DateRange,
+  DailyCostsResult,
   Dimension,
   DimensionId,
   EntityRef,
@@ -13,6 +15,7 @@ import type {
 } from '@costgoblin/core/browser';
 import { asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
+import { daysBetween } from '../lib/dates.js';
 
 const DIMENSION_FALLBACK_CHAINS: ReadonlyMap<DimensionId, readonly DimensionId[]> = new Map([
   [asDimensionId('service'), [asDimensionId('service_family'), asDimensionId('usage_type')]],
@@ -82,4 +85,19 @@ export function filtersKey(filters: FilterMap): string {
 export function dimensionLabelFor(dimensions: readonly Dimension[], id: DimensionId): string {
   const dim = dimensions.find(d => getDimensionId(d) === id);
   return dim === undefined ? id : getDimensionLabel(dim);
+}
+
+const COVERAGE_THRESHOLD = 0.8;
+
+/** Returns true if a CostResult covers at least 80% of the requested date range. */
+export function hasSufficientCoverage(result: CostResult, requested: DateRange): boolean {
+  const requestedDays = daysBetween(requested.start, requested.end);
+  const actualDays = daysBetween(result.dateRange.start, result.dateRange.end);
+  return actualDays >= requestedDays * COVERAGE_THRESHOLD;
+}
+
+/** Returns true if a DailyCostsResult covers at least 80% of the requested date range. */
+export function hasSufficientDailyCoverage(result: DailyCostsResult, requested: DateRange): boolean {
+  const requestedDays = daysBetween(requested.start, requested.end);
+  return result.days.length >= requestedDays * COVERAGE_THRESHOLD;
 }

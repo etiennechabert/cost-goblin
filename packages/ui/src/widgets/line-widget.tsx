@@ -8,7 +8,7 @@ import type { LineSeries } from '../components/line-chart.js';
 import { asTagValue } from '@costgoblin/core/browser';
 import type { DailyCostsResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { dimensionLabelFor, filtersKey, mergeFilters } from './widget.js';
+import { dimensionLabelFor, filtersKey, mergeFilters, hasSufficientDailyCoverage } from './widget.js';
 
 function buildSeries(data: DailyCostsResult | null, topN: number): LineSeries[] {
   if (data === null) return [];
@@ -91,9 +91,10 @@ export function LineWidget({
     [dailyResult],
   );
 
+  const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientDailyCoverage(prevQuery.data, previousDateRange);
   const previousSeries = useMemo(
-    () => buildPreviousSeries(prevQuery.status === 'success' ? prevQuery.data : null, series, currentDates),
-    [prevQuery, series, currentDates],
+    () => buildPreviousSeries(prevHasCoverage ? prevQuery.data : null, series, currentDates),
+    [prevHasCoverage, prevQuery, series, currentDates],
   );
 
   if (spec.type !== 'line' || specGroupBy === undefined || activeGroupBy === undefined) return null;

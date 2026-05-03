@@ -17,6 +17,7 @@ interface TreemapChartProps {
   readonly subtitle?: string | undefined;
   readonly height?: number | undefined;
   readonly onCellClick?: ((name: string) => void) | undefined;
+  readonly previousCosts?: ReadonlyMap<string, number> | undefined;
 }
 
 interface FlatNode {
@@ -30,6 +31,7 @@ function TreemapInner({
   width,
   height,
   onCellClick,
+  previousCosts,
 }: Omit<TreemapChartProps, 'title' | 'subtitle'> & { readonly width: number; readonly height: number }) {
   const { palette } = usePalette();
   const root = useMemo(() => {
@@ -80,7 +82,10 @@ function TreemapInner({
                   >
                     <title>{`${name} — ${formatDollars(cost)}`}</title>
                   </rect>
-                  {showLabel && (
+                  {showLabel && (() => {
+                    const prev = previousCosts?.get(name);
+                    const pctDelta = prev !== undefined && prev > 0 ? ((cost - prev) / prev) * 100 : undefined;
+                    return (
                     <>
                       <text
                         x={6}
@@ -102,10 +107,16 @@ function TreemapInner({
                           pointerEvents="none"
                         >
                           {formatDollars(cost)}
+                          {pctDelta !== undefined && (
+                            <tspan fillOpacity={0.7}>
+                              {' '}{pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
+                            </tspan>
+                          )}
                         </text>
                       )}
                     </>
-                  )}
+                    );
+                  })()}
                 </Group>
               );
             })}
@@ -116,7 +127,7 @@ function TreemapInner({
   );
 }
 
-export function TreemapChart({ data, title, subtitle, height = 320, onCellClick }: TreemapChartProps) {
+export function TreemapChart({ data, title, subtitle, height = 320, onCellClick, previousCosts }: TreemapChartProps) {
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col" style={{ height }}>
       {(title !== undefined || subtitle !== undefined) && (
@@ -133,6 +144,7 @@ export function TreemapChart({ data, title, subtitle, height = 320, onCellClick 
               width={width}
               height={h}
               onCellClick={onCellClick}
+              previousCosts={previousCosts}
             />
           )}
         </ParentSize>

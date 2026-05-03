@@ -288,10 +288,10 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             >
               <polyline
                 fill="none"
-                stroke="var(--color-text-muted)"
-                strokeWidth="2"
-                strokeDasharray="6,4"
-                strokeOpacity="0.6"
+                stroke="var(--color-text-secondary)"
+                strokeWidth="2.5"
+                strokeDasharray="6,3"
+                strokeOpacity="0.8"
                 vectorEffect="non-scaling-stroke"
                 points={previousTotals.map((val, i) => {
                   const x = previousTotals.length > 1
