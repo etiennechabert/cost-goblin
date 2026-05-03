@@ -48,7 +48,7 @@ type View =
 const STATIC_LEFT_NAV: { id: string; label: string }[] = [
   { id: 'trends', label: 'Trends' },
   { id: 'savings', label: 'Findings' },
-  { id: 'missing-tags', label: 'Missing Tags' },
+  { id: 'missing-tags', label: 'Tags' },
   { id: 'explorer', label: 'Explorer' },
 ];
 

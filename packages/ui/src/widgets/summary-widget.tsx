@@ -2,6 +2,7 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { daysBetween } from '../lib/dates.js';
 import { SummaryCard } from '../components/summary-card.js';
+import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { asDimensionId } from '@costgoblin/core/browser';
 import type { CostResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
@@ -31,6 +32,12 @@ export function SummaryWidget({
   );
 
   if (!isSummary) return null;
+
+  if (cur.status === 'loading') return (
+    <div className="rounded-xl border border-border bg-bg-secondary px-6 py-5 h-full">
+      <CoinRainLoader height={200} count={4} />
+    </div>
+  );
 
   const totalCost = cur.status === 'success' && cur.data !== null ? cur.data.totalCost : null;
 

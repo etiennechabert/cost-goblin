@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type {
   Dimension,
   DimensionId,
@@ -389,7 +390,9 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
       </div>
 
       {missingQuery.status === 'loading' && (
-        <div className="text-sm text-text-secondary">Loading...</div>
+        <div className="flex-1">
+          <CoinRainLoader height={500} count={10} />
+        </div>
       )}
       {missingQuery.status === 'error' && (
         <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">
