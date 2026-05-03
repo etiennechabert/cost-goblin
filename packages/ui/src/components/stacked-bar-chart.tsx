@@ -194,21 +194,24 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             return (
               <div className={`pointer-events-none absolute top-0 bottom-0 z-20 ${onLeft ? 'right-0 mr-1' : 'left-12 ml-1'}`}>
                 <div className="rounded-lg bg-bg-secondary/95 px-4 py-3 text-[11px] text-text-primary whitespace-nowrap shadow-lg border border-border min-w-[280px] max-h-full overflow-y-auto">
-                  <div className="flex items-center justify-between mb-2 pb-2 border-b border-border-subtle">
-                    <span className="font-semibold text-xs">{day.date}</span>
-                    <span className="font-semibold text-xs">
-                      Total: {formatDollars(day.total)}
-                      {totalDelta !== undefined && (
-                        <span className={`ml-1.5 text-[10px] font-normal ${totalDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
-                          {totalDelta >= 0 ? '↑' : '↓'}{Math.abs(totalDelta).toFixed(1)}%
-                        </span>
-                      )}
-                      {prevPeriodTotal !== undefined && prevPeriodTotal > 0 && (
-                        <span className="ml-1.5 text-[10px] font-normal text-text-muted">
-                          (prev: {formatDollars(prevPeriodTotal)})
-                        </span>
-                      )}
-                    </span>
+                  <div className="mb-2 pb-2 border-b border-border-subtle flex flex-col gap-0.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-xs">{day.date}</span>
+                      <span className="font-semibold text-xs">
+                        Total: {formatDollars(day.total)}
+                        {totalDelta !== undefined && (
+                          <span className={`ml-1.5 text-[10px] font-normal ${totalDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                            {totalDelta >= 0 ? '↑' : '↓'}{Math.abs(totalDelta).toFixed(1)}%
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                    {prevPeriodTotal !== undefined && prevPeriodTotal > 0 && (
+                      <div className="flex items-center justify-between text-text-muted">
+                        <span className="text-[10px]">Previous period</span>
+                        <span className="text-[10px] tabular-nums">Total: {formatDollars(prevPeriodTotal)}</span>
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-col gap-px">
                     {segs.slice(0, 12).map(seg => {
