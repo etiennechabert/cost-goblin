@@ -15,6 +15,7 @@ declare global {
   }
 
   interface DebugApi {
+    isE2E(): boolean;
     getInFlightCount(): number;
     getQueryLog(): Promise<DebugQueryLogEntry[]>;
     runExplain(queryId: number): Promise<string>;

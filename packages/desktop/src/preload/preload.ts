@@ -301,6 +301,7 @@ contextBridge.exposeInMainWorld('costgoblinUpdate', {
 });
 
 contextBridge.exposeInMainWorld('costgoblinDebug', {
+  isE2E(): boolean { return process.env['COSTGOBLIN_E2E'] === '1'; },
   isSandboxed(): boolean { return process.sandboxed; },
   getInFlightCount(): number { return inFlightCount; },
   getQueryLog(): Promise<DebugQueryLogEntry[]> {

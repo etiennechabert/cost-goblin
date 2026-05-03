@@ -378,7 +378,7 @@ test.describe('Performance Benchmarks', () => {
 
     test('baseline', async () => {
       await measure(page, 'Missing Tags → baseline', async () => {
-        await page.getByRole('button', { name: 'Missing Tags' }).click();
+        await page.getByRole('button', { name: 'Tags' }).click();
         await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
         await waitForQuerySettle(page);
       });
@@ -659,7 +659,7 @@ test.describe('Performance Benchmarks', () => {
   test.describe('Navigation stress', () => {
     test('rapid switching', async () => {
       await measure(page, 'Rapid navigation (9 switches)', async () => {
-        const views = ['Cost Overview', 'Trends', 'Missing Tags', 'Savings', 'Explorer', 'Cost Scope', 'Dimensions', 'Sync', 'Cost Overview'];
+        const views = ['Cost Overview', 'Trends', 'Tags', 'Savings', 'Explorer', 'Cost Scope', 'Dimensions', 'Sync', 'Cost Overview'];
         for (const v of views) {
           await page.getByRole('button', { name: v, exact: true }).first().click();
         }

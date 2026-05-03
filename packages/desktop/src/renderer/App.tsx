@@ -392,9 +392,12 @@ function AppShell(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    const minTimer = new Promise<void>(resolve => {
-      setTimeout(() => { splashMinElapsed.current = true; resolve(); }, SPLASH_DURATION);
-    });
+    const skipSplash = globalThis.costgoblinDebug.isE2E();
+    const minTimer = skipSplash
+      ? Promise.resolve()
+      : new Promise<void>(resolve => {
+          setTimeout(() => { splashMinElapsed.current = true; resolve(); }, SPLASH_DURATION);
+        });
     const statusCheck = api.getSetupStatus().then(({ configured }) => configured);
     // Pre-fetch dimensions during splash so they're cached when the dashboard mounts
     void api.getDimensions().catch(() => undefined);

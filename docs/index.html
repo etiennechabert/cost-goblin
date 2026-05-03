@@ -1146,7 +1146,7 @@
 
   <!-- HERO -->
   <section class="hero">
-    <div class="hero-badge"><span class="dot"></span> Free &amp; open source<span id="version-badge"></span></div>
+    <div class="hero-badge"><span class="dot"></span> Free &amp; open source</div>
     <div class="hero-icon"><img src="goblin.png" alt="CostGoblin mascot" width="160" height="160"></div>
     <h1>Know every dollar<br>in your <span>cloud</span></h1>
     <p class="hero-sub">
@@ -1164,7 +1164,7 @@
       </a>
     </div>
     <div class="hero-meta">
-      <span id="hero-platform-label">macOS Apple Silicon</span><span id="version-meta"></span> — <a href="#download">All platforms</a>
+      <span id="hero-platform-label">macOS Apple Silicon</span><span id="version-meta" style="display:none"></span> — <a href="#download">All platforms</a>
     </div>
     <div class="hero-screenshot">
       <div class="hero-screenshot-inner">
@@ -1334,7 +1334,7 @@
   <section class="download" id="download">
     <div class="container">
       <div class="section-label">Download</div>
-      <div class="section-title">Get CostGoblin<span id="version-download"></span></div>
+      <div class="section-title">Get CostGoblin<span id="version-download" style="display:none"></span></div>
       <div class="download-grid">
 
         <!-- macOS -->
@@ -1536,9 +1536,13 @@
         const assets = release.assets || [];
 
         // Update version labels
-        document.getElementById('version-badge').textContent = ' — ' + version;
-        document.getElementById('version-meta').textContent = ' · ' + version;
-        document.getElementById('version-download').textContent = ' ' + version;
+
+        var metaEl = document.getElementById('version-meta');
+        var dlEl = document.getElementById('version-download');
+        metaEl.textContent = ' · ' + version;
+        metaEl.style.display = '';
+        dlEl.textContent = ' ' + version;
+        dlEl.style.display = '';
 
         // Update releases link
         document.getElementById('releases-link').href = release.html_url;

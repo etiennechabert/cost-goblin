@@ -25,6 +25,7 @@ export function launchApp(overrides?: { configDir?: string }): Promise<ElectronA
     env: {
       ...process.env,
       NODE_ENV: 'production',
+      COSTGOBLIN_E2E: '1',
       COSTGOBLIN_DATA_DIR: dataDir,
       COSTGOBLIN_CONFIG_DIR: configDir,
     },
