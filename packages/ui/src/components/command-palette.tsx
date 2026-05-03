@@ -34,10 +34,10 @@ export function CommandPalette({ items, onNavigate }: CommandPaletteProps) {
     for (const item of items) {
       const group = item.group ?? 'Navigation';
       const list = groups.get(group);
-      if (list !== undefined) {
-        list.push(item);
-      } else {
+      if (list === undefined) {
         groups.set(group, [item]);
+      } else {
+        list.push(item);
       }
     }
     return groups;

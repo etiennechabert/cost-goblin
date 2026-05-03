@@ -105,6 +105,24 @@ function resolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): R
   );
 }
 
+function buildSingleFilterClause(
+  resolved: ResolvedDimension,
+  values: readonly string[],
+  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
+  qb: QueryBuilder,
+): string {
+  const expanded = tryExpandAccountIds(values, resolved.rawField, accountReverseMap, qb);
+  if (expanded !== null) return expanded;
+
+  const first = values[0];
+  if (values.length === 1 && first !== undefined) {
+    const placeholder = qb.addParam(first);
+    return `${resolved.fieldExpr} = ${placeholder}`;
+  }
+  const list = buildSqlList(values, qb);
+  return `${resolved.fieldExpr} IN (${list})`;
+}
+
 function buildFilterClauses(
   filters: FilterMap,
   dimensions: DimensionsConfig,
@@ -115,32 +133,7 @@ function buildFilterClauses(
   for (const [dimId, values] of Object.entries(filters)) {
     if (values === undefined || values.length === 0) continue;
     const resolved = resolveField(dimId as DimensionId, dimensions);
-    if (resolved.rawField === 'account_id' && accountReverseMap !== undefined) {
-      const allIds = new Set<string>();
-      let usedReverse = false;
-      for (const v of values) {
-        const ids = accountReverseMap.get(String(v));
-        if (ids !== undefined && ids.length > 0) {
-          for (const id of ids) allIds.add(id);
-          usedReverse = true;
-        } else {
-          allIds.add(String(v));
-        }
-      }
-      if (usedReverse) {
-        const list = buildSqlList([...allIds], qb);
-        clauses.push(`${resolved.rawField} IN (${list})`);
-        continue;
-      }
-    }
-    const first = values[0];
-    if (values.length === 1 && first !== undefined) {
-      const placeholder = qb.addParam(String(first));
-      clauses.push(`${resolved.fieldExpr} = ${placeholder}`);
-    } else {
-      const list = buildSqlList(values.map(v => String(v)), qb);
-      clauses.push(`${resolved.fieldExpr} IN (${list})`);
-    }
+    clauses.push(buildSingleFilterClause(resolved, values, accountReverseMap, qb));
   }
   return clauses;
 }
@@ -207,54 +200,54 @@ export function buildRuleMatchExpr(
   return conditionSqls.join(' AND ');
 }
 
+/** Try to merge a single-condition rule into the merged map. Returns true if
+ *  it was merged (or skipped as invalid); false if it should fall through to
+ *  multi-condition handling. */
+function tryMergeSingleConditionRule(
+  rule: ExclusionRule,
+  dimensions: DimensionsConfig,
+  accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
+  merged: Map<string, { resolved: ResolvedDimension; values: string[] }>,
+): boolean {
+  if (rule.conditions.length !== 1) return false;
+  const cond = rule.conditions[0];
+  if (cond === undefined || cond.values.length === 0) return true;
+  const resolved = tryResolveField(cond.dimensionId, dimensions);
+  if (resolved === null) return true;
+  if (resolved.rawField === 'account_id' && accountReverseMap !== undefined) return false;
+  const normalizedValues = cond.values.map(v => normalizeRuleValue(v, resolved.dim));
+  const existing = merged.get(cond.dimensionId);
+  if (existing === undefined) {
+    merged.set(cond.dimensionId, { resolved, values: [...normalizedValues] });
+  } else {
+    existing.values.push(...normalizedValues);
+  }
+  return true;
+}
+
 function buildExclusionClauses(
   rules: readonly ExclusionRule[],
   dimensions: DimensionsConfig,
   accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
   qb: QueryBuilder,
 ): string[] {
-  // Optimization: merge single-condition exclusion rules that target the same
-  // dimension into one NOT IN clause. This avoids redundant COALESCE/CASE
-  // evaluation per rule — DuckDB evaluates each NOT(...) independently, so
-  // five separate NOT (line_item_type IN (...)) become five COALESCE calls on
-  // every row instead of one.
   const singleConditionByDim = new Map<string, { resolved: ResolvedDimension; values: string[] }>();
   const multiConditionRules: ExclusionRule[] = [];
 
   for (const rule of rules) {
     if (!rule.enabled) continue;
-    if (rule.conditions.length === 1) {
-      const cond = rule.conditions[0];
-      if (cond === undefined || cond.values.length === 0) continue;
-      const resolved = tryResolveField(cond.dimensionId, dimensions);
-      if (resolved === null) continue;
-      // Account dimension with reverse-map expansion can't be merged simply
-      if (resolved.rawField === 'account_id' && accountReverseMap !== undefined) {
-        multiConditionRules.push(rule);
-        continue;
-      }
-      const key = cond.dimensionId;
-      const existing = singleConditionByDim.get(key);
-      const normalizedValues = cond.values.map(v => normalizeRuleValue(v, resolved.dim));
-      if (existing !== undefined) {
-        existing.values.push(...normalizedValues);
-      } else {
-        singleConditionByDim.set(key, { resolved, values: [...normalizedValues] });
-      }
-    } else {
+    if (!tryMergeSingleConditionRule(rule, dimensions, accountReverseMap, singleConditionByDim)) {
       multiConditionRules.push(rule);
     }
   }
 
   const clauses: string[] = [];
 
-  // Emit merged single-condition exclusions
   for (const [, { resolved, values }] of singleConditionByDim) {
     const list = buildSqlList(values, qb);
     clauses.push(`${resolved.fieldExpr} NOT IN (${list})`);
   }
 
-  // Emit multi-condition rules as before
   for (const rule of multiConditionRules) {
     const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap, qb);
     if (matchExpr === null) continue;
@@ -316,61 +309,63 @@ export interface BuildSourceOptions {
   readonly slim?: boolean | undefined;
 }
 
+function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
+  const selects: string[] = [];
+  for (const t of dimensions.tags) {
+    if (t.accountTagFallback === undefined) continue;
+    const curKey = t.tagName.startsWith('user_') ? t.tagName : `user_${t.tagName}`;
+    const colName = tagColumnName(t.tagName);
+    selects.push(`element_at(cur.resource_tags, '${curKey}')[1] AS raw_${colName}`);
+  }
+  return selects;
+}
+
+function buildParquetSource(dataDir: string, tier: string, periods: readonly string[] | undefined): string {
+  if (periods !== undefined && periods.length > 0) {
+    const paths = periods.map(p => `'${dataDir}/aws/raw/${tier}-${p}/*.parquet'`).join(', ');
+    return `read_parquet([${paths}])`;
+  }
+  return `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`;
+}
+
+function buildFromClause(
+  parquetSource: string,
+  dimensions: DimensionsConfig,
+  orgAccountsPath: string,
+): string {
+  const fallbackSelects = dimensions.tags
+    .filter(t => t.accountTagFallback !== undefined)
+    .map(t => {
+      const colName = tagColumnName(t.tagName);
+      const fallbackKey = sqlEscapeString(t.accountTagFallback ?? '');
+      return `tags->>'${fallbackKey}' AS fallback_${colName}`;
+    });
+  return `${parquetSource} AS cur
+      LEFT JOIN (
+        SELECT id, ${fallbackSelects.join(', ')}
+        FROM read_json_auto('${orgAccountsPath}')
+      ) AS acct_tags ON cur.line_item_usage_account_id = acct_tags.id`;
+}
+
 export function buildSource(opts: BuildSourceOptions): string {
   const { dataDir, tier, dimensions, orgAccountsPath, periods, costMetric = 'unblended', availableColumns, costPerspective, includeRawTags, slim } = opts;
   const hasFallbacks = dimensions.tags.some(t => t.accountTagFallback !== undefined);
   const needsOrgJoin = hasFallbacks && orgAccountsPath !== undefined;
 
   const tagSelects = dimensions.tags.map(t => buildTagSelect(t, needsOrgJoin));
-
   if (includeRawTags === true && needsOrgJoin) {
-    for (const t of dimensions.tags) {
-      if (t.accountTagFallback !== undefined) {
-        const curKey = t.tagName.startsWith('user_') ? t.tagName : `user_${t.tagName}`;
-        const colName = tagColumnName(t.tagName);
-        tagSelects.push(`element_at(cur.resource_tags, '${curKey}')[1] AS raw_${colName}`);
-      }
-    }
+    tagSelects.push(...buildRawTagSelects(dimensions));
   }
-
   const tagClause = tagSelects.length > 0 ? `,\n      ${tagSelects.join(',\n      ')}` : '';
 
-  // usage_date is always DATE so date-range filters work consistently across
-  // tiers (BETWEEN against a TIMESTAMP truncates 'YYYY-MM-DD' to midnight and
-  // would silently drop ~23h of rows on the end day). For hourly we additionally
-  // expose usage_hour as a standard TIMESTAMP — the source column is TIMESTAMP_NS
-  // (nanoseconds) in CUR and the @duckdb/node-api row converter doesn't know
-  // how to serialize that variant; casting to plain TIMESTAMP fixes it.
   const dateExpr = tier === 'hourly'
     ? 'line_item_usage_start_date::DATE AS usage_date,\n      line_item_usage_start_date::TIMESTAMP AS usage_hour'
     : 'line_item_usage_start_date::DATE AS usage_date';
 
-  const parquetPaths = periods !== undefined && periods.length > 0
-    ? periods.map(p => `'${dataDir}/aws/raw/${tier}-${p}/*.parquet'`).join(', ')
-    : undefined;
-  const parquetSource = parquetPaths === undefined
-    ? `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`
-    : `read_parquet([${parquetPaths}])`;
-
-  // Build fallback column extractions for the org-accounts join
-  const fallbackSelects = needsOrgJoin
-    ? dimensions.tags
-        .filter(t => t.accountTagFallback !== undefined)
-        .map(t => {
-          const colName = tagColumnName(t.tagName);
-          const fallbackKey = sqlEscapeString(t.accountTagFallback ?? '');
-          return `tags->>'${fallbackKey}' AS fallback_${colName}`;
-        })
-    : [];
-
-  const fromClause = needsOrgJoin
-    ? `${parquetSource} AS cur
-      LEFT JOIN (
-        SELECT id, ${fallbackSelects.join(', ')}
-        FROM read_json_auto('${orgAccountsPath}')
-      ) AS acct_tags ON cur.line_item_usage_account_id = acct_tags.id`
+  const parquetSource = buildParquetSource(dataDir, tier, periods);
+  const fromClause = hasFallbacks && orgAccountsPath !== undefined
+    ? buildFromClause(parquetSource, dimensions, orgAccountsPath)
     : parquetSource;
-
   const tablePrefix = needsOrgJoin ? 'cur.' : '';
   const costExpr = costExprFor(costMetric, tablePrefix, costPerspective, availableColumns);
 
@@ -537,10 +532,7 @@ export function buildTrendQuery(
 
   let source: string;
   let exclusionClauses: string[];
-  if (materializedSource !== undefined) {
-    source = materializedSource;
-    exclusionClauses = [];
-  } else {
+  if (materializedSource === undefined) {
     exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
 
     // Trend reads both the current period and the previous (same-duration)
@@ -557,6 +549,9 @@ export function buildTrendQuery(
     const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
     const periods = availablePeriods === undefined ? required : required.filter(p => availablePeriods.includes(p));
     source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective });
+  } else {
+    source = materializedSource;
+    exclusionClauses = [];
   }
 
   const allFilterClauses = [...filterClauses, ...exclusionClauses];

@@ -3,6 +3,7 @@ import type { SortingState } from '@tanstack/react-table';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { formatDollars } from '../components/format.js';
+import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { DataTable } from '../components/data-table.js';
 import type { TableColumn } from '../lib/table-types.js';
 import { useState, useMemo, Fragment } from 'react';
@@ -93,6 +94,41 @@ function parseResourceDetails(json: string): ParsedDetails | null {
   }
 }
 
+function RecommendationCell(_v: unknown, row: SavingsRecommendation) {
+  return (
+    <div className="max-w-lg">
+      <div className="flex items-baseline gap-2">
+        <span className="text-text-primary text-xs font-medium shrink-0">{humanizeAction(row.actionType)}</span>
+        {row.resourceArn.length > 0 && (
+          <span className="text-text-muted text-[10px] font-mono truncate" title={row.resourceArn}>{row.resourceArn.split(':').pop() ?? row.resourceArn}</span>
+        )}
+      </div>
+      <p className="text-text-muted text-xs mt-0.5 truncate" title={row.summary}>{row.summary}</p>
+    </div>
+  );
+}
+
+function AccountCell(_v: unknown, row: SavingsRecommendation) {
+  return (
+    <>
+      <p className="text-text-secondary text-xs">{row.accountName}</p>
+      <p className="text-text-muted text-[10px] font-mono">{row.accountId}</p>
+    </>
+  );
+}
+
+function MonthlySavingsCell(v: unknown) {
+  return <span className="font-medium text-accent">{formatDollars(v as number)}</span>;
+}
+
+function EffortCell(_v: unknown, row: SavingsRecommendation) {
+  return (
+    <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${effortColor(row.effort)}`}>
+      {effortLabel(row.effort)}
+    </span>
+  );
+}
+
 export function Savings() {
   const api = useCostApi();
   const savingsQuery = useQuery(() => api.querySavings(), [api]);
@@ -181,27 +217,12 @@ export function Savings() {
     {
       id: 'recommendation', header: 'Recommendation', sortable: false,
       accessorFn: r => r.actionType,
-      cell: (_v, row) => (
-        <div className="max-w-lg">
-          <div className="flex items-baseline gap-2">
-            <span className="text-text-primary text-xs font-medium shrink-0">{humanizeAction(row.actionType)}</span>
-            {row.resourceArn.length > 0 && (
-              <span className="text-text-muted text-[10px] font-mono truncate" title={row.resourceArn}>{row.resourceArn.split(':').pop() ?? row.resourceArn}</span>
-            )}
-          </div>
-          <p className="text-text-muted text-xs mt-0.5 truncate" title={row.summary}>{row.summary}</p>
-        </div>
-      ),
+      cell: RecommendationCell,
     },
     {
       id: 'accountName', header: 'Account',
       accessorFn: r => r.accountName,
-      cell: (_v, row) => (
-        <>
-          <p className="text-text-secondary text-xs">{row.accountName}</p>
-          <p className="text-text-muted text-[10px] font-mono">{row.accountId}</p>
-        </>
-      ),
+      cell: AccountCell,
     },
     { id: 'region', header: 'Region', accessorFn: r => r.region, sortable: false },
     {
@@ -212,7 +233,7 @@ export function Savings() {
     {
       id: 'monthlySavings', header: 'Savings/mo', align: 'right', mono: true,
       accessorFn: r => r.monthlySavings,
-      cell: v => <span className="font-medium text-accent">{formatDollars(v as number)}</span>,
+      cell: MonthlySavingsCell,
     },
     {
       id: 'savingsPercentage', header: '%', align: 'right', mono: true,
@@ -222,11 +243,7 @@ export function Savings() {
     {
       id: 'effort', header: 'Effort',
       accessorFn: r => EFFORT_ORDER[r.effort] ?? 4,
-      cell: (_v, row) => (
-        <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${effortColor(row.effort)}`}>
-          {effortLabel(row.effort)}
-        </span>
-      ),
+      cell: EffortCell,
     },
   ], []);
 
@@ -319,7 +336,9 @@ export function Savings() {
       )}
 
       {savingsQuery.status === 'loading' && (
-        <div className="text-sm text-text-secondary">Loading recommendations...</div>
+        <div className="flex-1">
+          <CoinRainLoader height={500} count={10} />
+        </div>
       )}
       {savingsQuery.status === 'error' && (
         <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">

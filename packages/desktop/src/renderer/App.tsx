@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button } from '@costgoblin/ui';
+import { useState, useEffect, useCallback, useMemo, useRef, Profiler } from 'react';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, FilterMap, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
@@ -48,7 +48,7 @@ type View =
 const STATIC_LEFT_NAV: { id: string; label: string }[] = [
   { id: 'trends', label: 'Trends' },
   { id: 'savings', label: 'Findings' },
-  { id: 'missing-tags', label: 'Missing Tags' },
+  { id: 'missing-tags', label: 'Tags' },
   { id: 'explorer', label: 'Explorer' },
 ];
 
@@ -116,13 +116,13 @@ function SyncAnnouncer({
   syncActivity,
   syncFilesRemaining,
   missingPeriods,
-}: {
+}: Readonly<{
   syncError: string | null;
   syncActivity: 'idle' | 'syncing' | 'downloading';
   syncFilesRemaining: number;
   missingPeriods: number;
-}): React.JSX.Element {
-  const errorMessage = syncError !== null ? `Sync error: ${syncError}` : '';
+}>): React.JSX.Element {
+  const errorMessage = syncError === null ? '' : `Sync error: ${syncError}`;
 
   let statusMessage = '';
   if (syncActivity === 'downloading' && syncFilesRemaining > 0) {
@@ -148,10 +148,10 @@ function SyncAnnouncer({
 function UpdateNotification({
   status,
   onShowReleaseNotes,
-}: {
+}: Readonly<{
   status: UpdateStatus;
   onShowReleaseNotes: () => void;
-}): React.JSX.Element | null {
+}>): React.JSX.Element | null {
   if (status.state === 'available') {
     return (
       <button
@@ -191,11 +191,11 @@ function ReleaseNotesModal({
   open,
   onOpenChange,
   status,
-}: {
+}: Readonly<{
   open: boolean;
   onOpenChange: (open: boolean) => void;
   status: UpdateStatus;
-}): React.JSX.Element | null {
+}>): React.JSX.Element | null {
   if (status.state !== 'available' && status.state !== 'downloaded') return null;
   const { info } = status;
   return (
@@ -259,6 +259,118 @@ export function App(): React.JSX.Element {
   );
 }
 
+function useSyncPolling(
+  api: CostApi,
+  setupCheck: SetupCheck,
+): {
+  syncError: string | null;
+  setSyncError: React.Dispatch<React.SetStateAction<string | null>>;
+  syncActivity: 'idle' | 'syncing' | 'downloading';
+  syncFilesRemaining: number;
+} {
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncActivity, setSyncActivity] = useState<'idle' | 'syncing' | 'downloading'>('idle');
+  const [syncFilesRemaining, setSyncFilesRemaining] = useState(0);
+
+  useEffect(() => {
+    if (setupCheck.status !== 'ready') return;
+    let cancelled = false;
+    async function tick(): Promise<void> {
+      try {
+        const [autoStatus, daily, hourly, costOpt] = await Promise.all([
+          api.getAutoSyncStatus(),
+          api.getSyncStatus('daily'),
+          api.getSyncStatus('hourly'),
+          api.getSyncStatus('cost-optimization'),
+        ]);
+        if (cancelled) return;
+        const failed = [daily, hourly, costOpt].find(s => s.status === 'failed');
+        if (failed !== undefined || autoStatus.state === 'error') {
+          let msg = 'Sync failed';
+          if (autoStatus.state === 'error') msg = autoStatus.message;
+          else if (failed?.status === 'failed') msg = failed.error.message;
+          setSyncError(msg);
+          setSyncActivity('idle');
+        } else {
+          const downloading = daily.status === 'syncing' || hourly.status === 'syncing' || costOpt.status === 'syncing' || autoStatus.state === 'syncing';
+          let activity: 'idle' | 'syncing' | 'downloading' = 'idle';
+          if (downloading) activity = 'downloading';
+          else if (autoStatus.state === 'checking') activity = 'syncing';
+          setSyncActivity(activity);
+          let remaining = 0;
+          for (const s of [daily, hourly, costOpt]) {
+            if (s.status === 'syncing') remaining += s.filesTotal - s.filesDone;
+          }
+          setSyncFilesRemaining(remaining);
+          setSyncError(prev => (prev?.includes('AWS credentials') ? prev : null));
+        }
+      } catch { /* transient */ }
+    }
+    tick().catch(() => undefined);
+    const interval = syncActivity === 'idle' ? 10_000 : 2_000;
+    const timer = setInterval(() => { tick().catch(() => undefined); }, interval);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [api, setupCheck, syncActivity]);
+
+  return { syncError, setSyncError, syncActivity, syncFilesRemaining };
+}
+
+const SPLASH_IMAGES = ['splash-1.png', 'splash-2.png', 'splash-3.png', 'splash-4.png', 'splash-5.png', 'splash-6.png', 'splash-7.png', 'splash-8.png', 'splash-9.png', 'splash-10.png'];
+const SPLASH_INTERVAL = 500;
+const SPLASH_DURATION = 2500;
+
+function shuffled<T>(arr: readonly T[]): T[] {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const a = copy[i];
+    const b = copy[j];
+    if (a !== undefined && b !== undefined) {
+      copy[i] = b;
+      copy[j] = a;
+    }
+  }
+  return copy;
+}
+
+function SplashScreen(): React.JSX.Element {
+  const [order] = useState(() => shuffled(SPLASH_IMAGES));
+  const [index, setIndex] = useState(0);
+  const [fadeOut, setFadeOut] = useState(false);
+
+  useEffect(() => {
+    const rotate = setInterval(() => {
+      setIndex(prev => (prev + 1) % SPLASH_IMAGES.length);
+    }, SPLASH_INTERVAL);
+    const fade = setTimeout(() => { setFadeOut(true); }, SPLASH_DURATION - 400);
+    return () => { clearInterval(rotate); clearTimeout(fade); };
+  }, []);
+
+  return (
+    <div
+      className="min-h-screen bg-bg-primary flex flex-col items-center justify-center transition-opacity duration-500"
+      style={{ opacity: fadeOut ? 0 : 1, WebkitAppRegion: 'drag' } as React.CSSProperties}
+    >
+      <div className="relative h-48 w-48 mb-6">
+        {order.map((src, i) => (
+          <img
+            key={src}
+            src={src}
+            alt=""
+            className="absolute inset-0 h-full w-full object-contain drop-shadow-lg transition-opacity duration-200"
+            style={{ opacity: i === index ? 1 : 0 }}
+          />
+        ))}
+      </div>
+      <h1 className="text-2xl font-bold text-accent tracking-wider mb-1">CostGoblin</h1>
+      <p className="text-sm text-text-muted mb-8">Crunching your cloud costs...</p>
+      <div className="w-64">
+        <CoinRainLoader height={120} count={6} />
+      </div>
+    </div>
+  );
+}
+
 function AppShell(): React.JSX.Element {
   const api = useCostApi();
   const confirmLeave = useConfirmLeave();
@@ -267,13 +379,9 @@ function AppShell(): React.JSX.Element {
   const [isDark, setIsDark] = useState(true);
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
+  const splashMinElapsed = useRef(false);
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
-  // Sync-health signal. Non-null whenever something AWS-side is broken —
-  // most commonly expired credentials. Surfaced as a red dot on the Sync
-  // nav button so the user notices without having to open the tab.
-  const [syncError, setSyncError] = useState<string | null>(null);
-  const [syncActivity, setSyncActivity] = useState<'idle' | 'syncing' | 'downloading'>('idle');
-  const [syncFilesRemaining, setSyncFilesRemaining] = useState(0);
+  const { syncError, setSyncError, syncActivity, syncFilesRemaining } = useSyncPolling(api, setupCheck);
   const [debugOpen, setDebugOpen] = useState(false);
   const inFlightCount = useDebugBadge();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
@@ -284,7 +392,14 @@ function AppShell(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    api.getSetupStatus().then(({ configured }) => {
+    const minTimer = new Promise<void>(resolve => {
+      setTimeout(() => { splashMinElapsed.current = true; resolve(); }, SPLASH_DURATION);
+    });
+    const statusCheck = api.getSetupStatus().then(({ configured }) => configured);
+    // Pre-fetch dimensions during splash so they're cached when the dashboard mounts
+    void api.getDimensions().catch(() => undefined);
+
+    void Promise.all([statusCheck, minTimer]).then(([configured]) => {
       setSetupCheck(configured ? { status: 'ready' } : { status: 'needs-setup' });
     }).catch(() => undefined);
   }, [api]);
@@ -351,46 +466,7 @@ function AppShell(): React.JSX.Element {
       const message = err instanceof Error ? err.message : String(err);
       setSyncError(message);
     });
-  }, [api, view, setupCheck]);
-
-  // Independent auto-sync polling — catches background-sync failures
-  // even when the user isn't on the Sync tab. The inventory effect above
-  // only fires on navigation, so without this a silent auto-sync error
-  // wouldn't surface until the user happened to revisit Sync.
-  useEffect(() => {
-    if (setupCheck.status !== 'ready') return;
-    let cancelled = false;
-    async function tick(): Promise<void> {
-      try {
-        const [autoStatus, daily, hourly, costOpt] = await Promise.all([
-          api.getAutoSyncStatus(),
-          api.getSyncStatus('daily'),
-          api.getSyncStatus('hourly'),
-          api.getSyncStatus('cost-optimization'),
-        ]);
-        if (cancelled) return;
-        const failed = [daily, hourly, costOpt].find(s => s.status === 'failed');
-        if (failed !== undefined || autoStatus.state === 'error') {
-          const msg = autoStatus.state === 'error' ? autoStatus.message : failed?.status === 'failed' ? failed.error.message : 'Sync failed';
-          setSyncError(msg);
-          setSyncActivity('idle');
-        } else {
-          const downloading = daily.status === 'syncing' || hourly.status === 'syncing' || costOpt.status === 'syncing' || autoStatus.state === 'syncing';
-          setSyncActivity(downloading ? 'downloading' : autoStatus.state === 'checking' ? 'syncing' : 'idle');
-          let remaining = 0;
-          for (const s of [daily, hourly, costOpt]) {
-            if (s.status === 'syncing') remaining += s.filesTotal - s.filesDone;
-          }
-          setSyncFilesRemaining(remaining);
-          setSyncError(prev => (prev?.includes('AWS credentials') ? prev : null));
-        }
-      } catch { /* transient */ }
-    }
-    tick().catch(() => undefined);
-    const interval = syncActivity !== 'idle' ? 2_000 : 10_000;
-    const timer = setInterval(() => { tick().catch(() => undefined); }, interval);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [api, setupCheck, syncActivity]);
+  }, [api, view, setupCheck, setSyncError]);
 
   function handleNavClick(id: string) {
     const alreadyActive = view.page === 'custom' ? view.viewId === id : view.page === id;
@@ -440,7 +516,7 @@ function AppShell(): React.JSX.Element {
   ], [customNav]);
 
   if (setupCheck.status === 'checking') {
-    return <div className="min-h-screen bg-bg-primary" />;
+    return <SplashScreen />;
   }
 
   if (setupCheck.status === 'needs-setup') {
@@ -478,7 +554,7 @@ function AppShell(): React.JSX.Element {
         {/* Title bar + nav */}
         <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
         <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
-          <div className="flex items-center gap-1" role="navigation" aria-label="Analytical views">
+          <nav className="flex items-center gap-1" aria-label="Analytical views">
             {leftNav.map((item) => (
               <button
                 key={item.id}
@@ -495,12 +571,12 @@ function AppShell(): React.JSX.Element {
                 {item.label}
               </button>
             ))}
-          </div>
+          </nav>
           <div className="flex items-center justify-center gap-2 px-4">
             <img src="goblin.png" alt="" className="h-8 w-auto object-contain" />
             <span className="text-sm font-bold text-accent tracking-wider">CostGoblin</span>
           </div>
-          <div className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]" role="navigation" aria-label="Configuration views">
+          <nav className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]" aria-label="Configuration views">
             <UpdateNotification status={updateStatus} onShowReleaseNotes={() => { setReleaseNotesOpen(true); }} />
             <button
               type="button"
@@ -594,7 +670,7 @@ function AppShell(): React.JSX.Element {
                 </button>
               );
             })}
-          </div>
+          </nav>
         </nav>
       </div>
 
