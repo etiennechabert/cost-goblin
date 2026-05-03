@@ -38,7 +38,7 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run build --workspaces
+      - run: npm run build --workspaces --if-present
 
       - name: Build installers
         run: npx --no-install electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish always
