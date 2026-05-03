@@ -102,7 +102,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
   const maxCost = Math.max(days.reduce((m, d) => Math.max(m, d.total), 0), prevMax);
 
   return (
-    <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col h-full">
+    <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col h-full overflow-hidden">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-medium text-text-secondary">{title ?? 'Daily Costs'}</h3>
         <div className="flex items-center gap-2">
