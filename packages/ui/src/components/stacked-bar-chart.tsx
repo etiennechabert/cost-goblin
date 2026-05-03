@@ -300,7 +300,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
         );
       })() : (() => {
         const placeholder = loading === true ? (
-          <div className="flex-1 min-h-40 flex items-center justify-center">
+          <div className="flex-1 min-h-40">
             <CoinRainLoader height={expanded ? 340 : 160} count={6} />
           </div>
         ) : (

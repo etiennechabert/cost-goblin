@@ -69,7 +69,7 @@ export function StackedBarWidget({
 
   return (
     <StackedBarChart
-      days={barDays}
+      days={loading ? [] : barDays}
       highlightedGroup={focus.hoveredEntity}
       title={title}
       loading={loading}
