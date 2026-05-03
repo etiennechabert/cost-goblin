@@ -354,7 +354,9 @@ export function DataTable<TData>({
                   const meta = header.column.columnDef.meta;
                   const isSorted = header.column.getIsSorted();
                   const canSort = header.column.getCanSort();
-                  const dirArrow = isSorted === 'asc' ? '\u2191' : isSorted === 'desc' ? '\u2193' : '';
+                  let dirArrow = '';
+                  if (isSorted === 'asc') dirArrow = '\u2191';
+                  else if (isSorted === 'desc') dirArrow = '\u2193';
                   return (
                     <th key={header.id} className="p-0 font-medium whitespace-nowrap">
                       {canSort ? (
@@ -364,7 +366,7 @@ export function DataTable<TData>({
                           className={[
                             'w-full px-2 py-1.5 inline-flex items-center gap-1 hover:text-text-primary hover:bg-bg-secondary/40 cursor-pointer',
                             meta?.align === 'right' ? 'justify-end' : 'justify-start',
-                            isSorted !== false ? 'text-text-primary' : '',
+                            isSorted === false ? '' : 'text-text-primary',
                           ].join(' ')}
                         >
                           <span>{flexRender(header.column.columnDef.header, header.getContext())}</span>
@@ -447,8 +449,8 @@ function TableBody<TData>({ virtualizer, rows, expandedIdx, setExpandedIdx, onCe
 
   const firstItem = virtualItems[0];
   const lastItem = virtualItems[virtualItems.length - 1];
-  const paddingTop = firstItem !== undefined ? firstItem.start : 0;
-  const paddingBottom = lastItem !== undefined ? virtualizer.getTotalSize() - lastItem.end : 0;
+  const paddingTop = firstItem === undefined ? 0 : firstItem.start;
+  const paddingBottom = lastItem === undefined ? 0 : virtualizer.getTotalSize() - lastItem.end;
 
   return (
     <tbody>
@@ -490,13 +492,17 @@ function TableRow<TData>({ row, expanded, canExpand, onToggle, onCellClick, rend
   onCellClick?: ((row: TData, columnId: string, value: unknown) => void) | undefined;
   renderExpandedRow?: ((row: TData) => React.ReactNode) | undefined;
 }>) {
+  let bgClass = '';
+  if (expanded) bgClass = 'bg-bg-tertiary/40';
+  else if (canExpand) bgClass = 'hover:bg-bg-tertiary/30';
+
   return (
     <>
       <tr
         className={[
           'border-t border-border/40',
           canExpand ? 'cursor-pointer' : '',
-          expanded ? 'bg-bg-tertiary/40' : canExpand ? 'hover:bg-bg-tertiary/30' : '',
+          bgClass,
         ].join(' ')}
         onClick={canExpand ? onToggle : undefined}
         onKeyDown={canExpand ? (e) => { if (e.key === 'Enter' || e.key === ' ') onToggle(); } : undefined}

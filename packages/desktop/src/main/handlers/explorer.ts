@@ -156,44 +156,50 @@ interface QueryContext {
   readonly accountMap: ReadonlyMap<string, string>;
 }
 
+function classifyExclusionRule(
+  rule: ExclusionRule,
+  dimensions: DimensionsConfig,
+  accountReverseMap: ReadonlyMap<string, readonly string[]>,
+  singleByDim: Map<string, { fieldExpr: string; values: string[] }>,
+): ExclusionRule | null {
+  if (rule.conditions.length !== 1) return rule;
+
+  const cond = rule.conditions[0];
+  if (cond === undefined || cond.values.length === 0) return null;
+
+  const key = cond.dimensionId;
+  const existing = singleByDim.get(key);
+  if (existing !== undefined) {
+    existing.values.push(...cond.values.map(v => v.replaceAll("'", "''")));
+    return null;
+  }
+
+  const probe: ExclusionRule = { ...rule, conditions: [cond] };
+  const expr = buildRuleMatchExpr(probe, dimensions, accountReverseMap);
+  if (expr === null) return null;
+
+  const inIdx = expr.indexOf(' IN (');
+  if (inIdx === -1) return rule;
+
+  const fieldExpr = expr.slice(0, inIdx);
+  singleByDim.set(key, { fieldExpr, values: cond.values.map(v => v.replaceAll("'", "''")) });
+  return null;
+}
+
 function buildExclusionClauses(
   costScope: { rules: readonly ExclusionRule[] } | undefined,
   dimensions: DimensionsConfig,
   accountReverseMap: ReadonlyMap<string, readonly string[]>,
 ): string[] {
   if (costScope === undefined) return [];
-  // Merge single-condition exclusion rules that target the same dimension
-  // into one NOT IN clause. Avoids redundant COALESCE/CASE evaluation
-  // per rule when DuckDB evaluates each NOT(...) independently.
+
   const singleByDim = new Map<string, { fieldExpr: string; values: string[] }>();
   const multiRules: ExclusionRule[] = [];
 
   for (const rule of costScope.rules) {
     if (!rule.enabled) continue;
-    if (rule.conditions.length === 1) {
-      const cond = rule.conditions[0];
-      if (cond === undefined || cond.values.length === 0) continue;
-      const key = cond.dimensionId;
-      const existing = singleByDim.get(key);
-      if (existing !== undefined) {
-        existing.values.push(...cond.values.map(v => v.replaceAll("'", "''")));
-      } else {
-        // Build the field expression once per dimension
-        const probe: ExclusionRule = { ...rule, conditions: [cond] };
-        const expr = buildRuleMatchExpr(probe, dimensions, accountReverseMap);
-        if (expr === null) continue;
-        // Extract the field expression from "fieldExpr IN ('v1', 'v2')"
-        const inIdx = expr.indexOf(' IN (');
-        if (inIdx === -1) {
-          multiRules.push(rule);
-          continue;
-        }
-        const fieldExpr = expr.slice(0, inIdx);
-        singleByDim.set(key, { fieldExpr, values: cond.values.map(v => v.replaceAll("'", "''")) });
-      }
-    } else {
-      multiRules.push(rule);
-    }
+    const multi = classifyExclusionRule(rule, dimensions, accountReverseMap, singleByDim);
+    if (multi !== null) multiRules.push(multi);
   }
 
   const clauses: string[] = [];

@@ -31,6 +31,33 @@ function buildSqlList(values: readonly string[], qb: QueryBuilder): string {
   return values.map(v => qb.addParam(v)).join(', ');
 }
 
+function resolveAccountIds(
+  values: readonly string[],
+  accountReverseMap: Map<string, readonly string[]>,
+): { allIds: Set<string>; usedReverse: boolean } {
+  const allIds = new Set<string>();
+  let usedReverse = false;
+  for (const v of values) {
+    const ids = accountReverseMap.get(v);
+    if (ids !== undefined && ids.length > 0) {
+      for (const id of ids) allIds.add(id);
+      usedReverse = true;
+    } else {
+      allIds.add(v);
+    }
+  }
+  return { allIds, usedReverse };
+}
+
+function buildValueClause(fieldExpr: string, values: readonly string[], qb: QueryBuilder): string {
+  if (values.length === 1) {
+    const first = values[0];
+    if (first === undefined) return '';
+    return `${fieldExpr} = ${qb.addParam(first)}`;
+  }
+  return `${fieldExpr} IN (${buildSqlList(values, qb)})`;
+}
+
 function buildFilterWhereClauses(
   filterEntries: Record<string, readonly string[]>,
   dimensions: import('@costgoblin/core').DimensionsConfig,
@@ -40,40 +67,17 @@ function buildFilterWhereClauses(
   const clauses: string[] = [];
   for (const [key, values] of Object.entries(filterEntries)) {
     if (values.length === 0) continue;
-    const fb = dimensions.builtIn.find(d => d.name === key);
-    const ft = dimensions.tags.find(d => tagColumnName(d.tagName) === key);
-    const ff = fb === undefined ? key : fb.field;
-    let ffExpr = ff;
-    if (fb !== undefined) ffExpr = buildAliasSqlCase(ff, fb);
-    else if (ft !== undefined) ffExpr = buildAliasSqlCase(ff, ft);
+    const { field: ff, fieldExpr: ffExpr } = resolveFieldExpr(key, dimensions);
 
     if (ff === 'account_id') {
-      const allIds = new Set<string>();
-      let usedReverse = false;
-      for (const v of values) {
-        const ids = accountReverseMap.get(v);
-        if (ids !== undefined && ids.length > 0) {
-          for (const id of ids) allIds.add(id);
-          usedReverse = true;
-        } else {
-          allIds.add(v);
-        }
-      }
+      const { allIds, usedReverse } = resolveAccountIds(values, accountReverseMap);
       if (usedReverse) {
-        const list = buildSqlList([...allIds], qb);
-        clauses.push(`${ff} IN (${list})`);
+        clauses.push(`${ff} IN (${buildSqlList([...allIds], qb)})`);
         continue;
       }
     }
-    if (values.length === 1) {
-      const first = values[0];
-      if (first === undefined) continue;
-      const placeholder = qb.addParam(first);
-      clauses.push(`${ffExpr} = ${placeholder}`);
-    } else {
-      const list = buildSqlList(values, qb);
-      clauses.push(`${ffExpr} IN (${list})`);
-    }
+    const clause = buildValueClause(ffExpr, values, qb);
+    if (clause.length > 0) clauses.push(clause);
   }
   return clauses;
 }
@@ -123,14 +127,14 @@ export function registerFilterHandlers(app: AppContext): void {
     const qb = new QueryBuilder();
     const { fieldExpr } = resolveFieldExpr(dimensionId, dimensions);
 
-    const matSource = dateRange !== undefined
-      ? materializedBase.getSource(dateRange, 'daily')
-      : undefined;
+    const matSource = dateRange === undefined
+      ? undefined
+      : materializedBase.getSource(dateRange, 'daily');
 
     const filterClauses = buildFilterWhereClauses(filterEntries, dimensions, accountReverseMap, qb);
-    const exclusionClauses = matSource !== undefined
-      ? []
-      : buildExclusionWhereClauses(costScope, dimensions, accountReverseMap, qb);
+    const exclusionClauses = matSource === undefined
+      ? buildExclusionWhereClauses(costScope, dimensions, accountReverseMap, qb)
+      : [];
     const whereClauses = [...filterClauses, ...exclusionClauses];
 
     if (dateRange !== undefined && matSource === undefined) {
@@ -142,13 +146,13 @@ export function registerFilterHandlers(app: AppContext): void {
     const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
     let source: string;
-    if (matSource !== undefined) {
-      source = matSource;
-    } else {
+    if (matSource === undefined) {
       const orgPath = await getOrgAccountsPath();
       const periods = dateRange === undefined ? undefined : computePeriodsInRange(dateRange);
       const availableColumns = await getAvailableColumns('daily');
       source = buildSource({ dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath, periods, costMetric: 'unblended', availableColumns });
+    } else {
+      source = matSource;
     }
 
     const sql = `

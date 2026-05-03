@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { DataInventoryResult, CostGoblinConfig } from '@costgoblin/core/browser';
+import type { DataInventoryResult, CostGoblinConfig, SyncStatus } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
@@ -7,6 +7,23 @@ import { SetupWizard } from './setup-wizard.js';
 import { OrgAccountsSection } from './data-management-org.js';
 import { SsmParameterSection } from './data-management-ssm.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
+
+function syncStatusToState(s: SyncStatus): SyncState | null {
+  if (s.status === 'syncing') {
+    return s.phase === 'repartitioning'
+      ? { status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal }
+      : { status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, message: s.message };
+  }
+  if (s.status === 'idle') {
+    return { status: 'idle' };
+  }
+  return null;
+}
+
+function retentionCutoffPeriod(retentionDays: number): string {
+  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+  return `${String(cutoff.getFullYear())}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
+}
 
 export function DataManagement() {
   const api = useCostApi();
@@ -35,11 +52,8 @@ export function DataManagement() {
     function applyStatus(tier: 'daily' | 'hourly' | 'cost-optimization', setter: (s: SyncState) => void) {
       api.getSyncStatus(tier).then(s => {
         if (cancelled) return;
-        if (s.status === 'syncing') {
-          setter(s.phase === 'repartitioning'
-            ? { status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal }
-            : { status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, message: s.message });
-        }
+        const mapped = syncStatusToState(s);
+        if (mapped !== null) setter(mapped);
       }).catch(() => undefined);
     }
     function tick() {
@@ -80,11 +94,10 @@ export function DataManagement() {
   const provider = config?.providers[0] ?? null;
 
   const retentionDays = provider?.sync.daily.retentionDays ?? 365;
-  const retentionCutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
-  const retentionCutoffPeriod = `${String(retentionCutoff.getFullYear())}-${String(retentionCutoff.getMonth() + 1).padStart(2, '0')}`;
+  const dailyCutoffPeriod = retentionCutoffPeriod(retentionDays);
 
   const missingPeriods = inventory?.periods.filter(p => p.localStatus === 'missing') ?? [];
-  const missingWithinRetention = missingPeriods.filter(p => p.period >= retentionCutoffPeriod);
+  const missingWithinRetention = missingPeriods.filter(p => p.period >= dailyCutoffPeriod);
 
   useEffect(() => {
     if (!initialized && inventoryQuery.status === 'success' && missingWithinRetention.length > 0) {
@@ -118,15 +131,8 @@ export function DataManagement() {
 
     const pollInterval = setInterval(() => {
       api.getSyncStatus('daily').then((s) => {
-        if (s.status === 'syncing') {
-          if (s.phase === 'repartitioning') {
-            setDailySyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
-          } else {
-            setDailySyncState({ status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, message: s.message });
-          }
-        } else if (s.status === 'idle') {
-          setDailySyncState({ status: 'idle' });
-        }
+        const mapped = syncStatusToState(s);
+        if (mapped !== null) setDailySyncState(mapped);
       }).catch(() => { /* poll failure is transient */ });
     }, 500);
 
@@ -196,14 +202,12 @@ export function DataManagement() {
   const costOptInventory: DataInventoryResult | null = costOptInventoryQuery.status === 'success' ? costOptInventoryQuery.data : null;
 
   const hourlyRetentionDays = provider?.sync.hourly?.retentionDays ?? 30;
-  const hourlyRetentionCutoff = new Date(Date.now() - hourlyRetentionDays * 24 * 60 * 60 * 1000);
-  const hourlyRetentionCutoffPeriod = `${String(hourlyRetentionCutoff.getFullYear())}-${String(hourlyRetentionCutoff.getMonth() + 1).padStart(2, '0')}`;
-  const hourlyMissing = (hourlyInventory?.periods.filter(p => p.localStatus === 'missing') ?? []).filter(p => p.period >= hourlyRetentionCutoffPeriod);
+  const hourlyCutoffPeriod = retentionCutoffPeriod(hourlyRetentionDays);
+  const hourlyMissing = (hourlyInventory?.periods.filter(p => p.localStatus === 'missing') ?? []).filter(p => p.period >= hourlyCutoffPeriod);
 
   const costOptRetentionDays = provider?.sync.costOptimization?.retentionDays ?? 90;
-  const costOptRetentionCutoff = new Date(Date.now() - costOptRetentionDays * 24 * 60 * 60 * 1000);
-  const costOptRetentionCutoffPeriod = `${String(costOptRetentionCutoff.getFullYear())}-${String(costOptRetentionCutoff.getMonth() + 1).padStart(2, '0')}`;
-  const costOptMissing = (costOptInventory?.periods.filter(p => p.localStatus === 'missing') ?? []).filter(p => p.period >= costOptRetentionCutoffPeriod);
+  const costOptCutoffPeriod = retentionCutoffPeriod(costOptRetentionDays);
+  const costOptMissing = (costOptInventory?.periods.filter(p => p.localStatus === 'missing') ?? []).filter(p => p.period >= costOptCutoffPeriod);
 
   const [hourlyInitialized, setHourlyInitialized] = useState(false);
   useEffect(() => {
@@ -246,15 +250,8 @@ export function DataManagement() {
 
     const pollInterval = setInterval(() => {
       api.getSyncStatus('hourly').then((s) => {
-        if (s.status === 'syncing') {
-          if (s.phase === 'repartitioning') {
-            setHourlySyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
-          } else {
-            setHourlySyncState({ status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, message: s.message });
-          }
-        } else if (s.status === 'idle') {
-          setHourlySyncState({ status: 'idle' });
-        }
+        const mapped = syncStatusToState(s);
+        if (mapped !== null) setHourlySyncState(mapped);
       }).catch(() => { /* poll failure is transient */ });
     }, 500);
 
@@ -299,15 +296,8 @@ export function DataManagement() {
 
     const pollInterval = setInterval(() => {
       api.getSyncStatus('cost-optimization').then((s) => {
-        if (s.status === 'syncing') {
-          if (s.phase === 'repartitioning') {
-            setCostOptSyncState({ status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal });
-          } else {
-            setCostOptSyncState({ status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, message: s.message });
-          }
-        } else if (s.status === 'idle') {
-          setCostOptSyncState({ status: 'idle' });
-        }
+        const mapped = syncStatusToState(s);
+        if (mapped !== null) setCostOptSyncState(mapped);
       }).catch(() => { /* poll failure is transient */ });
     }, 500);
 

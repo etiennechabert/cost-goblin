@@ -140,7 +140,11 @@ export function DebugPanel({ onClose }: Readonly<{ onClose: () => void }>): Reac
   const runningCount = entries.filter(e => e.status === 'running').length;
   const queuedCount = entries.filter(e => e.status === 'queued').length;
   const sorted = [...entries].reverse().sort((a, b) => {
-    const rank = (s: DebugQueryLogEntry['status']) => s === 'running' ? 0 : s === 'queued' ? 1 : 2;
+    const rank = (s: DebugQueryLogEntry['status']): number => {
+      if (s === 'running') return 0;
+      if (s === 'queued') return 1;
+      return 2;
+    };
     return rank(a.status) - rank(b.status);
   });
 

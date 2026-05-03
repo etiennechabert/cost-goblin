@@ -46,6 +46,37 @@ export function bucketBars(bars: readonly BarDay[], maxBuckets: number): readonl
   return result;
 }
 
+interface BarSegmentProps {
+  readonly seg: { readonly key: string; readonly value: number; readonly colorIdx: number };
+  readonly segTotal: number;
+  readonly highlightedGroup?: string | null | undefined;
+  readonly palette: readonly string[];
+  readonly onMouseEnter: () => void;
+  readonly onSegmentClick?: ((name: string) => void) | undefined;
+}
+
+function BarSegment({ seg, segTotal, highlightedGroup, palette, onMouseEnter, onSegmentClick }: BarSegmentProps) {
+  const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
+  const color = getColor(seg.colorIdx, palette);
+  const isDimmed = highlightedGroup !== null && highlightedGroup !== undefined && highlightedGroup !== seg.key;
+  return (
+    <div
+      onMouseEnter={onMouseEnter}
+      onClick={(e) => { e.stopPropagation(); onSegmentClick?.(seg.key); }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onSegmentClick?.(seg.key); } }}
+      role={onSegmentClick !== undefined ? 'button' : undefined}
+      tabIndex={onSegmentClick !== undefined ? 0 : undefined}
+      style={{
+        height: `${String(pct)}%`,
+        backgroundColor: color,
+        opacity: isDimmed ? 0.25 : 0.85,
+        transition: 'opacity 0.15s',
+        cursor: onSegmentClick !== undefined ? 'pointer' : undefined,
+      }}
+    />
+  );
+}
+
 export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick }: StackedBarChartProps) {
   const { palette } = usePalette();
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
@@ -225,25 +256,17 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                     className="w-full overflow-hidden rounded-t-sm"
                     style={{ height: `${String(barPct)}%`, minHeight: barPct > 0 ? '2px' : '0' }}
                   >
-                    {segments.map(seg => {
-                      const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
-                      const color = getColor(seg.colorIdx, palette);
-                      const isDimmed = highlightedGroup !== null && highlightedGroup !== undefined && highlightedGroup !== seg.key;
-                      return (
-                        <div
-                          key={seg.key}
-                          onMouseEnter={() => { setHoveredSegment(seg.key); }}
-                          onClick={(e) => { e.stopPropagation(); onSegmentClick?.(seg.key); }}
-                          style={{
-                            height: `${String(pct)}%`,
-                            backgroundColor: color,
-                            opacity: isDimmed ? 0.25 : 0.85,
-                            transition: 'opacity 0.15s',
-                            cursor: onSegmentClick !== undefined ? 'pointer' : undefined,
-                          }}
-                        />
-                      );
-                    })}
+                    {segments.map(seg => (
+                      <BarSegment
+                        key={seg.key}
+                        seg={seg}
+                        segTotal={segTotal}
+                        highlightedGroup={highlightedGroup}
+                        palette={palette}
+                        onMouseEnter={() => { setHoveredSegment(seg.key); }}
+                        onSegmentClick={onSegmentClick}
+                      />
+                    ))}
                   </div>
 
                 </button>
@@ -259,7 +282,9 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
               const pct = days.length > 1 ? (idx / (days.length - 1)) * 100 : 0;
               const isFirst = idx === 0;
               const isLast = idx >= days.length - step;
-              const align = isFirst ? '' : isLast ? '-translate-x-full' : '-translate-x-1/2';
+              let align = '-translate-x-1/2';
+              if (isFirst) align = '';
+              else if (isLast) align = '-translate-x-full';
               return (
                 <span
                   key={day.date}

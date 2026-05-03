@@ -52,6 +52,30 @@ function applyNormalizeAndStrip(
   });
 }
 
+function filterUncoveredSuggestions(
+  suggestions: readonly AliasSuggestion[],
+  existingAliases: Readonly<Record<string, readonly string[]>>,
+  dismissed: readonly DismissedEntry[],
+  tagName: string,
+): AliasSuggestion[] {
+  const coveredValues = new Set<string>();
+  for (const [canonical, aliases] of Object.entries(existingAliases)) {
+    coveredValues.add(canonical);
+    for (const a of aliases) coveredValues.add(a);
+  }
+
+  const filtered: AliasSuggestion[] = [];
+  for (const s of suggestions) {
+    if (coveredValues.has(s.canonical)) continue;
+    const uncovered = s.aliases.filter(a => !coveredValues.has(a));
+    if (uncovered.length === 0) continue;
+    const candidate: AliasSuggestion = { canonical: s.canonical, aliases: uncovered };
+    if (isDismissed(dismissed, tagName, candidate.canonical, candidate.aliases)) continue;
+    filtered.push(candidate);
+  }
+  return filtered;
+}
+
 export function registerDimensionsHandlers(app: AppContext): void {
   const { ctx, getConfig, getDimensions, getRegionMap, invalidateDimensions, runQuery } = app;
 
@@ -276,34 +300,14 @@ export function registerDimensionsHandlers(app: AppContext): void {
     let values = rows.map(r => toStr(r['tag_val'])).filter(v => v.length > 0);
     if (values.length === 0) return [];
 
-    // Apply normalization before clustering so case/format variations
-    // already handled by the normalize rule don't produce noise
     const normalizeRule = tag.normalize;
     if (normalizeRule !== undefined) {
       values = [...new Set(values.map(v => applyNormalizationRule(v, normalizeRule)))];
     }
 
     const suggestions = generateAliasSuggestions(values);
-
-    // Filter out suggestions already covered by existing alias rules
-    const existingAliases = tag.aliases ?? {};
-    const coveredValues = new Set<string>();
-    for (const [canonical, aliases] of Object.entries(existingAliases)) {
-      coveredValues.add(canonical);
-      for (const a of aliases) coveredValues.add(a);
-    }
-
     const dismissed = await loadDismissedSuggestions(ctx.dataDir);
-    const filtered: AliasSuggestion[] = [];
-    for (const s of suggestions) {
-      if (coveredValues.has(s.canonical)) continue;
-      const uncovered = s.aliases.filter(a => !coveredValues.has(a));
-      if (uncovered.length === 0) continue;
-      const candidate: AliasSuggestion = { canonical: s.canonical, aliases: uncovered };
-      if (isDismissed(dismissed, tagName, candidate.canonical, candidate.aliases)) continue;
-      filtered.push(candidate);
-    }
-    return filtered;
+    return filterUncoveredSuggestions(suggestions, tag.aliases ?? {}, dismissed, tagName);
   });
 
   ipcMain.handle('dimensions:dismiss-suggestion', async (_event, tagName: string, canonical: string, aliases: string[]): Promise<void> => {

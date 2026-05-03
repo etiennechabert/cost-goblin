@@ -107,7 +107,7 @@ export function useUnsavedChanges(isDirty: boolean, label?: string): void {
   // Using a ref keeps the key across renders — a new one would cause the
   // cleanup/register pair to churn and leave stale entries behind.
   const keyRef = useRef<string | undefined>(undefined);
-  keyRef.current ??= `uc-${String(Math.random()).slice(2)}-${String(Date.now())}`;
+  keyRef.current ??= `uc-${crypto.randomUUID()}`;
   const setDirty = ctx.setDirty;
   useEffect(() => {
     const key = keyRef.current;
