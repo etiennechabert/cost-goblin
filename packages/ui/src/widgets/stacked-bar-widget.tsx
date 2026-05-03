@@ -56,7 +56,7 @@ export function StackedBarWidget({
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
 
-  const { query, dailyResult } = useDailyWidgetQuery({
+  const { query, activeGroupBy, dailyResult } = useDailyWidgetQuery({
     specGroupBy,
     dateRange,
     granularity,
@@ -98,7 +98,7 @@ export function StackedBarWidget({
       highlightedGroup={focus.hoveredEntity}
       title={title}
       loading={loading}
-      onSegmentClick={specGroupBy === undefined ? undefined : (name) => { onSetFilter(specGroupBy, asTagValue(name)); }}
+      onSegmentClick={activeGroupBy === undefined ? undefined : (name) => { onSetFilter(activeGroupBy, asTagValue(name)); }}
       previousTotals={compareEnabled ? previousTotals : undefined}
     />
   );
