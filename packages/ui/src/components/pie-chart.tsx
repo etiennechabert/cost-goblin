@@ -42,6 +42,12 @@ function aggregateOther(data: readonly PieSlice[], maxSlices: number): PieSlice[
 }
 
 
+function legendTextClass(isDimmed: boolean, isHovered: boolean): string {
+  if (isDimmed) return 'text-text-muted';
+  if (isHovered) return 'text-text-primary font-semibold';
+  return 'text-text-secondary';
+}
+
 function PieChartInner({
   data,
   title,
@@ -146,6 +152,9 @@ function PieChartInner({
                         onMouseEnter={() => { handleMouseEnter(sliceName); }}
                         onMouseLeave={handleMouseLeave}
                         onClick={() => { if (sliceName !== OTHER_KEY) onSliceClick?.(sliceName); }}
+                        onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && sliceName !== OTHER_KEY) onSliceClick?.(sliceName); }}
+                        role={sliceName !== OTHER_KEY && onSliceClick !== undefined ? 'button' : undefined}
+                        tabIndex={sliceName !== OTHER_KEY && onSliceClick !== undefined ? 0 : undefined}
                         style={{ cursor: sliceName !== OTHER_KEY && onSliceClick !== undefined ? 'pointer' : 'default' }}
                       >
                         <path
@@ -178,10 +187,13 @@ function PieChartInner({
             return (
               <div
                 key={d.name}
-                ref={(el) => { if (el !== null) { legendRefs.current.set(d.name, el); } else { legendRefs.current.delete(d.name); } }}
+                ref={(el) => { if (el === null) { legendRefs.current.delete(d.name); } else { legendRefs.current.set(d.name, el); } }}
                 onMouseEnter={() => { handleMouseEnter(d.name); }}
                 onMouseLeave={handleMouseLeave}
                 onClick={() => { if (d.name !== OTHER_KEY) onSliceClick?.(d.name); }}
+                onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && d.name !== OTHER_KEY) onSliceClick?.(d.name); }}
+                role={d.name !== OTHER_KEY && onSliceClick !== undefined ? 'button' : undefined}
+                tabIndex={d.name !== OTHER_KEY && onSliceClick !== undefined ? 0 : undefined}
                 className={[
                   'flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[11px] transition-colors',
                   d.name !== OTHER_KEY && onSliceClick !== undefined ? 'cursor-pointer' : '',
@@ -189,10 +201,10 @@ function PieChartInner({
                 ].join(' ')}
               >
                 <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
-                <span className={`truncate min-w-0 flex-1 ${isDimmed ? 'text-text-muted' : isHovered ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>
+                <span className={`truncate min-w-0 flex-1 ${legendTextClass(isDimmed, isHovered)}`}>
                   {d.name}
                 </span>
-                <span className={`tabular-nums shrink-0 whitespace-nowrap ${isDimmed ? 'text-text-muted' : isHovered ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>
+                <span className={`tabular-nums shrink-0 whitespace-nowrap ${legendTextClass(isDimmed, isHovered)}`}>
                   {formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)
                 </span>
               </div>

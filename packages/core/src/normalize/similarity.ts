@@ -20,7 +20,7 @@ function levenshtein(a: string, b: string): number {
 }
 
 function normalize(value: string): string {
-  return value.toLowerCase().replace(/[-_\s]+/g, '');
+  return value.toLowerCase().replaceAll(/[-_\s]+/g, '');
 }
 
 function isSeparatorVariation(a: string, b: string): boolean {
@@ -38,8 +38,8 @@ function isAbbreviation(full: string, abbrev: string): boolean {
 
   // First-letter initials (e.g. "cb" -> "core-banking")
   const words = full
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/[-_]+/g, ' ')
+    .replaceAll(/([a-z])([A-Z])/g, '$1 $2')
+    .replaceAll(/[-_]+/g, ' ')
     .split(/\s+/)
     .filter(w => w.length > 0);
   const initials = words
@@ -72,12 +72,10 @@ export interface AliasSuggestion {
   readonly aliases: readonly string[];
 }
 
-export function generateAliasSuggestions(
+function buildAdjacencyMap(
   values: readonly string[],
-  threshold = 0.8,
-): readonly AliasSuggestion[] {
-  if (values.length === 0) return [];
-
+  threshold: number,
+): Map<string, Set<string>> {
   const adjacent = new Map<string, Set<string>>();
   for (let i = 0; i < values.length; i++) {
     const a = values[i];
@@ -86,35 +84,51 @@ export function generateAliasSuggestions(
     for (let j = i + 1; j < values.length; j++) {
       const b = values[j];
       if (b === undefined) continue;
-      if (isSimilar(a, b, threshold)) {
-        adjacent.get(a)?.add(b);
-        if (!adjacent.has(b)) adjacent.set(b, new Set());
-        adjacent.get(b)?.add(a);
-      }
+      if (!isSimilar(a, b, threshold)) continue;
+      adjacent.get(a)?.add(b);
+      if (!adjacent.has(b)) adjacent.set(b, new Set());
+      adjacent.get(b)?.add(a);
     }
   }
+  return adjacent;
+}
 
+function collectCluster(
+  start: string,
+  adjacent: ReadonlyMap<string, Set<string>>,
+  visited: Set<string>,
+): string[] {
+  const cluster: string[] = [];
+  const stack = [start];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (current === undefined || visited.has(current)) continue;
+    visited.add(current);
+    cluster.push(current);
+    const neighbors = adjacent.get(current);
+    if (neighbors === undefined) continue;
+    for (const n of neighbors) {
+      if (!visited.has(n)) stack.push(n);
+    }
+  }
+  return cluster;
+}
+
+export function generateAliasSuggestions(
+  values: readonly string[],
+  threshold = 0.8,
+): readonly AliasSuggestion[] {
+  if (values.length === 0) return [];
+
+  const adjacent = buildAdjacencyMap(values, threshold);
   const visited = new Set<string>();
   const suggestions: AliasSuggestion[] = [];
 
   for (const start of values) {
     if (visited.has(start)) continue;
-    const cluster: string[] = [];
-    const stack = [start];
-    while (stack.length > 0) {
-      const current = stack.pop();
-      if (current === undefined || visited.has(current)) continue;
-      visited.add(current);
-      cluster.push(current);
-      const neighbors = adjacent.get(current);
-      if (neighbors !== undefined) {
-        for (const n of neighbors) {
-          if (!visited.has(n)) stack.push(n);
-        }
-      }
-    }
+    const cluster = collectCluster(start, adjacent, visited);
     if (cluster.length < 2) continue;
-    cluster.sort((a, b) => a.length !== b.length ? a.length - b.length : a.localeCompare(b));
+    cluster.sort((a, b) => a.length === b.length ? a.localeCompare(b) : a.length - b.length);
     const canonical = cluster[0];
     if (canonical !== undefined) {
       suggestions.push({ canonical, aliases: cluster.slice(1) });

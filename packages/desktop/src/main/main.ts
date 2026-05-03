@@ -261,12 +261,10 @@ app.on('will-quit', () => {
   void stopMcpServer();
 });
 
-void (async () => {
-  try {
-    await main();
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`Fatal error: ${message}\n`);
-    process.exit(1);
-  }
-})();
+try {
+  await main();
+} catch (err: unknown) {
+  const message = err instanceof Error ? err.message : String(err);
+  process.stderr.write(`Fatal error: ${message}\n`);
+  process.exit(1);
+}

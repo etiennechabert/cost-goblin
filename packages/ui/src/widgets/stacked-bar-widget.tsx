@@ -73,7 +73,7 @@ export function StackedBarWidget({
       highlightedGroup={focus.hoveredEntity}
       title={title}
       loading={loading}
-      onSegmentClick={specGroupBy !== undefined ? (name) => { onSetFilter(specGroupBy, asTagValue(name)); } : undefined}
+      onSegmentClick={specGroupBy === undefined ? undefined : (name) => { onSetFilter(specGroupBy, asTagValue(name)); }}
     />
   );
 }
