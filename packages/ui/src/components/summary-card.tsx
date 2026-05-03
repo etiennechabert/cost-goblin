@@ -50,10 +50,14 @@ export function SummaryCard({ totalCost, previousCost, dateRange, previousDateRa
               let deltaArrow = '';
               if (isDecrease) deltaArrow = '▼';
               else if (isIncrease) deltaArrow = '▲';
+              const absDiff = (totalCost ?? 0) - (previousCost ?? 0);
               return (
                 <p className={`mt-1 text-2xl font-bold tabular-nums ${deltaColor}`}>
                   {deltaArrow}
                   {Math.abs(delta).toFixed(1)}%
+                  <span className="ml-2 text-sm font-semibold">
+                    ({absDiff >= 0 ? '+' : ''}{formatDollars(absDiff)})
+                  </span>
                 </p>
               );
             })()}
