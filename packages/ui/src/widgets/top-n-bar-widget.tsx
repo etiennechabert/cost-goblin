@@ -48,7 +48,11 @@ export function TopNBarWidget({
 
   const label = dimensionLabelFor(dimensions, activeGroupBy);
 
-  if (query.status === 'loading') return <CoinRainLoader height={260} count={5} />;
+  if (query.status === 'loading') return (
+    <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4">
+      <CoinRainLoader height={260} count={5} />
+    </div>
+  );
 
   return (
     <TopNBarChart

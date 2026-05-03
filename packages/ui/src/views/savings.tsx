@@ -3,6 +3,7 @@ import type { SortingState } from '@tanstack/react-table';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { formatDollars } from '../components/format.js';
+import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { DataTable } from '../components/data-table.js';
 import type { TableColumn } from '../lib/table-types.js';
 import { useState, useMemo, Fragment } from 'react';
@@ -335,7 +336,9 @@ export function Savings() {
       )}
 
       {savingsQuery.status === 'loading' && (
-        <div className="text-sm text-text-secondary">Loading recommendations...</div>
+        <div className="flex-1">
+          <CoinRainLoader height={500} count={10} />
+        </div>
       )}
       {savingsQuery.status === 'error' && (
         <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">

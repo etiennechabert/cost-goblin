@@ -16,6 +16,7 @@ import { DateRangePicker, getDefaultDateRange } from '../components/date-range-p
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
 import { DimensionSelector } from '../components/dimension-selector.js';
 import { formatDollars, formatPercent } from '../components/format.js';
+import { CoinRainLoader } from '../components/coin-rain-loader.js';
 
 type Direction = 'increases' | 'savings';
 
@@ -196,7 +197,9 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
       )}
 
       {trendsQuery.status === 'loading' && (
-        <div className="text-sm text-text-secondary">Loading trends...</div>
+        <div className="flex-1">
+          <CoinRainLoader height={500} count={10} />
+        </div>
       )}
       {trendsQuery.status === 'error' && (
         <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">
