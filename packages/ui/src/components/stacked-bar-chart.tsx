@@ -290,7 +290,6 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
               className="absolute left-12 right-0 top-0 bottom-7 z-[11] pointer-events-none"
               viewBox="0 0 1000 1000"
               preserveAspectRatio="none"
-              style={{ width: '100%', height: '100%' }}
             >
               <polyline
                 fill="none"
