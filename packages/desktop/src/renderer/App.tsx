@@ -366,8 +366,8 @@ function SplashScreen(): React.JSX.Element {
 
   return (
     <div
-      className="min-h-screen bg-bg-primary flex flex-col items-center justify-center transition-opacity duration-500"
-      style={{ opacity: fadeOut ? 0 : 1, WebkitAppRegion: 'drag' } as React.CSSProperties}
+      className="min-h-screen flex flex-col items-center justify-center transition-opacity duration-500"
+      style={{ opacity: fadeOut ? 0 : 1, background: '#0a0a0a', WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
       <div className="relative h-48 w-48 mb-6">
         {order.map((src, i) => (
