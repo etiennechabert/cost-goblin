@@ -17,6 +17,8 @@ interface TreemapChartProps {
   readonly subtitle?: string | undefined;
   readonly height?: number | undefined;
   readonly onCellClick?: ((name: string) => void) | undefined;
+  readonly onCellHover?: ((name: string | null) => void) | undefined;
+  readonly externalHoveredName?: string | null | undefined;
   readonly previousCosts?: ReadonlyMap<string, number> | undefined;
 }
 
@@ -31,6 +33,8 @@ function TreemapInner({
   width,
   height,
   onCellClick,
+  onCellHover,
+  externalHoveredName,
   previousCosts,
 }: Omit<TreemapChartProps, 'title' | 'subtitle'> & { readonly width: number; readonly height: number }) {
   const { palette } = usePalette();
@@ -68,17 +72,21 @@ function TreemapInner({
               const name = node.data.id;
               const cost = node.value ?? 0;
               const showLabel = w > 60 && h > 24;
+              const isHovered = externalHoveredName === name;
+              const isDimmed = externalHoveredName !== null && externalHoveredName !== undefined && !isHovered;
               return (
                 <Group key={`${name}-${String(i)}`} top={node.y0} left={node.x0}>
                   <rect
                     width={w}
                     height={h}
                     fill={color}
-                    fillOpacity={0.85}
-                    stroke="var(--color-bg-secondary)"
-                    strokeWidth={1.5}
-                    style={{ cursor: onCellClick === undefined ? 'default' : 'pointer' }}
+                    fillOpacity={isDimmed ? 0.35 : 0.85}
+                    stroke={isHovered ? '#ffffff' : 'var(--color-bg-secondary)'}
+                    strokeWidth={isHovered ? 2 : 1.5}
+                    style={{ cursor: onCellClick === undefined ? 'default' : 'pointer', transition: 'fill-opacity 0.15s, stroke 0.15s' }}
                     onClick={() => { onCellClick?.(name); }}
+                    onMouseEnter={() => { onCellHover?.(name); }}
+                    onMouseLeave={() => { onCellHover?.(null); }}
                   >
                     <title>{`${name} — ${formatDollars(cost)}`}</title>
                   </rect>
@@ -127,7 +135,7 @@ function TreemapInner({
   );
 }
 
-export function TreemapChart({ data, title, subtitle, height = 320, onCellClick, previousCosts }: TreemapChartProps) {
+export function TreemapChart({ data, title, subtitle, height = 320, onCellClick, onCellHover, externalHoveredName, previousCosts }: TreemapChartProps) {
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col" style={{ height }}>
       {(title !== undefined || subtitle !== undefined) && (
@@ -144,6 +152,8 @@ export function TreemapChart({ data, title, subtitle, height = 320, onCellClick,
               width={width}
               height={h}
               onCellClick={onCellClick}
+              onCellHover={onCellHover}
+              externalHoveredName={externalHoveredName}
               previousCosts={previousCosts}
             />
           )}

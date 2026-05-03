@@ -180,10 +180,11 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             const day = days[idx];
             if (day === undefined) return null;
             const onLeft = idx < days.length / 2;
+            const prevPeriodTotal = previousTotals !== undefined ? previousTotals[idx] : undefined;
             const prev = idx > 0 ? days[idx - 1] : undefined;
-            const prevTotal = prev?.total ?? 0;
-            const totalDelta = prev !== undefined && prevTotal > 0
-              ? ((day.total - prevTotal) / prevTotal) * 100
+            const compTotal = prevPeriodTotal ?? prev?.total;
+            const totalDelta = compTotal !== undefined && compTotal > 0
+              ? ((day.total - compTotal) / compTotal) * 100
               : undefined;
             const segs = breakdownKeys
               .map((key, ki) => ({ key, value: day.breakdown[key] ?? 0, colorIdx: ki }))
@@ -200,6 +201,11 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                       {totalDelta !== undefined && (
                         <span className={`ml-1.5 text-[10px] font-normal ${totalDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
                           {totalDelta >= 0 ? '↑' : '↓'}{Math.abs(totalDelta).toFixed(1)}%
+                        </span>
+                      )}
+                      {prevPeriodTotal !== undefined && prevPeriodTotal > 0 && (
+                        <span className="ml-1.5 text-[10px] font-normal text-text-muted">
+                          (prev: {formatDollars(prevPeriodTotal)})
                         </span>
                       )}
                     </span>

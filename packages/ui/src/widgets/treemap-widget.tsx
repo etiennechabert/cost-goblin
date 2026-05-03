@@ -5,6 +5,7 @@ import { useQuery } from '../hooks/use-query.js';
 import { TreemapChart } from '../components/treemap-chart.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { TreemapCell } from '../components/treemap-chart.js';
+import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import { asTagValue } from '@costgoblin/core/browser';
 import type { CostResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
@@ -31,6 +32,8 @@ export function TreemapWidget({
   onSetFilter,
 }: WidgetCommonProps) {
   const api = useCostApi();
+  const focus = useCostFocus();
+  const dispatch = useCostFocusDispatch();
   const specGroupBy = spec.type === 'treemap' ? spec.groupBy : undefined;
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
@@ -77,6 +80,8 @@ export function TreemapWidget({
       title={spec.title ?? label}
       subtitle="Click to filter"
       onCellClick={(name) => { onSetFilter(activeGroupBy, asTagValue(name)); }}
+      onCellHover={(name) => { dispatch({ type: 'HOVER', entity: name, dimension: activeGroupBy }); }}
+      externalHoveredName={focus.hoveredDimension === activeGroupBy ? focus.hoveredEntity : null}
       previousCosts={compareEnabled ? previousCosts : undefined}
     />
   );
