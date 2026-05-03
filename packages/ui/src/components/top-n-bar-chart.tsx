@@ -146,7 +146,7 @@ function TopNBarChartInner({
                     />
                   </div>
                   <span
-                    className="text-xs tabular-nums text-text-primary font-medium shrink-0 text-right"
+                    className="text-xs tabular-nums text-text-primary font-medium shrink-0 text-right relative z-10"
                     style={{ width: RIGHT_GUTTER - 8 }}
                   >
                     {formatDollars(row.cost)}
