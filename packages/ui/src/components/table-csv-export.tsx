@@ -3,7 +3,9 @@ import { Download } from 'lucide-react';
 
 function escapeCsv(value: unknown): string {
   if (value === null || value === undefined) return '';
-  const str = typeof value === 'string' ? value : typeof value === 'number' ? value.toString() : '';
+  let str = '';
+  if (typeof value === 'string') str = value;
+  else if (typeof value === 'number') str = value.toString();
   if (str.includes(',') || str.includes('"') || str.includes('\n')) {
     return `"${str.replaceAll('"', '""')}"`;
   }

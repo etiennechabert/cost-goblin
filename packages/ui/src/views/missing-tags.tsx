@@ -113,7 +113,7 @@ function buildMessageParts(ctx: CopyContext) {
 
 function buildSlack(ctx: CopyContext): string {
   const p = buildMessageParts(ctx);
-  const scope = p.owner !== null ? ` (filtered to *${p.owner}*)` : '';
+  const scope = p.owner === null ? '' : ` (filtered to *${p.owner}*)`;
   return [
     `*${p.count} resources* are missing the \`${p.tag}\` tag${scope}, representing *${p.cost}/month* in unattributed spend.`,
     '',
@@ -123,7 +123,7 @@ function buildSlack(ctx: CopyContext): string {
 
 function buildJira(ctx: CopyContext): string {
   const p = buildMessageParts(ctx);
-  const scope = p.owner !== null ? ` (filtered to *${p.owner}*)` : '';
+  const scope = p.owner === null ? '' : ` (filtered to *${p.owner}*)`;
   return [
     `h3. Missing {{${p.tag}}} tag`,
     '',
@@ -339,7 +339,10 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
                 className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-tertiary/30 px-3 py-1.5 text-xs font-medium text-text-primary hover:bg-bg-tertiary/50 transition-colors"
               >
                 <span className="text-text-muted">Fallback {activeDimLabel}</span>
-                <span>{selectedClosest === null ? 'All' : (selectedClosest.length === 0 ? '(none)' : selectedClosest)}</span>
+                <span>{(() => {
+                  if (selectedClosest === null) return 'All';
+                  return selectedClosest.length === 0 ? '(none)' : selectedClosest;
+                })()}</span>
                 <ChevronDown className="h-3 w-3 text-text-muted" />
               </button>
             </PopoverTrigger>
@@ -403,7 +406,7 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
           >
             <div>
               <p className="text-sm font-medium text-text-primary">
-                Actionable
+                Actionable{' '}
                 <span className="ml-2 text-base font-bold tabular-nums text-accent">
                   {formatDollars(selectedClosest === null ? data.totalActionableCost : asDollars(filteredActionable.reduce((s, r) => s + Number(r.cost), 0)))}
                   {data.actionableCount < data.unfilteredActionableCount && selectedClosest === null && (
@@ -456,7 +459,7 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
           >
             <div>
               <p className="text-sm font-medium text-text-secondary">
-                Likely not taggable
+                Likely not taggable{' '}
                 <span className="ml-2 text-base font-bold tabular-nums">
                   {formatDollars(selectedClosest === null ? data.totalLikelyUntaggableCost : asDollars(filteredUntaggable.reduce((s, r) => s + Number(r.cost), 0)))}
                   {data.likelyUntaggableCount < data.unfilteredLikelyUntaggableCount && selectedClosest === null && (
@@ -502,7 +505,7 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
           >
             <div>
               <p className="text-sm font-medium text-text-primary">
-                Non-resource cost
+                Non-resource cost{' '}
                 <span className="ml-2 text-base font-bold tabular-nums text-text-secondary">{formatDollars(data.totalNonResourceCost)}</span>
               </p>
               <p className="text-xs text-text-muted">

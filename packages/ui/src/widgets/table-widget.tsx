@@ -252,11 +252,6 @@ function RowDetail({ row, allColumns, fetchDetailRows }: Readonly<{
   const entries = Object.entries(row.values).filter(([, v]) => v.length > 0);
   const labelMap = new Map(allColumns.map(c => [c.key, c.label]));
 
-  function formatSignedDollarsInline(n: number): string {
-    if (n < 0) return `-${formatDollars(-n)}`;
-    return formatDollars(n);
-  }
-
   const detailColSpecs = useMemo(() => {
     if (detailRows === null || detailRows.length === 0) return [];
     const first = detailRows[0];
@@ -281,7 +276,7 @@ function RowDetail({ row, allColumns, fetchDetailRows }: Readonly<{
         ))}
         <div className="flex gap-1.5 py-0.5 min-w-0">
           <span className="text-text-muted shrink-0">Cost</span>
-          <span className="text-text-primary">{formatSignedDollarsInline(row.cost)}</span>
+          <span className="text-text-primary">{formatSignedDollars(row.cost)}</span>
         </div>
         <div className="flex gap-1.5 py-0.5 min-w-0">
           <span className="text-text-muted shrink-0">Line Items</span>
@@ -307,7 +302,7 @@ function RowDetail({ row, allColumns, fetchDetailRows }: Readonly<{
                   return (
                     <tr key={drKey} className="border-t border-border/30 hover:bg-bg-tertiary/20">
                       {detailColSpecs.map(c => {
-                        const val = c.key === 'cost' ? formatSignedDollarsInline(dr.cost) : (dr.values[c.key] ?? '');
+                        const val = c.key === 'cost' ? formatSignedDollars(dr.cost) : (dr.values[c.key] ?? '');
                         return (
                           <td
                             key={c.key}

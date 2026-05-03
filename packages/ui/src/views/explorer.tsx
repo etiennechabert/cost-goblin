@@ -684,7 +684,9 @@ function Histogram({ days, loading }: HistogramProps): React.JSX.Element {
           const pct = days.length > 1 ? (idx / (days.length - 1)) * 100 : 0;
           const isFirst = idx === 0;
           const isLast = idx >= days.length - labelStep;
-          const align = isFirst ? '' : isLast ? '-translate-x-full' : '-translate-x-1/2';
+          let align = '-translate-x-1/2';
+          if (isFirst) align = '';
+          else if (isLast) align = '-translate-x-full';
           return (
             <span
               key={d.date}

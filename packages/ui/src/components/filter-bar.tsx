@@ -164,9 +164,9 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
             <div
               className={[
                 'flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                !isActive
-                  ? 'border-border bg-bg-tertiary/30 text-text-secondary hover:border-border hover:text-text-primary'
-                  : 'border-accent bg-accent-muted text-accent',
+                isActive
+                  ? 'border-accent bg-accent-muted text-accent'
+                  : 'border-border bg-bg-tertiary/30 text-text-secondary hover:border-border hover:text-text-primary',
               ].join(' ')}
             >
               <button
@@ -242,6 +242,7 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                             className="accent-accent shrink-0"
                             checked={checked}
                             onChange={() => { toggleValue(item.value); }}
+                            aria-label={item.label}
                           />
                           <span className="truncate">{item.label}</span>
                         </span>

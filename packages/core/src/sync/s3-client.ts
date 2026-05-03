@@ -107,7 +107,11 @@ export async function createS3Handle(profile: string, region?: string, endpointO
       const sourceStream = Readable.from(body as AsyncIterable<Uint8Array>);
       const writeStream = createWriteStream(localPath);
 
-      if (options?.onBytes !== undefined) {
+      if (options?.onBytes === undefined) {
+        await pipeline(sourceStream, writeStream, {
+          signal: options?.signal,
+        });
+      } else {
         const onBytes = options.onBytes;
         let totalBytes = 0;
         const progressStream = new Transform({
@@ -120,10 +124,6 @@ export async function createS3Handle(profile: string, region?: string, endpointO
 
         await pipeline(sourceStream, progressStream, writeStream, {
           signal: options.signal,
-        });
-      } else {
-        await pipeline(sourceStream, writeStream, {
-          signal: options?.signal,
         });
       }
     },

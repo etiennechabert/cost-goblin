@@ -545,7 +545,7 @@ function sortAliasText(text: string): string {
     entries.push({ key, aliases: vals });
   }
   if (entries.length === 0) return text;
-  return entries
+  return [...entries]
     .sort((a, b) => a.key.localeCompare(b.key))
     .map(e => e.aliases.length > 0
       ? `${e.key}: ${[...e.aliases].sort((a, b) => a.localeCompare(b)).join(', ')}`
@@ -570,10 +570,14 @@ function AliasRulesEditor({ value, savedValue, activeLine, onChange, onLineFocus
       {lines.map((line, i) => {
         const isNew = !savedLines.has(line);
         const isActive = activeLine === i;
+        let borderStyle = 'border-l-transparent';
+        if (isActive) borderStyle = 'border-l-accent bg-accent/10';
+        else if (isNew) borderStyle = 'border-l-warning bg-warning/5';
+        const lineKey = line.split(':')[0] ?? `line-${String(i)}`;
         return (
           <div
-            key={i}
-            className={`flex items-center gap-1 px-3 py-1 text-[11px] font-mono border-l-2 ${isActive ? 'border-l-accent bg-accent/10' : isNew ? 'border-l-warning bg-warning/5' : 'border-l-transparent'} ${i > 0 ? 'border-t border-t-border/30' : ''}`}
+            key={lineKey}
+            className={`flex items-center gap-1 px-3 py-1 text-[11px] font-mono border-l-2 ${borderStyle} ${i > 0 ? 'border-t border-t-border/30' : ''}`}
           >
             <input
               type="text"
@@ -775,8 +779,8 @@ function TagValuePreview({ tagMatch, fallbackValues, missingValueTemplate, norma
           <button
             type="button"
             key={resolved}
-            onClick={onBadgeClick !== undefined ? () => { onBadgeClick(resolved); } : undefined}
-            className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${sourceColor(source, aliased)} ${onBadgeClick !== undefined ? 'cursor-pointer hover:ring-1 hover:ring-accent/50' : ''}`}
+            onClick={onBadgeClick === undefined ? undefined : () => { onBadgeClick(resolved); }}
+            className={`rounded border px-1.5 py-0.5 text-[10px] font-mono ${sourceColor(source, aliased)} ${onBadgeClick === undefined ? '' : 'cursor-pointer hover:ring-1 hover:ring-accent/50'}`}
           >
             {resolved}
           </button>
@@ -1539,12 +1543,15 @@ export function DimensionsView() {
                 .map(([idx, d]) => {
                 const locked = LOCKED_DIMENSIONS.has(d.name);
                 const isOn = locked || d.enabled !== false;
+                let buttonTitle = 'Click to enable';
+                if (locked) buttonTitle = 'Always enabled — required for cost breakdown';
+                else if (isOn) buttonTitle = 'Click to disable';
                 return (
                   <button
                     key={d.name}
                     type="button"
                     onClick={locked ? undefined : () => { toggleBuiltInEnabled(idx); }}
-                    title={locked ? 'Always enabled — required for cost breakdown' : isOn ? 'Click to disable' : 'Click to enable'}
+                    title={buttonTitle}
                     className={`${pillClass(isOn)}${locked ? ' cursor-default' : ''}`}
                   >
                     {locked && <Lock className="inline-block w-3 h-3 mr-1 -mt-0.5" />}

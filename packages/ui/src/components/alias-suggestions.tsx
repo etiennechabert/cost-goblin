@@ -66,6 +66,18 @@ export function AliasSuggestions({
     }
   }
 
+  function flipSuggestion(canonical: string) {
+    setSuggestions(prev => prev.map(x => {
+      if (x.canonical !== canonical) return x;
+      const all = [x.canonical, ...x.aliases];
+      const next = all[1];
+      if (next === undefined) return x;
+      const first = all[0];
+      if (first === undefined) return x;
+      return { ...x, canonical: next, aliases: [...all.slice(2), first] };
+    }));
+  }
+
   if (query.status !== 'success' || suggestions.length === 0) return null;
 
   return (
@@ -96,15 +108,7 @@ export function AliasSuggestions({
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      setSuggestions(prev => prev.map(x => {
-                        if (x.canonical !== s.canonical) return x;
-                        const all = [x.canonical, ...x.aliases];
-                        const next = all[1];
-                        if (next === undefined) return x;
-                        return { ...x, canonical: next, aliases: [...all.slice(2), all[0] as string] };
-                      }));
-                    }}
+                    onClick={() => { flipSuggestion(s.canonical); }}
                     disabled={isProcessing}
                     className="flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors bg-bg-tertiary text-text-muted hover:bg-bg-primary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
                     aria-label={`Flip alias suggestion for ${s.canonical}`}
