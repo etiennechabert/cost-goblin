@@ -195,7 +195,7 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
     } else {
       await win.loadFile(join(__dirname, '..', 'renderer', 'index.html'));
     }
-    win.webContents.openDevTools({ mode: 'detach' });
+    // DevTools available via Cmd+Option+I when needed
   } else {
     await win.loadFile(join(__dirname, '..', 'renderer', 'index.html'));
   }

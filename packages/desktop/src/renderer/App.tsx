@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button } from '@costgoblin/ui';
+import { useState, useEffect, useCallback, useMemo, useRef, Profiler } from 'react';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, FilterMap, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
@@ -315,6 +315,62 @@ function useSyncPolling(
   return { syncError, setSyncError, syncActivity, syncFilesRemaining };
 }
 
+const SPLASH_IMAGES = ['splash-1.png', 'splash-2.png', 'splash-3.png', 'splash-4.png', 'splash-5.png', 'splash-6.png', 'splash-7.png', 'splash-8.png', 'splash-9.png', 'splash-10.png'];
+const SPLASH_INTERVAL = 500;
+const SPLASH_DURATION = 2500;
+
+function shuffled<T>(arr: readonly T[]): T[] {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const a = copy[i];
+    const b = copy[j];
+    if (a !== undefined && b !== undefined) {
+      copy[i] = b;
+      copy[j] = a;
+    }
+  }
+  return copy;
+}
+
+function SplashScreen(): React.JSX.Element {
+  const [order] = useState(() => shuffled(SPLASH_IMAGES));
+  const [index, setIndex] = useState(0);
+  const [fadeOut, setFadeOut] = useState(false);
+
+  useEffect(() => {
+    const rotate = setInterval(() => {
+      setIndex(prev => (prev + 1) % SPLASH_IMAGES.length);
+    }, SPLASH_INTERVAL);
+    const fade = setTimeout(() => { setFadeOut(true); }, SPLASH_DURATION - 400);
+    return () => { clearInterval(rotate); clearTimeout(fade); };
+  }, []);
+
+  return (
+    <div
+      className="min-h-screen bg-bg-primary flex flex-col items-center justify-center transition-opacity duration-500"
+      style={{ opacity: fadeOut ? 0 : 1, WebkitAppRegion: 'drag' } as React.CSSProperties}
+    >
+      <div className="relative h-48 w-48 mb-6">
+        {order.map((src, i) => (
+          <img
+            key={src}
+            src={src}
+            alt=""
+            className="absolute inset-0 h-full w-full object-contain drop-shadow-lg transition-opacity duration-200"
+            style={{ opacity: i === index ? 1 : 0 }}
+          />
+        ))}
+      </div>
+      <h1 className="text-2xl font-bold text-accent tracking-wider mb-1">CostGoblin</h1>
+      <p className="text-sm text-text-muted mb-8">Crunching your cloud costs...</p>
+      <div className="w-64">
+        <CoinRainLoader height={120} count={6} />
+      </div>
+    </div>
+  );
+}
+
 function AppShell(): React.JSX.Element {
   const api = useCostApi();
   const confirmLeave = useConfirmLeave();
@@ -323,6 +379,7 @@ function AppShell(): React.JSX.Element {
   const [isDark, setIsDark] = useState(true);
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
+  const splashMinElapsed = useRef(false);
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
   const { syncError, setSyncError, syncActivity, syncFilesRemaining } = useSyncPolling(api, setupCheck);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -335,7 +392,14 @@ function AppShell(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    api.getSetupStatus().then(({ configured }) => {
+    const minTimer = new Promise<void>(resolve => {
+      setTimeout(() => { splashMinElapsed.current = true; resolve(); }, SPLASH_DURATION);
+    });
+    const statusCheck = api.getSetupStatus().then(({ configured }) => configured);
+    // Pre-fetch dimensions during splash so they're cached when the dashboard mounts
+    void api.getDimensions().catch(() => undefined);
+
+    void Promise.all([statusCheck, minTimer]).then(([configured]) => {
       setSetupCheck(configured ? { status: 'ready' } : { status: 'needs-setup' });
     }).catch(() => undefined);
   }, [api]);
@@ -452,7 +516,7 @@ function AppShell(): React.JSX.Element {
   ], [customNav]);
 
   if (setupCheck.status === 'checking') {
-    return <div className="min-h-screen bg-bg-primary" />;
+    return <SplashScreen />;
   }
 
   if (setupCheck.status === 'needs-setup') {
