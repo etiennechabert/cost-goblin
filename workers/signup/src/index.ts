@@ -80,11 +80,14 @@ export default {
       return json({ ok: true });
     }
 
-    // Turnstile verification
     const ip = request.headers.get('CF-Connecting-IP') ?? '0.0.0.0';
-    const turnstileValid = await verifyTurnstile(turnstileToken, env.TURNSTILE_SECRET_KEY, ip);
-    if (!turnstileValid) {
-      return json({ ok: false, error: 'Verification failed' }, 403);
+
+    // Turnstile verification (skip if secret not configured)
+    if (env.TURNSTILE_SECRET_KEY) {
+      const turnstileValid = await verifyTurnstile(turnstileToken, env.TURNSTILE_SECRET_KEY, ip);
+      if (!turnstileValid) {
+        return json({ ok: false, error: 'Verification failed' }, 403);
+      }
     }
 
     // Rate limit: 3 submissions per IP per hour

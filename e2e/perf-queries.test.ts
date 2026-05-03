@@ -333,7 +333,7 @@ test.describe('Query Performance Diagnostics', () => {
   });
 
   test('Missing Tags', async () => {
-    await navigateAndCollect(page, 'Missing Tags', 'Missing Tags', 'Missing Tags');
+    await navigateAndCollect(page, 'Tags', 'Missing Tags', 'Missing Tags');
   });
 
   test('Savings', async () => {
@@ -412,7 +412,7 @@ test.describe('Query Performance Diagnostics', () => {
   test('Custom Views', async () => {
     // Look for nav buttons that might be custom views (not the standard nav items)
     const standardViews = new Set([
-      'Cost Overview', 'Trends', 'Missing Tags', 'Savings', 'Explorer',
+      'Cost Overview', 'Trends', 'Tags', 'Savings', 'Explorer',
       'Cost Scope', 'Dimensions', 'Views', 'Sync',
     ]);
 
