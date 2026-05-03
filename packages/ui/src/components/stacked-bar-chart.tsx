@@ -286,27 +286,30 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
 
           {/* Previous period overlay line */}
           {previousTotals !== undefined && previousTotals.length > 0 && maxCost > 0 && (
-            <svg
-              className="absolute left-12 right-0 top-0 bottom-7 z-[11] pointer-events-none"
-              viewBox="0 0 1000 1000"
-              preserveAspectRatio="none"
-            >
-              <polyline
-                fill="none"
-                stroke="var(--color-text-secondary)"
-                strokeWidth="2.5"
-                strokeDasharray="6,3"
-                strokeOpacity="0.8"
-                vectorEffect="non-scaling-stroke"
-                points={previousTotals.map((val, i) => {
-                  const x = previousTotals.length > 1
-                    ? (i / (previousTotals.length - 1)) * 1000
-                    : 500;
-                  const y = (1 - val / maxCost) * 1000;
-                  return `${String(x)},${String(y)}`;
-                }).join(' ')}
-              />
-            </svg>
+            <div className="absolute left-12 right-0 top-0 bottom-7 z-[11] pointer-events-none">
+              <svg
+                width="100%"
+                height="100%"
+                viewBox="0 0 1000 1000"
+                preserveAspectRatio="none"
+              >
+                <polyline
+                  fill="none"
+                  stroke="var(--color-text-secondary)"
+                  strokeWidth="2.5"
+                  strokeDasharray="6,3"
+                  strokeOpacity="0.8"
+                  vectorEffect="non-scaling-stroke"
+                  points={previousTotals.map((val, i) => {
+                    const x = previousTotals.length > 1
+                      ? (i / (previousTotals.length - 1)) * 1000
+                      : 500;
+                    const y = (1 - val / maxCost) * 1000;
+                    return `${String(x)},${String(y)}`;
+                  }).join(' ')}
+                />
+              </svg>
+            </div>
           )}
 
           {/* X axis — pinned to bottom of pb-5 zone */}
