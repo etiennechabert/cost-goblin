@@ -10,7 +10,25 @@ import { DebugPanel, useDebugBadge } from './debug-panel.js';
 // React Profiler — collects render timings when perf mode is active
 // ---------------------------------------------------------------------------
 const perfEnabled = globalThis.costgoblinPerf !== undefined;
+const isDev = globalThis.costgoblinDebug.isDev();
 const renderTimings: RenderTiming[] = [];
+
+function RamBadge(): React.JSX.Element {
+  const [mb, setMb] = useState(0);
+  useEffect(() => {
+    function update(): void {
+      void globalThis.costgoblinDebug.getMemoryMB().then(setMb);
+    }
+    update();
+    const id = setInterval(update, 1000);
+    return () => { clearInterval(id); };
+  }, []);
+  return (
+    <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[11px] font-medium tabular-nums text-text-secondary whitespace-nowrap">
+      {mb} MB
+    </span>
+  );
+}
 
 if (perfEnabled) {
   globalThis.__PERF_REACT__ = renderTimings;
@@ -575,7 +593,8 @@ function AppShell(): React.JSX.Element {
               </button>
             ))}
           </nav>
-          <div className="flex items-center justify-center gap-2 px-4">
+          <div className="flex items-center justify-center gap-2 px-4 relative">
+            {isDev && <RamBadge />}
             <img src="goblin.png" alt="" className="h-8 w-auto object-contain" />
             <span className="text-sm font-bold text-accent tracking-wider">CostGoblin</span>
           </div>

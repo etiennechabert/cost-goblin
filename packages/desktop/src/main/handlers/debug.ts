@@ -29,4 +29,8 @@ export function registerDebugHandlers(app: AppContext): void {
   ipcMain.handle('debug:clear-query-log', () => {
     app.queryLog.clear();
   });
+
+  ipcMain.handle('debug:get-memory-mb', () => {
+    return Math.round(process.memoryUsage().rss / 1024 / 1024);
+  });
 }
