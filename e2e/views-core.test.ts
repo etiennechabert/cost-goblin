@@ -45,7 +45,7 @@ test.describe('App shell', () => {
   });
 
   test('shows all navigation buttons', async () => {
-    for (const label of ['Cost Overview', 'Trends', 'Missing Tags', 'Findings', 'Cost Scope', 'Dimensions', 'Views']) {
+    for (const label of ['Cost Overview', 'Trends', 'Tags', 'Findings', 'Cost Scope', 'Dimensions', 'Views']) {
       await expect(page.getByRole('button', { name: label })).toBeVisible();
     }
     await expect(page.getByRole('button', { name: /Sync/ }).first()).toBeVisible();
@@ -74,7 +74,7 @@ test.describe('App shell', () => {
     const views: { button: string; marker: { type: 'heading'; name: string } | { type: 'text'; text: string } }[] = [
       { button: 'Cost Overview', marker: { type: 'heading', name: 'Cost Overview' } },
       { button: 'Trends', marker: { type: 'text', text: 'Period-over-period comparison' } },
-      { button: 'Missing Tags', marker: { type: 'text', text: 'without the selected allocation tag' } },
+      { button: 'Tags', marker: { type: 'text', text: 'without the selected allocation tag' } },
       { button: 'Findings', marker: { type: 'text', text: 'cost optimization recommendations' } },
       { button: 'Cost Scope', marker: { type: 'heading', name: 'Cost Scope' } },
       { button: 'Dimensions', marker: { type: 'heading', name: 'Dimensions' } },
@@ -481,7 +481,7 @@ test.describe('Cost Trends', () => {
 // ---------------------------------------------------------------------------
 test.describe('Missing Tags', () => {
   test.beforeAll(async () => {
-    await navigateToText(page, 'Missing Tags', 'without the selected allocation tag');
+    await navigateToText(page, 'Tags', 'without the selected allocation tag');
   });
 
   test('shows heading and subtitle', async () => {
@@ -765,8 +765,8 @@ test.describe('Full user journey', () => {
     await expect(page.getByText('Period-over-period comparison').first()).toBeVisible();
     await waitForQuerySettle(page);
 
-    // 3. Missing Tags
-    await clickNavButton(page, 'Missing Tags');
+    // 3. Tags
+    await clickNavButton(page, 'Tags');
     await expect(page.getByText('without the selected allocation tag').first()).toBeVisible();
     await waitForQuerySettle(page);
 
@@ -791,7 +791,7 @@ test.describe('Full user journey', () => {
   });
 
   test('rapid navigation between views does not crash', async () => {
-    const views = ['Trends', 'Cost Overview', 'Missing Tags', 'Findings', 'Dimensions', 'Sync', 'Cost Overview', 'Trends', 'Missing Tags'];
+    const views = ['Trends', 'Cost Overview', 'Tags', 'Findings', 'Dimensions', 'Sync', 'Cost Overview', 'Trends', 'Tags'];
     for (const view of views) {
       await clickNavButton(page, view);
       await page.waitForTimeout(100);

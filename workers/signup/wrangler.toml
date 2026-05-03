@@ -8,5 +8,4 @@ routes = [
 
 [[kv_namespaces]]
 binding = "SIGNUPS"
-id = ""            # Run: npx wrangler kv namespace create SIGNUPS
-preview_id = ""    # Run: npx wrangler kv namespace create SIGNUPS --preview
+id = "725d6169dd0f469a9a3167673c34ea83"
