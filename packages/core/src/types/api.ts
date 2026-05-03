@@ -105,6 +105,7 @@ export interface CostApi {
   getFilterValues(dimensionId: string, filters: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }): Promise<{ value: string; label: string; count: number }[]>;
   deleteLocalPeriod(period: string, tier?: DataTier): Promise<void>;
   openDataFolder(): Promise<void>;
+  ssoLogin(profile: string): Promise<void>;
   getAccountMapping(): Promise<AccountMappingStatus>;
   getSetupStatus(): Promise<{ configured: boolean }>;
   testConnection(params: { profile: string; bucket: string }): Promise<{ ok: boolean; error?: string | undefined }>;
