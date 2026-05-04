@@ -42,6 +42,12 @@ function tempVaultDir(userDataPath: string): string {
   return join(userDataPath, 'vault-temp');
 }
 
+async function mkdirRestricted(dir: string): Promise<void> {
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const { chmod } = await import('node:fs/promises');
+  await chmod(dir, 0o700);
+}
+
 async function loadEncryptionConfig(userDataPath: string): Promise<EncryptionConfig | null> {
   try {
     const raw = await readFile(encryptionConfigPath(userDataPath), 'utf-8');
@@ -193,7 +199,7 @@ export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
     vaultState.derivedKey = key;
 
     const tempDir = tempVaultDir(userDataPath);
-    await mkdir(tempDir, { recursive: true });
+    await mkdirRestricted(tempDir);
     vaultState.tempDataDir = tempDir;
 
     logger.info(`Vault setup complete (password=${String(usePassword)}): ${String(parquetFiles.length)} files encrypted`);
@@ -231,13 +237,13 @@ export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
 
 async function decryptDataToTemp(dataDir: string, tempDir: string, key: Buffer): Promise<void> {
   await cleanupTemp(dirname(tempDir));
-  await mkdir(tempDir, { recursive: true });
+  await mkdirRestricted(tempDir);
 
   const encFiles = await collectEncryptedFiles(dataDir);
   for (const encPath of encFiles) {
     const rel = relative(join(dataDir, 'aws', 'raw'), encPath).replace(/\.enc$/, '');
     const outPath = join(tempDir, 'aws', 'raw', rel);
-    await mkdir(dirname(outPath), { recursive: true });
+    await mkdirRestricted(dirname(outPath));
     await decryptFile(encPath, outPath, key);
   }
 
