@@ -165,35 +165,6 @@ Then use the Data tab to repartition the downloaded files.
 - **CSV export** — export any view for reporting
 - **Works offline** — once synced, no internet needed
 
-<details>
-<summary><strong>Trends</strong> — period-over-period cost comparison</summary>
-<br>
-<img src="docs/screenshots/trends.png" alt="Trends bubble chart" width="800">
-</details>
-
-<details>
-<summary><strong>Findings</strong> — AWS cost optimization recommendations</summary>
-<br>
-<img src="docs/screenshots/cost-optimization.png" alt="Cost optimization findings" width="800">
-</details>
-
-<details>
-<summary><strong>Missing Tags</strong> — find and fix untagged resources</summary>
-<br>
-<img src="docs/screenshots/tags-missing.png" alt="Missing tags analysis" width="800">
-</details>
-
-<details>
-<summary><strong>Dimensions</strong> — map tags to cost allocation dimensions</summary>
-<br>
-<img src="docs/screenshots/dimensions.png" alt="Dimensions configuration" width="800">
-</details>
-
-<details>
-<summary><strong>Views</strong> — compose dashboards from the widget library</summary>
-<br>
-<img src="docs/screenshots/views.png" alt="View builder" width="800">
-</details>
 
 ## Architecture
 
