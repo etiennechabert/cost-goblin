@@ -107,7 +107,7 @@ function TreemapInner({
                         fontWeight={600}
                         fill="white"
                         pointerEvents="none"
-                        style={{ textShadow: '0 1px 3px rgba(0,0,0,0.5)' }}
+                        style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6), 0 0 4px rgba(0,0,0,0.3)' }}
                       >
                         {name.length > Math.floor(w / 7) ? `${name.slice(0, Math.floor(w / 7) - 1)}…` : name}
                       </text>
@@ -119,11 +119,11 @@ function TreemapInner({
                           fill="white"
                           fillOpacity={0.9}
                           pointerEvents="none"
-                          style={{ textShadow: '0 1px 3px rgba(0,0,0,0.5)' }}
+                          style={{ textShadow: '0 1px 2px rgba(0,0,0,0.6), 0 0 4px rgba(0,0,0,0.3)' }}
                         >
                           {formatDollars(cost)}
                           {pctDelta !== undefined && (
-                            <tspan fill={pctDelta >= 0 ? '#f87171' : '#4ade80'} fillOpacity={1}>
+                            <tspan fill={pctDelta >= 0 ? '#fecaca' : '#bbf7d0'} fillOpacity={1}>
                               {' '}{pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
                             </tspan>
                           )}
