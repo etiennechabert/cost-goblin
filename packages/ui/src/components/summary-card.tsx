@@ -78,7 +78,7 @@ export function SummaryCard({ totalCost, previousCost, dateRange, previousDateRa
               const avgColor = avgDiff > 0 ? 'text-negative' : avgDiff < 0 ? 'text-positive' : 'text-text-secondary';
               return (
                 <span className={`ml-2 text-xs font-medium ${avgColor}`}>
-                  ({avgDiff >= 0 ? '+' : ''}{formatDollars(avgDiff)}/day)
+                  ({avgDiff >= 0 ? '+' : ''}{formatDollars(avgDiff)})
                 </span>
               );
             })()}
