@@ -435,8 +435,9 @@ function AppShell(): React.JSX.Element {
         return;
       }
 
-      // Vault auto-unlocked (safeStorage) or already unlocked
-      void api.getDimensions().catch(() => undefined);
+      // Vault auto-unlocked (safeStorage) or already unlocked —
+      // pre-fetch dimensions so they're cached when the dashboard mounts.
+      await api.getDimensions().catch(() => undefined);
 
       if (!skipSplash) {
         await new Promise<void>(resolve => {

@@ -96,23 +96,14 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     api.cancelPendingQueries().catch(() => undefined);
   }, [dateRange, granularity, filtersKeyRef, compareEnabled, api]);
 
-  // Load persisted date range and granularity on mount
+  // Load column preferences on mount. Date range, granularity, and comparison
+  // always start at defaults (30d daily, comparison off) for a clean session.
   useEffect(() => {
     api.getExplorerPreferences().then(prefs => {
-      // Store column preferences to preserve them when saving
       columnPrefsRef.current = {
         hiddenColumns: prefs.hiddenColumns,
         columnOrder: prefs.columnOrder,
       };
-      if (prefs.lastUsedDateRange !== undefined) {
-        setDateRange(prefs.lastUsedDateRange);
-      }
-      if (prefs.lastUsedGranularity !== undefined) {
-        setGranularity(prefs.lastUsedGranularity);
-      }
-      if (prefs.compareEnabled === true) {
-        setCompareEnabled(true);
-      }
       prefsLoadedRef.current = true;
     }).catch(() => {
       prefsLoadedRef.current = true;
