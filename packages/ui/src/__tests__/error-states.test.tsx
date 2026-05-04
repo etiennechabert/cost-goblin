@@ -35,7 +35,8 @@ describe('DataManagement error states', () => {
     await waitFor(() => {
       expect(screen.getByText('To authenticate, run: aws sso login --profile prod')).toBeDefined();
     });
-    expect(screen.getByText('Refresh this page after logging in.')).toBeDefined();
+    expect(screen.getByText('Open SSO Login')).toBeDefined();
+    expect(screen.getByText('A browser window will open. Refresh this page after logging in.')).toBeDefined();
   });
 
   it('shows permission denied error without refresh hint', async () => {

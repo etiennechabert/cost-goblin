@@ -24,6 +24,7 @@ export type WidgetSpec =
   | (WidgetBase & {
       readonly type: 'pie';
       readonly groupBy: DimensionId;
+      readonly showLegend?: boolean | undefined;
     })
   | (WidgetBase & {
       readonly type: 'stackedBar';

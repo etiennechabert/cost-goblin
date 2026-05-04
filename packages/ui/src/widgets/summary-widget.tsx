@@ -1,16 +1,17 @@
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
-import { daysBetween } from '../lib/dates.js';
+
 import { SummaryCard } from '../components/summary-card.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { asDimensionId } from '@costgoblin/core/browser';
 import type { CostResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { filtersKey, mergeFilters } from './widget.js';
+import { filtersKey, mergeFilters, hasSufficientCoverage } from './widget.js';
 
 export function SummaryWidget({
   dateRange,
   previousDateRange,
+  compareEnabled,
   granularity,
   globalFilters,
   spec,
@@ -27,8 +28,8 @@ export function SummaryWidget({
     [isSummary, groupBy, dateRange.start, dateRange.end, fk, granularity, api],
   );
   const prev = useQuery<CostResult | null>(
-    () => isSummary ? api.queryCosts({ groupBy, dateRange: previousDateRange, filters, granularity }) : Promise.resolve(null),
-    [isSummary, groupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
+    () => isSummary && compareEnabled ? api.queryCosts({ groupBy, dateRange: previousDateRange, filters, granularity }) : Promise.resolve(null),
+    [isSummary, compareEnabled, groupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
   );
 
   if (!isSummary) return null;
@@ -41,21 +42,11 @@ export function SummaryWidget({
 
   const totalCost = cur.status === 'success' && cur.data !== null ? cur.data.totalCost : null;
 
-  // Hide comparison when either period has incomplete data (< 80% coverage).
-  // Incomplete current period: forward-looking range (e.g. "This quarter")
-  //   where we only have data through today.
-  // Incomplete previous period: not enough historical data to cover the range.
-  function hasSufficientCoverage(result: CostResult, requested: { start: string; end: string }): boolean {
-    const requestedDays = daysBetween(requested.start, requested.end);
-    const actualDays = daysBetween(result.dateRange.start, result.dateRange.end);
-    return actualDays >= requestedDays * 0.8;
-  }
-
   const prevData = prev.status === 'success' ? prev.data : null;
   const previousComplete = prevData !== null && hasSufficientCoverage(prevData, previousDateRange);
   const previousCost = previousComplete ? prevData.totalCost : null;
 
   return (
-    <SummaryCard totalCost={totalCost} previousCost={previousCost} dateRange={dateRange} />
+    <SummaryCard totalCost={totalCost} previousCost={previousCost} dateRange={dateRange} previousDateRange={previousComplete ? previousDateRange : undefined} />
   );
 }

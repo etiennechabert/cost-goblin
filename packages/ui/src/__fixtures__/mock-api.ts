@@ -239,6 +239,7 @@ export class MockCostApi implements CostApi {
   cancelSync(): Promise<void> { return Promise.resolve(); }
   deleteLocalPeriod(): Promise<void> { return Promise.resolve(); }
   openDataFolder(): Promise<void> { return Promise.resolve(); }
+  ssoLogin(): Promise<void> { return Promise.resolve(); }
   getAccountMapping(): Promise<AccountMappingStatus> { return Promise.resolve({ status: 'missing' }); }
   getSetupStatus(): Promise<{ configured: boolean }> { return Promise.resolve({ configured: true }); }
   testConnection(): Promise<{ ok: boolean; error?: string | undefined }> { return Promise.resolve({ ok: true }); }

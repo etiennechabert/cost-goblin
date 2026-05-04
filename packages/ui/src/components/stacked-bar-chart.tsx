@@ -22,6 +22,9 @@ interface StackedBarChartProps {
   readonly title?: string | undefined;
   readonly loading?: boolean | undefined;
   readonly onSegmentClick?: ((name: string) => void) | undefined;
+  /** Previous period daily totals, aligned by position index. Rendered as
+   *  a dashed line overlay when present. */
+  readonly previousTotals?: readonly number[] | undefined;
 }
 
 export function bucketBars(bars: readonly BarDay[], maxBuckets: number): readonly BarDay[] {
@@ -77,7 +80,7 @@ function BarSegment({ seg, segTotal, highlightedGroup, palette, onMouseEnter, on
   );
 }
 
-export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick }: StackedBarChartProps) {
+export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick, previousTotals }: StackedBarChartProps) {
   const { palette } = usePalette();
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
   const [hoveredSegment, setHoveredSegment] = useState<string | null>(null);
@@ -95,10 +98,11 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
   }
   const breakdownKeys = [...allKeys];
 
-  const maxCost = days.reduce((m, d) => Math.max(m, d.total), 0);
+  const prevMax = previousTotals !== undefined ? previousTotals.reduce((m, v) => Math.max(m, v), 0) : 0;
+  const maxCost = Math.max(days.reduce((m, d) => Math.max(m, d.total), 0), prevMax);
 
   return (
-    <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col h-full">
+    <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col h-full overflow-hidden">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-medium text-text-secondary">{title ?? 'Daily Costs'}</h3>
         <div className="flex items-center gap-2">
@@ -176,10 +180,11 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             const day = days[idx];
             if (day === undefined) return null;
             const onLeft = idx < days.length / 2;
+            const prevPeriodTotal = previousTotals !== undefined ? previousTotals[idx] : undefined;
             const prev = idx > 0 ? days[idx - 1] : undefined;
-            const prevTotal = prev?.total ?? 0;
-            const totalDelta = prev !== undefined && prevTotal > 0
-              ? ((day.total - prevTotal) / prevTotal) * 100
+            const compTotal = prevPeriodTotal ?? prev?.total;
+            const totalDelta = compTotal !== undefined && compTotal > 0
+              ? ((day.total - compTotal) / compTotal) * 100
               : undefined;
             const segs = breakdownKeys
               .map((key, ki) => ({ key, value: day.breakdown[key] ?? 0, colorIdx: ki }))
@@ -189,16 +194,24 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             return (
               <div className={`pointer-events-none absolute top-0 bottom-0 z-20 ${onLeft ? 'right-0 mr-1' : 'left-12 ml-1'}`}>
                 <div className="rounded-lg bg-bg-secondary/95 px-4 py-3 text-[11px] text-text-primary whitespace-nowrap shadow-lg border border-border min-w-[280px] max-h-full overflow-y-auto">
-                  <div className="flex items-center justify-between mb-2 pb-2 border-b border-border-subtle">
-                    <span className="font-semibold text-xs">{day.date}</span>
-                    <span className="font-semibold text-xs">
-                      Total: {formatDollars(day.total)}
-                      {totalDelta !== undefined && (
-                        <span className={`ml-1.5 text-[10px] font-normal ${totalDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
-                          {totalDelta >= 0 ? '↑' : '↓'}{Math.abs(totalDelta).toFixed(1)}%
-                        </span>
-                      )}
-                    </span>
+                  <div className="mb-2 pb-2 border-b border-border-subtle flex flex-col gap-0.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-xs">{day.date}</span>
+                      <span className="font-semibold text-xs">
+                        Total: {formatDollars(day.total)}
+                        {totalDelta !== undefined && (
+                          <span className={`ml-1.5 text-[10px] font-normal ${totalDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                            {totalDelta >= 0 ? '↑' : '↓'}{Math.abs(totalDelta).toFixed(1)}%
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                    {prevPeriodTotal !== undefined && prevPeriodTotal > 0 && (
+                      <div className="flex items-center justify-between text-text-muted">
+                        <span className="text-[10px]">Previous period</span>
+                        <span className="text-[10px] tabular-nums">Total: {formatDollars(prevPeriodTotal)}</span>
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-col gap-px">
                     {segs.slice(0, 12).map(seg => {
@@ -273,6 +286,34 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
               );
             })}
           </div>
+
+          {/* Previous period overlay line */}
+          {previousTotals !== undefined && previousTotals.length > 0 && maxCost > 0 && (
+            <div className="absolute left-12 right-0 top-0 bottom-7 z-[11] pointer-events-none">
+              <svg
+                width="100%"
+                height="100%"
+                viewBox="0 0 1000 1000"
+                preserveAspectRatio="none"
+              >
+                <polyline
+                  fill="none"
+                  stroke="var(--color-text-secondary)"
+                  strokeWidth="2.5"
+                  strokeDasharray="6,3"
+                  strokeOpacity="0.8"
+                  vectorEffect="non-scaling-stroke"
+                  points={previousTotals.map((val, i) => {
+                    const x = previousTotals.length > 1
+                      ? (i / (previousTotals.length - 1)) * 1000
+                      : 500;
+                    const y = (1 - val / maxCost) * 1000;
+                    return `${String(x)},${String(y)}`;
+                  }).join(' ')}
+                />
+              </svg>
+            </div>
+          )}
 
           {/* X axis — pinned to bottom of pb-5 zone */}
           <div className="absolute bottom-0 left-12 right-0 h-5">

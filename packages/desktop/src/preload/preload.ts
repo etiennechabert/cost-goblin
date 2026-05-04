@@ -136,6 +136,9 @@ const api: CostApi = {
   openDataFolder(): Promise<void> {
     return invoke<undefined>('data:open-folder').then(() => undefined);
   },
+  ssoLogin(profile: string): Promise<void> {
+    return invoke<undefined>('data:sso-login', profile).then(() => undefined);
+  },
   getAccountMapping(): Promise<AccountMappingStatus> {
     return invoke<AccountMappingStatus>('data:account-mapping');
   },

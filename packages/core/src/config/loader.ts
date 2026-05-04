@@ -20,7 +20,12 @@ export async function loadDimensions(path: string): Promise<DimensionsConfig> {
 }
 
 export async function loadOrgTree(path: string): Promise<OrgTreeConfig> {
-  const content = await readFile(path, 'utf-8');
+  let content: string;
+  try {
+    content = await readFile(path, 'utf-8');
+  } catch {
+    return { tree: [] };
+  }
   const raw: unknown = parse(content);
   return validateOrgTree(raw);
 }

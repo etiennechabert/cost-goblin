@@ -28,6 +28,8 @@ interface PieChartProps {
   readonly dimensions?: readonly Dimension[] | undefined;
   readonly activeDimensionId?: string | undefined;
   readonly onDimensionChange?: ((dimId: string) => void) | undefined;
+  readonly previousCosts?: ReadonlyMap<string, number> | undefined;
+  readonly showLegend?: boolean | undefined;
 }
 
 const OTHER_KEY = 'Other';
@@ -60,6 +62,8 @@ function PieChartInner({
   dimensions,
   activeDimensionId,
   onDimensionChange,
+  previousCosts,
+  showLegend = true,
   width,
   height,
 }: Omit<PieChartProps, 'collapsed'> & { width: number; height: number }) {
@@ -75,7 +79,7 @@ function PieChartInner({
   }, [hoveredName]);
 
   const displayData = aggregateOther(data, maxSlices);
-  const pieSize = Math.min(width * 0.38, height - 60);
+  const pieSize = showLegend ? Math.min(width * 0.38, height - 60) : Math.min(width - 32, height - 60);
   const radius = pieSize / 2;
 
   const handleMouseEnter = useCallback((name: string) => {
@@ -126,9 +130,9 @@ function PieChartInner({
           )}
         </div>
       </div>
-      <div className="flex flex-1 min-h-0 gap-2">
+      <div className="flex flex-1 min-h-0 gap-2 relative">
         {/* Pie */}
-        <div className="shrink-0" style={{ width: pieSize + 32 }}>
+        <div className={showLegend ? 'shrink-0' : 'flex-1 flex justify-center'} style={showLegend ? { width: pieSize + 32 } : undefined}>
           <svg width={pieSize + 32} height={pieSize + 16}>
             <Group top={radius + 8} left={radius + 16}>
               <Pie<PieSlice>
@@ -177,8 +181,27 @@ function PieChartInner({
           </svg>
         </div>
 
+        {/* Hover label for no-legend mode */}
+        {!showLegend && hoveredName !== null && (() => {
+          const d = displayData.find(s => s.name === hoveredName);
+          if (d === undefined) return null;
+          const prev = previousCosts?.get(d.name);
+          const pctDelta = prev !== undefined && prev > 0 ? ((d.cost - prev) / prev) * 100 : undefined;
+          return (
+            <div className="absolute left-1/2 -translate-x-1/2 bottom-2 z-10 rounded-lg bg-bg-secondary/95 border border-border shadow-lg px-3 py-2 text-xs pointer-events-none whitespace-nowrap">
+              <span className="font-semibold text-text-primary">{d.name}</span>
+              <span className="ml-2 tabular-nums text-text-secondary">{formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)</span>
+              {pctDelta !== undefined && (
+                <span className={`ml-1.5 tabular-nums text-[10px] ${pctDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                  {pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
+                </span>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Legend — HTML for proper text truncation */}
-        <div className="flex-1 min-w-0 overflow-y-auto flex flex-col gap-0.5 py-1">
+        {showLegend && <div className="flex-1 min-w-0 overflow-y-auto flex flex-col gap-0.5 py-1">
           {displayData.map((d, i) => {
             const color = d.name === OTHER_KEY ? '#374151' : getColor(i, palette);
             const isHovered = hoveredName === d.name;
@@ -195,22 +218,56 @@ function PieChartInner({
                 role={d.name !== OTHER_KEY && onSliceClick !== undefined ? 'button' : undefined}
                 tabIndex={d.name !== OTHER_KEY && onSliceClick !== undefined ? 0 : undefined}
                 className={[
-                  'flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[11px] transition-colors',
+                  'rounded text-[11px] transition-colors',
                   d.name !== OTHER_KEY && onSliceClick !== undefined ? 'cursor-pointer' : '',
-                  isHovered ? 'bg-accent-muted/50' : '',
+                  isHovered ? 'bg-accent-muted/50 px-1.5 py-1' : 'flex items-center gap-1.5 px-1.5 py-0.5',
                 ].join(' ')}
               >
-                <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
-                <span className={`truncate min-w-0 flex-1 ${legendTextClass(isDimmed, isHovered)}`}>
-                  {d.name}
-                </span>
-                <span className={`tabular-nums shrink-0 whitespace-nowrap ${legendTextClass(isDimmed, isHovered)}`}>
-                  {formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)
-                </span>
+                {isHovered ? (
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+                      <span className="font-semibold text-text-primary text-xs break-all">{d.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2 pl-4">
+                      <span className="tabular-nums text-text-primary font-medium">{formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)</span>
+                      {(() => {
+                        const prev = previousCosts?.get(d.name);
+                        if (prev === undefined || prev <= 0) return null;
+                        const pctDelta = ((d.cost - prev) / prev) * 100;
+                        return (
+                          <span className={`text-[10px] tabular-nums ${pctDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                            {pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+                    <span className={`truncate min-w-0 flex-1 ${legendTextClass(isDimmed, isHovered)}`}>
+                      {d.name}
+                    </span>
+                    <span className={`tabular-nums shrink-0 whitespace-nowrap ${legendTextClass(isDimmed, isHovered)}`}>
+                      {formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)
+                    </span>
+                    {(() => {
+                      const prev = previousCosts?.get(d.name);
+                      if (prev === undefined || prev <= 0) return null;
+                      const pctDelta = ((d.cost - prev) / prev) * 100;
+                      return (
+                        <span className={`text-[10px] tabular-nums shrink-0 ${pctDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                          {pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
+                        </span>
+                      );
+                    })()}
+                  </>
+                )}
               </div>
             );
           })}
-        </div>
+        </div>}
       </div>
     </div>
   );

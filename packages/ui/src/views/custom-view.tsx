@@ -61,6 +61,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
   const lagDays = useLagDays();
   const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
   const [granularity, setGranularity] = useState<Granularity>('daily');
+  const [compareEnabled, setCompareEnabled] = useState(false);
   const [filters, setFilters] = useState<FilterMap>(initialFilter ?? {});
   const prefsLoadedRef = useRef(false);
   const columnPrefsRef = useRef<{ hiddenColumns: readonly string[]; columnOrder: readonly string[] }>({
@@ -108,6 +109,9 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
       if (prefs.lastUsedGranularity !== undefined) {
         setGranularity(prefs.lastUsedGranularity);
       }
+      if (prefs.compareEnabled === true) {
+        setCompareEnabled(true);
+      }
       prefsLoadedRef.current = true;
     }).catch(() => {
       prefsLoadedRef.current = true;
@@ -126,8 +130,9 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
       columnOrder: columnPrefsRef.current.columnOrder,
       lastUsedDateRange: dateRange,
       lastUsedGranularity: granularity,
+      compareEnabled,
     }).catch(() => undefined);
-  }, [dateRange, granularity, api]);
+  }, [dateRange, granularity, compareEnabled, api]);
 
   function handleSetFilter(dim: DimensionId, value: TagValue) {
     setFilters(prev => ({ ...prev, [dim]: [value] }));
@@ -157,6 +162,8 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
           granularity={granularity}
           onChange={(range, g) => { setDateRange(range); setGranularity(g); }}
           lagDays={lagDays}
+          compareEnabled={compareEnabled}
+          onCompareChange={setCompareEnabled}
         />
       </div>
 
@@ -189,6 +196,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
                   spec={w}
                   dateRange={dateRange}
                   previousDateRange={previousDateRange}
+                  compareEnabled={compareEnabled}
                   granularity={granularity}
                   globalFilters={filters}
                   dimensions={dimensions}

@@ -33,6 +33,12 @@ export function DataManagement() {
   const [costOptRefreshKey, setCostOptRefreshKey] = useState(0);
   const configQuery = useQuery(() => api.getConfig(), [configRefreshKey]);
   const inventoryQuery = useQuery(() => api.getDataInventory(), [dailyRefreshKey]);
+  const isSsoError = inventoryQuery.status === 'error' && inventoryQuery.error.message.includes('aws sso login');
+  useEffect(() => {
+    if (!isSsoError) return;
+    const timer = setInterval(() => { setDailyRefreshKey(k => k + 1); }, 5_000);
+    return () => { clearInterval(timer); };
+  }, [isSsoError]);
   const [selected, setSelected] = useState(new Set<string>());
   const [hourlySelected, setHourlySelected] = useState(new Set<string>());
   const [costOptSelected, setCostOptSelected] = useState(new Set<string>());
@@ -428,8 +434,17 @@ export function DataManagement() {
       {inventoryQuery.status === 'error' && (
         <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
           <p className="text-sm font-medium text-negative">{inventoryQuery.error.message}</p>
-          {inventoryQuery.error.message.includes('aws sso login') && (
-            <p className="text-xs text-text-secondary mt-1">Refresh this page after logging in.</p>
+          {inventoryQuery.error.message.includes('aws sso login') && awsProfile !== null && (
+            <div className="flex items-center gap-3 mt-2">
+              <button
+                type="button"
+                onClick={() => { api.ssoLogin(awsProfile).catch(() => undefined); }}
+                className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover transition-colors"
+              >
+                Open SSO Login
+              </button>
+              <span className="text-xs text-text-secondary">A browser window will open. Refresh this page after logging in.</span>
+            </div>
           )}
         </div>
       )}

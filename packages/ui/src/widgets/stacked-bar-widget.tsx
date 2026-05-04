@@ -1,10 +1,13 @@
 import { useMemo } from 'react';
 import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
+import { useCostApi } from '../hooks/use-cost-api.js';
+import { useQuery } from '../hooks/use-query.js';
 import { StackedBarChart, bucketBars, type BarDay } from '../components/stacked-bar-chart.js';
 import { asTagValue } from '@costgoblin/core/browser';
 import { useCostFocus } from '../hooks/use-cost-focus.js';
 import type { DailyCostsResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
+import { filtersKey, mergeFilters, hasSufficientDailyCoverage } from './widget.js';
 
 const MAX_BARS = 170;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -33,23 +36,40 @@ function dailyToBarDays(data: DailyCostsResult | null): BarDay[] {
   }));
 }
 
+function dailyToTotals(data: DailyCostsResult | null): readonly number[] {
+  if (data === null) return [];
+  return data.days.map(d => d.total);
+}
+
 export function StackedBarWidget({
   spec,
   dateRange,
+  previousDateRange,
+  compareEnabled,
   granularity,
   globalFilters,
   onSetFilter,
 }: WidgetCommonProps) {
+  const api = useCostApi();
   const focus = useCostFocus();
   const specGroupBy = spec.type === 'stackedBar' ? spec.groupBy : undefined;
+  const filters = mergeFilters(globalFilters, spec.filters);
+  const fk = filtersKey(filters);
 
-  const { query, dailyResult } = useDailyWidgetQuery({
+  const { query, activeGroupBy, dailyResult } = useDailyWidgetQuery({
     specGroupBy,
     dateRange,
     granularity,
     globalFilters,
     specFilters: spec.filters,
   });
+
+  const prevQuery = useQuery<DailyCostsResult | null>(
+    () => compareEnabled && specGroupBy !== undefined
+      ? api.queryDailyCosts({ groupBy: specGroupBy, dateRange: previousDateRange, filters, granularity })
+      : Promise.resolve(null),
+    [compareEnabled, specGroupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
+  );
 
   const barDays = useMemo(
     () => {
@@ -58,6 +78,23 @@ export function StackedBarWidget({
       return bucketBars(filled, MAX_BARS);
     },
     [dailyResult, granularity, dateRange.start, dateRange.end],
+  );
+
+  const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientDailyCoverage(prevQuery.data, previousDateRange);
+  const previousTotals = useMemo(
+    () => {
+      const raw = dailyToTotals(prevHasCoverage ? prevQuery.data : null);
+      if (raw.length <= MAX_BARS) return raw;
+      const size = Math.ceil(raw.length / MAX_BARS);
+      const bucketed: number[] = [];
+      for (let i = 0; i < raw.length; i += size) {
+        let sum = 0;
+        for (let j = i; j < Math.min(i + size, raw.length); j++) sum += raw[j] ?? 0;
+        bucketed.push(sum);
+      }
+      return bucketed;
+    },
+    [prevHasCoverage, prevQuery],
   );
 
   if (spec.type !== 'stackedBar') return null;
@@ -73,7 +110,8 @@ export function StackedBarWidget({
       highlightedGroup={focus.hoveredEntity}
       title={title}
       loading={loading}
-      onSegmentClick={specGroupBy === undefined ? undefined : (name) => { onSetFilter(specGroupBy, asTagValue(name)); }}
+      onSegmentClick={activeGroupBy === undefined ? undefined : (name) => { onSetFilter(activeGroupBy, asTagValue(name)); }}
+      previousTotals={compareEnabled ? previousTotals : undefined}
     />
   );
 }

@@ -320,7 +320,7 @@ function useSyncPolling(
             if (s.status === 'syncing') remaining += s.filesTotal - s.filesDone;
           }
           setSyncFilesRemaining(remaining);
-          setSyncError(prev => (prev?.includes('AWS credentials') ? prev : null));
+          setSyncError(downloading ? null : (prev => (prev?.includes('AWS credentials') ? prev : null)));
         }
       } catch { /* transient */ }
     }

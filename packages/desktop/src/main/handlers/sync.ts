@@ -184,6 +184,15 @@ export function registerSyncHandlers(app: AppContext): void {
     await shell.openPath(ctx.dataDir);
   });
 
+  ipcMain.handle('data:sso-login', async (_event, profile: string): Promise<void> => {
+    const { spawn } = await import('node:child_process');
+    const child = spawn('aws', ['sso', 'login', '--profile', profile], {
+      stdio: 'ignore',
+      detached: true,
+    });
+    child.unref();
+  });
+
   ipcMain.handle('data:account-mapping', async (): Promise<AccountMappingStatus> => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');

@@ -68,13 +68,15 @@ interface DateRangePickerProps {
   readonly onChange: (range: DateRange, granularity: Granularity) => void;
   readonly hideHourly?: boolean;
   readonly lagDays?: number;
+  readonly compareEnabled?: boolean;
+  readonly onCompareChange?: ((enabled: boolean) => void) | undefined;
 }
 
 export function getDefaultDateRange(lagDays: number = DEFAULT_LAG_DAYS): DateRange {
   return { start: daysAgo(30 + lagDays), end: daysAgo(lagDays) };
 }
 
-export function DateRangePicker({ value, granularity, onChange, hideHourly, lagDays = DEFAULT_LAG_DAYS }: DateRangePickerProps) {
+export function DateRangePicker({ value, granularity, onChange, hideHourly, lagDays = DEFAULT_LAG_DAYS, compareEnabled, onCompareChange }: DateRangePickerProps) {
   const [open, setOpen] = useState(false);
   const [showCustom, setShowCustom] = useState(false);
   const latestDate = daysAgo(lagDays);
@@ -87,13 +89,16 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
   }
 
   function getActiveLabel(): string {
+    let label: string | undefined;
     for (const preset of ALL_PRESETS) {
       const range = getPresetRange(preset);
       if (value.start === range.start && value.end === range.end && granularity === preset.granularity) {
-        return preset.label;
+        label = preset.label;
+        break;
       }
     }
-    return `${value.start} → ${value.end}`;
+    const base = label ?? `${value.start} → ${value.end}`;
+    return compareEnabled === true ? `${base} vs prev` : base;
   }
 
   function handlePreset(preset: Preset) {
@@ -222,6 +227,20 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
               </div>
             )}
           </div>
+
+          {onCompareChange !== undefined && (
+            <div className="border-t border-border px-3 py-2.5">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={compareEnabled === true}
+                  onChange={(e) => { onCompareChange(e.target.checked); }}
+                  className="accent-accent h-3.5 w-3.5 rounded"
+                />
+                <span className="text-xs text-text-secondary">Compare to previous period</span>
+              </label>
+            </div>
+          )}
         </div>
       </PopoverContent>
     </Popover>
