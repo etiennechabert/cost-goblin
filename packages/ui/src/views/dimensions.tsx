@@ -291,7 +291,7 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
         <span className="text-[11px] text-text-muted leading-tight">
           {regionDataAvailable
             ? 'Use friendly names (e.g. "Europe (Frankfurt)") from the SSM snapshot.'
-            : 'Sync SSM Parameter Store from Data Management to enable.'}
+            : 'Sync Region Names from Data Management to enable.'}
         </span>
       </div>
       <DimensionToggle
@@ -359,7 +359,7 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
           ) : (
             <p className="text-text-secondary">
               Region values will display as raw codes (e.g. <span className="font-mono">eu-central-1</span>).
-              Sync the <span className="font-medium">SSM Parameter Store</span> section on Data Management to
+              Sync the <span className="font-medium">Region Names</span> section on Data Management to
               fetch the friendly names.
             </p>
           )}

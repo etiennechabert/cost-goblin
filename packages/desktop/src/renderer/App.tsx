@@ -5,6 +5,8 @@ import type { CostApi, FilterMap, ViewsConfig, ViewSpec, UpdateStatus } from '@c
 import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
 import { Download, RefreshCw } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
+import { VaultLockScreen } from './vault-lock-screen.js';
+import { VaultSetupScreen } from './vault-setup-screen.js';
 
 // ---------------------------------------------------------------------------
 // React Profiler — collects render timings when perf mode is active
@@ -121,6 +123,11 @@ function PaletteIcon() {
     </svg>
   );
 }
+
+type VaultCheck =
+  | { status: 'checking' }
+  | { status: 'locked' }
+  | { status: 'unlocked' };
 
 type SetupCheck =
   | { status: 'checking' }
@@ -396,6 +403,7 @@ function AppShell(): React.JSX.Element {
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [isDark, setIsDark] = useState(true);
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
+  const [vaultCheck, setVaultCheck] = useState<VaultCheck>({ status: 'checking' });
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const splashMinElapsed = useRef(false);
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
@@ -411,17 +419,33 @@ function AppShell(): React.JSX.Element {
 
   useEffect(() => {
     const skipSplash = globalThis.costgoblinDebug.isE2E();
-    const minTimer = skipSplash
-      ? Promise.resolve()
-      : new Promise<void>(resolve => {
+
+    const vaultStatusCheck = globalThis.costgoblinVault.getStatus();
+    const statusCheck = api.getSetupStatus().then(({ configured }) => configured);
+
+    void Promise.all([statusCheck, vaultStatusCheck]).then(async ([configured, vault]) => {
+      if (!configured || vault.state === 'not-configured') {
+        setVaultCheck({ status: 'unlocked' });
+        setSetupCheck({ status: 'needs-setup' });
+        return;
+      }
+
+      if (vault.state === 'locked') {
+        setVaultCheck({ status: 'locked' });
+        return;
+      }
+
+      // Vault auto-unlocked (safeStorage) or already unlocked
+      void api.getDimensions().catch(() => undefined);
+
+      if (!skipSplash) {
+        await new Promise<void>(resolve => {
           setTimeout(() => { splashMinElapsed.current = true; resolve(); }, SPLASH_DURATION);
         });
-    const statusCheck = api.getSetupStatus().then(({ configured }) => configured);
-    // Pre-fetch dimensions during splash so they're cached when the dashboard mounts
-    void api.getDimensions().catch(() => undefined);
+      }
 
-    void Promise.all([statusCheck, minTimer]).then(([configured]) => {
-      setSetupCheck(configured ? { status: 'ready' } : { status: 'needs-setup' });
+      setVaultCheck({ status: 'unlocked' });
+      setSetupCheck({ status: 'ready' });
     }).catch(() => undefined);
   }, [api]);
 
@@ -525,6 +549,10 @@ function AppShell(): React.JSX.Element {
     setView({ page: 'sync' });
   }
 
+  const renderVaultStep = useCallback((onContinue: () => void): React.JSX.Element => {
+    return <VaultSetupScreen onComplete={onContinue} />;
+  }, []);
+
   const views = viewsConfig ?? FALLBACK_VIEWS;
   const viewsReady = viewsConfig !== null;
   const customNav: { id: string; label: string }[] = views.views.map(v => ({ id: v.id, label: v.name }));
@@ -536,12 +564,30 @@ function AppShell(): React.JSX.Element {
     ...RIGHT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Settings' })),
   ], [customNav]);
 
+  if (vaultCheck.status === 'locked') {
+    return (
+      <VaultLockScreen
+        onUnlocked={() => {
+          setVaultCheck({ status: 'unlocked' });
+          void api.getDimensions().catch(() => undefined);
+          setTimeout(() => {
+            setSetupCheck({ status: 'ready' });
+          }, SPLASH_DURATION);
+        }}
+        onReset={() => {
+          setVaultCheck({ status: 'unlocked' });
+          setSetupCheck({ status: 'needs-setup' });
+        }}
+      />
+    );
+  }
+
   if (setupCheck.status === 'checking') {
     return <SplashScreen />;
   }
 
   if (setupCheck.status === 'needs-setup') {
-    return <SetupWizard onComplete={handleSetupComplete} />;
+    return <SetupWizard onComplete={handleSetupComplete} renderAfterWelcome={renderVaultStep} />;
   }
 
   function activeNavId(): string | null {

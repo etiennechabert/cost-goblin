@@ -13,6 +13,7 @@ const SOURCE_LABELS: Record<DataSource, { title: string; description: string }> 
 
 type WizardStep =
   | { step: 'welcome' }
+  | { step: 'after-welcome' }
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[]; path: string[] }
@@ -22,6 +23,7 @@ interface SetupWizardProps {
   onComplete: () => void;
   source?: DataSource | undefined;
   profile?: string | undefined;
+  renderAfterWelcome?: ((onContinue: () => void) => React.JSX.Element) | undefined;
 }
 
 function WelcomeStep({ onNext }: Readonly<{ onNext: () => void }>) {
@@ -61,6 +63,9 @@ function ProfileStep({ state, onSelect, onSkip, onBack }: Readonly<{
   onSkip: () => void;
   onBack: () => void;
 }>) {
+  const [filter, setFilter] = useState('');
+  const filtered = state.profiles.filter(p => p.toLowerCase().includes(filter.toLowerCase()));
+
   return (
     <div className="flex flex-col gap-5">
       <div>
@@ -86,23 +91,32 @@ function ProfileStep({ state, onSelect, onSkip, onBack }: Readonly<{
         </div>
       )}
       {!state.loading && state.profiles.length > 0 && (
-        <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
-          {state.profiles.map(profile => (
-            <button
-              key={profile}
-              type="button"
-              onClick={() => { onSelect(profile); }}
-              className={[
-                'flex items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors',
-                state.selected === profile
-                  ? 'border-accent bg-accent-muted text-accent'
-                  : 'border-border bg-bg-tertiary/20 text-text-primary hover:border-border hover:bg-bg-tertiary/40',
-              ].join(' ')}
-            >
-              <span className="font-mono text-xs px-1.5 py-0.5 rounded bg-bg-tertiary text-text-secondary">{profile}</span>
-            </button>
-          ))}
-        </div>
+        <>
+          <input
+            type="text"
+            value={filter}
+            onChange={(e) => { setFilter(e.target.value); }}
+            placeholder="Filter profiles..."
+            className="w-full rounded-lg border border-border bg-bg-primary px-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+          />
+          <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+            {filtered.map(profile => (
+              <button
+                key={profile}
+                type="button"
+                onClick={() => { onSelect(profile); }}
+                className={[
+                  'flex items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors',
+                  state.selected === profile
+                    ? 'border-accent bg-accent-muted text-accent'
+                    : 'border-border bg-bg-tertiary/20 text-text-primary hover:border-border hover:bg-bg-tertiary/40',
+                ].join(' ')}
+              >
+                <span className="font-mono text-xs px-1.5 py-0.5 rounded bg-bg-tertiary text-text-secondary">{profile}</span>
+              </button>
+            ))}
+          </div>
+        </>
       )}
 
       <div className="flex items-center justify-between pt-2">
@@ -438,7 +452,7 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: Readonly<
   );
 }
 
-export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile }: Readonly<SetupWizardProps>): React.JSX.Element {
+export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile, renderAfterWelcome }: Readonly<SetupWizardProps>): React.JSX.Element {
   const api = useCostApi();
   const isSourceMode = initialSource !== undefined && initialProfile !== undefined;
   const [wizard, setWizard] = useState<WizardStep>(
@@ -458,11 +472,19 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     }
   }, [isSourceMode, bucketsLoaded, api, initialProfile, initialSource]);
 
-  function handleWelcomeNext() {
+  function goToProfileStep() {
     setWizard({ step: 'profile', profiles: [], loading: true, selected: '' });
     api.listAwsProfiles().then(profiles => {
       setWizard({ step: 'profile', profiles, loading: false, selected: '' });
     }).catch(() => undefined);
+  }
+
+  function handleWelcomeNext() {
+    if (renderAfterWelcome !== undefined) {
+      setWizard({ step: 'after-welcome' });
+    } else {
+      goToProfileStep();
+    }
   }
 
   function handleProfileSelect(profile: string) {
@@ -541,11 +563,17 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }
 
   function handleBack() {
-    if (wizard.step === 'profile') {
+    if (wizard.step === 'after-welcome') {
       setWizard({ step: 'welcome' });
+    } else if (wizard.step === 'profile') {
+      if (renderAfterWelcome !== undefined) {
+        setWizard({ step: 'after-welcome' });
+      } else {
+        setWizard({ step: 'welcome' });
+      }
     } else if (wizard.step === 'bucket') {
       if (wizard.source === 'daily') {
-        handleWelcomeNext();
+        goToProfileStep();
       } else if (wizard.source === 'hourly') {
         startBucketStep(wizard.profile, 'daily');
       } else {
@@ -566,6 +594,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <img src="goblin.png" alt="CostGoblin" className="h-16 w-auto" />
           </div>
           {wizard.step === 'welcome' && <WelcomeStep onNext={handleWelcomeNext} />}
+          {wizard.step === 'after-welcome' && renderAfterWelcome !== undefined && renderAfterWelcome(goToProfileStep)}
           {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={onComplete} onBack={handleBack} />}
           {wizard.step === 'bucket' && (
             <BucketStep

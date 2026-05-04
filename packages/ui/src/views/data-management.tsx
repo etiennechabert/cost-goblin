@@ -422,7 +422,7 @@ export function DataManagement() {
       {/* Account mapping */}
       <OrgAccountsSection profile={awsProfile} />
 
-      {/* SSM Parameter Store enrichment data — independent of Org sync */}
+      {/* Region names enrichment — independent of Org sync */}
       <SsmParameterSection profile={awsProfile} />
 
       {inventoryQuery.status === 'loading' && !anySyncing && (

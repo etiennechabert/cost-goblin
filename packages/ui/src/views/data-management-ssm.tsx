@@ -8,7 +8,7 @@ type SyncState =
   | { status: 'done'; count: number }
   | { status: 'error'; message: string };
 
-/** Cached SSM Parameter Store data — lives separately from the AWS Org sync
+/** Cached Region Names data — lives separately from the AWS Org sync
  *  conceptually (different API, different IAM perms) so it gets its own UI
  *  block + own re-sync action. We cache per-region metadata published under
  *  /aws/service/global-infrastructure: longName, geolocationCountry,
@@ -20,6 +20,13 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
   const [syncState, setSyncState] = useState<SyncState>({ status: 'idle' });
   const [expanded, setExpanded] = useState(false);
   const [regionSearch, setRegionSearch] = useState('');
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+
+  async function handleClear(): Promise<void> {
+    await api.clearOrgData();
+    setRefreshKey(k => k + 1);
+    setShowClearConfirm(false);
+  }
 
   const info = infoQuery.status === 'success' ? infoQuery.data : null;
 
@@ -51,34 +58,109 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
       r.continent.toLowerCase().includes(needle))
     : regionEntries;
 
+  if (!hasData) {
+    return (
+      <div className={[
+        'rounded-xl border p-4',
+        hasError ? 'border-negative/50 bg-negative-muted' : 'border-warning/50 bg-warning-muted',
+      ].join(' ')}>
+        <div className="flex items-start gap-3">
+          <span className={hasError ? 'text-negative text-lg' : 'text-warning text-lg'}>&#9888;</span>
+          <div className="flex-1">
+            <p className={[
+              'text-sm font-medium',
+              hasError ? 'text-negative' : 'text-warning',
+            ].join(' ')}>
+              {hasError ? 'Region Names sync failed' : 'Region Names not synced'}
+            </p>
+            <p className="text-xs text-text-secondary mt-1 leading-relaxed">
+              {hasError
+                ? (info.lastError ?? 'Unknown error')
+                : 'Sync region friendly names from SSM to enrich the Region dimension with country and continent.'}
+            </p>
+
+            {syncState.status === 'syncing' && (
+              <div className="flex items-center gap-2 text-xs text-accent mt-2">
+                <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
+                <span>Fetching region friendly names…</span>
+              </div>
+            )}
+
+            {profile !== null && syncState.status !== 'syncing' && (
+              <button
+                type="button"
+                onClick={() => { handleSync().catch(() => undefined); }}
+                className="mt-3 rounded-md border border-accent/50 bg-accent/10 px-4 py-1.5 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+              >
+                {hasError ? 'Retry sync' : 'Sync region names'}
+              </button>
+            )}
+            {profile === null && (
+              <p className="text-xs text-text-muted mt-2">Configure an AWS profile first via the setup wizard.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-3">
         <button
           type="button"
-          onClick={() => { if (hasData) setExpanded(v => !v); }}
-          disabled={!hasData}
-          className="flex items-center gap-2 flex-1 text-left hover:bg-bg-tertiary/30 transition-colors rounded -mx-1 px-1 disabled:hover:bg-transparent disabled:cursor-default"
+          onClick={() => { setExpanded(v => !v); }}
+          className="flex items-center gap-2 flex-1 text-left hover:bg-bg-tertiary/30 transition-colors rounded -mx-1 px-1"
         >
-          <div className={[
-            'h-2 w-2 rounded-full',
-            (() => { if (hasData) { return 'bg-accent'; } return hasError ? 'bg-negative' : 'bg-text-muted'; })(),
-          ].join(' ')} />
-          <span className="text-sm font-medium text-text-primary">SSM Parameter Store</span>
-          {hasData && <span className="text-text-muted ml-auto text-xs">{expanded ? '▾' : '▸'}</span>}
+          <div className="h-2 w-2 rounded-full bg-accent" />
+          <span className="text-sm font-medium text-text-primary">Region Names</span>
+          <span className="text-text-muted ml-auto text-xs">{expanded ? '▾' : '▸'}</span>
         </button>
         {profile !== null && (
           <button
             type="button"
             onClick={() => { handleSync().catch(() => undefined); }}
             disabled={syncState.status === 'syncing'}
-            className="text-xs text-text-muted hover:text-accent transition-colors disabled:opacity-50"
-            title={hasData ? 'Re-sync SSM region names' : 'Fetch SSM region names'}
+            className="rounded-md border border-accent/50 bg-accent/10 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/20 transition-colors disabled:opacity-50"
+            title="Re-sync SSM region names"
           >
-            {hasData ? '↻' : 'Sync'}
+            Re-sync
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => { setShowClearConfirm(true); }}
+          disabled={syncState.status === 'syncing'}
+          className="rounded-md border border-negative/50 bg-negative/10 px-3 py-1 text-xs font-medium text-negative hover:bg-negative/20 transition-colors disabled:opacity-50"
+          title="Clear cached region names"
+        >
+          Clear
+        </button>
       </div>
+
+      {showClearConfirm && (
+        <div className="px-4 pb-3">
+          <div className="rounded-md border border-negative/30 bg-negative/5 p-3">
+            <p className="text-xs text-text-secondary">Clear cached region names? Re-sync any time to repopulate.</p>
+            <div className="flex gap-2 mt-2">
+              <button
+                type="button"
+                onClick={() => { setShowClearConfirm(false); }}
+                className="rounded-md bg-bg-tertiary px-3 py-1 text-xs font-medium text-text-primary hover:bg-bg-tertiary/80 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => { void handleClear(); }}
+                className="rounded-md bg-negative px-3 py-1 text-xs font-medium text-white hover:bg-negative/80 transition-colors"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {syncState.status === 'syncing' && (
         <div className="px-4 pb-2">
@@ -91,37 +173,17 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
 
       <ul className="px-4 pb-3 flex flex-col gap-1 text-xs">
         <li className="flex items-center gap-2">
-          {(() => {
-            if (hasData) return (
-              <>
-                <span className="text-accent">✓</span>
-                <span className="text-text-secondary">{String(info.count)} regions enriched with longName + country + continent</span>
-                {info.syncedAt.length > 0 && (
-                  <span className="text-text-muted ml-auto">
-                    Synced {new Date(info.syncedAt).toLocaleString()}
-                  </span>
-                )}
-              </>
-            );
-            if (hasError) return (
-              <>
-                <span className="text-negative shrink-0">✗</span>
-                <span className="text-negative break-words">
-                  Last sync failed: {info.lastError ?? ''}
-                </span>
-              </>
-            );
-            return (
-              <>
-                <span className="text-text-muted">○</span>
-                <span className="text-text-muted">No region names cached — click Sync to fetch from SSM Parameter Store</span>
-              </>
-            );
-          })()}
+          <span className="text-accent">✓</span>
+          <span className="text-text-secondary">{String(info.count)} regions enriched with longName + country + continent</span>
+          {info.syncedAt.length > 0 && (
+            <span className="text-text-muted ml-auto">
+              Synced {new Date(info.syncedAt).toLocaleString()}
+            </span>
+          )}
         </li>
       </ul>
 
-      {expanded && hasData && (
+      {expanded && (
         <div className="border-t border-border">
           <div className="flex items-center justify-between px-4 py-2">
             <span className="text-[10px] text-text-muted">

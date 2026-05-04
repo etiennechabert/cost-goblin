@@ -17,6 +17,7 @@ import { registerIpcHandlers } from './ipc.js';
 import { startMcpServer, stopMcpServer } from './mcp.js';
 import { initAutoUpdater } from './update-manager.js';
 import { registerUpdateHandlers } from './handlers/update.js';
+import { registerVaultHandlers, cleanupTemp, type VaultState } from './handlers/vault.js';
 import { validateUrl, SecurityError } from './url-validator.js';
 import { validateProfileLabel } from './validators/path-validator.js';
 
@@ -146,12 +147,17 @@ function installCSP(): void {
   });
 }
 
-async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<void> {
+async function createWindow(db: DuckDBClient, syncClient: SyncClient, vaultState: VaultState): Promise<void> {
   const userDataPath = app.getPath('userData');
   const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
   const configBase = process.env['COSTGOBLIN_CONFIG_DIR'] ?? join(userDataPath, 'config');
 
-  const appContext = registerIpcHandlers({
+  const vault: import('./handlers/context.js').VaultRef = {
+    getKey: () => vaultState.derivedKey,
+    getEffectiveDataDir: () => vaultState.tempDataDir ?? dataDir,
+  };
+
+  const appContext = registerIpcHandlers(Object.defineProperty({
     db,
     syncClient,
     configPath: resolveConfigPath(configBase, 'costgoblin'),
@@ -159,8 +165,9 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
     orgTreePath: resolveConfigPath(configBase, 'org-tree'),
     viewsPath: resolveConfigPath(configBase, 'views'),
     costScopePath: resolveConfigPath(configBase, 'cost-scope'),
-    dataDir,
-  });
+    storageDataDir: dataDir,
+    vault,
+  }, 'dataDir', { get: () => vault.getEffectiveDataDir(), enumerable: true }) as import('./handlers/context.js').IpcContext);
 
   startMcpServer(appContext).catch((err: unknown) => {
     logger.warn(`mcp: failed to start — ${err instanceof Error ? err.message : String(err)}`);
@@ -235,6 +242,9 @@ async function main(): Promise<void> {
   const syncClient = await createSyncClient(syncWorkerPath);
   logger.info('Sync worker ready');
 
+  const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
+  const vaultState = registerVaultHandlers({ dataDir, userDataPath });
+
   installCSP();
   if (app.isPackaged) {
     try {
@@ -244,11 +254,11 @@ async function main(): Promise<void> {
     }
   }
   registerUpdateHandlers();
-  await createWindow(db, syncClient);
+  await createWindow(db, syncClient, vaultState);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow(db, syncClient).catch(() => undefined);
+      createWindow(db, syncClient, vaultState).catch(() => undefined);
     }
   });
 }
@@ -259,6 +269,7 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   void stopMcpServer();
+  void cleanupTemp(app.getPath('userData'));
 });
 
 void (async () => {

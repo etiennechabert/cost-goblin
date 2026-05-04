@@ -46,16 +46,25 @@ declare global {
     readonly commitTime: number;
   }
 
+  interface VaultApi {
+    getStatus(): Promise<{ state: 'not-configured' | 'locked' | 'unlocked' }>;
+    unlock(password: string): Promise<{ success: boolean; dataDir: string | null }>;
+    setup(password: string | null): Promise<void>;
+    reset(): Promise<void>;
+  }
+
   interface Window {
     costgoblin: CostApi;
     costgoblinUpdate: UpdateApi;
     costgoblinDebug: DebugApi;
+    costgoblinVault: VaultApi;
     costgoblinPerf?: PerfApi;
     __PERF_REACT__?: RenderTiming[];
   }
   var costgoblin: CostApi;
   var costgoblinUpdate: UpdateApi;
   var costgoblinDebug: DebugApi;
+  var costgoblinVault: VaultApi;
   var costgoblinPerf: PerfApi | undefined;
   var __PERF_REACT__: RenderTiming[] | undefined;
 }
