@@ -73,7 +73,7 @@ function BubbleChartInner({
   const costMax = Math.max(...costs);
 
   const xScale = scaleSymlog<number>({
-    domain: [percentMin - percentPad, percentMax + percentPad],
+    domain: [0, percentMax + percentPad],
     range: [0, innerWidth],
     nice: true,
     constant: 10,
