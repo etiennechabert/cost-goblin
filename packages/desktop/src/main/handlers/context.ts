@@ -96,6 +96,10 @@ function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
     ...(loaded.order === undefined ? {} : { order: loaded.order }),
   };
 }
+export interface VaultRef {
+  readonly getKey: () => Buffer | null;
+}
+
 export interface IpcContext {
   readonly db: DuckDBClient;
   readonly syncClient: import('../sync-client.js').SyncClient;
@@ -105,6 +109,7 @@ export interface IpcContext {
   readonly viewsPath: string;
   readonly costScopePath: string;
   readonly dataDir: string;
+  readonly vault?: VaultRef | undefined;
 }
 
 export interface OrgTreeConfig {

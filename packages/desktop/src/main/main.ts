@@ -17,6 +17,7 @@ import { registerIpcHandlers } from './ipc.js';
 import { startMcpServer, stopMcpServer } from './mcp.js';
 import { initAutoUpdater } from './update-manager.js';
 import { registerUpdateHandlers } from './handlers/update.js';
+import { registerVaultHandlers, cleanupTemp, type VaultState } from './handlers/vault.js';
 import { validateUrl, SecurityError } from './url-validator.js';
 import { validateProfileLabel } from './validators/path-validator.js';
 
@@ -146,7 +147,7 @@ function installCSP(): void {
   });
 }
 
-async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<void> {
+async function createWindow(db: DuckDBClient, syncClient: SyncClient, vaultState: VaultState): Promise<void> {
   const userDataPath = app.getPath('userData');
   const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
   const configBase = process.env['COSTGOBLIN_CONFIG_DIR'] ?? join(userDataPath, 'config');
@@ -160,6 +161,7 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
     viewsPath: resolveConfigPath(configBase, 'views'),
     costScopePath: resolveConfigPath(configBase, 'cost-scope'),
     dataDir,
+    vault: { getKey: () => vaultState.derivedKey },
   });
 
   startMcpServer(appContext).catch((err: unknown) => {
@@ -235,6 +237,9 @@ async function main(): Promise<void> {
   const syncClient = await createSyncClient(syncWorkerPath);
   logger.info('Sync worker ready');
 
+  const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
+  const vaultState = registerVaultHandlers({ dataDir, userDataPath });
+
   installCSP();
   if (app.isPackaged) {
     try {
@@ -244,11 +249,11 @@ async function main(): Promise<void> {
     }
   }
   registerUpdateHandlers();
-  await createWindow(db, syncClient);
+  await createWindow(db, syncClient, vaultState);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow(db, syncClient).catch(() => undefined);
+      createWindow(db, syncClient, vaultState).catch(() => undefined);
     }
   });
 }
@@ -259,6 +264,7 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   void stopMcpServer();
+  void cleanupTemp(app.getPath('userData'));
 });
 
 void (async () => {

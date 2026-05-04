@@ -5,6 +5,8 @@ import type { CostApi, FilterMap, ViewsConfig, ViewSpec, UpdateStatus } from '@c
 import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
 import { Download, RefreshCw } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
+import { VaultLockScreen } from './vault-lock-screen.js';
+import { VaultSetupScreen } from './vault-setup-screen.js';
 
 // ---------------------------------------------------------------------------
 // React Profiler — collects render timings when perf mode is active
@@ -122,9 +124,15 @@ function PaletteIcon() {
   );
 }
 
+type VaultCheck =
+  | { status: 'checking' }
+  | { status: 'locked' }
+  | { status: 'unlocked' };
+
 type SetupCheck =
   | { status: 'checking' }
   | { status: 'needs-setup' }
+  | { status: 'needs-vault-setup' }
   | { status: 'ready' };
 
 const FALLBACK_VIEWS: ViewsConfig = { views: [OVERVIEW_SEED_VIEW] };
@@ -396,6 +404,7 @@ function AppShell(): React.JSX.Element {
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [isDark, setIsDark] = useState(true);
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
+  const [vaultCheck, setVaultCheck] = useState<VaultCheck>({ status: 'checking' });
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const splashMinElapsed = useRef(false);
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
@@ -416,12 +425,18 @@ function AppShell(): React.JSX.Element {
       : new Promise<void>(resolve => {
           setTimeout(() => { splashMinElapsed.current = true; resolve(); }, SPLASH_DURATION);
         });
+
+    const vaultStatusCheck = globalThis.costgoblinVault.getStatus();
     const statusCheck = api.getSetupStatus().then(({ configured }) => configured);
-    // Pre-fetch dimensions during splash so they're cached when the dashboard mounts
     void api.getDimensions().catch(() => undefined);
 
-    void Promise.all([statusCheck, minTimer]).then(([configured]) => {
-      setSetupCheck(configured ? { status: 'ready' } : { status: 'needs-setup' });
+    void Promise.all([statusCheck, vaultStatusCheck, minTimer]).then(([configured, vault]) => {
+      if (vault.state === 'locked') {
+        setVaultCheck({ status: 'locked' });
+      } else {
+        setVaultCheck({ status: 'unlocked' });
+        setSetupCheck(configured ? { status: 'ready' } : { status: 'needs-setup' });
+      }
     }).catch(() => undefined);
   }, [api]);
 
@@ -521,6 +536,10 @@ function AppShell(): React.JSX.Element {
   }
 
   function handleSetupComplete() {
+    setSetupCheck({ status: 'needs-vault-setup' });
+  }
+
+  function handleVaultSetupComplete() {
     setSetupCheck({ status: 'ready' });
     setView({ page: 'sync' });
   }
@@ -536,12 +555,33 @@ function AppShell(): React.JSX.Element {
     ...RIGHT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Settings' })),
   ], [customNav]);
 
-  if (setupCheck.status === 'checking') {
+  if (vaultCheck.status === 'checking' || (vaultCheck.status === 'unlocked' && setupCheck.status === 'checking')) {
     return <SplashScreen />;
+  }
+
+  if (vaultCheck.status === 'locked') {
+    return (
+      <VaultLockScreen
+        onUnlocked={() => {
+          setVaultCheck({ status: 'unlocked' });
+          api.getSetupStatus().then(({ configured }) => {
+            setSetupCheck(configured ? { status: 'ready' } : { status: 'needs-setup' });
+          }).catch(() => undefined);
+        }}
+        onReset={() => {
+          setVaultCheck({ status: 'unlocked' });
+          setSetupCheck({ status: 'needs-setup' });
+        }}
+      />
+    );
   }
 
   if (setupCheck.status === 'needs-setup') {
     return <SetupWizard onComplete={handleSetupComplete} />;
+  }
+
+  if (setupCheck.status === 'needs-vault-setup') {
+    return <VaultSetupScreen onComplete={handleVaultSetupComplete} />;
   }
 
   function activeNavId(): string | null {

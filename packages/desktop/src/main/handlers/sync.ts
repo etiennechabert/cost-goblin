@@ -4,6 +4,7 @@ import {
   getEtagFileName,
   getRawDirPrefix,
   parseEtagsJson,
+  encryptFile,
   logger,
 } from '@costgoblin/core';
 import type {
@@ -153,6 +154,14 @@ export function registerSyncHandlers(app: AppContext): void {
       });
 
       syncWorkerIds.delete(syncId);
+
+      if (result.filesDownloaded > 0 && ctx.vault !== undefined) {
+        const vaultKey = ctx.vault.getKey();
+        if (vaultKey !== null) {
+          await encryptSyncedFiles(ctx.dataDir, tier, vaultKey);
+        }
+      }
+
       state.syncStatuses[syncId] = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
       if (result.filesDownloaded > 0) app.warmupBase();
       return result;
@@ -234,6 +243,31 @@ export function registerSyncHandlers(app: AppContext): void {
 
     return { status: 'found', accounts, path: csvPath };
   });
+}
+
+async function encryptSyncedFiles(dataDir: string, tier: string, key: Buffer): Promise<void> {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const rawDir = path.join(dataDir, 'aws', 'raw');
+  try {
+    const periods = await fs.readdir(rawDir);
+    for (const period of periods) {
+      if (!period.startsWith(`${tier}-`) && tier !== 'cost-optimization') continue;
+      if (tier === 'cost-optimization' && !period.startsWith('cost-opt-')) continue;
+      const periodDir = path.join(rawDir, period);
+      const entries = await fs.readdir(periodDir);
+      for (const entry of entries) {
+        if (entry.endsWith('.parquet')) {
+          const filePath = path.join(periodDir, entry);
+          const encPath = `${filePath}.enc`;
+          await encryptFile(filePath, encPath, key);
+          await fs.unlink(filePath);
+        }
+      }
+    }
+  } catch (err: unknown) {
+    logger.warn(`Post-sync encryption error: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 export { resolveDataType };
