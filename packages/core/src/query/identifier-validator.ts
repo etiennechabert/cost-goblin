@@ -140,6 +140,25 @@ const BILLING_PERIOD_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
  * @param tablePath - The table path to validate
  * @throws {SecurityError} If the table path does not match the expected pattern
  */
+/**
+ * Pattern for valid YYYY-MM-DD date strings.
+ */
+const DATE_STRING_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+/**
+ * Validate that a string is a well-formed YYYY-MM-DD date.
+ * Throws SecurityError if the format is invalid, preventing SQL injection
+ * via date values interpolated into queries.
+ */
+export function assertDateString(value: string): void {
+  if (!DATE_STRING_PATTERN.test(value)) {
+    throw new SecurityError(
+      `Invalid date string "${value}" - must be YYYY-MM-DD format. ` +
+      `This prevents SQL injection via untrusted date values.`
+    );
+  }
+}
+
 export function validateTablePath(tablePath: string): void {
   // Extract the tier and period from the path
   // Expected formats:

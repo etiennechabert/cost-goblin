@@ -6,7 +6,7 @@ import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule } from
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
-import { SecurityError } from './identifier-validator.js';
+import { assertDateString, SecurityError } from './identifier-validator.js';
 
 function assertFiniteNumber(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
@@ -270,7 +270,8 @@ function buildTagSelect(
   t: DimensionsConfig['tags'][number],
   needsOrgJoin: boolean,
 ): string {
-  const curKey = t.tagName.startsWith('user_') ? t.tagName : `user_${t.tagName}`;
+  const rawKey = t.tagName.startsWith('user_') ? t.tagName : `user_${t.tagName}`;
+  const curKey = sqlEscapeString(rawKey);
   const colName = tagColumnName(t.tagName);
   const tablePrefix = needsOrgJoin ? 'cur.' : '';
   const resourceExpr = `element_at(${tablePrefix}resource_tags, '${curKey}')[1]`;
@@ -313,7 +314,8 @@ function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
   const selects: string[] = [];
   for (const t of dimensions.tags) {
     if (t.accountTagFallback === undefined) continue;
-    const curKey = t.tagName.startsWith('user_') ? t.tagName : `user_${t.tagName}`;
+    const rawKey = t.tagName.startsWith('user_') ? t.tagName : `user_${t.tagName}`;
+    const curKey = sqlEscapeString(rawKey);
     const colName = tagColumnName(t.tagName);
     selects.push(`element_at(cur.resource_tags, '${curKey}')[1] AS raw_${colName}`);
   }
@@ -845,8 +847,11 @@ export function buildMaterializeBaseQuery(
   const periods = resolveQueryPeriods(dateRange, availablePeriods);
   const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, includeRawTags: true, slim: true });
 
+  assertDateString(dateRange.start);
+  assertDateString(dateRange.end);
+
   const whereConditions = [
-    `usage_date BETWEEN '${sqlEscapeString(dateRange.start)}' AND '${sqlEscapeString(dateRange.end)}'`,
+    `usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}'`,
     ...exclusionClauses,
   ];
 

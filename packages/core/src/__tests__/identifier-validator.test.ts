@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateColumnName, validateTablePath, SecurityError } from '../query/identifier-validator.js';
+import { assertDateString, validateColumnName, validateTablePath, SecurityError } from '../query/identifier-validator.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId } from '../types/branded.js';
 
@@ -82,6 +82,29 @@ describe('validateColumnName', () => {
   it('throws SecurityError with descriptive message', () => {
     expect(() => { validateColumnName('bad_column', testDimensions); })
       .toThrow('Invalid column name "bad_column" - not in dimensions config allow-list');
+  });
+});
+
+describe('assertDateString', () => {
+  it('accepts valid YYYY-MM-DD dates', () => {
+    expect(() => { assertDateString('2026-01-01'); }).not.toThrow();
+    expect(() => { assertDateString('2026-12-31'); }).not.toThrow();
+    expect(() => { assertDateString('2025-06-15'); }).not.toThrow();
+  });
+
+  it('rejects invalid formats', () => {
+    expect(() => { assertDateString('2026-1-01'); }).toThrow(SecurityError);
+    expect(() => { assertDateString('2026-13-01'); }).toThrow(SecurityError);
+    expect(() => { assertDateString('2026-00-01'); }).toThrow(SecurityError);
+    expect(() => { assertDateString('2026-01-00'); }).toThrow(SecurityError);
+    expect(() => { assertDateString('2026-01-32'); }).toThrow(SecurityError);
+    expect(() => { assertDateString('not-a-date'); }).toThrow(SecurityError);
+    expect(() => { assertDateString(''); }).toThrow(SecurityError);
+  });
+
+  it('rejects SQL injection attempts', () => {
+    expect(() => { assertDateString("2026-01-01' OR 1=1 --"); }).toThrow(SecurityError);
+    expect(() => { assertDateString("2026-01-01'; DROP TABLE cost_base; --"); }).toThrow(SecurityError);
   });
 });
 

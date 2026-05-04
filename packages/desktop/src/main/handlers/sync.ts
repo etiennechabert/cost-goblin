@@ -60,6 +60,9 @@ export function registerSyncHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('data:delete-period', async (_event, period: string, tier: ExpectedDataType = 'daily'): Promise<void> => {
+    if (!/^\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/.test(period)) {
+      throw new Error(`Invalid period format: "${period}" — expected YYYY-MM or YYYY-MM-DD`);
+    }
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
 

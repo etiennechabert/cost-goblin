@@ -1,4 +1,5 @@
 import {
+  assertDateString,
   buildSource,
   computePeriodsInRange,
   DEFAULT_LAG_DAYS,
@@ -38,6 +39,8 @@ export async function runSql(
 
   let dateRange: { start: string; end: string };
   if (params.dateRange !== undefined) {
+    assertDateString(params.dateRange.start);
+    assertDateString(params.dateRange.end);
     dateRange = params.dateRange;
   } else {
     const dayMs = 86_400_000;
