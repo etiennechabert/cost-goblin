@@ -67,6 +67,7 @@ function isConfigureRequest(msg: unknown): msg is { kind: 'configure'; tempDir: 
 const cancelledIds = new Set<number>();
 const queuedIds = new Set<number>();  // waiting for pool.acquire()
 const runningIds = new Set<number>(); // executing in DuckDB
+const runningConns = new Map<number, DuckDBConnection>(); // id → connection for interrupt()
 
 async function fetchAllRows(
   conn: DuckDBConnection,
@@ -216,6 +217,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
     }
 
     runningIds.add(req.id);
+    runningConns.set(req.id, conn);
     const rows = await fetchAllRows(conn, req.sql, () => cancelledIds.has(req.id));
 
     // Skip serialization if cancelled during execution
@@ -227,9 +229,12 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    send({ kind: 'error', id: req.id, message });
+    const isCancelled = cancelledIds.has(req.id) || message.includes('INTERRUPT');
+    cancelledIds.delete(req.id);
+    send({ kind: 'error', id: req.id, message: isCancelled ? 'Query cancelled' : message });
   } finally {
     runningIds.delete(req.id);
+    runningConns.delete(req.id);
     pool.release(conn);
   }
 }
@@ -257,6 +262,7 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
     }
 
     runningIds.add(req.id);
+    runningConns.set(req.id, conn);
     const rows = await fetchAllRowsPrepared(conn, req.sql, req.params, () => cancelledIds.has(req.id));
 
     // Skip serialization if cancelled during execution
@@ -268,9 +274,12 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    send({ kind: 'error', id: req.id, message });
+    const isCancelled = cancelledIds.has(req.id) || message.includes('INTERRUPT');
+    cancelledIds.delete(req.id);
+    send({ kind: 'error', id: req.id, message: isCancelled ? 'Query cancelled' : message });
   } finally {
     runningIds.delete(req.id);
+    runningConns.delete(req.id);
     pool.release(conn);
   }
 }
@@ -281,6 +290,11 @@ function handleCancelPending(): void {
   }
   for (const id of runningIds) {
     cancelledIds.add(id);
+  }
+  // Actively interrupt running DuckDB queries so they release pool
+  // connections immediately instead of running to completion.
+  for (const conn of runningConns.values()) {
+    try { conn.interrupt(); } catch { /* connection may already be closed */ }
   }
 }
 

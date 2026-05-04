@@ -61,6 +61,7 @@ function launchApp(): Promise<ElectronApplication> {
       ...process.env,
       NODE_ENV: 'production',
       COSTGOBLIN_PERF_MODE: '1',
+      COSTGOBLIN_HEADLESS: '1',
       COSTGOBLIN_DATA_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'data'),
       COSTGOBLIN_CONFIG_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config'),
     },
@@ -83,6 +84,67 @@ async function waitForCostScopePreview(page: Page): Promise<void> {
     await expect(marker).toBeHidden({ timeout: LOAD_TIMEOUT });
   } catch { /* may have finished */ }
   await page.waitForTimeout(200);
+}
+
+// ---------------------------------------------------------------------------
+// Date picker & filter helpers for parameter combination benchmarks
+// ---------------------------------------------------------------------------
+
+async function openDatePicker(page: Page): Promise<void> {
+  const trigger = page.locator('button:has(svg.lucide-calendar)').first();
+  await trigger.click();
+  await page.waitForTimeout(300);
+}
+
+async function selectPreset(page: Page, label: string): Promise<void> {
+  await openDatePicker(page);
+  const popover = page.getByRole('dialog');
+  await popover.getByRole('button', { name: label, exact: true }).click();
+  await page.waitForTimeout(200);
+}
+
+async function setComparison(page: Page, enabled: boolean): Promise<void> {
+  await openDatePicker(page);
+  const popover = page.getByRole('dialog');
+  const checkbox = popover.getByLabel('Compare to previous period');
+  const checked = await checkbox.isChecked();
+  if (enabled && !checked) await checkbox.check();
+  else if (!enabled && checked) await checkbox.uncheck();
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+}
+
+async function applyDimensionFilter(page: Page, dimLabel: string): Promise<boolean> {
+  const chip = page.getByRole('button', { name: dimLabel, exact: true }).first();
+  if (!await chip.isVisible().catch(() => false)) return false;
+  await chip.click();
+  const dropdown = page.locator('.absolute.left-0.top-full.z-50');
+  try {
+    await expect(dropdown).toBeVisible({ timeout: 5_000 });
+  } catch { return false; }
+  // Wait for filter values to actually load (checkbox appears when ready)
+  const firstCheckbox = dropdown.locator('input[type="checkbox"]').first();
+  try {
+    await expect(firstCheckbox).toBeVisible({ timeout: 60_000 });
+  } catch {
+    // Filter values too slow to load — close dropdown and report failure
+    await page.keyboard.press('Escape');
+    return false;
+  }
+  // Deselect all then select just the first value
+  const clearBtn = dropdown.getByRole('button', { name: 'Clear', exact: true });
+  if (await clearBtn.isEnabled().catch(() => false)) await clearBtn.click();
+  await firstCheckbox.check();
+  await dropdown.getByRole('button', { name: 'Apply', exact: true }).click();
+  return true;
+}
+
+async function clearFilters(page: Page): Promise<void> {
+  const btn = page.getByRole('button', { name: 'Clear all' });
+  if (await btn.isVisible().catch(() => false)) {
+    await btn.click();
+    await page.waitForTimeout(200);
+  }
 }
 
 function heapMB(bytes: number): number {
@@ -648,6 +710,130 @@ test.describe('Performance Benchmarks', () => {
       await measure(page, 'Data Management → baseline', async () => {
         await page.getByRole('button', { name: 'Sync' }).click();
         await expect(page.getByRole('heading', { name: 'Data Management' })).toBeVisible();
+        await waitForQuerySettle(page);
+      });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Parameter Combinations (hourly, comparison, dimension filters)
+  // -------------------------------------------------------------------------
+  test.describe('Parameter Combinations', () => {
+    test.setTimeout(120_000);
+
+    test.beforeAll(async () => {
+      await page.getByRole('button', { name: 'Cost Overview', exact: true }).click();
+      await waitForQuerySettle(page);
+      // Reset to clean state: daily 30d, no comparison, no filters
+      await selectPreset(page, 'Last 30 days');
+      await waitForQuerySettle(page);
+      await setComparison(page, false);
+      await clearFilters(page);
+      await waitForQuerySettle(page);
+      await page.evaluate(() => window.costgoblinPerf?.startCpuProfile());
+    });
+
+    test.afterAll(async () => {
+      const result: any = await page.evaluate(() =>
+        window.costgoblinPerf?.stopCpuProfile('param-combos'),
+      );
+      if (result?.path) cpuProfiles.push({ label: 'Parameter Combinations', path: result.path });
+      // Restore defaults
+      await setComparison(page, false);
+      await clearFilters(page);
+      await selectPreset(page, 'Last 30 days');
+      await waitForQuerySettle(page);
+    });
+
+    test('hourly 7d', async () => {
+      await measure(page, 'Combo → hourly 7d', async () => {
+        await selectPreset(page, 'Last 7 days');
+        await waitForQuerySettle(page);
+      });
+    });
+
+    test('comparison enabled (daily 30d)', async () => {
+      await selectPreset(page, 'Last 30 days');
+      await waitForQuerySettle(page);
+      await measure(page, 'Combo → comparison 30d', async () => {
+        await setComparison(page, true);
+        await waitForQuerySettle(page);
+      });
+    });
+
+    test('comparison + hourly 7d', async () => {
+      // comparison still on from previous test
+      await measure(page, 'Combo → comparison + hourly 7d', async () => {
+        await selectPreset(page, 'Last 7 days');
+        await waitForQuerySettle(page);
+      });
+    });
+
+    test('service filter (daily 30d)', async () => {
+      await setComparison(page, false);
+      await selectPreset(page, 'Last 30 days');
+      await waitForQuerySettle(page);
+      await measure(page, 'Combo → service filter', async () => {
+        const applied = await applyDimensionFilter(page, 'Service');
+        if (!applied) return;
+        await waitForQuerySettle(page);
+      });
+    });
+
+    test('multi-dimension filter (daily 30d)', async () => {
+      await clearFilters(page);
+      await waitForQuerySettle(page);
+      await measure(page, 'Combo → multi-dim filter', async () => {
+        await applyDimensionFilter(page, 'Account');
+        await applyDimensionFilter(page, 'Service');
+        await waitForQuerySettle(page);
+      });
+    });
+
+    test('hourly + filter', async () => {
+      await clearFilters(page);
+      await waitForQuerySettle(page);
+      await applyDimensionFilter(page, 'Service');
+      await waitForQuerySettle(page);
+      await measure(page, 'Combo → hourly + filter', async () => {
+        await selectPreset(page, 'Last 7 days');
+        await waitForQuerySettle(page);
+      });
+    });
+
+    test('comparison + filter (daily 30d)', async () => {
+      await clearFilters(page);
+      await selectPreset(page, 'Last 30 days');
+      await waitForQuerySettle(page);
+      await applyDimensionFilter(page, 'Account');
+      await waitForQuerySettle(page);
+      await measure(page, 'Combo → comparison + filter', async () => {
+        await setComparison(page, true);
+        await waitForQuerySettle(page);
+      });
+    });
+
+    test('hourly + comparison + filter', async () => {
+      // comparison + Account filter still active
+      await measure(page, 'Combo → hourly + comparison + filter', async () => {
+        await selectPreset(page, 'Last 7 days');
+        await waitForQuerySettle(page);
+      });
+    });
+
+    test('365d + comparison', async () => {
+      await clearFilters(page);
+      await waitForQuerySettle(page);
+      await measure(page, 'Combo → 365d + comparison', async () => {
+        await selectPreset(page, 'Last 365 days');
+        await waitForQuerySettle(page);
+      });
+      // comparison still on
+    });
+
+    test('365d + comparison + filter', async () => {
+      await measure(page, 'Combo → 365d + comparison + filter', async () => {
+        await applyDimensionFilter(page, 'Account');
         await waitForQuerySettle(page);
       });
     });

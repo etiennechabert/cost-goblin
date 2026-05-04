@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
-import type { CostApi, FilterMap, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
-import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
+import type { CostApi, Dimension, FilterMap, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
+import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagColumnName } from '@costgoblin/core/browser';
 import { Download, RefreshCw } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { VaultLockScreen } from './vault-lock-screen.js';
@@ -358,7 +358,17 @@ function shuffled<T>(arr: readonly T[]): T[] {
   return copy;
 }
 
-function SplashScreen(): React.JSX.Element {
+function dimId(dim: Dimension): string {
+  return 'tagName' in dim ? tagColumnName(dim.tagName) : dim.name;
+}
+
+function defaultDateRange(): { start: string; end: string } {
+  const end = new Date(Date.now() - DEFAULT_LAG_DAYS * 86_400_000);
+  const start = new Date(end.getTime() - 30 * 86_400_000);
+  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+}
+
+function SplashScreen({ step }: Readonly<{ step: string }>): React.JSX.Element {
   const [order] = useState(() => shuffled(SPLASH_IMAGES));
   const [index, setIndex] = useState(0);
   const [fadeOut, setFadeOut] = useState(false);
@@ -388,7 +398,7 @@ function SplashScreen(): React.JSX.Element {
         ))}
       </div>
       <h1 className="text-2xl font-bold text-accent tracking-wider mb-1">CostGoblin</h1>
-      <p className="text-sm text-text-muted mb-8">Crunching your cloud costs...</p>
+      <p className="text-sm text-text-muted mb-8">{step}</p>
       <div className="w-64">
         <CoinRainLoader height={120} count={6} />
       </div>
@@ -405,6 +415,7 @@ function AppShell(): React.JSX.Element {
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
   const [vaultCheck, setVaultCheck] = useState<VaultCheck>({ status: 'checking' });
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
+  const [splashStep, setSplashStep] = useState('Connecting...');
   const splashMinElapsed = useRef(false);
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
   const { syncError, setSyncError, syncActivity, syncFilesRemaining } = useSyncPolling(api, setupCheck);
@@ -420,6 +431,7 @@ function AppShell(): React.JSX.Element {
   useEffect(() => {
     const skipSplash = globalThis.costgoblinDebug.isE2E();
 
+    setSplashStep('Checking configuration...');
     const vaultStatusCheck = globalThis.costgoblinVault.getStatus();
     const statusCheck = api.getSetupStatus().then(({ configured }) => configured);
 
@@ -435,9 +447,23 @@ function AppShell(): React.JSX.Element {
         return;
       }
 
-      // Vault auto-unlocked (safeStorage) or already unlocked
-      void api.getDimensions().catch(() => undefined);
+      // Vault auto-unlocked (safeStorage) or already unlocked —
+      // pre-fetch dimensions so they're cached when the dashboard mounts.
+      // Load dimensions, then pre-warm filter values for each one so
+      // dropdowns open instantly when the dashboard appears.
+      const dims = await api.getDimensions().catch(() => [] as Dimension[]);
+      if (dims.length > 0) {
+        const range = defaultDateRange();
+        let done = 0;
+        setSplashStep(`Loading dimensions 0/${String(dims.length)}...`);
+        await Promise.all(dims.map(async (dim) => {
+          await api.getFilterValues(dimId(dim), {}, range).catch(() => undefined);
+          done++;
+          setSplashStep(`Loading dimensions ${String(done)}/${String(dims.length)}...`);
+        }));
+      }
 
+      setSplashStep('Preparing dashboard...');
       if (!skipSplash) {
         await new Promise<void>(resolve => {
           setTimeout(() => { splashMinElapsed.current = true; resolve(); }, SPLASH_DURATION);
@@ -583,7 +609,7 @@ function AppShell(): React.JSX.Element {
   }
 
   if (setupCheck.status === 'checking') {
-    return <SplashScreen />;
+    return <SplashScreen step={splashStep} />;
   }
 
   if (setupCheck.status === 'needs-setup') {

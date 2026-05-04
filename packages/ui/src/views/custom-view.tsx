@@ -18,6 +18,7 @@ import {
   useCostFocusReducer,
 } from '../hooks/use-cost-focus.js';
 import {
+  getDimensionId,
   isEnvironmentDimension,
   isOwnerDimension,
   isProductDimension,
@@ -81,11 +82,12 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     [dateRange],
   );
 
-  // Cancel in-flight DuckDB queries when the date range or granularity
-  // changes so stale 30d queries don't compete for memory with new 365d
-  // queries. Skip until one render AFTER preferences have loaded — the
-  // prefs restore itself triggers a state change that we must not cancel.
+  // Cancel in-flight DuckDB queries when query-affecting state changes so
+  // stale queries don't hog pool connections while new ones queue behind them.
+  // Skip until one render AFTER preferences have loaded — the prefs restore
+  // itself triggers a state change that we must not cancel.
   const cancelReadyRef = useRef(false);
+  const filtersKeyRef = JSON.stringify(filters);
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
     if (!cancelReadyRef.current) {
@@ -93,46 +95,63 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
       return;
     }
     api.cancelPendingQueries().catch(() => undefined);
-  }, [dateRange, granularity, api]);
+  }, [dateRange, granularity, filtersKeyRef, compareEnabled, api]);
 
-  // Load persisted date range and granularity on mount
+  // Load column preferences on mount. Date range, granularity, and comparison
+  // always start at defaults (30d daily, comparison off) for a clean session.
   useEffect(() => {
     api.getExplorerPreferences().then(prefs => {
-      // Store column preferences to preserve them when saving
       columnPrefsRef.current = {
         hiddenColumns: prefs.hiddenColumns,
         columnOrder: prefs.columnOrder,
       };
-      if (prefs.lastUsedDateRange !== undefined) {
-        setDateRange(prefs.lastUsedDateRange);
-      }
-      if (prefs.lastUsedGranularity !== undefined) {
-        setGranularity(prefs.lastUsedGranularity);
-      }
-      if (prefs.compareEnabled === true) {
-        setCompareEnabled(true);
-      }
       prefsLoadedRef.current = true;
     }).catch(() => {
       prefsLoadedRef.current = true;
     });
   }, [api]);
 
-  // Save date range and granularity whenever they change. Skip saves until
-  // after preferences have loaded — the prefsLoadedRef flag is set in the
-  // mount effect once the initial load completes (or fails). This prevents
-  // redundant writes when restoring persisted values on mount. Preserve
-  // column preferences from Explorer to avoid overwriting them.
+  // Save preferences with debounce — rapid parameter changes (e.g. applying
+  // two filters back-to-back) only trigger a single write.
+  const savePendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
-    api.saveExplorerPreferences({
-      hiddenColumns: columnPrefsRef.current.hiddenColumns,
-      columnOrder: columnPrefsRef.current.columnOrder,
-      lastUsedDateRange: dateRange,
-      lastUsedGranularity: granularity,
-      compareEnabled,
-    }).catch(() => undefined);
+    if (savePendingRef.current !== null) clearTimeout(savePendingRef.current);
+    savePendingRef.current = setTimeout(() => {
+      api.saveExplorerPreferences({
+        hiddenColumns: columnPrefsRef.current.hiddenColumns,
+        columnOrder: columnPrefsRef.current.columnOrder,
+        lastUsedDateRange: dateRange,
+        lastUsedGranularity: granularity,
+        compareEnabled,
+      }).catch(() => undefined);
+    }, 500);
+    return () => {
+      if (savePendingRef.current !== null) clearTimeout(savePendingRef.current);
+    };
   }, [dateRange, granularity, compareEnabled, api]);
+
+  // Pre-fetch filter values for all dimensions so dropdowns open instantly.
+  // Cache is keyed by date range — invalidated when the range changes.
+  type FilterValue = { value: string; label: string; count: number };
+  const filterCacheRef = useRef(new Map<string, FilterValue[]>());
+  const filterCacheDateKeyRef = useRef('');
+
+  useEffect(() => {
+    if (dimensions.length === 0) return;
+    const dateKey = `${dateRange.start}|${dateRange.end}`;
+    if (filterCacheDateKeyRef.current !== dateKey) {
+      filterCacheRef.current.clear();
+      filterCacheDateKeyRef.current = dateKey;
+    }
+    for (const dim of dimensions) {
+      const dimId = getDimensionId(dim);
+      if (filterCacheRef.current.has(dimId)) continue;
+      api.getFilterValues(dimId, {}, dateRange).then(values => {
+        filterCacheRef.current.set(dimId, values);
+      }).catch(() => undefined);
+    }
+  }, [dimensions, dateRange, api]);
 
   function handleSetFilter(dim: DimensionId, value: TagValue) {
     setFilters(prev => ({ ...prev, [dim]: [value] }));
@@ -142,7 +161,15 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     handleSetFilter(dim, asTagValue(entity));
   }
 
-  function handleGetFilterValues(dimensionId: DimensionId, currentFilters: FilterMap): Promise<{ value: string; label: string; count: number }[]> {
+  function handleGetFilterValues(dimensionId: DimensionId, currentFilters: FilterMap): Promise<FilterValue[]> {
+    const hasActiveFilters = Object.keys(currentFilters).some(k => {
+      const v = currentFilters[k as DimensionId];
+      return v !== undefined && v.length > 0;
+    });
+    const cached = filterCacheRef.current.get(dimensionId);
+    if (!hasActiveFilters && cached !== undefined) {
+      return Promise.resolve(cached);
+    }
     const plain: Record<string, readonly string[]> = {};
     for (const [k, v] of Object.entries(currentFilters)) if (v !== undefined) plain[k] = v;
     return api.getFilterValues(dimensionId, plain, dateRange);
