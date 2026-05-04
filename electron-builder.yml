@@ -23,6 +23,7 @@ mac:
         - x64
         - arm64
   category: public.app-category.business
+  notarize: true
 win:
   target:
     - target: nsis
