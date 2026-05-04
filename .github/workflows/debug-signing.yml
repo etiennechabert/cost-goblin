@@ -1,0 +1,41 @@
+name: Debug Signing
+
+on: workflow_dispatch
+
+jobs:
+  debug:
+    environment: release
+    runs-on: macos-latest
+
+    steps:
+      - name: Decode P12
+        run: |
+          echo "=== Decoding CSC_LINK ==="
+          echo "$CSC_LINK" | base64 --decode > /tmp/cert.p12
+          echo "P12 file size: $(wc -c < /tmp/cert.p12) bytes"
+          file /tmp/cert.p12
+
+          echo ""
+          echo "=== Verifying P12 with password ==="
+          if openssl pkcs12 -in /tmp/cert.p12 -nokeys -password pass:"$CSC_KEY_PASSWORD" -noout 2>&1; then
+            echo "SUCCESS: P12 password is correct"
+          else
+            echo "FAILED: P12 password mismatch"
+          fi
+
+          echo ""
+          echo "=== Certificate subject ==="
+          openssl pkcs12 -in /tmp/cert.p12 -nokeys -password pass:"$CSC_KEY_PASSWORD" 2>/dev/null | openssl x509 -noout -subject -dates 2>&1 || echo "Could not read cert"
+
+          echo ""
+          echo "=== Password length ==="
+          echo "Password is ${#CSC_KEY_PASSWORD} characters"
+
+          echo ""
+          echo "=== P12 base64 length ==="
+          echo "Base64 input is ${#CSC_LINK} characters"
+
+          rm -f /tmp/cert.p12
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERTIFICATE_P12 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
