@@ -14,8 +14,8 @@ import { runSql } from './run-sql.js';
 import { toolError } from './tool-helpers.js';
 
 const dateRangeSchema = z.object({
-  start: z.string().describe('Start date (YYYY-MM-DD)'),
-  end: z.string().describe('End date (YYYY-MM-DD)'),
+  start: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, 'Must be YYYY-MM-DD').describe('Start date (YYYY-MM-DD)'),
+  end: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, 'Must be YYYY-MM-DD').describe('End date (YYYY-MM-DD)'),
 }).optional();
 
 const filtersSchema = z.record(z.string(), z.array(z.string())).optional()

@@ -89,7 +89,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const dailyDir = path.join(ctx.dataDir, 'aws', 'raw');
     let dirs: string[] = [];
     try {
-      dirs = (await fs.readdir(dailyDir)).filter(d => d.startsWith('daily-')).sort((a, b) => a.localeCompare(b));
+      dirs = (await fs.readdir(dailyDir)).filter(d => /^daily-\d{4}-(0[1-9]|1[0-2])$/.test(d)).sort((a, b) => a.localeCompare(b));
     } catch { /* no data */ }
     const recentDirs = dirs.slice(-2);
     const parquetGlobs = recentDirs.map(d => `'${ctx.dataDir}/aws/raw/${d}/*.parquet'`).join(', ');
@@ -172,7 +172,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
     let dirs: string[] = [];
     try {
-      dirs = (await fs.readdir(rawDir)).filter(d => d.startsWith('daily-')).sort((a, b) => a.localeCompare(b));
+      dirs = (await fs.readdir(rawDir)).filter(d => /^daily-\d{4}-(0[1-9]|1[0-2])$/.test(d)).sort((a, b) => a.localeCompare(b));
     } catch { /* no data */ }
     const latest = dirs.at(-1);
     if (latest === undefined) return { values: [], distinctCount: 0, period: '' };
@@ -190,7 +190,8 @@ export function registerDimensionsHandlers(app: AppContext): void {
       operation: 'line_item_operation',
       usage_type: 'line_item_usage_type',
     };
-    const col = RAW_COL[field] ?? field;
+    const col = RAW_COL[field];
+    if (col === undefined) return { values: [], distinctCount: 0, period: '' };
 
     const distinctSql = `SELECT COUNT(DISTINCT ${col}) AS n FROM ${source} WHERE ${col} IS NOT NULL AND ${col} != ''`;
     const valuesSql = `
@@ -278,7 +279,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
     let dirs: string[] = [];
     try {
-      dirs = (await fs.readdir(rawDir)).filter(d => d.startsWith('daily-')).sort();
+      dirs = (await fs.readdir(rawDir)).filter(d => /^daily-\d{4}-(0[1-9]|1[0-2])$/.test(d)).sort();
     } catch { /* no data */ }
     const latest = dirs.at(-1);
     if (latest === undefined) return [];
