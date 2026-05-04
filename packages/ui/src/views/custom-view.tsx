@@ -18,6 +18,7 @@ import {
   useCostFocusReducer,
 } from '../hooks/use-cost-focus.js';
 import {
+  getDimensionId,
   isEnvironmentDimension,
   isOwnerDimension,
   isProductDimension,
@@ -130,6 +131,28 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     };
   }, [dateRange, granularity, compareEnabled, api]);
 
+  // Pre-fetch filter values for all dimensions so dropdowns open instantly.
+  // Cache is keyed by date range — invalidated when the range changes.
+  type FilterValue = { value: string; label: string; count: number };
+  const filterCacheRef = useRef(new Map<string, FilterValue[]>());
+  const filterCacheDateKeyRef = useRef('');
+
+  useEffect(() => {
+    if (dimensions.length === 0) return;
+    const dateKey = `${dateRange.start}|${dateRange.end}`;
+    if (filterCacheDateKeyRef.current !== dateKey) {
+      filterCacheRef.current.clear();
+      filterCacheDateKeyRef.current = dateKey;
+    }
+    for (const dim of dimensions) {
+      const dimId = getDimensionId(dim);
+      if (filterCacheRef.current.has(dimId)) continue;
+      api.getFilterValues(dimId, {}, dateRange).then(values => {
+        filterCacheRef.current.set(dimId, values);
+      }).catch(() => undefined);
+    }
+  }, [dimensions, dateRange, api]);
+
   function handleSetFilter(dim: DimensionId, value: TagValue) {
     setFilters(prev => ({ ...prev, [dim]: [value] }));
   }
@@ -138,7 +161,15 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     handleSetFilter(dim, asTagValue(entity));
   }
 
-  function handleGetFilterValues(dimensionId: DimensionId, currentFilters: FilterMap): Promise<{ value: string; label: string; count: number }[]> {
+  function handleGetFilterValues(dimensionId: DimensionId, currentFilters: FilterMap): Promise<FilterValue[]> {
+    const hasActiveFilters = Object.keys(currentFilters).some(k => {
+      const v = currentFilters[k as DimensionId];
+      return v !== undefined && v.length > 0;
+    });
+    const cached = filterCacheRef.current.get(dimensionId);
+    if (!hasActiveFilters && cached !== undefined) {
+      return Promise.resolve(cached);
+    }
     const plain: Record<string, readonly string[]> = {};
     for (const [k, v] of Object.entries(currentFilters)) if (v !== undefined) plain[k] = v;
     return api.getFilterValues(dimensionId, plain, dateRange);
