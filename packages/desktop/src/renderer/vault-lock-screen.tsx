@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect } from 'react';
-import { CoinRainLoader } from '@costgoblin/ui';
 
 const SPLASH_IMAGES = ['splash-1.png', 'splash-2.png', 'splash-3.png', 'splash-4.png', 'splash-5.png', 'splash-6.png', 'splash-7.png', 'splash-8.png', 'splash-9.png', 'splash-10.png'];
 const SPLASH_INTERVAL = 500;
@@ -41,6 +40,53 @@ function RotatingGoblin(): React.JSX.Element {
         />
       ))}
     </div>
+  );
+}
+
+function KeyUnlockAnimation(): React.JSX.Element {
+  return (
+    <svg width="64" height="64" viewBox="0 0 64 64" fill="none" className="text-accent">
+      {/* Lock body */}
+      <rect x="16" y="28" width="32" height="24" rx="4" stroke="currentColor" strokeWidth="2.5" opacity="0.6" />
+      {/* Keyhole */}
+      <circle cx="32" cy="38" r="3" fill="currentColor" opacity="0.6" />
+      <rect x="30.5" y="38" width="3" height="6" rx="1" fill="currentColor" opacity="0.6" />
+      {/* Shackle — animates open */}
+      <path
+        d="M22 28V22a10 10 0 0 1 20 0v6"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        className="origin-[42px_28px]"
+        style={{
+          animation: 'shackle-open 1.2s ease-in-out forwards',
+        }}
+      />
+      {/* Key — slides in from right, then turns */}
+      <g style={{ animation: 'key-enter 0.6s ease-out forwards, key-turn 0.5s ease-in-out 0.6s forwards' }}>
+        {/* Key head (ring) */}
+        <circle cx="52" cy="40" r="4" stroke="currentColor" strokeWidth="2" fill="none" />
+        {/* Key shaft */}
+        <line x1="48" y1="40" x2="38" y2="40" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        {/* Key teeth */}
+        <line x1="42" y1="40" x2="42" y2="43" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <line x1="39" y1="40" x2="39" y2="42" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </g>
+      <style>{`
+        @keyframes shackle-open {
+          0%, 50% { transform: rotate(0deg) translateY(0); opacity: 1; }
+          100% { transform: rotate(-30deg) translateY(-4px); opacity: 0.4; }
+        }
+        @keyframes key-enter {
+          0% { transform: translateX(20px); opacity: 0; }
+          100% { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes key-turn {
+          0% { transform: rotate(0deg); transform-origin: 38px 40px; }
+          100% { transform: rotate(-45deg); transform-origin: 38px 40px; }
+        }
+      `}</style>
+    </svg>
   );
 }
 
@@ -145,8 +191,8 @@ export function VaultLockScreen({ onUnlocked, onReset }: VaultLockScreenProps): 
         </form>
 
         {unlocking && (
-          <div className="mt-6">
-            <CoinRainLoader height={80} count={4} />
+          <div className="mt-6 flex justify-center">
+            <KeyUnlockAnimation />
           </div>
         )}
 
