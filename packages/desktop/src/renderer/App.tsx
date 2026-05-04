@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
-import type { CostApi, FilterMap, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
-import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
+import type { CostApi, Dimension, FilterMap, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
+import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagColumnName } from '@costgoblin/core/browser';
 import { Download, RefreshCw } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { VaultLockScreen } from './vault-lock-screen.js';
@@ -358,6 +358,16 @@ function shuffled<T>(arr: readonly T[]): T[] {
   return copy;
 }
 
+function dimId(dim: Dimension): string {
+  return 'tagName' in dim ? tagColumnName(dim.tagName) : dim.name;
+}
+
+function defaultDateRange(): { start: string; end: string } {
+  const end = new Date(Date.now() - DEFAULT_LAG_DAYS * 86_400_000);
+  const start = new Date(end.getTime() - 30 * 86_400_000);
+  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+}
+
 function SplashScreen({ step }: Readonly<{ step: string }>): React.JSX.Element {
   const [order] = useState(() => shuffled(SPLASH_IMAGES));
   const [index, setIndex] = useState(0);
@@ -439,8 +449,19 @@ function AppShell(): React.JSX.Element {
 
       // Vault auto-unlocked (safeStorage) or already unlocked —
       // pre-fetch dimensions so they're cached when the dashboard mounts.
-      setSplashStep('Loading dimensions...');
-      await api.getDimensions().catch(() => undefined);
+      // Load dimensions, then pre-warm filter values for each one so
+      // dropdowns open instantly when the dashboard appears.
+      const dims = await api.getDimensions().catch(() => [] as Dimension[]);
+      if (dims.length > 0) {
+        const range = defaultDateRange();
+        let done = 0;
+        setSplashStep(`Loading dimensions 0/${String(dims.length)}...`);
+        await Promise.all(dims.map(async (dim) => {
+          await api.getFilterValues(dimId(dim), {}, range).catch(() => undefined);
+          done++;
+          setSplashStep(`Loading dimensions ${String(done)}/${String(dims.length)}...`);
+        }));
+      }
 
       setSplashStep('Preparing dashboard...');
       if (!skipSplash) {
