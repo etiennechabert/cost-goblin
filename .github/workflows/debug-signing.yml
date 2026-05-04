@@ -1,6 +1,10 @@
 name: Debug Signing
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'debug-signing-*'
 
 jobs:
   debug:
