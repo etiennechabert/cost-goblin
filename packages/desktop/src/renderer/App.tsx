@@ -358,7 +358,7 @@ function shuffled<T>(arr: readonly T[]): T[] {
   return copy;
 }
 
-function SplashScreen(): React.JSX.Element {
+function SplashScreen({ step }: Readonly<{ step: string }>): React.JSX.Element {
   const [order] = useState(() => shuffled(SPLASH_IMAGES));
   const [index, setIndex] = useState(0);
   const [fadeOut, setFadeOut] = useState(false);
@@ -388,7 +388,7 @@ function SplashScreen(): React.JSX.Element {
         ))}
       </div>
       <h1 className="text-2xl font-bold text-accent tracking-wider mb-1">CostGoblin</h1>
-      <p className="text-sm text-text-muted mb-8">Crunching your cloud costs...</p>
+      <p className="text-sm text-text-muted mb-8">{step}</p>
       <div className="w-64">
         <CoinRainLoader height={120} count={6} />
       </div>
@@ -405,6 +405,7 @@ function AppShell(): React.JSX.Element {
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
   const [vaultCheck, setVaultCheck] = useState<VaultCheck>({ status: 'checking' });
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
+  const [splashStep, setSplashStep] = useState('Connecting...');
   const splashMinElapsed = useRef(false);
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
   const { syncError, setSyncError, syncActivity, syncFilesRemaining } = useSyncPolling(api, setupCheck);
@@ -420,6 +421,7 @@ function AppShell(): React.JSX.Element {
   useEffect(() => {
     const skipSplash = globalThis.costgoblinDebug.isE2E();
 
+    setSplashStep('Checking configuration...');
     const vaultStatusCheck = globalThis.costgoblinVault.getStatus();
     const statusCheck = api.getSetupStatus().then(({ configured }) => configured);
 
@@ -437,8 +439,10 @@ function AppShell(): React.JSX.Element {
 
       // Vault auto-unlocked (safeStorage) or already unlocked —
       // pre-fetch dimensions so they're cached when the dashboard mounts.
+      setSplashStep('Loading dimensions...');
       await api.getDimensions().catch(() => undefined);
 
+      setSplashStep('Preparing dashboard...');
       if (!skipSplash) {
         await new Promise<void>(resolve => {
           setTimeout(() => { splashMinElapsed.current = true; resolve(); }, SPLASH_DURATION);
@@ -584,7 +588,7 @@ function AppShell(): React.JSX.Element {
   }
 
   if (setupCheck.status === 'checking') {
-    return <SplashScreen />;
+    return <SplashScreen step={splashStep} />;
   }
 
   if (setupCheck.status === 'needs-setup') {
