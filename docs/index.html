@@ -837,6 +837,114 @@
       border-color: var(--emerald);
     }
 
+    /* --- GET STARTED --- */
+    .get-started {
+      padding: 100px 24px;
+      border-top: 1px solid var(--border);
+    }
+
+    .get-started-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 48px;
+      max-width: 720px;
+    }
+
+    .step {
+      opacity: 0;
+      transform: translateY(16px);
+      transition: all 0.6s ease;
+    }
+
+    .step.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .step-num {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--emerald);
+      flex-shrink: 0;
+    }
+
+    .step-header h4 {
+      font-size: 17px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    .step p {
+      font-size: 14px;
+      color: var(--text-dim);
+      line-height: 1.7;
+      margin-bottom: 16px;
+      padding-left: 46px;
+    }
+
+    .step .code-block {
+      margin-left: 46px;
+      padding: 20px 24px;
+      border-radius: 10px;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.8;
+      color: var(--text-dim);
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    .step .code-block .code-comment {
+      color: var(--text-muted);
+    }
+
+    .step .code-block .code-dir {
+      color: var(--emerald);
+    }
+
+    .step .code-block .code-file {
+      color: var(--text);
+    }
+
+    .step-note {
+      margin-top: 12px;
+      margin-left: 46px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .step-note a {
+      color: var(--text-dim);
+      text-decoration: none;
+      border-bottom: 1px dashed var(--text-muted);
+      transition: all 0.2s;
+    }
+
+    .step-note a:hover {
+      color: var(--emerald);
+      border-color: var(--emerald);
+    }
+
     /* --- ROADMAP --- */
     .roadmap {
       padding: 100px 24px;
@@ -1117,6 +1225,8 @@
       .terminal-line { flex-direction: column; gap: 2px; }
       .t-tool { min-width: auto; }
       .terminal-line + .terminal-line { margin-top: 8px; }
+      .step p, .step .code-block, .step-note { margin-left: 0; padding-left: 0; }
+      .step .code-block { font-size: 11px; padding: 16px; }
     }
 
     @media (max-width: 480px) {
@@ -1135,7 +1245,7 @@
       <div class="nav-links">
         <a href="#features">Features</a>
         <a href="#download">Download</a>
-        <a href="#updates">Updates</a>
+        <a href="#get-started">Get Started</a>
         <a href="https://github.com/etiennechabert/cost-goblin" target="_blank" rel="noopener" class="gh-star">
           <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
           Star
@@ -1238,6 +1348,39 @@
       </div>
 
       <div class="showcase-item reverse" data-animate>
+        <div class="showcase-text">
+          <div class="section-label">Tags (Missing)</div>
+          <h3>Find untagged spend instantly</h3>
+          <p>See which resources are missing allocation tags, grouped by actionable vs. untaggable. Filter by dimension, minimum cost, or fallback owner. Copy findings to Slack or Jira in one click.</p>
+        </div>
+        <div class="showcase-img">
+          <a href="screenshots/tags-missing.png" data-lightbox><img src="screenshots/tags-missing.png" alt="CostGoblin missing tags view showing untagged resources grouped by actionability with cost and category data" width="1440" height="900" loading="lazy"></a>
+        </div>
+      </div>
+
+      <div class="showcase-item" data-animate>
+        <div class="showcase-text">
+          <div class="section-label">Trends</div>
+          <h3>Spot what's moving, fast</h3>
+          <p>Period-over-period bubble chart shows cost increases and savings at a glance. Bubble size maps to current spend. Filter by minimum dollar or percent change, drill into any entity.</p>
+        </div>
+        <div class="showcase-img">
+          <a href="screenshots/trends.png" data-lightbox><img src="screenshots/trends.png" alt="CostGoblin trends view with bubble chart showing period-over-period cost increases and savings by service" width="1440" height="900" loading="lazy"></a>
+        </div>
+      </div>
+
+      <div class="showcase-item reverse" data-animate>
+        <div class="showcase-text">
+          <div class="section-label">Cost Optimization</div>
+          <h3>Actionable savings, ranked</h3>
+          <p>AWS optimization recommendations sorted by monthly savings. See effort level, expand for full resource details, and filter by action type — rightsizing, reserved instances, deletions.</p>
+        </div>
+        <div class="showcase-img">
+          <a href="screenshots/cost-optimization.png" data-lightbox><img src="screenshots/cost-optimization.png" alt="CostGoblin cost optimization view showing AWS savings recommendations with effort badges and expandable details" width="1440" height="900" loading="lazy"></a>
+        </div>
+      </div>
+
+      <div class="showcase-item" data-animate>
         <div class="showcase-text">
           <div class="section-label">MCP Server</div>
           <h3>Talk to your costs with AI</h3>
@@ -1382,17 +1525,126 @@
     </div>
   </section>
 
+  <!-- GET STARTED -->
+  <section class="get-started" id="get-started">
+    <div class="container">
+      <div class="section-label">Get started</div>
+      <div class="section-title">Set up your AWS data exports</div>
+      <div class="get-started-steps">
+
+        <div class="step" data-animate>
+          <div class="step-header">
+            <span class="step-num">1</span>
+            <h4>Create your S3 bucket</h4>
+          </div>
+          <p>Pick a dedicated bucket (or prefix) for all CostGoblin data. We recommend this structure so each export lands in its own namespace:</p>
+          <div class="code-block">
+<span class="code-dir">s3://your-company-billing/</span>
+├── <span class="code-dir">cur_daily/</span>         <span class="code-comment"># Daily Cost &amp; Usage Report</span>
+├── <span class="code-dir">cur_hourly/</span>        <span class="code-comment"># Hourly Cost &amp; Usage Report</span>
+└── <span class="code-dir">cost_optimization/</span> <span class="code-comment"># Cost Optimization Hub export</span>
+          </div>
+          <div class="step-note">Use any bucket name. The three prefixes are what matters.</div>
+        </div>
+
+        <div class="step" data-animate>
+          <div class="step-header">
+            <span class="step-num">2</span>
+            <h4>Create the CUR exports</h4>
+          </div>
+          <p>In the AWS Billing Console &rarr; <strong>Data Exports</strong>, create two exports. Select <strong>Cost and usage report (CUR)</strong> as the data table and configure each one as follows:</p>
+          <div class="code-block">
+<span class="code-comment">Data table content settings</span>
+<span class="code-comment">─────────────────────────────────────</span>
+Time granularity:    <span class="code-file">Daily</span>  <span class="code-comment">(or Hourly for the second export)</span>
+
+Additional export content:
+ <span class="code-file">&#x2713;</span> Include resource IDs                             <span class="code-comment">on by default</span>
+ <span class="code-file">&#x2713;</span> Split cost allocation data                       <span class="code-comment">ECS/EKS shared costs</span>
+ <span class="code-comment">&#x2717;</span> Include caller identity (IAM principal)           <span class="code-comment">not needed</span>
+ <span class="code-comment">&#x2717;</span> Include capacity reservation columns              <span class="code-comment">not needed</span>
+
+<span class="code-comment">Data export delivery options</span>
+<span class="code-comment">─────────────────────────────────────</span>
+Compression &amp; format:   <span class="code-file">Parquet</span>  <span class="code-comment">(not gzip/CSV)</span>
+Data export overwriting: <span class="code-file">Overwrite existing data export file</span>
+
+<span class="code-comment">Data export storage settings</span>
+<span class="code-comment">─────────────────────────────────────</span>
+S3 bucket:       <span class="code-dir">your-company-billing</span>
+S3 path prefix:  <span class="code-dir">cur_daily</span>  <span class="code-comment">(or cur_hourly for the second export)</span>
+          </div>
+          <div class="step-note">Tags won't appear in the export unless you first activate them as <strong>cost allocation tags</strong> in the Billing Console &rarr; Cost Allocation Tags. Activate any user-defined tag you want to use as a dimension in CostGoblin (e.g. <em>team</em>, <em>environment</em>, <em>service</em>). Newly activated tags only appear in data generated after activation.</div>
+          <p>Under <strong>Column selection</strong>, enable these and disable the rest to keep file sizes small:</p>
+          <div class="code-block">
+<span class="code-comment"># Identity &amp; time</span>
+ &bull; <span class="code-file">line_item_usage_start_date</span>                    <span class="code-comment">usage timestamp</span>
+ &bull; <span class="code-file">line_item_usage_account_id</span>                    <span class="code-comment">AWS account ID</span>
+ &bull; <span class="code-file">line_item_usage_account_name</span>                  <span class="code-comment">account display name</span>
+
+<span class="code-comment"># What was used</span>
+ &bull; <span class="code-file">product_servicecode</span>                           <span class="code-comment">service (EC2, RDS, S3…)</span>
+ &bull; <span class="code-file">product_product_family</span>                        <span class="code-comment">family (Compute, Storage…)</span>
+ &bull; <span class="code-file">product_region_code</span>                           <span class="code-comment">region</span>
+ &bull; <span class="code-file">line_item_resource_id</span>                         <span class="code-comment">resource ARN</span>
+ &bull; <span class="code-file">line_item_operation</span>                           <span class="code-comment">API operation</span>
+ &bull; <span class="code-file">line_item_usage_type</span>                          <span class="code-comment">usage type</span>
+ &bull; <span class="code-file">line_item_usage_amount</span>                        <span class="code-comment">usage quantity</span>
+ &bull; <span class="code-file">line_item_line_item_type</span>                      <span class="code-comment">Usage, Tax, Credit…</span>
+ &bull; <span class="code-file">line_item_line_item_description</span>               <span class="code-comment">line item description</span>
+
+<span class="code-comment"># Cost columns</span>
+ &bull; <span class="code-file">line_item_unblended_cost</span>                      <span class="code-comment">raw cost</span>
+ &bull; <span class="code-file">line_item_blended_cost</span>                        <span class="code-comment">blended across accounts</span>
+ &bull; <span class="code-file">line_item_net_unblended_cost</span>                  <span class="code-comment">cost after discounts</span>
+ &bull; <span class="code-file">pricing_public_on_demand_cost</span>                 <span class="code-comment">on-demand list price</span>
+
+<span class="code-comment"># RI &amp; Savings Plan amortization</span>
+ &bull; <span class="code-file">reservation_effective_cost</span>                    <span class="code-comment">RI amortized cost</span>
+ &bull; <span class="code-file">reservation_net_effective_cost</span>                <span class="code-comment">RI net amortized cost</span>
+ &bull; <span class="code-file">savings_plan_savings_plan_effective_cost</span>      <span class="code-comment">SP amortized cost</span>
+ &bull; <span class="code-file">savings_plan_net_savings_plan_effective_cost</span>  <span class="code-comment">SP net amortized cost</span>
+
+<span class="code-comment"># Tags</span>
+ &bull; <span class="code-file">resource_tags</span>                                 <span class="code-comment">your cost allocation tags</span>
+          </div>
+          <div class="step-note">CostGoblin auto-detects available columns — missing optional ones are silently skipped. But including them all unlocks amortized views, net cost perspectives, and resource-level drill-down.</div>
+        </div>
+
+        <div class="step" data-animate>
+          <div class="step-header">
+            <span class="step-num">3</span>
+            <h4>Enable Cost Optimization Hub export</h4>
+          </div>
+          <p>In the AWS Billing Console &rarr; <strong>Cost Optimization Hub</strong> &rarr; Preferences, enable the S3 data export:</p>
+          <div class="code-block">
+<span class="code-comment"># Cost Optimization Hub export</span>
+S3 path:  <span class="code-dir">s3://your-company-billing/cost_optimization/</span>
+Format:   <span class="code-file">Parquet</span>
+          </div>
+          <div class="step-note">This feeds the Cost Optimization view with rightsizing, RI, and deletion recommendations.</div>
+        </div>
+
+        <div class="step" data-animate>
+          <div class="step-header">
+            <span class="step-num">4</span>
+            <h4>Connect and configure dimensions</h4>
+          </div>
+          <p>Open CostGoblin, go to <strong>Sync</strong> and point each data source to its S3 prefix. Once the first sync completes, head to <strong>Dimensions</strong> to map your tags to cost allocation dimensions.</p>
+          <p>This is where CostGoblin shines: if your tags are inconsistent across teams (e.g. <em>prod</em>, <em>Prod</em>, <em>production</em> all meaning the same thing), add <strong>aliases</strong> to normalize them at query time. No data reprocessing — changes take effect instantly across all views.</p>
+          <div class="step-note">First sync takes a few minutes depending on billing history size. After that, incremental syncs finish in seconds.</div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
   <!-- ROADMAP -->
   <section class="roadmap">
     <div class="container">
       <div class="section-label">Roadmap</div>
       <div class="section-title">What's next</div>
       <div class="roadmap-grid">
-        <div class="roadmap-card" data-animate>
-          <div class="roadmap-badge">Planned</div>
-          <h4>Multi-cloud</h4>
-          <p>GCP and Azure billing support alongside AWS. One interface for all your cloud spend.</p>
-        </div>
         <div class="roadmap-card" data-animate>
           <div class="roadmap-badge">Planned</div>
           <h4>Anomaly detection</h4>
@@ -1407,6 +1659,11 @@
           <div class="roadmap-badge">Planned</div>
           <h4>Collaboration</h4>
           <p>Share dashboards and cost reports with your team. Collaborative triage for cost spikes.</p>
+        </div>
+        <div class="roadmap-card" data-animate>
+          <div class="roadmap-badge">Maybe</div>
+          <h4>Multi-cloud</h4>
+          <p>GCP and Azure billing support alongside AWS. One interface for all your cloud spend.</p>
         </div>
       </div>
     </div>

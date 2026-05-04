@@ -181,5 +181,90 @@ export async function setup(): Promise<void> {
   const hourlyWhere = hourlyDates.map(d => `line_item_usage_start_date::DATE = '${d}'`).join(' OR ');
   await conn.run(`COPY (SELECT * FROM synthetic WHERE ${hourlyWhere}) TO '${join(hourlyDir, 'data.parquet')}' (FORMAT PARQUET)`);
 
+  // --- Cost optimization recommendations ---
+  const costOptDir = join(rawDir, 'cost-opt-2026-02');
+  await mkdir(costOptDir, { recursive: true });
+
+  const actionTypes = [
+    { action: 'Rightsize', resourceType: 'Ec2Instance', service: 'ec2', efforts: ['Low', 'Medium'] as const },
+    { action: 'PurchaseReservedInstances', resourceType: 'RdsReservedInstances', service: 'rds', efforts: ['VeryLow'] as const },
+    { action: 'PurchaseSavingsPlans', resourceType: 'ComputeSavingsPlans', service: 'ec2', efforts: ['VeryLow'] as const },
+    { action: 'Delete', resourceType: 'EbsVolume', service: 'ebs', efforts: ['Low'] as const },
+    { action: 'Delete', resourceType: 'ElasticIpAddress', service: 'ec2', efforts: ['Low'] as const },
+    { action: 'Rightsize', resourceType: 'RdsDbInstance', service: 'rds', efforts: ['Medium', 'High'] as const },
+  ];
+
+  const instanceTypes = ['t3.micro', 't3.small', 't3.medium', 'm5.large', 'm5.xlarge', 'r5.large', 'r5.xlarge', 'c5.large', 'c5.xlarge'];
+  const rdsTypes = ['db.t3.micro', 'db.t3.small', 'db.t4g.medium', 'db.r5.large', 'db.r5.xlarge'];
+  const costOptRows: string[] = [];
+
+  for (let i = 0; i < 25; i++) {
+    const at = pick(actionTypes, rand);
+    const account = weightedPick(cfg.accounts, rand);
+    const region = pick(cfg.regions, rand);
+    const effort = pick(at.efforts, rand);
+    const monthlyCost = Math.round((rand() * 4000 + 100) * 100) / 100;
+    const savingsPct = Math.round((rand() * 60 + 10) * 100) / 100;
+    const monthlySavings = Math.round(monthlyCost * savingsPct / 100 * 100) / 100;
+    const recId = `rec-${String(i).padStart(4, '0')}`;
+    const arn = `arn:aws:${at.service}:${region}:${account.id}:${at.resourceType.toLowerCase()}/${String(Math.floor(rand() * 10000))}`;
+
+    let currentSummary = '';
+    let summary = '';
+    let currentDetails = '';
+    let recommendedDetails = '';
+    if (at.action === 'Rightsize' && at.resourceType === 'Ec2Instance') {
+      const curr = pick(instanceTypes, rand);
+      const rec = pick(instanceTypes, rand);
+      currentSummary = `${curr} in ${region}`;
+      summary = `${rec} in ${region}`;
+      currentDetails = `{"instanceType": "${curr}", "vcpus": "2", "memory": "8 GiB"}`;
+      recommendedDetails = `{"instanceType": "${rec}", "vcpus": "2", "memory": "4 GiB"}`;
+    } else if (at.resourceType === 'RdsDbInstance' || at.resourceType === 'RdsReservedInstances') {
+      const curr = pick(rdsTypes, rand);
+      const rec = pick(rdsTypes, rand);
+      currentSummary = `${curr} MySQL in ${region}`;
+      summary = at.action === 'PurchaseReservedInstances' ? `${String(Math.floor(rand() * 5 + 1))} ${curr} MySQL in ${region}` : `${rec} MySQL in ${region}`;
+      currentDetails = `{"instanceType": "${curr}", "engine": "MySQL", "multiAZ": "false"}`;
+      recommendedDetails = `{"instanceType": "${rec}", "engine": "MySQL"}`;
+    } else if (at.action === 'Delete') {
+      currentSummary = `Unused ${at.resourceType} in ${region}`;
+      summary = `Delete unused ${at.resourceType}`;
+    } else {
+      summary = `${at.resourceType} in ${region}`;
+    }
+
+    const source = rand() < 0.6 ? 'ComputeOptimizer' : 'CostExplorer';
+    const restart = at.action === 'Rightsize' ? (rand() < 0.4) : false;
+    const rollback = at.action !== 'Delete';
+
+    costOptRows.push(`('${recId}', '${account.id}', '${account.name}', '${at.action}', '${at.resourceType}', '${summary.replace(/'/g, "''")}', '${region}', ${String(monthlySavings)}, ${String(monthlyCost)}, ${String(savingsPct)}, '${effort}', '${arn}', '${currentDetails.replace(/'/g, "''")}', '${recommendedDetails.replace(/'/g, "''")}', '${currentSummary.replace(/'/g, "''")}', ${String(restart)}, ${String(rollback)}, '${source}')`);
+  }
+
+  await conn.run(`
+    CREATE TABLE cost_opt (
+      recommendation_id VARCHAR,
+      account_id VARCHAR,
+      account_name VARCHAR,
+      action_type VARCHAR,
+      current_resource_type VARCHAR,
+      recommended_resource_summary VARCHAR,
+      region VARCHAR,
+      estimated_monthly_savings_after_discount DOUBLE,
+      estimated_monthly_cost_after_discount DOUBLE,
+      estimated_savings_percentage_after_discount DOUBLE,
+      implementation_effort VARCHAR,
+      resource_arn VARCHAR,
+      current_resource_details VARCHAR,
+      recommended_resource_details VARCHAR,
+      current_resource_summary VARCHAR,
+      restart_needed BOOLEAN,
+      rollback_possible BOOLEAN,
+      recommendation_source VARCHAR
+    )
+  `);
+  await conn.run(`INSERT INTO cost_opt VALUES ${costOptRows.join(',')}`);
+  await conn.run(`COPY (SELECT * FROM cost_opt) TO '${join(costOptDir, 'data.parquet')}' (FORMAT PARQUET)`);
+
   await writeFile(MARKER, new Date().toISOString());
 }
