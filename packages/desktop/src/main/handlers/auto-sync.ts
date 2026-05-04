@@ -42,7 +42,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
         const bucket = tier === 'hourly'
           ? provider.sync.hourly?.bucket ?? provider.sync.daily.bucket
           : tierBucket;
-        const inv = await getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, asTier(tier));
+        const inv = await getDataInventory(bucket, provider.credentials.profile, ctx.storageDataDir, asTier(tier));
         return {
           periods: inv.periods.map(p => ({
             period: p.period,
@@ -68,7 +68,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           const result = await syncClient.syncPeriods({
             bucketPath: bucket,
             profile: provider.credentials.profile,
-            dataDir: ctx.dataDir,
+            dataDir: ctx.storageDataDir,
             tier: syncId,
             files,
             onProgress: (progress) => {

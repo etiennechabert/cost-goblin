@@ -152,7 +152,12 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient, vaultState
   const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
   const configBase = process.env['COSTGOBLIN_CONFIG_DIR'] ?? join(userDataPath, 'config');
 
-  const appContext = registerIpcHandlers({
+  const vault: import('./handlers/context.js').VaultRef = {
+    getKey: () => vaultState.derivedKey,
+    getEffectiveDataDir: () => vaultState.tempDataDir ?? dataDir,
+  };
+
+  const appContext = registerIpcHandlers(Object.defineProperty({
     db,
     syncClient,
     configPath: resolveConfigPath(configBase, 'costgoblin'),
@@ -160,9 +165,9 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient, vaultState
     orgTreePath: resolveConfigPath(configBase, 'org-tree'),
     viewsPath: resolveConfigPath(configBase, 'views'),
     costScopePath: resolveConfigPath(configBase, 'cost-scope'),
-    dataDir,
-    vault: { getKey: () => vaultState.derivedKey },
-  });
+    storageDataDir: dataDir,
+    vault,
+  }, 'dataDir', { get: () => vault.getEffectiveDataDir(), enumerable: true }) as import('./handlers/context.js').IpcContext);
 
   startMcpServer(appContext).catch((err: unknown) => {
     logger.warn(`mcp: failed to start — ${err instanceof Error ? err.message : String(err)}`);

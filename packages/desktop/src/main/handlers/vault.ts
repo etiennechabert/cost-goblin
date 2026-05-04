@@ -192,6 +192,10 @@ export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
     vaultState.encryptionConfig = config;
     vaultState.derivedKey = key;
 
+    const tempDir = tempVaultDir(userDataPath);
+    await mkdir(tempDir, { recursive: true });
+    vaultState.tempDataDir = tempDir;
+
     logger.info(`Vault setup complete (password=${String(usePassword)}): ${String(parquetFiles.length)} files encrypted`);
   });
 
