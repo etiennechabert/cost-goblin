@@ -151,34 +151,20 @@ Then use the Data tab to repartition the downloaded files.
 
 ## Features
 
-- **S3 billing sync** — downloads CUR parquet files into optimized daily Hive partitions
-- **Interactive dashboard** — pie charts for accounts/services/tags, stacked daily histogram, drill-down
+- **S3 billing sync** — downloads CUR parquet files into daily Hive partitions
+- **Interactive dashboard** — pie charts, stacked bar charts, treemaps, and more, with drill-down into any dimension
+- **Trends** — period-over-period comparison with bubble chart visualization, filterable by dimension with configurable thresholds
+- **Findings** — surfaces AWS cost optimization recommendations (rightsize, delete unused, purchase SPs/RIs) with effort estimates and savings projections
+- **Missing Tags** — identifies untagged resources by taggability, with Slack/Jira copy and CSV export
+- **Explorer** — browse raw line items with configurable columns, filters, and sorting
 - **Filter by any dimension** — account, service, region, team, product, environment, or custom tags
 - **Custom dimensions** — map any AWS tag to a first-class cost allocation dimension
 - **Tag normalization** — aliases applied at query time, fix messy tags without re-processing
-- **Composable views** — drag-and-drop widget builder with 9 widget types
-- **Service drill-down** — click through service → service family breakdowns
-- **Period-over-period comparison** — vs previous period delta on the summary card
+- **Composable views** — drag-and-drop widget builder with 9 widget types (pie, bar, stacked bar, line, treemap, heatmap, bubble, table, summary)
+- **Cost Scope** — configure cost metrics (unblended, blended, amortized) and exclusion rules
 - **CSV export** — export any view for reporting
 - **Works offline** — once synced, no internet needed
 
-<details>
-<summary><strong>Dimensions</strong> — map tags to cost allocation dimensions</summary>
-<br>
-<img src="docs/screenshots/dimensions.png" alt="Dimensions configuration" width="800">
-</details>
-
-<details>
-<summary><strong>Views</strong> — compose dashboards from the widget library</summary>
-<br>
-<img src="docs/screenshots/views.png" alt="View builder" width="800">
-</details>
-
-<details>
-<summary><strong>Explorer</strong> — drill into individual line items</summary>
-<br>
-<img src="docs/screenshots/explorer.png" alt="Cost explorer" width="800">
-</details>
 
 ## Architecture
 
