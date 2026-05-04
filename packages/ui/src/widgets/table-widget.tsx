@@ -58,9 +58,15 @@ function specToTableColumn(spec: ColumnSpec, activeDimIds: ReadonlySet<string>):
   };
 }
 
+function rowValuesKey(values: Readonly<Record<string, string>>): string {
+  return Object.entries(values).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join('|');
+}
+
 export function TableWidget({
   spec,
   dateRange,
+  previousDateRange,
+  compareEnabled,
   granularity,
   globalFilters,
   dimensions,
@@ -119,6 +125,29 @@ export function TableWidget({
     [fk, dateRange.start, dateRange.end, granularity, groupByKey, sort?.column, sort?.direction, api],
   );
 
+  const prevDataQuery = useQuery(
+    () => compareEnabled
+      ? api.queryAggregatedTable({
+          filters: explorerFilters,
+          dateRange: previousDateRange,
+          granularity,
+          applyCostScope: true,
+          groupByColumns,
+          rowLimit: ROW_LIMIT,
+        })
+      : Promise.resolve(null),
+    [compareEnabled, fk, previousDateRange.start, previousDateRange.end, granularity, groupByKey, api],
+  );
+
+  const prevCostMap = useMemo(() => {
+    if (prevDataQuery.status !== 'success' || prevDataQuery.data === null) return new Map<string, number>();
+    const m = new Map<string, number>();
+    for (const row of prevDataQuery.data.rows) {
+      m.set(rowValuesKey(row.values), row.cost);
+    }
+    return m;
+  }, [prevDataQuery]);
+
   const activeDimIds = useMemo(() => {
     const ids = new Set<string>();
     for (const d of dimensions) ids.add(getDimensionId(d));
@@ -130,11 +159,39 @@ export function TableWidget({
     [allColumnSpecs, activeDimIds],
   );
 
+  const deltaColumn = useMemo<TableColumn<AggregatedTableRow> | null>(() => {
+    if (!compareEnabled || prevCostMap.size === 0) return null;
+    return {
+      id: '__delta_pct',
+      header: 'Δ%',
+      dimId: null,
+      clickable: false,
+      align: 'right' as const,
+      mono: true,
+      accessorFn: (row: AggregatedTableRow) => {
+        const prev = prevCostMap.get(rowValuesKey(row.values));
+        if (prev === undefined || prev === 0) return null;
+        return ((row.cost - prev) / prev) * 100;
+      },
+      cell: (value: unknown) => {
+        if (value === null || value === undefined) return '';
+        const v = value as number;
+        const color = v > 0 ? 'text-negative' : v < 0 ? 'text-positive' : 'text-text-secondary';
+        return <span className={`${color} text-[11px]`}>{v >= 0 ? '↑' : '↓'}{Math.abs(v).toFixed(1)}%</span>;
+      },
+    };
+  }, [compareEnabled, prevCostMap]);
+
   const visibleTableColumns = useMemo(() => {
     const enabled = allColumnSpecs.filter(c => enabledSet.has(c.key));
     const ordered = applyColumnOrder(enabled, [...enabledColumns]);
-    return ordered.map(s => specToTableColumn(s, activeDimIds));
-  }, [allColumnSpecs, enabledSet, enabledColumns, activeDimIds]);
+    const cols = ordered.map(s => specToTableColumn(s, activeDimIds));
+    if (deltaColumn !== null) {
+      const costIdx = cols.findIndex(c => c.id === 'cost');
+      cols.splice(costIdx + 1, 0, deltaColumn);
+    }
+    return cols;
+  }, [allColumnSpecs, enabledSet, enabledColumns, activeDimIds, deltaColumn]);
 
   const hiddenColumns = useMemo(
     () => allColumnSpecs.filter(c => !enabledSet.has(c.key)).map(c => c.key),
