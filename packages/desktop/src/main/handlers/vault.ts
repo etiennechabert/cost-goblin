@@ -108,6 +108,7 @@ function loadKeyFromSafeStorage(userDataPath: string): Buffer | null {
 
 export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
   const { dataDir, userDataPath } = vaultCtx;
+  const isE2E = process.env['COSTGOBLIN_E2E'] === '1';
 
   const vaultState: VaultState = {
     encryptionConfig: null,
@@ -116,6 +117,8 @@ export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
   };
 
   ipcMain.handle('vault:status', async (): Promise<VaultStatus> => {
+    if (isE2E) return { state: 'unlocked' };
+
     const config = await loadEncryptionConfig(userDataPath);
     vaultState.encryptionConfig = config;
 
