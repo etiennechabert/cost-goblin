@@ -1,6 +1,3 @@
-# Dependabot configuration for automated dependency updates and security alerts
-# Docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
-
 version: 2
 updates:
   # Root workspace package.json
@@ -11,7 +8,7 @@ updates:
       day: "monday"
       time: "09:00"
       timezone: "UTC"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     versioning-strategy: "increase"
     labels:
       - "dependencies"
@@ -20,20 +17,9 @@ updates:
       prefix: "chore"
       include: "scope"
     groups:
-      # Group dev dependencies together to reduce PR noise
-      dev-dependencies:
+      all-dependencies:
         patterns:
-          - "@biomejs/*"
-          - "@playwright/*"
-          - "@testing-library/*"
-          - "@typescript-eslint/*"
-          - "@vitest/*"
-          - "eslint*"
-          - "typescript"
-          - "vitest"
-        update-types:
-          - "minor"
-          - "patch"
+          - "*"
 
   # Core package (business logic, DuckDB)
   - package-ecosystem: "npm"
@@ -43,7 +29,7 @@ updates:
       day: "monday"
       time: "09:00"
       timezone: "UTC"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     versioning-strategy: "increase"
     labels:
       - "dependencies"
@@ -53,13 +39,9 @@ updates:
       prefix: "chore"
       include: "scope"
     groups:
-      # Group AWS SDK packages together
-      aws-sdk:
+      all-dependencies:
         patterns:
-          - "@aws-sdk/*"
-        update-types:
-          - "minor"
-          - "patch"
+          - "*"
 
   # UI package (React components)
   - package-ecosystem: "npm"
@@ -69,7 +51,7 @@ updates:
       day: "monday"
       time: "09:00"
       timezone: "UTC"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     versioning-strategy: "increase"
     labels:
       - "dependencies"
@@ -79,14 +61,9 @@ updates:
       prefix: "chore"
       include: "scope"
     groups:
-      # Group React ecosystem packages
-      react-ecosystem:
+      all-dependencies:
         patterns:
-          - "react*"
-          - "@radix-ui/*"
-        update-types:
-          - "minor"
-          - "patch"
+          - "*"
 
   # Desktop package (Electron shell)
   - package-ecosystem: "npm"
@@ -96,7 +73,7 @@ updates:
       day: "monday"
       time: "09:00"
       timezone: "UTC"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     versioning-strategy: "increase"
     labels:
       - "dependencies"
@@ -105,6 +82,10 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
 
   # GitHub Actions workflow dependencies
   - package-ecosystem: "github-actions"
@@ -121,3 +102,7 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    groups:
+      all-actions:
+        patterns:
+          - "*"

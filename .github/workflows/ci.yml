@@ -141,6 +141,6 @@ jobs:
           cat coverage-e2e-shards/lcov.info > coverage-e2e/lcov.info 2>/dev/null || true
         continue-on-error: true
       - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@c7ee0f9df90b7aa20e8dcf9695dcfe2e7da5b4f2 # v7
+        uses: SonarSource/sonarqube-scan-action@59db25f34e16620e48ab4bb9e4a5dce155cb5432 # v8.0.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
