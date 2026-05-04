@@ -13,6 +13,13 @@ packages/core/src/__fixtures__/synthetic/
 e2e/*.png
 e2e/*.txt
 
+# Sensitive files
+.env
+.env.*
+*.pem
+*.key
+*.pdf
+
 # Editor backups
 *~
 
