@@ -173,11 +173,14 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient, vaultState
     logger.warn(`mcp: failed to start — ${err instanceof Error ? err.message : String(err)}`);
   });
 
+  const headless = process.env['COSTGOBLIN_HEADLESS'] === '1';
+
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 900,
     minHeight: 600,
+    show: !headless,
     backgroundColor: '#0a0a0a',
     titleBarStyle: 'hiddenInset',
     icon: join(__dirname, '..', '..', 'resources', 'icon.png'),

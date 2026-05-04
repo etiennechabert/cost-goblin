@@ -79,6 +79,10 @@ perf: ## Build and run performance benchmarks
 	$(BUILD)
 	npx playwright test e2e/perf.test.ts
 
+perf-queries: ## Build and run query performance diagnostics
+	$(BUILD)
+	npx playwright test e2e/perf-queries.test.ts
+
 lint: ## Run tsc + eslint
 	npx tsc --noEmit -p packages/core/tsconfig.json
 	npx tsc --noEmit -p packages/ui/tsconfig.json

@@ -58,6 +58,71 @@ const viewReports: ViewReport[] = [];
 // Helpers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Date picker & filter helpers
+// ---------------------------------------------------------------------------
+
+async function openDatePicker(pg: Page): Promise<void> {
+  const trigger = pg.locator('button:has(svg.lucide-calendar)').first();
+  await trigger.click();
+  await pg.waitForTimeout(300);
+}
+
+async function selectPreset(pg: Page, label: string): Promise<void> {
+  await openDatePicker(pg);
+  const popover = pg.getByRole('dialog');
+  await popover.getByRole('button', { name: label, exact: true }).click();
+  await pg.waitForTimeout(200);
+}
+
+async function setComparison(pg: Page, enabled: boolean): Promise<void> {
+  await openDatePicker(pg);
+  const popover = pg.getByRole('dialog');
+  const checkbox = popover.getByLabel('Compare to previous period');
+  const checked = await checkbox.isChecked();
+  if (enabled && !checked) await checkbox.check();
+  else if (!enabled && checked) await checkbox.uncheck();
+  await pg.keyboard.press('Escape');
+  await pg.waitForTimeout(200);
+}
+
+async function applyDimensionFilter(pg: Page, dimLabel: string): Promise<boolean> {
+  const chip = pg.getByRole('button', { name: dimLabel, exact: true }).first();
+  if (!await chip.isVisible().catch(() => false)) return false;
+  await chip.click();
+  const dropdown = pg.locator('.absolute.left-0.top-full.z-50');
+  try {
+    await expect(dropdown).toBeVisible({ timeout: 5_000 });
+  } catch { return false; }
+  // Wait for filter values to actually load (checkbox appears when ready)
+  const firstCheckbox = dropdown.locator('input[type="checkbox"]').first();
+  try {
+    await expect(firstCheckbox).toBeVisible({ timeout: 60_000 });
+  } catch {
+    // Filter values too slow to load — close dropdown and report failure
+    await pg.keyboard.press('Escape');
+    return false;
+  }
+  // Deselect all then select just the first value
+  const clearBtn = dropdown.getByRole('button', { name: 'Clear', exact: true });
+  if (await clearBtn.isEnabled().catch(() => false)) await clearBtn.click();
+  await firstCheckbox.check();
+  await dropdown.getByRole('button', { name: 'Apply', exact: true }).click();
+  return true;
+}
+
+async function clearFilters(pg: Page): Promise<void> {
+  const btn = pg.getByRole('button', { name: 'Clear all' });
+  if (await btn.isVisible().catch(() => false)) {
+    await btn.click();
+    await pg.waitForTimeout(200);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// App launch
+// ---------------------------------------------------------------------------
+
 function launchApp(): Promise<ElectronApplication> {
   return _electron.launch({
     args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],
@@ -65,6 +130,7 @@ function launchApp(): Promise<ElectronApplication> {
       ...process.env,
       NODE_ENV: 'production',
       COSTGOBLIN_PERF_MODE: '1',
+      COSTGOBLIN_HEADLESS: '1',
       COSTGOBLIN_DATA_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'data'),
       COSTGOBLIN_CONFIG_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config'),
     },
@@ -407,6 +473,168 @@ test.describe('Query Performance Diagnostics', () => {
 
   test('Data Management', async () => {
     await navigateAndCollect(page, 'Sync', 'Data Management', 'Data Management');
+  });
+
+  // -----------------------------------------------------------------------
+  // Parameter Combinations — hourly, comparison, dimension filters
+  // -----------------------------------------------------------------------
+
+  test('Combo: hourly 7d', async () => {
+    await page.getByRole('button', { name: 'Cost Overview', exact: true }).first().click();
+    await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible({ timeout: 10_000 });
+    await waitForAllQueriesComplete(page);
+    // Reset state
+    await setComparison(page, false);
+    await clearFilters(page);
+    await selectPreset(page, 'Last 30 days');
+    await waitForAllQueriesComplete(page);
+
+    await clearQueryLog(page);
+    await selectPreset(page, 'Last 7 days');
+    try {
+      await expect(page.getByText('Loading', { exact: false }).first()).toBeHidden({ timeout: SETTLE_TIMEOUT });
+    } catch { /* */ }
+    await page.waitForTimeout(1000);
+    const report = await collectViewQueries(page, 'Combo: hourly 7d');
+    viewReports.push(report);
+  });
+
+  test('Combo: comparison (daily 30d)', async () => {
+    await selectPreset(page, 'Last 30 days');
+    await waitForAllQueriesComplete(page);
+
+    await clearQueryLog(page);
+    await setComparison(page, true);
+    try {
+      await expect(page.getByText('Loading', { exact: false }).first()).toBeHidden({ timeout: SETTLE_TIMEOUT });
+    } catch { /* */ }
+    await page.waitForTimeout(1000);
+    const report = await collectViewQueries(page, 'Combo: comparison 30d');
+    viewReports.push(report);
+  });
+
+  test('Combo: comparison + hourly 7d', async () => {
+    // comparison still on
+    await clearQueryLog(page);
+    await selectPreset(page, 'Last 7 days');
+    try {
+      await expect(page.getByText('Loading', { exact: false }).first()).toBeHidden({ timeout: SETTLE_TIMEOUT });
+    } catch { /* */ }
+    await page.waitForTimeout(1000);
+    const report = await collectViewQueries(page, 'Combo: comparison + hourly 7d');
+    viewReports.push(report);
+  });
+
+  test('Combo: service filter (daily 30d)', async () => {
+    await setComparison(page, false);
+    await selectPreset(page, 'Last 30 days');
+    await waitForAllQueriesComplete(page);
+
+    await clearQueryLog(page);
+    await applyDimensionFilter(page, 'Service');
+    try {
+      await expect(page.getByText('Loading', { exact: false }).first()).toBeHidden({ timeout: SETTLE_TIMEOUT });
+    } catch { /* */ }
+    await page.waitForTimeout(1000);
+    const report = await collectViewQueries(page, 'Combo: service filter');
+    viewReports.push(report);
+  });
+
+  test('Combo: multi-dimension filter (daily 30d)', async () => {
+    await clearFilters(page);
+    await waitForAllQueriesComplete(page);
+
+    await clearQueryLog(page);
+    await applyDimensionFilter(page, 'Account');
+    await applyDimensionFilter(page, 'Service');
+    try {
+      await expect(page.getByText('Loading', { exact: false }).first()).toBeHidden({ timeout: SETTLE_TIMEOUT });
+    } catch { /* */ }
+    await page.waitForTimeout(1000);
+    const report = await collectViewQueries(page, 'Combo: multi-dim filter');
+    viewReports.push(report);
+  });
+
+  test('Combo: hourly + filter', async () => {
+    await clearFilters(page);
+    await waitForAllQueriesComplete(page);
+    await applyDimensionFilter(page, 'Service');
+    await waitForAllQueriesComplete(page);
+
+    await clearQueryLog(page);
+    await selectPreset(page, 'Last 7 days');
+    try {
+      await expect(page.getByText('Loading', { exact: false }).first()).toBeHidden({ timeout: SETTLE_TIMEOUT });
+    } catch { /* */ }
+    await page.waitForTimeout(1000);
+    const report = await collectViewQueries(page, 'Combo: hourly + filter');
+    viewReports.push(report);
+  });
+
+  test('Combo: comparison + filter (daily 30d)', async () => {
+    await clearFilters(page);
+    await selectPreset(page, 'Last 30 days');
+    await waitForAllQueriesComplete(page);
+    await applyDimensionFilter(page, 'Account');
+    await waitForAllQueriesComplete(page);
+
+    await clearQueryLog(page);
+    await setComparison(page, true);
+    try {
+      await expect(page.getByText('Loading', { exact: false }).first()).toBeHidden({ timeout: SETTLE_TIMEOUT });
+    } catch { /* */ }
+    await page.waitForTimeout(1000);
+    const report = await collectViewQueries(page, 'Combo: comparison + filter');
+    viewReports.push(report);
+  });
+
+  test('Combo: hourly + comparison + filter', async () => {
+    // comparison + Account filter still active
+    await clearQueryLog(page);
+    await selectPreset(page, 'Last 7 days');
+    try {
+      await expect(page.getByText('Loading', { exact: false }).first()).toBeHidden({ timeout: 180_000 });
+    } catch { /* */ }
+    await page.waitForTimeout(2000);
+    const report = await collectViewQueries(page, 'Combo: hourly + comparison + filter');
+    viewReports.push(report);
+  });
+
+  test('Combo: 365d + comparison', async () => {
+    await clearFilters(page);
+    await waitForAllQueriesComplete(page);
+
+    await clearQueryLog(page);
+    await selectPreset(page, 'Last 365 days');
+    try {
+      await expect(page.getByText('Loading', { exact: false }).first()).toBeHidden({ timeout: 180_000 });
+    } catch { /* */ }
+    await page.waitForTimeout(2000);
+    const report = await collectViewQueries(page, 'Combo: 365d + comparison');
+    viewReports.push(report);
+  });
+
+  test('Combo: 365d + comparison + filter', async () => {
+    // comparison still on
+    await clearQueryLog(page);
+    await applyDimensionFilter(page, 'Account');
+    try {
+      await expect(page.getByText('Loading', { exact: false }).first()).toBeHidden({ timeout: 180_000 });
+    } catch { /* */ }
+    await page.waitForTimeout(2000);
+    const report = await collectViewQueries(page, 'Combo: 365d + comparison + filter');
+    viewReports.push(report);
+  });
+
+  // -----------------------------------------------------------------------
+  // Restore and continue to Custom Views
+  // -----------------------------------------------------------------------
+
+  test('Combo: cleanup', async () => {
+    await setComparison(page, false);
+    await clearFilters(page);
+    await selectPreset(page, 'Last 30 days');
+    await waitForAllQueriesComplete(page);
   });
 
   test('Custom Views', async () => {

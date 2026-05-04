@@ -15,6 +15,7 @@ export interface DuckDBInstance {
 export interface DuckDBConnection {
   run: (sql: string) => Promise<DuckDBResult>;
   prepare: (sql: string) => Promise<DuckDBPreparedStatement>;
+  interrupt: () => void;
   disconnectSync: () => void;
 }
 

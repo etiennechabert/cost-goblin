@@ -81,11 +81,12 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     [dateRange],
   );
 
-  // Cancel in-flight DuckDB queries when the date range or granularity
-  // changes so stale 30d queries don't compete for memory with new 365d
-  // queries. Skip until one render AFTER preferences have loaded — the
-  // prefs restore itself triggers a state change that we must not cancel.
+  // Cancel in-flight DuckDB queries when query-affecting state changes so
+  // stale queries don't hog pool connections while new ones queue behind them.
+  // Skip until one render AFTER preferences have loaded — the prefs restore
+  // itself triggers a state change that we must not cancel.
   const cancelReadyRef = useRef(false);
+  const filtersKeyRef = JSON.stringify(filters);
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
     if (!cancelReadyRef.current) {
@@ -93,7 +94,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
       return;
     }
     api.cancelPendingQueries().catch(() => undefined);
-  }, [dateRange, granularity, api]);
+  }, [dateRange, granularity, filtersKeyRef, compareEnabled, api]);
 
   // Load persisted date range and granularity on mount
   useEffect(() => {
@@ -118,20 +119,24 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     });
   }, [api]);
 
-  // Save date range and granularity whenever they change. Skip saves until
-  // after preferences have loaded — the prefsLoadedRef flag is set in the
-  // mount effect once the initial load completes (or fails). This prevents
-  // redundant writes when restoring persisted values on mount. Preserve
-  // column preferences from Explorer to avoid overwriting them.
+  // Save preferences with debounce — rapid parameter changes (e.g. applying
+  // two filters back-to-back) only trigger a single write.
+  const savePendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
-    api.saveExplorerPreferences({
-      hiddenColumns: columnPrefsRef.current.hiddenColumns,
-      columnOrder: columnPrefsRef.current.columnOrder,
-      lastUsedDateRange: dateRange,
-      lastUsedGranularity: granularity,
-      compareEnabled,
-    }).catch(() => undefined);
+    if (savePendingRef.current !== null) clearTimeout(savePendingRef.current);
+    savePendingRef.current = setTimeout(() => {
+      api.saveExplorerPreferences({
+        hiddenColumns: columnPrefsRef.current.hiddenColumns,
+        columnOrder: columnPrefsRef.current.columnOrder,
+        lastUsedDateRange: dateRange,
+        lastUsedGranularity: granularity,
+        compareEnabled,
+      }).catch(() => undefined);
+    }, 500);
+    return () => {
+      if (savePendingRef.current !== null) clearTimeout(savePendingRef.current);
+    };
   }, [dateRange, granularity, compareEnabled, api]);
 
   function handleSetFilter(dim: DimensionId, value: TagValue) {
