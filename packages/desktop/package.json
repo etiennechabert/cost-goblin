@@ -18,7 +18,7 @@
     "@duckdb/node-api": "^1.5.2-r.1",
     "@smithy/shared-ini-file-loader": "^4.4.9",
     "electron-updater": "^6.8.3",
-    "yaml": "^2.8.3"
+    "yaml": "^2.8.4"
   },
   "devDependencies": {
     "@costgoblin/core": "*",
