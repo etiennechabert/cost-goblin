@@ -10,6 +10,9 @@ providers:
       hourly:
         bucket: s3://test-cur-bucket/hourly/
         retentionDays: 30
+      costOptimization:
+        bucket: s3://test-cur-bucket/cost-optimization/
+        retentionDays: 90
       intervalMinutes: 60
 
 defaults:
