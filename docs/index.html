@@ -1680,8 +1680,8 @@ Format:   <span class="code-file">Parquet</span>
         <input type="text" name="website" class="hp" tabindex="-1" autocomplete="off">
         <input type="email" name="email" placeholder="you@company.com" required autocomplete="email">
         <button type="submit">Subscribe</button>
-        <div class="cf-turnstile" id="turnstile-widget" data-sitekey="0x4AAAAAADHTvUnS8efYJ2uh" data-theme="dark" style="margin-top: 12px; display: flex; justify-content: center;"></div>
       </form>
+      <div class="cf-turnstile" id="turnstile-widget" data-sitekey="0x4AAAAAADHTvUnS8efYJ2uh" data-theme="dark" style="margin-top: 12px; display: flex; justify-content: center;"></div>
       <div class="signup-error" id="signup-error"></div>
       <div class="signup-note" id="signup-note">No spam. Unsubscribe anytime.</div>
     </div>
@@ -1861,7 +1861,8 @@ Format:   <span class="code-file">Parquet</span>
 
       // Include Turnstile token only if widget is configured
       if (turnstileConfigured) {
-        payload['cf-turnstile-response'] = formData.get('cf-turnstile-response');
+        const tokenInput = document.querySelector('#turnstile-widget [name="cf-turnstile-response"]');
+        payload['cf-turnstile-response'] = tokenInput ? tokenInput.value : '';
       }
 
       try {
