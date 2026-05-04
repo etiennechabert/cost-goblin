@@ -199,10 +199,10 @@ export async function setup(): Promise<void> {
   const costOptRows: string[] = [];
 
   for (let i = 0; i < 25; i++) {
-    const at = actionTypes[Math.floor(rand() * actionTypes.length)]!;
-    const account = cfg.accounts[Math.floor(rand() * cfg.accounts.length)]!;
+    const at = pick(actionTypes, rand);
+    const account = weightedPick(cfg.accounts, rand);
     const region = pick(cfg.regions, rand);
-    const effort = at.efforts[Math.floor(rand() * at.efforts.length)]!;
+    const effort = pick(at.efforts, rand);
     const monthlyCost = Math.round((rand() * 4000 + 100) * 100) / 100;
     const savingsPct = Math.round((rand() * 60 + 10) * 100) / 100;
     const monthlySavings = Math.round(monthlyCost * savingsPct / 100 * 100) / 100;
@@ -214,17 +214,17 @@ export async function setup(): Promise<void> {
     let currentDetails = '';
     let recommendedDetails = '';
     if (at.action === 'Rightsize' && at.resourceType === 'Ec2Instance') {
-      const curr = instanceTypes[Math.floor(rand() * instanceTypes.length)]!;
-      const rec = instanceTypes[Math.floor(rand() * instanceTypes.length)]!;
+      const curr = pick(instanceTypes, rand);
+      const rec = pick(instanceTypes, rand);
       currentSummary = `${curr} in ${region}`;
       summary = `${rec} in ${region}`;
       currentDetails = `{"instanceType": "${curr}", "vcpus": "2", "memory": "8 GiB"}`;
       recommendedDetails = `{"instanceType": "${rec}", "vcpus": "2", "memory": "4 GiB"}`;
     } else if (at.resourceType === 'RdsDbInstance' || at.resourceType === 'RdsReservedInstances') {
-      const curr = rdsTypes[Math.floor(rand() * rdsTypes.length)]!;
-      const rec = rdsTypes[Math.floor(rand() * rdsTypes.length)]!;
+      const curr = pick(rdsTypes, rand);
+      const rec = pick(rdsTypes, rand);
       currentSummary = `${curr} MySQL in ${region}`;
-      summary = at.action === 'PurchaseReservedInstances' ? `${Math.floor(rand() * 5 + 1)} ${curr} MySQL in ${region}` : `${rec} MySQL in ${region}`;
+      summary = at.action === 'PurchaseReservedInstances' ? `${String(Math.floor(rand() * 5 + 1))} ${curr} MySQL in ${region}` : `${rec} MySQL in ${region}`;
       currentDetails = `{"instanceType": "${curr}", "engine": "MySQL", "multiAZ": "false"}`;
       recommendedDetails = `{"instanceType": "${rec}", "engine": "MySQL"}`;
     } else if (at.action === 'Delete') {
