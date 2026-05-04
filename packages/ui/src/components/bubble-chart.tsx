@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Group } from '@visx/group';
-import { scaleLinear, scaleSqrt } from '@visx/scale';
+import { scaleSymlog, scaleSqrt } from '@visx/scale';
 import { AxisBottom, AxisLeft } from '@visx/axis';
 import { GridRows, GridColumns } from '@visx/grid';
 import { useTooltip, TooltipWithBounds } from '@visx/tooltip';
@@ -72,16 +72,18 @@ function BubbleChartInner({
   const deltaMax = Math.max(...absDeltas);
   const costMax = Math.max(...costs);
 
-  const xScale = scaleLinear<number>({
-    domain: [percentMin - percentPad, percentMax + percentPad],
+  const xScale = scaleSymlog<number>({
+    domain: [0, percentMax + percentPad],
     range: [0, innerWidth],
     nice: true,
+    constant: 10,
   });
 
-  const yScale = scaleLinear<number>({
+  const yScale = scaleSymlog<number>({
     domain: [0, deltaMax * 1.15],
     range: [innerHeight, 0],
     nice: true,
+    constant: 10,
   });
 
   const rScale = scaleSqrt<number>({
