@@ -47,9 +47,9 @@ declare global {
   }
 
   interface VaultApi {
-    getStatus(): Promise<{ state: 'disabled' | 'locked' | 'unlocked' }>;
+    getStatus(): Promise<{ state: 'not-configured' | 'locked' | 'unlocked' }>;
     unlock(password: string): Promise<{ success: boolean; dataDir: string | null }>;
-    setup(password: string): Promise<void>;
+    setup(password: string | null): Promise<void>;
     reset(): Promise<void>;
   }
 

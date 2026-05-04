@@ -167,17 +167,17 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
             type="button"
             onClick={() => { handleSync().catch(() => undefined); }}
             disabled={syncState.status === 'syncing'}
-            className="text-xs text-text-muted hover:text-accent transition-colors disabled:opacity-50"
+            className="rounded-md border border-accent/50 bg-accent/10 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/20 transition-colors disabled:opacity-50"
             title="Re-sync"
           >
-            ↻
+            Re-sync
           </button>
         )}
         <button
           type="button"
           onClick={() => { setShowClearConfirm(true); }}
           disabled={syncState.status === 'syncing'}
-          className="text-xs text-text-muted hover:text-negative transition-colors disabled:opacity-50"
+          className="rounded-md border border-negative/50 bg-negative/10 px-3 py-1 text-xs font-medium text-negative hover:bg-negative/20 transition-colors disabled:opacity-50"
           title="Delete all org-sync data (accounts, account tags, region names)"
         >
           Clear

@@ -287,13 +287,13 @@ const api: CostApi = {
 contextBridge.exposeInMainWorld('costgoblin', api);
 
 contextBridge.exposeInMainWorld('costgoblinVault', {
-  getStatus(): Promise<{ state: 'disabled' | 'locked' | 'unlocked' }> {
-    return invoke<{ state: 'disabled' | 'locked' | 'unlocked' }>('vault:status');
+  getStatus(): Promise<{ state: 'not-configured' | 'locked' | 'unlocked' }> {
+    return invoke<{ state: 'not-configured' | 'locked' | 'unlocked' }>('vault:status');
   },
   unlock(password: string): Promise<{ success: boolean; dataDir: string | null }> {
     return invoke<{ success: boolean; dataDir: string | null }>('vault:unlock', password);
   },
-  setup(password: string): Promise<void> {
+  setup(password: string | null): Promise<void> {
     return invoke<undefined>('vault:setup', password).then(() => undefined);
   },
   reset(): Promise<void> {

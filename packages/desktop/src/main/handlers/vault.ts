@@ -1,6 +1,7 @@
-import { ipcMain } from 'electron';
+import { ipcMain, safeStorage } from 'electron';
 import { readFile, writeFile, readdir, mkdir, rm, unlink } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync, readFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join, dirname, relative } from 'node:path';
 import {
   deriveKey,
@@ -25,12 +26,16 @@ export interface VaultContext {
 }
 
 type VaultStatus =
-  | { state: 'disabled' }
+  | { state: 'not-configured' }
   | { state: 'locked' }
   | { state: 'unlocked' };
 
 function encryptionConfigPath(userDataPath: string): string {
   return join(userDataPath, 'encryption.json');
+}
+
+function safeStorageKeyPath(userDataPath: string): string {
+  return join(userDataPath, 'vault-key.enc');
 }
 
 function tempVaultDir(userDataPath: string): string {
@@ -43,9 +48,9 @@ async function loadEncryptionConfig(userDataPath: string): Promise<EncryptionCon
     const parsed: unknown = JSON.parse(raw);
     if (
       typeof parsed === 'object' && parsed !== null
-      && 'enabled' in parsed && typeof parsed.enabled === 'boolean'
       && 'salt' in parsed && typeof parsed.salt === 'string'
       && 'keyCheck' in parsed && typeof parsed.keyCheck === 'string'
+      && 'usePassword' in parsed && typeof parsed.usePassword === 'boolean'
     ) {
       return parsed as EncryptionConfig;
     }
@@ -57,40 +62,42 @@ async function saveEncryptionConfig(userDataPath: string, config: EncryptionConf
   await writeFile(encryptionConfigPath(userDataPath), JSON.stringify(config, null, 2));
 }
 
-async function collectEncryptedFiles(dataDir: string): Promise<string[]> {
+async function collectFiles(dir: string, suffix: string): Promise<string[]> {
   const files: string[] = [];
-  const rawDir = join(dataDir, 'aws', 'raw');
-  if (!existsSync(rawDir)) return files;
-
-  const periods = await readdir(rawDir);
-  for (const period of periods) {
-    const periodDir = join(rawDir, period);
-    const entries = await readdir(periodDir);
-    for (const entry of entries) {
-      if (entry.endsWith('.parquet.enc')) {
-        files.push(join(periodDir, entry));
-      }
+  if (!existsSync(dir)) return files;
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await collectFiles(fullPath, suffix));
+    } else if (entry.name.endsWith(suffix)) {
+      files.push(fullPath);
     }
   }
   return files;
 }
 
-async function collectParquetFiles(dataDir: string): Promise<string[]> {
-  const files: string[] = [];
-  const rawDir = join(dataDir, 'aws', 'raw');
-  if (!existsSync(rawDir)) return files;
+function collectEncryptedFiles(dataDir: string): Promise<string[]> {
+  return collectFiles(join(dataDir, 'aws', 'raw'), '.parquet.enc');
+}
 
-  const periods = await readdir(rawDir);
-  for (const period of periods) {
-    const periodDir = join(rawDir, period);
-    const entries = await readdir(periodDir);
-    for (const entry of entries) {
-      if (entry.endsWith('.parquet')) {
-        files.push(join(periodDir, entry));
-      }
-    }
+function collectParquetFiles(dataDir: string): Promise<string[]> {
+  return collectFiles(join(dataDir, 'aws', 'raw'), '.parquet');
+}
+
+function storeKeyInSafeStorage(userDataPath: string, rawKey: Buffer): void {
+  const encrypted = safeStorage.encryptString(rawKey.toString('hex'));
+  writeFileSync(safeStorageKeyPath(userDataPath), encrypted);
+}
+
+function loadKeyFromSafeStorage(userDataPath: string): Buffer | null {
+  try {
+    const encrypted = readFileSync(safeStorageKeyPath(userDataPath));
+    const hex = safeStorage.decryptString(encrypted);
+    return Buffer.from(hex, 'hex');
+  } catch {
+    return null;
   }
-  return files;
 }
 
 export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
@@ -105,18 +112,33 @@ export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
   ipcMain.handle('vault:status', async (): Promise<VaultStatus> => {
     const config = await loadEncryptionConfig(userDataPath);
     vaultState.encryptionConfig = config;
-    if (config === null || !config.enabled) {
-      return { state: 'disabled' };
+
+    if (config === null) {
+      return { state: 'not-configured' };
     }
-    if (vaultState.derivedKey === null) {
-      return { state: 'locked' };
+
+    if (vaultState.derivedKey !== null) {
+      return { state: 'unlocked' };
     }
-    return { state: 'unlocked' };
+
+    if (!config.usePassword) {
+      const key = loadKeyFromSafeStorage(userDataPath);
+      if (key !== null && verifyKeyCheck(Buffer.from(config.keyCheck, 'hex'), key)) {
+        vaultState.derivedKey = key;
+        const tempDir = tempVaultDir(userDataPath);
+        await decryptDataToTemp(dataDir, tempDir, key);
+        vaultState.tempDataDir = tempDir;
+        logger.info('Vault auto-unlocked via system keychain');
+        return { state: 'unlocked' };
+      }
+    }
+
+    return { state: 'locked' };
   });
 
   ipcMain.handle('vault:unlock', async (_event, password: string): Promise<{ success: boolean; dataDir: string | null }> => {
     const config = await loadEncryptionConfig(userDataPath);
-    if (config === null || !config.enabled) {
+    if (config === null) {
       return { success: true, dataDir };
     }
 
@@ -139,18 +161,26 @@ export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
     return { success: true, dataDir: tempDir };
   });
 
-  ipcMain.handle('vault:setup', async (_event, password: string): Promise<void> => {
+  ipcMain.handle('vault:setup', async (_event, password: string | null): Promise<void> => {
+    const usePassword = password !== null;
     const salt = generateSalt();
-    const key = await deriveKey(password, salt);
+    let key: Buffer;
+
+    if (usePassword) {
+      key = await deriveKey(password, salt);
+    } else {
+      key = randomBytes(32);
+      storeKeyInSafeStorage(userDataPath, key);
+    }
+
     const keyCheck = createKeyCheck(key);
 
     const config: EncryptionConfig = {
-      enabled: true,
       salt: salt.toString('hex'),
       keyCheck: keyCheck.toString('hex'),
+      usePassword,
     };
 
-    // Encrypt any existing parquet files in place
     const parquetFiles = await collectParquetFiles(dataDir);
     for (const filePath of parquetFiles) {
       const encPath = `${filePath}.enc`;
@@ -162,20 +192,20 @@ export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
     vaultState.encryptionConfig = config;
     vaultState.derivedKey = key;
 
-    logger.info(`Vault setup complete: ${String(parquetFiles.length)} files encrypted`);
+    logger.info(`Vault setup complete (password=${String(usePassword)}): ${String(parquetFiles.length)} files encrypted`);
   });
 
   ipcMain.handle('vault:reset', async (): Promise<void> => {
-    // Wipe all data and encryption config
     const rawDir = join(dataDir, 'aws', 'raw');
     if (existsSync(rawDir)) {
       await rm(rawDir, { recursive: true });
     }
     await cleanupTemp(userDataPath);
 
-    const configPath = encryptionConfigPath(userDataPath);
-    if (existsSync(configPath)) {
-      await unlink(configPath);
+    for (const path of [encryptionConfigPath(userDataPath), safeStorageKeyPath(userDataPath)]) {
+      if (existsSync(path)) {
+        await unlink(path);
+      }
     }
 
     vaultState.encryptionConfig = null;

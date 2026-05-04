@@ -132,7 +132,6 @@ type VaultCheck =
 type SetupCheck =
   | { status: 'checking' }
   | { status: 'needs-setup' }
-  | { status: 'needs-vault-setup' }
   | { status: 'ready' };
 
 const FALLBACK_VIEWS: ViewsConfig = { views: [OVERVIEW_SEED_VIEW] };
@@ -420,23 +419,33 @@ function AppShell(): React.JSX.Element {
 
   useEffect(() => {
     const skipSplash = globalThis.costgoblinDebug.isE2E();
-    const minTimer = skipSplash
-      ? Promise.resolve()
-      : new Promise<void>(resolve => {
-          setTimeout(() => { splashMinElapsed.current = true; resolve(); }, SPLASH_DURATION);
-        });
 
     const vaultStatusCheck = globalThis.costgoblinVault.getStatus();
     const statusCheck = api.getSetupStatus().then(({ configured }) => configured);
-    void api.getDimensions().catch(() => undefined);
 
-    void Promise.all([statusCheck, vaultStatusCheck, minTimer]).then(([configured, vault]) => {
+    void Promise.all([statusCheck, vaultStatusCheck]).then(async ([configured, vault]) => {
+      if (!configured || vault.state === 'not-configured') {
+        setVaultCheck({ status: 'unlocked' });
+        setSetupCheck({ status: 'needs-setup' });
+        return;
+      }
+
       if (vault.state === 'locked') {
         setVaultCheck({ status: 'locked' });
-      } else {
-        setVaultCheck({ status: 'unlocked' });
-        setSetupCheck(configured ? { status: 'ready' } : { status: 'needs-setup' });
+        return;
       }
+
+      // Vault auto-unlocked (safeStorage) or already unlocked
+      void api.getDimensions().catch(() => undefined);
+
+      if (!skipSplash) {
+        await new Promise<void>(resolve => {
+          setTimeout(() => { splashMinElapsed.current = true; resolve(); }, SPLASH_DURATION);
+        });
+      }
+
+      setVaultCheck({ status: 'unlocked' });
+      setSetupCheck({ status: 'ready' });
     }).catch(() => undefined);
   }, [api]);
 
@@ -536,13 +545,13 @@ function AppShell(): React.JSX.Element {
   }
 
   function handleSetupComplete() {
-    setSetupCheck({ status: 'needs-vault-setup' });
-  }
-
-  function handleVaultSetupComplete() {
     setSetupCheck({ status: 'ready' });
     setView({ page: 'sync' });
   }
+
+  const renderVaultStep = useCallback((onContinue: () => void): React.JSX.Element => {
+    return <VaultSetupScreen onComplete={onContinue} />;
+  }, []);
 
   const views = viewsConfig ?? FALLBACK_VIEWS;
   const viewsReady = viewsConfig !== null;
@@ -555,18 +564,15 @@ function AppShell(): React.JSX.Element {
     ...RIGHT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Settings' })),
   ], [customNav]);
 
-  if (vaultCheck.status === 'checking' || (vaultCheck.status === 'unlocked' && setupCheck.status === 'checking')) {
-    return <SplashScreen />;
-  }
-
   if (vaultCheck.status === 'locked') {
     return (
       <VaultLockScreen
         onUnlocked={() => {
           setVaultCheck({ status: 'unlocked' });
-          api.getSetupStatus().then(({ configured }) => {
-            setSetupCheck(configured ? { status: 'ready' } : { status: 'needs-setup' });
-          }).catch(() => undefined);
+          void api.getDimensions().catch(() => undefined);
+          setTimeout(() => {
+            setSetupCheck({ status: 'ready' });
+          }, SPLASH_DURATION);
         }}
         onReset={() => {
           setVaultCheck({ status: 'unlocked' });
@@ -576,12 +582,12 @@ function AppShell(): React.JSX.Element {
     );
   }
 
-  if (setupCheck.status === 'needs-setup') {
-    return <SetupWizard onComplete={handleSetupComplete} />;
+  if (setupCheck.status === 'checking') {
+    return <SplashScreen />;
   }
 
-  if (setupCheck.status === 'needs-vault-setup') {
-    return <VaultSetupScreen onComplete={handleVaultSetupComplete} />;
+  if (setupCheck.status === 'needs-setup') {
+    return <SetupWizard onComplete={handleSetupComplete} renderAfterWelcome={renderVaultStep} />;
   }
 
   function activeNavId(): string | null {

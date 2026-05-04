@@ -1,5 +1,48 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { CoinRainLoader } from '@costgoblin/ui';
+
+const SPLASH_IMAGES = ['splash-1.png', 'splash-2.png', 'splash-3.png', 'splash-4.png', 'splash-5.png', 'splash-6.png', 'splash-7.png', 'splash-8.png', 'splash-9.png', 'splash-10.png'];
+const SPLASH_INTERVAL = 500;
+
+function shuffled<T>(arr: readonly T[]): T[] {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const a = copy[i];
+    const b = copy[j];
+    if (a !== undefined && b !== undefined) {
+      copy[i] = b;
+      copy[j] = a;
+    }
+  }
+  return copy;
+}
+
+function RotatingGoblin(): React.JSX.Element {
+  const [order] = useState(() => shuffled(SPLASH_IMAGES));
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setIndex(prev => (prev + 1) % SPLASH_IMAGES.length);
+    }, SPLASH_INTERVAL);
+    return () => { clearInterval(timer); };
+  }, []);
+
+  return (
+    <div className="relative h-24 w-24">
+      {order.map((src, i) => (
+        <img
+          key={src}
+          src={src}
+          alt=""
+          className="absolute inset-0 h-full w-full object-contain drop-shadow-lg transition-opacity duration-200"
+          style={{ opacity: i === index ? 1 : 0 }}
+        />
+      ))}
+    </div>
+  );
+}
 
 interface VaultLockScreenProps {
   readonly onUnlocked: () => void;
@@ -72,8 +115,8 @@ export function VaultLockScreen({ onUnlocked, onReset }: VaultLockScreenProps): 
     >
       <div className="w-80" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         <div className="flex flex-col items-center mb-8">
-          <img src="goblin.png" alt="" className="h-16 w-auto object-contain mb-3" />
-          <h1 className="text-xl font-bold text-accent tracking-wider">CostGoblin</h1>
+          <RotatingGoblin />
+          <h1 className="text-xl font-bold text-accent tracking-wider mt-3">CostGoblin</h1>
           <p className="text-sm text-text-secondary mt-1">Enter your password to unlock</p>
         </div>
 
@@ -85,7 +128,7 @@ export function VaultLockScreen({ onUnlocked, onReset }: VaultLockScreenProps): 
               onChange={(e) => { setPassword(e.target.value); setError(null); }}
               placeholder="Password"
               autoFocus
-              className="w-full px-3 py-2.5 rounded-md bg-bg-secondary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
+              className="w-full px-4 py-3 rounded-md bg-bg-secondary border border-border text-accent text-2xl tracking-[0.3em] placeholder:text-text-muted placeholder:text-sm placeholder:tracking-normal focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
             />
             {error !== null && (
               <p className="mt-1.5 text-xs text-negative">{error}</p>

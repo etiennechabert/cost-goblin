@@ -245,6 +245,23 @@ export function registerSyncHandlers(app: AppContext): void {
   });
 }
 
+async function encryptDir(
+  dir: string, key: Buffer,
+  fs: typeof import('node:fs/promises'),
+  path: typeof import('node:path'),
+): Promise<void> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await encryptDir(fullPath, key, fs, path);
+    } else if (entry.name.endsWith('.parquet')) {
+      await encryptFile(fullPath, `${fullPath}.enc`, key);
+      await fs.unlink(fullPath);
+    }
+  }
+}
+
 async function encryptSyncedFiles(dataDir: string, tier: string, key: Buffer): Promise<void> {
   const fs = await import('node:fs/promises');
   const path = await import('node:path');
@@ -255,15 +272,7 @@ async function encryptSyncedFiles(dataDir: string, tier: string, key: Buffer): P
       if (!period.startsWith(`${tier}-`) && tier !== 'cost-optimization') continue;
       if (tier === 'cost-optimization' && !period.startsWith('cost-opt-')) continue;
       const periodDir = path.join(rawDir, period);
-      const entries = await fs.readdir(periodDir);
-      for (const entry of entries) {
-        if (entry.endsWith('.parquet')) {
-          const filePath = path.join(periodDir, entry);
-          const encPath = `${filePath}.enc`;
-          await encryptFile(filePath, encPath, key);
-          await fs.unlink(filePath);
-        }
-      }
+      await encryptDir(periodDir, key, fs, path);
     }
   } catch (err: unknown) {
     logger.warn(`Post-sync encryption error: ${err instanceof Error ? err.message : String(err)}`);
