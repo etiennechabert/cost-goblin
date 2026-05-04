@@ -389,6 +389,15 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
 
       </div>
 
+      {dimensionsQuery.status === 'success' && tagDimensions.length === 0 && (
+        <div className="rounded-xl border border-border bg-bg-secondary/50 p-12 text-center">
+          <p className="text-sm font-medium text-text-primary">No tag dimensions configured</p>
+          <p className="text-xs text-text-secondary mt-1">
+            Add custom tag dimensions in the <strong>Dimensions</strong> page to start tracking missing tags.
+          </p>
+        </div>
+      )}
+
       {missingQuery.status === 'loading' && (
         <div className="flex-1">
           <CoinRainLoader height={500} count={10} />
