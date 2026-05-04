@@ -12,13 +12,13 @@
     "dev": "npm run build:worker && npm run build:preload && electron-vite dev"
   },
   "dependencies": {
-    "@aws-sdk/client-organizations": "^3.1038.0",
-    "@aws-sdk/client-s3": "^3.1038.0",
-    "@aws-sdk/client-ssm": "^3.1038.0",
+    "@aws-sdk/client-organizations": "^3.1041.0",
+    "@aws-sdk/client-s3": "^3.1041.0",
+    "@aws-sdk/client-ssm": "^3.1041.0",
     "@duckdb/node-api": "^1.5.2-r.1",
     "@smithy/shared-ini-file-loader": "^4.4.9",
     "electron-updater": "^6.8.3",
-    "yaml": "^2.8.3"
+    "yaml": "^2.8.4"
   },
   "devDependencies": {
     "@costgoblin/core": "*",
@@ -27,8 +27,8 @@
     "@tailwindcss/vite": "^4.2.4",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^4.0.0",
-    "electron": "^41.3.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "electron": "^41.5.0",
     "electron-vite": "^5.0.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
