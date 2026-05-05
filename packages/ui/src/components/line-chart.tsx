@@ -28,7 +28,7 @@ interface LineChartProps {
   /** Previous period series, rendered as dashed ghost lines. Dates should
    *  be mapped onto the current period so lines overlay by position. */
   readonly previousSeries?: readonly LineSeries[] | undefined;
-  readonly title?: string | undefined;
+  readonly title?: React.ReactNode | undefined;
   readonly subtitle?: string | undefined;
   readonly height?: number | undefined;
   readonly onSeriesClick?: ((name: string) => void) | undefined;

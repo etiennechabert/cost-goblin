@@ -19,7 +19,7 @@ interface StackedBarChartProps {
   readonly onTabChange?: ((tab: HistogramTab) => void) | undefined;
   readonly expanded?: boolean | undefined;
   readonly onExpandToggle?: (() => void) | undefined;
-  readonly title?: string | undefined;
+  readonly title?: React.ReactNode | undefined;
   readonly loading?: boolean | undefined;
   readonly onSegmentClick?: ((name: string) => void) | undefined;
   /** Previous period daily totals, aligned by position index. Rendered as
@@ -104,8 +104,7 @@ interface BarColumnProps {
 
 function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, palette, onSegmentClick, setHoveredDay, setHoveredSegment }: BarColumnProps) {
   return (
-    <button
-      type="button"
+    <div
       className="group relative flex-1 min-w-0"
       style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
       onMouseEnter={() => { setHoveredDay(day.date); }}
@@ -127,7 +126,7 @@ function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, palette,
           />
         ))}
       </div>
-    </button>
+    </div>
   );
 }
 

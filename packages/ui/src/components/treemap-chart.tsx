@@ -13,7 +13,7 @@ export interface TreemapCell {
 
 interface TreemapChartProps {
   readonly data: readonly TreemapCell[];
-  readonly title?: string | undefined;
+  readonly title?: React.ReactNode | undefined;
   readonly subtitle?: string | undefined;
   readonly height?: number | undefined;
   readonly onCellClick?: ((name: string) => void) | undefined;

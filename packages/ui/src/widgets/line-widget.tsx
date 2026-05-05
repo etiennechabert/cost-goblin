@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -6,9 +6,10 @@ import { LineChart } from '../components/line-chart.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { LineSeries } from '../components/line-chart.js';
 import { asTagValue } from '@costgoblin/core/browser';
-import type { DailyCostsResult } from '@costgoblin/core/browser';
+import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, mergeFilters, hasSufficientDailyCoverage } from './widget.js';
+import { GroupByTitle } from '../components/group-by-title.js';
 
 function buildSeries(data: DailyCostsResult | null, topN: number): LineSeries[] {
   if (data === null) return [];
@@ -61,13 +62,15 @@ export function LineWidget({
   onSetFilter,
 }: WidgetCommonProps) {
   const api = useCostApi();
+  const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'line' ? spec.groupBy : undefined;
+  const effectiveGroupBy = groupByOverride ?? specGroupBy;
   const topN = spec.type === 'line' ? (spec.topN ?? 6) : 6;
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
 
   const { query, activeGroupBy, dailyResult } = useDailyWidgetQuery({
-    specGroupBy,
+    specGroupBy: effectiveGroupBy,
     dateRange,
     granularity,
     globalFilters,
@@ -75,10 +78,10 @@ export function LineWidget({
   });
 
   const prevQuery = useQuery<DailyCostsResult | null>(
-    () => compareEnabled && specGroupBy !== undefined
-      ? api.queryDailyCosts({ groupBy: specGroupBy, dateRange: previousDateRange, filters, granularity })
+    () => compareEnabled && effectiveGroupBy !== undefined
+      ? api.queryDailyCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters, granularity })
       : Promise.resolve(null),
-    [compareEnabled, specGroupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
+    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
   );
 
   const series = useMemo(
@@ -97,7 +100,7 @@ export function LineWidget({
     [prevHasCoverage, prevQuery, series, currentDates],
   );
 
-  if (spec.type !== 'line' || specGroupBy === undefined || activeGroupBy === undefined) return null;
+  if (spec.type !== 'line' || effectiveGroupBy === undefined || activeGroupBy === undefined) return null;
 
   const label = dimensionLabelFor(dimensions, activeGroupBy);
 
@@ -111,7 +114,7 @@ export function LineWidget({
     <LineChart
       series={series}
       previousSeries={compareEnabled ? previousSeries : undefined}
-      title={spec.title ?? `${label} over time`}
+      title={spec.title ?? <GroupByTitle dimensions={dimensions} currentGroupBy={activeGroupBy} onGroupByChange={setGroupByOverride} label={label} suffix="over time" />}
       subtitle={`Top ${String(topN)} • Click to filter, dbl-click to hide`}
       onSeriesClick={(name) => { onSetFilter(activeGroupBy, asTagValue(name)); }}
     />

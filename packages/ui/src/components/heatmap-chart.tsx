@@ -14,7 +14,7 @@ interface HeatmapChartProps {
   readonly cells: readonly HeatmapCell[];
   readonly groups: readonly string[];
   readonly dates: readonly string[];
-  readonly title?: string | undefined;
+  readonly title?: React.ReactNode | undefined;
   readonly subtitle?: string | undefined;
   readonly height?: number | undefined;
   readonly onCellClick?: ((group: string, date: string) => void) | undefined;

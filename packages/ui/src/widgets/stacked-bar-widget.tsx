@@ -1,13 +1,14 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { StackedBarChart, bucketBars, type BarDay } from '../components/stacked-bar-chart.js';
 import { asTagValue } from '@costgoblin/core/browser';
 import { useCostFocus } from '../hooks/use-cost-focus.js';
-import type { DailyCostsResult } from '@costgoblin/core/browser';
+import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { filtersKey, mergeFilters, hasSufficientDailyCoverage } from './widget.js';
+import { dimensionLabelFor, filtersKey, mergeFilters, hasSufficientDailyCoverage } from './widget.js';
+import { GroupByTitle } from '../components/group-by-title.js';
 
 const MAX_BARS = 170;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -48,16 +49,19 @@ export function StackedBarWidget({
   compareEnabled,
   granularity,
   globalFilters,
+  dimensions,
   onSetFilter,
 }: WidgetCommonProps) {
   const api = useCostApi();
   const focus = useCostFocus();
+  const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'stackedBar' ? spec.groupBy : undefined;
+  const effectiveGroupBy = groupByOverride ?? specGroupBy;
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
 
   const { query, activeGroupBy, dailyResult } = useDailyWidgetQuery({
-    specGroupBy,
+    specGroupBy: effectiveGroupBy,
     dateRange,
     granularity,
     globalFilters,
@@ -65,10 +69,10 @@ export function StackedBarWidget({
   });
 
   const prevQuery = useQuery<DailyCostsResult | null>(
-    () => compareEnabled && specGroupBy !== undefined
-      ? api.queryDailyCosts({ groupBy: specGroupBy, dateRange: previousDateRange, filters, granularity })
+    () => compareEnabled && effectiveGroupBy !== undefined
+      ? api.queryDailyCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters, granularity })
       : Promise.resolve(null),
-    [compareEnabled, specGroupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
+    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
   );
 
   const barDays = useMemo(
@@ -102,7 +106,11 @@ export function StackedBarWidget({
   const loading = query.status === 'loading';
 
   const defaultTitle = granularity === 'hourly' ? 'Hourly Costs' : 'Daily Costs';
-  const title = spec.title ?? defaultTitle;
+  let title: React.ReactNode = spec.title ?? defaultTitle;
+  if (spec.title === undefined && activeGroupBy !== undefined) {
+    const label = dimensionLabelFor(dimensions, activeGroupBy);
+    title = <GroupByTitle dimensions={dimensions} currentGroupBy={activeGroupBy} onGroupByChange={setGroupByOverride} label={label} />;
+  }
 
   return (
     <StackedBarChart

@@ -1,12 +1,14 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
 import { HeatmapChart } from '../components/heatmap-chart.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { HeatmapCell } from '../components/heatmap-chart.js';
 import { asTagValue } from '@costgoblin/core/browser';
+import type { DimensionId } from '@costgoblin/core/browser';
 import type { DailyCostsResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor } from './widget.js';
+import { GroupByTitle } from '../components/group-by-title.js';
 
 interface BuiltCells {
   readonly cells: readonly HeatmapCell[];
@@ -47,11 +49,13 @@ export function HeatmapWidget({
   dimensions,
   onSetFilter,
 }: WidgetCommonProps) {
+  const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'heatmap' ? spec.groupBy : undefined;
+  const effectiveGroupBy = groupByOverride ?? specGroupBy;
   const topN = spec.type === 'heatmap' ? (spec.topN ?? 12) : 12;
 
   const { query, activeGroupBy, dailyResult } = useDailyWidgetQuery({
-    specGroupBy,
+    specGroupBy: effectiveGroupBy,
     dateRange,
     granularity,
     globalFilters,
@@ -63,7 +67,7 @@ export function HeatmapWidget({
     [dailyResult, topN],
   );
 
-  if (spec.type !== 'heatmap' || specGroupBy === undefined || activeGroupBy === undefined) return null;
+  if (spec.type !== 'heatmap' || effectiveGroupBy === undefined || activeGroupBy === undefined) return null;
 
   const label = dimensionLabelFor(dimensions, activeGroupBy);
 
@@ -78,7 +82,7 @@ export function HeatmapWidget({
       cells={cells}
       groups={groups}
       dates={dates}
-      title={spec.title ?? `${label} × Day`}
+      title={spec.title ?? <GroupByTitle dimensions={dimensions} currentGroupBy={activeGroupBy} onGroupByChange={setGroupByOverride} label={label} suffix="× Day" />}
       subtitle="Click a cell to filter"
       onCellClick={(group) => { onSetFilter(activeGroupBy, asTagValue(group)); }}
     />
