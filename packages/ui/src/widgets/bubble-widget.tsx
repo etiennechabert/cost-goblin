@@ -63,6 +63,7 @@ export function BubbleWidget({
       </div>
       <BubbleChart
         data={data}
+        logScale={spec.logScale}
         onEntityClick={(entity) => { onEntityClick?.(entity, effectiveGroupBy); }}
       />
     </div>

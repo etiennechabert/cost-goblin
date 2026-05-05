@@ -103,6 +103,14 @@ function validateGroupByWidget(raw: Record<string, unknown>, ctx: string, base: 
     return { type, ...base, groupBy, ...(drillTo === undefined ? {} : { drillTo }) };
   }
   if (type === 'pie') return { type, ...base, groupBy };
+  if (type === 'bubble') {
+    let logScale: number | undefined;
+    if (raw['logScale'] !== undefined) {
+      assertNumber(raw['logScale'], `${ctx}.logScale`);
+      logScale = raw['logScale'];
+    }
+    return { type, ...base, groupBy, ...(logScale === undefined ? {} : { logScale }) };
+  }
   return { type, ...base, groupBy };
 }
 

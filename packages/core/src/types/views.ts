@@ -53,6 +53,7 @@ export type WidgetSpec =
   | (WidgetBase & {
       readonly type: 'bubble';
       readonly groupBy: DimensionId;
+      readonly logScale?: number | undefined;
     })
   | (WidgetBase & {
       readonly type: 'table';

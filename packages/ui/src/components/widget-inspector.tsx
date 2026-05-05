@@ -35,8 +35,9 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
     case 'pie':
       return { ...common, type: w.type, groupBy: w.groupBy, ...(w.showLegend === false ? { showLegend: false } : {}) };
     case 'stackedBar':
-    case 'bubble':
       return { ...common, type: w.type, groupBy: w.groupBy };
+    case 'bubble':
+      return { ...common, type: w.type, groupBy: w.groupBy, ...(w.logScale === undefined ? {} : { logScale: w.logScale }) };
     case 'treemap':
       return { ...common, type: w.type, groupBy: w.groupBy, ...(w.drillTo === undefined ? {} : { drillTo: w.drillTo }) };
     case 'line':
@@ -61,8 +62,9 @@ function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: str
     case 'pie':
       return { ...base, type, groupBy: existingGroupBy };
     case 'stackedBar':
-    case 'bubble':
       return { ...base, type, groupBy: existingGroupBy };
+    case 'bubble':
+      return { ...base, type, groupBy: existingGroupBy, ...('logScale' in prev && prev.logScale !== undefined ? { logScale: prev.logScale } : {}) };
     case 'treemap':
       return { ...base, type, groupBy: existingGroupBy };
     case 'line':
@@ -230,6 +232,23 @@ export function WidgetInspector({
             ].join(' ')} />
           </button>
         </div>
+      )}
+
+      {widget.type === 'bubble' && (
+        <label className="flex items-center gap-2">
+          <span className="text-text-muted shrink-0 w-14">Log scale</span>
+          <input
+            type="number"
+            min={1}
+            max={1000}
+            value={widget.logScale ?? 10}
+            onChange={(e) => {
+              const v = Number.parseInt(e.target.value, 10);
+              if (Number.isFinite(v) && v >= 1) onChange({ ...widget, logScale: v });
+            }}
+            className="w-20 bg-transparent border border-border rounded px-2 py-1 text-text-primary"
+          />
+        </label>
       )}
 
       {(widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap') && (
