@@ -9,7 +9,7 @@ function findAwsCli(): string {
 
   const candidates = process.platform === 'win32'
     ? [
-        join(process.env['PROGRAMFILES'] ?? 'C:\\Program Files', 'Amazon', 'AWSCLIV2', 'aws.exe'),
+        join(process.env['PROGRAMFILES'] ?? String.raw`C:\Program Files`, 'Amazon', 'AWSCLIV2', 'aws.exe'),
       ]
     : [
         '/opt/homebrew/bin/aws',

@@ -72,6 +72,21 @@ export interface AliasSuggestion {
   readonly aliases: readonly string[];
 }
 
+function getOrCreateSet(map: Map<string, Set<string>>, key: string): Set<string> {
+  let set = map.get(key);
+  if (set === undefined) {
+    set = new Set();
+    map.set(key, set);
+  }
+  return set;
+}
+
+function linkIfSimilar(adjacent: Map<string, Set<string>>, a: string, b: string, threshold: number): void {
+  if (!isSimilar(a, b, threshold)) return;
+  getOrCreateSet(adjacent, a).add(b);
+  getOrCreateSet(adjacent, b).add(a);
+}
+
 function buildAdjacencyMap(
   values: readonly string[],
   threshold: number,
@@ -80,14 +95,11 @@ function buildAdjacencyMap(
   for (let i = 0; i < values.length; i++) {
     const a = values[i];
     if (a === undefined) continue;
-    if (!adjacent.has(a)) adjacent.set(a, new Set());
+    getOrCreateSet(adjacent, a);
     for (let j = i + 1; j < values.length; j++) {
       const b = values[j];
       if (b === undefined) continue;
-      if (!isSimilar(a, b, threshold)) continue;
-      adjacent.get(a)?.add(b);
-      if (!adjacent.has(b)) adjacent.set(b, new Set());
-      adjacent.get(b)?.add(a);
+      linkIfSimilar(adjacent, a, b, threshold);
     }
   }
   return adjacent;

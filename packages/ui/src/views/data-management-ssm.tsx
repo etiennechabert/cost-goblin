@@ -8,6 +8,72 @@ type SyncState =
   | { status: 'done'; count: number }
   | { status: 'error'; message: string };
 
+function SyncingIndicator() {
+  return (
+    <div className="flex items-center gap-2 text-xs text-accent mt-2">
+      <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
+      <span>Fetching region friendly names…</span>
+    </div>
+  );
+}
+
+function NoDataBanner({ hasError, info, syncState, profile, onSync }: Readonly<{
+  hasError: boolean;
+  info: { lastError?: string | null | undefined } | null;
+  syncState: SyncState;
+  profile: string | null;
+  onSync: () => void;
+}>) {
+  const borderClass = hasError ? 'border-negative/50 bg-negative-muted' : 'border-warning/50 bg-warning-muted';
+  const iconClass = hasError ? 'text-negative text-lg' : 'text-warning text-lg';
+  const titleClass = hasError ? 'text-negative' : 'text-warning';
+  const title = hasError ? 'Region Names sync failed' : 'Region Names not synced';
+  const description = hasError
+    ? (info?.lastError ?? 'Unknown error')
+    : 'Sync region friendly names from SSM to enrich the Region dimension with country and continent.';
+  const buttonLabel = hasError ? 'Retry sync' : 'Sync region names';
+
+  return (
+    <div className={`rounded-xl border p-4 ${borderClass}`}>
+      <div className="flex items-start gap-3">
+        <span className={iconClass}>&#9888;</span>
+        <div className="flex-1">
+          <p className={`text-sm font-medium ${titleClass}`}>{title}</p>
+          <p className="text-xs text-text-secondary mt-1 leading-relaxed">{description}</p>
+
+          {syncState.status === 'syncing' && <SyncingIndicator />}
+
+          {profile !== null && syncState.status !== 'syncing' && (
+            <button
+              type="button"
+              onClick={onSync}
+              className="mt-3 rounded-md border border-accent/50 bg-accent/10 px-4 py-1.5 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
+            >
+              {buttonLabel}
+            </button>
+          )}
+          {profile === null && (
+            <p className="text-xs text-text-muted mt-2">Configure an AWS profile first via the setup wizard.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function filterRegions(
+  regionEntries: readonly [string, { longName: string; country: string; continent: string }][],
+  search: string,
+): readonly [string, { longName: string; country: string; continent: string }][] {
+  if (search.length === 0) return regionEntries;
+  const needle = search.toLowerCase();
+  return regionEntries.filter(([code, r]) =>
+    code.toLowerCase().includes(needle) ||
+    r.longName.toLowerCase().includes(needle) ||
+    r.country.toLowerCase().includes(needle) ||
+    r.continent.toLowerCase().includes(needle));
+}
+
 /** Cached Region Names data — lives separately from the AWS Org sync
  *  conceptually (different API, different IAM perms) so it gets its own UI
  *  block + own re-sync action. We cache per-region metadata published under
@@ -49,58 +115,17 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
   const regionEntries = info === null
     ? []
     : Object.entries(info.regions).sort(([a], [b]) => a.localeCompare(b));
-  const needle = regionSearch.toLowerCase();
-  const filteredRegions = regionSearch.length > 0
-    ? regionEntries.filter(([code, r]) =>
-      code.toLowerCase().includes(needle) ||
-      r.longName.toLowerCase().includes(needle) ||
-      r.country.toLowerCase().includes(needle) ||
-      r.continent.toLowerCase().includes(needle))
-    : regionEntries;
+  const filteredRegions = filterRegions(regionEntries, regionSearch);
 
   if (!hasData) {
     return (
-      <div className={[
-        'rounded-xl border p-4',
-        hasError ? 'border-negative/50 bg-negative-muted' : 'border-warning/50 bg-warning-muted',
-      ].join(' ')}>
-        <div className="flex items-start gap-3">
-          <span className={hasError ? 'text-negative text-lg' : 'text-warning text-lg'}>&#9888;</span>
-          <div className="flex-1">
-            <p className={[
-              'text-sm font-medium',
-              hasError ? 'text-negative' : 'text-warning',
-            ].join(' ')}>
-              {hasError ? 'Region Names sync failed' : 'Region Names not synced'}
-            </p>
-            <p className="text-xs text-text-secondary mt-1 leading-relaxed">
-              {hasError
-                ? (info.lastError ?? 'Unknown error')
-                : 'Sync region friendly names from SSM to enrich the Region dimension with country and continent.'}
-            </p>
-
-            {syncState.status === 'syncing' && (
-              <div className="flex items-center gap-2 text-xs text-accent mt-2">
-                <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
-                <span>Fetching region friendly names…</span>
-              </div>
-            )}
-
-            {profile !== null && syncState.status !== 'syncing' && (
-              <button
-                type="button"
-                onClick={() => { handleSync().catch(() => undefined); }}
-                className="mt-3 rounded-md border border-accent/50 bg-accent/10 px-4 py-1.5 text-xs font-medium text-accent hover:bg-accent/20 transition-colors"
-              >
-                {hasError ? 'Retry sync' : 'Sync region names'}
-              </button>
-            )}
-            {profile === null && (
-              <p className="text-xs text-text-muted mt-2">Configure an AWS profile first via the setup wizard.</p>
-            )}
-          </div>
-        </div>
-      </div>
+      <NoDataBanner
+        hasError={hasError}
+        info={info}
+        syncState={syncState}
+        profile={profile}
+        onSync={() => { handleSync().catch(() => undefined); }}
+      />
     );
   }
 
@@ -164,10 +189,7 @@ export function SsmParameterSection({ profile }: Readonly<{ profile: string | nu
 
       {syncState.status === 'syncing' && (
         <div className="px-4 pb-2">
-          <div className="flex items-center gap-2 text-xs text-accent">
-            <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
-            <span>Fetching region friendly names…</span>
-          </div>
+          <SyncingIndicator />
         </div>
       )}
 

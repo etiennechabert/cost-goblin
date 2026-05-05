@@ -80,6 +80,72 @@ function generateFixtureRow(date: string, cfg: FixtureConfig, rand: () => number
   return `(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', '${meta.family}', '${operation}', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(cost)}, ${String(netCost)}, ${String(listCost)}, NULL, NULL, NULL, NULL, 'Usage', '${operation}', 'Usage', MAP {${tagEntries.join(', ')}})`;
 }
 
+interface ActionType {
+  action: string;
+  resourceType: string;
+  service: string;
+  efforts: readonly string[];
+}
+
+const INSTANCE_TYPES = ['t3.micro', 't3.small', 't3.medium', 'm5.large', 'm5.xlarge', 'r5.large', 'r5.xlarge', 'c5.large', 'c5.xlarge'];
+const RDS_TYPES = ['db.t3.micro', 'db.t3.small', 'db.t4g.medium', 'db.r5.large', 'db.r5.xlarge'];
+
+function generateRecSummaries(at: ActionType, region: string, rand: () => number): { summary: string; currentSummary: string; currentDetails: string; recommendedDetails: string } {
+  if (at.action === 'Rightsize' && at.resourceType === 'Ec2Instance') {
+    const curr = pick(INSTANCE_TYPES, rand);
+    const rec = pick(INSTANCE_TYPES, rand);
+    return {
+      currentSummary: `${curr} in ${region}`,
+      summary: `${rec} in ${region}`,
+      currentDetails: `{"instanceType": "${curr}", "vcpus": "2", "memory": "8 GiB"}`,
+      recommendedDetails: `{"instanceType": "${rec}", "vcpus": "2", "memory": "4 GiB"}`,
+    };
+  }
+  if (at.resourceType === 'RdsDbInstance' || at.resourceType === 'RdsReservedInstances') {
+    const curr = pick(RDS_TYPES, rand);
+    const rec = pick(RDS_TYPES, rand);
+    return {
+      currentSummary: `${curr} MySQL in ${region}`,
+      summary: at.action === 'PurchaseReservedInstances' ? `${String(Math.floor(rand() * 5 + 1))} ${curr} MySQL in ${region}` : `${rec} MySQL in ${region}`,
+      currentDetails: `{"instanceType": "${curr}", "engine": "MySQL", "multiAZ": "false"}`,
+      recommendedDetails: `{"instanceType": "${rec}", "engine": "MySQL"}`,
+    };
+  }
+  if (at.action === 'Delete') {
+    return {
+      currentSummary: `Unused ${at.resourceType} in ${region}`,
+      summary: `Delete unused ${at.resourceType}`,
+      currentDetails: '',
+      recommendedDetails: '',
+    };
+  }
+  return { summary: `${at.resourceType} in ${region}`, currentSummary: '', currentDetails: '', recommendedDetails: '' };
+}
+
+function generateCostOptRows(actionTypes: readonly ActionType[], cfg: FixtureConfig, rand: () => number): string[] {
+  const rows: string[] = [];
+  for (let i = 0; i < 25; i++) {
+    const at = pick(actionTypes, rand);
+    const account = weightedPick(cfg.accounts, rand);
+    const region = pick(cfg.regions, rand);
+    const effort = pick(at.efforts, rand);
+    const monthlyCost = Math.round((rand() * 4000 + 100) * 100) / 100;
+    const savingsPct = Math.round((rand() * 60 + 10) * 100) / 100;
+    const monthlySavings = Math.round(monthlyCost * savingsPct / 100 * 100) / 100;
+    const recId = `rec-${String(i).padStart(4, '0')}`;
+    const arn = `arn:aws:${at.service}:${region}:${account.id}:${at.resourceType.toLowerCase()}/${String(Math.floor(rand() * 10000))}`;
+
+    const { summary, currentSummary, currentDetails, recommendedDetails } = generateRecSummaries(at, region, rand);
+
+    const source = rand() < 0.6 ? 'ComputeOptimizer' : 'CostExplorer';
+    const restart = at.action === 'Rightsize' ? (rand() < 0.4) : false;
+    const rollback = at.action !== 'Delete';
+
+    rows.push(`('${recId}', '${account.id}', '${account.name}', '${at.action}', '${at.resourceType}', '${summary.replaceAll("'", "''")}', '${region}', ${String(monthlySavings)}, ${String(monthlyCost)}, ${String(savingsPct)}, '${effort}', '${arn}', '${currentDetails.replaceAll("'", "''")}', '${recommendedDetails.replaceAll("'", "''")}', '${currentSummary.replaceAll("'", "''")}', ${String(restart)}, ${String(rollback)}, '${source}')`);
+  }
+  return rows;
+}
+
 export async function setup(): Promise<void> {
   const dailyParquet = join(SYNTHETIC_DIR, 'aws', 'raw', 'daily-2026-01', 'data.parquet');
   try {
@@ -194,52 +260,7 @@ export async function setup(): Promise<void> {
     { action: 'Rightsize', resourceType: 'RdsDbInstance', service: 'rds', efforts: ['Medium', 'High'] as const },
   ];
 
-  const instanceTypes = ['t3.micro', 't3.small', 't3.medium', 'm5.large', 'm5.xlarge', 'r5.large', 'r5.xlarge', 'c5.large', 'c5.xlarge'];
-  const rdsTypes = ['db.t3.micro', 'db.t3.small', 'db.t4g.medium', 'db.r5.large', 'db.r5.xlarge'];
-  const costOptRows: string[] = [];
-
-  for (let i = 0; i < 25; i++) {
-    const at = pick(actionTypes, rand);
-    const account = weightedPick(cfg.accounts, rand);
-    const region = pick(cfg.regions, rand);
-    const effort = pick(at.efforts, rand);
-    const monthlyCost = Math.round((rand() * 4000 + 100) * 100) / 100;
-    const savingsPct = Math.round((rand() * 60 + 10) * 100) / 100;
-    const monthlySavings = Math.round(monthlyCost * savingsPct / 100 * 100) / 100;
-    const recId = `rec-${String(i).padStart(4, '0')}`;
-    const arn = `arn:aws:${at.service}:${region}:${account.id}:${at.resourceType.toLowerCase()}/${String(Math.floor(rand() * 10000))}`;
-
-    let currentSummary = '';
-    let summary = '';
-    let currentDetails = '';
-    let recommendedDetails = '';
-    if (at.action === 'Rightsize' && at.resourceType === 'Ec2Instance') {
-      const curr = pick(instanceTypes, rand);
-      const rec = pick(instanceTypes, rand);
-      currentSummary = `${curr} in ${region}`;
-      summary = `${rec} in ${region}`;
-      currentDetails = `{"instanceType": "${curr}", "vcpus": "2", "memory": "8 GiB"}`;
-      recommendedDetails = `{"instanceType": "${rec}", "vcpus": "2", "memory": "4 GiB"}`;
-    } else if (at.resourceType === 'RdsDbInstance' || at.resourceType === 'RdsReservedInstances') {
-      const curr = pick(rdsTypes, rand);
-      const rec = pick(rdsTypes, rand);
-      currentSummary = `${curr} MySQL in ${region}`;
-      summary = at.action === 'PurchaseReservedInstances' ? `${String(Math.floor(rand() * 5 + 1))} ${curr} MySQL in ${region}` : `${rec} MySQL in ${region}`;
-      currentDetails = `{"instanceType": "${curr}", "engine": "MySQL", "multiAZ": "false"}`;
-      recommendedDetails = `{"instanceType": "${rec}", "engine": "MySQL"}`;
-    } else if (at.action === 'Delete') {
-      currentSummary = `Unused ${at.resourceType} in ${region}`;
-      summary = `Delete unused ${at.resourceType}`;
-    } else {
-      summary = `${at.resourceType} in ${region}`;
-    }
-
-    const source = rand() < 0.6 ? 'ComputeOptimizer' : 'CostExplorer';
-    const restart = at.action === 'Rightsize' ? (rand() < 0.4) : false;
-    const rollback = at.action !== 'Delete';
-
-    costOptRows.push(`('${recId}', '${account.id}', '${account.name}', '${at.action}', '${at.resourceType}', '${summary.replace(/'/g, "''")}', '${region}', ${String(monthlySavings)}, ${String(monthlyCost)}, ${String(savingsPct)}, '${effort}', '${arn}', '${currentDetails.replace(/'/g, "''")}', '${recommendedDetails.replace(/'/g, "''")}', '${currentSummary.replace(/'/g, "''")}', ${String(restart)}, ${String(rollback)}, '${source}')`);
-  }
+  const costOptRows = generateCostOptRows(actionTypes, cfg, rand);
 
   await conn.run(`
     CREATE TABLE cost_opt (

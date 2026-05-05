@@ -87,7 +87,7 @@ export function LineWidget({
   );
 
   const currentDates = useMemo(
-    () => (dailyResult !== null ? dailyResult.days.map(d => d.date) : []),
+    () => (dailyResult === null ? [] : dailyResult.days.map(d => d.date)),
     [dailyResult],
   );
 

@@ -92,7 +92,9 @@ function TreemapInner({
                       const prev = previousCosts?.get(name);
                       const d = prev !== undefined && prev > 0 ? ((cost - prev) / prev) * 100 : undefined;
                       const base = `${name} — ${formatDollars(cost)}`;
-                      return d !== undefined ? `${base} (${d >= 0 ? '↑' : '↓'}${Math.abs(d).toFixed(1)}%)` : base;
+                      if (d === undefined) return base;
+                      const arrow = d >= 0 ? '↑' : '↓';
+                      return `${base} (${arrow}${Math.abs(d).toFixed(1)}%)`;
                     })()}</title>
                   </rect>
                   {showLabel && (() => {

@@ -484,10 +484,10 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }
 
   function handleWelcomeNext() {
-    if (renderAfterWelcome !== undefined) {
-      setWizard({ step: 'after-welcome' });
-    } else {
+    if (renderAfterWelcome === undefined) {
       goToProfileStep();
+    } else {
+      setWizard({ step: 'after-welcome' });
     }
   }
 
@@ -570,10 +570,10 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     if (wizard.step === 'after-welcome') {
       setWizard({ step: 'welcome' });
     } else if (wizard.step === 'profile') {
-      if (renderAfterWelcome !== undefined) {
-        setWizard({ step: 'after-welcome' });
-      } else {
+      if (renderAfterWelcome === undefined) {
         setWizard({ step: 'welcome' });
+      } else {
+        setWizard({ step: 'after-welcome' });
       }
     } else if (wizard.step === 'bucket') {
       if (wizard.source === 'daily') {
@@ -598,7 +598,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <img src="goblin.png" alt="CostGoblin" className="h-16 w-auto" />
           </div>
           {wizard.step === 'welcome' && <WelcomeStep onNext={handleWelcomeNext} />}
-          {wizard.step === 'after-welcome' && renderAfterWelcome !== undefined && renderAfterWelcome(goToProfileStep)}
+          {wizard.step === 'after-welcome' && renderAfterWelcome?.(goToProfileStep)}
           {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={onComplete} onBack={handleBack} />}
           {wizard.step === 'bucket' && (
             <BucketStep

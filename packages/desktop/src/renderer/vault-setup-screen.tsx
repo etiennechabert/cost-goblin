@@ -47,7 +47,7 @@ export function VaultSetupScreen({ onComplete }: VaultSetupScreenProps): React.J
           </button>
           <button
             type="button"
-            onClick={() => { void globalThis.costgoblinVault.setup(null).then(onComplete); }}
+            onClick={() => { globalThis.costgoblinVault.setup(null).then(onComplete).catch(() => undefined); }}
             className="w-full rounded-lg border border-border bg-bg-tertiary/20 p-4 text-left hover:border-border hover:bg-bg-tertiary/40 transition-colors"
           >
             <span className="text-sm font-medium text-text-primary">No thanks</span>
@@ -67,10 +67,11 @@ export function VaultSetupScreen({ onComplete }: VaultSetupScreenProps): React.J
         </p>
       </div>
 
-      <form onSubmit={(e) => { void handleSubmit(e); }} className="space-y-4">
+      <form onSubmit={(e) => { handleSubmit(e).catch(() => undefined); }} className="space-y-4">
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Password</label>
+          <label htmlFor="vault-password" className="block text-xs font-medium text-text-secondary mb-1.5">Password</label>
           <input
+            id="vault-password"
             type="password"
             value={password}
             onChange={(e) => { setPassword(e.target.value); setError(null); }}
@@ -79,8 +80,9 @@ export function VaultSetupScreen({ onComplete }: VaultSetupScreenProps): React.J
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1.5">Confirm password</label>
+          <label htmlFor="vault-confirm-password" className="block text-xs font-medium text-text-secondary mb-1.5">Confirm password</label>
           <input
+            id="vault-confirm-password"
             type="password"
             value={confirmPassword}
             onChange={(e) => { setConfirmPassword(e.target.value); setError(null); }}

@@ -70,7 +70,7 @@ function PieChartInner({
   const { palette } = usePalette();
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const hoveredName = externalHoveredName ?? localHovered;
-  const legendRefs = useRef(new Map<string, HTMLDivElement>());
+  const legendRefs = useRef(new Map<string, HTMLElement>());
 
   useEffect(() => {
     if (hoveredName !== null) {
@@ -207,63 +207,83 @@ function PieChartInner({
             const isHovered = hoveredName === d.name;
             const isDimmed = hoveredName !== null && !isHovered;
 
+            const isInteractive = d.name !== OTHER_KEY && onSliceClick !== undefined;
+            const itemClassName = [
+              'rounded text-[11px] transition-colors w-full text-left',
+              isInteractive ? 'cursor-pointer' : '',
+              isHovered ? 'bg-accent-muted/50 px-1.5 py-1' : 'flex items-center gap-1.5 px-1.5 py-0.5',
+            ].join(' ');
+            const itemRef = (el: HTMLElement | null) => { if (el === null) { legendRefs.current.delete(d.name); } else { legendRefs.current.set(d.name, el); } };
+            const itemProps = {
+              onMouseEnter: () => { handleMouseEnter(d.name); },
+              onMouseLeave: handleMouseLeave,
+            };
+
+            const content = isHovered ? (
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+                  <span className="font-semibold text-text-primary text-xs break-all">{d.name}</span>
+                </div>
+                <div className="flex items-center gap-2 pl-4">
+                  <span className="tabular-nums text-text-primary font-medium">{formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)</span>
+                  {(() => {
+                    const prev = previousCosts?.get(d.name);
+                    if (prev === undefined || prev <= 0) return null;
+                    const pctDelta = ((d.cost - prev) / prev) * 100;
+                    return (
+                      <span className={`text-[10px] tabular-nums ${pctDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                        {pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
+                      </span>
+                    );
+                  })()}
+                </div>
+              </div>
+            ) : (
+              <>
+                <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+                <span className={`truncate min-w-0 flex-1 ${legendTextClass(isDimmed, isHovered)}`}>
+                  {d.name}
+                </span>
+                <span className={`tabular-nums shrink-0 whitespace-nowrap ${legendTextClass(isDimmed, isHovered)}`}>
+                  {formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)
+                </span>
+                {(() => {
+                  const prev = previousCosts?.get(d.name);
+                  if (prev === undefined || prev <= 0) return null;
+                  const pctDelta = ((d.cost - prev) / prev) * 100;
+                  return (
+                    <span className={`text-[10px] tabular-nums shrink-0 ${pctDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
+                      {pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
+                    </span>
+                  );
+                })()}
+              </>
+            );
+
+            if (isInteractive) {
+              return (
+                <button
+                  key={d.name}
+                  type="button"
+                  ref={itemRef}
+                  {...itemProps}
+                  onClick={() => { onSliceClick(d.name); }}
+                  className={`${itemClassName} bg-transparent border-none p-0 font-[inherit]`}
+                >
+                  {content}
+                </button>
+              );
+            }
+
             return (
               <div
                 key={d.name}
-                ref={(el) => { if (el === null) { legendRefs.current.delete(d.name); } else { legendRefs.current.set(d.name, el); } }}
-                onMouseEnter={() => { handleMouseEnter(d.name); }}
-                onMouseLeave={handleMouseLeave}
-                onClick={() => { if (d.name !== OTHER_KEY) onSliceClick?.(d.name); }}
-                onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && d.name !== OTHER_KEY) onSliceClick?.(d.name); }}
-                role={d.name !== OTHER_KEY && onSliceClick !== undefined ? 'button' : undefined}
-                tabIndex={d.name !== OTHER_KEY && onSliceClick !== undefined ? 0 : undefined}
-                className={[
-                  'rounded text-[11px] transition-colors',
-                  d.name !== OTHER_KEY && onSliceClick !== undefined ? 'cursor-pointer' : '',
-                  isHovered ? 'bg-accent-muted/50 px-1.5 py-1' : 'flex items-center gap-1.5 px-1.5 py-0.5',
-                ].join(' ')}
+                ref={itemRef}
+                {...itemProps}
+                className={itemClassName}
               >
-                {isHovered ? (
-                  <div className="flex flex-col gap-0.5">
-                    <div className="flex items-center gap-1.5">
-                      <span className="inline-block w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: color }} />
-                      <span className="font-semibold text-text-primary text-xs break-all">{d.name}</span>
-                    </div>
-                    <div className="flex items-center gap-2 pl-4">
-                      <span className="tabular-nums text-text-primary font-medium">{formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)</span>
-                      {(() => {
-                        const prev = previousCosts?.get(d.name);
-                        if (prev === undefined || prev <= 0) return null;
-                        const pctDelta = ((d.cost - prev) / prev) * 100;
-                        return (
-                          <span className={`text-[10px] tabular-nums ${pctDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
-                            {pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
-                          </span>
-                        );
-                      })()}
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <span className="inline-block w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
-                    <span className={`truncate min-w-0 flex-1 ${legendTextClass(isDimmed, isHovered)}`}>
-                      {d.name}
-                    </span>
-                    <span className={`tabular-nums shrink-0 whitespace-nowrap ${legendTextClass(isDimmed, isHovered)}`}>
-                      {formatDollars(d.cost)} ({d.percentage.toFixed(1)}%)
-                    </span>
-                    {(() => {
-                      const prev = previousCosts?.get(d.name);
-                      if (prev === undefined || prev <= 0) return null;
-                      const pctDelta = ((d.cost - prev) / prev) * 100;
-                      return (
-                        <span className={`text-[10px] tabular-nums shrink-0 ${pctDelta >= 0 ? 'text-negative' : 'text-positive'}`}>
-                          {pctDelta >= 0 ? '↑' : '↓'}{Math.abs(pctDelta).toFixed(1)}%
-                        </span>
-                      );
-                    })()}
-                  </>
-                )}
+                {content}
               </div>
             );
           })}

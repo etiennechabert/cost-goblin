@@ -25,7 +25,7 @@ export function SummaryCard({ totalCost, previousCost, dateRange, previousDateRa
 
   const rangeDays = Math.max(1, daysBetween(dateRange.start, dateRange.end));
   const dailyAvg = hasTotal ? totalCost / rangeDays : null;
-  const prevRangeDays = previousDateRange !== undefined ? Math.max(1, daysBetween(previousDateRange.start, previousDateRange.end)) : rangeDays;
+  const prevRangeDays = previousDateRange === undefined ? rangeDays : Math.max(1, daysBetween(previousDateRange.start, previousDateRange.end));
   const prevDailyAvg = hasPrevious ? previousCost / prevRangeDays : null;
 
   return (
@@ -75,7 +75,8 @@ export function SummaryCard({ totalCost, previousCost, dateRange, previousDateRa
             {dailyAvg === null ? PLACEHOLDER : formatDollars(dailyAvg)}
             {dailyAvg !== null && prevDailyAvg !== null && prevDailyAvg > 0 && (() => {
               const avgDiff = dailyAvg - prevDailyAvg;
-              const avgColor = avgDiff > 0 ? 'text-negative' : avgDiff < 0 ? 'text-positive' : 'text-text-secondary';
+              const innerColor = avgDiff < 0 ? 'text-positive' : 'text-text-secondary';
+              const avgColor = avgDiff > 0 ? 'text-negative' : innerColor;
               return (
                 <span className={`ml-2 text-xs font-medium ${avgColor}`}>
                   ({avgDiff >= 0 ? '+' : ''}{formatDollars(avgDiff)})
