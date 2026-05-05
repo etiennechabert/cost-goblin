@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
-import type { CostApi, Dimension, FilterMap, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
+import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagColumnName } from '@costgoblin/core/browser';
 import { Download, RefreshCw } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
@@ -19,7 +19,7 @@ function RamBadge(): React.JSX.Element {
   const [mb, setMb] = useState(0);
   useEffect(() => {
     function update(): void {
-      void globalThis.costgoblinDebug.getMemoryMB().then(setMb);
+      globalThis.costgoblinDebug.getMemoryMB().then(setMb).catch(() => undefined);
     }
     update();
     const id = setInterval(update, 1000);
@@ -124,6 +124,8 @@ function PaletteIcon() {
   );
 }
 
+type SyncActivity = 'idle' | 'syncing' | 'downloading';
+
 type VaultCheck =
   | { status: 'checking' }
   | { status: 'locked' }
@@ -143,7 +145,7 @@ function SyncAnnouncer({
   missingPeriods,
 }: Readonly<{
   syncError: string | null;
-  syncActivity: 'idle' | 'syncing' | 'downloading';
+  syncActivity: SyncActivity;
   syncFilesRemaining: number;
   missingPeriods: number;
 }>): React.JSX.Element {
@@ -284,17 +286,41 @@ export function App(): React.JSX.Element {
   );
 }
 
+type SyncStatusTuple = readonly [Awaited<ReturnType<CostApi['getAutoSyncStatus']>>, ...SyncStatus[]];
+
+function extractSyncError([autoStatus, ...statuses]: SyncStatusTuple): string | null {
+  if (autoStatus.state === 'error') return autoStatus.message;
+  const failed = statuses.find(s => s.status === 'failed');
+  if (failed?.status === 'failed') return failed.error.message;
+  return null;
+}
+
+function resolveSyncActivity([autoStatus, ...statuses]: SyncStatusTuple): SyncActivity {
+  const isDownloading = statuses.some(s => s.status === 'syncing') || autoStatus.state === 'syncing';
+  if (isDownloading) return 'downloading';
+  if (autoStatus.state === 'checking') return 'syncing';
+  return 'idle';
+}
+
+function countFilesRemaining(statuses: readonly SyncStatus[]): number {
+  let remaining = 0;
+  for (const s of statuses) {
+    if (s.status === 'syncing') remaining += s.filesTotal - s.filesDone;
+  }
+  return remaining;
+}
+
 function useSyncPolling(
   api: CostApi,
   setupCheck: SetupCheck,
 ): {
   syncError: string | null;
   setSyncError: React.Dispatch<React.SetStateAction<string | null>>;
-  syncActivity: 'idle' | 'syncing' | 'downloading';
+  syncActivity: SyncActivity;
   syncFilesRemaining: number;
 } {
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [syncActivity, setSyncActivity] = useState<'idle' | 'syncing' | 'downloading'>('idle');
+  const [syncActivity, setSyncActivity] = useState<SyncActivity>('idle');
   const [syncFilesRemaining, setSyncFilesRemaining] = useState(0);
 
   useEffect(() => {
@@ -309,26 +335,17 @@ function useSyncPolling(
           api.getSyncStatus('cost-optimization'),
         ]);
         if (cancelled) return;
-        const failed = [daily, hourly, costOpt].find(s => s.status === 'failed');
-        if (failed !== undefined || autoStatus.state === 'error') {
-          let msg = 'Sync failed';
-          if (autoStatus.state === 'error') msg = autoStatus.message;
-          else if (failed?.status === 'failed') msg = failed.error.message;
-          setSyncError(msg);
+        const tuple: SyncStatusTuple = [autoStatus, daily, hourly, costOpt];
+        const errorMsg = extractSyncError(tuple);
+        if (errorMsg !== null) {
+          setSyncError(errorMsg);
           setSyncActivity('idle');
-        } else {
-          const downloading = daily.status === 'syncing' || hourly.status === 'syncing' || costOpt.status === 'syncing' || autoStatus.state === 'syncing';
-          let activity: 'idle' | 'syncing' | 'downloading' = 'idle';
-          if (downloading) activity = 'downloading';
-          else if (autoStatus.state === 'checking') activity = 'syncing';
-          setSyncActivity(activity);
-          let remaining = 0;
-          for (const s of [daily, hourly, costOpt]) {
-            if (s.status === 'syncing') remaining += s.filesTotal - s.filesDone;
-          }
-          setSyncFilesRemaining(remaining);
-          setSyncError(downloading ? null : (prev => (prev?.includes('AWS credentials') ? prev : null)));
+          return;
         }
+        const activity = resolveSyncActivity(tuple);
+        setSyncActivity(activity);
+        setSyncFilesRemaining(countFilesRemaining([daily, hourly, costOpt]));
+        setSyncError(activity === 'downloading' ? null : (prev => (prev?.includes('AWS credentials') ? prev : null)));
       } catch { /* transient */ }
     }
     tick().catch(() => undefined);
@@ -406,6 +423,26 @@ function SplashScreen({ step }: Readonly<{ step: string }>): React.JSX.Element {
   );
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => { setTimeout(resolve, ms); });
+}
+
+async function prewarmDimensions(
+  api: CostApi,
+  setSplashStep: (step: string) => void,
+): Promise<void> {
+  const dims = await api.getDimensions().catch((): Dimension[] => []);
+  if (dims.length === 0) return;
+  const range = defaultDateRange();
+  let done = 0;
+  setSplashStep(`Loading dimensions 0/${String(dims.length)}...`);
+  await Promise.all(dims.map(async (dim) => {
+    await api.getFilterValues(dimId(dim), {}, range).catch(() => undefined);
+    done++;
+    setSplashStep(`Loading dimensions ${String(done)}/${String(dims.length)}...`);
+  }));
+}
+
 function AppShell(): React.JSX.Element {
   const api = useCostApi();
   const confirmLeave = useConfirmLeave();
@@ -429,13 +466,15 @@ function AppShell(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    const skipSplash = globalThis.costgoblinDebug.isE2E();
+    async function initialize(): Promise<void> {
+      const skipSplash = globalThis.costgoblinDebug.isE2E();
 
-    setSplashStep('Checking configuration...');
-    const vaultStatusCheck = globalThis.costgoblinVault.getStatus();
-    const statusCheck = api.getSetupStatus().then(({ configured }) => configured);
+      setSplashStep('Checking configuration...');
+      const [configured, vault] = await Promise.all([
+        api.getSetupStatus().then(({ configured: c }) => c),
+        globalThis.costgoblinVault.getStatus(),
+      ]);
 
-    void Promise.all([statusCheck, vaultStatusCheck]).then(async ([configured, vault]) => {
       if (!configured || vault.state === 'not-configured') {
         setVaultCheck({ status: 'unlocked' });
         setSetupCheck({ status: 'needs-setup' });
@@ -447,32 +486,18 @@ function AppShell(): React.JSX.Element {
         return;
       }
 
-      // Vault auto-unlocked (safeStorage) or already unlocked —
-      // pre-fetch dimensions so they're cached when the dashboard mounts.
-      // Load dimensions, then pre-warm filter values for each one so
-      // dropdowns open instantly when the dashboard appears.
-      const dims = await api.getDimensions().catch(() => [] as Dimension[]);
-      if (dims.length > 0) {
-        const range = defaultDateRange();
-        let done = 0;
-        setSplashStep(`Loading dimensions 0/${String(dims.length)}...`);
-        await Promise.all(dims.map(async (dim) => {
-          await api.getFilterValues(dimId(dim), {}, range).catch(() => undefined);
-          done++;
-          setSplashStep(`Loading dimensions ${String(done)}/${String(dims.length)}...`);
-        }));
-      }
+      await prewarmDimensions(api, setSplashStep);
 
       setSplashStep('Preparing dashboard...');
       if (!skipSplash) {
-        await new Promise<void>(resolve => {
-          setTimeout(() => { splashMinElapsed.current = true; resolve(); }, SPLASH_DURATION);
-        });
+        await delay(SPLASH_DURATION);
+        splashMinElapsed.current = true;
       }
 
       setVaultCheck({ status: 'unlocked' });
       setSetupCheck({ status: 'ready' });
-    }).catch(() => undefined);
+    }
+    initialize().catch(() => undefined);
   }, [api]);
 
   useEffect(() => {
@@ -595,7 +620,7 @@ function AppShell(): React.JSX.Element {
       <VaultLockScreen
         onUnlocked={() => {
           setVaultCheck({ status: 'unlocked' });
-          void api.getDimensions().catch(() => undefined);
+          prewarmDimensions(api, () => undefined).catch(() => undefined);
           setTimeout(() => {
             setSetupCheck({ status: 'ready' });
           }, SPLASH_DURATION);

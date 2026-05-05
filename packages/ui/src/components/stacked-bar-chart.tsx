@@ -62,21 +62,72 @@ function BarSegment({ seg, segTotal, highlightedGroup, palette, onMouseEnter, on
   const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
   const color = getColor(seg.colorIdx, palette);
   const isDimmed = highlightedGroup !== null && highlightedGroup !== undefined && highlightedGroup !== seg.key;
+  const baseStyle = {
+    height: `${String(pct)}%`,
+    backgroundColor: color,
+    opacity: isDimmed ? 0.25 : 0.85,
+    transition: 'opacity 0.15s',
+  };
+  if (onSegmentClick !== undefined) {
+    return (
+      <button
+        type="button"
+        onMouseEnter={onMouseEnter}
+        onClick={(e) => { e.stopPropagation(); onSegmentClick(seg.key); }}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onSegmentClick(seg.key); } }}
+        className="w-full cursor-pointer border-none p-0 m-0 bg-transparent block"
+        style={baseStyle}
+      />
+    );
+  }
   return (
     <div
       onMouseEnter={onMouseEnter}
-      onClick={(e) => { e.stopPropagation(); onSegmentClick?.(seg.key); }}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onSegmentClick?.(seg.key); } }}
-      role={onSegmentClick !== undefined ? 'button' : undefined}
-      tabIndex={onSegmentClick !== undefined ? 0 : undefined}
-      style={{
-        height: `${String(pct)}%`,
-        backgroundColor: color,
-        opacity: isDimmed ? 0.25 : 0.85,
-        transition: 'opacity 0.15s',
-        cursor: onSegmentClick !== undefined ? 'pointer' : undefined,
-      }}
+      style={baseStyle}
     />
+  );
+}
+
+type Segment = { readonly key: string; readonly value: number; readonly colorIdx: number };
+
+interface BarColumnProps {
+  readonly day: BarDay;
+  readonly segments: readonly Segment[];
+  readonly segTotal: number;
+  readonly barPct: number;
+  readonly highlightedGroup?: string | null | undefined;
+  readonly palette: readonly string[];
+  readonly onSegmentClick?: ((name: string) => void) | undefined;
+  readonly setHoveredDay: (date: string | null) => void;
+  readonly setHoveredSegment: (key: string | null) => void;
+}
+
+function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, palette, onSegmentClick, setHoveredDay, setHoveredSegment }: BarColumnProps) {
+  return (
+    <button
+      type="button"
+      className="group relative flex-1 min-w-0"
+      style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
+      onMouseEnter={() => { setHoveredDay(day.date); }}
+      onMouseLeave={() => { setHoveredDay(null); setHoveredSegment(null); }}
+    >
+      <div
+        className="w-full overflow-hidden rounded-t-sm"
+        style={{ height: `${String(barPct)}%`, minHeight: barPct > 0 ? '2px' : '0' }}
+      >
+        {segments.map(seg => (
+          <BarSegment
+            key={seg.key}
+            seg={seg}
+            segTotal={segTotal}
+            highlightedGroup={highlightedGroup}
+            palette={palette}
+            onMouseEnter={() => { setHoveredSegment(seg.key); }}
+            onSegmentClick={onSegmentClick}
+          />
+        ))}
+      </div>
+    </button>
   );
 }
 
@@ -98,7 +149,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
   }
   const breakdownKeys = [...allKeys];
 
-  const prevMax = previousTotals !== undefined ? previousTotals.reduce((m, v) => Math.max(m, v), 0) : 0;
+  const prevMax = previousTotals === undefined ? 0 : previousTotals.reduce((m, v) => Math.max(m, v), 0);
   const maxCost = Math.max(days.reduce((m, d) => Math.max(m, d.total), 0), prevMax);
 
   return (
@@ -180,7 +231,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             const day = days[idx];
             if (day === undefined) return null;
             const onLeft = idx < days.length / 2;
-            const prevPeriodTotal = previousTotals !== undefined ? previousTotals[idx] : undefined;
+            const prevPeriodTotal = previousTotals === undefined ? undefined : previousTotals[idx];
             const prev = idx > 0 ? days[idx - 1] : undefined;
             const compTotal = prevPeriodTotal ?? prev?.total;
             const totalDelta = compTotal !== undefined && compTotal > 0
@@ -257,32 +308,18 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
               const segTotal = segments.reduce((sum, s) => sum + s.value, 0);
 
               return (
-                <button
-                  type="button"
+                <BarColumn
                   key={day.date}
-                  className="group relative flex-1 min-w-0"
-                  style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
-                  onMouseEnter={() => { setHoveredDay(day.date); }}
-                  onMouseLeave={() => { setHoveredDay(null); setHoveredSegment(null); }}
-                >
-                  <div
-                    className="w-full overflow-hidden rounded-t-sm"
-                    style={{ height: `${String(barPct)}%`, minHeight: barPct > 0 ? '2px' : '0' }}
-                  >
-                    {segments.map(seg => (
-                      <BarSegment
-                        key={seg.key}
-                        seg={seg}
-                        segTotal={segTotal}
-                        highlightedGroup={highlightedGroup}
-                        palette={palette}
-                        onMouseEnter={() => { setHoveredSegment(seg.key); }}
-                        onSegmentClick={onSegmentClick}
-                      />
-                    ))}
-                  </div>
-
-                </button>
+                  day={day}
+                  segments={segments}
+                  segTotal={segTotal}
+                  barPct={barPct}
+                  highlightedGroup={highlightedGroup}
+                  palette={palette}
+                  onSegmentClick={onSegmentClick}
+                  setHoveredDay={setHoveredDay}
+                  setHoveredSegment={setHoveredSegment}
+                />
               );
             })}
           </div>

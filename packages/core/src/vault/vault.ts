@@ -11,8 +11,8 @@ interface ScryptOptions {
 function scryptAsync(password: string, salt: Buffer, keylen: number, options: ScryptOptions): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     scrypt(password, salt, keylen, options, (err, derivedKey) => {
-      if (err !== null) reject(err);
-      else resolve(derivedKey);
+      if (err === null) resolve(derivedKey);
+      else reject(err);
     });
   });
 }

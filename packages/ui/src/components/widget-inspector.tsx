@@ -213,22 +213,23 @@ export function WidgetInspector({
       </label>
 
       {widget.type === 'pie' && (
-        <label className="flex items-center gap-2">
-          <span className="text-text-muted shrink-0 w-14">Legend</span>
+        <div className="flex items-center gap-2">
+          <span className="text-text-muted shrink-0 w-14" id={`legend-toggle-${widget.id}`}>Legend</span>
           <button
             type="button"
+            aria-labelledby={`legend-toggle-${widget.id}`}
             onClick={() => { onChange({ ...widget, showLegend: widget.showLegend === false ? undefined : false }); }}
             className={[
               'relative h-5 w-9 rounded-full transition-colors',
-              widget.showLegend !== false ? 'bg-accent' : 'bg-bg-tertiary',
+              widget.showLegend === false ? 'bg-bg-tertiary' : 'bg-accent',
             ].join(' ')}
           >
             <span className={[
               'absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform',
-              widget.showLegend !== false ? 'translate-x-4' : 'translate-x-0',
+              widget.showLegend === false ? 'translate-x-0' : 'translate-x-4',
             ].join(' ')} />
           </button>
-        </label>
+        </div>
       )}
 
       {(widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap') && (

@@ -8,6 +8,7 @@ import {
   logger,
 } from '@costgoblin/core';
 import type {
+  CostGoblinConfig,
   DataInventory,
   ManifestFileEntry,
   AccountMappingStatus,
@@ -16,6 +17,8 @@ import type {
 } from '@costgoblin/core';
 import {
   type AppContext,
+  type AppState,
+  type IpcContext,
   isCredentialError,
   toUserFriendlyError,
 } from './context.js';
@@ -26,6 +29,70 @@ function resolveDataType(syncId: string): ExpectedDataType {
   if (syncId === 'hourly') return 'hourly';
   if (syncId === 'cost-optimization') return 'cost-optimization';
   return 'daily';
+}
+
+function resolveBucketPath(config: CostGoblinConfig, syncId: string): string {
+  const provider = config.providers[0];
+  if (provider === undefined) throw new Error('No provider configured');
+  if (syncId === 'hourly') {
+    return provider.sync.hourly?.bucket ?? provider.sync.daily.bucket;
+  }
+  if (syncId === 'cost-optimization') {
+    const costOptBucket = provider.sync.costOptimization?.bucket;
+    if (costOptBucket === undefined) throw new Error('Cost optimization not configured');
+    return costOptBucket;
+  }
+  return provider.sync.daily.bucket;
+}
+
+function matchesPeriodPrefix(entry: string, prefix: string, period: string): boolean {
+  return entry === `${prefix}-${period}` || entry.startsWith(`${prefix}-${period}-`);
+}
+
+async function removeMatchingDirs(
+  dir: string,
+  prefix: string,
+  period: string,
+  fs: typeof import('node:fs/promises'),
+  path: typeof import('node:path'),
+): Promise<boolean> {
+  let removedAny = false;
+  try {
+    const entries = await fs.readdir(dir);
+    for (const entry of entries) {
+      if (!matchesPeriodPrefix(entry, prefix, period)) continue;
+      await fs.rm(path.join(dir, entry), { recursive: true });
+      removedAny = true;
+    }
+  } catch {
+    // dir may not exist
+  }
+  return removedAny;
+}
+
+async function pruneEtagFile(
+  etagPath: string,
+  period: string,
+  fs: typeof import('node:fs/promises'),
+): Promise<void> {
+  try {
+    const raw = await fs.readFile(etagPath, 'utf-8');
+    const etags = parseEtagsJson(raw);
+    const kept: Record<string, Record<string, string>> = {};
+    let changed = false;
+    for (const [key, value] of Object.entries(etags)) {
+      if (key === period || key.startsWith(`${period}-`)) {
+        changed = true;
+        continue;
+      }
+      kept[key] = value;
+    }
+    if (changed) {
+      await fs.writeFile(etagPath, JSON.stringify(kept, null, 2));
+    }
+  } catch {
+    // etag file may not exist
+  }
 }
 
 export function registerSyncHandlers(app: AppContext): void {
@@ -42,16 +109,7 @@ export function registerSyncHandlers(app: AppContext): void {
     const provider = config.providers[0];
     if (provider === undefined) throw new Error('No provider configured');
     const t = tier ?? 'daily';
-    let bucket: string;
-    if (t === 'hourly') {
-      bucket = provider.sync.hourly?.bucket ?? provider.sync.daily.bucket;
-    } else if (t === 'cost-optimization') {
-      const costOptBucket = provider.sync.costOptimization?.bucket;
-      if (costOptBucket === undefined) throw new Error('Cost optimization not configured');
-      bucket = costOptBucket;
-    } else {
-      bucket = provider.sync.daily.bucket;
-    }
+    const bucket = resolveBucketPath(config, t);
     try {
       return await getDataInventory(bucket, provider.credentials.profile, ctx.storageDataDir, t);
     } catch (err: unknown) {
@@ -66,59 +124,21 @@ export function registerSyncHandlers(app: AppContext): void {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
 
-    // Data files for a period live under aws/raw/{prefix}-{period}/.
-    // For cost-optimization the period field is a YYYY-MM-DD (per-day download)
-    // — the directory name is e.g. cost-opt-2026-04-08 — so match on
-    // ${prefix}-${period} OR ${prefix}-${period}-* to cover both cases.
     const prefix = getRawDirPrefix(tier);
     const storageDir = ctx.storageDataDir;
     const rawDir = path.join(storageDir, 'aws', 'raw');
-    let removedAny = false;
-    try {
-      const entries = await fs.readdir(rawDir);
-      for (const entry of entries) {
-        if (entry === `${prefix}-${period}` || entry.startsWith(`${prefix}-${period}-`)) {
-          await fs.rm(path.join(rawDir, entry), { recursive: true });
-          logger.info(`Deleted local data (${tier}): ${entry}`);
-          removedAny = true;
-        }
-      }
-    } catch {
-      // raw dir may not exist
+
+    const removedAny = await removeMatchingDirs(rawDir, prefix, period, fs, path);
+    if (removedAny) {
+      logger.info(`Deleted local data (${tier}): ${prefix}-${period}*`);
     }
 
-    // Also remove from temp dir so DuckDB doesn't query stale data
     const tempRawDir = path.join(ctx.dataDir, 'aws', 'raw');
     if (tempRawDir !== rawDir) {
-      try {
-        const entries = await fs.readdir(tempRawDir);
-        for (const entry of entries) {
-          if (entry === `${prefix}-${period}` || entry.startsWith(`${prefix}-${period}-`)) {
-            await fs.rm(path.join(tempRawDir, entry), { recursive: true });
-          }
-        }
-      } catch { /* temp dir may not exist */ }
+      await removeMatchingDirs(tempRawDir, prefix, period, fs, path);
     }
 
-    const etagPath = path.join(storageDir, getEtagFileName(tier));
-    try {
-      const raw = await fs.readFile(etagPath, 'utf-8');
-      const etags = parseEtagsJson(raw);
-      const kept: Record<string, Record<string, string>> = {};
-      let changed = false;
-      for (const [key, value] of Object.entries(etags)) {
-        if (key === period || key.startsWith(`${period}-`)) {
-          changed = true;
-          continue;
-        }
-        kept[key] = value;
-      }
-      if (changed) {
-        await fs.writeFile(etagPath, JSON.stringify(kept, null, 2));
-      }
-    } catch {
-      // etag file may not exist
-    }
+    await pruneEtagFile(path.join(storageDir, getEtagFileName(tier)), period, fs);
 
     if (!removedAny) {
       logger.info(`Delete (${tier}) for ${period}: nothing matched ${prefix}-${period}*`);
@@ -130,17 +150,7 @@ export function registerSyncHandlers(app: AppContext): void {
     const provider = config.providers[0];
     if (provider === undefined) throw new Error('No provider configured');
 
-    let bucketPath: string;
-    if (syncId === 'hourly') {
-      bucketPath = provider.sync.hourly?.bucket ?? provider.sync.daily.bucket;
-    } else if (syncId === 'cost-optimization') {
-      const costOptBucket = provider.sync.costOptimization?.bucket;
-      if (costOptBucket === undefined) throw new Error('Cost optimization not configured');
-      bucketPath = costOptBucket;
-    } else {
-      bucketPath = provider.sync.daily.bucket;
-    }
-
+    const bucketPath = resolveBucketPath(config, syncId);
     const workerId = nextWorkerId++;
     syncWorkerIds.set(syncId, workerId);
     state.syncStatuses[syncId] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0, message: '' };
@@ -148,49 +158,20 @@ export function registerSyncHandlers(app: AppContext): void {
     const tier = resolveDataType(syncId);
 
     try {
-      const storageDir = ctx.storageDataDir;
-      const result = await ctx.syncClient.syncPeriods({
-        bucketPath,
-        profile: provider.credentials.profile,
-        dataDir: storageDir,
-        tier,
-        files: fileEntries,
-        onProgress: (progress) => {
-          state.syncStatuses[syncId] = {
-            status: 'syncing',
-            phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
-            progress: progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0,
-            filesTotal: progress.filesTotal,
-            filesDone: progress.filesDone,
-            message: progress.message ?? '',
-          };
-        },
-      });
-
+      const result = await runSync(ctx, provider.credentials.profile, bucketPath, tier, fileEntries, syncId, state);
       syncWorkerIds.delete(syncId);
 
-      if (result.filesDownloaded > 0 && ctx.vault !== undefined) {
-        const vaultKey = ctx.vault.getKey();
-        if (vaultKey !== null) {
-          const effectiveDir = ctx.vault.getEffectiveDataDir();
-          await copyNewFilesToTemp(storageDir, effectiveDir, tier);
-          await encryptSyncedFiles(storageDir, tier, vaultKey);
-        }
-      }
+      await handlePostSyncVault(ctx, tier, result.filesDownloaded);
 
       state.syncStatuses[syncId] = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
       if (result.filesDownloaded > 0) app.warmupBase();
       return result;
     } catch (err: unknown) {
       syncWorkerIds.delete(syncId);
-      const raw = err instanceof Error ? err : new Error(String(err));
-      if (raw.message === 'Download cancelled') {
-        state.syncStatuses[syncId] = { status: 'idle', lastSync: null };
+      const error = handleSyncError(err, syncId, provider.credentials.profile, state);
+      if (error.message === 'Download cancelled') {
         return { filesDownloaded: 0, rowsProcessed: 0 };
       }
-      const error = isCredentialError(err) ? toUserFriendlyError(err, provider.credentials.profile) : raw;
-      logger.error(`Selective sync '${syncId}' failed: ${error.message}`);
-      state.syncStatuses[syncId] = { status: 'failed', error, lastSync: null };
       throw error;
     }
   });
@@ -279,6 +260,64 @@ export function registerSyncHandlers(app: AppContext): void {
 
     return { status: 'found', accounts, path: csvPath };
   });
+}
+
+async function runSync(
+  ctx: IpcContext,
+  profile: string,
+  bucketPath: string,
+  tier: ExpectedDataType,
+  fileEntries: readonly ManifestFileEntry[],
+  syncId: string,
+  state: AppState,
+): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
+  return ctx.syncClient.syncPeriods({
+    bucketPath,
+    profile,
+    dataDir: ctx.storageDataDir,
+    tier,
+    files: fileEntries,
+    onProgress: (progress) => {
+      state.syncStatuses[syncId] = {
+        status: 'syncing',
+        phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
+        progress: progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0,
+        filesTotal: progress.filesTotal,
+        filesDone: progress.filesDone,
+        message: progress.message ?? '',
+      };
+    },
+  });
+}
+
+async function handlePostSyncVault(
+  ctx: IpcContext,
+  tier: ExpectedDataType,
+  filesDownloaded: number,
+): Promise<void> {
+  if (filesDownloaded === 0 || ctx.vault === undefined) return;
+  const vaultKey = ctx.vault.getKey();
+  if (vaultKey === null) return;
+  const effectiveDir = ctx.vault.getEffectiveDataDir();
+  await copyNewFilesToTemp(ctx.storageDataDir, effectiveDir, tier);
+  await encryptSyncedFiles(ctx.storageDataDir, tier, vaultKey);
+}
+
+function handleSyncError(
+  err: unknown,
+  syncId: string,
+  profile: string,
+  state: AppState,
+): Error {
+  const raw = err instanceof Error ? err : new Error(String(err));
+  if (raw.message === 'Download cancelled') {
+    state.syncStatuses[syncId] = { status: 'idle', lastSync: null };
+    return raw;
+  }
+  const error = isCredentialError(err) ? toUserFriendlyError(err, profile) : raw;
+  logger.error(`Selective sync '${syncId}' failed: ${error.message}`);
+  state.syncStatuses[syncId] = { status: 'failed', error, lastSync: null };
+  return error;
 }
 
 async function encryptDir(

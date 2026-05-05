@@ -58,6 +58,14 @@ function specToTableColumn(spec: ColumnSpec, activeDimIds: ReadonlySet<string>):
   };
 }
 
+function renderDeltaCell(value: unknown): React.ReactNode {
+  if (value === null || value === undefined) return '';
+  const v = value as number;
+  const innerColor = v < 0 ? 'text-positive' : 'text-text-secondary';
+  const color = v > 0 ? 'text-negative' : innerColor;
+  return <span className={`${color} text-[11px]`}>{v >= 0 ? '↑' : '↓'}{Math.abs(v).toFixed(1)}%</span>;
+}
+
 function rowValuesKey(values: Readonly<Record<string, string>>): string {
   return Object.entries(values).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join('|');
 }
@@ -173,12 +181,7 @@ export function TableWidget({
         if (prev === undefined || prev === 0) return null;
         return ((row.cost - prev) / prev) * 100;
       },
-      cell: (value: unknown) => {
-        if (value === null || value === undefined) return '';
-        const v = value as number;
-        const color = v > 0 ? 'text-negative' : v < 0 ? 'text-positive' : 'text-text-secondary';
-        return <span className={`${color} text-[11px]`}>{v >= 0 ? '↑' : '↓'}{Math.abs(v).toFixed(1)}%</span>;
-      },
+      cell: renderDeltaCell,
     };
   }, [compareEnabled, prevCostMap]);
 

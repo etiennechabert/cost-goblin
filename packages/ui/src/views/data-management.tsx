@@ -26,6 +26,31 @@ function retentionCutoffPeriod(retentionDays: number): string {
   return `${String(cutoff.getFullYear())}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function toggleInSet(
+  setter: (fn: (prev: Set<string>) => Set<string>) => void,
+  period: string,
+): void {
+  setter(prev => {
+    const next = new Set(prev);
+    if (next.has(period)) { next.delete(period); } else { next.add(period); }
+    return next;
+  });
+}
+
+function missingWithinCutoff(
+  inventory: DataInventoryResult | null,
+  cutoffPeriod: string,
+): DataInventoryResult['periods'] {
+  if (inventory === null) return [];
+  return inventory.periods
+    .filter(p => p.localStatus === 'missing')
+    .filter(p => p.period >= cutoffPeriod);
+}
+
+function isSyncActive(state: SyncState): boolean {
+  return state.status === 'downloading' || state.status === 'repartitioning';
+}
+
 export function DataManagement() {
   const api = useCostApi();
   const [configRefreshKey, setConfigRefreshKey] = useState(0);
@@ -90,9 +115,7 @@ export function DataManagement() {
   // bucket setup.
   const [showProfileSwap, setShowProfileSwap] = useState(false);
 
-  const anySyncing = dailySyncState.status === 'downloading' || dailySyncState.status === 'repartitioning'
-    || hourlySyncState.status === 'downloading' || hourlySyncState.status === 'repartitioning'
-    || costOptSyncState.status === 'downloading' || costOptSyncState.status === 'repartitioning';
+  const anySyncing = isSyncActive(dailySyncState) || isSyncActive(hourlySyncState) || isSyncActive(costOptSyncState);
 
   const inventory: DataInventoryResult | null =
     inventoryQuery.status === 'success' ? inventoryQuery.data : null;
@@ -103,8 +126,7 @@ export function DataManagement() {
   const retentionDays = provider?.sync.daily.retentionDays ?? 365;
   const dailyCutoffPeriod = retentionCutoffPeriod(retentionDays);
 
-  const missingPeriods = inventory?.periods.filter(p => p.localStatus === 'missing') ?? [];
-  const missingWithinRetention = missingPeriods.filter(p => p.period >= dailyCutoffPeriod);
+  const missingWithinRetention = missingWithinCutoff(inventory, dailyCutoffPeriod);
 
   useEffect(() => {
     if (!initialized && inventoryQuery.status === 'success' && missingWithinRetention.length > 0) {
@@ -114,11 +136,7 @@ export function DataManagement() {
   }, [initialized, inventoryQuery.status, missingWithinRetention]);
 
   function togglePeriod(period: string) {
-    setSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(period)) { next.delete(period); } else { next.add(period); }
-      return next;
-    });
+    toggleInSet(setSelected, period);
   }
 
   function selectAll() {
@@ -210,11 +228,11 @@ export function DataManagement() {
 
   const hourlyRetentionDays = provider?.sync.hourly?.retentionDays ?? 30;
   const hourlyCutoffPeriod = retentionCutoffPeriod(hourlyRetentionDays);
-  const hourlyMissing = (hourlyInventory?.periods.filter(p => p.localStatus === 'missing') ?? []).filter(p => p.period >= hourlyCutoffPeriod);
+  const hourlyMissing = missingWithinCutoff(hourlyInventory, hourlyCutoffPeriod);
 
   const costOptRetentionDays = provider?.sync.costOptimization?.retentionDays ?? 90;
   const costOptCutoffPeriod = retentionCutoffPeriod(costOptRetentionDays);
-  const costOptMissing = (costOptInventory?.periods.filter(p => p.localStatus === 'missing') ?? []).filter(p => p.period >= costOptCutoffPeriod);
+  const costOptMissing = missingWithinCutoff(costOptInventory, costOptCutoffPeriod);
 
   const [hourlyInitialized, setHourlyInitialized] = useState(false);
   useEffect(() => {
@@ -233,11 +251,7 @@ export function DataManagement() {
   }, [costOptInitialized, costOptInventoryQuery.status, costOptMissing]);
 
   function toggleHourlyPeriod(period: string) {
-    setHourlySelected(prev => {
-      const next = new Set(prev);
-      if (next.has(period)) { next.delete(period); } else { next.add(period); }
-      return next;
-    });
+    toggleInSet(setHourlySelected, period);
   }
 
   function selectAllHourly() {
@@ -275,11 +289,7 @@ export function DataManagement() {
   }
 
   function toggleCostOptPeriod(period: string) {
-    setCostOptSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(period)) { next.delete(period); } else { next.add(period); }
-      return next;
-    });
+    toggleInSet(setCostOptSelected, period);
   }
 
   function selectAllCostOpt() {

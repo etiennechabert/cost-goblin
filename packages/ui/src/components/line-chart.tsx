@@ -170,7 +170,7 @@ function LineSvg({ series, visible, previousSeries, width, height }: LineSvgProp
               dy: '0.33em',
             })}
           />
-          {previousSeries !== undefined && previousSeries.map((s) => {
+          {previousSeries?.map((s) => {
             const colorIdx = seriesColorIndex.get(s.name) ?? 0;
             const color = getColor(colorIdx, palette);
             return (

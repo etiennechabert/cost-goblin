@@ -143,7 +143,7 @@ export function VaultLockScreen({ onUnlocked, onReset }: VaultLockScreenProps): 
             </button>
             <button
               type="button"
-              onClick={() => { void handleReset(); }}
+              onClick={() => { handleReset().catch(() => undefined); }}
               className="px-4 py-2 text-sm font-medium rounded-md bg-negative text-white hover:bg-negative/80 transition-colors"
             >
               Delete all data
@@ -166,7 +166,7 @@ export function VaultLockScreen({ onUnlocked, onReset }: VaultLockScreenProps): 
           <p className="text-sm text-text-secondary mt-1">Enter your password to unlock</p>
         </div>
 
-        <form onSubmit={(e) => { void handleSubmit(e); }} className="space-y-4">
+        <form onSubmit={(e) => { handleSubmit(e).catch(() => undefined); }} className="space-y-4">
           <div>
             <input
               type="password"
