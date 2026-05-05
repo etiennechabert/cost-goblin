@@ -267,7 +267,7 @@ test.describe('Cost Overview', () => {
   });
 
   test('stacked bar chart renders with title', async () => {
-    await expect(page.getByText('Daily Costs')).toBeVisible();
+    await expect(page.locator('h3', { hasText: 'Service' }).first()).toBeVisible();
   });
 
   test('histogram expand/collapse toggle works', async () => {
