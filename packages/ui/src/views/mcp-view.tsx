@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, Sparkles } from 'lucide-react';
+
+import { useCostApi } from '../hooks/use-cost-api.js';
 
 const MCP_PORT = 19532;
 const MCP_URL = `http://localhost:${String(MCP_PORT)}/mcp`;
@@ -37,7 +39,7 @@ function CodeBlock({ children }: Readonly<{ children: string }>) {
   );
 }
 
-const CLAUDE_CONFIG = JSON.stringify({
+const MCP_CONFIG = JSON.stringify({
   mcpServers: {
     costgoblin: {
       type: 'streamable-http',
@@ -56,8 +58,8 @@ const EXAMPLE_PROMPTS = [
     prompt: 'Compare my costs this week vs last week. What changed the most?',
   },
   {
-    title: 'Tag coverage',
-    prompt: 'Which resources are missing the "team" tag and how much do they cost?',
+    title: 'Tag quality',
+    prompt: 'Analyze my tag coverage and suggest tag groupings to better allocate costs by team.',
   },
   {
     title: 'Deep dive',
@@ -68,48 +70,47 @@ const EXAMPLE_PROMPTS = [
     prompt: 'Show me services where spending increased more than 20% compared to last month.',
   },
   {
-    title: 'Custom SQL',
-    prompt: 'Run a SQL query to find the top 10 most expensive resources by daily average cost.',
+    title: 'Spending report',
+    prompt: 'Generate a full overview of my cloud spending: top services, trends, anomalies, and recommendations.',
   },
 ];
 
-const PROVIDERS: { name: string; configLabel: string; config: string; docs: string }[] = [
+const PROVIDERS: { name: string; config: string; docs: string }[] = [
   {
-    name: 'Claude Desktop',
-    configLabel: 'claude_desktop_config.json',
-    config: CLAUDE_CONFIG,
-    docs: 'Add to your Claude Desktop config file:',
+    name: 'Claude / Cursor / Windsurf',
+    config: MCP_CONFIG,
+    docs: 'Add to claude_desktop_config.json, .mcp.json, or your editor MCP settings:',
   },
   {
-    name: 'Claude Code',
-    configLabel: '.mcp.json',
-    config: JSON.stringify({
-      mcpServers: {
-        costgoblin: {
-          type: 'streamable-http',
-          url: MCP_URL,
-        },
-      },
-    }, null, 2),
-    docs: 'Add to your project .mcp.json or run:',
+    name: 'ChatGPT',
+    config: MCP_URL,
+    docs: 'In ChatGPT \u2192 Settings \u2192 Add MCP server, paste this URL:',
   },
   {
-    name: 'Cursor / Windsurf',
-    configLabel: 'MCP settings',
-    config: JSON.stringify({
-      mcpServers: {
-        costgoblin: {
-          type: 'streamable-http',
-          url: MCP_URL,
-        },
-      },
-    }, null, 2),
-    docs: 'Add to your editor MCP settings:',
+    name: 'Gemini',
+    config: MCP_URL,
+    docs: 'In Gemini \u2192 Settings \u2192 Extensions \u2192 Add MCP server, paste this URL:',
   },
 ];
 
 export function McpView() {
+  const api = useCostApi();
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
+  const [running, setRunning] = useState(true);
+  const [toggling, setToggling] = useState(false);
+
+  useEffect(() => {
+    void api.getMcpServerRunning().then(setRunning);
+  }, [api]);
+
+  const handleToggle = useCallback(() => {
+    setToggling(true);
+    const next = !running;
+    void api.setMcpServerRunning(next).then(() => {
+      setRunning(next);
+      setToggling(false);
+    });
+  }, [api, running]);
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-3xl mx-auto">
@@ -125,12 +126,24 @@ export function McpView() {
 
       {/* Status */}
       <div className="rounded-xl border border-border bg-bg-secondary/50 p-5">
-        <div className="flex items-center gap-3">
-          <span className="flex h-2.5 w-2.5 rounded-full bg-accent animate-pulse" />
-          <div>
-            <p className="text-sm font-medium text-text-primary">MCP server running</p>
-            <p className="text-xs text-text-muted font-mono mt-0.5">{MCP_URL}</p>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className={`flex h-2.5 w-2.5 rounded-full ${running ? 'bg-accent animate-pulse' : 'bg-text-muted'}`} />
+            <div>
+              <p className="text-sm font-medium text-text-primary">
+                MCP server {running ? 'running' : 'stopped'}
+              </p>
+              {running && <p className="text-xs text-text-muted font-mono mt-0.5">{MCP_URL}</p>}
+            </div>
           </div>
+          <button
+            type="button"
+            disabled={toggling}
+            onClick={handleToggle}
+            className="text-xs px-3 py-1.5 rounded-md border border-border text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50 transition-colors disabled:opacity-50"
+          >
+            {running ? 'Stop' : 'Start'}
+          </button>
         </div>
       </div>
 

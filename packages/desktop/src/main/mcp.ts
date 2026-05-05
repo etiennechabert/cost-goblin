@@ -37,3 +37,7 @@ export async function stopMcpServer(): Promise<void> {
     server = null;
   }
 }
+
+export function isMcpServerRunning(): boolean {
+  return server !== null;
+}
