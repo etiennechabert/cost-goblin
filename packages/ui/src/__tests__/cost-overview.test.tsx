@@ -35,13 +35,13 @@ describe('CostOverview', () => {
     await waitFor(() => {
       expect(screen.getByText('Total Cost')).toBeDefined();
     });
-    expect(screen.getByText('Daily Costs')).toBeDefined();
+    expect(screen.getAllByText('Service').length).toBeGreaterThan(0);
   });
 
   it('renders daily costs chart', async () => {
     renderOverview();
     await waitFor(() => {
-      expect(screen.getByText('Daily Costs')).toBeDefined();
+      expect(screen.getAllByText('Service').length).toBeGreaterThan(0);
     });
   });
 

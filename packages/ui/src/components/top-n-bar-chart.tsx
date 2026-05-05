@@ -15,7 +15,7 @@ export interface TopNBar {
 
 interface TopNBarChartProps {
   readonly data: readonly TopNBar[];
-  readonly title: string;
+  readonly title: React.ReactNode;
   readonly subtitle?: string | undefined;
   readonly topN?: number | undefined;
   readonly onBarClick?: ((name: string) => void) | undefined;
@@ -86,7 +86,7 @@ function TopNBarChartInner({
           <select
             value={activeDimensionId ?? ''}
             onChange={(e) => { onDimensionChange(e.target.value); }}
-            aria-label={`Group by dimension (current: ${title})`}
+            aria-label="Group by dimension"
             className="text-sm font-medium text-text-secondary bg-transparent border-none outline-none cursor-pointer hover:text-text-primary transition-colors appearance-none pr-4"
             style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'10\' height=\'6\' viewBox=\'0 0 10 6\' fill=\'none\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cpath d=\'M1 1l4 4 4-4\' stroke=\'%236b7280\' stroke-width=\'1.5\' stroke-linecap=\'round\'/%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right center' }}
           >

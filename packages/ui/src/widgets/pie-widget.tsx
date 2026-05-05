@@ -1,13 +1,14 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useCostWidgetQuery } from '../hooks/use-widget-query.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { PieChart } from '../components/pie-chart.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
+import { GroupByTitle } from '../components/group-by-title.js';
 import type { PieSlice } from '../components/pie-chart.js';
 import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import { asTagValue } from '@costgoblin/core/browser';
-import type { CostResult } from '@costgoblin/core/browser';
+import type { CostResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, mergeFilters, hasSufficientCoverage } from './widget.js';
 
@@ -39,13 +40,15 @@ export function PieWidget({
   const api = useCostApi();
   const focus = useCostFocus();
   const dispatch = useCostFocusDispatch();
+  const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'pie' ? spec.groupBy : undefined;
+  const effectiveGroupBy = groupByOverride ?? specGroupBy;
   const specTitle = spec.title;
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
 
   const { query, activeGroupBy, costResult } = useCostWidgetQuery({
-    specGroupBy,
+    specGroupBy: effectiveGroupBy,
     dateRange,
     granularity,
     globalFilters,
@@ -53,10 +56,10 @@ export function PieWidget({
   });
 
   const prevQuery = useQuery<CostResult | null>(
-    () => compareEnabled && specGroupBy !== undefined
-      ? api.queryCosts({ groupBy: specGroupBy, dateRange: previousDateRange, filters, granularity })
+    () => compareEnabled && effectiveGroupBy !== undefined
+      ? api.queryCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters, granularity })
       : Promise.resolve(null),
-    [compareEnabled, specGroupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
+    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
   );
 
   const slices = useMemo(
@@ -70,7 +73,7 @@ export function PieWidget({
     [prevHasCoverage, prevQuery],
   );
 
-  if (spec.type !== 'pie' || specGroupBy === undefined || activeGroupBy === undefined) return null;
+  if (spec.type !== 'pie' || effectiveGroupBy === undefined || activeGroupBy === undefined) return null;
 
   const label = dimensionLabelFor(dimensions, activeGroupBy);
 
@@ -85,7 +88,7 @@ export function PieWidget({
   return (
     <PieChart
       data={slices}
-      title={specTitle ?? label}
+      title={specTitle ?? <GroupByTitle dimensions={dimensions} currentGroupBy={activeGroupBy} onGroupByChange={setGroupByOverride} label={label} />}
       subtitle="Click to filter"
       onSliceClick={(name) => { onSetFilter(activeGroupBy, asTagValue(name)); }}
       onSliceHover={(name) => { dispatch({ type: 'HOVER', entity: name, dimension: activeGroupBy }); }}
