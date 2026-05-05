@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagColumnName } from '@costgoblin/core/browser';
-import { Download, RefreshCw } from 'lucide-react';
+import { Download, RefreshCw, Sparkles } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { VaultLockScreen } from './vault-lock-screen.js';
 import { VaultSetupScreen } from './vault-setup-screen.js';
@@ -59,6 +59,7 @@ type View =
   | { page: 'trends' }
   | { page: 'missing-tags' }
   | { page: 'savings' }
+  | { page: 'mcp' }
   | { page: 'explorer' }
   | { page: 'dimensions' }
   | { page: 'cost-scope' }
@@ -578,6 +579,7 @@ function AppShell(): React.JSX.Element {
         case 'dimensions': setView({ page: 'dimensions' }); break;
         case 'views-editor': setView({ page: 'views-editor' }); break;
         case 'sync': setView({ page: 'sync' }); break;
+        case 'mcp': setView({ page: 'mcp' }); break;
         default:
           // Anything else is a custom view id (every left-nav entry that
           // isn't one of the well-known static pages above).
@@ -612,6 +614,7 @@ function AppShell(): React.JSX.Element {
   const paletteItems: NavItem[] = useMemo(() => [
     ...customNav.map(n => ({ id: n.id, label: n.label, group: 'Dashboards' })),
     ...STATIC_LEFT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Analysis' })),
+    { id: 'mcp', label: 'AI Assistant', group: 'Settings' },
     ...RIGHT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Settings' })),
   ], [customNav]);
 
@@ -651,6 +654,7 @@ function AppShell(): React.JSX.Element {
     if (view.page === 'dimensions') return 'dimensions';
     if (view.page === 'views-editor') return 'views-editor';
     if (view.page === 'sync') return 'sync';
+    if (view.page === 'mcp') return 'mcp';
     return null;
   }
   const active = activeNavId();
@@ -730,6 +734,19 @@ function AppShell(): React.JSX.Element {
               aria-label={palette === 'standard' ? 'Switch to colorblind palette' : 'Switch to standard palette'}
             >
               <PaletteIcon />
+            </button>
+            <button
+              type="button"
+              onClick={() => { handleNavClick('mcp'); }}
+              className={[
+                'rounded-md p-1.5 transition-colors',
+                active === 'mcp'
+                  ? 'bg-bg-tertiary text-text-primary'
+                  : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
+              ].join(' ')}
+              aria-label="AI Assistant"
+            >
+              <Sparkles className="h-4 w-4" />
             </button>
             {RIGHT_NAV.map((item) => {
               const isSync = item.id === 'sync';
@@ -836,6 +853,9 @@ function AppShell(): React.JSX.Element {
         <Profiler id="views-editor" onRender={onPerfRender}>
           <ViewsEditor onConfigPersisted={setViewsConfig} />
         </Profiler>
+      )}
+      {view.page === 'mcp' && (
+        <McpView />
       )}
       <div className={view.page === 'sync' ? '' : 'hidden'}>
         <Profiler id="sync" onRender={onPerfRender}>

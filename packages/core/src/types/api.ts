@@ -192,6 +192,8 @@ export interface CostApi {
    *  navigation so stale queries from the previous view don't hold pool
    *  connections and slow down the new view's queries. */
   cancelPendingQueries(): Promise<void>;
+  getMcpServerRunning(): Promise<boolean>;
+  setMcpServerRunning(enabled: boolean): Promise<void>;
 }
 
 export interface AccountMappingEntry {
