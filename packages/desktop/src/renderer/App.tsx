@@ -5,8 +5,6 @@ import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, 
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagColumnName } from '@costgoblin/core/browser';
 import { Download, RefreshCw, Sparkles } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
-import { VaultLockScreen } from './vault-lock-screen.js';
-import { VaultSetupScreen } from './vault-setup-screen.js';
 
 // ---------------------------------------------------------------------------
 // React Profiler — collects render timings when perf mode is active
@@ -126,11 +124,6 @@ function PaletteIcon() {
 }
 
 type SyncActivity = 'idle' | 'syncing' | 'downloading';
-
-type VaultCheck =
-  | { status: 'checking' }
-  | { status: 'locked' }
-  | { status: 'unlocked' };
 
 type SetupCheck =
   | { status: 'checking' }
@@ -451,7 +444,6 @@ function AppShell(): React.JSX.Element {
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [isDark, setIsDark] = useState(true);
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
-  const [vaultCheck, setVaultCheck] = useState<VaultCheck>({ status: 'checking' });
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const [splashStep, setSplashStep] = useState('Connecting...');
   const splashMinElapsed = useRef(false);
@@ -471,19 +463,10 @@ function AppShell(): React.JSX.Element {
       const skipSplash = globalThis.costgoblinDebug.isE2E();
 
       setSplashStep('Checking configuration...');
-      const [configured, vault] = await Promise.all([
-        api.getSetupStatus().then(({ configured: c }) => c),
-        globalThis.costgoblinVault.getStatus(),
-      ]);
+      const { configured } = await api.getSetupStatus();
 
-      if (!configured || vault.state === 'not-configured') {
-        setVaultCheck({ status: 'unlocked' });
+      if (!configured) {
         setSetupCheck({ status: 'needs-setup' });
-        return;
-      }
-
-      if (vault.state === 'locked') {
-        setVaultCheck({ status: 'locked' });
         return;
       }
 
@@ -495,7 +478,6 @@ function AppShell(): React.JSX.Element {
         splashMinElapsed.current = true;
       }
 
-      setVaultCheck({ status: 'unlocked' });
       setSetupCheck({ status: 'ready' });
     }
     initialize().catch(() => undefined);
@@ -602,10 +584,6 @@ function AppShell(): React.JSX.Element {
     setView({ page: 'sync' });
   }
 
-  const renderVaultStep = useCallback((onContinue: () => void): React.JSX.Element => {
-    return <VaultSetupScreen onComplete={onContinue} />;
-  }, []);
-
   const views = viewsConfig ?? FALLBACK_VIEWS;
   const viewsReady = viewsConfig !== null;
   const customNav: { id: string; label: string }[] = views.views.map(v => ({ id: v.id, label: v.name }));
@@ -618,30 +596,12 @@ function AppShell(): React.JSX.Element {
     ...RIGHT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Settings' })),
   ], [customNav]);
 
-  if (vaultCheck.status === 'locked') {
-    return (
-      <VaultLockScreen
-        onUnlocked={() => {
-          setVaultCheck({ status: 'unlocked' });
-          prewarmDimensions(api, () => undefined).catch(() => undefined);
-          setTimeout(() => {
-            setSetupCheck({ status: 'ready' });
-          }, SPLASH_DURATION);
-        }}
-        onReset={() => {
-          setVaultCheck({ status: 'unlocked' });
-          setSetupCheck({ status: 'needs-setup' });
-        }}
-      />
-    );
-  }
-
   if (setupCheck.status === 'checking') {
     return <SplashScreen step={splashStep} />;
   }
 
   if (setupCheck.status === 'needs-setup') {
-    return <SetupWizard onComplete={handleSetupComplete} renderAfterWelcome={renderVaultStep} />;
+    return <SetupWizard onComplete={handleSetupComplete} />;
   }
 
   function activeNavId(): string | null {

@@ -4,7 +4,6 @@ import {
   getEtagFileName,
   getRawDirPrefix,
   parseEtagsJson,
-  encryptFile,
   logger,
 } from '@costgoblin/core';
 import type {
@@ -111,7 +110,7 @@ export function registerSyncHandlers(app: AppContext): void {
     const t = tier ?? 'daily';
     const bucket = resolveBucketPath(config, t);
     try {
-      return await getDataInventory(bucket, provider.credentials.profile, ctx.storageDataDir, t);
+      return await getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, t);
     } catch (err: unknown) {
       throw toUserFriendlyError(err, provider.credentials.profile);
     }
@@ -125,20 +124,14 @@ export function registerSyncHandlers(app: AppContext): void {
     const path = await import('node:path');
 
     const prefix = getRawDirPrefix(tier);
-    const storageDir = ctx.storageDataDir;
-    const rawDir = path.join(storageDir, 'aws', 'raw');
+    const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
 
     const removedAny = await removeMatchingDirs(rawDir, prefix, period, fs, path);
     if (removedAny) {
       logger.info(`Deleted local data (${tier}): ${prefix}-${period}*`);
     }
 
-    const tempRawDir = path.join(ctx.dataDir, 'aws', 'raw');
-    if (tempRawDir !== rawDir) {
-      await removeMatchingDirs(tempRawDir, prefix, period, fs, path);
-    }
-
-    await pruneEtagFile(path.join(storageDir, getEtagFileName(tier)), period, fs);
+    await pruneEtagFile(path.join(ctx.dataDir, getEtagFileName(tier)), period, fs);
 
     if (!removedAny) {
       logger.info(`Delete (${tier}) for ${period}: nothing matched ${prefix}-${period}*`);
@@ -160,8 +153,6 @@ export function registerSyncHandlers(app: AppContext): void {
     try {
       const result = await runSync(ctx, provider.credentials.profile, bucketPath, tier, fileEntries, syncId, state);
       syncWorkerIds.delete(syncId);
-
-      await handlePostSyncVault(ctx, tier, result.filesDownloaded);
 
       state.syncStatuses[syncId] = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
       if (result.filesDownloaded > 0) app.warmupBase();
@@ -186,8 +177,8 @@ export function registerSyncHandlers(app: AppContext): void {
 
   ipcMain.handle('data:open-folder', async (): Promise<void> => {
     const fs = await import('node:fs/promises');
-    await fs.mkdir(ctx.storageDataDir, { recursive: true });
-    await shell.openPath(ctx.storageDataDir);
+    await fs.mkdir(ctx.dataDir, { recursive: true });
+    await shell.openPath(ctx.dataDir);
   });
 
   ipcMain.handle('data:sso-login', async (_event, profile: string): Promise<void> => {
@@ -274,7 +265,7 @@ async function runSync(
   return ctx.syncClient.syncPeriods({
     bucketPath,
     profile,
-    dataDir: ctx.storageDataDir,
+    dataDir: ctx.dataDir,
     tier,
     files: fileEntries,
     onProgress: (progress) => {
@@ -288,19 +279,6 @@ async function runSync(
       };
     },
   });
-}
-
-async function handlePostSyncVault(
-  ctx: IpcContext,
-  tier: ExpectedDataType,
-  filesDownloaded: number,
-): Promise<void> {
-  if (filesDownloaded === 0 || ctx.vault === undefined) return;
-  const vaultKey = ctx.vault.getKey();
-  if (vaultKey === null) return;
-  const effectiveDir = ctx.vault.getEffectiveDataDir();
-  await copyNewFilesToTemp(ctx.storageDataDir, effectiveDir, tier);
-  await encryptSyncedFiles(ctx.storageDataDir, tier, vaultKey);
 }
 
 function handleSyncError(
@@ -318,79 +296,6 @@ function handleSyncError(
   logger.error(`Selective sync '${syncId}' failed: ${error.message}`);
   state.syncStatuses[syncId] = { status: 'failed', error, lastSync: null };
   return error;
-}
-
-async function encryptDir(
-  dir: string, key: Buffer,
-  fs: typeof import('node:fs/promises'),
-  path: typeof import('node:path'),
-): Promise<void> {
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      await encryptDir(fullPath, key, fs, path);
-    } else if (entry.name.endsWith('.parquet')) {
-      await encryptFile(fullPath, `${fullPath}.enc`, key);
-      await fs.unlink(fullPath);
-    }
-  }
-}
-
-async function encryptSyncedFiles(dataDir: string, tier: string, key: Buffer): Promise<void> {
-  const fs = await import('node:fs/promises');
-  const path = await import('node:path');
-  const rawDir = path.join(dataDir, 'aws', 'raw');
-  try {
-    const periods = await fs.readdir(rawDir);
-    for (const period of periods) {
-      if (!period.startsWith(`${tier}-`) && tier !== 'cost-optimization') continue;
-      if (tier === 'cost-optimization' && !period.startsWith('cost-opt-')) continue;
-      const periodDir = path.join(rawDir, period);
-      await encryptDir(periodDir, key, fs, path);
-    }
-  } catch (err: unknown) {
-    logger.warn(`Post-sync encryption error: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-async function copyNewFilesToTemp(storageDir: string, tempDir: string, tier: string): Promise<void> {
-  if (storageDir === tempDir) return;
-  const fs = await import('node:fs/promises');
-  const path = await import('node:path');
-  const rawDir = path.join(storageDir, 'aws', 'raw');
-  try {
-    const periods = await fs.readdir(rawDir);
-    for (const period of periods) {
-      if (!period.startsWith(`${tier}-`) && tier !== 'cost-optimization') continue;
-      if (tier === 'cost-optimization' && !period.startsWith('cost-opt-')) continue;
-      await copyDir(
-        path.join(rawDir, period),
-        path.join(tempDir, 'aws', 'raw', period),
-        '.parquet', fs, path,
-      );
-    }
-  } catch (err: unknown) {
-    logger.warn(`Copy to temp error: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-async function copyDir(
-  src: string, dest: string, suffix: string,
-  fs: typeof import('node:fs/promises'),
-  path: typeof import('node:path'),
-): Promise<void> {
-  const entries = await fs.readdir(src, { withFileTypes: true });
-  for (const entry of entries) {
-    const srcPath = path.join(src, entry.name);
-    const destPath = path.join(dest, entry.name);
-    if (entry.isDirectory()) {
-      await copyDir(srcPath, destPath, suffix, fs, path);
-    } else if (entry.name.endsWith(suffix)) {
-      await fs.mkdir(dest, { recursive: true });
-      await fs.copyFile(srcPath, destPath);
-    }
-  }
 }
 
 export { resolveDataType };

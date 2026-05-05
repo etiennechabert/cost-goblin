@@ -14,7 +14,6 @@ const SOURCE_LABELS: Record<DataSource, { title: string; description: string }> 
 
 type WizardStep =
   | { step: 'welcome' }
-  | { step: 'after-welcome' }
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[]; path: string[] }
@@ -24,7 +23,6 @@ interface SetupWizardProps {
   onComplete: () => void;
   source?: DataSource | undefined;
   profile?: string | undefined;
-  renderAfterWelcome?: ((onContinue: () => void) => React.JSX.Element) | undefined;
 }
 
 function WelcomeStep({ onNext }: Readonly<{ onNext: () => void }>) {
@@ -456,7 +454,7 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: Readonly<
   );
 }
 
-export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile, renderAfterWelcome }: Readonly<SetupWizardProps>): React.JSX.Element {
+export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile }: Readonly<SetupWizardProps>): React.JSX.Element {
   const api = useCostApi();
   const isSourceMode = initialSource !== undefined && initialProfile !== undefined;
   const [wizard, setWizard] = useState<WizardStep>(
@@ -484,11 +482,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }
 
   function handleWelcomeNext() {
-    if (renderAfterWelcome === undefined) {
-      goToProfileStep();
-    } else {
-      setWizard({ step: 'after-welcome' });
-    }
+    goToProfileStep();
   }
 
   function handleProfileSelect(profile: string) {
@@ -567,14 +561,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }
 
   function handleBack() {
-    if (wizard.step === 'after-welcome') {
+    if (wizard.step === 'profile') {
       setWizard({ step: 'welcome' });
-    } else if (wizard.step === 'profile') {
-      if (renderAfterWelcome === undefined) {
-        setWizard({ step: 'welcome' });
-      } else {
-        setWizard({ step: 'after-welcome' });
-      }
     } else if (wizard.step === 'bucket') {
       if (wizard.source === 'daily') {
         goToProfileStep();
@@ -598,7 +586,6 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <img src="goblin.png" alt="CostGoblin" className="h-16 w-auto" />
           </div>
           {wizard.step === 'welcome' && <WelcomeStep onNext={handleWelcomeNext} />}
-          {wizard.step === 'after-welcome' && renderAfterWelcome?.(goToProfileStep)}
           {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={onComplete} onBack={handleBack} />}
           {wizard.step === 'bucket' && (
             <BucketStep
