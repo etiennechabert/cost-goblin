@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/etiennechabert/cost-goblin/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/Node.js-%3E%3D%2020-339933.svg?logo=node.js&logoColor=white" alt="Node.js">
-  <img src="https://img.shields.io/badge/Electron-34-47848F.svg?logo=electron&logoColor=white" alt="Electron">
+  <img src="https://img.shields.io/badge/Electron-41-47848F.svg?logo=electron&logoColor=white" alt="Electron">
   <img src="https://img.shields.io/badge/DuckDB-1.5-FFF000.svg?logo=duckdb&logoColor=black" alt="DuckDB">
   <a href="https://github.com/etiennechabert/cost-goblin/actions/workflows/ci.yml"><img src="https://github.com/etiennechabert/cost-goblin/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://buymeacoffee.com/etiennechak"><img src="https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buymeacoffee&logoColor=white" alt="Buy Me A Coffee"></a>
@@ -26,6 +26,7 @@
 
 <p align="center">
   <a href="https://costgoblin.com">Website</a> &middot;
+  <a href="https://github.com/etiennechabert/cost-goblin/releases/latest">Download</a> &middot;
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#features">Features</a>
 </p>
@@ -35,6 +36,12 @@
 </p>
 
 CostGoblin is a desktop app that syncs your AWS billing data locally and queries it with DuckDB. Filter, drill down, and slice costs by any dimension — from a plane at 10,000 meters.
+
+## Install
+
+Download the latest release for your platform from the [GitHub Releases page](https://github.com/etiennechabert/cost-goblin/releases/latest). macOS binaries are signed and notarized. See the [code signing policy](https://costgoblin.com/code-signing.html) for details.
+
+The app auto-updates when a new version is available.
 
 ## Quick Start
 
@@ -137,6 +144,8 @@ s3://bucket/prefix/
 CostGoblin reads profiles from `~/.aws/config` and `~/.aws/credentials`. The wizard lists available profiles and lets you pick one.
 
 **Using SSO:**
+
+The app has a built-in SSO login button — click it next to your profile and CostGoblin will launch `aws sso login` for you. Or run it manually:
 ```bash
 aws configure sso
 aws sso login --profile your-profile-name
@@ -162,6 +171,10 @@ Then use the Data tab to repartition the downloaded files.
 - **Tag normalization** — aliases applied at query time, fix messy tags without re-processing
 - **Composable views** — drag-and-drop widget builder with 9 widget types (pie, bar, stacked bar, line, treemap, heatmap, bubble, table, summary)
 - **Cost Scope** — configure cost metrics (unblended, blended, amortized) and exclusion rules
+- **Vault encryption** — optional AES-256-GCM at-rest encryption for local billing data, with system keychain integration
+- **MCP server** — Model Context Protocol integration for querying cost data from AI assistants
+- **Dark/light mode** — theme toggle with two chart color palettes (standard + Okabe-Ito colorblind-safe)
+- **Auto-updates** — the app checks for new versions on startup and installs them automatically
 - **CSV export** — export any view for reporting
 - **Works offline** — once synced, no internet needed
 
@@ -173,6 +186,7 @@ packages/
   core/     @costgoblin/core — DuckDB queries, S3 sync, config (no framework deps)
   ui/       @costgoblin/ui — React components (visx charts, Tailwind, shadcn/ui)
   desktop/  Electron shell — imports core and ui
+  mcp/      @costgoblin/mcp — Model Context Protocol server for AI assistant integration
 ```
 
 - **DuckDB** for analytical queries over local Parquet files
