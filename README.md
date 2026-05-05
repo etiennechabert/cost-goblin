@@ -29,7 +29,7 @@
 </h3>
 
 <p align="center">
-  <a href="https://costgoblin.com/#get-started">Download</a> &middot;
+  <a href="https://costgoblin.com/#download">Download</a> &middot;
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#features">Features</a>
 </p>
@@ -42,7 +42,7 @@ CostGoblin is a desktop app that syncs your AWS billing data locally and queries
 
 ## Install
 
-Download the latest release for your platform from [costgoblin.com](https://costgoblin.com/#get-started). macOS binaries are signed and notarized. See the [code signing policy](https://costgoblin.com/code-signing.html) for details.
+Download the latest release for your platform from [costgoblin.com](https://costgoblin.com/#download). macOS binaries are signed and notarized. See the [code signing policy](https://costgoblin.com/code-signing.html) for details.
 
 The app auto-updates when a new version is available.
 
