@@ -15,7 +15,7 @@ import { createSyncClient } from './sync-client.js';
 import type { SyncClient } from './sync-client.js';
 import { registerIpcHandlers } from './ipc.js';
 import { startMcpServer, stopMcpServer } from './mcp.js';
-import { initAutoUpdater } from './update-manager.js';
+import { initAutoUpdater, checkForUpdates } from './update-manager.js';
 import { registerUpdateHandlers } from './handlers/update.js';
 import { registerVaultHandlers, cleanupTemp, type VaultState } from './handlers/vault.js';
 import { validateUrl, SecurityError } from './url-validator.js';
@@ -252,6 +252,7 @@ async function main(): Promise<void> {
   if (app.isPackaged) {
     try {
       initAutoUpdater();
+      checkForUpdates().catch(() => undefined);
     } catch {
       logger.warn('Auto-updater unavailable');
     }
