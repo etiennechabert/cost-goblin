@@ -945,6 +945,22 @@
       border-color: var(--emerald);
     }
 
+    .step-callout {
+      margin-top: 16px;
+      margin-left: 46px;
+      padding: 16px 20px;
+      border-radius: 8px;
+      border: 1px solid var(--gold);
+      background: rgba(212, 168, 67, 0.08);
+      font-size: 14px;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    .step-callout strong {
+      color: var(--gold);
+    }
+
     /* --- ROADMAP --- */
     .roadmap {
       padding: 100px 24px;
@@ -1534,6 +1550,16 @@
 
         <div class="step" data-animate>
           <div class="step-header">
+            <span class="step-num">0</span>
+            <h4>Activate your cost allocation tags</h4>
+          </div>
+          <p>Before setting up any exports, make sure the tags you want to slice costs by are activated in the AWS Billing Console &rarr; <strong>Cost Allocation Tags</strong>.</p>
+          <p>Activate any user-defined tag you plan to use as a dimension in CostGoblin (e.g. <em>team</em>, <em>environment</em>, <em>service</em>). Tags that aren't activated here won't appear in the CUR exports, no matter how they're configured.</p>
+          <div class="step-note">Newly activated tags only appear in data generated <strong>after</strong> activation &mdash; they are not backfilled. Activate them as early as possible.</div>
+        </div>
+
+        <div class="step" data-animate>
+          <div class="step-header">
             <span class="step-num">1</span>
             <h4>Create your S3 bucket</h4>
           </div>
@@ -1574,7 +1600,6 @@ Data export overwriting: <span class="code-file">Overwrite existing data export 
 S3 bucket:       <span class="code-dir">your-company-billing</span>
 S3 path prefix:  <span class="code-dir">cur_daily</span>  <span class="code-comment">(or cur_hourly for the second export)</span>
           </div>
-          <div class="step-note">Tags won't appear in the export unless you first activate them as <strong>cost allocation tags</strong> in the Billing Console &rarr; Cost Allocation Tags. Activate any user-defined tag you want to use as a dimension in CostGoblin (e.g. <em>team</em>, <em>environment</em>, <em>service</em>). Newly activated tags only appear in data generated after activation.</div>
           <p>Under <strong>Column selection</strong>, enable these and disable the rest to keep file sizes small:</p>
           <div class="code-block">
 <span class="code-comment"># Identity &amp; time</span>
@@ -1609,6 +1634,7 @@ S3 path prefix:  <span class="code-dir">cur_daily</span>  <span class="code-comm
  &bull; <span class="code-file">resource_tags</span>                                 <span class="code-comment">your cost allocation tags</span>
           </div>
           <div class="step-note">CostGoblin auto-detects available columns — missing optional ones are silently skipped. But including them all unlocks amortized views, net cost perspectives, and resource-level drill-down.</div>
+          <div class="step-callout"><strong>Pro tip:</strong> New CUR exports only include data from the day they're created. To get historical data, open an AWS Support case requesting a backfill for your export &mdash; AWS can typically reload up to 12 months of past billing data into your S3 bucket.</div>
         </div>
 
         <div class="step" data-animate>
@@ -1630,9 +1656,14 @@ Format:   <span class="code-file">Parquet</span>
             <span class="step-num">4</span>
             <h4>Connect and configure dimensions</h4>
           </div>
-          <p>Open CostGoblin, go to <strong>Sync</strong> and point each data source to its S3 prefix. Once the first sync completes, head to <strong>Dimensions</strong> to map your tags to cost allocation dimensions.</p>
-          <p>This is where CostGoblin shines: if your tags are inconsistent across teams (e.g. <em>prod</em>, <em>Prod</em>, <em>production</em> all meaning the same thing), add <strong>aliases</strong> to normalize them at query time. No data reprocessing — changes take effect instantly across all views.</p>
-          <div class="step-note">First sync takes a few minutes depending on billing history size. After that, incremental syncs finish in seconds.</div>
+          <p>Open CostGoblin, go to <strong>Sync</strong> and point each data source to its S3 prefix. Once the first sync completes, head to <strong>Dimensions</strong> to map your tags to cost allocation dimensions. This is where CostGoblin shines &mdash; for each dimension you can:</p>
+          <ul style="margin: 12px 0 0 46px; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: var(--text-dim);">
+            <li><strong style="color: var(--emerald);">Normalize</strong> &mdash; merge inconsistent casing and spelling (<em>prod</em>, <em>Prod</em>, <em>production</em> &rarr; one value)</li>
+            <li><strong style="color: var(--emerald);">Define aliases</strong> &mdash; group multiple tag values under a single label across all views</li>
+            <li><strong style="color: var(--emerald);">Define fallbacks</strong> &mdash; fill missing resource tags with the account-level tag</li>
+            <li style="color: var(--text-muted); font-style: italic;">No data reprocessing &mdash; changes take effect instantly across all views.</li>
+          </ul>
+          <div class="step-note">First sync takes a few minutes depending on billing history size. Subsequent syncs only re-download the current month (AWS regenerates the full month's data with each export refresh).</div>
         </div>
 
       </div>
