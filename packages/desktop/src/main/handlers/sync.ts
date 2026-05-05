@@ -214,12 +214,24 @@ export function registerSyncHandlers(app: AppContext): void {
     const currentPath = process.env['PATH'] ?? '';
     const extraPaths = ['/usr/local/bin', '/opt/homebrew/bin', '/usr/bin'];
     const fullPath = [...new Set([...currentPath.split(':'), ...extraPaths])].join(':');
-    const child = spawn('aws', ['sso', 'login', '--profile', profile], {
-      stdio: 'ignore',
-      detached: true,
-      env: { ...process.env, PATH: fullPath },
+    return new Promise<void>((resolve, reject) => {
+      const child = spawn('aws', ['sso', 'login', '--profile', profile], {
+        stdio: 'ignore',
+        detached: true,
+        env: { ...process.env, PATH: fullPath },
+      });
+      child.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'ENOENT') {
+          reject(new Error('AWS_CLI_NOT_FOUND'));
+        } else {
+          reject(err);
+        }
+      });
+      child.on('spawn', () => {
+        child.unref();
+        resolve();
+      });
     });
-    child.unref();
   });
 
   ipcMain.handle('data:account-mapping', async (): Promise<AccountMappingStatus> => {

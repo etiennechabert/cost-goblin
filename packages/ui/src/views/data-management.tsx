@@ -7,6 +7,7 @@ import { SetupWizard } from './setup-wizard.js';
 import { OrgAccountsSection } from './data-management-org.js';
 import { SsmParameterSection } from './data-management-ssm.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
+import { SsoLoginButton } from '../components/sso-login-button.js';
 
 function syncStatusToState(s: SyncStatus): SyncState | null {
   if (s.status === 'syncing') {
@@ -435,16 +436,7 @@ export function DataManagement() {
         <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
           <p className="text-sm font-medium text-negative">{inventoryQuery.error.message}</p>
           {inventoryQuery.error.message.includes('aws sso login') && awsProfile !== null && (
-            <div className="flex items-center gap-3 mt-2">
-              <button
-                type="button"
-                onClick={() => { api.ssoLogin(awsProfile).catch(() => undefined); }}
-                className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover transition-colors"
-              >
-                Open SSO Login
-              </button>
-              <span className="text-xs text-text-secondary">A browser window will open. Refresh this page after logging in.</span>
-            </div>
+            <SsoLoginButton profile={awsProfile} />
           )}
         </div>
       )}
