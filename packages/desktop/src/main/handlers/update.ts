@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import {
   checkForUpdates,
   downloadUpdate,
@@ -10,6 +10,7 @@ export function registerUpdateHandlers(): void {
   ipcMain.handle('update:check', () => checkForUpdates());
   ipcMain.handle('update:download', () => downloadUpdate());
   ipcMain.handle('update:quit-and-install', () => { quitAndInstall(); });
+  ipcMain.handle('update:get-app-version', () => app.getVersion());
 
   onStatusChanged((status) => {
     for (const win of BrowserWindow.getAllWindows()) {

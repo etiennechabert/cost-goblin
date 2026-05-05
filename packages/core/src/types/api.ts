@@ -227,4 +227,5 @@ export interface UpdateApi {
   downloadUpdate(): Promise<void>;
   quitAndInstall(): void;
   onStatusChanged(callback: (status: UpdateStatus) => void): () => void;
+  getAppVersion(): Promise<string>;
 }

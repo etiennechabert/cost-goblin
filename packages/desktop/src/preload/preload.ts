@@ -307,6 +307,9 @@ contextBridge.exposeInMainWorld('costgoblinUpdate', {
     ipcRenderer.on('update:status-changed', handler);
     return () => { ipcRenderer.removeListener('update:status-changed', handler); };
   },
+  getAppVersion(): Promise<string> {
+    return invoke<string>('update:get-app-version');
+  },
 });
 
 contextBridge.exposeInMainWorld('costgoblinDebug', {
