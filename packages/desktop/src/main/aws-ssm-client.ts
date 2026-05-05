@@ -38,7 +38,8 @@ async function resolveProfileRegion(profile: string): Promise<string> {
     const ssoRegion = sessionSection['sso_region'];
     if (typeof ssoRegion === 'string' && ssoRegion.length > 0) return ssoRegion;
   }
-  throw new Error(`Profile "${profile}" has no region configured in ~/.aws/config. Add 'region = <aws-region>' to the profile.`);
+  const configHint = process.platform === 'win32' ? '%USERPROFILE%\\.aws\\config' : '~/.aws/config';
+  throw new Error(`Profile "${profile}" has no region configured in ${configHint}. Add 'region = <aws-region>' to the profile.`);
 }
 
 const FIELDS = ['longName', 'geolocationCountry', 'geolocationRegion'] as const;
