@@ -57,7 +57,7 @@ function KeyUnlockAnimation(): React.JSX.Element {
         stroke="currentColor"
         strokeWidth="2.5"
         strokeLinecap="round"
-        className="origin-[42px_28px]"
+        className="origin-[22px_28px]"
         style={{
           animation: 'shackle-open 1.2s ease-in-out forwards',
         }}
@@ -74,8 +74,8 @@ function KeyUnlockAnimation(): React.JSX.Element {
       </g>
       <style>{`
         @keyframes shackle-open {
-          0%, 50% { transform: rotate(0deg) translateY(0); opacity: 1; }
-          100% { transform: rotate(-30deg) translateY(-4px); opacity: 0.4; }
+          0%, 50% { transform: rotate(0deg); }
+          100% { transform: rotate(-45deg); }
         }
         @keyframes key-enter {
           0% { transform: translateX(20px); opacity: 0; }
@@ -83,7 +83,7 @@ function KeyUnlockAnimation(): React.JSX.Element {
         }
         @keyframes key-turn {
           0% { transform: rotate(0deg); transform-origin: 38px 40px; }
-          100% { transform: rotate(-45deg); transform-origin: 38px 40px; }
+          100% { transform: rotate(45deg); transform-origin: 38px 40px; }
         }
       `}</style>
     </svg>
