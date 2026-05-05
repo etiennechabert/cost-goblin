@@ -13,7 +13,7 @@ const perfEnabled = globalThis.costgoblinPerf !== undefined;
 const isDev = globalThis.costgoblinDebug.isDev();
 const renderTimings: RenderTiming[] = [];
 
-function RamBadge(): React.JSX.Element {
+function useMemoryMB(): number {
   const [mb, setMb] = useState(0);
   useEffect(() => {
     function update(): void {
@@ -23,11 +23,7 @@ function RamBadge(): React.JSX.Element {
     const id = setInterval(update, 1000);
     return () => { clearInterval(id); };
   }, []);
-  return (
-    <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[11px] font-medium tabular-nums text-text-secondary whitespace-nowrap">
-      {mb} MB
-    </span>
-  );
+  return mb;
 }
 
 if (perfEnabled) {
@@ -187,10 +183,14 @@ function UpdateNotification({
   }
   if (status.state === 'downloading') {
     return (
-      <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-text-secondary">
+      <button
+        type="button"
+        onClick={onShowReleaseNotes}
+        className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary/50 transition-colors"
+      >
         <RefreshCw size={14} className="animate-spin" />
         Downloading {String(status.percent)}%
-      </div>
+      </button>
     );
   }
   if (status.state === 'downloaded') {
@@ -217,21 +217,46 @@ function ReleaseNotesModal({
   onOpenChange: (open: boolean) => void;
   status: UpdateStatus;
 }>): React.JSX.Element | null {
-  if (status.state !== 'available' && status.state !== 'downloaded') return null;
+  if (status.state !== 'available' && status.state !== 'downloading' && status.state !== 'downloaded') return null;
   const { info } = status;
+
+  const title = status.state === 'downloaded'
+    ? 'Ready to Install'
+    : status.state === 'downloading'
+      ? 'Downloading Update'
+      : 'Update Available';
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogTitle>
-          {status.state === 'downloaded' ? 'Ready to Install' : 'Update Available'} &mdash; v{info.version}
+          {title} &mdash; v{info.version}
         </DialogTitle>
         <DialogDescription>
           Released {info.releaseDate}
         </DialogDescription>
-        {info.releaseNotes !== null && (
-          <div className="mt-3 max-h-60 overflow-y-auto rounded-md bg-bg-primary p-3 text-sm text-text-secondary whitespace-pre-wrap">
-            {info.releaseNotes}
+        {status.state === 'downloading' && (
+          <div className="mt-3">
+            <div className="flex items-center justify-between text-xs text-text-secondary mb-1.5">
+              <span className="flex items-center gap-1.5">
+                <RefreshCw size={12} className="animate-spin" />
+                Downloading...
+              </span>
+              <span>{String(status.percent)}%</span>
+            </div>
+            <div className="h-2 rounded-full bg-bg-tertiary overflow-hidden">
+              <div
+                className="h-full rounded-full bg-accent transition-all duration-300"
+                style={{ width: `${String(status.percent)}%` }}
+              />
+            </div>
           </div>
+        )}
+        {info.releaseNotes !== null && (
+          <div
+            className="mt-3 max-h-60 overflow-y-auto rounded-md bg-bg-primary p-3 text-sm text-text-secondary prose prose-sm prose-invert max-w-none [&_a]:text-accent [&_a]:underline [&_h2]:text-base [&_h2]:font-semibold [&_h2]:mt-2 [&_h2]:mb-1 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-2 [&_h3]:mb-1 [&_p]:my-1 [&_ul]:my-1 [&_li]:my-0"
+            dangerouslySetInnerHTML={{ __html: info.releaseNotes }}
+          />
         )}
         <div className="mt-4 flex justify-end gap-2">
           <DialogClose>
@@ -242,7 +267,6 @@ function ReleaseNotesModal({
               size="sm"
               onClick={() => {
                 globalThis.costgoblinUpdate.downloadUpdate().catch(() => undefined);
-                onOpenChange(false);
               }}
             >
               <Download size={14} className="mr-1.5" />
@@ -445,10 +469,26 @@ function AppShell(): React.JSX.Element {
   const inFlightCount = useDebugBadge();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState('');
+  const memoryMB = useMemoryMB();
+  const autoOpenRef = useMemo(() => ({ current: false }), []);
+
+  useEffect(() => {
+    globalThis.costgoblinUpdate.getAppVersion().then(setAppVersion).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     return globalThis.costgoblinUpdate.onStatusChanged(setUpdateStatus);
   }, []);
+
+  useEffect(() => {
+    if (autoOpenRef.current) return;
+    if (setupCheck.status !== 'ready') return;
+    if (updateStatus.state === 'available' || updateStatus.state === 'downloaded') {
+      autoOpenRef.current = true;
+      setReleaseNotesOpen(true);
+    }
+  }, [setupCheck.status, updateStatus.state, autoOpenRef]);
 
   useEffect(() => {
     async function initialize(): Promise<void> {
@@ -637,10 +677,15 @@ function AppShell(): React.JSX.Element {
               </button>
             ))}
           </nav>
-          <div className="flex items-center justify-center gap-2 px-4 relative">
-            {isDev && <RamBadge />}
-            <img src="goblin.png" alt="" className="h-8 w-auto object-contain" />
-            <span className="text-sm font-bold text-accent tracking-wider">CostGoblin</span>
+          <div className="flex items-center justify-center gap-2 px-4">
+            <img src="goblin.png" alt="" className="h-10 w-auto object-contain self-stretch" />
+            <div className="flex flex-col justify-center">
+              <span className="text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
+              <div className="flex items-center gap-1.5 text-[10px] text-text-muted tabular-nums">
+                {appVersion !== '' && <span>v{appVersion}</span>}
+                {isDev && memoryMB > 0 && <span>{memoryMB} MB</span>}
+              </div>
+            </div>
           </div>
           <nav className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]" aria-label="Configuration views">
             <UpdateNotification status={updateStatus} onShowReleaseNotes={() => { setReleaseNotesOpen(true); }} />

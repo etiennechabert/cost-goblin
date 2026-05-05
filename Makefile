@@ -68,7 +68,8 @@ release: ## Bump version (patch/minor/major), tag, and push to trigger release
 	esac; \
 	npm version $$bump --no-git-tag-version && \
 	version=$$(node -p 'require("./package.json").version') && \
-	git add package.json package-lock.json && \
+	cd packages/desktop && npm version $$version --no-git-tag-version && cd ../.. && \
+	git add package.json package-lock.json packages/desktop/package.json && \
 	git commit -m "Release v$$version" && \
 	git tag "v$$version" && \
 	echo "" && \
