@@ -282,6 +282,12 @@ const api: CostApi = {
     // Use ipcRenderer directly — cancel calls shouldn't inflate the in-flight badge
     return (ipcRenderer.invoke('query:cancel-pending') as Promise<undefined>).then(() => undefined);
   },
+  getMcpServerRunning(): Promise<boolean> {
+    return invoke<boolean>('mcp:get-running');
+  },
+  setMcpServerRunning(enabled: boolean): Promise<void> {
+    return invoke<undefined>('mcp:set-running', enabled).then(() => undefined);
+  },
 };
 
 contextBridge.exposeInMainWorld('costgoblin', api);
