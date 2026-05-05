@@ -1,7 +1,6 @@
 import { ipcMain, safeStorage } from 'electron';
 import { readFile, writeFile, readdir, mkdir, rm, unlink } from 'node:fs/promises';
-import { existsSync, writeFileSync, readFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import {
   deriveKey,
@@ -93,11 +92,6 @@ function collectParquetFiles(dataDir: string): Promise<string[]> {
   return collectFiles(join(dataDir, 'aws', 'raw'), '.parquet');
 }
 
-function storeKeyInSafeStorage(userDataPath: string, rawKey: Buffer): void {
-  const encrypted = safeStorage.encryptString(rawKey.toString('hex'));
-  writeFileSync(safeStorageKeyPath(userDataPath), encrypted);
-}
-
 function loadKeyFromSafeStorage(userDataPath: string): Buffer | null {
   try {
     const encrypted = readFileSync(safeStorageKeyPath(userDataPath));
@@ -126,6 +120,11 @@ export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
 
     if (config === null) {
       return { state: 'not-configured' };
+    }
+
+    if (!config.usePassword && config.keyCheck === '') {
+      vaultState.encryptionConfig = config;
+      return { state: 'unlocked' };
     }
 
     if (vaultState.derivedKey !== null) {
@@ -173,23 +172,26 @@ export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
   });
 
   ipcMain.handle('vault:setup', async (_event, password: string | null): Promise<void> => {
-    const usePassword = password !== null;
-    const salt = generateSalt();
-    let key: Buffer;
-
-    if (usePassword) {
-      key = await deriveKey(password, salt);
-    } else {
-      key = randomBytes(32);
-      storeKeyInSafeStorage(userDataPath, key);
+    if (password === null) {
+      const config: EncryptionConfig = {
+        salt: '',
+        keyCheck: '',
+        usePassword: false,
+      };
+      await saveEncryptionConfig(userDataPath, config);
+      vaultState.encryptionConfig = config;
+      logger.info('Vault setup complete (no encryption)');
+      return;
     }
 
+    const salt = generateSalt();
+    const key = await deriveKey(password, salt);
     const keyCheck = createKeyCheck(key);
 
     const config: EncryptionConfig = {
       salt: salt.toString('hex'),
       keyCheck: keyCheck.toString('hex'),
-      usePassword,
+      usePassword: true,
     };
 
     const parquetFiles = await collectParquetFiles(dataDir);
@@ -207,7 +209,7 @@ export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
     await mkdirRestricted(tempDir);
     vaultState.tempDataDir = tempDir;
 
-    logger.info(`Vault setup complete (password=${String(usePassword)}): ${String(parquetFiles.length)} files encrypted`);
+    logger.info(`Vault setup complete (password): ${String(parquetFiles.length)} files encrypted`);
   });
 
   ipcMain.handle('vault:reset', async (): Promise<void> => {

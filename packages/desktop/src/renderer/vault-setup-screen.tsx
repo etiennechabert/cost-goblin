@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { Lock, LockOpen } from 'lucide-react';
 
 interface VaultSetupScreenProps {
   readonly onComplete: () => void;
@@ -40,18 +41,24 @@ export function VaultSetupScreen({ onComplete }: VaultSetupScreenProps): React.J
           <button
             type="button"
             onClick={() => { setWantEncryption(true); }}
-            className="w-full rounded-lg border border-border bg-bg-tertiary/20 p-4 text-left hover:border-accent/50 hover:bg-bg-tertiary/40 transition-colors"
+            className="w-full rounded-lg border border-border bg-bg-tertiary/20 p-4 text-left hover:border-accent/50 hover:bg-bg-tertiary/40 transition-colors flex items-start gap-3"
           >
-            <span className="text-sm font-medium text-text-primary">Yes, set a password</span>
-            <p className="text-xs text-text-muted mt-0.5">Data is encrypted on disk. You&apos;ll enter the password each time you open CostGoblin.</p>
+            <Lock className="size-5 text-accent mt-0.5 shrink-0" />
+            <div>
+              <span className="text-sm font-medium text-text-primary">Yes, set a password</span>
+              <p className="text-xs text-text-muted mt-0.5">Data is encrypted on disk. You&apos;ll enter the password each time you open CostGoblin.</p>
+            </div>
           </button>
           <button
             type="button"
             onClick={() => { globalThis.costgoblinVault.setup(null).then(onComplete).catch(() => undefined); }}
-            className="w-full rounded-lg border border-border bg-bg-tertiary/20 p-4 text-left hover:border-border hover:bg-bg-tertiary/40 transition-colors"
+            className="w-full rounded-lg border border-border bg-bg-tertiary/20 p-4 text-left hover:border-border hover:bg-bg-tertiary/40 transition-colors flex items-start gap-3"
           >
-            <span className="text-sm font-medium text-text-primary">No thanks</span>
-            <p className="text-xs text-text-muted mt-0.5">Data is encrypted automatically using your system keychain. No password prompt on startup.</p>
+            <LockOpen className="size-5 text-text-muted mt-0.5 shrink-0" />
+            <div>
+              <span className="text-sm font-medium text-text-primary">No thanks</span>
+              <p className="text-xs text-text-muted mt-0.5">Data is stored unencrypted on disk. You can enable encryption later in settings.</p>
+            </div>
           </button>
         </div>
       </div>
@@ -63,7 +70,7 @@ export function VaultSetupScreen({ onComplete }: VaultSetupScreenProps): React.J
       <div>
         <h2 className="text-xl font-semibold text-text-primary">Set your password</h2>
         <p className="text-sm text-text-secondary mt-1">
-          This password encrypts your billing data. If you forget it, you&apos;ll need to re-sync from S3.
+          Pick something simple and easy to remember — no need for special characters. If you forget it, you can always re-sync from S3.
         </p>
       </div>
 
