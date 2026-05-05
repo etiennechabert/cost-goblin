@@ -681,7 +681,7 @@ function AppShell(): React.JSX.Element {
             <img src="goblin.png" alt="" className="h-10 w-auto object-contain self-stretch" />
             <div className="flex flex-col justify-center">
               <span className="text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
-              <div className="flex items-center gap-1.5 text-[10px] text-text-muted tabular-nums">
+              <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
                 {appVersion !== '' && <span>v{appVersion}</span>}
                 {isDev && memoryMB > 0 && <span>{memoryMB} MB</span>}
               </div>
