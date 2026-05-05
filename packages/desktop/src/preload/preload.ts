@@ -299,6 +299,13 @@ contextBridge.exposeInMainWorld('costgoblinVault', {
   reset(): Promise<void> {
     return invoke<undefined>('vault:reset').then(() => undefined);
   },
+  onDecryptProgress(callback: (done: number, total: number) => void): () => void {
+    const handler = (_event: Electron.IpcRendererEvent, done: number, total: number): void => {
+      callback(done, total);
+    };
+    ipcRenderer.on('vault:decrypt-progress', handler);
+    return () => { ipcRenderer.removeListener('vault:decrypt-progress', handler); };
+  },
 });
 
 contextBridge.exposeInMainWorld('costgoblinUpdate', {

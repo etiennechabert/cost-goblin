@@ -100,6 +100,14 @@ export function VaultLockScreen({ onUnlocked, onReset }: VaultLockScreenProps): 
   const [error, setError] = useState<string | null>(null);
   const [unlocking, setUnlocking] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [decryptProgress, setDecryptProgress] = useState<{ done: number; total: number } | null>(null);
+
+  useEffect(() => {
+    if (!unlocking) return;
+    return globalThis.costgoblinVault.onDecryptProgress((done, total) => {
+      setDecryptProgress({ done, total });
+    });
+  }, [unlocking]);
 
   const handleSubmit = useCallback(async (e: React.SyntheticEvent) => {
     e.preventDefault();
@@ -107,6 +115,7 @@ export function VaultLockScreen({ onUnlocked, onReset }: VaultLockScreenProps): 
 
     setUnlocking(true);
     setError(null);
+    setDecryptProgress(null);
 
     const result = await globalThis.costgoblinVault.unlock(password);
     if (result.success) {
@@ -114,6 +123,7 @@ export function VaultLockScreen({ onUnlocked, onReset }: VaultLockScreenProps): 
     } else {
       setError('Wrong password');
       setUnlocking(false);
+      setDecryptProgress(null);
     }
   }, [password, unlocking, onUnlocked]);
 
@@ -191,8 +201,21 @@ export function VaultLockScreen({ onUnlocked, onReset }: VaultLockScreenProps): 
         </form>
 
         {unlocking && (
-          <div className="mt-6 flex justify-center">
+          <div className="mt-6 flex flex-col items-center gap-3">
             <KeyUnlockAnimation />
+            {decryptProgress !== null && decryptProgress.total > 0 && (
+              <div className="w-full space-y-1.5">
+                <div className="h-1.5 rounded-full bg-bg-tertiary overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-accent transition-all duration-150 ease-out"
+                    style={{ width: `${String(Math.round((decryptProgress.done / decryptProgress.total) * 100))}%` }}
+                  />
+                </div>
+                <p className="text-xs text-text-muted text-center">
+                  Decrypting {String(decryptProgress.done)}/{String(decryptProgress.total)} files
+                </p>
+              </div>
+            )}
           </div>
         )}
 

@@ -146,7 +146,7 @@ export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
     return { state: 'locked' };
   });
 
-  ipcMain.handle('vault:unlock', async (_event, password: string): Promise<{ success: boolean; dataDir: string | null }> => {
+  ipcMain.handle('vault:unlock', async (event, password: string): Promise<{ success: boolean; dataDir: string | null }> => {
     const config = await loadEncryptionConfig(userDataPath);
     if (config === null) {
       return { success: true, dataDir };
@@ -164,7 +164,9 @@ export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
     vaultState.encryptionConfig = config;
 
     const tempDir = tempVaultDir(userDataPath);
-    await decryptDataToTemp(dataDir, tempDir, key);
+    await decryptDataToTemp(dataDir, tempDir, key, (done, total) => {
+      event.sender.send('vault:decrypt-progress', done, total);
+    });
     vaultState.tempDataDir = tempDir;
 
     logger.info('Vault unlocked, data decrypted to temp');
@@ -242,19 +244,28 @@ export function registerVaultHandlers(vaultCtx: VaultContext): VaultState {
   return vaultState;
 }
 
-async function decryptDataToTemp(dataDir: string, tempDir: string, key: Buffer): Promise<void> {
+async function decryptDataToTemp(
+  dataDir: string,
+  tempDir: string,
+  key: Buffer,
+  onProgress?: (done: number, total: number) => void,
+): Promise<void> {
   await cleanupTemp(dirname(tempDir));
   await mkdirRestricted(tempDir);
 
   const encFiles = await collectEncryptedFiles(dataDir);
-  for (const encPath of encFiles) {
+  const total = encFiles.length;
+  for (let i = 0; i < total; i++) {
+    const encPath = encFiles[i];
+    if (encPath === undefined) continue;
     const rel = relative(join(dataDir, 'aws', 'raw'), encPath).replace(/\.enc$/, '');
     const outPath = join(tempDir, 'aws', 'raw', rel);
     await mkdirRestricted(dirname(outPath));
     await decryptFile(encPath, outPath, key);
+    onProgress?.(i + 1, total);
   }
 
-  logger.info(`Decrypted ${String(encFiles.length)} files to temp`);
+  logger.info(`Decrypted ${String(total)} files to temp`);
 }
 
 export async function cleanupTemp(userDataPath: string): Promise<void> {

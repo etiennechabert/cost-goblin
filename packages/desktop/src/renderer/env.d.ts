@@ -51,6 +51,7 @@ declare global {
     unlock(password: string): Promise<{ success: boolean; dataDir: string | null }>;
     setup(password: string | null): Promise<void>;
     reset(): Promise<void>;
+    onDecryptProgress(callback: (done: number, total: number) => void): () => void;
   }
 
   interface Window {
