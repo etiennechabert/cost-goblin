@@ -44,8 +44,10 @@ function tempVaultDir(userDataPath: string): string {
 
 async function mkdirRestricted(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true, mode: 0o700 });
-  const { chmod } = await import('node:fs/promises');
-  await chmod(dir, 0o700);
+  if (process.platform !== 'win32') {
+    const { chmod } = await import('node:fs/promises');
+    await chmod(dir, 0o700);
+  }
 }
 
 async function loadEncryptionConfig(userDataPath: string): Promise<EncryptionConfig | null> {

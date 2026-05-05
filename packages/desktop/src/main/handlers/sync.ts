@@ -211,13 +211,17 @@ export function registerSyncHandlers(app: AppContext): void {
 
   ipcMain.handle('data:sso-login', async (_event, profile: string): Promise<void> => {
     const { spawn } = await import('node:child_process');
+    const { delimiter } = await import('node:path');
     const currentPath = process.env['PATH'] ?? '';
-    const extraPaths = ['/usr/local/bin', '/opt/homebrew/bin', '/usr/bin'];
-    const fullPath = [...new Set([...currentPath.split(':'), ...extraPaths])].join(':');
+    const extraPaths = process.platform === 'win32'
+      ? []
+      : ['/usr/local/bin', '/opt/homebrew/bin', '/usr/bin'];
+    const fullPath = [...new Set([...currentPath.split(delimiter), ...extraPaths])].join(delimiter);
     return new Promise<void>((resolve, reject) => {
       const child = spawn('aws', ['sso', 'login', '--profile', profile], {
         stdio: 'ignore',
         detached: true,
+        shell: process.platform === 'win32',
         env: { ...process.env, PATH: fullPath },
       });
       child.on('error', (err: NodeJS.ErrnoException) => {

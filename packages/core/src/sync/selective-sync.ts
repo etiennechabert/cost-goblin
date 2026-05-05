@@ -1,4 +1,4 @@
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -6,23 +6,24 @@ import { join } from 'node:path';
 let cachedAwsPath: string | null = null;
 function findAwsCli(): string {
   if (cachedAwsPath !== null) return cachedAwsPath;
-  // Packaged macOS apps don't inherit the user's shell PATH
-  const candidates = [
-    '/opt/homebrew/bin/aws',
-    '/usr/local/bin/aws',
-    '/usr/bin/aws',
-  ];
+
+  const candidates = process.platform === 'win32'
+    ? [
+        join(process.env['PROGRAMFILES'] ?? 'C:\\Program Files', 'Amazon', 'AWSCLIV2', 'aws.exe'),
+      ]
+    : [
+        '/opt/homebrew/bin/aws',
+        '/usr/local/bin/aws',
+        '/usr/bin/aws',
+        '/usr/local/sbin/aws',
+        '/opt/local/bin/aws',
+      ];
+
   for (const p of candidates) {
     if (existsSync(p)) { cachedAwsPath = p; return p; }
   }
-  // Fall back to PATH lookup (works in dev mode)
-  try {
-    cachedAwsPath = execFileSync('which', ['aws'], { encoding: 'utf-8' }).trim();
-    return cachedAwsPath;
-  } catch {
-    cachedAwsPath = 'aws';
-    return cachedAwsPath;
-  }
+  cachedAwsPath = 'aws';
+  return cachedAwsPath;
 }
 import { logger } from '../logger/logger.js';
 import { parseS3Path } from './s3-client.js';
