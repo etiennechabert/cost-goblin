@@ -14,13 +14,17 @@ const MARGIN = { top: 20, right: 30, bottom: 50, left: 70 };
 const MIN_RADIUS = 4;
 const MAX_RADIUS = 40;
 
+const DEFAULT_LOG_SCALE = 10;
+
 interface BubbleChartProps {
   readonly data: readonly TrendRow[];
+  readonly logScale?: number | undefined;
   readonly onEntityClick: (entity: EntityRef) => void;
 }
 
 function BubbleChartInner({
   data,
+  logScale,
   onEntityClick,
   width,
   height,
@@ -72,18 +76,20 @@ function BubbleChartInner({
   const deltaMax = Math.max(...absDeltas);
   const costMax = Math.max(...costs);
 
+  const symlogConstant = logScale ?? DEFAULT_LOG_SCALE;
+
   const xScale = scaleSymlog<number>({
-    domain: [0, percentMax + percentPad],
+    domain: [percentMin - percentPad, percentMax + percentPad],
     range: [0, innerWidth],
     nice: true,
-    constant: 10,
+    constant: symlogConstant,
   });
 
   const yScale = scaleSymlog<number>({
     domain: [0, deltaMax * 1.15],
     range: [innerHeight, 0],
     nice: true,
-    constant: 10,
+    constant: symlogConstant,
   });
 
   const rScale = scaleSqrt<number>({
@@ -114,6 +120,17 @@ function BubbleChartInner({
             stroke={gridColor}
             strokeDasharray="2,3"
             numTicks={5}
+          />
+
+          {/* Zero reference line */}
+          <line
+            x1={xScale(0)}
+            x2={xScale(0)}
+            y1={0}
+            y2={innerHeight}
+            stroke={axisColor}
+            strokeOpacity={0.5}
+            strokeWidth={1}
           />
 
           <AxisBottom
@@ -209,13 +226,14 @@ function BubbleChartInner({
   );
 }
 
-export function BubbleChart({ data, onEntityClick }: BubbleChartProps) {
+export function BubbleChart({ data, logScale, onEntityClick }: BubbleChartProps) {
   return (
     <div className="h-[350px] w-full rounded-xl border border-border bg-bg-secondary/50">
       <ParentSize>
         {({ width, height }) => (
           <BubbleChartInner
             data={data}
+            logScale={logScale}
             onEntityClick={onEntityClick}
             width={width}
             height={height}

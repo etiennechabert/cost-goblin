@@ -27,8 +27,11 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
       return base;
     case 'pie':
     case 'stackedBar':
+      addGroupByFields(base, w);
+      return base;
     case 'bubble':
       addGroupByFields(base, w);
+      if (w.logScale !== undefined) base['logScale'] = w.logScale;
       return base;
     case 'treemap':
       addGroupByFields(base, w);
