@@ -147,6 +147,7 @@ function BucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
   onSkip?: (() => void) | undefined;
   onBack: () => void;
 }>) {
+  const api = useCostApi();
   const [filter, setFilter] = useState('');
   const filtered = state.buckets.filter(b => filter.length === 0 || b.name.toLowerCase().includes(filter.toLowerCase()));
   const sourceLabel = SOURCE_LABELS[state.source];
@@ -160,8 +161,20 @@ function BucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
       </div>
 
       {state.error.length > 0 && (
-        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">
-          {state.error}
+        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3">
+          <p className="text-sm text-negative">{state.error}</p>
+          {state.error.includes('aws sso login') && (
+            <div className="flex items-center gap-3 mt-2">
+              <button
+                type="button"
+                onClick={() => { api.ssoLogin(state.profile).catch(() => undefined); }}
+                className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover transition-colors"
+              >
+                Open SSO Login
+              </button>
+              <span className="text-xs text-text-secondary">A browser window will open. Refresh this page after logging in.</span>
+            </div>
+          )}
         </div>
       )}
 
