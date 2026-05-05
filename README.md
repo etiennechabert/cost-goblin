@@ -30,7 +30,7 @@
 
 <p align="center">
   <a href="https://costgoblin.com/#download">Download</a> &middot;
-  <a href="#quick-start">Quick Start</a> &middot;
+  <a href="https://costgoblin.com/#get-started">Get Started</a> &middot;
   <a href="#features">Features</a>
 </p>
 
