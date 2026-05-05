@@ -1,12 +1,10 @@
-import { useState, useEffect, useCallback, useMemo, useRef, Profiler } from 'react';
+import { useState, useEffect, useCallback, useMemo, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagColumnName } from '@costgoblin/core/browser';
 import { Download, RefreshCw, Sparkles } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
-import { VaultLockScreen } from './vault-lock-screen.js';
-import { VaultSetupScreen } from './vault-setup-screen.js';
 
 // ---------------------------------------------------------------------------
 // React Profiler — collects render timings when perf mode is active
@@ -126,11 +124,6 @@ function PaletteIcon() {
 }
 
 type SyncActivity = 'idle' | 'syncing' | 'downloading';
-
-type VaultCheck =
-  | { status: 'checking' }
-  | { status: 'locked' }
-  | { status: 'unlocked' };
 
 type SetupCheck =
   | { status: 'checking' }
@@ -360,7 +353,6 @@ function useSyncPolling(
 
 const SPLASH_IMAGES = ['splash-1.png', 'splash-2.png', 'splash-3.png', 'splash-4.png', 'splash-5.png', 'splash-6.png', 'splash-7.png', 'splash-8.png', 'splash-9.png', 'splash-10.png'];
 const SPLASH_INTERVAL = 500;
-const SPLASH_DURATION = 2500;
 
 function shuffled<T>(arr: readonly T[]): T[] {
   const copy = [...arr];
@@ -389,20 +381,18 @@ function defaultDateRange(): { start: string; end: string } {
 function SplashScreen({ step }: Readonly<{ step: string }>): React.JSX.Element {
   const [order] = useState(() => shuffled(SPLASH_IMAGES));
   const [index, setIndex] = useState(0);
-  const [fadeOut, setFadeOut] = useState(false);
 
   useEffect(() => {
     const rotate = setInterval(() => {
       setIndex(prev => (prev + 1) % SPLASH_IMAGES.length);
     }, SPLASH_INTERVAL);
-    const fade = setTimeout(() => { setFadeOut(true); }, SPLASH_DURATION - 400);
-    return () => { clearInterval(rotate); clearTimeout(fade); };
+    return () => { clearInterval(rotate); };
   }, []);
 
   return (
     <div
-      className="min-h-screen flex flex-col items-center justify-center transition-opacity duration-500"
-      style={{ opacity: fadeOut ? 0 : 1, background: '#0a0a0a', WebkitAppRegion: 'drag' } as React.CSSProperties}
+      className="min-h-screen flex flex-col items-center justify-center"
+      style={{ background: '#0a0a0a', WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
       <div className="relative h-48 w-48 mb-6">
         {order.map((src, i) => (
@@ -422,10 +412,6 @@ function SplashScreen({ step }: Readonly<{ step: string }>): React.JSX.Element {
       </div>
     </div>
   );
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => { setTimeout(resolve, ms); });
 }
 
 async function prewarmDimensions(
@@ -451,10 +437,8 @@ function AppShell(): React.JSX.Element {
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [isDark, setIsDark] = useState(true);
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
-  const [vaultCheck, setVaultCheck] = useState<VaultCheck>({ status: 'checking' });
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const [splashStep, setSplashStep] = useState('Connecting...');
-  const splashMinElapsed = useRef(false);
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
   const { syncError, setSyncError, syncActivity, syncFilesRemaining } = useSyncPolling(api, setupCheck);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -468,34 +452,15 @@ function AppShell(): React.JSX.Element {
 
   useEffect(() => {
     async function initialize(): Promise<void> {
-      const skipSplash = globalThis.costgoblinDebug.isE2E();
-
       setSplashStep('Checking configuration...');
-      const [configured, vault] = await Promise.all([
-        api.getSetupStatus().then(({ configured: c }) => c),
-        globalThis.costgoblinVault.getStatus(),
-      ]);
+      const { configured } = await api.getSetupStatus();
 
-      if (!configured || vault.state === 'not-configured') {
-        setVaultCheck({ status: 'unlocked' });
+      if (!configured) {
         setSetupCheck({ status: 'needs-setup' });
         return;
       }
 
-      if (vault.state === 'locked') {
-        setVaultCheck({ status: 'locked' });
-        return;
-      }
-
       await prewarmDimensions(api, setSplashStep);
-
-      setSplashStep('Preparing dashboard...');
-      if (!skipSplash) {
-        await delay(SPLASH_DURATION);
-        splashMinElapsed.current = true;
-      }
-
-      setVaultCheck({ status: 'unlocked' });
       setSetupCheck({ status: 'ready' });
     }
     initialize().catch(() => undefined);
@@ -602,10 +567,6 @@ function AppShell(): React.JSX.Element {
     setView({ page: 'sync' });
   }
 
-  const renderVaultStep = useCallback((onContinue: () => void): React.JSX.Element => {
-    return <VaultSetupScreen onComplete={onContinue} />;
-  }, []);
-
   const views = viewsConfig ?? FALLBACK_VIEWS;
   const viewsReady = viewsConfig !== null;
   const customNav: { id: string; label: string }[] = views.views.map(v => ({ id: v.id, label: v.name }));
@@ -618,30 +579,12 @@ function AppShell(): React.JSX.Element {
     ...RIGHT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Settings' })),
   ], [customNav]);
 
-  if (vaultCheck.status === 'locked') {
-    return (
-      <VaultLockScreen
-        onUnlocked={() => {
-          setVaultCheck({ status: 'unlocked' });
-          prewarmDimensions(api, () => undefined).catch(() => undefined);
-          setTimeout(() => {
-            setSetupCheck({ status: 'ready' });
-          }, SPLASH_DURATION);
-        }}
-        onReset={() => {
-          setVaultCheck({ status: 'unlocked' });
-          setSetupCheck({ status: 'needs-setup' });
-        }}
-      />
-    );
-  }
-
   if (setupCheck.status === 'checking') {
     return <SplashScreen step={splashStep} />;
   }
 
   if (setupCheck.status === 'needs-setup') {
-    return <SetupWizard onComplete={handleSetupComplete} renderAfterWelcome={renderVaultStep} />;
+    return <SetupWizard onComplete={handleSetupComplete} />;
   }
 
   function activeNavId(): string | null {

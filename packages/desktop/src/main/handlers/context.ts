@@ -96,11 +96,6 @@ function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
     ...(loaded.order === undefined ? {} : { order: loaded.order }),
   };
 }
-export interface VaultRef {
-  readonly getKey: () => Buffer | null;
-  readonly getEffectiveDataDir: () => string;
-}
-
 export interface IpcContext {
   readonly db: DuckDBClient;
   readonly syncClient: import('../sync-client.js').SyncClient;
@@ -109,11 +104,7 @@ export interface IpcContext {
   readonly orgTreePath: string;
   readonly viewsPath: string;
   readonly costScopePath: string;
-  /** Effective data dir — resolves to temp when vault is active. */
   readonly dataDir: string;
-  /** Permanent storage dir — always the real location on disk. Used by sync. */
-  readonly storageDataDir: string;
-  readonly vault?: VaultRef | undefined;
 }
 
 export interface OrgTreeConfig {
