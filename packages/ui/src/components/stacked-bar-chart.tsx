@@ -3,6 +3,7 @@ import { getColor } from '../lib/palette.js';
 import { formatDollars } from './format.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
 import { usePalette } from '../hooks/use-palette.js';
+import { useBarDragSelect } from '../hooks/use-bar-drag-select.js';
 
 export interface BarDay {
   readonly date: string;
@@ -25,6 +26,7 @@ interface StackedBarChartProps {
   /** Previous period daily totals, aligned by position index. Rendered as
    *  a dashed line overlay when present. */
   readonly previousTotals?: readonly number[] | undefined;
+  readonly onRangeSelect?: ((startIdx: number, endIdx: number) => void) | undefined;
 }
 
 export function bucketBars(bars: readonly BarDay[], maxBuckets: number): readonly BarDay[] {
@@ -130,11 +132,19 @@ function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, palette,
   );
 }
 
-export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick, previousTotals }: StackedBarChartProps) {
+export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick, previousTotals, onRangeSelect }: StackedBarChartProps) {
   const { palette } = usePalette();
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
   const [hoveredSegment, setHoveredSegment] = useState<string | null>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
+  const barsRef = useRef<HTMLDivElement>(null);
+
+  const { isDragging, overlay, handleMouseDown } = useBarDragSelect({
+    containerRef: barsRef,
+    bucketCount: days.length,
+    onRangeSelect,
+    disabled: onRangeSelect === undefined || loading === true,
+  });
 
   useEffect(() => {
     highlightRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -224,7 +234,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
           </div>
 
           {/* Floating tooltip — opposite side of hovered bar, full height */}
-          {hoveredDay !== null && (() => {
+          {hoveredDay !== null && !isDragging && (() => {
             const idx = days.findIndex(d => d.date === hoveredDay);
             if (idx < 0) return null;
             const day = days[idx];
@@ -293,7 +303,15 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
             );
           })()}
 
-          <div className="absolute left-12 right-0 top-0 bottom-7 flex items-end z-10" style={{ gap: days.length > 100 ? '1px' : '2px' }}>
+          <div
+            ref={barsRef}
+            className={[
+              'absolute left-12 right-0 top-0 bottom-7 flex items-end z-10',
+              onRangeSelect !== undefined ? 'cursor-crosshair select-none' : '',
+            ].join(' ')}
+            style={{ gap: days.length > 100 ? '1px' : '2px' }}
+            onMouseDown={handleMouseDown}
+          >
             {days.map((day) => {
               const barPct = maxCost > 0 ? (day.total / maxCost) * 100 : 0;
               const segments = breakdownKeys
@@ -321,6 +339,12 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                 />
               );
             })}
+            {overlay !== null && (
+              <div
+                className="pointer-events-none absolute top-0 bottom-0 bg-accent/20 border-l border-r border-accent z-30"
+                style={{ left: overlay.left, width: overlay.width }}
+              />
+            )}
           </div>
 
           {/* Previous period overlay line */}

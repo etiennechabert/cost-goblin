@@ -13,15 +13,20 @@ import type {
   ExplorerSort,
   Granularity,
 } from '@costgoblin/core/browser';
+import { asDateString } from '@costgoblin/core/browser';
 import type { SortingState } from '@tanstack/react-table';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
+import { useBarDragSelect } from '../hooks/use-bar-drag-select.js';
+import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
 import { DataTable } from '../components/data-table.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
+import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { getDimensionId } from '../lib/dimensions.js';
+import { bucketKeyToDate, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import type { TableColumn } from '../lib/table-types.js';
 
 const DEBOUNCE_MS = 250;
@@ -93,6 +98,7 @@ const DEFAULT_HIDDEN: ReadonlySet<string> = new Set([
 export function ExplorerView(): React.JSX.Element {
   const api = useCostApi();
   const lagDays = useLagDays();
+  const hourlyConfigured = useHourlyConfigured();
   const [filters, setFilters] = useState<ExplorerFilterMap>({});
   const [sort, setSort] = useState<ExplorerSort | undefined>(undefined);
   const [dimensions, setDimensions] = useState<Dimension[]>([]);
@@ -106,6 +112,7 @@ export function ExplorerView(): React.JSX.Element {
   const [rows, setRows] = useState<RowsState>({ data: null, loading: true, error: null });
   const [hiddenColumns, setHiddenColumns] = useState<readonly string[]>([...DEFAULT_HIDDEN]);
   const [columnOrder, setColumnOrder] = useState<readonly string[]>([]);
+  const [hourlyHint, setHourlyHint] = useState(false);
   const overviewDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rowsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const overviewReqIdRef = useRef(0);
@@ -379,6 +386,32 @@ export function ExplorerView(): React.JSX.Element {
 
   const activeFilterCount = Object.values(filters).reduce((n, vs) => n + vs.length, 0);
   const overviewData = overview.data;
+  const dailyTotals = useMemo(() => overviewData?.dailyTotals ?? [], [overviewData]);
+
+  const handleHistogramRangeSelect = useCallback((startIdx: number, endIdx: number) => {
+    const startBar = dailyTotals[startIdx];
+    const endBar = dailyTotals[endIdx];
+    if (startBar === undefined || endBar === undefined) return;
+    const startDate = bucketKeyToDate(startBar.date);
+    const endDate = bucketKeyToDate(endBar.date);
+    setDateRange({ start: asDateString(startDate), end: asDateString(endDate) });
+    if (shouldAutoSwitchToHourly(startDate, endDate, granularity)) {
+      if (hourlyConfigured) {
+        setGranularity('hourly');
+        setHourlyHint(false);
+      } else {
+        setHourlyHint(true);
+      }
+    } else {
+      setHourlyHint(false);
+    }
+  }, [dailyTotals, granularity, hourlyConfigured]);
+
+  useEffect(() => {
+    if (!shouldAutoSwitchToHourly(dateRange.start, dateRange.end, granularity)) {
+      setHourlyHint(false);
+    }
+  }, [dateRange.start, dateRange.end, granularity]);
 
   return (
     <div className="p-6 max-w-[1800px] mx-auto space-y-4">
@@ -439,10 +472,17 @@ export function ExplorerView(): React.JSX.Element {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Daily total</CardTitle>
+          <CardTitle className="text-sm">{granularity === 'hourly' ? 'Hourly total' : 'Daily total'}</CardTitle>
         </CardHeader>
         <CardContent>
-          <Histogram days={overviewData?.dailyTotals ?? []} loading={overview.loading} />
+          <Histogram
+            days={dailyTotals}
+            loading={overview.loading}
+            onRangeSelect={handleHistogramRangeSelect}
+          />
+          {hourlyHint && (
+            <HourlyHintBanner className="mt-3" onDismiss={() => { setHourlyHint(false); }} />
+          )}
         </CardContent>
       </Card>
 
@@ -573,6 +613,7 @@ function ExplorerOptions({
 interface HistogramProps {
   readonly days: readonly { readonly date: string; readonly cost: number; readonly rows: number }[];
   readonly loading: boolean;
+  readonly onRangeSelect?: (startIdx: number, endIdx: number) => void;
 }
 
 const CHART_HEIGHT = 200;
@@ -584,8 +625,15 @@ const Y_TICKS = [1, 0.75, 0.5, 0.25, 0] as const;
  *  but single-series — Explorer doesn't split the total, it's raw counts
  *  over time. Bucket width follows whatever the handler emits (day or
  *  hour), so the same component handles daily and hourly granularities. */
-function Histogram({ days, loading }: HistogramProps): React.JSX.Element {
+function Histogram({ days, loading, onRangeSelect }: HistogramProps): React.JSX.Element {
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const barsRef = useRef<HTMLDivElement>(null);
+  const { isDragging, overlay, handleMouseDown } = useBarDragSelect({
+    containerRef: barsRef,
+    bucketCount: days.length,
+    onRangeSelect,
+    disabled: onRangeSelect === undefined || loading,
+  });
 
   if (loading) {
     return <CoinRainLoader height={CHART_HEIGHT} count={6} />;
@@ -632,8 +680,13 @@ function Histogram({ days, loading }: HistogramProps): React.JSX.Element {
 
         {/* Bars */}
         <div
-          className="absolute top-0 right-0 h-full flex items-end"
+          ref={barsRef}
+          className={[
+            'absolute top-0 right-0 h-full flex items-end',
+            onRangeSelect !== undefined ? 'cursor-crosshair select-none' : '',
+          ].join(' ')}
           style={{ left: Y_AXIS_WIDTH, gap: 2 }}
+          onMouseDown={handleMouseDown}
         >
           {days.map(d => {
             const pct = (d.cost / max) * 100;
@@ -651,11 +704,11 @@ function Histogram({ days, loading }: HistogramProps): React.JSX.Element {
                 <div
                   className={[
                     'w-full rounded-t-sm transition-colors',
-                    isHovered ? 'bg-accent' : 'bg-accent/80',
+                    isHovered && !isDragging ? 'bg-accent' : 'bg-accent/80',
                   ].join(' ')}
                   style={{ height: `${String(Math.max(pct, 0.5))}%` }}
                 />
-                {isHovered && (
+                {isHovered && !isDragging && (
                   <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20">
                     <div className="rounded-lg border border-border bg-bg-secondary/95 px-3 py-2 text-[11px] text-text-primary whitespace-nowrap shadow-lg min-w-[160px]">
                       <div className="font-semibold mb-1.5 text-xs">{d.date}</div>
@@ -673,6 +726,12 @@ function Histogram({ days, loading }: HistogramProps): React.JSX.Element {
               </div>
             );
           })}
+          {overlay !== null && (
+            <div
+              className="pointer-events-none absolute top-0 bottom-0 bg-accent/20 border-l border-r border-accent z-30"
+              style={{ left: overlay.left, width: overlay.width }}
+            />
+          )}
         </div>
       </div>
 
