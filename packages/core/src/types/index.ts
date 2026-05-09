@@ -5,6 +5,7 @@ export type {
   BucketPath,
   Dollars,
   DateString,
+  HourString,
 } from './branded.js';
 export {
   asDimensionId,
@@ -13,6 +14,7 @@ export {
   asBucketPath,
   asDollars,
   asDateString,
+  asHourString,
   tagColumnName,
 } from './branded.js';
 

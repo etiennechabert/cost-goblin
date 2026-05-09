@@ -159,6 +159,25 @@ export function assertDateString(value: string): void {
   }
 }
 
+/**
+ * Pattern for valid YYYY-MM-DD HH:00:00 hour strings.
+ */
+const HOUR_STRING_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]) ([01]\d|2[0-3]):00:00$/;
+
+/**
+ * Validate that a string is a well-formed YYYY-MM-DD HH:00:00 hour timestamp.
+ * Throws SecurityError if the format is invalid, preventing SQL injection
+ * via hour values interpolated into queries.
+ */
+export function assertHourString(value: string): void {
+  if (!HOUR_STRING_PATTERN.test(value)) {
+    throw new SecurityError(
+      `Invalid hour string "${value}" - must be YYYY-MM-DD HH:00:00 format. ` +
+      `This prevents SQL injection via untrusted hour values.`
+    );
+  }
+}
+
 export function validateTablePath(tablePath: string): void {
   // Extract the tier and period from the path
   // Expected formats:

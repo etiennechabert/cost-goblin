@@ -6,6 +6,7 @@ export type TagValue = Brand<string, 'TagValue'>;
 export type BucketPath = Brand<string, 'BucketPath'>;
 export type Dollars = Brand<number, 'Dollars'>;
 export type DateString = Brand<string, 'DateString'>;
+export type HourString = Brand<string, 'HourString'>;
 
 export function asDimensionId(value: string): DimensionId {
   return value as DimensionId;
@@ -29,6 +30,10 @@ export function asDollars(value: number): Dollars {
 
 export function asDateString(value: string): DateString {
   return value as DateString;
+}
+
+export function asHourString(value: string): HourString {
+  return value as HourString;
 }
 
 export function tagColumnName(tagName: string): string {

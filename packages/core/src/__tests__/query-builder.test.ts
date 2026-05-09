@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { buildCostQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource, computePeriodsInRange } from '../query/builder.js';
+import { buildCostQuery, buildDailyCostsQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource, computePeriodsInRange } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
-import { asDimensionId, asDateString, asDollars, asEntityRef, asTagValue } from '../types/branded.js';
+import { asDimensionId, asDateString, asDollars, asEntityRef, asHourString, asTagValue } from '../types/branded.js';
 
 const dimensions: DimensionsConfig = {
   builtIn: [
@@ -284,5 +284,105 @@ describe('buildEntityDetailQuery', () => {
     expect(params).toContain('core-banking');
     expect(sql).toContain('usage_date');
     expect(sql).toContain('service');
+  });
+});
+
+describe('hour-bounded date ranges', () => {
+  const hourRange = {
+    start: asDateString('2026-04-30'),
+    end: asDateString('2026-04-30'),
+    startHour: asHourString('2026-04-30 14:00:00'),
+    endHour: asHourString('2026-04-30 17:00:00'),
+  };
+
+  it('buildCostQuery filters on usage_hour and forces the hourly tier', () => {
+    const { sql, params } = buildCostQuery(
+      {
+        groupBy: asDimensionId('service'),
+        dateRange: hourRange,
+        filters: {},
+        granularity: 'hourly',
+      },
+      { dataDir: '/data', dimensions },
+    );
+    expect(sql).toContain('usage_hour BETWEEN');
+    expect(sql).toContain('::TIMESTAMP');
+    expect(sql).not.toContain('usage_date BETWEEN');
+    expect(sql).toContain("'/data/aws/raw/hourly-2026-04/*.parquet'");
+    expect(params).toContain('2026-04-30 14:00:00');
+    expect(params).toContain('2026-04-30 17:00:00');
+  });
+
+  it('buildDailyCostsQuery filters on usage_hour and groups by hour', () => {
+    const { sql } = buildDailyCostsQuery(
+      {
+        groupBy: asDimensionId('service'),
+        dateRange: hourRange,
+        filters: {},
+        granularity: 'hourly',
+      },
+      { dataDir: '/data', dimensions },
+    );
+    expect(sql).toContain('usage_hour BETWEEN');
+    expect(sql).toContain("strftime(usage_hour, '%Y-%m-%d %H:00')");
+    expect(sql).not.toContain('usage_date BETWEEN');
+  });
+
+  it('buildEntityDetailQuery filters on usage_hour when hour bounds are set', () => {
+    const { sql, params } = buildEntityDetailQuery(
+      {
+        entity: asEntityRef('core-banking'),
+        dimension: asDimensionId('tag_org_team'),
+        dateRange: hourRange,
+        filters: {},
+        granularity: 'hourly',
+      },
+      { dataDir: '/data', dimensions },
+    );
+    expect(sql).toContain('usage_hour BETWEEN');
+    expect(params).toContain('2026-04-30 14:00:00');
+    expect(params).toContain('2026-04-30 17:00:00');
+  });
+
+  it('promotes daily-only callers (missing tags) to hourly tier when hour bounds are set', () => {
+    const { sql } = buildMissingTagsQuery(
+      {
+        dateRange: hourRange,
+        filters: {},
+        minCost: asDollars(0),
+        tagDimension: asDimensionId('tag_org_team'),
+      },
+      { dataDir: '/data', dimensions },
+    );
+    expect(sql).toContain('usage_hour BETWEEN');
+    expect(sql).toContain("'/data/aws/raw/hourly-2026-04/*.parquet'");
+  });
+
+  it('promotes non-resource cost to hourly tier when hour bounds are set', () => {
+    const { sql } = buildNonResourceCostQuery(
+      {
+        dateRange: hourRange,
+        filters: {},
+        minCost: asDollars(0),
+        tagDimension: asDimensionId('tag_org_team'),
+      },
+      { dataDir: '/data', dimensions },
+    );
+    expect(sql).toContain('usage_hour BETWEEN');
+    expect(sql).toContain("'/data/aws/raw/hourly-2026-04/*.parquet'");
+  });
+
+  it('falls back to date filter when hour bounds are not set', () => {
+    const { sql } = buildCostQuery(
+      {
+        groupBy: asDimensionId('service'),
+        dateRange: { start: asDateString('2026-04-01'), end: asDateString('2026-04-30') },
+        filters: {},
+        granularity: 'daily',
+      },
+      { dataDir: '/data', dimensions },
+    );
+    expect(sql).toContain('usage_date BETWEEN');
+    expect(sql).not.toContain('usage_hour BETWEEN');
   });
 });

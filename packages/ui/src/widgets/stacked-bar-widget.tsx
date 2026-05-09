@@ -3,13 +3,13 @@ import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { StackedBarChart, bucketBars, type BarDay } from '../components/stacked-bar-chart.js';
-import { asDateString, asTagValue } from '@costgoblin/core/browser';
+import { asDateString, asHourString, asTagValue } from '@costgoblin/core/browser';
 import { useCostFocus } from '../hooks/use-cost-focus.js';
 import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, mergeFilters, hasSufficientDailyCoverage } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
-import { computeBucketedRange } from '../lib/drag-select.js';
+import { computeBucketedHourRange, computeBucketedRange } from '../lib/drag-select.js';
 
 const MAX_BARS = 170;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -105,13 +105,25 @@ export function StackedBarWidget({
 
   const handleRangeSelect = useCallback((startIdx: number, endIdx: number) => {
     if (onDateRangeChange === undefined) return;
+    if (granularity === 'hourly') {
+      const fallbackEndHour = `${String(dateRange.end)} 23:00:00`;
+      const hourRange = computeBucketedHourRange(barDays, startIdx, endIdx, fallbackEndHour);
+      if (hourRange === null) return;
+      onDateRangeChange({
+        start: asDateString(hourRange.startHour.slice(0, 10)),
+        end: asDateString(hourRange.endHour.slice(0, 10)),
+        startHour: asHourString(hourRange.startHour),
+        endHour: asHourString(hourRange.endHour),
+      });
+      return;
+    }
     const range = computeBucketedRange(barDays, startIdx, endIdx, dateRange.end);
     if (range === null) return;
     onDateRangeChange({
       start: asDateString(range.startDate),
       end: asDateString(range.endDate),
     });
-  }, [barDays, dateRange.end, onDateRangeChange]);
+  }, [barDays, dateRange.end, granularity, onDateRangeChange]);
 
   if (spec.type !== 'stackedBar') return null;
 

@@ -54,3 +54,49 @@ export function computeBucketedRange(
   if (endDate < startDate) endDate = startDate;
   return { startDate, endDate };
 }
+
+/** Normalize an hourly bucket key like "2026-04-30 14:00" or "2026-04-30 14:00:00"
+ *  to the canonical `YYYY-MM-DD HH:00:00` HourString form used by the query
+ *  layer. Missing seconds are zero-padded; anything that isn't an hourly key
+ *  falls through (caller should treat that as not-hourly). */
+export function normalizeHourKey(key: string): string | null {
+  // Match "YYYY-MM-DD HH:MM" or "YYYY-MM-DD HH:MM:SS"
+  const m = /^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2})(?::\d{2})?$/.exec(key);
+  if (m === null) return null;
+  const date = m[1];
+  const hour = m[2];
+  return `${String(date)} ${String(hour)}:00:00`;
+}
+
+/** Same as `computeBucketedRange` but for hourly bars. Each bar's `date` is an
+ *  hour-bucket key (e.g. "2026-04-30 14:00"). With `bucketBars` collapsing
+ *  multiple hours per visual bar, the chunk's first bar gives the start hour;
+ *  the next bar's hour minus one gives the end hour, and the last bar falls
+ *  back to the visible range end. Inclusive on both ends. Returns null when
+ *  the bars don't carry hourly keys. */
+export function computeBucketedHourRange(
+  bars: readonly BucketLike[],
+  startIdx: number,
+  endIdx: number,
+  fallbackEndHour: string,
+): { startHour: string; endHour: string } | null {
+  const startBar = bars[startIdx];
+  const endBar = bars[endIdx];
+  if (startBar === undefined || endBar === undefined) return null;
+  const startHour = normalizeHourKey(startBar.date);
+  if (startHour === null) return null;
+  const nextBar = bars[endIdx + 1];
+  let endHour: string;
+  if (nextBar !== undefined) {
+    const nextHour = normalizeHourKey(nextBar.date);
+    if (nextHour === null) return null;
+    const d = new Date(nextHour.replace(' ', 'T') + 'Z');
+    d.setUTCHours(d.getUTCHours() - 1);
+    endHour = `${d.toISOString().slice(0, 10)} ${String(d.getUTCHours()).padStart(2, '0')}:00:00`;
+  } else {
+    const fallback = normalizeHourKey(fallbackEndHour);
+    endHour = fallback ?? startHour;
+  }
+  if (endHour < startHour) endHour = startHour;
+  return { startHour, endHour };
+}

@@ -7,7 +7,7 @@ import type {
   EntityDetailResult,
   FilterMap,
 } from '@costgoblin/core/browser';
-import { asDateString, asDimensionId, asEntityRef, asTagValue } from '@costgoblin/core/browser';
+import { asDateString, asDimensionId, asEntityRef, asHourString, asTagValue } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -21,7 +21,7 @@ import type { PieSlice } from '../components/pie-chart.js';
 import { StackedBarChart, bucketBars } from '../components/stacked-bar-chart.js';
 import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
 import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension } from '../lib/dimensions.js';
-import { computeBucketedRange, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { computeBucketedHourRange, computeBucketedRange, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 
 interface EntityDetailProps {
   entity: string;
@@ -215,6 +215,24 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   const barDays = bucketBars(dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null), 170);
 
   const handleHistogramRangeSelect = useCallback((startIdx: number, endIdx: number) => {
+    if (granularity === 'hourly') {
+      // Hourly bars carry "YYYY-MM-DD HH:00" keys — preserve the hour info so
+      // the rest of the page (totals, pies, breakdown) filters on the same
+      // sub-day window the user dragged across.
+      const fallbackEndHour = `${String(dateRange.end)} 23:00:00`;
+      const hourRange = computeBucketedHourRange(barDays, startIdx, endIdx, fallbackEndHour);
+      if (hourRange === null) return;
+      const startDate = hourRange.startHour.slice(0, 10);
+      const endDate = hourRange.endHour.slice(0, 10);
+      setDateRange({
+        start: asDateString(startDate),
+        end: asDateString(endDate),
+        startHour: asHourString(hourRange.startHour),
+        endHour: asHourString(hourRange.endHour),
+      });
+      setHourlyHint(false);
+      return;
+    }
     const range = computeBucketedRange(barDays, startIdx, endIdx, dateRange.end);
     if (range === null) return;
     const { startDate, endDate } = range;

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { CalendarIcon, ChevronDown } from 'lucide-react';
-import type { DateString } from '@costgoblin/core/browser';
+import type { DateString, HourString } from '@costgoblin/core/browser';
 import { DEFAULT_LAG_DAYS, asDateString } from '@costgoblin/core/browser';
 import { daysAgo, getThisMonth, getLastMonth, getCurrentQuarter, getLastQuarter, getYTD, getLastYear } from '../lib/dates.js';
 import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
@@ -58,6 +58,8 @@ const ALL_PRESETS = PRESETS.flatMap(s => s.items);
 export interface DateRange {
   start: DateString;
   end: DateString;
+  startHour?: HourString | undefined;
+  endHour?: HourString | undefined;
 }
 
 interface DateRangePickerProps {
@@ -94,7 +96,22 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
     return preferred;
   }
 
+  const hasHourBounds = value.startHour !== undefined && value.endHour !== undefined;
+
+  function formatHourBound(hour: HourString): string {
+    // "2026-04-30 14:00:00" → "Apr 30 14:00"
+    const s = String(hour);
+    const date = new Date(`${s.slice(0, 10)}T${s.slice(11, 16)}:00`);
+    if (Number.isNaN(date.getTime())) return s;
+    const month = date.toLocaleString('en-US', { month: 'short' });
+    return `${month} ${String(date.getDate())} ${s.slice(11, 16)}`;
+  }
+
   function getActiveLabel(): string {
+    if (hasHourBounds && value.startHour !== undefined && value.endHour !== undefined) {
+      const base = `${formatHourBound(value.startHour)} → ${formatHourBound(value.endHour)}`;
+      return compareEnabled === true ? `${base} vs prev` : base;
+    }
     let label: string | undefined;
     for (const preset of ALL_PRESETS) {
       const range = getPresetRange(preset);
@@ -109,22 +126,32 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
 
   function handlePreset(preset: Preset) {
     const range = getPresetRange(preset);
+    // Picking a preset is an explicit "back to whole-day mode" gesture —
+    // don't carry a previous drag's hour bounds onto the new window.
     onChange(range, resolveGranularity(range, preset.granularity));
     setShowCustom(false);
     setOpen(false);
   }
 
   function handleCustomRange(range: DateRange) {
+    // Same intent as a preset: editing the calendar picks whole days, so any
+    // active hour bounds no longer apply.
     onChange(range, resolveGranularity(range, granularity));
   }
 
   function handleGranularityToggle(next: Granularity) {
     if (next === granularity) return;
     if (next === 'hourly' && !hourlyAvailable) return;
-    onChange(value, next);
+    // Switching to Daily clears hour bounds; switching to Hourly leaves the
+    // current day-level range alone (the user can drag-zoom from there).
+    const cleared: DateRange = next === 'daily'
+      ? { start: value.start, end: value.end }
+      : value;
+    onChange(cleared, next);
   }
 
   function isActivePreset(preset: Preset): boolean {
+    if (hasHourBounds) return false;
     const range = getPresetRange(preset);
     return value.start === range.start && value.end === range.end && granularity === resolveGranularity(range, preset.granularity);
   }
@@ -245,7 +272,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
                         selected={new Date(value.start + 'T00:00:00')}
                         onSelect={(date) => {
                           if (date) {
-                            handleCustomRange({ ...value, start: asDateString(date.toISOString().slice(0, 10)) });
+                            handleCustomRange({ start: asDateString(date.toISOString().slice(0, 10)), end: value.end });
                           }
                         }}
                         disabled={(date) => date.toISOString().slice(0, 10) > latestDate}
@@ -272,7 +299,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
                         selected={new Date(value.end + 'T00:00:00')}
                         onSelect={(date) => {
                           if (date) {
-                            handleCustomRange({ ...value, end: asDateString(date.toISOString().slice(0, 10)) });
+                            handleCustomRange({ start: value.start, end: asDateString(date.toISOString().slice(0, 10)) });
                           }
                         }}
                         disabled={(date) => date.toISOString().slice(0, 10) > latestDate}
