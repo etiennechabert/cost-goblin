@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react';
-import { useCostApi } from './use-cost-api.js';
+import { useContext, useEffect, useState } from 'react';
+import { CostApiContext } from './use-cost-api.js';
 
 export function useHourlyConfigured(): boolean {
-  const api = useCostApi();
+  const api = useContext(CostApiContext);
   const [configured, setConfigured] = useState(false);
 
   useEffect(() => {
+    if (api === null) return;
     let cancelled = false;
     api.getConfig().then(config => {
       if (cancelled) return;

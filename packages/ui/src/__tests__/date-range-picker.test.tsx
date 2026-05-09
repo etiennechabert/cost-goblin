@@ -34,9 +34,8 @@ describe('DateRangePicker', () => {
     const user = userEvent.setup();
     await user.click(screen.getByText('Last 30 days'));
 
-    expect(screen.getByText('Daily')).toBeDefined();
+    expect(screen.getByText('Days')).toBeDefined();
     expect(screen.getByText('Period')).toBeDefined();
-    expect(screen.getByText('Hourly')).toBeDefined();
   });
 
   it('shows all presets when open', async () => {
@@ -44,6 +43,8 @@ describe('DateRangePicker', () => {
     const user = userEvent.setup();
     await user.click(screen.getByText('Last 30 days'));
 
+    expect(screen.getByText('Last 7 days')).toBeDefined();
+    expect(screen.getByText('Last 14 days')).toBeDefined();
     expect(screen.getByText('Last 90 days')).toBeDefined();
     expect(screen.getByText('Last 365 days')).toBeDefined();
     expect(screen.getByText('This month')).toBeDefined();
@@ -52,9 +53,6 @@ describe('DateRangePicker', () => {
     expect(screen.getByText('Last quarter')).toBeDefined();
     expect(screen.getByText('This year')).toBeDefined();
     expect(screen.getByText('Last year')).toBeDefined();
-    expect(screen.getByText('Last 7 days')).toBeDefined();
-    expect(screen.getByText('Last 14 days')).toBeDefined();
-    expect(screen.getByText('Last 28 days')).toBeDefined();
     expect(screen.getByText('Custom range…')).toBeDefined();
   });
 
@@ -71,7 +69,7 @@ describe('DateRangePicker', () => {
     expect(granularity).toBe('daily');
   });
 
-  it('clicking hourly preset calls onChange with hourly granularity', async () => {
+  it('Last 7 days preset stays daily without hourly tier configured', async () => {
     const onChange = vi.fn();
     renderPicker({ onChange });
     const user = userEvent.setup();
@@ -81,7 +79,7 @@ describe('DateRangePicker', () => {
 
     expect(onChange).toHaveBeenCalledOnce();
     const granularity = onChange.mock.calls[0]?.[1] as Granularity;
-    expect(granularity).toBe('hourly');
+    expect(granularity).toBe('daily');
   });
 
   it('shows custom range inputs when Custom range is clicked', async () => {

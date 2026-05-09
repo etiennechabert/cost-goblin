@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { CostApi } from '@costgoblin/core/browser';
 
-const CostApiContext = createContext<CostApi | null>(null);
+export const CostApiContext = createContext<CostApi | null>(null);
 
 export function useCostApi(): CostApi {
   const api = useContext(CostApiContext);
