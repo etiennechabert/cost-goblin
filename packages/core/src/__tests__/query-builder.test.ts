@@ -324,7 +324,8 @@ describe('hour-bounded date ranges', () => {
       { dataDir: '/data', dimensions },
     );
     expect(sql).toContain('usage_hour BETWEEN');
-    expect(sql).toContain("strftime(usage_hour, '%Y-%m-%d %H:00')");
+    // Mid-hour fee timestamps round to nearest hour (see buildDailyCostsQuery).
+    expect(sql).toContain("strftime(date_trunc('hour', usage_hour + INTERVAL '30 minutes'), '%Y-%m-%d %H:00')");
     expect(sql).not.toContain('usage_date BETWEEN');
   });
 

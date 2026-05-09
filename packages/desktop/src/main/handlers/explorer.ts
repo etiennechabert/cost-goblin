@@ -397,10 +397,12 @@ export function registerExplorerHandlers(app: AppContext): void {
     `.trim();
 
     // Bucket width matches the queried tier — daily rows group per day,
-    // hourly rows group per hour. Without this the hourly-tier histogram
-    // would collapse back to daily bars and hide the whole point of
-    // switching granularity.
-    const bucketExpr = qc.tier === 'hourly' ? 'usage_hour' : 'usage_date';
+    // hourly rows group per hour. CUR line items like SavingsPlanFee, RIFee,
+    // Refund and Tax carry a precise mid-hour timestamp; we shift by 30
+    // minutes before truncating so a fee at 11:56:32 lands in the 12:00
+    // bucket instead of either getting its own bar (no truncation) or being
+    // stuck in 11:00 (plain truncation).
+    const bucketExpr = qc.tier === 'hourly' ? `date_trunc('hour', usage_hour + INTERVAL '30 minutes')` : 'usage_date';
     const dailySql = `
       SELECT
         ${bucketExpr}::VARCHAR AS date,

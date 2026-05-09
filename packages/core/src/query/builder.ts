@@ -785,8 +785,11 @@ export function buildDailyCostsQuery(
     ...exclusionClauses,
   ];
 
+  // Round CUR's mid-hour fee timestamps (SavingsPlanFee, RIFee, Tax, etc.)
+  // to the nearest hour boundary so they land in a single bucket alongside
+  // hour-aligned Usage rows instead of polluting the histogram.
   const dateExpr = resolvedTier === 'hourly'
-    ? "strftime(usage_hour, '%Y-%m-%d %H:00')"
+    ? "strftime(date_trunc('hour', usage_hour + INTERVAL '30 minutes'), '%Y-%m-%d %H:00')"
     : 'usage_date::VARCHAR';
 
   const sql = `
@@ -836,9 +839,10 @@ export function buildEntityDetailQuery(
   ];
 
   // Group by hour for hourly tier so the entity detail histogram doesn't
-  // collapse 24 hourly rows into one date row.
+  // collapse 24 hourly rows into one date row. Mid-hour fee timestamps are
+  // rounded to the nearest hour boundary (see buildDailyCostsQuery comment).
   const groupKey = resolvedTier === 'hourly'
-    ? "strftime(usage_hour, '%Y-%m-%d %H:00')"
+    ? "strftime(date_trunc('hour', usage_hour + INTERVAL '30 minutes'), '%Y-%m-%d %H:00')"
     : 'usage_date::VARCHAR';
 
   const sql = `
