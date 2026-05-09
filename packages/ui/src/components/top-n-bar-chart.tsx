@@ -3,9 +3,10 @@ import { getColor } from '../lib/palette.js';
 import { CollapsedChart } from './collapsed-chart.js';
 import { useContainerWidth } from '../lib/use-container-width.js';
 import { formatDollars } from './format.js';
-import type { Dimension } from '@costgoblin/core/browser';
+import type { Dimension, AnomalySeverity } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
 import { usePalette } from '../hooks/use-palette.js';
+import { AnomalyBadge } from './anomaly-badge.js';
 
 export interface TopNBar {
   readonly name: string;
@@ -29,6 +30,9 @@ interface TopNBarChartProps {
   /** Previous period costs keyed by entity name. When present, delta %
    *  badges are rendered next to each bar. */
   readonly previousCosts?: ReadonlyMap<string, number> | undefined;
+  /** Anomaly data keyed by entity name. When present, anomaly badges
+   *  are rendered before entity names. */
+  readonly anomaliesByEntity?: ReadonlyMap<string, { readonly count: number; readonly severity: AnomalySeverity }> | undefined;
 }
 
 const ROW_HEIGHT = 24;
@@ -55,6 +59,7 @@ function TopNBarChartInner({
   activeDimensionId,
   onDimensionChange,
   previousCosts,
+  anomaliesByEntity,
   width,
 }: Omit<TopNBarChartProps, 'collapsed'> & { width: number }) {
   const { palette } = usePalette();
@@ -139,8 +144,17 @@ function TopNBarChartInner({
                 ? ((row.cost - prevCost) / prevCost) * 100
                 : undefined;
 
+              const anomalyInfo = anomaliesByEntity?.get(row.name);
+
               const barContent = (
                 <>
+                  {anomalyInfo !== undefined && (
+                    <AnomalyBadge
+                      severity={anomalyInfo.severity}
+                      count={anomalyInfo.count}
+                      className="shrink-0"
+                    />
+                  )}
                   <span
                     className="text-xs tabular-nums text-text-secondary text-right shrink-0"
                     style={{ width: LABEL_WIDTH - 16 }}
