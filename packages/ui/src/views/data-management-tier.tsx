@@ -4,7 +4,7 @@ import { ConfirmModal } from '../components/confirm-modal.js';
 
 export type SyncState =
   | { status: 'idle' }
-  | { status: 'downloading'; filesDone: number; filesTotal: number; message: string }
+  | { status: 'downloading'; filesDone: number; filesTotal: number; bytesDone: number; bytesTotal: number; message: string }
   | { status: 'repartitioning'; datesDone: number; datesTotal: number }
   | { status: 'done'; filesDownloaded: number }
   | { status: 'error'; message: string };
@@ -120,32 +120,42 @@ export function TierPanel({
       </div>
 
       {/* Sync progress */}
-      {syncState.status === 'downloading' && (
-        <div className="rounded-lg border border-accent/50 bg-positive-muted px-3 py-2">
-          <div className="flex items-center justify-between mb-1.5">
-            <div className="flex items-center gap-2 text-xs text-accent min-w-0">
-              <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse shrink-0" />
-              <span>Downloading {String(syncState.filesDone)}/{String(syncState.filesTotal)} files</span>
+      {syncState.status === 'downloading' && (() => {
+        // Prefer bytes for the bar — `aws s3 sync` only ticks filesDone after
+        // each file fully completes, so on a few large files the bar would
+        // sit at 0% for minutes. Bytes from the "Completed" line move
+        // smoothly. Fall back to file-count until the first bytes land.
+        const fraction = syncState.bytesTotal > 0
+          ? syncState.bytesDone / syncState.bytesTotal
+          : (syncState.filesTotal > 0 ? syncState.filesDone / syncState.filesTotal : 0);
+        const percent = Math.min(100, Math.max(0, Math.round(fraction * 100)));
+        return (
+          <div className="rounded-lg border border-accent/50 bg-positive-muted px-3 py-2">
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center gap-2 text-xs text-accent min-w-0">
+                <div className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse shrink-0" />
+                <span>Downloading {String(syncState.filesDone)}/{String(syncState.filesTotal)} files</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => { onCancelSync?.(); }}
+                className="p-0.5 rounded text-negative/70 hover:text-negative hover:bg-negative-muted transition-colors shrink-0 ml-2"
+                title="Cancel download"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M1 1l10 10M11 1L1 11" />
+                </svg>
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => { onCancelSync?.(); }}
-              className="p-0.5 rounded text-negative/70 hover:text-negative hover:bg-negative-muted transition-colors shrink-0 ml-2"
-              title="Cancel download"
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <path d="M1 1l10 10M11 1L1 11" />
-              </svg>
-            </button>
+            <div className="h-1 rounded-full bg-bg-tertiary overflow-hidden mb-1.5">
+              <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${String(percent)}%` }} />
+            </div>
+            {syncState.message.length > 0 && (
+              <p className="text-[10px] text-text-muted font-mono truncate">{syncState.message}</p>
+            )}
           </div>
-          <div className="h-1 rounded-full bg-bg-tertiary overflow-hidden mb-1.5">
-            <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${String(syncState.filesTotal > 0 ? Math.round(syncState.filesDone / syncState.filesTotal * 100) : 0)}%` }} />
-          </div>
-          {syncState.message.length > 0 && (
-            <p className="text-[10px] text-text-muted font-mono truncate">{syncState.message}</p>
-          )}
-        </div>
-      )}
+        );
+      })()}
       {syncState.status === 'repartitioning' && (
         <div className="rounded-lg border border-violet-500/50 bg-violet-500/5 px-3 py-2">
           <div className="flex items-center justify-between mb-1">

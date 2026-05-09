@@ -63,7 +63,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           : syncTierBucket;
 
         const syncId = asTier(tier);
-        state.syncStatuses[syncId] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: files.length, filesDone: 0, message: '' };
+        state.syncStatuses[syncId] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: files.length, filesDone: 0, bytesTotal: 0, bytesDone: 0, message: '' };
         try {
           const result = await syncClient.syncPeriods({
             bucketPath: bucket,
@@ -72,12 +72,19 @@ export function registerAutoSyncHandlers(app: AppContext): void {
             tier: syncId,
             files,
             onProgress: (progress) => {
+              const bytesDone = progress.bytesDone ?? 0;
+              const bytesTotal = progress.bytesTotal ?? 0;
+              const fraction = bytesTotal > 0
+                ? bytesDone / bytesTotal
+                : (progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0);
               state.syncStatuses[syncId] = {
                 status: 'syncing',
                 phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
-                progress: progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0,
+                progress: fraction,
                 filesTotal: progress.filesTotal,
                 filesDone: progress.filesDone,
+                bytesTotal,
+                bytesDone,
                 message: progress.message ?? '',
               };
             },

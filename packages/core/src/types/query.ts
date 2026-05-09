@@ -199,7 +199,7 @@ export type SyncPhase = 'downloading' | 'repartitioning';
 
 export type SyncStatus =
   | { readonly status: 'idle'; readonly lastSync: Date | null }
-  | { readonly status: 'syncing'; readonly phase: SyncPhase; readonly progress: number; readonly filesTotal: number; readonly filesDone: number; readonly message: string }
+  | { readonly status: 'syncing'; readonly phase: SyncPhase; readonly progress: number; readonly filesTotal: number; readonly filesDone: number; readonly bytesTotal: number; readonly bytesDone: number; readonly message: string }
   | { readonly status: 'completed'; readonly lastSync: Date; readonly filesDownloaded: number }
   | { readonly status: 'failed'; readonly error: Error; readonly lastSync: Date | null };
 

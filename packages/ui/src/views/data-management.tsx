@@ -13,7 +13,7 @@ function syncStatusToState(s: SyncStatus): SyncState | null {
   if (s.status === 'syncing') {
     return s.phase === 'repartitioning'
       ? { status: 'repartitioning', datesDone: s.filesDone, datesTotal: s.filesTotal }
-      : { status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, message: s.message };
+      : { status: 'downloading', filesDone: s.filesDone, filesTotal: s.filesTotal, bytesDone: s.bytesDone, bytesTotal: s.bytesTotal, message: s.message };
   }
   if (s.status === 'idle') {
     return { status: 'idle' };
@@ -152,7 +152,7 @@ export function DataManagement() {
       .filter(p => selected.has(p.period))
       .flatMap(p => [...p.files]);
     if (selectedFiles.length === 0) return;
-    setDailySyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, message: '' });
+    setDailySyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, bytesDone: 0, bytesTotal: 0, message: '' });
 
     const pollInterval = setInterval(() => {
       api.getSyncStatus('daily').then((s) => {
@@ -267,7 +267,7 @@ export function DataManagement() {
       .filter(p => hourlySelected.has(p.period))
       .flatMap(p => [...p.files]);
     if (selectedFiles.length === 0) return;
-    setHourlySyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, message: '' });
+    setHourlySyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, bytesDone: 0, bytesTotal: 0, message: '' });
 
     const pollInterval = setInterval(() => {
       api.getSyncStatus('hourly').then((s) => {
@@ -309,7 +309,7 @@ export function DataManagement() {
       .filter(p => costOptSelected.has(p.period))
       .flatMap(p => [...p.files]);
     if (selectedFiles.length === 0) return;
-    setCostOptSyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, message: '' });
+    setCostOptSyncState({ status: 'downloading', filesDone: 0, filesTotal: selectedFiles.length, bytesDone: 0, bytesTotal: 0, message: '' });
 
     const pollInterval = setInterval(() => {
       api.getSyncStatus('cost-optimization').then((s) => {

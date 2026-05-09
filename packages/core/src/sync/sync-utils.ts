@@ -100,6 +100,35 @@ export function groupByPeriod(files: readonly ManifestFileEntry[]): Map<string, 
   return groups;
 }
 
+const AWS_UNIT_BYTES: Record<string, number> = {
+  B: 1,
+  KiB: 1024,
+  MiB: 1024 * 1024,
+  GiB: 1024 * 1024 * 1024,
+  TiB: 1024 * 1024 * 1024 * 1024,
+};
+
+/**
+ * Parses an `aws s3 sync` "Completed" progress line into byte counts. Format
+ * varies — typical shape: `Completed 203.6 MiB/404.2 MiB (3.0 MiB/s) with 7
+ * file(s) remaining`. Returns null when the line is in a form without
+ * total-known byte counts (e.g. `Completed N file(s) ...`), so callers can
+ * leave the previous numbers in place.
+ */
+export function parseAwsCompletedBytes(line: string): { bytesDone: number; bytesTotal: number } | null {
+  const match = /^Completed\s+([\d.]+)\s+(B|KiB|MiB|GiB|TiB)\/([\d.]+)\s+(B|KiB|MiB|GiB|TiB)\b/.exec(line);
+  if (match === null) return null;
+  const [, doneNum, doneUnit, totalNum, totalUnit] = match;
+  if (doneNum === undefined || doneUnit === undefined || totalNum === undefined || totalUnit === undefined) return null;
+  const doneFactor = AWS_UNIT_BYTES[doneUnit];
+  const totalFactor = AWS_UNIT_BYTES[totalUnit];
+  if (doneFactor === undefined || totalFactor === undefined) return null;
+  const bytesDone = Number.parseFloat(doneNum) * doneFactor;
+  const bytesTotal = Number.parseFloat(totalNum) * totalFactor;
+  if (!Number.isFinite(bytesDone) || !Number.isFinite(bytesTotal) || bytesTotal <= 0) return null;
+  return { bytesDone, bytesTotal };
+}
+
 /**
  * Parses a sync-etags JSON file. Returns an empty record on any malformed input.
  * Shape: `{ [period: string]: { [fileKey: string]: contentHash } }`

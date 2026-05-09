@@ -309,7 +309,7 @@ describe('getDataInventory with mocked S3', () => {
     expect(mar?.localStatus).toBe('repartitioned');
   });
 
-  it('handles missing etag file gracefully', async () => {
+  it('treats period as stale when etag file is missing', async () => {
     const mock = createMockS3Handle([
       file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
     ]);
@@ -331,11 +331,12 @@ describe('getDataInventory with mocked S3', () => {
 
     expect(inventory.totalLocalPeriods).toBe(1);
     const jan = inventory.periods.find(p => p.period === '2026-01');
-    // Without etag file, we can't verify staleness, so it's considered repartitioned
-    expect(jan?.localStatus).toBe('repartitioned');
+    // Without an etag file we can't prove the local data matches remote, so
+    // the period is reported as stale and the user can re-sync to verify.
+    expect(jan?.localStatus).toBe('stale');
   });
 
-  it('detects repartitioned when etag file exists but has no entry for period', async () => {
+  it('detects stale when etag file exists but has no entry for period', async () => {
     const mock = createMockS3Handle([
       file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
     ]);
@@ -361,11 +362,13 @@ describe('getDataInventory with mocked S3', () => {
     );
 
     const jan = inventory.periods.find(p => p.period === '2026-01');
-    // Etag file exists but has no entry for this period → repartitioned
-    expect(jan?.localStatus).toBe('repartitioned');
+    // Etag file exists but has no entry for this period → unverified → stale.
+    // This is the field-observed bug: 5 local files, no etag record, reported
+    // as fresh while charts showed gaps.
+    expect(jan?.localStatus).toBe('stale');
   });
 
-  it('detects repartitioned when etag file has partial file coverage with all matching', async () => {
+  it('detects stale when etag file is missing entries for some remote files', async () => {
     const mock = createMockS3Handle([
       file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
       file('cur/data/BILLING_PERIOD=2026-01/file2.parquet', 'hash2', 3000),
@@ -383,7 +386,7 @@ describe('getDataInventory with mocked S3', () => {
       '2026-01': {
         'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'hash1',
         'cur/data/BILLING_PERIOD=2026-01/file2.parquet': 'hash2',
-        // file3 not in etags
+        // file3 not in etags — appeared on remote since the last sync
       },
     };
     await writeFile(etagFile, JSON.stringify(etags));
@@ -397,8 +400,9 @@ describe('getDataInventory with mocked S3', () => {
     );
 
     const jan = inventory.periods.find(p => p.period === '2026-01');
-    // All files that have etags match, missing etags are ignored → repartitioned
-    expect(jan?.localStatus).toBe('repartitioned');
+    // file3 has no saved etag — we can't prove we have it locally, so the
+    // period is stale and a re-sync will pick file3 up.
+    expect(jan?.localStatus).toBe('stale');
   });
 
   it('detects stale when one file hash differs among multiple files', async () => {
@@ -698,7 +702,7 @@ describe('getDataInventory with mocked S3', () => {
       expect(jan?.localStatus).toBe('stale');
     });
 
-    it('allows incremental sync: new remote files not in etag cache do not trigger stale status', async () => {
+    it('marks period as stale when remote has new files not yet in etag cache', async () => {
       const mock = createMockS3Handle([
         file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'etag-abc', 5000),
         file('cur/data/BILLING_PERIOD=2026-01/file2.parquet', 'etag-def', 3000),
@@ -730,10 +734,9 @@ describe('getDataInventory with mocked S3', () => {
       );
 
       const jan = inventory.periods.find(p => p.period === '2026-01');
-      // Tracked files (file1, file2) match → repartitioned
-      // New file (file3-NEW) is not tracked, so doesn't cause stale status
-      // Sync orchestrator will download new file incrementally
-      expect(jan?.localStatus).toBe('repartitioned');
+      // file3-NEW has no saved etag → we have not downloaded it → stale.
+      // The user re-syncs and aws s3 sync only transfers file3-NEW.
+      expect(jan?.localStatus).toBe('stale');
     });
 
     it('validates etag-based skip decision across all three status values', async () => {
@@ -779,7 +782,42 @@ describe('getDataInventory with mocked S3', () => {
       expect(periods['2026-03']).toBe('missing');       // DOWNLOAD: not synced yet
     });
 
-    it('validates empty etag cache does not prevent initial sync', async () => {
+    it('reproduces issue #278: hourly period with files local but no etag entry → stale', async () => {
+      // Field-observed: 53 files on remote, 5 files in local raw dir,
+      // 0 entries for the period in sync-etags-hourly.json. The UI badge
+      // showed "Downloaded" instead of "stale" — chart silently empty.
+      const remoteFiles = Array.from({ length: 53 }, (_, i) =>
+        file(`hourly/BILLING_PERIOD=2026-04/data-${String(i).padStart(5, '0')}.parquet`, `etag-${String(i)}`, 1000),
+      );
+      const mock = createMockS3Handle(remoteFiles);
+
+      const rawDir = join(tempDir, 'aws', 'raw');
+      const periodDir = join(rawDir, 'hourly-2026-04');
+      await mkdir(periodDir, { recursive: true });
+      // 5 of 53 files on disk
+      for (let i = 0; i < 5; i++) {
+        await writeFile(join(periodDir, `data-${String(i).padStart(5, '0')}.parquet`), 'partial');
+      }
+
+      // Etag file exists for some other period entirely — 2026-04 is absent.
+      const etagFile = join(tempDir, 'sync-etags-hourly.json');
+      await writeFile(etagFile, JSON.stringify({
+        '2026-03': { 'hourly/BILLING_PERIOD=2026-03/data-00000.parquet': 'etag-march' },
+      }));
+
+      const inventory = await getDataInventory(
+        's3://test-bucket/hourly/',
+        'default',
+        tempDir,
+        'hourly',
+        mock,
+      );
+
+      const apr = inventory.periods.find(p => p.period === '2026-04');
+      expect(apr?.localStatus).toBe('stale');
+    });
+
+    it('marks period as stale when etag file is empty', async () => {
       const mock = createMockS3Handle([
         file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
       ]);
@@ -789,7 +827,9 @@ describe('getDataInventory with mocked S3', () => {
       await mkdir(periodDir, { recursive: true });
       await writeFile(join(periodDir, 'data.parquet'), 'data');
 
-      // Etag file exists but is empty (first sync after etag feature deployed)
+      // Etag file exists but is empty (first sync after etag feature deployed,
+      // or local data carried over from an older sync version that didn't
+      // write etags).
       const etagFile = join(tempDir, 'sync-etags.json');
       await writeFile(etagFile, JSON.stringify({}));
 
@@ -802,9 +842,9 @@ describe('getDataInventory with mocked S3', () => {
       );
 
       const jan = inventory.periods.find(p => p.period === '2026-01');
-      // No etag tracking for this period → assume repartitioned
-      // (conservative: treat as synced, sync orchestrator can handle validation)
-      expect(jan?.localStatus).toBe('repartitioned');
+      // No etag tracking → unverified → stale. The user can re-sync and the
+      // resulting etag file will mark the period repartitioned thereafter.
+      expect(jan?.localStatus).toBe('stale');
     });
   });
 
@@ -831,10 +871,11 @@ describe('getDataInventory with mocked S3', () => {
         mock,
       );
 
-      // Should not throw, should treat as if no etag file exists
+      // Should not throw — corrupted etag JSON parses to empty record, then
+      // the period is reported stale because no file has a verified etag.
       expect(inventory.totalLocalPeriods).toBe(1);
       const jan = inventory.periods.find(p => p.period === '2026-01');
-      expect(jan?.localStatus).toBe('repartitioned');
+      expect(jan?.localStatus).toBe('stale');
     });
 
     it('handles JSON array instead of object', async () => {
@@ -859,9 +900,9 @@ describe('getDataInventory with mocked S3', () => {
         mock,
       );
 
-      // Should treat as empty etag cache
+      // Should treat as empty etag cache → no verified etags → stale.
       const jan = inventory.periods.find(p => p.period === '2026-01');
-      expect(jan?.localStatus).toBe('repartitioned');
+      expect(jan?.localStatus).toBe('stale');
     });
 
     it('handles JSON null instead of object', async () => {
@@ -886,7 +927,7 @@ describe('getDataInventory with mocked S3', () => {
       );
 
       const jan = inventory.periods.find(p => p.period === '2026-01');
-      expect(jan?.localStatus).toBe('repartitioned');
+      expect(jan?.localStatus).toBe('stale');
     });
 
     it('handles JSON string instead of object', async () => {
@@ -911,7 +952,7 @@ describe('getDataInventory with mocked S3', () => {
       );
 
       const jan = inventory.periods.find(p => p.period === '2026-01');
-      expect(jan?.localStatus).toBe('repartitioned');
+      expect(jan?.localStatus).toBe('stale');
     });
 
     it('skips period entries that are not objects', async () => {
@@ -945,8 +986,9 @@ describe('getDataInventory with mocked S3', () => {
       const jan = inventory.periods.find(p => p.period === '2026-01');
       const feb = inventory.periods.find(p => p.period === '2026-02');
 
-      // 2026-01: corrupted period entry is skipped → treated as repartitioned
-      expect(jan?.localStatus).toBe('repartitioned');
+      // 2026-01: corrupted period entry is dropped from the parsed record →
+      // file1 has no verified etag → stale.
+      expect(jan?.localStatus).toBe('stale');
       // 2026-02: valid entry with matching hash → repartitioned
       expect(feb?.localStatus).toBe('repartitioned');
     });
@@ -983,9 +1025,9 @@ describe('getDataInventory with mocked S3', () => {
       );
 
       const jan = inventory.periods.find(p => p.period === '2026-01');
-      // Only file1 has valid etag and it matches → repartitioned
-      // file2 and file3 have invalid etags (dropped) → not compared
-      expect(jan?.localStatus).toBe('repartitioned');
+      // file1 has a valid matching etag, but file2 and file3 had non-string
+      // values that the parser dropped → those files are unverified → stale.
+      expect(jan?.localStatus).toBe('stale');
     });
 
     it('detects stale when valid hash differs despite other corrupted entries', async () => {

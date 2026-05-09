@@ -134,6 +134,13 @@ export interface SyncProgress {
   readonly phase: 'downloading' | 'repartitioning' | 'done';
   readonly filesTotal: number;
   readonly filesDone: number;
+  // bytesTotal/bytesDone come from `aws s3 sync` "Completed X MiB/Y MiB"
+  // lines. Files-done only ticks when a file fully finishes, so on a small
+  // number of large files the file count stays at 0 long enough for the
+  // progress bar to look frozen. Byte counts make mid-flight progress
+  // visible. Both fields are absent until the first "Completed" line lands.
+  readonly bytesTotal?: number | undefined;
+  readonly bytesDone?: number | undefined;
   readonly message?: string | undefined;
 }
 

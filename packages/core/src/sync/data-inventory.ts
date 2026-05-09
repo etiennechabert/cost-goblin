@@ -112,12 +112,12 @@ export async function getDataInventory(
 
   function getPeriodStatus(period: string, files: ManifestFileEntry[]): PeriodStatus {
     if (!localPeriods.has(period)) return 'missing';
-    const saved = savedEtags[period];
-    if (saved !== undefined) {
-      for (const file of files) {
-        const savedHash = saved[file.key];
-        if (savedHash !== undefined && savedHash !== file.contentHash) return 'stale';
-      }
+    const saved = savedEtags[period] ?? {};
+    // Strict: every remote file must have a saved etag that matches. A missing
+    // entry (whole period absent or specific file absent) means we have not
+    // verified that file locally, so the period is stale and must re-sync.
+    for (const file of files) {
+      if (saved[file.key] !== file.contentHash) return 'stale';
     }
     return 'repartitioned';
   }
