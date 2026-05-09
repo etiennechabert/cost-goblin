@@ -288,6 +288,18 @@ const api: CostApi = {
   setMcpServerRunning(enabled: boolean): Promise<void> {
     return invoke<undefined>('mcp:set-running', enabled).then(() => undefined);
   },
+  queryAnomalies(params: import('@costgoblin/core').AnomalyDetectionParams): Promise<import('@costgoblin/core').AnomalyResult> {
+    return invoke<import('@costgoblin/core').AnomalyResult>('query:anomalies', params);
+  },
+  queryAnomalyDetail(params: import('@costgoblin/core').AnomalyDetailParams): Promise<import('@costgoblin/core').AnomalyDetailResult> {
+    return invoke<import('@costgoblin/core').AnomalyDetailResult>('query:anomaly-detail', params);
+  },
+  dismissAnomaly(anomalyId: import('@costgoblin/core').AnomalyId): Promise<void> {
+    return invoke<undefined>('anomaly:dismiss', anomalyId).then(() => undefined);
+  },
+  restoreAnomaly(anomalyId: import('@costgoblin/core').AnomalyId): Promise<void> {
+    return invoke<undefined>('anomaly:restore', anomalyId).then(() => undefined);
+  },
 };
 
 contextBridge.exposeInMainWorld('costgoblin', api);

@@ -375,6 +375,38 @@ export class MockCostApi implements CostApi {
   cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
   getMcpServerRunning(): Promise<boolean> { return Promise.resolve(true); }
   setMcpServerRunning(): Promise<void> { return Promise.resolve(); }
+  queryAnomalies(): Promise<import('@costgoblin/core').AnomalyResult> {
+    return Promise.resolve({
+      anomalies: [],
+      totalAnomalies: 0,
+      highSeverityCount: 0,
+      mediumSeverityCount: 0,
+      lowSeverityCount: 0,
+    });
+  }
+  queryAnomalyDetail(): Promise<import('@costgoblin/core').AnomalyDetailResult> {
+    return Promise.resolve({
+      anomaly: {
+        id: '' as import('@costgoblin/core').AnomalyId,
+        entity: '' as import('@costgoblin/core').EntityRef,
+        dimension: asDimensionId('account'),
+        service: '',
+        detectedDate: '' as import('@costgoblin/core').DateString,
+        currentCost: asDollars(0),
+        expectedCost: asDollars(0),
+        deviation: 0,
+        severity: 'low' as import('@costgoblin/core').AnomalySeverity,
+        percentIncrease: 0,
+        isDismissed: false,
+      },
+      dailyCosts: [],
+      rollingAverage: asDollars(0),
+      standardDeviation: asDollars(0),
+      affectedResources: [],
+    });
+  }
+  dismissAnomaly(): Promise<void> { return Promise.resolve(); }
+  restoreAnomaly(): Promise<void> { return Promise.resolve(); }
 }
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {

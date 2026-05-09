@@ -4,6 +4,7 @@ import { registerCostHandlers } from './query-costs.js';
 import { registerTrendHandlers } from './query-trends.js';
 import { registerRecommendationHandlers } from './query-recommendations.js';
 import { registerFilterHandlers } from './query-filters.js';
+import { registerAnomalyHandlers } from './anomaly.js';
 
 export function registerQueryHandlers(app: AppContext): void {
   ipcMain.handle('query:cancel-pending', () => {
@@ -13,4 +14,5 @@ export function registerQueryHandlers(app: AppContext): void {
   registerTrendHandlers(app);
   registerRecommendationHandlers(app);
   registerFilterHandlers(app);
+  registerAnomalyHandlers(app);
 }

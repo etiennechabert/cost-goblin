@@ -122,6 +122,7 @@ export interface AppState {
   accountReverseMap: Map<string, readonly string[]> | null;
   regionMap: Map<string, RegionEnrichment> | null;
   orgAccountsPath: string | undefined | null;
+  dismissedAnomalies: Set<import('@costgoblin/core').AnomalyId> | null;
 }
 
 export interface AppContext {
@@ -153,6 +154,9 @@ export interface AppContext {
   readonly materializedBase: MaterializedBase;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly runPreparedQuery: (sql: string, params: readonly unknown[], materialized?: boolean) => Promise<RawRow[]>;
+  readonly getDismissedAnomalies: () => Promise<ReadonlySet<import('@costgoblin/core').AnomalyId>>;
+  readonly dismissAnomaly: (id: import('@costgoblin/core').AnomalyId) => Promise<void>;
+  readonly restoreAnomaly: (id: import('@costgoblin/core').AnomalyId) => Promise<void>;
   readonly invalidateConfig: () => void;
   readonly invalidateDimensions: () => void;
   readonly invalidateViews: () => void;
@@ -243,6 +247,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     accountReverseMap: null,
     regionMap: null,
     orgAccountsPath: null,
+    dismissedAnomalies: null,
   };
 
   async function getConfig(): Promise<CostGoblinConfig> {
@@ -454,6 +459,46 @@ export function createAppContext(ctx: IpcContext): AppContext {
     });
   };
 
+  async function getDismissedAnomalies(): Promise<ReadonlySet<import('@costgoblin/core').AnomalyId>> {
+    if (state.dismissedAnomalies !== null) return state.dismissedAnomalies;
+    const fs = await import('node:fs/promises');
+    const path = await prefsPath(ctx.dataDir, 'dismissed-anomalies');
+    try {
+      const raw = await fs.readFile(path, 'utf-8');
+      const parsed: unknown = JSON.parse(raw);
+      const dismissed = new Set<import('@costgoblin/core').AnomalyId>();
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (typeof item === 'string') dismissed.add(item as import('@costgoblin/core').AnomalyId);
+        }
+      }
+      state.dismissedAnomalies = dismissed;
+      return dismissed;
+    } catch {
+      // File doesn't exist yet
+      state.dismissedAnomalies = new Set();
+      return state.dismissedAnomalies;
+    }
+  }
+
+  async function dismissAnomaly(id: import('@costgoblin/core').AnomalyId): Promise<void> {
+    const dismissed = new Set(await getDismissedAnomalies());
+    dismissed.add(id);
+    state.dismissedAnomalies = dismissed;
+    const fs = await import('node:fs/promises');
+    const path = await prefsPath(ctx.dataDir, 'dismissed-anomalies');
+    await fs.writeFile(path, JSON.stringify([...dismissed], null, 2));
+  }
+
+  async function restoreAnomaly(id: import('@costgoblin/core').AnomalyId): Promise<void> {
+    const dismissed = new Set(await getDismissedAnomalies());
+    dismissed.delete(id);
+    state.dismissedAnomalies = dismissed;
+    const fs = await import('node:fs/promises');
+    const path = await prefsPath(ctx.dataDir, 'dismissed-anomalies');
+    await fs.writeFile(path, JSON.stringify([...dismissed], null, 2));
+  }
+
   async function warmupBase(): Promise<void> {
     try {
       const config = await getConfig();
@@ -512,6 +557,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
     materializedBase,
     runQuery,
     runPreparedQuery,
+    getDismissedAnomalies,
+    dismissAnomaly,
+    restoreAnomaly,
     invalidateConfig: () => { state.config = null; },
     invalidateDimensions: () => {
       state.dimensions = null; state.accountMap = null; state.accountReverseMap = null; state.regionMap = null; state.orgAccountsPath = null;
