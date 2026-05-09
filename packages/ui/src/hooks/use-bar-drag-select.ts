@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
-import { pixelToIndex } from '../lib/drag-select.js';
+import { pixelRangeToBars, pixelToIndex } from '../lib/drag-select.js';
 
 interface DragState {
   startX: number;
@@ -19,9 +19,18 @@ interface UseBarDragSelectOptions {
   readonly disabled?: boolean | undefined;
 }
 
+interface DragSelection {
+  readonly startIdx: number;
+  readonly endIdx: number;
+}
+
 interface UseBarDragSelectResult {
   readonly isDragging: boolean;
   readonly overlay: OverlayRect | null;
+  /** Bar indices currently under the drag overlay, mirrored from the same
+   *  pixelToIndex math used at mouse-up. Lets callers display the
+   *  start/end-of-period labels live while the user is still dragging. */
+  readonly selection: DragSelection | null;
   readonly handleMouseDown: (event: React.MouseEvent<HTMLElement>) => void;
 }
 
@@ -30,6 +39,7 @@ const MIN_DRAG_PX = 4;
 export function useBarDragSelect(options: UseBarDragSelectOptions): UseBarDragSelectResult {
   const { containerRef, bucketCount, onRangeSelect, disabled } = options;
   const [overlay, setOverlay] = useState<OverlayRect | null>(null);
+  const [selection, setSelection] = useState<DragSelection | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const bucketCountRef = useRef(bucketCount);
   const onRangeSelectRef = useRef(onRangeSelect);
@@ -46,6 +56,8 @@ export function useBarDragSelect(options: UseBarDragSelectOptions): UseBarDragSe
     const startX = event.clientX - rect.left;
     dragRef.current = { startX, currentX: startX, rect };
     setOverlay({ left: startX, width: 0 });
+    const startIdx = pixelToIndex(startX, rect.width, bucketCount);
+    setSelection({ startIdx, endIdx: startIdx });
     event.preventDefault();
   }, [containerRef, bucketCount, disabled]);
 
@@ -58,6 +70,9 @@ export function useBarDragSelect(options: UseBarDragSelectOptions): UseBarDragSe
       const minX = Math.min(drag.startX, x);
       const maxX = Math.max(drag.startX, x);
       setOverlay({ left: minX, width: maxX - minX });
+      const count = bucketCountRef.current;
+      const range = pixelRangeToBars(minX, maxX, drag.rect.width, count);
+      if (range !== null) setSelection(range);
     };
     const handleUp = () => {
       const drag = dragRef.current;
@@ -67,17 +82,18 @@ export function useBarDragSelect(options: UseBarDragSelectOptions): UseBarDragSe
       // Sub-4px drags are treated as plain clicks so bar hover/click still works.
       if (maxX - minX >= MIN_DRAG_PX) {
         const count = bucketCountRef.current;
-        const startIdx = pixelToIndex(minX, drag.rect.width, count);
-        const endIdx = pixelToIndex(maxX, drag.rect.width, count);
-        if (startIdx <= endIdx) onRangeSelectRef.current?.(startIdx, endIdx);
+        const range = pixelRangeToBars(minX, maxX, drag.rect.width, count);
+        if (range !== null) onRangeSelectRef.current?.(range.startIdx, range.endIdx);
       }
       dragRef.current = null;
       setOverlay(null);
+      setSelection(null);
     };
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       dragRef.current = null;
       setOverlay(null);
+      setSelection(null);
     };
     window.addEventListener('mousemove', handleMove);
     window.addEventListener('mouseup', handleUp);
@@ -89,5 +105,5 @@ export function useBarDragSelect(options: UseBarDragSelectOptions): UseBarDragSe
     };
   }, []);
 
-  return { isDragging: overlay !== null, overlay, handleMouseDown };
+  return { isDragging: overlay !== null, overlay, selection, handleMouseDown };
 }

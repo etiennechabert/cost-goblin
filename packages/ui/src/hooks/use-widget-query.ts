@@ -96,7 +96,7 @@ export function useDailyWidgetQuery({
     () => specGroupBy === undefined
       ? Promise.resolve(null)
       : fetchDailyWithFallback(api, specGroupBy, fallbackDims, dateRange, filters, granularity),
-    [specGroupBy, fallbackDims, dateRange.start, dateRange.end, fk, granularity, api],
+    [specGroupBy, fallbackDims, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api],
   );
 
   const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
@@ -134,7 +134,7 @@ export function useCostWidgetQuery({
     () => specGroupBy === undefined
       ? Promise.resolve(null)
       : fetchCostsWithFallback(api, specGroupBy, fallbackDims, dateRange, filters, granularity),
-    [specGroupBy, fallbackDims, dateRange.start, dateRange.end, fk, granularity, api],
+    [specGroupBy, fallbackDims, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api],
   );
 
   const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;

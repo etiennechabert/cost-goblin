@@ -100,7 +100,7 @@ export function TableWidget({
 
   const overviewQuery = useQuery(
     () => api.queryExplorerOverview({ filters: explorerFilters, dateRange, granularity }),
-    [fk, dateRange.start, dateRange.end, granularity, api],
+    [fk, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, granularity, api],
   );
 
   const tagColumns = overviewQuery.status === 'success' ? overviewQuery.data.tagColumns : [];
@@ -130,7 +130,7 @@ export function TableWidget({
       ...(sort === undefined ? {} : { sort }),
       rowLimit: ROW_LIMIT,
     }),
-    [fk, dateRange.start, dateRange.end, granularity, groupByKey, sort?.column, sort?.direction, api],
+    [fk, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, granularity, groupByKey, sort?.column, sort?.direction, api],
   );
 
   const prevDataQuery = useQuery(
@@ -144,7 +144,7 @@ export function TableWidget({
           rowLimit: ROW_LIMIT,
         })
       : Promise.resolve(null),
-    [compareEnabled, fk, previousDateRange.start, previousDateRange.end, granularity, groupByKey, api],
+    [compareEnabled, fk, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, granularity, groupByKey, api],
   );
 
   const prevCostMap = useMemo(() => {

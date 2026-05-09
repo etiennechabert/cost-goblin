@@ -6,7 +6,7 @@ import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule } from
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
-import { assertDateString, SecurityError } from './identifier-validator.js';
+import { assertDateString, assertHourString, SecurityError } from './identifier-validator.js';
 
 function assertFiniteNumber(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
@@ -409,9 +409,47 @@ function resolveQueryPeriods(
   return required.filter(p => availablePeriods.includes(p));
 }
 
+interface DateRangeLike {
+  readonly start: string;
+  readonly end: string;
+  readonly startHour?: string | undefined;
+  readonly endHour?: string | undefined;
+}
+
+/** True when the range has both hour bounds set. Hour bounds are an additive
+ *  refinement on top of the day-level start/end; they only kick in for
+ *  hourly-tier queries (the daily Parquet files don't have usage_hour). */
+function hasHourBounds(dateRange: DateRangeLike): boolean {
+  return dateRange.startHour !== undefined && dateRange.endHour !== undefined;
+}
+
+/** When hour bounds are present, the query must read from the hourly tier so
+ *  that usage_hour is available to filter on. Promote the requested tier
+ *  accordingly. */
+function effectiveTier(requestedTier: string, dateRange: DateRangeLike): string {
+  return hasHourBounds(dateRange) ? 'hourly' : requestedTier;
+}
+
+/** WHERE expression for the date range. With hour bounds set we filter at the
+ *  hour level (inclusive on both ends) — `usage_hour BETWEEN startHour AND endHour`.
+ *  Without them we keep the cheaper day-level filter. Both forms use parameter
+ *  placeholders so untrusted values stay out of the SQL string. */
+function buildDateRangeWhere(qb: QueryBuilder, dateRange: DateRangeLike): string {
+  if (dateRange.startHour !== undefined && dateRange.endHour !== undefined) {
+    assertHourString(dateRange.startHour);
+    assertHourString(dateRange.endHour);
+    const sh = qb.addParam(dateRange.startHour);
+    const eh = qb.addParam(dateRange.endHour);
+    return `usage_hour BETWEEN ${sh}::TIMESTAMP AND ${eh}::TIMESTAMP`;
+  }
+  const s = qb.addParam(dateRange.start);
+  const e = qb.addParam(dateRange.end);
+  return `usage_date BETWEEN ${s} AND ${e}`;
+}
+
 interface CommonQueryArgs {
   readonly filters: FilterMap;
-  readonly dateRange: { readonly start: string; readonly end: string };
+  readonly dateRange: DateRangeLike;
 }
 
 interface CommonQuerySetup {
@@ -444,14 +482,18 @@ function setupQuery(
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
   const costMetric = costScope?.costMetric ?? 'unblended';
 
-  if (materializedSource !== undefined) {
+  // The materialized base table is built at daily tier and lacks usage_hour,
+  // so it can't satisfy hour-bounded queries. Fall through to a fresh hourly
+  // Parquet read in that case.
+  if (materializedSource !== undefined && !hasHourBounds(params.dateRange)) {
     return { qb, filterClauses, exclusionClauses: [], source: materializedSource, costMetric };
   }
 
   const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
-  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, ...extraSourceOpts });
+  const resolvedTier = effectiveTier(tier, params.dateRange);
+  const source = buildSource({ dataDir, tier: resolvedTier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, ...extraSourceOpts });
   return { qb, filterClauses, exclusionClauses, source, costMetric };
 }
 
@@ -465,10 +507,8 @@ export function buildCostQuery(
   const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, costTier, opts);
   const groupByResolved = resolveField(params.groupBy, opts.dimensions);
 
-  const startDatePlaceholder = qb.addParam(params.dateRange.start);
-  const endDatePlaceholder = qb.addParam(params.dateRange.end);
   const whereConditions = [
-    `usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder}`,
+    buildDateRangeWhere(qb, params.dateRange),
     ...filterClauses,
     ...exclusionClauses,
   ];
@@ -637,10 +677,8 @@ export function buildMissingTagsQuery(
   const hasRawColumn = tagDim?.accountTagFallback !== undefined && opts.orgAccountsPath !== undefined;
   const tagCheckField = hasRawColumn ? `raw_${tagResolved.rawField}` : tagResolved.rawField;
 
-  const startDatePlaceholder = qb.addParam(params.dateRange.start);
-  const endDatePlaceholder = qb.addParam(params.dateRange.end);
   const whereConditions = [
-    `usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder}`,
+    buildDateRangeWhere(qb, params.dateRange),
     `line_item_type IN ('Usage', 'DiscountedUsage')`,
     `resource_id IS NOT NULL AND resource_id != ''`,
     ...filterClauses,
@@ -709,10 +747,8 @@ export function buildNonResourceCostQuery(
 ): ParameterizedQuery {
   const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, 'daily', opts);
 
-  const startDatePlaceholder = qb.addParam(params.dateRange.start);
-  const endDatePlaceholder = qb.addParam(params.dateRange.end);
   const whereConditions = [
-    `usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder}`,
+    buildDateRangeWhere(qb, params.dateRange),
     `(line_item_type NOT IN ('Usage', 'DiscountedUsage') OR resource_id IS NULL OR resource_id = '')`,
     ...filterClauses,
     ...exclusionClauses,
@@ -739,19 +775,21 @@ export function buildDailyCostsQuery(
   opts: QueryContextOptions,
 ): ParameterizedQuery {
   const dailyTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
+  const resolvedTier = effectiveTier(dailyTier, params.dateRange);
   const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, dailyTier, opts);
   const groupByResolved = resolveField(params.groupBy, opts.dimensions);
 
-  const startDatePlaceholder = qb.addParam(params.dateRange.start);
-  const endDatePlaceholder = qb.addParam(params.dateRange.end);
   const whereConditions = [
-    `usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder}`,
+    buildDateRangeWhere(qb, params.dateRange),
     ...filterClauses,
     ...exclusionClauses,
   ];
 
-  const dateExpr = dailyTier === 'hourly'
-    ? "strftime(usage_hour, '%Y-%m-%d %H:00')"
+  // Round CUR's mid-hour fee timestamps (SavingsPlanFee, RIFee, Tax, etc.)
+  // to the nearest hour boundary so they land in a single bucket alongside
+  // hour-aligned Usage rows instead of polluting the histogram.
+  const dateExpr = resolvedTier === 'hourly'
+    ? "strftime(date_trunc('hour', usage_hour + INTERVAL '30 minutes'), '%Y-%m-%d %H:00')"
     : 'usage_date::VARCHAR';
 
   const sql = `
@@ -774,6 +812,7 @@ export function buildEntityDetailQuery(
 ): ParameterizedQuery {
   const granularity = params.granularity ?? 'daily';
   const tier = granularity === 'hourly' ? 'hourly' : 'daily';
+  const resolvedTier = effectiveTier(tier, params.dateRange);
   const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, tier, opts);
   const dimResolved = resolveField(params.dimension, opts.dimensions);
 
@@ -792,19 +831,18 @@ export function buildEntityDetailQuery(
     return `${dimResolved.fieldExpr} = ${entityPlaceholder}`;
   })();
 
-  const startDatePlaceholder = qb.addParam(params.dateRange.start);
-  const endDatePlaceholder = qb.addParam(params.dateRange.end);
   const whereConditions = [
-    `usage_date BETWEEN ${startDatePlaceholder} AND ${endDatePlaceholder}`,
+    buildDateRangeWhere(qb, params.dateRange),
     entityClause,
     ...filterClauses,
     ...exclusionClauses,
   ];
 
   // Group by hour for hourly tier so the entity detail histogram doesn't
-  // collapse 24 hourly rows into one date row.
-  const groupKey = tier === 'hourly'
-    ? "strftime(usage_hour, '%Y-%m-%d %H:00')"
+  // collapse 24 hourly rows into one date row. Mid-hour fee timestamps are
+  // rounded to the nearest hour boundary (see buildDailyCostsQuery comment).
+  const groupKey = resolvedTier === 'hourly'
+    ? "strftime(date_trunc('hour', usage_hour + INTERVAL '30 minutes'), '%Y-%m-%d %H:00')"
     : 'usage_date::VARCHAR';
 
   const sql = `

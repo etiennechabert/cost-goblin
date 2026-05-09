@@ -28,6 +28,7 @@ export function costFocusReducer(state: CostFocusState, action: CostFocusAction)
       return { ...state, environment: action.env };
 
     case 'HOVER':
+      if (state.hoveredEntity === action.entity && state.hoveredDimension === action.dimension) return state;
       return { ...state, hoveredEntity: action.entity, hoveredDimension: action.dimension };
 
     case 'TOGGLE_EXPAND':

@@ -4,6 +4,7 @@ import { formatDollars } from './format.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
 import { usePalette } from '../hooks/use-palette.js';
 import { useBarDragSelect } from '../hooks/use-bar-drag-select.js';
+import { formatBucketKey } from '../lib/drag-select.js';
 
 export interface BarDay {
   readonly date: string;
@@ -27,6 +28,11 @@ interface StackedBarChartProps {
    *  a dashed line overlay when present. */
   readonly previousTotals?: readonly number[] | undefined;
   readonly onRangeSelect?: ((startIdx: number, endIdx: number) => void) | undefined;
+  /** Fires when the focused series changes — either the user moused into a
+   *  bar segment or hovered a row in the floating tooltip. Lets the host
+   *  widget propagate to the global cross-chart focus so sibling pies dim
+   *  the same way pie→histogram already does. Called with null on leave. */
+  readonly onSegmentHover?: ((name: string | null) => void) | undefined;
 }
 
 export function bucketBars(bars: readonly BarDay[], maxBuckets: number): readonly BarDay[] {
@@ -63,12 +69,18 @@ interface BarSegmentProps {
 function BarSegment({ seg, segTotal, highlightedGroup, palette, onMouseEnter, onSegmentClick }: BarSegmentProps) {
   const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
   const color = getColor(seg.colorIdx, palette);
-  const isDimmed = highlightedGroup !== null && highlightedGroup !== undefined && highlightedGroup !== seg.key;
-  const baseStyle = {
+  const isHighlighted = highlightedGroup !== null && highlightedGroup !== undefined && highlightedGroup === seg.key;
+  const isDimmed = highlightedGroup !== null && highlightedGroup !== undefined && !isHighlighted;
+  // Match the pie chart's emphasis: dimmed series fade to ~25%, the focused
+  // one stays at full opacity with a subtle brightness boost and a thin white
+  // outline inset so it reads as "selected" the way a pie slice does on hover.
+  const baseStyle: React.CSSProperties = {
     height: `${String(pct)}%`,
     backgroundColor: color,
-    opacity: isDimmed ? 0.25 : 0.85,
-    transition: 'opacity 0.15s',
+    opacity: isDimmed ? 0.25 : isHighlighted ? 1 : 0.85,
+    filter: isHighlighted ? 'brightness(1.2)' : 'none',
+    boxShadow: isHighlighted ? 'inset 0 0 0 1.5px rgba(255,255,255,0.85)' : 'none',
+    transition: 'opacity 0.15s, filter 0.15s, box-shadow 0.15s',
   };
   if (onSegmentClick !== undefined) {
     return (
@@ -109,8 +121,7 @@ function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, palette,
     <div
       className="group relative flex-1 min-w-0"
       style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
-      onMouseEnter={() => { setHoveredDay(day.date); }}
-      onMouseLeave={() => { setHoveredDay(null); setHoveredSegment(null); }}
+      onMouseEnter={() => { setHoveredDay(day.date); setHoveredSegment(null); }}
     >
       <div
         className="w-full overflow-hidden rounded-t-sm"
@@ -132,22 +143,41 @@ function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, palette,
   );
 }
 
-export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick, previousTotals, onRangeSelect }: StackedBarChartProps) {
+export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick, previousTotals, onRangeSelect, onSegmentHover }: StackedBarChartProps) {
   const { palette } = usePalette();
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
   const [hoveredSegment, setHoveredSegment] = useState<string | null>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
   const barsRef = useRef<HTMLDivElement>(null);
 
-  const { isDragging, overlay, handleMouseDown } = useBarDragSelect({
+  const { isDragging, overlay, selection, handleMouseDown } = useBarDragSelect({
     containerRef: barsRef,
     bucketCount: days.length,
     onRangeSelect,
     disabled: onRangeSelect === undefined || loading === true,
   });
 
+  const dragLabels = (() => {
+    if (selection === null) return null;
+    const startBar = days[selection.startIdx];
+    const endBar = days[selection.endIdx];
+    if (startBar === undefined || endBar === undefined) return null;
+    return { start: formatBucketKey(startBar.date), end: formatBucketKey(endBar.date) };
+  })();
+
   useEffect(() => {
     highlightRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [hoveredSegment]);
+
+  // Surface the local hover to the widget host so it can lift it into the
+  // global cross-chart focus. Mirror of the pie chart's onSliceHover. The
+  // callback is held in a ref so an unstable parent reference can't retrigger
+  // the effect on every render — that path is an infinite-update loop when
+  // the parent's dispatch causes any re-render.
+  const onSegmentHoverRef = useRef(onSegmentHover);
+  onSegmentHoverRef.current = onSegmentHover;
+  useEffect(() => {
+    onSegmentHoverRef.current?.(hoveredSegment);
   }, [hoveredSegment]);
 
   const allKeys = new Set<string>();
@@ -160,6 +190,10 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
 
   const prevMax = previousTotals === undefined ? 0 : previousTotals.reduce((m, v) => Math.max(m, v), 0);
   const maxCost = Math.max(days.reduce((m, d) => Math.max(m, d.total), 0), prevMax);
+
+  // Either an external focus signal or a row the user is currently pointing at
+  // in the tooltip should fade the other series to match how pies behave.
+  const focusedKey = highlightedGroup ?? hoveredSegment;
 
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col h-full overflow-hidden">
@@ -208,7 +242,11 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
         const minChartHeight = expanded ? 360 : 180;
         const ticks = [1, 0.75, 0.5, 0.25, 0];
         return (
-        <div className="relative flex-1 pb-7" style={{ minHeight: `${String(minChartHeight)}px` }}>
+        <div
+          className="relative flex-1 pb-7"
+          style={{ minHeight: `${String(minChartHeight)}px` }}
+          onMouseLeave={() => { setHoveredDay(null); setHoveredSegment(null); }}
+        >
           {/* Y axis ticks */}
           <div className="absolute left-0 top-0 bottom-7 w-10">
             {ticks.map(pct => (
@@ -252,7 +290,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
               .sort((a, b) => b.value - a.value);
             const segTotal = segs.reduce((sum, s) => sum + s.value, 0);
             return (
-              <div className={`pointer-events-none absolute top-0 bottom-0 z-20 ${onLeft ? 'right-0 mr-1' : 'left-12 ml-1'}`}>
+              <div className={`absolute top-0 bottom-0 z-20 ${onLeft ? 'right-0 mr-1' : 'left-12 ml-1'}`}>
                 <div className="rounded-lg bg-bg-secondary/95 px-4 py-3 text-[11px] text-text-primary whitespace-nowrap shadow-lg border border-border min-w-[280px] max-h-full overflow-y-auto">
                   <div className="mb-2 pb-2 border-b border-border-subtle flex flex-col gap-0.5">
                     <div className="flex items-center justify-between">
@@ -283,7 +321,13 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                         ? ((seg.value - prevVal) / prevVal) * 100
                         : undefined;
                       return (
-                        <div key={seg.key} ref={isHigh ? highlightRef : undefined} className={`flex items-center gap-2 rounded py-0.5 px-1 -mx-1 ${isHigh ? 'bg-white/10' : ''}`}>
+                        <div
+                          key={seg.key}
+                          ref={isHigh ? highlightRef : undefined}
+                          onMouseEnter={() => { setHoveredSegment(seg.key); }}
+                          onMouseLeave={() => { setHoveredSegment(null); }}
+                          className={`pointer-events-auto flex items-center gap-2 rounded py-0.5 px-1 -mx-1 cursor-default ${isHigh ? 'bg-white/10' : ''}`}
+                        >
                           <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
                           <span className={`truncate flex-1 min-w-0 ${isHigh ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>{seg.key}</span>
                           <span className={`tabular-nums shrink-0 ${isHigh ? 'font-semibold' : ''}`}>
@@ -331,7 +375,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                   segments={segments}
                   segTotal={segTotal}
                   barPct={barPct}
-                  highlightedGroup={highlightedGroup}
+                  highlightedGroup={focusedKey}
                   palette={palette}
                   onSegmentClick={onSegmentClick}
                   setHoveredDay={setHoveredDay}
@@ -344,6 +388,22 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                 className="pointer-events-none absolute top-0 bottom-0 bg-accent/20 border-l border-r border-accent z-30"
                 style={{ left: overlay.left, width: overlay.width }}
               />
+            )}
+            {overlay !== null && dragLabels !== null && (
+              <>
+                <div
+                  className="pointer-events-none absolute -top-5 z-40 -translate-x-1/2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium text-bg-primary shadow whitespace-nowrap tabular-nums"
+                  style={{ left: overlay.left }}
+                >
+                  {dragLabels.start}
+                </div>
+                <div
+                  className="pointer-events-none absolute -top-5 z-40 -translate-x-1/2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium text-bg-primary shadow whitespace-nowrap tabular-nums"
+                  style={{ left: overlay.left + overlay.width }}
+                >
+                  {dragLabels.end}
+                </div>
+              </>
             )}
           </div>
 

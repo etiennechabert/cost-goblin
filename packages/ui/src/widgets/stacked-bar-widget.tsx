@@ -3,13 +3,13 @@ import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { StackedBarChart, bucketBars, type BarDay } from '../components/stacked-bar-chart.js';
-import { asDateString, asTagValue } from '@costgoblin/core/browser';
-import { useCostFocus } from '../hooks/use-cost-focus.js';
+import { asDateString, asHourString, asTagValue } from '@costgoblin/core/browser';
+import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, mergeFilters, hasSufficientDailyCoverage } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
-import { computeBucketedRange } from '../lib/drag-select.js';
+import { computeBucketedHourRange, computeBucketedRange } from '../lib/drag-select.js';
 
 const MAX_BARS = 170;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -56,6 +56,7 @@ export function StackedBarWidget({
 }: WidgetCommonProps) {
   const api = useCostApi();
   const focus = useCostFocus();
+  const dispatch = useCostFocusDispatch();
   const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'stackedBar' ? spec.groupBy : undefined;
   const effectiveGroupBy = groupByOverride ?? specGroupBy;
@@ -74,7 +75,7 @@ export function StackedBarWidget({
     () => compareEnabled && effectiveGroupBy !== undefined
       ? api.queryDailyCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters, granularity })
       : Promise.resolve(null),
-    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
+    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api],
   );
 
   const barDays = useMemo(
@@ -83,7 +84,7 @@ export function StackedBarWidget({
       const filled = granularity === 'daily' ? fillDateRange(raw, dateRange.start, dateRange.end) : raw;
       return bucketBars(filled, MAX_BARS);
     },
-    [dailyResult, granularity, dateRange.start, dateRange.end],
+    [dailyResult, granularity, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour],
   );
 
   const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientDailyCoverage(prevQuery.data, previousDateRange);
@@ -105,13 +106,25 @@ export function StackedBarWidget({
 
   const handleRangeSelect = useCallback((startIdx: number, endIdx: number) => {
     if (onDateRangeChange === undefined) return;
+    if (granularity === 'hourly') {
+      const fallbackEndHour = `${String(dateRange.end)} 23:00:00`;
+      const hourRange = computeBucketedHourRange(barDays, startIdx, endIdx, fallbackEndHour);
+      if (hourRange === null) return;
+      onDateRangeChange({
+        start: asDateString(hourRange.startHour.slice(0, 10)),
+        end: asDateString(hourRange.endHour.slice(0, 10)),
+        startHour: asHourString(hourRange.startHour),
+        endHour: asHourString(hourRange.endHour),
+      });
+      return;
+    }
     const range = computeBucketedRange(barDays, startIdx, endIdx, dateRange.end);
     if (range === null) return;
     onDateRangeChange({
       start: asDateString(range.startDate),
       end: asDateString(range.endDate),
     });
-  }, [barDays, dateRange.end, onDateRangeChange]);
+  }, [barDays, dateRange.end, granularity, onDateRangeChange]);
 
   if (spec.type !== 'stackedBar') return null;
 
@@ -124,15 +137,25 @@ export function StackedBarWidget({
     title = <GroupByTitle dimensions={dimensions} currentGroupBy={activeGroupBy} onGroupByChange={setGroupByOverride} label={label} />;
   }
 
+  // Cross-chart focus is dimension-scoped: only honour an external hover when
+  // it came from a chart grouped by the same dimension as us. Otherwise the
+  // histogram would dim every bar when the user hovered, say, a Team slice.
+  const externalHighlight = activeGroupBy !== undefined && focus.hoveredDimension === activeGroupBy
+    ? focus.hoveredEntity
+    : null;
+
   return (
     <StackedBarChart
       days={loading ? [] : barDays}
-      highlightedGroup={focus.hoveredEntity}
+      highlightedGroup={externalHighlight}
       title={title}
       loading={loading}
       onSegmentClick={activeGroupBy === undefined ? undefined : (name) => { onSetFilter(activeGroupBy, asTagValue(name)); }}
       previousTotals={compareEnabled ? previousTotals : undefined}
       onRangeSelect={onDateRangeChange === undefined ? undefined : handleRangeSelect}
+      onSegmentHover={activeGroupBy === undefined ? undefined : (name) => {
+        dispatch({ type: 'HOVER', entity: name, dimension: activeGroupBy });
+      }}
     />
   );
 }

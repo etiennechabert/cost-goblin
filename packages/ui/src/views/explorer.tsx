@@ -13,7 +13,7 @@ import type {
   ExplorerSort,
   Granularity,
 } from '@costgoblin/core/browser';
-import { asDateString } from '@costgoblin/core/browser';
+import { asDateString, asHourString } from '@costgoblin/core/browser';
 import type { SortingState } from '@tanstack/react-table';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
@@ -26,7 +26,7 @@ import { DateRangePicker, getDefaultDateRange } from '../components/date-range-p
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { getDimensionId } from '../lib/dimensions.js';
-import { bucketKeyToDate, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { bucketKeyToDate, formatBucketKey, normalizeHourKey, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import type { TableColumn } from '../lib/table-types.js';
 
 const DEBOUNCE_MS = 250;
@@ -392,6 +392,21 @@ export function ExplorerView(): React.JSX.Element {
     const startBar = dailyTotals[startIdx];
     const endBar = dailyTotals[endIdx];
     if (startBar === undefined || endBar === undefined) return;
+    if (granularity === 'hourly') {
+      // Each bar is one hour bucket — keep the hour info so the rest of
+      // the Explorer (overview totals, table) filters on the same window.
+      const startHour = normalizeHourKey(startBar.date);
+      const endHour = normalizeHourKey(endBar.date);
+      if (startHour === null || endHour === null) return;
+      setDateRange({
+        start: asDateString(startHour.slice(0, 10)),
+        end: asDateString(endHour.slice(0, 10)),
+        startHour: asHourString(startHour),
+        endHour: asHourString(endHour),
+      });
+      setHourlyHint(false);
+      return;
+    }
     const startDate = bucketKeyToDate(startBar.date);
     const endDate = bucketKeyToDate(endBar.date);
     setDateRange({ start: asDateString(startDate), end: asDateString(endDate) });
@@ -628,12 +643,20 @@ const Y_TICKS = [1, 0.75, 0.5, 0.25, 0] as const;
 function Histogram({ days, loading, onRangeSelect }: HistogramProps): React.JSX.Element {
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const barsRef = useRef<HTMLDivElement>(null);
-  const { isDragging, overlay, handleMouseDown } = useBarDragSelect({
+  const { isDragging, overlay, selection, handleMouseDown } = useBarDragSelect({
     containerRef: barsRef,
     bucketCount: days.length,
     onRangeSelect,
     disabled: onRangeSelect === undefined || loading,
   });
+
+  const dragLabels = (() => {
+    if (selection === null) return null;
+    const startBar = days[selection.startIdx];
+    const endBar = days[selection.endIdx];
+    if (startBar === undefined || endBar === undefined) return null;
+    return { start: formatBucketKey(startBar.date), end: formatBucketKey(endBar.date) };
+  })();
 
   if (loading) {
     return <CoinRainLoader height={CHART_HEIGHT} count={6} />;
@@ -731,6 +754,22 @@ function Histogram({ days, loading, onRangeSelect }: HistogramProps): React.JSX.
               className="pointer-events-none absolute top-0 bottom-0 bg-accent/20 border-l border-r border-accent z-30"
               style={{ left: overlay.left, width: overlay.width }}
             />
+          )}
+          {overlay !== null && dragLabels !== null && (
+            <>
+              <div
+                className="pointer-events-none absolute -top-5 z-40 -translate-x-1/2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium text-bg-primary shadow whitespace-nowrap tabular-nums"
+                style={{ left: overlay.left }}
+              >
+                {dragLabels.start}
+              </div>
+              <div
+                className="pointer-events-none absolute -top-5 z-40 -translate-x-1/2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium text-bg-primary shadow whitespace-nowrap tabular-nums"
+                style={{ left: overlay.left + overlay.width }}
+              >
+                {dragLabels.end}
+              </div>
+            </>
           )}
         </div>
       </div>

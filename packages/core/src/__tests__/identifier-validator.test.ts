@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assertDateString, validateColumnName, validateTablePath, SecurityError } from '../query/identifier-validator.js';
+import { assertDateString, assertHourString, validateColumnName, validateTablePath, SecurityError } from '../query/identifier-validator.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId } from '../types/branded.js';
 
@@ -105,6 +105,34 @@ describe('assertDateString', () => {
   it('rejects SQL injection attempts', () => {
     expect(() => { assertDateString("2026-01-01' OR 1=1 --"); }).toThrow(SecurityError);
     expect(() => { assertDateString("2026-01-01'; DROP TABLE cost_base; --"); }).toThrow(SecurityError);
+  });
+});
+
+describe('assertHourString', () => {
+  it('accepts valid YYYY-MM-DD HH:00:00 timestamps', () => {
+    expect(() => { assertHourString('2026-04-30 00:00:00'); }).not.toThrow();
+    expect(() => { assertHourString('2026-04-30 14:00:00'); }).not.toThrow();
+    expect(() => { assertHourString('2026-04-30 23:00:00'); }).not.toThrow();
+    expect(() => { assertHourString('2025-12-31 09:00:00'); }).not.toThrow();
+  });
+
+  it('rejects non-zero minutes or seconds', () => {
+    expect(() => { assertHourString('2026-04-30 14:30:00'); }).toThrow(SecurityError);
+    expect(() => { assertHourString('2026-04-30 14:00:01'); }).toThrow(SecurityError);
+    expect(() => { assertHourString('2026-04-30 14:00'); }).toThrow(SecurityError);
+  });
+
+  it('rejects out-of-range hours and dates', () => {
+    expect(() => { assertHourString('2026-04-30 24:00:00'); }).toThrow(SecurityError);
+    expect(() => { assertHourString('2026-04-30 99:00:00'); }).toThrow(SecurityError);
+    expect(() => { assertHourString('2026-13-30 14:00:00'); }).toThrow(SecurityError);
+    expect(() => { assertHourString('2026-04-32 14:00:00'); }).toThrow(SecurityError);
+  });
+
+  it('rejects SQL injection attempts', () => {
+    expect(() => { assertHourString("2026-04-30 14:00:00' OR 1=1 --"); }).toThrow(SecurityError);
+    expect(() => { assertHourString("2026-04-30 14:00:00'; DROP TABLE cost_base; --"); }).toThrow(SecurityError);
+    expect(() => { assertHourString(''); }).toThrow(SecurityError);
   });
 });
 

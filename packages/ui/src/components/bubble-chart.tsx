@@ -20,16 +20,23 @@ interface BubbleChartProps {
   readonly data: readonly TrendRow[];
   readonly logScale?: number | undefined;
   readonly onEntityClick: (entity: EntityRef) => void;
+  readonly externalHoveredName?: string | null | undefined;
+  readonly onEntityHover?: ((name: string | null) => void) | undefined;
 }
 
 function BubbleChartInner({
   data,
   logScale,
   onEntityClick,
+  externalHoveredName,
+  onEntityHover,
   width,
   height,
 }: BubbleChartProps & { readonly width: number; readonly height: number }) {
-  const [hoveredEntity, setHoveredEntity] = useState<EntityRef | null>(null);
+  const [localHovered, setLocalHovered] = useState<EntityRef | null>(null);
+  const hoveredEntity: EntityRef | null = (externalHoveredName ?? null) === null
+    ? localHovered
+    : (externalHoveredName as EntityRef | null);
   const {
     showTooltip,
     hideTooltip,
@@ -48,15 +55,26 @@ function BubbleChartInner({
         tooltipLeft: coords.x,
         tooltipTop: coords.y,
       });
-      setHoveredEntity(row.entity);
+      // SVG mousemove fires every frame; only push to global focus when the
+      // pointed-at bubble actually changes, otherwise sibling charts thrash
+      // (the pie's HOVER reducer was firing 60 times/s and visibly flickered).
+      setLocalHovered(prev => {
+        if (prev === row.entity) return prev;
+        onEntityHover?.(row.entity);
+        return row.entity;
+      });
     },
-    [showTooltip],
+    [showTooltip, onEntityHover],
   );
 
   const handleMouseLeave = useCallback(() => {
     hideTooltip();
-    setHoveredEntity(null);
-  }, [hideTooltip]);
+    setLocalHovered(prev => {
+      if (prev === null) return prev;
+      onEntityHover?.(null);
+      return null;
+    });
+  }, [hideTooltip, onEntityHover]);
 
   const innerWidth = width - MARGIN.left - MARGIN.right;
   const innerHeight = height - MARGIN.top - MARGIN.bottom;
@@ -104,7 +122,7 @@ function BubbleChartInner({
   const tickColor = 'var(--color-text-muted)';
 
   return (
-    <div className="relative">
+    <div className="relative" onMouseLeave={handleMouseLeave}>
       <svg width={width} height={height} aria-label="Cost trend bubble chart: x-axis shows percent change, y-axis shows absolute delta, bubble size represents current cost">
         <Group left={MARGIN.left} top={MARGIN.top}>
           <GridRows
@@ -226,7 +244,7 @@ function BubbleChartInner({
   );
 }
 
-export function BubbleChart({ data, logScale, onEntityClick }: BubbleChartProps) {
+export function BubbleChart({ data, logScale, onEntityClick, externalHoveredName, onEntityHover }: BubbleChartProps) {
   return (
     <div className="h-[350px] w-full rounded-xl border border-border bg-bg-secondary/50">
       <ParentSize>
@@ -235,6 +253,8 @@ export function BubbleChart({ data, logScale, onEntityClick }: BubbleChartProps)
             data={data}
             logScale={logScale}
             onEntityClick={onEntityClick}
+            externalHoveredName={externalHoveredName}
+            onEntityHover={onEntityHover}
             width={width}
             height={height}
           />

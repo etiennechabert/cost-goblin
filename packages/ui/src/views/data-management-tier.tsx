@@ -183,6 +183,31 @@ export function TierPanel({
         </div>
       )}
 
+      {/* Local periods */}
+      {downloadedPeriods.length > 0 && (
+        <div className="rounded-lg border border-border overflow-hidden">
+          <div className="border-b border-border px-3 py-2">
+            <span className="text-xs font-medium text-text-secondary">Downloaded</span>
+          </div>
+          <div className="max-h-48 overflow-y-auto divide-y divide-border-subtle">
+            {downloadedPeriods.map(p => (
+              <div key={p.period} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                <div className="h-1.5 w-1.5 rounded-full bg-accent" />
+                <span className="text-text-primary w-16">{formatPeriod(p.period)}</span>
+                <span className="text-text-muted tabular-nums ml-auto mr-2">{formatBytes(p.totalSize)}</span>
+                <button
+                  type="button"
+                  onClick={() => { setPendingDelete(p.period); }}
+                  className="text-text-muted hover:text-negative transition-colors"
+                >
+                  &#10005;
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Missing / stale periods */}
       {missingPeriods.length > 0 && (
         <div className="rounded-lg border border-border overflow-hidden">
@@ -218,31 +243,6 @@ export function TierPanel({
               </button>
             </div>
           )}
-        </div>
-      )}
-
-      {/* Local periods */}
-      {downloadedPeriods.length > 0 && (
-        <div className="rounded-lg border border-border overflow-hidden">
-          <div className="border-b border-border px-3 py-2">
-            <span className="text-xs font-medium text-text-secondary">Downloaded</span>
-          </div>
-          <div className="max-h-48 overflow-y-auto divide-y divide-border-subtle">
-            {downloadedPeriods.map(p => (
-              <div key={p.period} className="flex items-center gap-2 px-3 py-1.5 text-xs">
-                <div className="h-1.5 w-1.5 rounded-full bg-accent" />
-                <span className="text-text-primary w-16">{formatPeriod(p.period)}</span>
-                <span className="text-text-muted tabular-nums ml-auto mr-2">{formatBytes(p.totalSize)}</span>
-                <button
-                  type="button"
-                  onClick={() => { setPendingDelete(p.period); }}
-                  className="text-text-muted hover:text-negative transition-colors"
-                >
-                  &#10005;
-                </button>
-              </div>
-            ))}
-          </div>
         </div>
       )}
 

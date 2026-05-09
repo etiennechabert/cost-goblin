@@ -58,7 +58,7 @@ export function TopNBarWidget({
     () => compareEnabled && effectiveGroupBy !== undefined
       ? api.queryCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters, granularity })
       : Promise.resolve(null),
-    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
+    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api],
   );
 
   const bars = useMemo(

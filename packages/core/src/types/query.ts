@@ -1,10 +1,20 @@
-import type { DateString, DimensionId, Dollars, EntityRef, TagValue } from './branded.js';
+import type { DateString, DimensionId, Dollars, EntityRef, HourString, TagValue } from './branded.js';
 
 export type Granularity = 'daily' | 'hourly';
 
+/**
+ * A date range. `start`/`end` are always present and authoritative for whole-day
+ * filters. When the user has dragged into a sub-day window on an hourly chart,
+ * `startHour`/`endHour` (inclusive on both ends, in `YYYY-MM-DD HH:00:00` form)
+ * refine the window to a specific range of hours; query builders use
+ * `usage_hour BETWEEN startHour AND endHour` instead of the day-level filter
+ * when the granularity is hourly and both fields are set.
+ */
 export interface DateRange {
   readonly start: DateString;
   readonly end: DateString;
+  readonly startHour?: HourString | undefined;
+  readonly endHour?: HourString | undefined;
 }
 
 export type FilterMap = Readonly<Partial<Record<DimensionId, readonly TagValue[]>>>;

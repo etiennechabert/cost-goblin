@@ -93,7 +93,10 @@ function PieChartInner({
   }, [onSliceHover]);
 
   return (
-    <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col h-full">
+    <div
+      className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col h-full"
+      onMouseLeave={handleMouseLeave}
+    >
       <div className="flex items-center justify-between mb-3">
         {dimensions !== undefined && dimensions.length > 0 && onDimensionChange !== undefined ? (
           <select

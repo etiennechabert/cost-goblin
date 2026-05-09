@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pixelToIndex, bucketKeyToDate, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { pixelToIndex, bucketKeyToDate, computeBucketedHourRange, normalizeHourKey, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 
 describe('pixelToIndex', () => {
   it('maps the left edge to index 0', () => {
@@ -45,6 +45,58 @@ describe('bucketKeyToDate', () => {
   it('returns short input unchanged', () => {
     expect(bucketKeyToDate('')).toBe('');
     expect(bucketKeyToDate('2026')).toBe('2026');
+  });
+});
+
+describe('normalizeHourKey', () => {
+  it('canonicalizes "YYYY-MM-DD HH:MM" to "YYYY-MM-DD HH:00:00"', () => {
+    expect(normalizeHourKey('2026-04-30 14:00')).toBe('2026-04-30 14:00:00');
+    expect(normalizeHourKey('2026-04-30 00:00')).toBe('2026-04-30 00:00:00');
+  });
+
+  it('preserves already-canonical hour keys', () => {
+    expect(normalizeHourKey('2026-04-30 14:00:00')).toBe('2026-04-30 14:00:00');
+  });
+
+  it('returns null for date-only or malformed strings', () => {
+    expect(normalizeHourKey('2026-04-30')).toBeNull();
+    expect(normalizeHourKey('')).toBeNull();
+    expect(normalizeHourKey('garbage')).toBeNull();
+  });
+});
+
+describe('computeBucketedHourRange', () => {
+  const hourBars = [
+    { date: '2026-04-30 14:00' },
+    { date: '2026-04-30 15:00' },
+    { date: '2026-04-30 16:00' },
+    { date: '2026-04-30 17:00' },
+    { date: '2026-04-30 18:00' },
+  ];
+
+  it('returns the picked hour range when dragging in the middle', () => {
+    const range = computeBucketedHourRange(hourBars, 0, 3, '2026-04-30 18:00');
+    // start = first bar, end = (next bar's hour) - 1 = 17:00 - 1 wait actually
+    // for indices 0..3 inclusive, next bar is index 4 (18:00); end = 18:00 - 1 = 17:00
+    expect(range).toEqual({ startHour: '2026-04-30 14:00:00', endHour: '2026-04-30 17:00:00' });
+  });
+
+  it('drag inside a single hour bucket yields a single-hour range', () => {
+    const range = computeBucketedHourRange(hourBars, 1, 1, '2026-04-30 18:00');
+    expect(range).toEqual({ startHour: '2026-04-30 15:00:00', endHour: '2026-04-30 15:00:00' });
+  });
+
+  it('drag covering the last bar uses fallback for the end hour', () => {
+    const range = computeBucketedHourRange(hourBars, 3, 4, '2026-04-30 18:00');
+    expect(range).toEqual({ startHour: '2026-04-30 17:00:00', endHour: '2026-04-30 18:00:00' });
+  });
+
+  it('returns null for non-hourly bar keys', () => {
+    const range = computeBucketedHourRange(
+      [{ date: '2026-04-30' }, { date: '2026-05-01' }],
+      0, 1, '2026-04-30 23:00',
+    );
+    expect(range).toBeNull();
   });
 });
 
