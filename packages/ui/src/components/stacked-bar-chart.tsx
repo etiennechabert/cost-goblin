@@ -170,10 +170,15 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
   }, [hoveredSegment]);
 
   // Surface the local hover to the widget host so it can lift it into the
-  // global cross-chart focus. Mirror of the pie chart's onSliceHover.
+  // global cross-chart focus. Mirror of the pie chart's onSliceHover. The
+  // callback is held in a ref so an unstable parent reference can't retrigger
+  // the effect on every render — that path is an infinite-update loop when
+  // the parent's dispatch causes any re-render.
+  const onSegmentHoverRef = useRef(onSegmentHover);
+  onSegmentHoverRef.current = onSegmentHover;
   useEffect(() => {
-    onSegmentHover?.(hoveredSegment);
-  }, [hoveredSegment, onSegmentHover]);
+    onSegmentHoverRef.current?.(hoveredSegment);
+  }, [hoveredSegment]);
 
   const allKeys = new Set<string>();
   for (const day of days) {
