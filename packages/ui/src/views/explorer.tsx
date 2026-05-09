@@ -26,7 +26,7 @@ import { DateRangePicker, getDefaultDateRange } from '../components/date-range-p
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { getDimensionId } from '../lib/dimensions.js';
-import { bucketKeyToDate, normalizeHourKey, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { bucketKeyToDate, formatBucketKey, normalizeHourKey, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import type { TableColumn } from '../lib/table-types.js';
 
 const DEBOUNCE_MS = 250;
@@ -643,12 +643,20 @@ const Y_TICKS = [1, 0.75, 0.5, 0.25, 0] as const;
 function Histogram({ days, loading, onRangeSelect }: HistogramProps): React.JSX.Element {
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const barsRef = useRef<HTMLDivElement>(null);
-  const { isDragging, overlay, handleMouseDown } = useBarDragSelect({
+  const { isDragging, overlay, selection, handleMouseDown } = useBarDragSelect({
     containerRef: barsRef,
     bucketCount: days.length,
     onRangeSelect,
     disabled: onRangeSelect === undefined || loading,
   });
+
+  const dragLabels = (() => {
+    if (selection === null) return null;
+    const startBar = days[selection.startIdx];
+    const endBar = days[selection.endIdx];
+    if (startBar === undefined || endBar === undefined) return null;
+    return { start: formatBucketKey(startBar.date), end: formatBucketKey(endBar.date) };
+  })();
 
   if (loading) {
     return <CoinRainLoader height={CHART_HEIGHT} count={6} />;
@@ -746,6 +754,22 @@ function Histogram({ days, loading, onRangeSelect }: HistogramProps): React.JSX.
               className="pointer-events-none absolute top-0 bottom-0 bg-accent/20 border-l border-r border-accent z-30"
               style={{ left: overlay.left, width: overlay.width }}
             />
+          )}
+          {overlay !== null && dragLabels !== null && (
+            <>
+              <div
+                className="pointer-events-none absolute -top-5 z-40 -translate-x-1/2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium text-bg-primary shadow whitespace-nowrap tabular-nums"
+                style={{ left: overlay.left }}
+              >
+                {dragLabels.start}
+              </div>
+              <div
+                className="pointer-events-none absolute -top-5 z-40 -translate-x-1/2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium text-bg-primary shadow whitespace-nowrap tabular-nums"
+                style={{ left: overlay.left + overlay.width }}
+              >
+                {dragLabels.end}
+              </div>
+            </>
           )}
         </div>
       </div>

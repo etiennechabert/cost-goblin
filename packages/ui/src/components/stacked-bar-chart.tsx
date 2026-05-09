@@ -4,6 +4,7 @@ import { formatDollars } from './format.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
 import { usePalette } from '../hooks/use-palette.js';
 import { useBarDragSelect } from '../hooks/use-bar-drag-select.js';
+import { formatBucketKey } from '../lib/drag-select.js';
 
 export interface BarDay {
   readonly date: string;
@@ -109,8 +110,7 @@ function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, palette,
     <div
       className="group relative flex-1 min-w-0"
       style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}
-      onMouseEnter={() => { setHoveredDay(day.date); }}
-      onMouseLeave={() => { setHoveredDay(null); setHoveredSegment(null); }}
+      onMouseEnter={() => { setHoveredDay(day.date); setHoveredSegment(null); }}
     >
       <div
         className="w-full overflow-hidden rounded-t-sm"
@@ -139,12 +139,20 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
   const highlightRef = useRef<HTMLDivElement>(null);
   const barsRef = useRef<HTMLDivElement>(null);
 
-  const { isDragging, overlay, handleMouseDown } = useBarDragSelect({
+  const { isDragging, overlay, selection, handleMouseDown } = useBarDragSelect({
     containerRef: barsRef,
     bucketCount: days.length,
     onRangeSelect,
     disabled: onRangeSelect === undefined || loading === true,
   });
+
+  const dragLabels = (() => {
+    if (selection === null) return null;
+    const startBar = days[selection.startIdx];
+    const endBar = days[selection.endIdx];
+    if (startBar === undefined || endBar === undefined) return null;
+    return { start: formatBucketKey(startBar.date), end: formatBucketKey(endBar.date) };
+  })();
 
   useEffect(() => {
     highlightRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -160,6 +168,10 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
 
   const prevMax = previousTotals === undefined ? 0 : previousTotals.reduce((m, v) => Math.max(m, v), 0);
   const maxCost = Math.max(days.reduce((m, d) => Math.max(m, d.total), 0), prevMax);
+
+  // Either an external focus signal or a row the user is currently pointing at
+  // in the tooltip should fade the other series to match how pies behave.
+  const focusedKey = highlightedGroup ?? hoveredSegment;
 
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 px-5 py-4 flex flex-col h-full overflow-hidden">
@@ -208,7 +220,11 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
         const minChartHeight = expanded ? 360 : 180;
         const ticks = [1, 0.75, 0.5, 0.25, 0];
         return (
-        <div className="relative flex-1 pb-7" style={{ minHeight: `${String(minChartHeight)}px` }}>
+        <div
+          className="relative flex-1 pb-7"
+          style={{ minHeight: `${String(minChartHeight)}px` }}
+          onMouseLeave={() => { setHoveredDay(null); setHoveredSegment(null); }}
+        >
           {/* Y axis ticks */}
           <div className="absolute left-0 top-0 bottom-7 w-10">
             {ticks.map(pct => (
@@ -252,7 +268,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
               .sort((a, b) => b.value - a.value);
             const segTotal = segs.reduce((sum, s) => sum + s.value, 0);
             return (
-              <div className={`pointer-events-none absolute top-0 bottom-0 z-20 ${onLeft ? 'right-0 mr-1' : 'left-12 ml-1'}`}>
+              <div className={`absolute top-0 bottom-0 z-20 ${onLeft ? 'right-0 mr-1' : 'left-12 ml-1'}`}>
                 <div className="rounded-lg bg-bg-secondary/95 px-4 py-3 text-[11px] text-text-primary whitespace-nowrap shadow-lg border border-border min-w-[280px] max-h-full overflow-y-auto">
                   <div className="mb-2 pb-2 border-b border-border-subtle flex flex-col gap-0.5">
                     <div className="flex items-center justify-between">
@@ -283,7 +299,13 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                         ? ((seg.value - prevVal) / prevVal) * 100
                         : undefined;
                       return (
-                        <div key={seg.key} ref={isHigh ? highlightRef : undefined} className={`flex items-center gap-2 rounded py-0.5 px-1 -mx-1 ${isHigh ? 'bg-white/10' : ''}`}>
+                        <div
+                          key={seg.key}
+                          ref={isHigh ? highlightRef : undefined}
+                          onMouseEnter={() => { setHoveredSegment(seg.key); }}
+                          onMouseLeave={() => { setHoveredSegment(null); }}
+                          className={`pointer-events-auto flex items-center gap-2 rounded py-0.5 px-1 -mx-1 cursor-default ${isHigh ? 'bg-white/10' : ''}`}
+                        >
                           <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
                           <span className={`truncate flex-1 min-w-0 ${isHigh ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>{seg.key}</span>
                           <span className={`tabular-nums shrink-0 ${isHigh ? 'font-semibold' : ''}`}>
@@ -331,7 +353,7 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                   segments={segments}
                   segTotal={segTotal}
                   barPct={barPct}
-                  highlightedGroup={highlightedGroup}
+                  highlightedGroup={focusedKey}
                   palette={palette}
                   onSegmentClick={onSegmentClick}
                   setHoveredDay={setHoveredDay}
@@ -344,6 +366,22 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                 className="pointer-events-none absolute top-0 bottom-0 bg-accent/20 border-l border-r border-accent z-30"
                 style={{ left: overlay.left, width: overlay.width }}
               />
+            )}
+            {overlay !== null && dragLabels !== null && (
+              <>
+                <div
+                  className="pointer-events-none absolute -top-5 z-40 -translate-x-1/2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium text-bg-primary shadow whitespace-nowrap tabular-nums"
+                  style={{ left: overlay.left }}
+                >
+                  {dragLabels.start}
+                </div>
+                <div
+                  className="pointer-events-none absolute -top-5 z-40 -translate-x-1/2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-medium text-bg-primary shadow whitespace-nowrap tabular-nums"
+                  style={{ left: overlay.left + overlay.width }}
+                >
+                  {dragLabels.end}
+                </div>
+              </>
             )}
           </div>
 

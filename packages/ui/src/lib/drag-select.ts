@@ -16,6 +16,28 @@ export function bucketKeyToDate(key: string): string {
   return key.length >= 10 ? key.slice(0, 10) : key;
 }
 
+/** Human-readable label for a bar's time bucket. Hourly bucket keys carry an
+ *  `HH:MM` suffix (e.g. "2026-05-01 21:00") and we surface that; daily keys
+ *  collapse to date-only ("May 1"). Used for the live drag-zoom edge labels
+ *  so the user can see the period before releasing the mouse. */
+export function formatBucketKey(key: string): string {
+  if (key.length === 0) return '';
+  const datePart = key.slice(0, 10);
+  const [yearStr, monthStr, dayStr] = datePart.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return key;
+  const d = new Date(year, month - 1, day);
+  const dateLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  // "YYYY-MM-DD HH:MM" or "YYYY-MM-DD HH:MM:SS"
+  if (key.length >= 16 && key[10] === ' ') {
+    const hour = key.slice(11, 16);
+    return `${dateLabel} ${hour}`;
+  }
+  return dateLabel;
+}
+
 export function shouldAutoSwitchToHourly(
   startDate: string,
   endDate: string,
