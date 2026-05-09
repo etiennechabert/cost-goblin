@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   CostResult,
   DailyCostsResult,
@@ -7,18 +7,21 @@ import type {
   EntityDetailResult,
   FilterMap,
 } from '@costgoblin/core/browser';
-import { asDimensionId, asEntityRef, asTagValue } from '@costgoblin/core/browser';
+import { asDateString, asDimensionId, asEntityRef, asTagValue } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
+import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { formatDollars, formatPercent } from '../components/format.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
+import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { PieChart } from '../components/pie-chart.js';
 import type { PieSlice } from '../components/pie-chart.js';
 import { StackedBarChart, bucketBars } from '../components/stacked-bar-chart.js';
 import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
 import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension } from '../lib/dimensions.js';
+import { computeBucketedRange, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 
 interface EntityDetailProps {
   entity: string;
@@ -77,10 +80,12 @@ function handleCsvExport(data: EntityDetailResult, entity: string) {
 export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetailProps>) {
   const api = useCostApi();
   const lagDays = useLagDays();
+  const hourlyConfigured = useHourlyConfigured();
   const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [histogramTab, setHistogramTab] = useState<HistogramTab>('service');
   const [histogramExpanded, setHistogramExpanded] = useState(false);
+  const [hourlyHint, setHourlyHint] = useState(false);
   const [pie1DimId, setPie1DimId] = useState<DimensionId | null>(null);
   const [pie2DimId, setPie2DimId] = useState<DimensionId | null>(null);
   const [pie3DimId, setPie3DimId] = useState<DimensionId | null>(null);
@@ -209,6 +214,29 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   );
   const barDays = bucketBars(dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null), 170);
 
+  const handleHistogramRangeSelect = useCallback((startIdx: number, endIdx: number) => {
+    const range = computeBucketedRange(barDays, startIdx, endIdx, dateRange.end);
+    if (range === null) return;
+    const { startDate, endDate } = range;
+    setDateRange({ start: asDateString(startDate), end: asDateString(endDate) });
+    if (shouldAutoSwitchToHourly(startDate, endDate, granularity)) {
+      if (hourlyConfigured) {
+        setGranularity('hourly');
+        setHourlyHint(false);
+      } else {
+        setHourlyHint(true);
+      }
+    } else {
+      setHourlyHint(false);
+    }
+  }, [barDays, dateRange.end, granularity, hourlyConfigured]);
+
+  useEffect(() => {
+    if (!shouldAutoSwitchToHourly(dateRange.start, dateRange.end, granularity)) {
+      setHourlyHint(false);
+    }
+  }, [dateRange.start, dateRange.end, granularity]);
+
   const totalCost = data === null ? 0 : data.totalCost;
   const isIncrease = data !== null && data.percentChange > 0;
   const isDecrease = data !== null && data.percentChange < 0;
@@ -294,7 +322,11 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
                 onExpandToggle={() => { setHistogramExpanded(prev => !prev); }}
                 title={granularity === 'hourly' ? 'Hourly Costs' : 'Daily Costs'}
                 loading={dailyQuery.status === 'loading'}
+                onRangeSelect={handleHistogramRangeSelect}
               />
+              {hourlyHint && (
+                <HourlyHintBanner className="mt-2" onDismiss={() => { setHourlyHint(false); }} />
+              )}
             </div>
           </div>
 

@@ -126,8 +126,7 @@ test.describe('Cost Overview', () => {
     const popover = page.locator('[data-radix-popper-content-wrapper]');
     await expect(popover).toBeVisible({ timeout: 5000 });
 
-    await expect(popover.getByText('Daily')).toBeVisible();
-    await expect(popover.getByText('Hourly')).toBeVisible();
+    await expect(popover.getByText('Days', { exact: true })).toBeVisible();
     await expect(popover.getByText('Period', { exact: true })).toBeVisible();
     await expect(popover.getByText('Custom range…')).toBeVisible();
 

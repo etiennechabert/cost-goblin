@@ -3,6 +3,8 @@ import { CalendarIcon, ChevronDown } from 'lucide-react';
 import type { DateString } from '@costgoblin/core/browser';
 import { DEFAULT_LAG_DAYS, asDateString } from '@costgoblin/core/browser';
 import { daysAgo, getThisMonth, getLastMonth, getCurrentQuarter, getLastQuarter, getYTD, getLastYear } from '../lib/dates.js';
+import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { Calendar } from './ui/calendar.js';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover.js';
 
@@ -13,6 +15,7 @@ type DayPreset = {
   readonly type: 'days';
   readonly days: number;
   readonly granularity: Granularity;
+  readonly hint?: string;
 };
 
 type CalendarPreset = {
@@ -20,26 +23,21 @@ type CalendarPreset = {
   readonly type: 'calendar';
   readonly getRange: () => { start: DateString; end: DateString };
   readonly granularity: Granularity;
+  readonly hint?: string;
 };
 
 type Preset = DayPreset | CalendarPreset;
 
 const PRESETS: readonly { section: string; items: readonly Preset[] }[] = [
   {
-    section: 'Daily',
+    section: 'Days',
     items: [
+      { label: 'Last 7 days', type: 'days', days: 7, granularity: 'hourly', hint: 'hourly' },
+      { label: 'Last 14 days', type: 'days', days: 14, granularity: 'daily' },
       { label: 'Last 30 days', type: 'days', days: 30, granularity: 'daily' },
       { label: 'Last 90 days', type: 'days', days: 90, granularity: 'daily' },
       { label: 'Last 180 days', type: 'days', days: 180, granularity: 'daily' },
       { label: 'Last 365 days', type: 'days', days: 365, granularity: 'daily' },
-    ],
-  },
-  {
-    section: 'Hourly',
-    items: [
-      { label: 'Last 7 days', type: 'days', days: 7, granularity: 'hourly' },
-      { label: 'Last 14 days', type: 'days', days: 14, granularity: 'hourly' },
-      { label: 'Last 28 days', type: 'days', days: 28, granularity: 'hourly' },
     ],
   },
   {
@@ -77,6 +75,8 @@ export function getDefaultDateRange(lagDays: number = DEFAULT_LAG_DAYS): DateRan
 }
 
 export function DateRangePicker({ value, granularity, onChange, hideHourly, lagDays = DEFAULT_LAG_DAYS, compareEnabled, onCompareChange }: DateRangePickerProps) {
+  const hourlyConfigured = useHourlyConfigured();
+  const hourlyAvailable = hideHourly !== true && hourlyConfigured;
   const [open, setOpen] = useState(false);
   const [showCustom, setShowCustom] = useState(false);
   const latestDate = daysAgo(lagDays);
@@ -88,11 +88,17 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
     return preset.getRange();
   }
 
+  function resolveGranularity(range: DateRange, preferred: Granularity): Granularity {
+    if (preferred === 'hourly' && !hourlyAvailable) return 'daily';
+    if (preferred === 'daily' && hourlyAvailable && shouldAutoSwitchToHourly(range.start, range.end, 'daily')) return 'hourly';
+    return preferred;
+  }
+
   function getActiveLabel(): string {
     let label: string | undefined;
     for (const preset of ALL_PRESETS) {
       const range = getPresetRange(preset);
-      if (value.start === range.start && value.end === range.end && granularity === preset.granularity) {
+      if (value.start === range.start && value.end === range.end && granularity === resolveGranularity(range, preset.granularity)) {
         label = preset.label;
         break;
       }
@@ -103,22 +109,67 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
 
   function handlePreset(preset: Preset) {
     const range = getPresetRange(preset);
-    onChange(range, preset.granularity);
+    onChange(range, resolveGranularity(range, preset.granularity));
     setShowCustom(false);
     setOpen(false);
   }
 
+  function handleCustomRange(range: DateRange) {
+    onChange(range, resolveGranularity(range, granularity));
+  }
+
+  function handleGranularityToggle(next: Granularity) {
+    if (next === granularity) return;
+    if (next === 'hourly' && !hourlyAvailable) return;
+    onChange(value, next);
+  }
+
   function isActivePreset(preset: Preset): boolean {
     const range = getPresetRange(preset);
-    return value.start === range.start && value.end === range.end && granularity === preset.granularity;
+    return value.start === range.start && value.end === range.end && granularity === resolveGranularity(range, preset.granularity);
   }
 
   const sections = hideHourly === true
-    ? PRESETS.filter(s => s.section !== 'Hourly')
+    ? PRESETS.map(s => ({
+        section: s.section,
+        items: s.items.filter(p => p.granularity !== 'hourly'),
+      })).filter(s => s.items.length > 0)
     : PRESETS;
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <div className="flex items-center gap-2">
+      {hideHourly !== true && (
+        <div className="inline-flex items-center rounded-lg border border-border bg-bg-tertiary/30 p-0.5">
+          <button
+            type="button"
+            onClick={() => { handleGranularityToggle('daily'); }}
+            className={[
+              'px-2.5 py-1 text-xs font-medium rounded-md transition-colors',
+              granularity === 'daily'
+                ? 'bg-accent text-bg-primary shadow-sm'
+                : 'text-text-muted hover:text-text-primary',
+            ].join(' ')}
+          >
+            Daily
+          </button>
+          <button
+            type="button"
+            onClick={() => { handleGranularityToggle('hourly'); }}
+            disabled={!hourlyAvailable}
+            title={hourlyAvailable ? undefined : 'Hourly tier is not configured'}
+            className={[
+              'px-2.5 py-1 text-xs font-medium rounded-md transition-colors',
+              granularity === 'hourly'
+                ? 'bg-accent text-bg-primary shadow-sm'
+                : 'text-text-muted hover:text-text-primary',
+              !hourlyAvailable ? 'opacity-50 cursor-not-allowed' : '',
+            ].join(' ')}
+          >
+            Hourly
+          </button>
+        </div>
+      )}
+      <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -136,21 +187,27 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
               <div className="px-3 pt-2.5 pb-1">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">{section}</span>
               </div>
-              {items.map(preset => (
-                <button
-                  key={preset.label}
-                  type="button"
-                  onClick={() => { handlePreset(preset); }}
-                  className={[
-                    'w-full text-left px-3 py-1.5 text-xs transition-colors',
-                    isActivePreset(preset)
-                      ? 'bg-accent/10 text-accent font-medium border-l-2 border-accent'
-                      : 'text-text-secondary hover:bg-bg-tertiary/50 hover:text-text-primary border-l-2 border-transparent',
-                  ].join(' ')}
-                >
-                  {preset.label}
-                </button>
-              ))}
+              {items.map(preset => {
+                const showHint = preset.hint !== undefined && hourlyAvailable;
+                return (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => { handlePreset(preset); }}
+                    className={[
+                      'w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs transition-colors',
+                      isActivePreset(preset)
+                        ? 'bg-accent/10 text-accent font-medium border-l-2 border-accent'
+                        : 'text-text-secondary hover:bg-bg-tertiary/50 hover:text-text-primary border-l-2 border-transparent',
+                    ].join(' ')}
+                  >
+                    <span>{preset.label}</span>
+                    {showHint && (
+                      <span className="text-[10px] uppercase tracking-wider text-text-muted">{preset.hint}</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           ))}
 
@@ -188,7 +245,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
                         selected={new Date(value.start + 'T00:00:00')}
                         onSelect={(date) => {
                           if (date) {
-                            onChange({ ...value, start: asDateString(date.toISOString().slice(0, 10)) }, 'daily');
+                            handleCustomRange({ ...value, start: asDateString(date.toISOString().slice(0, 10)) });
                           }
                         }}
                         disabled={(date) => date.toISOString().slice(0, 10) > latestDate}
@@ -215,7 +272,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
                         selected={new Date(value.end + 'T00:00:00')}
                         onSelect={(date) => {
                           if (date) {
-                            onChange({ ...value, end: asDateString(date.toISOString().slice(0, 10)) }, 'daily');
+                            handleCustomRange({ ...value, end: asDateString(date.toISOString().slice(0, 10)) });
                           }
                         }}
                         disabled={(date) => date.toISOString().slice(0, 10) > latestDate}
@@ -243,6 +300,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
           )}
         </div>
       </PopoverContent>
-    </Popover>
+      </Popover>
+    </div>
   );
 }

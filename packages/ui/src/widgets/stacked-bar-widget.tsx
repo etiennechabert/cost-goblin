@@ -1,14 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useDailyWidgetQuery } from '../hooks/use-widget-query.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { StackedBarChart, bucketBars, type BarDay } from '../components/stacked-bar-chart.js';
-import { asTagValue } from '@costgoblin/core/browser';
+import { asDateString, asTagValue } from '@costgoblin/core/browser';
 import { useCostFocus } from '../hooks/use-cost-focus.js';
 import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, mergeFilters, hasSufficientDailyCoverage } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
+import { computeBucketedRange } from '../lib/drag-select.js';
 
 const MAX_BARS = 170;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -51,6 +52,7 @@ export function StackedBarWidget({
   globalFilters,
   dimensions,
   onSetFilter,
+  onDateRangeChange,
 }: WidgetCommonProps) {
   const api = useCostApi();
   const focus = useCostFocus();
@@ -101,6 +103,16 @@ export function StackedBarWidget({
     [prevHasCoverage, prevQuery],
   );
 
+  const handleRangeSelect = useCallback((startIdx: number, endIdx: number) => {
+    if (onDateRangeChange === undefined) return;
+    const range = computeBucketedRange(barDays, startIdx, endIdx, dateRange.end);
+    if (range === null) return;
+    onDateRangeChange({
+      start: asDateString(range.startDate),
+      end: asDateString(range.endDate),
+    });
+  }, [barDays, dateRange.end, onDateRangeChange]);
+
   if (spec.type !== 'stackedBar') return null;
 
   const loading = query.status === 'loading';
@@ -120,6 +132,7 @@ export function StackedBarWidget({
       loading={loading}
       onSegmentClick={activeGroupBy === undefined ? undefined : (name) => { onSetFilter(activeGroupBy, asTagValue(name)); }}
       previousTotals={compareEnabled ? previousTotals : undefined}
+      onRangeSelect={onDateRangeChange === undefined ? undefined : handleRangeSelect}
     />
   );
 }

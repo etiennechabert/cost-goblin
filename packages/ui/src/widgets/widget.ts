@@ -44,6 +44,10 @@ export interface WidgetCommonProps {
   readonly dimensions: readonly Dimension[];
   readonly onSetFilter: (dim: DimensionId, value: TagValue) => void;
   readonly onEntityClick?: ((entity: EntityRef, dim: DimensionId) => void) | undefined;
+  /** Optional callback letting widgets request a new visible range — used by
+   *  drag-to-zoom interactions. Granularity is omitted when the widget has
+   *  no opinion (caller keeps the current setting). */
+  readonly onDateRangeChange?: ((range: DateRange, granularity?: Granularity) => void) | undefined;
 }
 
 export type WidgetComponent = ComponentType<WidgetCommonProps>;
