@@ -1,4 +1,4 @@
-import type { DateString, DimensionId, Dollars, EntityRef, HourString, TagValue } from './branded.js';
+import type { AnomalyId, DateString, DimensionId, Dollars, EntityRef, HourString, TagValue } from './branded.js';
 
 export type Granularity = 'daily' | 'hourly';
 
@@ -203,6 +203,63 @@ export interface SavingsRecommendation {
 export interface SavingsResult {
   readonly recommendations: readonly SavingsRecommendation[];
   readonly totalMonthlySavings: Dollars;
+}
+
+export type AnomalySeverity = 'high' | 'medium' | 'low';
+
+export interface AnomalyDetectionParams {
+  readonly dateRange: DateRange;
+  readonly filters: FilterMap;
+  readonly groupBy: DimensionId;
+  readonly lookbackDays: number;
+  readonly stddevThreshold: number;
+}
+
+export interface Anomaly {
+  readonly id: AnomalyId;
+  readonly entity: EntityRef;
+  readonly dimension: DimensionId;
+  readonly service: string;
+  readonly detectedDate: DateString;
+  readonly currentCost: Dollars;
+  readonly expectedCost: Dollars;
+  readonly deviation: number;
+  readonly severity: AnomalySeverity;
+  readonly percentIncrease: number;
+  readonly isDismissed: boolean;
+}
+
+export interface AnomalyResult {
+  readonly anomalies: readonly Anomaly[];
+  readonly totalAnomalies: number;
+  readonly highSeverityCount: number;
+  readonly mediumSeverityCount: number;
+  readonly lowSeverityCount: number;
+}
+
+export interface AnomalyDetailParams {
+  readonly anomalyId: AnomalyId;
+  readonly entity: EntityRef;
+  readonly service: string;
+  readonly detectedDate: DateString;
+  readonly lookbackDays: number;
+}
+
+export interface AnomalyDailyCost {
+  readonly date: DateString;
+  readonly cost: Dollars;
+  readonly isAnomaly: boolean;
+}
+
+export interface AnomalyDetailResult {
+  readonly anomaly: Anomaly;
+  readonly dailyCosts: readonly AnomalyDailyCost[];
+  readonly rollingAverage: Dollars;
+  readonly standardDeviation: Dollars;
+  readonly affectedResources: readonly {
+    readonly resourceId: string;
+    readonly cost: Dollars;
+  }[];
 }
 
 export type SyncPhase = 'downloading' | 'repartitioning';

@@ -7,6 +7,7 @@ export type BucketPath = Brand<string, 'BucketPath'>;
 export type Dollars = Brand<number, 'Dollars'>;
 export type DateString = Brand<string, 'DateString'>;
 export type HourString = Brand<string, 'HourString'>;
+export type AnomalyId = Brand<string, 'AnomalyId'>;
 
 export function asDimensionId(value: string): DimensionId {
   return value as DimensionId;
@@ -34,6 +35,10 @@ export function asDateString(value: string): DateString {
 
 export function asHourString(value: string): HourString {
   return value as HourString;
+}
+
+export function asAnomalyId(value: string): AnomalyId {
+  return value as AnomalyId;
 }
 
 export function tagColumnName(tagName: string): string {
