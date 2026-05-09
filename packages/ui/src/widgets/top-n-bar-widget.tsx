@@ -7,7 +7,7 @@ import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { TopNBar } from '../components/top-n-bar-chart.js';
 import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import { asTagValue } from '@costgoblin/core/browser';
-import type { CostResult, DimensionId } from '@costgoblin/core/browser';
+import type { CostResult, DimensionId, AnomalyResult, AnomalySeverity } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, mergeFilters, hasSufficientCoverage } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
@@ -27,6 +27,30 @@ function buildPreviousCostMap(data: CostResult | null): ReadonlyMap<string, numb
   return new Map(data.rows.map(r => [r.entity, r.totalCost]));
 }
 
+function buildAnomaliesMap(data: AnomalyResult | null): ReadonlyMap<string, { readonly count: number; readonly severity: AnomalySeverity }> {
+  if (data === null || data.anomalies.length === 0) return new Map();
+  // Group anomalies by entity name and determine the highest severity level
+  const grouped = new Map<string, { count: number; severity: AnomalySeverity }>();
+  for (const anomaly of data.anomalies) {
+    const existing = grouped.get(anomaly.entity);
+    if (existing === undefined) {
+      grouped.set(anomaly.entity, { count: 1, severity: anomaly.severity });
+    } else {
+      // Increment count and upgrade severity if higher
+      const newSeverity = upgradeSeverity(existing.severity, anomaly.severity);
+      grouped.set(anomaly.entity, { count: existing.count + 1, severity: newSeverity });
+    }
+  }
+  return grouped;
+}
+
+function upgradeSeverity(current: AnomalySeverity, incoming: AnomalySeverity): AnomalySeverity {
+  const severityOrder: readonly AnomalySeverity[] = ['low', 'medium', 'high'];
+  const currentIndex = severityOrder.indexOf(current);
+  const incomingIndex = severityOrder.indexOf(incoming);
+  return incomingIndex > currentIndex ? incoming : current;
+}
+
 export function TopNBarWidget({
   spec,
   dateRange,
@@ -35,6 +59,7 @@ export function TopNBarWidget({
   granularity,
   globalFilters,
   dimensions,
+  anomaliesState,
   onSetFilter,
 }: WidgetCommonProps) {
   const api = useCostApi();
@@ -72,6 +97,11 @@ export function TopNBarWidget({
     [prevHasCoverage, prevQuery],
   );
 
+  const anomaliesByEntity = useMemo(
+    () => buildAnomaliesMap(anomaliesState.status === 'success' ? anomaliesState.data : null),
+    [anomaliesState],
+  );
+
   if (spec.type !== 'topNBar' || effectiveGroupBy === undefined || activeGroupBy === undefined) return null;
 
   const label = dimensionLabelFor(dimensions, activeGroupBy);
@@ -92,6 +122,7 @@ export function TopNBarWidget({
       onBarHover={(name) => { dispatch({ type: 'HOVER', entity: name, dimension: activeGroupBy }); }}
       externalHoveredName={focus.hoveredDimension === activeGroupBy ? focus.hoveredEntity : null}
       previousCosts={compareEnabled ? previousCosts : undefined}
+      anomaliesByEntity={anomaliesByEntity.size > 0 ? anomaliesByEntity : undefined}
     />
   );
 }

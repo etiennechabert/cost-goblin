@@ -30,7 +30,6 @@ import {
   type AnomalyResult,
   type AnomalyDetailResult,
   type Anomaly,
-  type AnomalySeverity,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE } from '@costgoblin/core/browser';
 
@@ -208,7 +207,7 @@ const mockAnomalies: Anomaly[] = [
     currentCost: asDollars(250),
     expectedCost: asDollars(180),
     deviation: 3.2,
-    severity: 'high' as AnomalySeverity,
+    severity: 'high',
     percentIncrease: 38.9,
     isDismissed: false,
   },
@@ -221,7 +220,7 @@ const mockAnomalies: Anomaly[] = [
     currentCost: asDollars(320),
     expectedCost: asDollars(280),
     deviation: 2.4,
-    severity: 'medium' as AnomalySeverity,
+    severity: 'medium',
     percentIncrease: 14.3,
     isDismissed: false,
   },
@@ -235,8 +234,11 @@ const anomalyResult: AnomalyResult = {
   lowSeverityCount: 0,
 };
 
+const [firstAnomaly] = mockAnomalies;
+if (firstAnomaly === undefined) throw new Error('mockAnomalies must have at least one element');
+
 const mockAnomalyDetail: AnomalyDetailResult = {
-  anomaly: mockAnomalies[0]!,
+  anomaly: firstAnomaly,
   dailyCosts: [
     { date: asDateString('2026-03-16'), cost: asDollars(175), isAnomaly: false },
     { date: asDateString('2026-03-17'), cost: asDollars(182), isAnomaly: false },

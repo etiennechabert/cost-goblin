@@ -12,6 +12,8 @@ import type {
   WidgetFilterOverlay,
   WidgetSize,
   WidgetSpec,
+  AnomalyResult,
+  QueryState,
 } from '@costgoblin/core/browser';
 import { asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
@@ -42,6 +44,9 @@ export interface WidgetCommonProps {
   readonly granularity: Granularity;
   readonly globalFilters: FilterMap;
   readonly dimensions: readonly Dimension[];
+  /** Anomaly detection state computed at the view level. Widgets can use
+   *  this to display anomaly badges on entities with cost spikes. */
+  readonly anomaliesState: QueryState<AnomalyResult>;
   readonly onSetFilter: (dim: DimensionId, value: TagValue) => void;
   readonly onEntityClick?: ((entity: EntityRef, dim: DimensionId) => void) | undefined;
   /** Optional callback letting widgets request a new visible range — used by

@@ -127,8 +127,6 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
   }, [dateRange.start, dateRange.end, filters, dimensions]);
 
   const anomaliesState = useAnomalies(anomalyParams);
-  // Anomaly state will be consumed by widgets in subtask-4-2 (badge integration)
-  void anomaliesState;
 
   // Cancel in-flight DuckDB queries when query-affecting state changes so
   // stale queries don't hog pool connections while new ones queue behind them.
@@ -304,6 +302,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
                   granularity={granularity}
                   globalFilters={filters}
                   dimensions={dimensions}
+                  anomaliesState={anomaliesState}
                   onSetFilter={handleSetFilter}
                   onEntityClick={handleEntityClick}
                   onDateRangeChange={handleDateRangeChange}
