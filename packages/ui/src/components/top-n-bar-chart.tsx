@@ -3,10 +3,13 @@ import { getColor } from '../lib/palette.js';
 import { CollapsedChart } from './collapsed-chart.js';
 import { useContainerWidth } from '../lib/use-container-width.js';
 import { formatDollars } from './format.js';
-import type { Dimension, AnomalySeverity } from '@costgoblin/core/browser';
+import type { Dimension, AnomalySeverity, DimensionId, AnomalyId } from '@costgoblin/core/browser';
+import { asAnomalyId } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
 import { usePalette } from '../hooks/use-palette.js';
 import { AnomalyBadge } from './anomaly-badge.js';
+import { AnomalyDetailModal } from './anomaly-detail-modal.js';
+import { useCostApi } from '../hooks/use-cost-api.js';
 
 export interface TopNBar {
   readonly name: string;
@@ -31,8 +34,16 @@ interface TopNBarChartProps {
    *  badges are rendered next to each bar. */
   readonly previousCosts?: ReadonlyMap<string, number> | undefined;
   /** Anomaly data keyed by entity name. When present, anomaly badges
-   *  are rendered before entity names. */
-  readonly anomaliesByEntity?: ReadonlyMap<string, { readonly count: number; readonly severity: AnomalySeverity }> | undefined;
+   *  are rendered before entity names. Includes the data needed to show the
+   *  anomaly detail modal for the first/highest severity anomaly. */
+  readonly anomaliesByEntity?: ReadonlyMap<string, {
+    readonly count: number;
+    readonly severity: AnomalySeverity;
+    readonly anomalyId: AnomalyId;
+    readonly dimensionId: DimensionId;
+    readonly service: string;
+    readonly detectedDate: string;
+  }> | undefined;
 }
 
 const ROW_HEIGHT = 24;
@@ -62,9 +73,40 @@ function TopNBarChartInner({
   anomaliesByEntity,
   width,
 }: Omit<TopNBarChartProps, 'collapsed'> & { width: number }) {
+  const api = useCostApi();
   const { palette } = usePalette();
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const hoveredName = externalHoveredName ?? localHovered;
+  const [selectedAnomaly, setSelectedAnomaly] = useState<{
+    anomalyId: string;
+    entity: string;
+    service: string;
+    detectedDate: string;
+  } | null>(null);
+
+  const handleAnomalyBadgeClick = useCallback((entity: string, anomalyData: {
+    readonly anomalyId: AnomalyId;
+    readonly service: string;
+    readonly detectedDate: string;
+  }, event: React.MouseEvent) => {
+    event.stopPropagation(); // Prevent bar click
+    setSelectedAnomaly({
+      anomalyId: anomalyData.anomalyId,
+      entity,
+      service: anomalyData.service,
+      detectedDate: anomalyData.detectedDate,
+    });
+  }, []);
+
+  const handleAnomalyModalClose = useCallback(() => {
+    setSelectedAnomaly(null);
+  }, []);
+
+  const handleAnomalyDismiss = useCallback((anomalyId: string) => {
+    api.dismissAnomaly(asAnomalyId(anomalyId))
+      .then(() => { setSelectedAnomaly(null); })
+      .catch(() => undefined); // Ignore errors - the parent component should refetch anomalies
+  }, [api]);
 
   const sliced = useMemo(
     () => [...data].sort((a, b) => b.cost - a.cost).slice(0, topN),
@@ -152,7 +194,8 @@ function TopNBarChartInner({
                     <AnomalyBadge
                       severity={anomalyInfo.severity}
                       count={anomalyInfo.count}
-                      className="shrink-0"
+                      className="shrink-0 cursor-pointer"
+                      onClick={(e) => { handleAnomalyBadgeClick(row.name, anomalyInfo, e); }}
                     />
                   )}
                   <span
@@ -222,6 +265,19 @@ function TopNBarChartInner({
           </ul>
         )}
       </div>
+
+      {selectedAnomaly !== null && (
+        <AnomalyDetailModal
+          anomalyId={selectedAnomaly.anomalyId}
+          entity={selectedAnomaly.entity}
+          service={selectedAnomaly.service}
+          detectedDate={selectedAnomaly.detectedDate}
+          lookbackDays={30}
+          isOpen={true}
+          onClose={handleAnomalyModalClose}
+          onDismiss={handleAnomalyDismiss}
+        />
+      )}
     </div>
   );
 }

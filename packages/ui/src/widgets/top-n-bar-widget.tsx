@@ -7,7 +7,7 @@ import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { TopNBar } from '../components/top-n-bar-chart.js';
 import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import { asTagValue } from '@costgoblin/core/browser';
-import type { CostResult, DimensionId, AnomalyResult, AnomalySeverity } from '@costgoblin/core/browser';
+import type { CostResult, DimensionId, AnomalyResult, AnomalySeverity, AnomalyId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, mergeFilters, hasSufficientCoverage } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
@@ -27,18 +27,47 @@ function buildPreviousCostMap(data: CostResult | null): ReadonlyMap<string, numb
   return new Map(data.rows.map(r => [r.entity, r.totalCost]));
 }
 
-function buildAnomaliesMap(data: AnomalyResult | null): ReadonlyMap<string, { readonly count: number; readonly severity: AnomalySeverity }> {
+function buildAnomaliesMap(data: AnomalyResult | null): ReadonlyMap<string, {
+  readonly count: number;
+  readonly severity: AnomalySeverity;
+  readonly anomalyId: AnomalyId;
+  readonly dimensionId: DimensionId;
+  readonly service: string;
+  readonly detectedDate: string;
+}> {
   if (data === null || data.anomalies.length === 0) return new Map();
-  // Group anomalies by entity name and determine the highest severity level
-  const grouped = new Map<string, { count: number; severity: AnomalySeverity }>();
+  // Group anomalies by entity name and keep the data for the highest severity anomaly
+  const grouped = new Map<string, {
+    count: number;
+    severity: AnomalySeverity;
+    anomalyId: AnomalyId;
+    dimensionId: DimensionId;
+    service: string;
+    detectedDate: string;
+  }>();
   for (const anomaly of data.anomalies) {
     const existing = grouped.get(anomaly.entity);
     if (existing === undefined) {
-      grouped.set(anomaly.entity, { count: 1, severity: anomaly.severity });
+      grouped.set(anomaly.entity, {
+        count: 1,
+        severity: anomaly.severity,
+        anomalyId: anomaly.id,
+        dimensionId: anomaly.dimension,
+        service: anomaly.service,
+        detectedDate: anomaly.detectedDate,
+      });
     } else {
-      // Increment count and upgrade severity if higher
+      // Increment count and upgrade severity if higher (keeping the higher severity anomaly's data)
       const newSeverity = upgradeSeverity(existing.severity, anomaly.severity);
-      grouped.set(anomaly.entity, { count: existing.count + 1, severity: newSeverity });
+      const keepNewAnomaly = newSeverity !== existing.severity && newSeverity === anomaly.severity;
+      grouped.set(anomaly.entity, {
+        count: existing.count + 1,
+        severity: newSeverity,
+        anomalyId: keepNewAnomaly ? anomaly.id : existing.anomalyId,
+        dimensionId: keepNewAnomaly ? anomaly.dimension : existing.dimensionId,
+        service: keepNewAnomaly ? anomaly.service : existing.service,
+        detectedDate: keepNewAnomaly ? anomaly.detectedDate : existing.detectedDate,
+      });
     }
   }
   return grouped;
