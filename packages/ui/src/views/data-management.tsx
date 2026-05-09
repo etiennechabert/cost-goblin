@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { DataInventoryResult, CostGoblinConfig, SyncStatus } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -79,19 +79,53 @@ export function DataManagement() {
   const [autoSyncInterval, setAutoSyncInterval] = useState(24 * 60);
   const [autoSyncIntervalLoaded, setAutoSyncIntervalLoaded] = useState(false);
 
+  // Track the previous server-side status per tier so the poller can detect a
+  // syncing→completed/failed transition. Without it, a background auto-sync that
+  // finishes between two ticks leaves the React state pinned to the last
+  // 'syncing' value (the mapper used to return null for completed/failed,
+  // skipping the setter entirely) and the inventory was never refreshed.
+  const prevServerStatusRef = useRef<Record<'daily' | 'hourly' | 'cost-optimization', SyncStatus['status'] | null>>({
+    daily: null,
+    hourly: null,
+    'cost-optimization': null,
+  });
+
   useEffect(() => {
     let cancelled = false;
-    function applyStatus(tier: 'daily' | 'hourly' | 'cost-optimization', setter: (s: SyncState) => void) {
+    function applyStatus(
+      tier: 'daily' | 'hourly' | 'cost-optimization',
+      setter: (s: SyncState) => void,
+      bumpRefresh: () => void,
+    ) {
       api.getSyncStatus(tier).then(s => {
         if (cancelled) return;
-        const mapped = syncStatusToState(s);
-        if (mapped !== null) setter(mapped);
+        const prev = prevServerStatusRef.current[tier];
+        prevServerStatusRef.current[tier] = s.status;
+
+        if (s.status === 'syncing') {
+          const mapped = syncStatusToState(s);
+          if (mapped !== null) setter(mapped);
+          return;
+        }
+        // Only react to terminal states when we directly observed the
+        // syncing→terminal transition in this session — otherwise a leftover
+        // 'completed' from a prior session would keep flashing the "synced N
+        // files" message every time the user opens this page.
+        if (prev !== 'syncing') return;
+        if (s.status === 'completed') {
+          setter({ status: 'done', filesDownloaded: s.filesDownloaded });
+          bumpRefresh();
+        } else if (s.status === 'failed') {
+          setter({ status: 'error', message: s.error.message });
+        } else {
+          setter({ status: 'idle' });
+        }
       }).catch(() => undefined);
     }
     function tick() {
-      applyStatus('daily', setDailySyncState);
-      applyStatus('hourly', setHourlySyncState);
-      applyStatus('cost-optimization', setCostOptSyncState);
+      applyStatus('daily', setDailySyncState, () => { setDailyRefreshKey(k => k + 1); });
+      applyStatus('hourly', setHourlySyncState, () => { setHourlyRefreshKey(k => k + 1); });
+      applyStatus('cost-optimization', setCostOptSyncState, () => { setCostOptRefreshKey(k => k + 1); });
     }
     tick();
     const timer = setInterval(tick, 2_000);

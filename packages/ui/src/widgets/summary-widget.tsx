@@ -25,11 +25,11 @@ export function SummaryWidget({
 
   const cur = useQuery<CostResult | null>(
     () => isSummary ? api.queryCosts({ groupBy, dateRange, filters, granularity }) : Promise.resolve(null),
-    [isSummary, groupBy, dateRange.start, dateRange.end, fk, granularity, api],
+    [isSummary, groupBy, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api],
   );
   const prev = useQuery<CostResult | null>(
     () => isSummary && compareEnabled ? api.queryCosts({ groupBy, dateRange: previousDateRange, filters, granularity }) : Promise.resolve(null),
-    [isSummary, compareEnabled, groupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
+    [isSummary, compareEnabled, groupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api],
   );
 
   if (!isSummary) return null;

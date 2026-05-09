@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { asDateString, asTagValue } from '@costgoblin/core/browser';
+import { asDateString, asHourString, asTagValue } from '@costgoblin/core/browser';
 import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
@@ -50,7 +50,30 @@ function priorityFor(d: Dimension): number {
   return 4;
 }
 
+function formatHour(d: Date): string {
+  return `${d.toISOString().slice(0, 10)} ${String(d.getUTCHours()).padStart(2, '0')}:00:00`;
+}
+
 function previousRangeFor(dr: DateRange): DateRange {
+  // Sub-day window (drag-zoom into hours): shift back by the same hour duration
+  // so the comparison is apples-to-apples (4 hours vs the prior 4 hours), not
+  // 4 hours vs the 1–2 calendar days that contain them.
+  if (dr.startHour !== undefined && dr.endHour !== undefined) {
+    const startMs = new Date(`${String(dr.startHour).slice(0, 10)}T${String(dr.startHour).slice(11, 19)}Z`).getTime();
+    const endMs = new Date(`${String(dr.endHour).slice(0, 10)}T${String(dr.endHour).slice(11, 19)}Z`).getTime();
+    const hourMs = 60 * 60 * 1000;
+    const durationHours = Math.round((endMs - startMs) / hourMs) + 1;
+    const prevEndMs = startMs - hourMs;
+    const prevStartMs = prevEndMs - (durationHours - 1) * hourMs;
+    const prevStartHour = formatHour(new Date(prevStartMs));
+    const prevEndHour = formatHour(new Date(prevEndMs));
+    return {
+      start: asDateString(prevStartHour.slice(0, 10)),
+      end: asDateString(prevEndHour.slice(0, 10)),
+      startHour: asHourString(prevStartHour),
+      endHour: asHourString(prevEndHour),
+    };
+  }
   const periodDays = daysBetween(dr.start, dr.end);
   const prevEnd = new Date(new Date(dr.start).getTime() - 24 * 60 * 60 * 1000);
   const prevStart = new Date(prevEnd.getTime() - (periodDays - 1) * 24 * 60 * 60 * 1000);

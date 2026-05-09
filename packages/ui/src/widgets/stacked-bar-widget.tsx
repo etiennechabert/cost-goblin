@@ -74,7 +74,7 @@ export function StackedBarWidget({
     () => compareEnabled && effectiveGroupBy !== undefined
       ? api.queryDailyCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters, granularity })
       : Promise.resolve(null),
-    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, fk, granularity, api],
+    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api],
   );
 
   const barDays = useMemo(
@@ -83,7 +83,7 @@ export function StackedBarWidget({
       const filled = granularity === 'daily' ? fillDateRange(raw, dateRange.start, dateRange.end) : raw;
       return bucketBars(filled, MAX_BARS);
     },
-    [dailyResult, granularity, dateRange.start, dateRange.end],
+    [dailyResult, granularity, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour],
   );
 
   const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientDailyCoverage(prevQuery.data, previousDateRange);

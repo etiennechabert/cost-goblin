@@ -95,7 +95,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
     columnOrder: [],
   });
 
-  const dateRangeKey = `${dateRange.start}_${dateRange.end}`;
+  const dateRangeKey = `${dateRange.start}_${dateRange.end}_${String(dateRange.startHour ?? '')}_${String(dateRange.endHour ?? '')}`;
   const entityFilter: FilterMap = { [asDimensionId(dimension)]: [asTagValue(entity)] };
   const filterKey = JSON.stringify(entityFilter);
 

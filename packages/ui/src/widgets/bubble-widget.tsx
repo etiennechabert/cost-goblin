@@ -41,7 +41,7 @@ export function BubbleWidget({
           deltaThreshold: DEFAULT_DELTA_THRESHOLD,
           percentThreshold: DEFAULT_PERCENT_THRESHOLD,
         }),
-    [effectiveGroupBy, dateRange.start, dateRange.end, fk, api],
+    [effectiveGroupBy, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, api],
   );
 
   const data = useMemo(
