@@ -395,7 +395,7 @@ export class MockCostApi implements CostApi {
         currentCost: asDollars(0),
         expectedCost: asDollars(0),
         deviation: 0,
-        severity: 'low' as import('@costgoblin/core').AnomalySeverity,
+        severity: 'low',
         percentIncrease: 0,
         isDismissed: false,
       },

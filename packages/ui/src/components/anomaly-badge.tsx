@@ -38,14 +38,14 @@ export interface AnomalyBadgeProps
  */
 export const AnomalyBadge = React.forwardRef<HTMLDivElement, AnomalyBadgeProps>(
   ({ className, severity, count, children, ...props }, ref) => {
-    const displayContent = children ?? (count !== undefined ? `${count}` : '!');
+    const displayContent = children ?? (count !== undefined ? String(count) : '!');
 
     return (
       <div
         ref={ref}
         className={cn(badgeVariants({ severity }), className)}
         role="status"
-        aria-label={`${severity} severity anomaly${count !== undefined ? `: ${count} detected` : ''}`}
+        aria-label={`${severity} severity anomaly${count !== undefined ? `: ${String(count)} detected` : ''}`}
         {...props}
       >
         {displayContent}
