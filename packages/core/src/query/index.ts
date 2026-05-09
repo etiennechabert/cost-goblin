@@ -14,7 +14,7 @@ export type { QueryContextOptions, BuildSourceOptions } from './builder.js';
 
 export { costExprFor } from './cost-metric.js';
 
-export { assertDateString, validateColumnName, validateTablePath, SecurityError } from './identifier-validator.js';
+export { assertDateString, assertHourString, validateColumnName, validateTablePath, SecurityError } from './identifier-validator.js';
 
 export type { ParameterizedQuery } from './parameterized.js';
 export { QueryBuilder } from './parameterized.js';

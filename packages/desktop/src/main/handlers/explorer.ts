@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import {
   asDimensionId,
   asDateString,
+  assertHourString,
   buildSource,
   buildRuleMatchExpr,
   buildAliasSqlCase,
@@ -58,12 +59,32 @@ function toIsoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-function resolveDateRange(raw: { start?: string; end?: string } | undefined): { startStr: string; endStr: string; windowDays: number } {
+interface ResolvedDateRange {
+  readonly startStr: string;
+  readonly endStr: string;
+  readonly windowDays: number;
+  readonly startHour?: string;
+  readonly endHour?: string;
+}
+
+function resolveDateRange(raw: { start?: string | undefined; end?: string | undefined; startHour?: string | undefined; endHour?: string | undefined } | undefined): ResolvedDateRange {
   const start = parseDate(raw?.start);
   const end = parseDate(raw?.end);
   if (start !== null && end !== null && start.getTime() <= end.getTime()) {
     const days = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
-    return { startStr: toIsoDate(start), endStr: toIsoDate(end), windowDays: days };
+    const base = { startStr: toIsoDate(start), endStr: toIsoDate(end), windowDays: days };
+    // Hour bounds are an additive refinement from drag-zoom on the histogram.
+    // Validate up front so a malformed value can't reach the SQL builder.
+    if (typeof raw?.startHour === 'string' && typeof raw.endHour === 'string') {
+      try {
+        assertHourString(raw.startHour);
+        assertHourString(raw.endHour);
+        return { ...base, startHour: raw.startHour, endHour: raw.endHour };
+      } catch {
+        // fall through to day-only range
+      }
+    }
+    return base;
   }
   const latestDate = new Date(Date.now() - DEFAULT_LAG_DAYS * 86_400_000);
   const fallbackEnd = toIsoDate(latestDate);
@@ -219,6 +240,8 @@ interface BuildFreshSourceOptions {
   readonly params: ExplorerBaseParams;
   readonly startStr: string;
   readonly endStr: string;
+  readonly startHour?: string;
+  readonly endHour?: string;
   readonly tier: 'daily' | 'hourly';
   readonly periods: readonly string[];
   readonly dimensions: DimensionsConfig;
@@ -227,7 +250,7 @@ interface BuildFreshSourceOptions {
 }
 
 async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source: string; whereStr: string }> {
-  const { app, params, startStr, endStr, tier, periods, dimensions, filterPredicate, accountReverseMap } = opts;
+  const { app, params, startStr, endStr, startHour, endHour, tier, periods, dimensions, filterPredicate, accountReverseMap } = opts;
   const { ctx, getCostScope, getOrgAccountsPath, getAvailableColumns } = app;
   const orgPath = await getOrgAccountsPath();
   const availableColumns = await getAvailableColumns(tier);
@@ -239,8 +262,16 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
   const source = buildSource({ dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath, periods, costMetric: metric, availableColumns, costPerspective: perspective });
   const exclusions = buildExclusionClauses(costScope, dimensions, accountReverseMap);
 
+  // When the histogram drag-zoom emits hour bounds, swap the day-level
+  // BETWEEN for an hour-level filter so the rest of the Explorer (overview,
+  // table, sample rows) matches what the user dragged. usage_hour only exists
+  // on the hourly tier — caller forces tier='hourly' in that case.
+  const dateClause = startHour !== undefined && endHour !== undefined && tier === 'hourly'
+    ? `usage_hour BETWEEN TIMESTAMP '${startHour}' AND TIMESTAMP '${endHour}'`
+    : `usage_date BETWEEN '${startStr}' AND '${endStr}'`;
+
   const whereClauses: string[] = [
-    `usage_date BETWEEN '${startStr}' AND '${endStr}'`,
+    dateClause,
     ...(filterPredicate === null ? [] : [`(${filterPredicate})`]),
     ...exclusions,
   ];
@@ -249,8 +280,12 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
 
 async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams): Promise<QueryContext> {
   const { ctx, getQueryDimensions, getAccountMap } = app;
-  const { startStr, endStr, windowDays } = resolveDateRange(params.dateRange);
-  const tier: 'daily' | 'hourly' = params.granularity === 'hourly' ? 'hourly' : 'daily';
+  const { startStr, endStr, windowDays, startHour, endHour } = resolveDateRange(params.dateRange);
+  // Hour bounds (sub-day drag-zoom) require the hourly tier — that's where
+  // usage_hour lives. Promote tier when present, regardless of what
+  // params.granularity says.
+  const requestedTier: 'daily' | 'hourly' = params.granularity === 'hourly' ? 'hourly' : 'daily';
+  const tier: 'daily' | 'hourly' = (startHour !== undefined && endHour !== undefined) ? 'hourly' : requestedTier;
 
   const available = await listLocalMonths(ctx.dataDir, tier);
   const required = computePeriodsInRange({ start: startStr, end: endStr });
@@ -277,7 +312,10 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   // slim schema (no description, usage_amount, list_cost) that Explorer's
   // aggregated table and sample rows need.
   const { source, whereStr } = await buildFreshSource({
-    app, params, startStr, endStr, tier, periods, dimensions, filterPredicate, accountReverseMap,
+    app, params, startStr, endStr,
+    ...(startHour !== undefined ? { startHour } : {}),
+    ...(endHour !== undefined ? { endHour } : {}),
+    tier, periods, dimensions, filterPredicate, accountReverseMap,
   });
   return { empty: false, source, whereStr, ...shared };
 }

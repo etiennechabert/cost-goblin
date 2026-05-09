@@ -12,6 +12,41 @@ export function pixelToIndex(x: number, containerWidth: number, bucketCount: num
   return idx;
 }
 
+/** Map a drag overlay onto bar indices by majority coverage: a bar is included
+ *  only if more than half of its width is under the overlay. This means the
+ *  user can intentionally overshoot on either edge (start the drag inside the
+ *  bar before the period and end inside the bar after) and the boundary bars
+ *  drop out instead of being captured.
+ *
+ *  When the drag is so narrow that no bar is majority-covered (typically a
+ *  small drag inside a single wide bar), fall back to the bar under the drag
+ *  midpoint so single-hour selections still work. */
+export function pixelRangeToBars(
+  minX: number,
+  maxX: number,
+  containerWidth: number,
+  bucketCount: number,
+): { startIdx: number; endIdx: number } | null {
+  if (bucketCount <= 0 || containerWidth <= 0) return null;
+  const slot = containerWidth / bucketCount;
+  const half = slot / 2;
+  let startIdx = -1;
+  let endIdx = -1;
+  for (let i = 0; i < bucketCount; i++) {
+    const left = i * slot;
+    const right = left + slot;
+    const overlap = Math.max(0, Math.min(maxX, right) - Math.max(minX, left));
+    if (overlap > half) {
+      if (startIdx === -1) startIdx = i;
+      endIdx = i;
+    }
+  }
+  if (startIdx >= 0) return { startIdx, endIdx };
+  const mid = (minX + maxX) / 2;
+  const idx = pixelToIndex(mid, containerWidth, bucketCount);
+  return { startIdx: idx, endIdx: idx };
+}
+
 export function bucketKeyToDate(key: string): string {
   return key.length >= 10 ? key.slice(0, 10) : key;
 }

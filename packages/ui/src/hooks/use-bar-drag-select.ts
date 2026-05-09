@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
-import { pixelToIndex } from '../lib/drag-select.js';
+import { pixelRangeToBars, pixelToIndex } from '../lib/drag-select.js';
 
 interface DragState {
   startX: number;
@@ -71,10 +71,8 @@ export function useBarDragSelect(options: UseBarDragSelectOptions): UseBarDragSe
       const maxX = Math.max(drag.startX, x);
       setOverlay({ left: minX, width: maxX - minX });
       const count = bucketCountRef.current;
-      setSelection({
-        startIdx: pixelToIndex(minX, drag.rect.width, count),
-        endIdx: pixelToIndex(maxX, drag.rect.width, count),
-      });
+      const range = pixelRangeToBars(minX, maxX, drag.rect.width, count);
+      if (range !== null) setSelection(range);
     };
     const handleUp = () => {
       const drag = dragRef.current;
@@ -84,9 +82,8 @@ export function useBarDragSelect(options: UseBarDragSelectOptions): UseBarDragSe
       // Sub-4px drags are treated as plain clicks so bar hover/click still works.
       if (maxX - minX >= MIN_DRAG_PX) {
         const count = bucketCountRef.current;
-        const startIdx = pixelToIndex(minX, drag.rect.width, count);
-        const endIdx = pixelToIndex(maxX, drag.rect.width, count);
-        if (startIdx <= endIdx) onRangeSelectRef.current?.(startIdx, endIdx);
+        const range = pixelRangeToBars(minX, maxX, drag.rect.width, count);
+        if (range !== null) onRangeSelectRef.current?.(range.startIdx, range.endIdx);
       }
       dragRef.current = null;
       setOverlay(null);
