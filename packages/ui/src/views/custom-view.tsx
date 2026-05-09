@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { asDateString, asHourString, asTagValue } from '@costgoblin/core/browser';
+import { asDateString, asHourString, asTagValue, asDimensionId } from '@costgoblin/core/browser';
 import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
@@ -11,10 +11,12 @@ import type {
   FilterMap,
   TagValue,
   ViewSpec,
+  AnomalyDetectionParams,
 } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
+import { useAnomalies } from '../hooks/use-anomalies.js';
 import {
   CostFocusDispatchProvider,
   CostFocusProvider,
@@ -109,6 +111,24 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     () => previousRangeFor(dateRange),
     [dateRange],
   );
+
+  // Anomaly detection: use the first available dimension as groupBy, with a
+  // fallback to 'owner'. Detection runs on the current date range and filters,
+  // using a 30-day lookback and 2σ threshold (as specified in the spec).
+  const anomalyParams: AnomalyDetectionParams = useMemo(() => {
+    const firstDim = dimensions[0];
+    return {
+      dateRange: { start: dateRange.start, end: dateRange.end },
+      filters,
+      groupBy: firstDim !== undefined ? getDimensionId(firstDim) : asDimensionId('owner'),
+      lookbackDays: 30,
+      stddevThreshold: 2.0,
+    };
+  }, [dateRange.start, dateRange.end, filters, dimensions]);
+
+  const anomaliesState = useAnomalies(anomalyParams);
+  // Anomaly state will be consumed by widgets in subtask-4-2 (badge integration)
+  void anomaliesState;
 
   // Cancel in-flight DuckDB queries when query-affecting state changes so
   // stale queries don't hog pool connections while new ones queue behind them.
