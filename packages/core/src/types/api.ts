@@ -26,7 +26,12 @@ import type {
   SyncStatus,
   TrendQueryParams,
   TrendResult,
+  AnomalyDetectionParams,
+  AnomalyResult,
+  AnomalyDetailParams,
+  AnomalyDetailResult,
 } from './query.js';
+import type { AnomalyId } from './branded.js';
 
 export interface SavingsPreferences {
   readonly hiddenActionTypes: readonly string[];
@@ -95,6 +100,18 @@ export interface CostApi {
   queryMissingTags(params: MissingTagsParams): Promise<MissingTagsResult>;
   querySavings(): Promise<SavingsResult>;
   queryEntityDetail(params: EntityDetailParams): Promise<EntityDetailResult>;
+  /** Detect cost anomalies (>N standard deviations from rolling average) at
+   *  (entity × service) level. Returns anomalies sorted by severity and
+   *  deviation magnitude, filtered by dismissed state from local persistence. */
+  queryAnomalies(params: AnomalyDetectionParams): Promise<AnomalyResult>;
+  /** Retrieve time-series detail for a specific anomaly, including the daily
+   *  cost history, rolling average, standard deviation, and affected resources. */
+  queryAnomalyDetail(params: AnomalyDetailParams): Promise<AnomalyDetailResult>;
+  /** Mark an anomaly as dismissed so it no longer appears in query results.
+   *  Persists to local JSON state. Idempotent. */
+  dismissAnomaly(anomalyId: AnomalyId): Promise<void>;
+  /** Restore a previously dismissed anomaly. Idempotent. */
+  restoreAnomaly(anomalyId: AnomalyId): Promise<void>;
   getSyncStatus(syncId?: string): Promise<SyncStatus>;
   getConfig(): Promise<CostGoblinConfig>;
   getDimensions(): Promise<Dimension[]>;

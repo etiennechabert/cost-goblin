@@ -6,6 +6,7 @@ export type {
   Dollars,
   DateString,
   HourString,
+  AnomalyId,
 } from './branded.js';
 export {
   asDimensionId,
@@ -15,6 +16,7 @@ export {
   asDollars,
   asDateString,
   asHourString,
+  asAnomalyId,
   tagColumnName,
 } from './branded.js';
 
@@ -60,6 +62,13 @@ export type {
   SavingsResult,
   SyncStatus,
   QueryState,
+  AnomalyDetectionParams,
+  AnomalyResult,
+  AnomalyDetailParams,
+  AnomalyDetailResult,
+  Anomaly,
+  AnomalySeverity,
+  AnomalyDailyCost,
 } from './query.js';
 
 export type { Dimension, CostApi, DataInventoryResult, DataTier, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateStatus, UpdateApi } from './api.js';
