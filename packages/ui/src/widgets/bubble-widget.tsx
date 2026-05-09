@@ -8,6 +8,7 @@ import type { DimensionId, TrendResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, mergeFilters } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
+import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 
 const DEFAULT_DELTA_THRESHOLD = asDollars(50);
 const DEFAULT_PERCENT_THRESHOLD = 5;
@@ -25,6 +26,8 @@ export function BubbleWidget({
   onEntityClick,
 }: WidgetCommonProps) {
   const api = useCostApi();
+  const focus = useCostFocus();
+  const dispatch = useCostFocusDispatch();
   const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'bubble' ? spec.groupBy : undefined;
   const effectiveGroupBy = groupByOverride ?? specGroupBy;
@@ -65,6 +68,8 @@ export function BubbleWidget({
         data={data}
         logScale={spec.logScale}
         onEntityClick={(entity) => { onEntityClick?.(entity, effectiveGroupBy); }}
+        externalHoveredName={focus.hoveredDimension === effectiveGroupBy ? focus.hoveredEntity : null}
+        onEntityHover={(name) => { dispatch({ type: 'HOVER', entity: name, dimension: effectiveGroupBy }); }}
       />
     </div>
   );

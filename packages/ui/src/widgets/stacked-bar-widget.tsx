@@ -4,7 +4,7 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { StackedBarChart, bucketBars, type BarDay } from '../components/stacked-bar-chart.js';
 import { asDateString, asHourString, asTagValue } from '@costgoblin/core/browser';
-import { useCostFocus } from '../hooks/use-cost-focus.js';
+import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, mergeFilters, hasSufficientDailyCoverage } from './widget.js';
@@ -56,6 +56,7 @@ export function StackedBarWidget({
 }: WidgetCommonProps) {
   const api = useCostApi();
   const focus = useCostFocus();
+  const dispatch = useCostFocusDispatch();
   const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'stackedBar' ? spec.groupBy : undefined;
   const effectiveGroupBy = groupByOverride ?? specGroupBy;
@@ -136,15 +137,25 @@ export function StackedBarWidget({
     title = <GroupByTitle dimensions={dimensions} currentGroupBy={activeGroupBy} onGroupByChange={setGroupByOverride} label={label} />;
   }
 
+  // Cross-chart focus is dimension-scoped: only honour an external hover when
+  // it came from a chart grouped by the same dimension as us. Otherwise the
+  // histogram would dim every bar when the user hovered, say, a Team slice.
+  const externalHighlight = activeGroupBy !== undefined && focus.hoveredDimension === activeGroupBy
+    ? focus.hoveredEntity
+    : null;
+
   return (
     <StackedBarChart
       days={loading ? [] : barDays}
-      highlightedGroup={focus.hoveredEntity}
+      highlightedGroup={externalHighlight}
       title={title}
       loading={loading}
       onSegmentClick={activeGroupBy === undefined ? undefined : (name) => { onSetFilter(activeGroupBy, asTagValue(name)); }}
       previousTotals={compareEnabled ? previousTotals : undefined}
       onRangeSelect={onDateRangeChange === undefined ? undefined : handleRangeSelect}
+      onSegmentHover={activeGroupBy === undefined ? undefined : (name) => {
+        dispatch({ type: 'HOVER', entity: name, dimension: activeGroupBy });
+      }}
     />
   );
 }

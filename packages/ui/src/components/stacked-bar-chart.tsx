@@ -28,6 +28,11 @@ interface StackedBarChartProps {
    *  a dashed line overlay when present. */
   readonly previousTotals?: readonly number[] | undefined;
   readonly onRangeSelect?: ((startIdx: number, endIdx: number) => void) | undefined;
+  /** Fires when the focused series changes — either the user moused into a
+   *  bar segment or hovered a row in the floating tooltip. Lets the host
+   *  widget propagate to the global cross-chart focus so sibling pies dim
+   *  the same way pie→histogram already does. Called with null on leave. */
+  readonly onSegmentHover?: ((name: string | null) => void) | undefined;
 }
 
 export function bucketBars(bars: readonly BarDay[], maxBuckets: number): readonly BarDay[] {
@@ -64,12 +69,18 @@ interface BarSegmentProps {
 function BarSegment({ seg, segTotal, highlightedGroup, palette, onMouseEnter, onSegmentClick }: BarSegmentProps) {
   const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
   const color = getColor(seg.colorIdx, palette);
-  const isDimmed = highlightedGroup !== null && highlightedGroup !== undefined && highlightedGroup !== seg.key;
-  const baseStyle = {
+  const isHighlighted = highlightedGroup !== null && highlightedGroup !== undefined && highlightedGroup === seg.key;
+  const isDimmed = highlightedGroup !== null && highlightedGroup !== undefined && !isHighlighted;
+  // Match the pie chart's emphasis: dimmed series fade to ~25%, the focused
+  // one stays at full opacity with a subtle brightness boost and a thin white
+  // outline inset so it reads as "selected" the way a pie slice does on hover.
+  const baseStyle: React.CSSProperties = {
     height: `${String(pct)}%`,
     backgroundColor: color,
-    opacity: isDimmed ? 0.25 : 0.85,
-    transition: 'opacity 0.15s',
+    opacity: isDimmed ? 0.25 : isHighlighted ? 1 : 0.85,
+    filter: isHighlighted ? 'brightness(1.2)' : 'none',
+    boxShadow: isHighlighted ? 'inset 0 0 0 1.5px rgba(255,255,255,0.85)' : 'none',
+    transition: 'opacity 0.15s, filter 0.15s, box-shadow 0.15s',
   };
   if (onSegmentClick !== undefined) {
     return (
@@ -132,7 +143,7 @@ function BarColumn({ day, segments, segTotal, barPct, highlightedGroup, palette,
   );
 }
 
-export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick, previousTotals, onRangeSelect }: StackedBarChartProps) {
+export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expanded, onExpandToggle, title, loading, onSegmentClick, previousTotals, onRangeSelect, onSegmentHover }: StackedBarChartProps) {
   const { palette } = usePalette();
   const [hoveredDay, setHoveredDay] = useState<string | null>(null);
   const [hoveredSegment, setHoveredSegment] = useState<string | null>(null);
@@ -157,6 +168,12 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
   useEffect(() => {
     highlightRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [hoveredSegment]);
+
+  // Surface the local hover to the widget host so it can lift it into the
+  // global cross-chart focus. Mirror of the pie chart's onSliceHover.
+  useEffect(() => {
+    onSegmentHover?.(hoveredSegment);
+  }, [hoveredSegment, onSegmentHover]);
 
   const allKeys = new Set<string>();
   for (const day of days) {
