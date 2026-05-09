@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { asDateString, asTagValue } from '@costgoblin/core/browser';
+import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
+import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { daysBetween } from '../lib/dates.js';
 import type {
   Dimension,
@@ -60,10 +63,12 @@ function previousRangeFor(dr: DateRange): DateRange {
 function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProps) {
   const api = useCostApi();
   const lagDays = useLagDays();
+  const hourlyConfigured = useHourlyConfigured();
   const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [compareEnabled, setCompareEnabled] = useState(false);
   const [filters, setFilters] = useState<FilterMap>(initialFilter ?? {});
+  const [hourlyHint, setHourlyHint] = useState(false);
   const prefsLoadedRef = useRef(false);
   const columnPrefsRef = useRef<{ hiddenColumns: readonly string[]; columnOrder: readonly string[] }>({
     hiddenColumns: [],
@@ -157,6 +162,31 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     setFilters(prev => ({ ...prev, [dim]: [value] }));
   }
 
+  const handleDateRangeChange = useCallback((range: DateRange, g?: Granularity) => {
+    setDateRange(range);
+    if (g !== undefined) {
+      setGranularity(g);
+      setHourlyHint(false);
+      return;
+    }
+    if (shouldAutoSwitchToHourly(range.start, range.end, granularity)) {
+      if (hourlyConfigured) {
+        setGranularity('hourly');
+        setHourlyHint(false);
+      } else {
+        setHourlyHint(true);
+      }
+    } else {
+      setHourlyHint(false);
+    }
+  }, [granularity, hourlyConfigured]);
+
+  useEffect(() => {
+    if (!shouldAutoSwitchToHourly(dateRange.start, dateRange.end, granularity)) {
+      setHourlyHint(false);
+    }
+  }, [dateRange.start, dateRange.end, granularity]);
+
   function handleEntityClick(entity: EntityRef, dim: DimensionId) {
     handleSetFilter(dim, asTagValue(entity));
   }
@@ -205,6 +235,10 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
 
       <FilterActiveBanner />
 
+      {hourlyHint && (
+        <HourlyHintBanner onDismiss={() => { setHourlyHint(false); }} />
+      )}
+
       {dimensionsQuery.status === 'loading' && (
         <div className="text-sm text-text-secondary">Loading...</div>
       )}
@@ -229,6 +263,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
                   dimensions={dimensions}
                   onSetFilter={handleSetFilter}
                   onEntityClick={handleEntityClick}
+                  onDateRangeChange={handleDateRangeChange}
                 />
               </div>
             );

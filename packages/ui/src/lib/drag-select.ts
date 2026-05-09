@@ -24,3 +24,33 @@ export function shouldAutoSwitchToHourly(
   if (currentGranularity !== 'daily') return false;
   return daysBetween(startDate, endDate) <= HOURLY_THRESHOLD_DAYS;
 }
+
+interface BucketLike {
+  readonly date: string;
+}
+
+// For bucketed bars (one bar can cover multiple days) the bar's date is the
+// *start* of its chunk. The actual end of the selected range is the day
+// before the next chunk starts; the last bar falls back to the visible end.
+export function computeBucketedRange(
+  bars: readonly BucketLike[],
+  startIdx: number,
+  endIdx: number,
+  fallbackEnd: string,
+): { startDate: string; endDate: string } | null {
+  const startBar = bars[startIdx];
+  const endBar = bars[endIdx];
+  if (startBar === undefined || endBar === undefined) return null;
+  const startDate = bucketKeyToDate(startBar.date);
+  const nextBar = bars[endIdx + 1];
+  let endDate: string;
+  if (nextBar !== undefined) {
+    const d = new Date(bucketKeyToDate(nextBar.date) + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - 1);
+    endDate = d.toISOString().slice(0, 10);
+  } else {
+    endDate = fallbackEnd;
+  }
+  if (endDate < startDate) endDate = startDate;
+  return { startDate, endDate };
+}

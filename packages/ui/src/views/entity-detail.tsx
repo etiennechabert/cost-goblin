@@ -21,7 +21,7 @@ import type { PieSlice } from '../components/pie-chart.js';
 import { StackedBarChart, bucketBars } from '../components/stacked-bar-chart.js';
 import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
 import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension } from '../lib/dimensions.js';
-import { bucketKeyToDate, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { computeBucketedRange, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 
 interface EntityDetailProps {
   entity: string;
@@ -215,22 +215,9 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   const barDays = bucketBars(dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null), 170);
 
   const handleHistogramRangeSelect = useCallback((startIdx: number, endIdx: number) => {
-    const startBar = barDays[startIdx];
-    const endBar = barDays[endIdx];
-    if (startBar === undefined || endBar === undefined) return;
-    const startDate = bucketKeyToDate(startBar.date);
-    // bucketBars stores the date of the first entry in each chunk; the
-    // covered bucket really ends the day before the next chunk starts.
-    let endDate: string;
-    const nextBar = barDays[endIdx + 1];
-    if (nextBar !== undefined) {
-      const d = new Date(bucketKeyToDate(nextBar.date) + 'T00:00:00Z');
-      d.setUTCDate(d.getUTCDate() - 1);
-      endDate = d.toISOString().slice(0, 10);
-    } else {
-      endDate = dateRange.end;
-    }
-    if (endDate < startDate) endDate = startDate;
+    const range = computeBucketedRange(barDays, startIdx, endIdx, dateRange.end);
+    if (range === null) return;
+    const { startDate, endDate } = range;
     setDateRange({ start: asDateString(startDate), end: asDateString(endDate) });
     if (shouldAutoSwitchToHourly(startDate, endDate, granularity)) {
       if (hourlyConfigured) {
