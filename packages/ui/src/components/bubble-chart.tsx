@@ -104,7 +104,7 @@ function BubbleChartInner({
   const tickColor = 'var(--color-text-muted)';
 
   return (
-    <div className="relative">
+    <div className="relative" onMouseLeave={handleMouseLeave}>
       <svg width={width} height={height} aria-label="Cost trend bubble chart: x-axis shows percent change, y-axis shows absolute delta, bubble size represents current cost">
         <Group left={MARGIN.left} top={MARGIN.top}>
           <GridRows

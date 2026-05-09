@@ -146,7 +146,11 @@ function TreemapInner({
 
 export function TreemapChart({ data, title, subtitle, height = 320, onCellClick, onCellHover, externalHoveredName, previousCosts }: TreemapChartProps) {
   return (
-    <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col" style={{ height }}>
+    <div
+      className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col"
+      style={{ height }}
+      onMouseLeave={() => { onCellHover?.(null); }}
+    >
       {(title !== undefined || subtitle !== undefined) && (
         <div className="flex items-center justify-between mb-2">
           {title !== undefined && <h3 className="text-sm font-medium text-text-secondary">{title}</h3>}

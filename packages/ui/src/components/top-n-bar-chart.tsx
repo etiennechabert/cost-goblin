@@ -80,7 +80,11 @@ function TopNBarChartInner({
   }, [onBarHover]);
 
   return (
-    <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col" style={{ height: CHART_HEIGHT }}>
+    <div
+      className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-4 flex flex-col"
+      style={{ height: CHART_HEIGHT }}
+      onMouseLeave={handleLeave}
+    >
       <div className="flex items-center justify-between mb-3">
         {dimensions !== undefined && dimensions.length > 0 && onDimensionChange !== undefined ? (
           <select
