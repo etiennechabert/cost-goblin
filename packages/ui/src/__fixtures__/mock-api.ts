@@ -4,6 +4,7 @@ import {
   asDollars,
   asDateString,
   asEntityRef,
+  asAnomalyId,
   type AccountMappingStatus,
   type CostApi,
   type CostResult,
@@ -26,6 +27,10 @@ import {
   type ExplorerOverviewResult,
   type ExplorerRowsResult,
   type AliasSuggestion,
+  type AnomalyResult,
+  type AnomalyDetailResult,
+  type Anomaly,
+  type AnomalySeverity,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE } from '@costgoblin/core/browser';
 
@@ -192,6 +197,71 @@ const orgTree: OrgNode[] = [
   { name: 'growth', children: [{ name: 'acquisition' }, { name: 'retention' }] },
   { name: 'infra', children: [{ name: 'networking' }, { name: 'security' }] },
 ];
+
+const mockAnomalies: Anomaly[] = [
+  {
+    id: asAnomalyId('ml-ec2-2026-03-30'),
+    entity: asEntityRef('ml'),
+    dimension: asDimensionId('team'),
+    service: 'Amazon EC2',
+    detectedDate: asDateString('2026-03-30'),
+    currentCost: asDollars(250),
+    expectedCost: asDollars(180),
+    deviation: 3.2,
+    severity: 'high' as AnomalySeverity,
+    percentIncrease: 38.9,
+    isDismissed: false,
+  },
+  {
+    id: asAnomalyId('platform-rds-2026-03-29'),
+    entity: asEntityRef('platform'),
+    dimension: asDimensionId('team'),
+    service: 'Amazon RDS',
+    detectedDate: asDateString('2026-03-29'),
+    currentCost: asDollars(320),
+    expectedCost: asDollars(280),
+    deviation: 2.4,
+    severity: 'medium' as AnomalySeverity,
+    percentIncrease: 14.3,
+    isDismissed: false,
+  },
+];
+
+const anomalyResult: AnomalyResult = {
+  anomalies: mockAnomalies,
+  totalAnomalies: 2,
+  highSeverityCount: 1,
+  mediumSeverityCount: 1,
+  lowSeverityCount: 0,
+};
+
+const mockAnomalyDetail: AnomalyDetailResult = {
+  anomaly: mockAnomalies[0]!,
+  dailyCosts: [
+    { date: asDateString('2026-03-16'), cost: asDollars(175), isAnomaly: false },
+    { date: asDateString('2026-03-17'), cost: asDollars(182), isAnomaly: false },
+    { date: asDateString('2026-03-18'), cost: asDollars(178), isAnomaly: false },
+    { date: asDateString('2026-03-19'), cost: asDollars(185), isAnomaly: false },
+    { date: asDateString('2026-03-20'), cost: asDollars(180), isAnomaly: false },
+    { date: asDateString('2026-03-21'), cost: asDollars(183), isAnomaly: false },
+    { date: asDateString('2026-03-22'), cost: asDollars(179), isAnomaly: false },
+    { date: asDateString('2026-03-23'), cost: asDollars(181), isAnomaly: false },
+    { date: asDateString('2026-03-24'), cost: asDollars(177), isAnomaly: false },
+    { date: asDateString('2026-03-25'), cost: asDollars(184), isAnomaly: false },
+    { date: asDateString('2026-03-26'), cost: asDollars(182), isAnomaly: false },
+    { date: asDateString('2026-03-27'), cost: asDollars(186), isAnomaly: false },
+    { date: asDateString('2026-03-28'), cost: asDollars(188), isAnomaly: false },
+    { date: asDateString('2026-03-29'), cost: asDollars(245), isAnomaly: true },
+    { date: asDateString('2026-03-30'), cost: asDollars(250), isAnomaly: true },
+  ],
+  rollingAverage: asDollars(180),
+  standardDeviation: asDollars(22),
+  affectedResources: [
+    { resourceId: 'i-0a1b2c3d4e5f6g7h8', cost: asDollars(120) },
+    { resourceId: 'i-9h8g7f6e5d4c3b2a1', cost: asDollars(85) },
+    { resourceId: 'i-1z2y3x4w5v6u7t8s9', cost: asDollars(45) },
+  ],
+};
 
 export class MockCostApi implements CostApi {
   queryCosts(): Promise<CostResult> { return Promise.resolve(costResult); }
@@ -375,38 +445,18 @@ export class MockCostApi implements CostApi {
   cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
   getMcpServerRunning(): Promise<boolean> { return Promise.resolve(true); }
   setMcpServerRunning(): Promise<void> { return Promise.resolve(); }
-  queryAnomalies(): Promise<import('@costgoblin/core').AnomalyResult> {
-    return Promise.resolve({
-      anomalies: [],
-      totalAnomalies: 0,
-      highSeverityCount: 0,
-      mediumSeverityCount: 0,
-      lowSeverityCount: 0,
-    });
+  queryAnomalies(): Promise<AnomalyResult> {
+    return Promise.resolve(anomalyResult);
   }
-  queryAnomalyDetail(): Promise<import('@costgoblin/core').AnomalyDetailResult> {
-    return Promise.resolve({
-      anomaly: {
-        id: '' as import('@costgoblin/core').AnomalyId,
-        entity: '' as import('@costgoblin/core').EntityRef,
-        dimension: asDimensionId('account'),
-        service: '',
-        detectedDate: '' as import('@costgoblin/core').DateString,
-        currentCost: asDollars(0),
-        expectedCost: asDollars(0),
-        deviation: 0,
-        severity: 'low',
-        percentIncrease: 0,
-        isDismissed: false,
-      },
-      dailyCosts: [],
-      rollingAverage: asDollars(0),
-      standardDeviation: asDollars(0),
-      affectedResources: [],
-    });
+  queryAnomalyDetail(): Promise<AnomalyDetailResult> {
+    return Promise.resolve(mockAnomalyDetail);
   }
-  dismissAnomaly(): Promise<void> { return Promise.resolve(); }
-  restoreAnomaly(): Promise<void> { return Promise.resolve(); }
+  dismissAnomaly(): Promise<void> {
+    return Promise.resolve();
+  }
+  restoreAnomaly(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {
