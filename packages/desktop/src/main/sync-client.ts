@@ -24,7 +24,7 @@ export interface SyncClient {
 
 type WorkerResponse =
   | { kind: 'ready' }
-  | { kind: 'progress'; id: number; phase: 'downloading' | 'repartitioning' | 'done'; filesDone: number; filesTotal: number; message?: string }
+  | { kind: 'progress'; id: number; phase: 'downloading' | 'repartitioning' | 'done'; filesDone: number; filesTotal: number; bytesDone?: number; bytesTotal?: number; message?: string }
   | { kind: 'complete'; id: number; filesDownloaded: number; rowsProcessed: number }
   | { kind: 'error'; id: number; message: string };
 
@@ -81,6 +81,8 @@ export async function createSyncClient(workerPath: string): Promise<SyncClient> 
         phase: msg.phase,
         filesTotal: msg.filesTotal,
         filesDone: msg.filesDone,
+        ...(msg.bytesDone === undefined ? {} : { bytesDone: msg.bytesDone }),
+        ...(msg.bytesTotal === undefined ? {} : { bytesTotal: msg.bytesTotal }),
         ...(msg.message === undefined ? {} : { message: msg.message }),
       });
     } else {

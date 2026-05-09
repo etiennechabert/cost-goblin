@@ -36,6 +36,8 @@ interface ProgressResponse {
   readonly phase: 'downloading' | 'repartitioning' | 'done';
   readonly filesDone: number;
   readonly filesTotal: number;
+  readonly bytesDone?: number;
+  readonly bytesTotal?: number;
   readonly message?: string;
 }
 
@@ -122,13 +124,15 @@ async function handleSyncRequest(req: SyncRequest): Promise<void> {
         // Skip sending progress if cancelled
         if (cancelledIds.has(req.id)) return;
 
-        // Only include message if it exists (exactOptionalPropertyTypes: true)
+        // Only include optional fields when set (exactOptionalPropertyTypes)
         send({
           kind: 'progress',
           id: req.id,
           phase: progress.phase,
           filesDone: progress.filesDone,
           filesTotal: progress.filesTotal,
+          ...(progress.bytesDone === undefined ? {} : { bytesDone: progress.bytesDone }),
+          ...(progress.bytesTotal === undefined ? {} : { bytesTotal: progress.bytesTotal }),
           ...(progress.message === undefined ? {} : { message: progress.message }),
         });
       },

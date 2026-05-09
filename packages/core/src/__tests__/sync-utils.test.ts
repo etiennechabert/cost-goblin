@@ -4,6 +4,7 @@ import {
   extractPeriod,
   extractPeriodPrefix,
   groupByPeriod,
+  parseAwsCompletedBytes,
   parseEtagsJson,
 } from '../sync/sync-utils.js';
 import type { ManifestFileEntry } from '../sync/manifest.js';
@@ -110,5 +111,39 @@ describe('parseEtagsJson', () => {
     });
     const result = parseEtagsJson(json);
     expect(result['2026-01']).toEqual({ 'a.parquet': 'h1' });
+  });
+});
+
+describe('parseAwsCompletedBytes', () => {
+  it('parses MiB/MiB with rate and remaining', () => {
+    const result = parseAwsCompletedBytes('Completed 203.6 MiB/404.2 MiB (3.0 MiB/s) with 7 file(s) remaining');
+    expect(result).not.toBeNull();
+    expect(result?.bytesDone).toBeCloseTo(203.6 * 1024 * 1024, 0);
+    expect(result?.bytesTotal).toBeCloseTo(404.2 * 1024 * 1024, 0);
+  });
+
+  it('parses GiB units', () => {
+    const result = parseAwsCompletedBytes('Completed 1.5 GiB/2.0 GiB (10.0 MiB/s) with 3 file(s) remaining');
+    expect(result?.bytesDone).toBeCloseTo(1.5 * 1024 ** 3, 0);
+    expect(result?.bytesTotal).toBeCloseTo(2.0 * 1024 ** 3, 0);
+  });
+
+  it('parses mixed units (KiB / MiB)', () => {
+    const result = parseAwsCompletedBytes('Completed 512.0 KiB/1.0 MiB (100.0 KiB/s) with 1 file(s) remaining');
+    expect(result?.bytesDone).toBe(512 * 1024);
+    expect(result?.bytesTotal).toBe(1024 * 1024);
+  });
+
+  it('returns null for the file-count-only form (no bytes available)', () => {
+    expect(parseAwsCompletedBytes('Completed 5 file(s) with 2 file(s) remaining')).toBeNull();
+  });
+
+  it('returns null for non-Completed lines', () => {
+    expect(parseAwsCompletedBytes('download: s3://bucket/k to /local/k')).toBeNull();
+    expect(parseAwsCompletedBytes('')).toBeNull();
+  });
+
+  it('returns null when total is zero', () => {
+    expect(parseAwsCompletedBytes('Completed 0 B/0 B (0 B/s) with 0 file(s) remaining')).toBeNull();
   });
 });

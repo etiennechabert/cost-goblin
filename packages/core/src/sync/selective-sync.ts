@@ -35,6 +35,7 @@ import {
   extractPeriodPrefix,
   getEtagFileName,
   groupByPeriod,
+  parseAwsCompletedBytes,
   parseEtagsJson,
 } from './sync-utils.js';
 
@@ -159,21 +160,36 @@ function groupFilesByDate(periodFiles: readonly ManifestFileEntry[]): Map<string
   return dateGroups;
 }
 
+interface ByteState {
+  bytesDone: number | undefined;
+  bytesTotal: number | undefined;
+}
+
 function makeLineHandler(
   onProgress: ProgressCallback | undefined,
   totalFiles: number,
   counter: { filesDone: number },
+  bytes: ByteState,
 ): (line: string) => void {
   return (line) => {
     logger.info(`[aws] ${line}`);
     if (line.startsWith('download:')) {
       counter.filesDone++;
     }
+    if (line.startsWith('Completed')) {
+      const parsed = parseAwsCompletedBytes(line);
+      if (parsed !== null) {
+        bytes.bytesDone = parsed.bytesDone;
+        bytes.bytesTotal = parsed.bytesTotal;
+      }
+    }
     if (onProgress !== undefined) {
       onProgress({
         phase: 'downloading',
         filesTotal: totalFiles,
         filesDone: counter.filesDone,
+        bytesTotal: bytes.bytesTotal,
+        bytesDone: bytes.bytesDone,
         message: line.startsWith('Completed') ? line : undefined,
       });
     }
@@ -225,6 +241,7 @@ async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ fi
   const periodList = [...periods.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   const totalFiles = files.length;
   const counter = { filesDone: 0 };
+  const bytes: ByteState = { bytesDone: undefined, bytesTotal: undefined };
   let totalFilesDownloaded = 0;
 
   for (const [period, periodFiles] of periodList) {
@@ -237,7 +254,7 @@ async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ fi
       if (options.signal?.aborted) break;
       totalFilesDownloaded += await syncDateGroup({
         date, dateFiles, s3Bucket: s3Path.bucket, dataDir, outputDir, profile,
-        signal: options.signal, onLine: makeLineHandler(onProgress, totalFiles, counter),
+        signal: options.signal, onLine: makeLineHandler(onProgress, totalFiles, counter, bytes),
       });
     }
 
@@ -272,6 +289,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
   let totalFilesDownloaded = 0;
   const totalFiles = files.length;
   let globalFilesDone = 0;
+  const bytes: ByteState = { bytesDone: undefined, bytesTotal: undefined };
 
   for (const [period, periodFiles] of periodList) {
     if (options.signal?.aborted) break;
@@ -307,11 +325,20 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
             }
           }
         }
+        if (line.startsWith('Completed')) {
+          const parsed = parseAwsCompletedBytes(line);
+          if (parsed !== null) {
+            bytes.bytesDone = parsed.bytesDone;
+            bytes.bytesTotal = parsed.bytesTotal;
+          }
+        }
         if (onProgress !== undefined) {
           onProgress({
             phase: 'downloading',
             filesTotal: totalFiles,
             filesDone: globalFilesDone,
+            bytesTotal: bytes.bytesTotal,
+            bytesDone: bytes.bytesDone,
             message: line.startsWith('Completed') ? line : undefined,
           });
         }

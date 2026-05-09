@@ -146,7 +146,7 @@ export function registerSyncHandlers(app: AppContext): void {
     const bucketPath = resolveBucketPath(config, syncId);
     const workerId = nextWorkerId++;
     syncWorkerIds.set(syncId, workerId);
-    state.syncStatuses[syncId] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0, message: '' };
+    state.syncStatuses[syncId] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0, bytesTotal: 0, bytesDone: 0, message: '' };
 
     const tier = resolveDataType(syncId);
 
@@ -269,12 +269,23 @@ async function runSync(
     tier,
     files: fileEntries,
     onProgress: (progress) => {
+      const bytesDone = progress.bytesDone ?? 0;
+      const bytesTotal = progress.bytesTotal ?? 0;
+      // Prefer byte-fraction for the headline progress number — it's smooth
+      // mid-flight, where filesDone/filesTotal stays at 0 until each file
+      // fully completes. Falls back to the file-count fraction before the
+      // first "Completed" line lands.
+      const fraction = bytesTotal > 0
+        ? bytesDone / bytesTotal
+        : (progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0);
       state.syncStatuses[syncId] = {
         status: 'syncing',
         phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
-        progress: progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0,
+        progress: fraction,
         filesTotal: progress.filesTotal,
         filesDone: progress.filesDone,
+        bytesTotal,
+        bytesDone,
         message: progress.message ?? '',
       };
     },
