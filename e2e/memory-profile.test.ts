@@ -2,16 +2,15 @@ import { test, expect, type ElectronApplication, type Page } from '@playwright/t
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { FIXTURE_CONFIG_DIR, launchApp, waitForQuerySettle, navigateTo } from './helpers.js';
+import { FIXTURE_CONFIG_DIR, FIXTURE_DATA_DIR, ROOT, launchApp, waitForQuerySettle, navigateTo } from './helpers.js';
 
 // ---------------------------------------------------------------------------
 // Memory profiling — verify pagination reduces peak heap by 40%+
 // ---------------------------------------------------------------------------
 
 const isCI = process.env['CI'] === 'true';
-const SOURCE_CONFIG_DIR = isCI
-  ? FIXTURE_CONFIG_DIR
-  : join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config');
+// Always use fixture config for E2E tests to ensure consistent data
+const SOURCE_CONFIG_DIR = FIXTURE_CONFIG_DIR;
 const TEMP_CONFIG_DIR = join(tmpdir(), `costgoblin-memory-profile-${String(Date.now())}`);
 const REPORT_DIR = join(tmpdir(), 'costgoblin-memory-profile');
 mkdirSync(REPORT_DIR, { recursive: true });
@@ -223,7 +222,19 @@ test.describe('Memory Profiling', () => {
         }
       }
 
-      baselineApp = await launchApp({ configDir: TEMP_CONFIG_DIR });
+      // Copy preference files
+      const fixtureRoot = join(ROOT, 'packages', 'core', 'src', '__fixtures__');
+      for (const f of ['app-preferences.json', 'explorer-preferences.json', 'ui-preferences.json']) {
+        const src = join(fixtureRoot, f);
+        if (existsSync(src)) {
+          writeFileSync(join(TEMP_CONFIG_DIR, f), readFileSync(src));
+        }
+      }
+
+      baselineApp = await launchApp({
+        configDir: TEMP_CONFIG_DIR,
+        dataDir: FIXTURE_DATA_DIR
+      });
       baselinePage = await baselineApp.firstWindow();
       await expect(baselinePage).toHaveTitle('CostGoblin');
       await baselinePage.setViewportSize({ width: 1400, height: 900 });
@@ -235,7 +246,8 @@ test.describe('Memory Profiling', () => {
 
     test('measure memory with large result set (simulated no pagination)', async () => {
       // Navigate to Explorer
-      await navigateTo(baselinePage, 'Explorer', 'Explorer');
+      await baselinePage.getByRole('button', { name: 'Explorer' }).click();
+      await expect(baselinePage.getByText('Inspect the raw CUR dataset.')).toBeVisible({ timeout: 5000 });
 
       // Wait for initial load to settle
       await waitForQuerySettle(baselinePage);
@@ -276,7 +288,10 @@ test.describe('Memory Profiling', () => {
 
   test.describe('Paginated (current implementation)', () => {
     test.beforeAll(async () => {
-      paginatedApp = await launchApp({ configDir: TEMP_CONFIG_DIR });
+      paginatedApp = await launchApp({
+        configDir: TEMP_CONFIG_DIR,
+        dataDir: FIXTURE_DATA_DIR
+      });
       paginatedPage = await paginatedApp.firstWindow();
       await expect(paginatedPage).toHaveTitle('CostGoblin');
       await paginatedPage.setViewportSize({ width: 1400, height: 900 });
@@ -289,7 +304,8 @@ test.describe('Memory Profiling', () => {
 
     test('measure memory with paginated loading', async () => {
       // Navigate to Explorer
-      await navigateTo(paginatedPage, 'Explorer', 'Explorer');
+      await paginatedPage.getByRole('button', { name: 'Explorer' }).click();
+      await expect(paginatedPage.getByText('Inspect the raw CUR dataset.')).toBeVisible({ timeout: 5000 });
 
       // Wait for initial load to settle
       await waitForQuerySettle(paginatedPage);
@@ -302,8 +318,8 @@ test.describe('Memory Profiling', () => {
           // Just load the first page - pagination keeps memory bounded
           await waitForQuerySettle(paginatedPage);
 
-          // Verify pagination UI is present
-          const rowCount = paginatedPage.getByText(/Showing \d+ of \d+ rows/);
+          // Verify pagination UI is present (use the same regex as explorer-pagination test)
+          const rowCount = paginatedPage.getByText(/Showing .* of .* rows/).first();
           await expect(rowCount).toBeVisible({ timeout: 5000 });
         },
         600, // sample every 600ms
