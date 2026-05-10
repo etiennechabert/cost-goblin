@@ -1,8 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  AIInsight,
+  AIModel,
+  AIPreferences,
   CostApi,
   Dimension,
   CostGoblinConfig,
+  InsightParams,
+  OllamaStatus,
   OrgNode,
   CostQueryParams,
   CostResult,
@@ -287,6 +292,21 @@ const api: CostApi = {
   },
   setMcpServerRunning(enabled: boolean): Promise<void> {
     return invoke<undefined>('mcp:set-running', enabled).then(() => undefined);
+  },
+  getAIPreferences(): Promise<AIPreferences> {
+    return invoke<AIPreferences>('ai:get-preferences');
+  },
+  saveAIPreferences(prefs: AIPreferences): Promise<void> {
+    return invoke<undefined>('ai:save-preferences', prefs).then(() => undefined);
+  },
+  getOllamaStatus(): Promise<OllamaStatus> {
+    return invoke<OllamaStatus>('ai:get-status');
+  },
+  listAIModels(): Promise<readonly AIModel[]> {
+    return invoke<readonly AIModel[]>('ai:list-models');
+  },
+  generateInsight(params: InsightParams): Promise<AIInsight> {
+    return invoke<AIInsight>('ai:generate-insight', params);
   },
 };
 

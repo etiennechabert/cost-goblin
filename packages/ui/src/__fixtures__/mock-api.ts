@@ -375,6 +375,24 @@ export class MockCostApi implements CostApi {
   cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
   getMcpServerRunning(): Promise<boolean> { return Promise.resolve(true); }
   setMcpServerRunning(): Promise<void> { return Promise.resolve(); }
+  getAIPreferences(): Promise<import('@costgoblin/core').AIPreferences> {
+    return Promise.resolve({
+      enabled: false,
+      defaultModel: null,
+      autoGenerateSummaries: false,
+      showOptimizations: true,
+    });
+  }
+  saveAIPreferences(): Promise<void> { return Promise.resolve(); }
+  getOllamaStatus(): Promise<import('@costgoblin/core').OllamaStatus> {
+    return Promise.resolve({ state: 'disconnected', error: 'Ollama not running in mock mode' });
+  }
+  listAIModels(): Promise<readonly import('@costgoblin/core').AIModel[]> {
+    return Promise.resolve([]);
+  }
+  generateInsight(): Promise<import('@costgoblin/core').AIInsight> {
+    return Promise.reject(new Error('AI insights not available in mock mode'));
+  }
 }
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {
