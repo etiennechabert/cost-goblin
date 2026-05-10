@@ -8,6 +8,7 @@ export { cn } from './lib/utils.js';
 export { useCostApi, CostApiProvider } from './hooks/use-cost-api.js';
 export { useQuery } from './hooks/use-query.js';
 export { UnsavedChangesProvider, useUnsavedChanges, useConfirmLeave } from './hooks/use-unsaved-changes.js';
+export { useAIInsight } from './hooks/use-ai-insight.js';
 
 export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/card.js';
 export { Button, buttonVariants } from './components/ui/button.js';
@@ -38,6 +39,8 @@ export { TreemapChart } from './components/treemap-chart.js';
 export { HeatmapChart } from './components/heatmap-chart.js';
 export { FilterActiveBanner } from './components/filter-active-banner.js';
 export { CoinRainLoader } from './components/coin-rain-loader.js';
+export { AIChat } from './components/ai-chat.js';
+export { AIInsightCard } from './components/ai-insight-card.js';
 export { useCostFocus, useCostFocusDispatch, useCostFocusReducer, CostFocusProvider, CostFocusDispatchProvider } from './hooks/use-cost-focus.js';
 
 export { WIDGET_REGISTRY, WIDGET_CATALOG } from './widgets/registry.js';
@@ -59,6 +62,7 @@ export { CostScopeView } from './views/cost-scope.js';
 export { ExplorerView } from './views/explorer.js';
 export { SetupWizard } from './views/setup-wizard.js';
 export { McpView } from './views/mcp-view.js';
+export { AIInsights } from './views/ai-insights.js';
 
 export { getDimensionId, isTagDimension, isEnvironmentDimension, isOwnerDimension, isProductDimension } from './lib/dimensions.js';
 
