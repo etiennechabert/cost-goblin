@@ -11,6 +11,7 @@ import { queryEntityDetail } from './query-entity-detail.js';
 import { queryMissingTags } from './query-missing-tags.js';
 import { exploreData } from './explore-data.js';
 import { runSql } from './run-sql.js';
+import { aiQuery } from './ai-query.js';
 import { toolError } from './tool-helpers.js';
 
 const dateRangeSchema = z.object({
@@ -213,6 +214,23 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     async (params) => {
       try {
         return await runSql(ctx, params);
+      } catch (err: unknown) {
+        return toolError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'ai_query',
+    {
+      description: 'Answer natural language cost questions. Interprets queries like "Which team spent the most on S3 last month?" and returns structured cost data.',
+      inputSchema: {
+        query: z.string().describe('Natural language question about cloud costs (e.g., "What were my top costs last week?", "Show me cost trends by service", "Which account had the biggest increase?")'),
+      },
+    },
+    async (params) => {
+      try {
+        return await aiQuery(ctx, params);
       } catch (err: unknown) {
         return toolError(err instanceof Error ? err.message : String(err));
       }
