@@ -13,10 +13,16 @@ import { registerCostScopeHandlers } from './handlers/cost-scope.js';
 import { registerExplorerHandlers } from './handlers/explorer.js';
 import { registerDebugHandlers } from './handlers/debug.js';
 import { registerMcpHandlers } from './handlers/mcp-handler.js';
+import { registerAIHandlers } from './handlers/ai.js';
+import type { OllamaManager } from './ollama-manager.js';
 
 export type { AppContext, IpcContext } from './handlers/context.js';
 
-export function registerIpcHandlers(ctx: IpcContext): AppContext {
+export interface IpcHandlerOptions {
+  readonly ollamaManager?: OllamaManager | undefined;
+}
+
+export function registerIpcHandlers(ctx: IpcContext, options?: IpcHandlerOptions): AppContext {
   const app = createAppContext(ctx);
   registerQueryHandlers(app);
   registerSyncHandlers(app);
@@ -32,6 +38,10 @@ export function registerIpcHandlers(ctx: IpcContext): AppContext {
   registerExplorerHandlers(app);
   registerDebugHandlers(app);
   registerMcpHandlers(app);
+
+  if (options?.ollamaManager !== undefined) {
+    registerAIHandlers(app, { ollamaManager: options.ollamaManager });
+  }
 
   app.warmupBase();
 
