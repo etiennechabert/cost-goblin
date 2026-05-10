@@ -110,6 +110,16 @@ export interface ExplorerOverviewResult {
 export interface ExplorerRowsResult {
   readonly sampleRows: readonly ExplorerSampleRow[];
   readonly tagColumns: readonly ExplorerTagColumn[];
+  /** Total number of rows matching the query (before pagination). The UI
+   *  shows "Showing X of Y rows" honestly. */
+  readonly totalRows: number;
+  /** Opaque cursor for fetching the next page. Undefined when there are
+   *  no more pages. Client passes this back as ExplorerRowsParams.cursor
+   *  to fetch the next page. */
+  readonly cursor?: string | undefined;
+  /** Whether there are more pages available after this one. Convenience
+   *  flag — equivalent to `cursor !== undefined`. */
+  readonly hasMore: boolean;
 }
 
 export interface AggregatedTableParams extends ExplorerBaseParams {
