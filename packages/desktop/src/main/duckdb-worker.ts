@@ -35,6 +35,7 @@ type WorkerResponse =
   | { kind: 'ready' }
   | { kind: 'started'; id: number }
   | { kind: 'rows'; id: number; rows: Readonly<Record<string, unknown>>[] }
+  | { kind: 'chunk'; id: number; rows: Readonly<Record<string, unknown>>[]; hasMore: boolean }
   | { kind: 'error'; id: number; message: string };
 
 function hasProps(msg: unknown): msg is Record<string, unknown> {
