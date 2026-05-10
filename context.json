@@ -1,0 +1,80 @@
+{
+  "files_to_modify": {
+    "core": [
+      "packages/core/src/types/api.ts",
+      "packages/core/src/index.ts"
+    ],
+    "desktop": [
+      "packages/desktop/src/main/ipc.ts",
+      "packages/desktop/package.json"
+    ],
+    "ui": [
+      "packages/ui/src/index.ts"
+    ],
+    "mcp": [
+      "packages/mcp/src/tools/index.ts"
+    ]
+  },
+  "files_to_create": {
+    "core": [
+      "packages/core/src/ai/ollama-client.ts",
+      "packages/core/src/ai/prompt-builder.ts",
+      "packages/core/src/ai/types.ts",
+      "packages/core/src/ai/index.ts",
+      "packages/core/src/__tests__/ollama-client.test.ts",
+      "packages/core/src/__tests__/prompt-builder.test.ts"
+    ],
+    "desktop": [
+      "packages/desktop/src/main/handlers/ai.ts",
+      "packages/desktop/src/main/ollama-manager.ts",
+      "packages/desktop/src/__tests__/ollama-manager.test.ts"
+    ],
+    "ui": [
+      "packages/ui/src/views/ai-insights.tsx",
+      "packages/ui/src/components/ai-insight-card.tsx",
+      "packages/ui/src/components/ai-chat.tsx",
+      "packages/ui/src/hooks/use-ai-insight.ts",
+      "packages/ui/src/__tests__/ai-components.test.tsx"
+    ],
+    "mcp": [
+      "packages/mcp/src/tools/ai-query.ts"
+    ]
+  },
+  "files_to_reference": [
+    "packages/desktop/src/main/handlers/query-costs.ts",
+    "packages/desktop/src/main/handlers/context.ts",
+    "packages/desktop/src/main/handlers/ui.ts",
+    "packages/ui/src/views/cost-overview.tsx",
+    "packages/ui/src/views/custom-view.tsx",
+    "packages/ui/src/components/summary-card.tsx",
+    "packages/mcp/src/tools/query-costs.ts",
+    "packages/core/src/types/api.ts"
+  ],
+  "patterns": {
+    "ipc_handler_pattern": "Use ipcMain.handle() with async handlers, access app context for shared resources",
+    "api_interface_pattern": "Add methods to CostApi interface in core/types/api.ts, implement in desktop handlers",
+    "type_pattern": "Use branded types (e.g., type ModelName = Brand<string, 'ModelName'>) and discriminated unions for state",
+    "component_pattern": "React components in ui/src/components/, views in ui/src/views/, hooks in ui/src/hooks/",
+    "test_pattern": "Vitest tests in __tests__ directories, use descriptive test names",
+    "error_handling": "Never use any, @ts-ignore, or non-null assertions; handle errors with discriminated unions",
+    "logging": "Use logger from @costgoblin/core, never console.log"
+  },
+  "existing_implementations": {
+    "description": "Found existing IPC handler patterns, UI preferences system, and MCP server integration",
+    "relevant_files": [
+      "packages/desktop/src/main/handlers/ui.ts",
+      "packages/desktop/src/main/handlers/savings.ts",
+      "packages/desktop/src/main/mcp.ts",
+      "packages/core/src/types/api.ts"
+    ],
+    "preferences_pattern": "Preferences stored as JSON files, accessed via getXPreferences/saveXPreferences methods in CostApi",
+    "mcp_pattern": "MCP server tools in packages/mcp/src/tools/, registered in tools/index.ts"
+  },
+  "key_decisions": {
+    "ollama_integration": "Use Ollama HTTP API (http://localhost:11434) for model management and inference",
+    "privacy_first": "All inference runs locally, no network calls except to localhost Ollama",
+    "opt_in": "AI features disabled by default, require user to install Ollama and download a model",
+    "performance": "Target < 5 seconds for insight generation on mid-range hardware",
+    "mcp_integration": "Extend existing MCP server to channel AI queries for external assistants"
+  }
+}
