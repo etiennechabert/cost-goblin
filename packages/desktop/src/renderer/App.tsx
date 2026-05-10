@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, AIInsights } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagColumnName } from '@costgoblin/core/browser';
@@ -54,6 +54,7 @@ type View =
   | { page: 'missing-tags' }
   | { page: 'savings' }
   | { page: 'mcp' }
+  | { page: 'ai-insights' }
   | { page: 'explorer' }
   | { page: 'dimensions' }
   | { page: 'cost-scope' }
@@ -585,6 +586,7 @@ function AppShell(): React.JSX.Element {
         case 'views-editor': setView({ page: 'views-editor' }); break;
         case 'sync': setView({ page: 'sync' }); break;
         case 'mcp': setView({ page: 'mcp' }); break;
+        case 'ai-insights': setView({ page: 'ai-insights' }); break;
         default:
           // Anything else is a custom view id (every left-nav entry that
           // isn't one of the well-known static pages above).
@@ -615,6 +617,7 @@ function AppShell(): React.JSX.Element {
   const paletteItems: NavItem[] = useMemo(() => [
     ...customNav.map(n => ({ id: n.id, label: n.label, group: 'Dashboards' })),
     ...STATIC_LEFT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Analysis' })),
+    { id: 'ai-insights', label: 'AI Insights', group: 'Settings' },
     { id: 'mcp', label: 'AI Assistant', group: 'Settings' },
     ...RIGHT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Settings' })),
   ], [customNav]);
@@ -638,6 +641,7 @@ function AppShell(): React.JSX.Element {
     if (view.page === 'views-editor') return 'views-editor';
     if (view.page === 'sync') return 'sync';
     if (view.page === 'mcp') return 'mcp';
+    if (view.page === 'ai-insights') return 'ai-insights';
     return null;
   }
   const active = activeNavId();
@@ -725,14 +729,14 @@ function AppShell(): React.JSX.Element {
             </button>
             <button
               type="button"
-              onClick={() => { handleNavClick('mcp'); }}
+              onClick={() => { handleNavClick('ai-insights'); }}
               className={[
                 'rounded-md p-1.5 transition-colors',
-                active === 'mcp'
+                active === 'ai-insights'
                   ? 'bg-bg-tertiary text-text-primary'
                   : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
               ].join(' ')}
-              aria-label="AI Assistant"
+              aria-label="AI Insights"
             >
               <Sparkles className="h-4 w-4" />
             </button>
@@ -844,6 +848,11 @@ function AppShell(): React.JSX.Element {
       )}
       {view.page === 'mcp' && (
         <McpView />
+      )}
+      {view.page === 'ai-insights' && (
+        <Profiler id="ai-insights" onRender={onPerfRender}>
+          <AIInsights />
+        </Profiler>
       )}
       <div className={view.page === 'sync' ? '' : 'hidden'}>
         <Profiler id="sync" onRender={onPerfRender}>
