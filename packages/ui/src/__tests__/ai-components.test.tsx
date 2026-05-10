@@ -1,10 +1,25 @@
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { afterEach, describe, it, expect } from 'vitest';
+import { CostApiProvider } from '../hooks/use-cost-api.js';
+import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { AIInsightCard } from '../components/ai-insight-card.js';
+import { AIChat } from '../components/ai-chat.js';
 import type { AIInsight } from '@costgoblin/core/browser';
 import { asModelName } from '@costgoblin/core/browser';
 
 afterEach(cleanup);
+
+function renderAIChat(props = {}) {
+  const api = new MockCostApi();
+  return {
+    api,
+    ...render(
+      <CostApiProvider value={api}>
+        <AIChat {...props} />
+      </CostApiProvider>,
+    ),
+  };
+}
 
 describe('AIInsightCard', () => {
   it('shows placeholder when insight is null', () => {
@@ -145,5 +160,115 @@ describe('AIInsightCard', () => {
     expect(screen.getByText('AI Answer')).toBeDefined();
     expect(screen.getByText('Based on the data, EC2 costs have been the primary driver of increases.')).toBeDefined();
     expect(screen.queryByText('Supporting Data')).toBeNull();
+  });
+});
+
+describe('AIChat', () => {
+  it('renders empty state with placeholder text', () => {
+    renderAIChat();
+    expect(screen.getByText('AI Cost Assistant')).toBeDefined();
+    expect(screen.getByText('Ask me anything about your costs')).toBeDefined();
+    expect(screen.getByPlaceholderText('Ask a question about your costs...')).toBeDefined();
+  });
+
+  it('renders with initial messages', () => {
+    const initialMessages = [
+      {
+        id: '1',
+        role: 'user' as const,
+        content: 'What is my total spend?',
+        timestamp: '2026-05-10T12:00:00Z',
+      },
+      {
+        id: '2',
+        role: 'assistant' as const,
+        content: 'Your total spend is $12,500 for the selected period.',
+        timestamp: '2026-05-10T12:00:05Z',
+      },
+    ];
+
+    renderAIChat({ initialMessages });
+    expect(screen.getByText('What is my total spend?')).toBeDefined();
+    expect(screen.getByText('Your total spend is $12,500 for the selected period.')).toBeDefined();
+  });
+
+  it('displays supporting data in assistant messages', () => {
+    const initialMessages = [
+      {
+        id: '1',
+        role: 'user' as const,
+        content: 'Which team spent the most?',
+        timestamp: '2026-05-10T12:00:00Z',
+      },
+      {
+        id: '2',
+        role: 'assistant' as const,
+        content: 'The platform team spent the most at $6,200.',
+        supportingData: ['Platform team: $6,200', 'Data team: $5,200'],
+        timestamp: '2026-05-10T12:00:05Z',
+      },
+    ];
+
+    renderAIChat({ initialMessages });
+    expect(screen.getByText('The platform team spent the most at $6,200.')).toBeDefined();
+    expect(screen.getByText('Supporting Data')).toBeDefined();
+    expect(screen.getByText('Platform team: $6,200')).toBeDefined();
+    expect(screen.getByText('Data team: $5,200')).toBeDefined();
+  });
+
+  it('handles input change and submit', () => {
+    renderAIChat();
+    const input = screen.getByPlaceholderText('Ask a question about your costs...');
+    const submitButton = screen.getByRole('button');
+
+    // Initially submit button should be disabled
+    expect((submitButton as HTMLButtonElement).disabled).toBe(true);
+
+    // Type a message
+    fireEvent.change(input, { target: { value: 'Test question' } });
+    expect((input as HTMLInputElement).value).toBe('Test question');
+    expect((submitButton as HTMLButtonElement).disabled).toBe(false);
+
+    // Submit the form
+    const form = input.closest('form');
+    if (form === null) throw new Error('Form not found');
+    fireEvent.submit(form);
+
+    // Input should be cleared
+    expect((input as HTMLInputElement).value).toBe('');
+  });
+
+  it('disables input and submit during loading', async () => {
+    renderAIChat();
+    const input = screen.getByPlaceholderText('Ask a question about your costs...');
+    const form = input.closest('form');
+    if (form === null) throw new Error('Form not found');
+
+    // Type and submit
+    fireEvent.change(input, { target: { value: 'Test question' } });
+    fireEvent.submit(form);
+
+    // Input and button should be disabled during loading
+    await waitFor(() => {
+      expect((input as HTMLInputElement).disabled).toBe(true);
+    });
+  });
+
+  it('does not submit empty or whitespace-only messages', () => {
+    renderAIChat();
+    const input = screen.getByPlaceholderText('Ask a question about your costs...');
+    const submitButton = screen.getByRole('button');
+
+    // Empty input
+    fireEvent.change(input, { target: { value: '' } });
+    expect((submitButton as HTMLButtonElement).disabled).toBe(true);
+
+    // Whitespace only
+    fireEvent.change(input, { target: { value: '   ' } });
+    expect((submitButton as HTMLButtonElement).disabled).toBe(true);
+
+    // Valid input
+    fireEvent.change(input, { target: { value: 'Valid question' } });
+    expect((submitButton as HTMLButtonElement).disabled).toBe(false);
   });
 });
