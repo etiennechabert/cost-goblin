@@ -263,11 +263,18 @@ export function TableWidget({
   const aggregatedTotal = dataQuery.status === 'success' ? dataQuery.data.totalRows : totalRows;
   const loading = dataQuery.status === 'loading' || overviewQuery.status === 'loading';
   const error = dataQuery.status === 'error' ? dataQuery.error.message : null;
+  const isTruncated = rows.length >= ROW_LIMIT && aggregatedTotal > ROW_LIMIT;
 
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden p-4">
       {spec.title !== undefined && (
         <h3 className="text-sm font-medium text-text-secondary mb-3">{spec.title}</h3>
+      )}
+      {isTruncated && (
+        <div className="rounded-md border border-warning/40 bg-warning/5 text-xs text-text-secondary px-3 py-2 mb-3">
+          Showing top {ROW_LIMIT.toLocaleString()} of {aggregatedTotal.toLocaleString()} rows.
+          Use the Explorer view or apply filters to see all results.
+        </div>
       )}
       <DataTable<AggregatedTableRow>
         data={rows}
