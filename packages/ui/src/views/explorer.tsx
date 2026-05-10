@@ -8,7 +8,6 @@ import type {
   ExplorerFilterMap,
   ExplorerFilterValue,
   ExplorerOverviewResult,
-  ExplorerRowsResult,
   ExplorerSampleRow,
   ExplorerSort,
   Granularity,
@@ -19,6 +18,8 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useBarDragSelect } from '../hooks/use-bar-drag-select.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
+import { usePaginatedQuery } from '../hooks/use-paginated-query.js';
+import type { PaginatedResult } from '../hooks/use-paginated-query.js';
 import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
 import { DataTable } from '../components/data-table.js';
@@ -39,12 +40,6 @@ function formatSignedDollars(n: number): string {
 
 interface OverviewState {
   data: ExplorerOverviewResult | null;
-  loading: boolean;
-  error: string | null;
-}
-
-interface RowsState {
-  data: ExplorerRowsResult | null;
   loading: boolean;
   error: string | null;
 }
@@ -109,14 +104,11 @@ export function ExplorerView(): React.JSX.Element {
   const [costMetric, setCostMetric] = useState<CostMetric>('unblended');
   const [costPerspective, setCostPerspective] = useState<CostPerspective>('gross');
   const [overview, setOverview] = useState<OverviewState>({ data: null, loading: true, error: null });
-  const [rows, setRows] = useState<RowsState>({ data: null, loading: true, error: null });
   const [hiddenColumns, setHiddenColumns] = useState<readonly string[]>([...DEFAULT_HIDDEN]);
   const [columnOrder, setColumnOrder] = useState<readonly string[]>([]);
   const [hourlyHint, setHourlyHint] = useState(false);
   const overviewDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const rowsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const overviewReqIdRef = useRef(0);
-  const rowsReqIdRef = useRef(0);
   const prefsLoadedRef = useRef(false);
 
   useEffect(() => {
@@ -230,37 +222,29 @@ export function ExplorerView(): React.JSX.Element {
       });
   }, [api]);
 
-  const runRows = useCallback((
-    f: ExplorerFilterMap,
-    s: ExplorerSort | undefined,
-    range: DateRange,
-    gran: Granularity,
-    scope: boolean,
-    metric: CostMetric,
-    perspective: CostPerspective,
-  ) => {
-    const reqId = ++rowsReqIdRef.current;
-    setRows(prev => ({ ...prev, loading: true, error: null }));
-    api.queryExplorerRows({
-      filters: f,
+  // Paginated rows query — fetcher returns PaginatedResult from ExplorerRowsResult
+  const rowsFetcher = useCallback(async (cursor?: string): Promise<PaginatedResult<ExplorerSampleRow>> => {
+    const result = await api.queryExplorerRows({
+      filters,
       rowLimit: ROW_LIMIT,
-      dateRange: range,
-      granularity: gran,
-      applyCostScope: scope,
-      costMetric: metric,
-      costPerspective: perspective,
-      ...(s === undefined ? {} : { sort: s }),
-    })
-      .then(data => {
-        if (reqId !== rowsReqIdRef.current) return;
-        setRows({ data, loading: false, error: null });
-      })
-      .catch((err: unknown) => {
-        if (reqId !== rowsReqIdRef.current) return;
-        const message = err instanceof Error ? err.message : String(err);
-        setRows(prev => ({ data: prev.data, loading: false, error: message }));
-      });
-  }, [api]);
+      dateRange,
+      granularity,
+      applyCostScope,
+      costMetric,
+      costPerspective,
+      ...(sort === undefined ? {} : { sort }),
+      cursor,
+    });
+    return {
+      data: result.sampleRows,
+      cursor: result.cursor,
+      hasMore: result.hasMore,
+    };
+  }, [api, filters, sort, dateRange, granularity, applyCostScope, costMetric, costPerspective]);
+
+  const rowsState = usePaginatedQuery(rowsFetcher, [
+    filters, sort, dateRange, granularity, applyCostScope, costMetric, costPerspective,
+  ]);
 
   // Overview (histogram + totals) — deliberately omits `sort` from deps so
   // changing the table sort doesn't wipe the histogram.
@@ -274,19 +258,7 @@ export function ExplorerView(): React.JSX.Element {
     };
   }, [filters, dateRange, granularity, applyCostScope, costMetric, costPerspective, runOverview]);
 
-  // Sample rows — all overview deps PLUS sort. A sort-only change therefore
-  // only re-fires this fetch, leaving the histogram alone.
-  useEffect(() => {
-    if (rowsDebounceRef.current !== null) clearTimeout(rowsDebounceRef.current);
-    rowsDebounceRef.current = setTimeout(() => {
-      runRows(filters, sort, dateRange, granularity, applyCostScope, costMetric, costPerspective);
-    }, DEBOUNCE_MS);
-    return () => {
-      if (rowsDebounceRef.current !== null) clearTimeout(rowsDebounceRef.current);
-    };
-  }, [filters, sort, dateRange, granularity, applyCostScope, costMetric, costPerspective, runRows]);
-
-  const tagColumns = overview.data?.tagColumns ?? rows.data?.tagColumns ?? [];
+  const tagColumns = overview.data?.tagColumns ?? [];
   const defaultColumns = useMemo<readonly TableColumn<ExplorerSampleRow>[]>(() => [
     ...BASE_COLUMNS.filter(c => c.id !== 'usage_hour' || granularity === 'hourly'),
     ...tagColumns.map<TableColumn<ExplorerSampleRow>>(t => ({
@@ -504,7 +476,7 @@ export function ExplorerView(): React.JSX.Element {
       <Card>
         <CardContent className="pt-5">
           <DataTable<ExplorerSampleRow>
-            data={rows.data?.sampleRows ?? []}
+            data={rowsState.data}
             columns={visibleColumns}
             allColumns={availableColumns}
             hiddenColumns={hiddenColumns}
@@ -515,8 +487,8 @@ export function ExplorerView(): React.JSX.Element {
             onSortingChange={handleSortingChange}
             onCellClick={handleCellClick}
             totalRows={overviewData?.totalRows ?? 0}
-            loading={rows.loading}
-            error={rows.error}
+            loading={rowsState.status === 'loading'}
+            error={rowsState.status === 'error' ? rowsState.error.message : null}
             height={560}
             rowHeight={28}
             csvFilename={`costgoblin-explorer-${dateRange.start}-${dateRange.end}`}
