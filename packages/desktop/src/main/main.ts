@@ -17,6 +17,7 @@ import { registerIpcHandlers } from './ipc.js';
 import { startMcpServer, stopMcpServer } from './mcp.js';
 import { initAutoUpdater, checkForUpdates } from './update-manager.js';
 import { registerUpdateHandlers } from './handlers/update.js';
+import { initTray } from './tray-manager.js';
 import { validateUrl, SecurityError } from './url-validator.js';
 import { validateProfileLabel } from './validators/path-validator.js';
 import { resolveConfigDir, resolveDataDir } from './xdg-paths.js';
@@ -216,6 +217,11 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
     return { action: 'deny' };
   });
 
+  // Initialize tray icon on Linux for minimize-to-tray behavior
+  if (process.platform === 'linux') {
+    initTray(win);
+  }
+
   logger.info('Window created');
 }
 
@@ -259,7 +265,10 @@ async function main(): Promise<void> {
 }
 
 app.on('window-all-closed', () => {
-  app.quit();
+  // On Linux with tray icon, keep app running in background
+  if (process.platform !== 'linux') {
+    app.quit();
+  }
 });
 
 app.on('will-quit', () => {
