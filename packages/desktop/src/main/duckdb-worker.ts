@@ -62,6 +62,11 @@ function isConfigureRequest(msg: unknown): msg is { kind: 'configure'; tempDir: 
   return msg['kind'] === 'configure' && typeof msg['tempDir'] === 'string';
 }
 
+function isStreamingQueryRequest(msg: unknown): msg is { kind: 'streaming-query'; id: number; sql: string; chunkSize?: number } {
+  if (!hasProps(msg)) return false;
+  return msg['kind'] === 'streaming-query' && typeof msg['id'] === 'number' && typeof msg['sql'] === 'string';
+}
+
 // ---------------------------------------------------------------------------
 // Query cancellation state
 // ---------------------------------------------------------------------------
@@ -325,6 +330,62 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
   }
 }
 
+async function handleStreamingRequest(req: { kind: 'streaming-query'; id: number; sql: string; chunkSize?: number }): Promise<void> {
+  // Check before acquiring a pool connection
+  if (cancelledIds.has(req.id)) {
+    cancelledIds.delete(req.id);
+    send({ kind: 'error', id: req.id, message: 'Query cancelled' });
+    return;
+  }
+
+  queuedIds.add(req.id);
+  const pool = await getPool();
+  const conn = await pool.acquire();
+  queuedIds.delete(req.id);
+  send({ kind: 'started', id: req.id });
+
+  try {
+    // Check after acquiring — cancel may have arrived while queued
+    if (cancelledIds.has(req.id)) {
+      cancelledIds.delete(req.id);
+      send({ kind: 'error', id: req.id, message: 'Query cancelled' });
+      return;
+    }
+
+    runningIds.add(req.id);
+    runningConns.set(req.id, conn);
+    const chunkSize = req.chunkSize ?? 1000;
+
+    await fetchRowsChunked(
+      conn,
+      req.sql,
+      chunkSize,
+      () => cancelledIds.has(req.id),
+      (rows, hasMore) => {
+        // Skip sending chunks if cancelled during execution
+        if (!cancelledIds.has(req.id)) {
+          send({ kind: 'chunk', id: req.id, rows, hasMore });
+        }
+      }
+    );
+
+    // Check if cancelled after streaming completed
+    if (cancelledIds.has(req.id)) {
+      cancelledIds.delete(req.id);
+      send({ kind: 'error', id: req.id, message: 'Query cancelled' });
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isCancelled = cancelledIds.has(req.id) || message.includes('INTERRUPT');
+    cancelledIds.delete(req.id);
+    send({ kind: 'error', id: req.id, message: isCancelled ? 'Query cancelled' : message });
+  } finally {
+    runningIds.delete(req.id);
+    runningConns.delete(req.id);
+    pool.release(conn);
+  }
+}
+
 function handleCancelPending(): void {
   for (const id of queuedIds) {
     cancelledIds.add(id);
@@ -354,6 +415,8 @@ port.on('message', (msg: unknown) => {
     handleRequest(msg).catch(() => undefined);
   } else if (isPreparedQueryRequest(msg)) {
     handlePreparedRequest(msg).catch(() => undefined);
+  } else if (isStreamingQueryRequest(msg)) {
+    handleStreamingRequest(msg).catch(() => undefined);
   } else if (isCancelRequest(msg)) {
     handleCancelPending();
   } else if (isConfigureRequest(msg)) {
