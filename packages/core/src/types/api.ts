@@ -27,6 +27,7 @@ import type {
   TrendQueryParams,
   TrendResult,
 } from './query.js';
+import type { AIInsight, AIModel, AIPreferences, InsightParams, OllamaStatus } from '../ai/types.js';
 
 export interface SavingsPreferences {
   readonly hiddenActionTypes: readonly string[];
@@ -194,6 +195,22 @@ export interface CostApi {
   cancelPendingQueries(): Promise<void>;
   getMcpServerRunning(): Promise<boolean>;
   setMcpServerRunning(enabled: boolean): Promise<void>;
+  /** Get AI feature preferences (enabled state, default model, auto-generate
+   *  settings). Stored in state/ai-preferences.json. */
+  getAIPreferences(): Promise<AIPreferences>;
+  /** Save AI feature preferences. */
+  saveAIPreferences(prefs: AIPreferences): Promise<void>;
+  /** Check Ollama service connection status. Returns 'connected' if Ollama is
+   *  reachable at localhost:11434, otherwise 'disconnected' with error. */
+  getOllamaStatus(): Promise<OllamaStatus>;
+  /** List all models available in the local Ollama instance. Returns empty
+   *  array if Ollama is not running or no models are installed. */
+  listAIModels(): Promise<readonly AIModel[]>;
+  /** Generate an AI insight based on cost data. Runs inference locally via
+   *  Ollama — no cloud API calls. Returns full insight with metadata
+   *  (model, generation time). Throws if Ollama is disconnected or if AI
+   *  features are disabled in preferences. */
+  generateInsight(params: InsightParams): Promise<AIInsight>;
 }
 
 export interface AccountMappingEntry {
