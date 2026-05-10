@@ -97,6 +97,46 @@ async function fetchAllRows(
   return rows;
 }
 
+async function fetchRowsChunked(
+  conn: DuckDBConnection,
+  sql: string,
+  chunkSize: number,
+  isCancelled: () => boolean,
+  onChunk: (rows: Readonly<Record<string, unknown>>[], hasMore: boolean) => void,
+): Promise<void> {
+  const result = await conn.run(sql);
+  const cols = result.columnCount;
+  const names: string[] = [];
+  for (let i = 0; i < cols; i++) names.push(result.columnName(i));
+
+  let buffer: Record<string, unknown>[] = [];
+  let chunk = await result.fetchChunk();
+
+  while (chunk !== null && chunk.rowCount > 0) {
+    if (isCancelled()) return;
+
+    for (let r = 0; r < chunk.rowCount; r++) {
+      const row: Record<string, unknown> = {};
+      for (let c = 0; c < cols; c++) {
+        const name = names[c];
+        if (name !== undefined) row[name] = chunk.getColumnVector(c).getItem(r);
+      }
+      buffer.push(row);
+
+      // Send chunk when buffer reaches chunkSize
+      if (buffer.length >= chunkSize) {
+        onChunk(buffer, true);
+        buffer = [];
+      }
+    }
+
+    chunk = await result.fetchChunk();
+  }
+
+  // Send final chunk with hasMore = false
+  onChunk(buffer, false);
+}
+
 function bindParams(stmt: import('./duckdb-loader.js').DuckDBPreparedStatement, params: unknown[]): void {
   for (let i = 0; i < params.length; i++) {
     const val = params[i];
