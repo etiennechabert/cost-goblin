@@ -1,5 +1,6 @@
 import { ipcMain, shell } from 'electron';
 import {
+  extractPeriod,
   getDataInventory,
   getEtagFileName,
   getRawDirPrefix,
@@ -155,7 +156,17 @@ export function registerSyncHandlers(app: AppContext): void {
       syncWorkerIds.delete(syncId);
 
       state.syncStatuses[syncId] = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
-      if (result.filesDownloaded > 0) app.warmupBase();
+      if (result.filesDownloaded > 0) {
+        app.warmupBase();
+        // Daily tier is the only one with rollups today; trigger build for the
+        // synced periods. Don't await — query traffic shouldn't wait on rollup
+        // builds, the rollup just kicks in on the next query that lands after
+        // the build finishes.
+        if (tier === 'daily') {
+          const periods = [...new Set(fileEntries.map(f => extractPeriod(f.key)).filter(p => p !== 'unknown'))];
+          if (periods.length > 0) void app.buildRollups(periods);
+        }
+      }
       return result;
     } catch (err: unknown) {
       syncWorkerIds.delete(syncId);

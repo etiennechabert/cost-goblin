@@ -7,6 +7,8 @@ import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize
 import { costExprFor } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
 import { assertDateString, assertHourString, SecurityError } from './identifier-validator.js';
+import { rollupParquetPath, type RollupSchema } from '../rollup/index.js';
+import { isRollupEligible } from '../rollup/eligibility.js';
 
 function assertFiniteNumber(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
@@ -308,6 +310,11 @@ export interface BuildSourceOptions {
    *  description, usage_amount, list_cost. Used by the materialized base
    *  to keep the in-memory table small. */
   readonly slim?: boolean | undefined;
+  /** When set, emit a SELECT directly over the rollup parquet files instead
+   *  of the raw CUR. Caller is responsible for verifying eligibility — every
+   *  column referenced by the outer query must be carried by `schema`.
+   *  `paths` is the list of rollup parquet files to UNION (one per period). */
+  readonly rollupSource?: { readonly paths: readonly string[]; readonly schema: RollupSchema } | undefined;
 }
 
 function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
@@ -330,6 +337,31 @@ function buildParquetSource(dataDir: string, tier: string, periods: readonly str
   return `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`;
 }
 
+/** Inner SELECT when reading from a rollup parquet. The rollup carries every
+ *  column its schema declares using the same canonical names buildSource() emits
+ *  on the raw path — so the outer query can reference them identically. Cost
+ *  measures are pre-aggregated; downstream SUM(cost) is SUM-of-SUMs (correct
+ *  for SUM under associativity).
+ *
+ *  Caller is responsible for eligibility — the outer query must NOT reference
+ *  any column not in the rollup schema (e.g. resource_id, description). */
+function buildRollupSelectSource(rollupSource: { readonly paths: readonly string[]; readonly schema: RollupSchema }): string {
+  const { paths, schema } = rollupSource;
+  const escapedPaths = paths.map(p => `'${p.replaceAll("'", "''")}'`).join(', ');
+  const cols = [
+    ...schema.builtInFields,
+    ...schema.tagColumns,
+    'cost',
+    'list_cost',
+    'usage_amount',
+    'row_count',
+  ];
+  return `(
+    SELECT ${cols.join(', ')}
+    FROM read_parquet([${escapedPaths}])
+  )`;
+}
+
 function buildFromClause(
   parquetSource: string,
   dimensions: DimensionsConfig,
@@ -350,7 +382,12 @@ function buildFromClause(
 }
 
 export function buildSource(opts: BuildSourceOptions): string {
-  const { dataDir, tier, dimensions, orgAccountsPath, periods, costMetric = 'unblended', availableColumns, costPerspective, includeRawTags, slim } = opts;
+  const { dataDir, tier, dimensions, orgAccountsPath, periods, costMetric = 'unblended', availableColumns, costPerspective, includeRawTags, slim, rollupSource } = opts;
+
+  if (rollupSource !== undefined) {
+    return buildRollupSelectSource(rollupSource);
+  }
+
   const hasFallbacks = dimensions.tags.some(t => t.accountTagFallback !== undefined);
   const needsOrgJoin = hasFallbacks && orgAccountsPath !== undefined;
 
@@ -469,6 +506,75 @@ export interface QueryContextOptions {
   readonly costScope?: CostScopeConfig | undefined;
   readonly availableColumns?: ReadonlySet<string> | undefined;
   readonly materializedSource?: string | undefined;
+  /** When set, the desktop layer has determined a rollup is available for some
+   *  set of months. Per-query builders pass the schema + the set of fresh
+   *  periods through `tryRollupSourceFor()` to decide whether to use it. */
+  readonly rollupSchema?: RollupSchema | undefined;
+  readonly rollupFreshPeriods?: ReadonlySet<string> | undefined;
+}
+
+/** Collect every dimension id touched by a query: explicit group-by/dimension
+ *  selectors plus the keys of any filter map. Used to feed isRollupEligible. */
+function collectReferencedDimensionIds(
+  explicit: readonly DimensionId[],
+  filters: FilterMap,
+): readonly DimensionId[] {
+  const ids = new Set<DimensionId>(explicit);
+  for (const k of Object.keys(filters)) ids.add(k as DimensionId);
+  return [...ids];
+}
+
+/** Decide whether the rollup can satisfy a query and return a `rollupSource`
+ *  ready to pass into buildSource(). Returns undefined when the query must use
+ *  raw — the caller falls through to the normal raw path.
+ *
+ *  Conditions for "yes":
+ *   1. tier is daily (rollup is daily-only)
+ *   2. opts.rollupSchema is configured
+ *   3. every required period has a fresh rollup
+ *   4. the query references only dimensions the rollup carries (no resource_id,
+ *      no description, no disabled built-ins)
+ *   5. cost-scope rules don't reference rollup-incompatible dimensions */
+function tryRollupSourceFor(args: {
+  readonly tier: string;
+  readonly dataDir: string;
+  readonly periods: readonly string[];
+  readonly opts: QueryContextOptions;
+  readonly referencedDimensionIds: readonly DimensionId[];
+  readonly extraReferencedFields?: readonly string[];
+  readonly needsRawRows?: boolean;
+}): { readonly paths: readonly string[]; readonly schema: RollupSchema } | undefined {
+  const { tier, dataDir, periods, opts, referencedDimensionIds, extraReferencedFields, needsRawRows } = args;
+  if (tier !== 'daily') return undefined;
+  if (opts.rollupSchema === undefined || opts.rollupFreshPeriods === undefined) return undefined;
+  if (periods.length === 0) return undefined;
+  for (const p of periods) {
+    if (!opts.rollupFreshPeriods.has(p)) return undefined;
+  }
+  if (!isRollupEligible({
+    schema: opts.rollupSchema,
+    dimensions: opts.dimensions,
+    referencedDimensionIds,
+    extraReferencedFields: extraReferencedFields ?? [],
+    needsRawRows: needsRawRows ?? false,
+    costScope: opts.costScope,
+  })) return undefined;
+
+  const paths = periods.map(p => rollupParquetPath(dataDir, p));
+  return { paths, schema: opts.rollupSchema };
+}
+
+interface RollupHint {
+  /** Dimension ids referenced by the query (filters, group-by, entity).
+   *  Used to decide whether the query is rollup-eligible. */
+  readonly referencedDimensionIds: readonly DimensionId[];
+  /** Raw fields the outer SQL references directly, bypassing dimension
+   *  resolution (e.g. line_item_type). If any aren't carried by the rollup
+   *  schema, eligibility fails. */
+  readonly extraReferencedFields?: readonly string[];
+  /** When true, the caller needs raw rows (per-resource detail, raw tag
+   *  detection). Forces raw. */
+  readonly needsRawRows?: boolean;
 }
 
 function setupQuery(
@@ -476,6 +582,7 @@ function setupQuery(
   tier: string,
   opts: QueryContextOptions,
   extraSourceOpts?: Partial<BuildSourceOptions>,
+  rollupHint?: RollupHint,
 ): CommonQuerySetup {
   const { dataDir, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns, materializedSource } = opts;
   const qb = new QueryBuilder();
@@ -493,7 +600,24 @@ function setupQuery(
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const resolvedTier = effectiveTier(tier, params.dateRange);
-  const source = buildSource({ dataDir, tier: resolvedTier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, ...extraSourceOpts });
+
+  const rollupSource = rollupHint === undefined
+    ? undefined
+    : tryRollupSourceFor({
+        tier: resolvedTier,
+        dataDir,
+        periods,
+        opts,
+        referencedDimensionIds: rollupHint.referencedDimensionIds,
+        extraReferencedFields: rollupHint.extraReferencedFields ?? [],
+        needsRawRows: rollupHint.needsRawRows ?? false,
+      });
+
+  const source = buildSource({
+    dataDir, tier: resolvedTier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective,
+    ...extraSourceOpts,
+    rollupSource,
+  });
   return { qb, filterClauses, exclusionClauses, source, costMetric };
 }
 
@@ -504,7 +628,11 @@ export function buildCostQuery(
 ): ParameterizedQuery {
   assertFiniteNumber(topN, 'topN');
   const costTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
-  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, costTier, opts);
+  const referencedDimensionIds = collectReferencedDimensionIds([params.groupBy], params.filters);
+  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, costTier, opts, undefined, {
+    referencedDimensionIds,
+    extraReferencedFields: ['service'],
+  });
   const groupByResolved = resolveField(params.groupBy, opts.dimensions);
 
   const whereConditions = [
@@ -590,7 +718,18 @@ export function buildTrendQuery(
     const previousPeriods = computePeriodsInRange({ start: prevStartIso, end: prevEndIso });
     const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
     const periods = availablePeriods === undefined ? required : required.filter(p => availablePeriods.includes(p));
-    source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective });
+
+    const referencedDimensionIds = collectReferencedDimensionIds([params.groupBy], params.filters);
+    const rollupSource = tryRollupSourceFor({
+      tier: 'daily',
+      dataDir,
+      periods,
+      opts,
+      referencedDimensionIds,
+      extraReferencedFields: [],
+    });
+
+    source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, rollupSource });
   } else {
     source = materializedSource;
     exclusionClauses = [];
@@ -776,7 +915,10 @@ export function buildDailyCostsQuery(
 ): ParameterizedQuery {
   const dailyTier = params.granularity === 'hourly' ? 'hourly' : 'daily';
   const resolvedTier = effectiveTier(dailyTier, params.dateRange);
-  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, dailyTier, opts);
+  const referencedDimensionIds = collectReferencedDimensionIds([params.groupBy], params.filters);
+  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, dailyTier, opts, undefined, {
+    referencedDimensionIds,
+  });
   const groupByResolved = resolveField(params.groupBy, opts.dimensions);
 
   const whereConditions = [
@@ -813,7 +955,12 @@ export function buildEntityDetailQuery(
   const granularity = params.granularity ?? 'daily';
   const tier = granularity === 'hourly' ? 'hourly' : 'daily';
   const resolvedTier = effectiveTier(tier, params.dateRange);
-  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, tier, opts);
+  const referencedDimensionIds = collectReferencedDimensionIds([params.dimension], params.filters);
+  const { qb, filterClauses, exclusionClauses, source } = setupQuery(params, tier, opts, undefined, {
+    referencedDimensionIds,
+    // entity detail outputs `service`, `account_id`, `account_name` columns;
+    // these are all in the rollup, no extra raw fields needed.
+  });
   const dimResolved = resolveField(params.dimension, opts.dimensions);
 
   // Same display-name collision treatment for the entity selector itself: if

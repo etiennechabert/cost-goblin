@@ -41,8 +41,13 @@ export function registerTrendHandlers(app: AppContext): void {
     const fullRange = { start: prevStart, end: params.dateRange.end };
     const matSource = materializedBase.getSource(fullRange, 'daily');
     const isMat = matSource !== undefined;
+    const rollup = isMat ? undefined : await app.getRollupAvailability();
 
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
+    const qcOpts: QueryContextOptions = {
+      dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available,
+      accountReverseMap, costScope, availableColumns, materializedSource: matSource,
+      ...(rollup === undefined ? {} : { rollupSchema: rollup.schema, rollupFreshPeriods: rollup.fresh }),
+    };
     const { sql, params: queryParams } = buildTrendQuery(params, qcOpts);
     logger.info('query:trends', { groupBy: params.groupBy, materialized: isMat });
 

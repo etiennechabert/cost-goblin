@@ -19,7 +19,12 @@ import {
   DEFAULT_LAG_DAYS,
   logger,
   isStringRecord,
+  deriveRollupSchema,
+  computeRollupAvailability,
+  buildPendingRollups,
+  dropStaleManifestEntries,
 } from '@costgoblin/core';
+import type { RollupSchema } from '@costgoblin/core';
 import { buildAccountReverseMap } from './query-utils.js';
 import type {
   BuiltInDimension,
@@ -122,6 +127,9 @@ export interface AppState {
   accountReverseMap: Map<string, readonly string[]> | null;
   regionMap: Map<string, RegionEnrichment> | null;
   orgAccountsPath: string | undefined | null;
+  /** Cached rollup availability — computed lazily, invalidated when dims or
+   *  cost scope change, refreshed after sync completes. */
+  rollupAvailability: { schema: RollupSchema; fresh: ReadonlySet<string> } | null;
 }
 
 export interface AppContext {
@@ -159,6 +167,13 @@ export interface AppContext {
   readonly invalidateCostScope: () => void;
   readonly invalidateColumnCache: () => void;
   readonly warmupBase: () => void;
+  /** Returns the current rollup schema + the set of fresh-on-disk periods.
+   *  Lazy: computes on first call, cached until invalidated. */
+  readonly getRollupAvailability: () => Promise<{ schema: RollupSchema; fresh: ReadonlySet<string> }>;
+  /** Build any rollup that's missing or stale. Called after sync completes
+   *  (with the synced periods) and lazily from query handlers when a query
+   *  would hit a stale period. */
+  readonly buildRollups: (periods?: readonly string[]) => Promise<readonly string[]>;
 }
 
 async function loadAccountCsv(
@@ -243,6 +258,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     accountReverseMap: null,
     regionMap: null,
     orgAccountsPath: null,
+    rollupAvailability: null,
   };
 
   async function getConfig(): Promise<CostGoblinConfig> {
@@ -494,6 +510,52 @@ export function createAppContext(ctx: IpcContext): AppContext {
     }
   }
 
+  async function deriveSchemaForRollup(): Promise<RollupSchema> {
+    // Use the user-facing dimensions (NOT query-enriched) — we want the raw
+    // tag list, not SSM-derived enrichment, to drive the rollup shape.
+    const dims = await getDimensions();
+    const costScope = await getCostScope().catch(() => undefined);
+    const metric = costScope?.costMetric ?? 'unblended';
+    const perspective = costScope?.costPerspective ?? 'gross';
+    return deriveRollupSchema(dims, metric, perspective);
+  }
+
+  async function getRollupAvailability(): Promise<{ schema: RollupSchema; fresh: ReadonlySet<string> }> {
+    if (state.rollupAvailability !== null) return state.rollupAvailability;
+    const schema = await deriveSchemaForRollup();
+    const availability = await computeRollupAvailability(ctx.dataDir, schema);
+    const cached = { schema: availability.schema, fresh: availability.fresh };
+    state.rollupAvailability = cached;
+    return cached;
+  }
+
+  async function buildRollups(periods?: readonly string[]): Promise<readonly string[]> {
+    try {
+      const schema = await deriveSchemaForRollup();
+      // Drop manifest entries from any older schema before rebuilding under the
+      // new one. The on-disk parquet files get overwritten as we go.
+      await dropStaleManifestEntries(ctx.dataDir, schema);
+      const availableColumns = await getAvailableColumns('daily');
+      const built = await buildPendingRollups({
+        dataDir: ctx.dataDir,
+        schema,
+        availableColumns,
+        runQuery: (sql) => ctx.db.runQuery(sql),
+        ...(periods === undefined ? {} : { periods }),
+      });
+      // Refresh cached availability so subsequent queries see the new files.
+      const refreshed = await computeRollupAvailability(ctx.dataDir, schema);
+      state.rollupAvailability = { schema: refreshed.schema, fresh: refreshed.fresh };
+      if (built.length > 0) {
+        logger.info('rollup-built-batch', { count: built.length, periods: built });
+      }
+      return built;
+    } catch (err: unknown) {
+      logger.warn(`buildRollups: ${err instanceof Error ? err.message : String(err)}`);
+      return [];
+    }
+  }
+
   return {
     ctx,
     state,
@@ -515,15 +577,24 @@ export function createAppContext(ctx: IpcContext): AppContext {
     invalidateConfig: () => { state.config = null; },
     invalidateDimensions: () => {
       state.dimensions = null; state.accountMap = null; state.accountReverseMap = null; state.regionMap = null; state.orgAccountsPath = null;
+      // Schema changes — drop rollup availability so the next query sees the
+      // post-rebuild state, then rebuild in the background.
+      state.rollupAvailability = null;
       void materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); }).then(() => { void warmupBase(); });
+      void buildRollups();
     },
     invalidateViews: () => { state.views = null; },
     invalidateCostScope: () => {
       state.costScope = null;
+      // Cost metric / perspective live in the cost scope; rollup invalidates too.
+      state.rollupAvailability = null;
       void materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); }).then(() => { void warmupBase(); });
+      void buildRollups();
     },
     invalidateColumnCache: () => { columnCache.clear(); },
     warmupBase: () => { resultCache.clear(); void warmupBase(); },
+    getRollupAvailability,
+    buildRollups,
   };
 }
 
