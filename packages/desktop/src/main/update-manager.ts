@@ -2,6 +2,7 @@ import pkg from 'electron-updater';
 const { autoUpdater } = pkg;
 import { logger, isStringRecord } from '@costgoblin/core';
 import type { UpdateInfo, UpdateStatus } from '@costgoblin/core';
+import { notifyUpdateAvailable, notifyUpdateDownloaded } from './notification-manager.js';
 
 type StatusListener = (status: UpdateStatus) => void;
 
@@ -55,6 +56,7 @@ export function initAutoUpdater(): void {
   updater.on('update-available', (info) => {
     currentInfo = toUpdateInfo(info);
     setStatus({ state: 'available', info: currentInfo });
+    notifyUpdateAvailable(info.version);
   });
 
   updater.on('update-not-available', () => {
@@ -70,6 +72,7 @@ export function initAutoUpdater(): void {
     const downloadedInfo = toUpdateInfo(info);
     currentInfo = downloadedInfo;
     setStatus({ state: 'downloaded', info: downloadedInfo });
+    notifyUpdateDownloaded(info.version);
   });
 
   updater.on('error', (err) => {
