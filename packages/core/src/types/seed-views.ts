@@ -12,6 +12,11 @@ export const OVERVIEW_SEED_VIEW: ViewSpec = {
   rows: [
     {
       widgets: [
+        { id: 'overview-ai-insight', type: 'ai-insight', size: 'full' },
+      ],
+    },
+    {
+      widgets: [
         { id: 'overview-summary', type: 'summary', size: 'small', metric: 'total' },
         { id: 'overview-histogram', type: 'stackedBar', size: 'large', groupBy: asDimensionId('service') },
       ],

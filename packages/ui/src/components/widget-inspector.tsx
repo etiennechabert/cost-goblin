@@ -50,6 +50,8 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
         type: w.type,
         ...(w.enabledColumns === undefined ? {} : { enabledColumns: w.enabledColumns }),
       };
+    case 'ai-insight':
+      return { ...common, type: w.type };
   }
 }
 
@@ -77,6 +79,8 @@ function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: str
         type,
         enabledColumns: [...SEED_TABLE_ENABLED],
       };
+    case 'ai-insight':
+      return { ...base, type };
   }
 }
 

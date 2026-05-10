@@ -18,7 +18,7 @@ import {
 } from './validator.js';
 
 const WIDGET_TYPES: readonly WidgetType[] = [
-  'summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table',
+  'summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table', 'ai-insight',
 ];
 
 const WIDGET_SIZES: readonly WidgetSize[] = ['small', 'medium', 'large', 'full'];
@@ -156,6 +156,8 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
       return validateTopNWidget(raw, ctx, base, type);
     case 'table':
       return validateTableWidget(raw, ctx, base);
+    case 'ai-insight':
+      return { type: 'ai-insight', ...base };
   }
 }
 

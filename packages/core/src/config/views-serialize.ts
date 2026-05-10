@@ -46,6 +46,8 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
     case 'table':
       if (w.enabledColumns !== undefined && w.enabledColumns.length > 0) base['enabledColumns'] = [...w.enabledColumns];
       return base;
+    case 'ai-insight':
+      return base;
   }
 }
 

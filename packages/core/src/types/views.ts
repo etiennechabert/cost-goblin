@@ -58,6 +58,9 @@ export type WidgetSpec =
   | (WidgetBase & {
       readonly type: 'table';
       readonly enabledColumns?: readonly string[] | undefined;
+    })
+  | (WidgetBase & {
+      readonly type: 'ai-insight';
     });
 
 export type WidgetType = WidgetSpec['type'];
