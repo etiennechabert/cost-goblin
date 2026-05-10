@@ -48,6 +48,13 @@ export interface ExplorerRowsParams extends ExplorerBaseParams {
   readonly sort?: ExplorerSort;
   /** Cap on returned sample rows. Clamped server-side to avoid IPC blowup. */
   readonly rowLimit: number;
+  /** Number of rows per page. Defaults to 1000 server-side. Clamped to
+   *  prevent excessive memory use (max 2000). */
+  readonly pageSize?: number | undefined;
+  /** Opaque cursor for fetching the next page. Undefined means first page.
+   *  Returned by ExplorerRowsResult.cursor and passed back for subsequent
+   *  pages. Server decodes this to an offset. */
+  readonly cursor?: string | undefined;
 }
 
 export interface ExplorerDailyRow {
