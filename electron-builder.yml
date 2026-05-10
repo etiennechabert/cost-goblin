@@ -41,6 +41,18 @@ linux:
       arch:
         - x64
         - arm64
+    - target: snap
+      arch:
+        - x64
+        - arm64
+snap:
+  confinement: classic
+  summary: Cloud cost visibility for AWS billing analysis
+  description: |
+    CostGoblin is a desktop app for analyzing AWS cloud costs locally.
+    It syncs billing data from S3, stores it as Parquet, and enables
+    fast querying with DuckDB. Designed for FinOps engineers and platform teams.
+  grade: stable
 publish:
   provider: github
   vPrefixedTagName: true
