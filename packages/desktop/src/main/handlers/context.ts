@@ -153,7 +153,6 @@ export interface AppContext {
   readonly materializedBase: MaterializedBase;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly runPreparedQuery: (sql: string, params: readonly unknown[], materialized?: boolean) => Promise<RawRow[]>;
-  readonly runStreamingQuery: (sql: string, onChunk: (rows: RawRow[], hasMore: boolean) => void, onStarted?: () => void) => Promise<void>;
   readonly invalidateConfig: () => void;
   readonly invalidateDimensions: () => void;
   readonly invalidateViews: () => void;
@@ -513,9 +512,6 @@ export function createAppContext(ctx: IpcContext): AppContext {
     materializedBase,
     runQuery,
     runPreparedQuery,
-    runStreamingQuery: (sql: string, onChunk: (rows: RawRow[], hasMore: boolean) => void, onStarted?: () => void): Promise<void> => {
-      return ctx.db.queryStreaming(sql, onChunk, onStarted);
-    },
     invalidateConfig: () => { state.config = null; },
     invalidateDimensions: () => {
       state.dimensions = null; state.accountMap = null; state.accountReverseMap = null; state.regionMap = null; state.orgAccountsPath = null;

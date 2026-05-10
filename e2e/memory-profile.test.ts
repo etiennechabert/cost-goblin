@@ -307,18 +307,34 @@ test.describe('Memory Profiling', () => {
       await paginatedPage.getByRole('button', { name: 'Explorer' }).click();
       await expect(paginatedPage.getByText('Inspect the raw CUR dataset.')).toBeVisible({ timeout: 5000 });
 
-      // Wait for initial load to settle
-      await waitForQuerySettle(paginatedPage);
-
-      // Monitor memory with paginated loading (just initial page)
+      // Monitor memory with paginated loading - same data amount as baseline
+      // Start monitoring BEFORE page loads to capture loading peak
       await monitorMemory(
         paginatedPage,
-        'paginated (initial page load)',
+        'paginated (initial page + load more)',
         async () => {
-          // Just load the first page - pagination keeps memory bounded
+          // Load initial page
           await waitForQuerySettle(paginatedPage);
 
-          // Verify pagination UI is present (use the same regex as explorer-pagination test)
+          // Click "Load More" the same number of times as baseline (10 pages total)
+          let loadMoreCount = 0;
+          const maxLoads = 10; // Same as baseline
+
+          while (loadMoreCount < maxLoads) {
+            const loadMoreBtn = paginatedPage.getByRole('button', { name: 'Load More' });
+            const isVisible = await loadMoreBtn.isVisible().catch(() => false);
+
+            if (!isVisible) {
+              // No more data to load
+              break;
+            }
+
+            await loadMoreBtn.click();
+            await waitForQuerySettle(paginatedPage);
+            loadMoreCount++;
+          }
+
+          // Verify pagination UI is present
           const rowCount = paginatedPage.getByText(/Showing .* of .* rows/).first();
           await expect(rowCount).toBeVisible({ timeout: 5000 });
         },
