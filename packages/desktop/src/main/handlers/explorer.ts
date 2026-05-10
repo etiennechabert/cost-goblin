@@ -38,6 +38,7 @@ import type {
 } from '@costgoblin/core';
 import { type AppContext, prefsPath } from './context.js';
 import { buildAccountReverseMap, toNum, toStr } from './query-utils.js';
+import { parseCursor, encodeCursor, clampPageSize } from './pagination-utils.js';
 
 const DEFAULT_WINDOW_DAYS = 30;
 const MAX_ROW_LIMIT = 1000;
@@ -495,7 +496,14 @@ export function registerExplorerHandlers(app: AppContext): void {
   ipcMain.handle('explorer:query-rows', async (_event, payload: unknown): Promise<ExplorerRowsResult> => {
     const params = payload as ExplorerRowsParams;
     const qc = await prepareQueryContext(app, params);
-    const rowLimit = clampRowLimit(params.rowLimit);
+
+    // Parse pagination parameters
+    const offset = parseCursor(params.cursor);
+    const pageSize = params.pageSize !== undefined
+      ? clampPageSize(params.pageSize, 2000)
+      : 1000;
+    // For backward compatibility, also respect rowLimit - take the minimum
+    const effectiveLimit = Math.min(clampRowLimit(params.rowLimit), pageSize);
 
     if (qc.empty) return { sampleRows: [], tagColumns: qc.tagColumns, totalRows: 0, hasMore: false };
 
@@ -525,7 +533,8 @@ export function registerExplorerHandlers(app: AppContext): void {
       FROM ${qc.source}
       ${qc.whereStr}
       ORDER BY ${orderBy}
-      LIMIT ${String(rowLimit)}
+      LIMIT ${String(effectiveLimit)}
+      OFFSET ${String(offset)}
     `.trim();
 
     let totalRows = 0;
@@ -571,7 +580,17 @@ export function registerExplorerHandlers(app: AppContext): void {
       logger.warn(`explorer: sample query failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    return { sampleRows, tagColumns: qc.tagColumns, totalRows, hasMore: false };
+    // Calculate pagination metadata
+    const hasMore = (offset + effectiveLimit) < totalRows;
+    const nextCursor = hasMore ? encodeCursor(offset + effectiveLimit) : undefined;
+
+    return {
+      sampleRows,
+      tagColumns: qc.tagColumns,
+      totalRows,
+      hasMore,
+      cursor: nextCursor,
+    };
   });
 
   ipcMain.handle('explorer:query-aggregated-table', async (_event, payload: unknown): Promise<AggregatedTableResult> => {
