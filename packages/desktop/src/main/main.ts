@@ -19,6 +19,7 @@ import { initAutoUpdater, checkForUpdates } from './update-manager.js';
 import { registerUpdateHandlers } from './handlers/update.js';
 import { validateUrl, SecurityError } from './url-validator.js';
 import { validateProfileLabel } from './validators/path-validator.js';
+import { resolveConfigDir, resolveDataDir } from './xdg-paths.js';
 
 // Log level: debug in dev (NODE_ENV=development or electron-vite serving
 // the renderer), or when COSTGOBLIN_LOG_LEVEL=debug. Otherwise info.
@@ -148,8 +149,8 @@ function installCSP(): void {
 
 async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<void> {
   const userDataPath = app.getPath('userData');
-  const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
-  const configBase = process.env['COSTGOBLIN_CONFIG_DIR'] ?? join(userDataPath, 'config');
+  const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? resolveDataDir(join(userDataPath, 'data'));
+  const configBase = process.env['COSTGOBLIN_CONFIG_DIR'] ?? resolveConfigDir(join(userDataPath, 'config'));
 
   const appContext = registerIpcHandlers({
     db,
