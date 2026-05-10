@@ -21,6 +21,7 @@ import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { usePaginatedQuery } from '../hooks/use-paginated-query.js';
 import type { PaginatedResult } from '../hooks/use-paginated-query.js';
 import { formatDollars } from '../components/format.js';
+import { Button } from '../components/ui/button.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
 import { DataTable } from '../components/data-table.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
@@ -494,6 +495,20 @@ export function ExplorerView(): React.JSX.Element {
             csvFilename={`costgoblin-explorer-${dateRange.start}-${dateRange.end}`}
             renderExpandedRow={(row) => <RowDetail row={row} allColumns={availableColumns} />}
           />
+          {rowsState.status === 'success' && rowsState.hasMore && (
+            <div className="flex items-center justify-center gap-3 pt-4">
+              <Button
+                variant="outline"
+                size="default"
+                onClick={rowsState.loadMore}
+              >
+                Load More
+              </Button>
+              <span className="text-xs text-text-muted tabular-nums">
+                Showing {rowsState.data.length.toLocaleString()} of {(overviewData?.totalRows ?? 0).toLocaleString()} rows
+              </span>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
