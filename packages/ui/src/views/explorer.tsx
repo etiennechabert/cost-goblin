@@ -111,6 +111,7 @@ export function ExplorerView(): React.JSX.Element {
   const overviewDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const overviewReqIdRef = useRef(0);
   const prefsLoadedRef = useRef(false);
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // Store ALL dims (not just enabled). The filter bar normally hides
@@ -258,6 +259,42 @@ export function ExplorerView(): React.JSX.Element {
       if (overviewDebounceRef.current !== null) clearTimeout(overviewDebounceRef.current);
     };
   }, [filters, dateRange, granularity, applyCostScope, costMetric, costPerspective, runOverview]);
+
+  // Infinite scroll — auto-load more rows when sentinel becomes visible
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    if (sentinel === null) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry === undefined) return;
+
+        // Trigger load when sentinel is visible and we have more data to load.
+        // State transitions prevent duplicate loads: calling loadMore() sets
+        // status to 'loading', which fails the 'success' check on subsequent
+        // intersection events until the fetch completes.
+        if (
+          entry.isIntersecting &&
+          rowsState.status === 'success' &&
+          rowsState.hasMore
+        ) {
+          rowsState.loadMore();
+        }
+      },
+      {
+        // Trigger when sentinel is 200px from entering viewport (smooth preload)
+        rootMargin: '200px',
+        threshold: 0,
+      },
+    );
+
+    observer.observe(sentinel);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [rowsState]);
 
   const tagColumns = overview.data?.tagColumns ?? [];
   const defaultColumns = useMemo<readonly TableColumn<ExplorerSampleRow>[]>(() => [
@@ -496,18 +533,22 @@ export function ExplorerView(): React.JSX.Element {
             renderExpandedRow={(row) => <RowDetail row={row} allColumns={availableColumns} />}
           />
           {rowsState.status === 'success' && rowsState.hasMore && (
-            <div className="flex items-center justify-center gap-3 pt-4">
-              <Button
-                variant="outline"
-                size="default"
-                onClick={rowsState.loadMore}
-              >
-                Load More
-              </Button>
-              <span className="text-xs text-text-muted tabular-nums">
-                Showing {rowsState.data.length.toLocaleString()} of {(overviewData?.totalRows ?? 0).toLocaleString()} rows
-              </span>
-            </div>
+            <>
+              {/* Infinite scroll sentinel — triggers auto-load when visible */}
+              <div ref={loadMoreSentinelRef} className="h-px" aria-hidden="true" />
+              <div className="flex items-center justify-center gap-3 pt-4">
+                <Button
+                  variant="outline"
+                  size="default"
+                  onClick={rowsState.loadMore}
+                >
+                  Load More
+                </Button>
+                <span className="text-xs text-text-muted tabular-nums">
+                  Showing {rowsState.data.length.toLocaleString()} of {(overviewData?.totalRows ?? 0).toLocaleString()} rows
+                </span>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
