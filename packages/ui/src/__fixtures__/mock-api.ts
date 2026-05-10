@@ -333,6 +333,8 @@ export class MockCostApi implements CostApi {
         { id: 'tag_team', label: 'Team' },
         { id: 'tag_env', label: 'Environment' },
       ],
+      totalRows: mockRows.length,
+      hasMore: false,
     });
   }
   queryAggregatedTable(): Promise<import('@costgoblin/core/browser').AggregatedTableResult> {

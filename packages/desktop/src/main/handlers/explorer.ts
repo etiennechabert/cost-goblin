@@ -497,7 +497,7 @@ export function registerExplorerHandlers(app: AppContext): void {
     const qc = await prepareQueryContext(app, params);
     const rowLimit = clampRowLimit(params.rowLimit);
 
-    if (qc.empty) return { sampleRows: [], tagColumns: qc.tagColumns };
+    if (qc.empty) return { sampleRows: [], tagColumns: qc.tagColumns, totalRows: 0, hasMore: false };
 
     const tagSelectSql = qc.tagColumns.length > 0
       ? qc.tagColumns.map(t => `COALESCE(${t.id}, '') AS ${t.id}`).join(',\n          ')
@@ -507,6 +507,12 @@ export function registerExplorerHandlers(app: AppContext): void {
     // to VARCHAR so it survives IPC cleanly. Daily has no usage_hour
     // column, so emit a literal empty string.
     const hourSelect = qc.tier === 'hourly' ? `usage_hour::VARCHAR AS usage_hour` : `'' AS usage_hour`;
+
+    const countSql = `
+      SELECT CAST(COUNT(*) AS DOUBLE) AS n FROM ${qc.source}
+      ${qc.whereStr}
+    `.trim();
+
     const sampleSql = `
       SELECT
         usage_date::VARCHAR AS usage_date,
@@ -521,6 +527,17 @@ export function registerExplorerHandlers(app: AppContext): void {
       ORDER BY ${orderBy}
       LIMIT ${String(rowLimit)}
     `.trim();
+
+    let totalRows = 0;
+    try {
+      const countRows = await runQuery(countSql);
+      const r = countRows[0];
+      if (r !== undefined) {
+        totalRows = toNum(r['n']);
+      }
+    } catch (err) {
+      logger.warn(`explorer: count query failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     let sampleRows: readonly ExplorerSampleRow[] = [];
     try {
@@ -554,7 +571,7 @@ export function registerExplorerHandlers(app: AppContext): void {
       logger.warn(`explorer: sample query failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    return { sampleRows, tagColumns: qc.tagColumns };
+    return { sampleRows, tagColumns: qc.tagColumns, totalRows, hasMore: false };
   });
 
   ipcMain.handle('explorer:query-aggregated-table', async (_event, payload: unknown): Promise<AggregatedTableResult> => {
