@@ -1,5 +1,4 @@
-import type { AnomalyDetailResult } from '@costgoblin/core/browser';
-import { asAnomalyId, asEntityRef, asDateString } from '@costgoblin/core/browser';
+import type { Anomaly } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { formatDollars, formatPercent, formatDate } from './format.js';
@@ -13,19 +12,19 @@ import {
 } from './ui/dialog.js';
 
 export interface AnomalyDetailModalProps {
-  anomalyId: string;
-  entity: string;
-  service: string;
-  detectedDate: string;
-  lookbackDays: number;
-  isOpen: boolean;
-  onClose: () => void;
-  onDismiss: (anomalyId: string) => void;
+  readonly anomaly: Anomaly;
+  readonly lookbackDays: number;
+  readonly stddevThreshold: number;
+  readonly isOpen: boolean;
+  readonly onClose: () => void;
+  readonly onDismiss: () => void;
 }
 
-function MiniHistogram({
-  dailyCosts,
-}: Readonly<{ dailyCosts: AnomalyDetailResult['dailyCosts'] }>) {
+interface MiniHistogramProps {
+  readonly dailyCosts: readonly { date: string; cost: number; isAnomaly: boolean }[];
+}
+
+function MiniHistogram({ dailyCosts }: MiniHistogramProps) {
   const last14 = dailyCosts.slice(-14);
   const max = last14.reduce((m, d) => Math.max(m, d.cost), 0);
 
@@ -33,7 +32,6 @@ function MiniHistogram({
     <div className="flex items-end gap-0.5" style={{ height: '64px' }}>
       {last14.map((day) => {
         const heightPct = max > 0 ? (day.cost / max) * 100 : 0;
-        const isAnomalyDay = day.isAnomaly;
         return (
           <div
             key={day.date}
@@ -42,12 +40,12 @@ function MiniHistogram({
           >
             <div
               className={`w-full rounded-t-sm transition-colors ${
-                isAnomalyDay
+                day.isAnomaly
                   ? 'bg-negative group-hover:bg-negative-hover'
                   : 'bg-accent group-hover:bg-accent-hover'
               }`}
               style={{ height: `${String(heightPct)}%`, minHeight: heightPct > 0 ? '2px' : '0' }}
-              title={`${formatDate(day.date)}: ${formatDollars(day.cost)}${isAnomalyDay ? ' (anomaly)' : ''}`}
+              title={`${formatDate(day.date)}: ${formatDollars(day.cost)}${day.isAnomaly ? ' (anomaly)' : ''}`}
             />
           </div>
         );
@@ -57,62 +55,83 @@ function MiniHistogram({
 }
 
 export function AnomalyDetailModal({
-  anomalyId,
-  entity,
-  service,
-  detectedDate,
+  anomaly,
   lookbackDays,
+  stddevThreshold,
   isOpen,
   onClose,
   onDismiss,
-}: Readonly<AnomalyDetailModalProps>) {
+}: AnomalyDetailModalProps) {
   const api = useCostApi();
 
   const detailQuery = useQuery(
     () =>
       api.queryAnomalyDetail({
-        anomalyId: asAnomalyId(anomalyId),
-        entity: asEntityRef(entity),
-        service,
-        detectedDate: asDateString(detectedDate),
+        anomalyId: anomaly.id,
+        dimension: anomaly.dimension,
+        entity: anomaly.entity,
+        service: anomaly.service,
+        detectedDate: anomaly.detectedDate,
         lookbackDays,
+        stddevThreshold,
       }),
-    [anomalyId, entity, service, detectedDate, lookbackDays, api],
+    [api, anomaly.id, anomaly.dimension, anomaly.entity, anomaly.service, anomaly.detectedDate, lookbackDays, stddevThreshold],
   );
 
-  const data: AnomalyDetailResult | null =
-    detailQuery.status === 'success' ? detailQuery.data : null;
-
-  const anomaly = data?.anomaly ?? null;
-  const top5Resources = data?.affectedResources.slice(0, 5) ?? [];
-
   const handleDismiss = () => {
-    onDismiss(anomalyId);
+    onDismiss();
     onClose();
   };
+
+  const data = detailQuery.status === 'success' ? detailQuery.data : null;
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-w-2xl">
-        {/* Header */}
         <div className="mb-4 flex items-start justify-between gap-4">
           <div className="flex-1">
             <div className="flex items-center gap-2">
               <DialogTitle className="text-lg font-semibold text-text-primary">
-                {entity}
+                {anomaly.entity}
               </DialogTitle>
-              {anomaly !== null && <AnomalyBadge severity={anomaly.severity} />}
+              <AnomalyBadge severity={anomaly.severity} />
             </div>
             <DialogDescription className="mt-1 text-sm text-text-secondary">
-              {service} · Detected on {formatDate(detectedDate)}
+              {anomaly.service} · Detected on {formatDate(anomaly.detectedDate)}
             </DialogDescription>
           </div>
         </div>
 
-        {/* Body */}
         <div className="flex max-h-[60vh] flex-col gap-4 overflow-y-auto">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-3">
+              <p className="text-xs font-medium uppercase tracking-wider text-text-muted">Current Cost</p>
+              <p className="mt-1.5 text-xl font-semibold tabular-nums text-text-primary">
+                {formatDollars(anomaly.currentCost)}
+              </p>
+            </div>
+            <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-3">
+              <p className="text-xs font-medium uppercase tracking-wider text-text-muted">Expected Cost</p>
+              <p className="mt-1.5 text-xl font-semibold tabular-nums text-text-secondary">
+                {formatDollars(anomaly.expectedCost)}
+              </p>
+            </div>
+            <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-3">
+              <p className="text-xs font-medium uppercase tracking-wider text-text-muted">Increase</p>
+              <p className="mt-1.5 text-xl font-semibold tabular-nums text-negative">
+                {formatPercent(anomaly.percentIncrease)}
+              </p>
+            </div>
+            <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-3">
+              <p className="text-xs font-medium uppercase tracking-wider text-text-muted">Deviation</p>
+              <p className="mt-1.5 text-xl font-semibold tabular-nums text-text-primary">
+                {anomaly.deviation.toFixed(1)}σ
+              </p>
+            </div>
+          </div>
+
           {detailQuery.status === 'loading' && (
-            <p className="text-sm text-text-secondary">Loading anomaly details…</p>
+            <p className="text-sm text-text-secondary">Loading daily trend…</p>
           )}
           {detailQuery.status === 'error' && (
             <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">
@@ -120,48 +139,8 @@ export function AnomalyDetailModal({
             </div>
           )}
 
-          {data !== null && anomaly !== null && (
+          {data !== null && (
             <>
-              {/* Key Metrics */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-3">
-                  <p className="text-xs font-medium uppercase tracking-wider text-text-muted">
-                    Current Cost
-                  </p>
-                  <p className="mt-1.5 text-xl font-semibold tabular-nums text-text-primary">
-                    {formatDollars(anomaly.currentCost)}
-                  </p>
-                </div>
-
-                <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-3">
-                  <p className="text-xs font-medium uppercase tracking-wider text-text-muted">
-                    Expected Cost
-                  </p>
-                  <p className="mt-1.5 text-xl font-semibold tabular-nums text-text-secondary">
-                    {formatDollars(anomaly.expectedCost)}
-                  </p>
-                </div>
-
-                <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-3">
-                  <p className="text-xs font-medium uppercase tracking-wider text-text-muted">
-                    Increase
-                  </p>
-                  <p className="mt-1.5 text-xl font-semibold tabular-nums text-negative">
-                    {formatPercent(anomaly.percentIncrease)}
-                  </p>
-                </div>
-
-                <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-3">
-                  <p className="text-xs font-medium uppercase tracking-wider text-text-muted">
-                    Deviation
-                  </p>
-                  <p className="mt-1.5 text-xl font-semibold tabular-nums text-text-primary">
-                    {anomaly.deviation.toFixed(1)}σ
-                  </p>
-                </div>
-              </div>
-
-              {/* Statistical Context */}
               <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-3">
                 <p className="mb-2 text-xs font-medium uppercase tracking-wider text-text-muted">
                   Baseline Statistics ({lookbackDays}-day average)
@@ -169,20 +148,15 @@ export function AnomalyDetailModal({
                 <div className="flex gap-6 text-sm">
                   <div>
                     <span className="text-text-muted">Rolling Avg:</span>{' '}
-                    <span className="tabular-nums text-text-primary">
-                      {formatDollars(data.rollingAverage)}
-                    </span>
+                    <span className="tabular-nums text-text-primary">{formatDollars(data.rollingAverage)}</span>
                   </div>
                   <div>
                     <span className="text-text-muted">Std Dev:</span>{' '}
-                    <span className="tabular-nums text-text-primary">
-                      {formatDollars(data.standardDeviation)}
-                    </span>
+                    <span className="tabular-nums text-text-primary">{formatDollars(data.standardDeviation)}</span>
                   </div>
                 </div>
               </div>
 
-              {/* Daily Cost Trend */}
               {data.dailyCosts.length > 0 && (
                 <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-3">
                   <p className="mb-3 text-xs font-medium uppercase tracking-wider text-text-muted">
@@ -201,41 +175,15 @@ export function AnomalyDetailModal({
                   </div>
                 </div>
               )}
-
-              {/* Affected Resources */}
-              {top5Resources.length > 0 && (
-                <div className="rounded-xl border border-border bg-bg-secondary/50 px-4 py-3">
-                  <p className="mb-3 text-xs font-medium uppercase tracking-wider text-text-muted">
-                    Top 5 Affected Resources
-                  </p>
-                  <div className="flex flex-col gap-2">
-                    {top5Resources.map((resource) => (
-                      <div
-                        key={resource.resourceId}
-                        className="flex items-center justify-between gap-3 text-sm"
-                      >
-                        <span className="truncate font-mono text-xs text-text-secondary" title={resource.resourceId}>
-                          {resource.resourceId}
-                        </span>
-                        <span className="shrink-0 tabular-nums text-text-primary">
-                          {formatDollars(resource.cost)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </>
           )}
         </div>
 
-        {/* Actions */}
         <div className="mt-4 flex gap-2 border-t border-border pt-4">
           <button
             type="button"
             onClick={handleDismiss}
-            disabled={detailQuery.status === 'loading'}
-            className="flex-1 rounded-lg border border-border bg-bg-tertiary/50 px-3 py-2 text-sm font-medium text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex-1 rounded-lg border border-border bg-bg-tertiary/50 px-3 py-2 text-sm font-medium text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
           >
             Dismiss anomaly
           </button>

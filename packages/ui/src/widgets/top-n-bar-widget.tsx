@@ -7,7 +7,9 @@ import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import type { TopNBar } from '../components/top-n-bar-chart.js';
 import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import { asTagValue } from '@costgoblin/core/browser';
-import type { CostResult, DimensionId, AnomalyResult, AnomalySeverity, AnomalyId } from '@costgoblin/core/browser';
+import type { Anomaly, AnomalyResult, AnomalySeverity, CostResult, DimensionId } from '@costgoblin/core/browser';
+import type { AnomalyEntry } from '../components/top-n-bar-chart.js';
+import { ANOMALY_LOOKBACK_DAYS, ANOMALY_STDDEV_THRESHOLD } from '../lib/anomaly-constants.js';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, mergeFilters, hasSufficientCoverage } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
@@ -27,57 +29,30 @@ function buildPreviousCostMap(data: CostResult | null): ReadonlyMap<string, numb
   return new Map(data.rows.map(r => [r.entity, r.totalCost]));
 }
 
-function buildAnomaliesMap(data: AnomalyResult | null): ReadonlyMap<string, {
-  readonly count: number;
-  readonly severity: AnomalySeverity;
-  readonly anomalyId: AnomalyId;
-  readonly dimensionId: DimensionId;
-  readonly service: string;
-  readonly detectedDate: string;
-}> {
+const SEVERITY_RANK: Record<AnomalySeverity, number> = { low: 0, medium: 1, high: 2 };
+
+/** Group anomalies by entity, keeping a count and the most severe anomaly as
+ *  the badge's primary. Ties on severity are broken by the higher deviation. */
+function buildAnomaliesMap(data: AnomalyResult | null): ReadonlyMap<string, AnomalyEntry> {
   if (data === null || data.anomalies.length === 0) return new Map();
-  // Group anomalies by entity name and keep the data for the highest severity anomaly
-  const grouped = new Map<string, {
-    count: number;
-    severity: AnomalySeverity;
-    anomalyId: AnomalyId;
-    dimensionId: DimensionId;
-    service: string;
-    detectedDate: string;
-  }>();
+  const grouped = new Map<string, { count: number; primary: Anomaly }>();
   for (const anomaly of data.anomalies) {
     const existing = grouped.get(anomaly.entity);
     if (existing === undefined) {
-      grouped.set(anomaly.entity, {
-        count: 1,
-        severity: anomaly.severity,
-        anomalyId: anomaly.id,
-        dimensionId: anomaly.dimension,
-        service: anomaly.service,
-        detectedDate: anomaly.detectedDate,
-      });
-    } else {
-      // Increment count and upgrade severity if higher (keeping the higher severity anomaly's data)
-      const newSeverity = upgradeSeverity(existing.severity, anomaly.severity);
-      const keepNewAnomaly = newSeverity !== existing.severity && newSeverity === anomaly.severity;
-      grouped.set(anomaly.entity, {
-        count: existing.count + 1,
-        severity: newSeverity,
-        anomalyId: keepNewAnomaly ? anomaly.id : existing.anomalyId,
-        dimensionId: keepNewAnomaly ? anomaly.dimension : existing.dimensionId,
-        service: keepNewAnomaly ? anomaly.service : existing.service,
-        detectedDate: keepNewAnomaly ? anomaly.detectedDate : existing.detectedDate,
-      });
+      grouped.set(anomaly.entity, { count: 1, primary: anomaly });
+      continue;
     }
+    const incomingRank = SEVERITY_RANK[anomaly.severity];
+    const currentRank = SEVERITY_RANK[existing.primary.severity];
+    const promote =
+      incomingRank > currentRank ||
+      (incomingRank === currentRank && anomaly.deviation > existing.primary.deviation);
+    grouped.set(anomaly.entity, {
+      count: existing.count + 1,
+      primary: promote ? anomaly : existing.primary,
+    });
   }
   return grouped;
-}
-
-function upgradeSeverity(current: AnomalySeverity, incoming: AnomalySeverity): AnomalySeverity {
-  const severityOrder: readonly AnomalySeverity[] = ['low', 'medium', 'high'];
-  const currentIndex = severityOrder.indexOf(current);
-  const incomingIndex = severityOrder.indexOf(incoming);
-  return incomingIndex > currentIndex ? incoming : current;
 }
 
 export function TopNBarWidget({
@@ -89,6 +64,7 @@ export function TopNBarWidget({
   globalFilters,
   dimensions,
   anomaliesState,
+  onAnomalyDismissed,
   onSetFilter,
 }: WidgetCommonProps) {
   const api = useCostApi();
@@ -152,6 +128,9 @@ export function TopNBarWidget({
       externalHoveredName={focus.hoveredDimension === activeGroupBy ? focus.hoveredEntity : null}
       previousCosts={compareEnabled ? previousCosts : undefined}
       anomaliesByEntity={anomaliesByEntity.size > 0 ? anomaliesByEntity : undefined}
+      anomalyLookbackDays={ANOMALY_LOOKBACK_DAYS}
+      anomalyStddevThreshold={ANOMALY_STDDEV_THRESHOLD}
+      onAnomalyDismissed={onAnomalyDismissed}
     />
   );
 }

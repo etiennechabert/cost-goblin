@@ -3,6 +3,7 @@ import { LRUCache } from '../lru-cache.js';
 import { QueryLog } from '../query-log.js';
 import { MaterializedBase, configHash } from '../materialized-base.js';
 import {
+  asAnomalyId,
   asDimensionId,
   applyNormalizationRule,
   applyRegionFriendlyNames,
@@ -22,6 +23,7 @@ import {
 } from '@costgoblin/core';
 import { buildAccountReverseMap } from './query-utils.js';
 import type {
+  AnomalyId,
   BuiltInDimension,
   CostGoblinConfig,
   CostScopeConfig,
@@ -122,7 +124,7 @@ export interface AppState {
   accountReverseMap: Map<string, readonly string[]> | null;
   regionMap: Map<string, RegionEnrichment> | null;
   orgAccountsPath: string | undefined | null;
-  dismissedAnomalies: Set<import('@costgoblin/core').AnomalyId> | null;
+  dismissedAnomalies: Set<AnomalyId> | null;
 }
 
 export interface AppContext {
@@ -154,9 +156,9 @@ export interface AppContext {
   readonly materializedBase: MaterializedBase;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly runPreparedQuery: (sql: string, params: readonly unknown[], materialized?: boolean) => Promise<RawRow[]>;
-  readonly getDismissedAnomalies: () => Promise<ReadonlySet<import('@costgoblin/core').AnomalyId>>;
-  readonly dismissAnomaly: (id: import('@costgoblin/core').AnomalyId) => Promise<void>;
-  readonly restoreAnomaly: (id: import('@costgoblin/core').AnomalyId) => Promise<void>;
+  readonly getDismissedAnomalies: () => Promise<ReadonlySet<AnomalyId>>;
+  readonly dismissAnomaly: (id: AnomalyId) => Promise<void>;
+  readonly restoreAnomaly: (id: AnomalyId) => Promise<void>;
   readonly invalidateConfig: () => void;
   readonly invalidateDimensions: () => void;
   readonly invalidateViews: () => void;
@@ -459,44 +461,46 @@ export function createAppContext(ctx: IpcContext): AppContext {
     });
   };
 
-  async function getDismissedAnomalies(): Promise<ReadonlySet<import('@costgoblin/core').AnomalyId>> {
+  async function getDismissedAnomalies(): Promise<ReadonlySet<AnomalyId>> {
     if (state.dismissedAnomalies !== null) return state.dismissedAnomalies;
     const fs = await import('node:fs/promises');
-    const path = await prefsPath(ctx.dataDir, 'dismissed-anomalies');
     try {
-      const raw = await fs.readFile(path, 'utf-8');
+      const raw = await fs.readFile(await prefsPath(ctx.dataDir, 'dismissed-anomalies'), 'utf-8');
       const parsed: unknown = JSON.parse(raw);
-      const dismissed = new Set<import('@costgoblin/core').AnomalyId>();
+      const dismissed = new Set<AnomalyId>();
       if (Array.isArray(parsed)) {
         for (const item of parsed) {
-          if (typeof item === 'string') dismissed.add(item as import('@costgoblin/core').AnomalyId);
+          if (typeof item === 'string') dismissed.add(asAnomalyId(item));
         }
       }
       state.dismissedAnomalies = dismissed;
       return dismissed;
     } catch {
-      // File doesn't exist yet
       state.dismissedAnomalies = new Set();
       return state.dismissedAnomalies;
     }
   }
 
-  async function dismissAnomaly(id: import('@costgoblin/core').AnomalyId): Promise<void> {
+  async function persistDismissedAnomalies(set: ReadonlySet<AnomalyId>): Promise<void> {
+    const fs = await import('node:fs/promises');
+    await fs.writeFile(
+      await prefsPath(ctx.dataDir, 'dismissed-anomalies'),
+      JSON.stringify(Array.from(set), null, 2),
+    );
+  }
+
+  async function dismissAnomaly(id: AnomalyId): Promise<void> {
     const dismissed = new Set(await getDismissedAnomalies());
     dismissed.add(id);
     state.dismissedAnomalies = dismissed;
-    const fs = await import('node:fs/promises');
-    const path = await prefsPath(ctx.dataDir, 'dismissed-anomalies');
-    await fs.writeFile(path, JSON.stringify([...dismissed], null, 2));
+    await persistDismissedAnomalies(dismissed);
   }
 
-  async function restoreAnomaly(id: import('@costgoblin/core').AnomalyId): Promise<void> {
+  async function restoreAnomaly(id: AnomalyId): Promise<void> {
     const dismissed = new Set(await getDismissedAnomalies());
     dismissed.delete(id);
     state.dismissedAnomalies = dismissed;
-    const fs = await import('node:fs/promises');
-    const path = await prefsPath(ctx.dataDir, 'dismissed-anomalies');
-    await fs.writeFile(path, JSON.stringify([...dismissed], null, 2));
+    await persistDismissedAnomalies(dismissed);
   }
 
   async function warmupBase(): Promise<void> {

@@ -1,28 +1,64 @@
 import { ipcMain } from 'electron';
 import {
-  buildAnomalyDetectionQuery,
-  buildAnomalyDetailQuery,
-  parseAnomalyDetectionResult,
-  parseAnomalyDetailResult,
-  logger,
   asDollars,
+  buildAnomalyDetailQuery,
+  buildAnomalyDetectionQuery,
+  logger,
+  parseAnomalyDetailResult,
+  parseAnomalyDetectionResult,
+  type AnomalyDetailParams,
+  type AnomalyDetailResult,
+  type AnomalyDetailRow,
+  type AnomalyDetectionParams,
+  type AnomalyId,
+  type AnomalyResult,
+  type AnomalyRow,
+  type QueryContextOptions,
 } from '@costgoblin/core';
-import type {
-  AnomalyDetectionParams,
-  AnomalyResult,
-  AnomalyDetailParams,
-  AnomalyDetailResult,
-  AnomalyId,
-  Anomaly,
-  QueryContextOptions,
-} from '@costgoblin/core';
+import type { RawRow } from '../duckdb-client.js';
 import type { AppContext } from './context.js';
-import { resolveAvailablePeriods } from './query-utils.js';
+import { resolveAvailablePeriods, toNum, toStr } from './query-utils.js';
+
+function toBool(v: unknown): boolean {
+  return v === true;
+}
+
+function asAnomalyRows(rows: readonly RawRow[]): AnomalyRow[] {
+  return rows.map(row => ({
+    entity: toStr(row['entity']),
+    service: toStr(row['service']),
+    detected_date: toStr(row['detected_date']),
+    current_cost: toNum(row['current_cost']),
+    rolling_avg: toNum(row['rolling_avg']),
+    stddev: toNum(row['stddev']),
+    deviation: toNum(row['deviation']),
+  }));
+}
+
+function asAnomalyDetailRows(rows: readonly RawRow[]): AnomalyDetailRow[] {
+  return rows.map(row => ({
+    date: toStr(row['date']),
+    daily_cost: toNum(row['daily_cost']),
+    rolling_avg: toNum(row['rolling_avg']),
+    stddev: toNum(row['stddev']),
+    is_anomaly: toBool(row['is_anomaly']),
+  }));
+}
+
+function emptyAnomalyResult(): AnomalyResult {
+  return {
+    anomalies: [],
+    totalAnomalies: 0,
+    highSeverityCount: 0,
+    mediumSeverityCount: 0,
+    lowSeverityCount: 0,
+  };
+}
 
 export function registerAnomalyHandlers(app: AppContext): void {
   const {
     ctx,
-    getQueryDimensions: getDimensions,
+    getQueryDimensions,
     getAccountReverseMap,
     getOrgAccountsPath,
     getCostScope,
@@ -35,23 +71,17 @@ export function registerAnomalyHandlers(app: AppContext): void {
   } = app;
 
   ipcMain.handle('query:anomalies', async (_event, params: AnomalyDetectionParams): Promise<AnomalyResult> => {
-    const dimensions = await getDimensions();
-    const accountReverseMap = await getAccountReverseMap();
-    const orgPath = await getOrgAccountsPath();
-    const costScope = await getCostScope().catch(() => undefined);
     const tier = 'daily';
-    const availableColumns = await getAvailableColumns(tier);
-    const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, tier, params.dateRange);
+    const [dimensions, accountReverseMap, orgPath, costScope, availableColumns, periodInfo] = await Promise.all([
+      getQueryDimensions(),
+      getAccountReverseMap(),
+      getOrgAccountsPath(),
+      getCostScope().catch(() => undefined),
+      getAvailableColumns(tier),
+      resolveAvailablePeriods(ctx.dataDir, tier, params.dateRange),
+    ]);
 
-    if (empty) {
-      return {
-        anomalies: [],
-        totalAnomalies: 0,
-        highSeverityCount: 0,
-        mediumSeverityCount: 0,
-        lowSeverityCount: 0,
-      };
-    }
+    if (periodInfo.empty) return emptyAnomalyResult();
 
     const matSource = materializedBase.getSource(params.dateRange, tier);
     const isMat = matSource !== undefined;
@@ -59,7 +89,7 @@ export function registerAnomalyHandlers(app: AppContext): void {
       dataDir: ctx.dataDir,
       dimensions,
       orgAccountsPath: orgPath,
-      availablePeriods: available,
+      availablePeriods: periodInfo.available,
       accountReverseMap,
       costScope,
       availableColumns,
@@ -74,64 +104,28 @@ export function registerAnomalyHandlers(app: AppContext): void {
       materialized: isMat,
     });
 
-    const rows = await runPreparedQuery(sql, queryParams, isMat);
+    const rawRows = await runPreparedQuery(sql, queryParams, isMat);
     const dismissedSet = await getDismissedAnomalies();
-
-    // Type assertion: rows from DuckDB match the expected AnomalyRow structure
-    type AnomalyRow = {
-      readonly entity: string;
-      readonly service: string;
-      readonly detected_date: string;
-      readonly current_cost: number;
-      readonly rolling_avg: number;
-      readonly stddev: number;
-      readonly deviation: number;
-    };
-
-    return parseAnomalyDetectionResult(rows as unknown as readonly AnomalyRow[], params.groupBy, dismissedSet);
+    return parseAnomalyDetectionResult(asAnomalyRows(rawRows), params.groupBy, dismissedSet);
   });
 
   ipcMain.handle('query:anomaly-detail', async (_event, params: AnomalyDetailParams): Promise<AnomalyDetailResult> => {
-    const dimensions = await getDimensions();
-    const accountReverseMap = await getAccountReverseMap();
-    const orgPath = await getOrgAccountsPath();
-    const costScope = await getCostScope().catch(() => undefined);
     const tier = 'daily';
-    const availableColumns = await getAvailableColumns(tier);
-
-    // Build date range from detected date and lookback
     const lookbackStart = new Date(`${params.detectedDate}T00:00:00Z`);
     lookbackStart.setUTCDate(lookbackStart.getUTCDate() - params.lookbackDays);
-    const dateRange = {
-      start: lookbackStart.toISOString().slice(0, 10),
-      end: params.detectedDate,
-    };
+    const dateRange = { start: lookbackStart.toISOString().slice(0, 10), end: params.detectedDate };
 
-    const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, tier, dateRange);
+    const [dimensions, accountReverseMap, orgPath, costScope, availableColumns, periodInfo] = await Promise.all([
+      getQueryDimensions(),
+      getAccountReverseMap(),
+      getOrgAccountsPath(),
+      getCostScope().catch(() => undefined),
+      getAvailableColumns(tier),
+      resolveAvailablePeriods(ctx.dataDir, tier, dateRange),
+    ]);
 
-    // Create a basic Anomaly object for empty case
-    const emptyAnomaly: Anomaly = {
-      id: params.anomalyId,
-      entity: params.entity,
-      dimension: 'account' as import('@costgoblin/core').DimensionId,
-      service: params.service,
-      detectedDate: params.detectedDate,
-      currentCost: asDollars(0),
-      expectedCost: asDollars(0),
-      deviation: 0,
-      severity: 'low',
-      percentIncrease: 0,
-      isDismissed: false,
-    };
-
-    if (empty) {
-      return {
-        anomaly: emptyAnomaly,
-        dailyCosts: [],
-        rollingAverage: asDollars(0),
-        standardDeviation: asDollars(0),
-        affectedResources: [],
-      };
+    if (periodInfo.empty) {
+      return { dailyCosts: [], rollingAverage: asDollars(0), standardDeviation: asDollars(0) };
     }
 
     const matSource = materializedBase.getSource(dateRange, tier);
@@ -140,7 +134,7 @@ export function registerAnomalyHandlers(app: AppContext): void {
       dataDir: ctx.dataDir,
       dimensions,
       orgAccountsPath: orgPath,
-      availablePeriods: available,
+      availablePeriods: periodInfo.available,
       accountReverseMap,
       costScope,
       availableColumns,
@@ -150,26 +144,14 @@ export function registerAnomalyHandlers(app: AppContext): void {
     const { sql, params: queryParams } = buildAnomalyDetailQuery(params, qcOpts);
     logger.info('query:anomaly-detail', {
       anomalyId: params.anomalyId,
+      dimension: params.dimension,
       entity: params.entity,
       service: params.service,
       materialized: isMat,
     });
 
-    const rows = await runPreparedQuery(sql, queryParams, isMat);
-
-    // Type assertion: rows from DuckDB match the expected AnomalyDetailRow structure
-    type AnomalyDetailRow = {
-      readonly date: string;
-      readonly daily_cost: number;
-      readonly rolling_avg: number;
-      readonly stddev: number;
-      readonly is_anomaly: boolean;
-    };
-
-    // For the real query, we need to reconstruct the anomaly from the detail params
-    // In a real scenario, this would come from querying the anomaly first, but for now
-    // we create a basic one - the parse function will use whatever anomaly we pass
-    return parseAnomalyDetailResult(rows as unknown as readonly AnomalyDetailRow[], emptyAnomaly);
+    const rawRows = await runPreparedQuery(sql, queryParams, isMat);
+    return parseAnomalyDetailResult(asAnomalyDetailRows(rawRows));
   });
 
   ipcMain.handle('anomaly:dismiss', async (_event, anomalyId: AnomalyId): Promise<void> => {

@@ -239,10 +239,12 @@ export interface AnomalyResult {
 
 export interface AnomalyDetailParams {
   readonly anomalyId: AnomalyId;
+  readonly dimension: DimensionId;
   readonly entity: EntityRef;
   readonly service: string;
   readonly detectedDate: DateString;
   readonly lookbackDays: number;
+  readonly stddevThreshold: number;
 }
 
 export interface AnomalyDailyCost {
@@ -252,14 +254,9 @@ export interface AnomalyDailyCost {
 }
 
 export interface AnomalyDetailResult {
-  readonly anomaly: Anomaly;
   readonly dailyCosts: readonly AnomalyDailyCost[];
   readonly rollingAverage: Dollars;
   readonly standardDeviation: Dollars;
-  readonly affectedResources: readonly {
-    readonly resourceId: string;
-    readonly cost: Dollars;
-  }[];
 }
 
 export type SyncPhase = 'downloading' | 'repartitioning';

@@ -56,7 +56,7 @@ export function computePeriodsInRange(dateRange: { readonly start: string; reado
   return periods;
 }
 
-interface ResolvedDimension {
+export interface ResolvedDimension {
   readonly fieldExpr: string;
   readonly rawField: string;
   /** The backing dim, when the id resolves to a known built-in or tag.
@@ -96,7 +96,7 @@ function normalizeRuleValue(value: string, dim: BuiltInDimension | TagDimension 
   return resolveAlias(normalized, dim.aliases);
 }
 
-function resolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): ResolvedDimension {
+export function resolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): ResolvedDimension {
   const resolved = tryResolveField(dimensionId, dimensions);
   if (resolved !== null) return resolved;
   throw new SecurityError(
@@ -409,7 +409,7 @@ function resolveQueryPeriods(
   return required.filter(p => availablePeriods.includes(p));
 }
 
-interface DateRangeLike {
+export interface DateRangeLike {
   readonly start: string;
   readonly end: string;
   readonly startHour?: string | undefined;
@@ -434,7 +434,7 @@ function effectiveTier(requestedTier: string, dateRange: DateRangeLike): string 
  *  hour level (inclusive on both ends) — `usage_hour BETWEEN startHour AND endHour`.
  *  Without them we keep the cheaper day-level filter. Both forms use parameter
  *  placeholders so untrusted values stay out of the SQL string. */
-function buildDateRangeWhere(qb: QueryBuilder, dateRange: DateRangeLike): string {
+export function buildDateRangeWhere(qb: QueryBuilder, dateRange: DateRangeLike): string {
   if (dateRange.startHour !== undefined && dateRange.endHour !== undefined) {
     assertHourString(dateRange.startHour);
     assertHourString(dateRange.endHour);
@@ -447,12 +447,12 @@ function buildDateRangeWhere(qb: QueryBuilder, dateRange: DateRangeLike): string
   return `usage_date BETWEEN ${s} AND ${e}`;
 }
 
-interface CommonQueryArgs {
+export interface CommonQueryArgs {
   readonly filters: FilterMap;
   readonly dateRange: DateRangeLike;
 }
 
-interface CommonQuerySetup {
+export interface CommonQuerySetup {
   readonly qb: QueryBuilder;
   readonly filterClauses: string[];
   readonly exclusionClauses: string[];
@@ -471,7 +471,7 @@ export interface QueryContextOptions {
   readonly materializedSource?: string | undefined;
 }
 
-function setupQuery(
+export function setupQuery(
   params: CommonQueryArgs,
   tier: string,
   opts: QueryContextOptions,

@@ -1,22 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { asDateString, asHourString, asTagValue, asDimensionId } from '@costgoblin/core/browser';
+import { asDateString, asHourString, asTagValue } from '@costgoblin/core/browser';
 import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { daysBetween } from '../lib/dates.js';
 import type {
+  AnomalyResult,
   Dimension,
   DimensionId,
   EntityRef,
   FilterMap,
+  QueryState,
   TagValue,
   ViewSpec,
-  AnomalyDetectionParams,
 } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
-import { useAnomalies } from '../hooks/use-anomalies.js';
+import { ANOMALY_LOOKBACK_DAYS, ANOMALY_STDDEV_THRESHOLD } from '../lib/anomaly-constants.js';
 import {
   CostFocusDispatchProvider,
   CostFocusProvider,
@@ -112,21 +113,41 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     [dateRange],
   );
 
-  // Anomaly detection: use the first available dimension as groupBy, with a
-  // fallback to 'owner'. Detection runs on the current date range and filters,
-  // using a 30-day lookback and 2σ threshold (as specified in the spec).
-  const anomalyParams: AnomalyDetectionParams = useMemo(() => {
-    const firstDim = dimensions[0];
-    return {
-      dateRange: { start: dateRange.start, end: dateRange.end },
-      filters,
-      groupBy: firstDim !== undefined ? getDimensionId(firstDim) : asDimensionId('owner'),
-      lookbackDays: 30,
-      stddevThreshold: 2.0,
-    };
-  }, [dateRange.start, dateRange.end, filters, dimensions]);
+  // Detection is opt-in per session. The first dimension (priority-sorted —
+  // typically owner/team) is the meaningful axis for "which entity surged?";
+  // when no dimensions are configured we keep detection idle.
+  const [anomaliesEnabled, setAnomaliesEnabled] = useState(false);
+  const [anomaliesNonce, setAnomaliesNonce] = useState(0);
+  const anomaliesGroupBy = useMemo(() => {
+    const first = dimensions[0];
+    return first !== undefined ? getDimensionId(first) : null;
+  }, [dimensions]);
 
-  const anomaliesState = useAnomalies(anomalyParams);
+  const anomaliesState: QueryState<AnomalyResult> = useQuery(
+    () => {
+      if (!anomaliesEnabled || anomaliesGroupBy === null) {
+        return Promise.resolve({
+          anomalies: [],
+          totalAnomalies: 0,
+          highSeverityCount: 0,
+          mediumSeverityCount: 0,
+          lowSeverityCount: 0,
+        });
+      }
+      return api.queryAnomalies({
+        dateRange: { start: dateRange.start, end: dateRange.end },
+        filters,
+        groupBy: anomaliesGroupBy,
+        lookbackDays: ANOMALY_LOOKBACK_DAYS,
+        stddevThreshold: ANOMALY_STDDEV_THRESHOLD,
+      });
+    },
+    [api, anomaliesEnabled, anomaliesGroupBy, dateRange.start, dateRange.end, filters, anomaliesNonce],
+  );
+
+  const handleAnomalyDismissed = useCallback(() => {
+    setAnomaliesNonce(n => n + 1);
+  }, []);
 
   // Cancel in-flight DuckDB queries when query-affecting state changes so
   // stale queries don't hog pool connections while new ones queue behind them.
@@ -255,14 +276,27 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
             <p className="text-sm text-text-secondary mt-0.5">{headerSubtitle}</p>
           )}
         </div>
-        <DateRangePicker
-          value={dateRange}
-          granularity={granularity}
-          onChange={(range, g) => { setDateRange(range); setGranularity(g); }}
-          lagDays={lagDays}
-          compareEnabled={compareEnabled}
-          onCompareChange={setCompareEnabled}
-        />
+        <div className="flex items-center gap-3">
+          {anomaliesGroupBy !== null && (
+            <label className="flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={anomaliesEnabled}
+                onChange={(e) => { setAnomaliesEnabled(e.target.checked); }}
+                className="cursor-pointer"
+              />
+              Anomalies
+            </label>
+          )}
+          <DateRangePicker
+            value={dateRange}
+            granularity={granularity}
+            onChange={(range, g) => { setDateRange(range); setGranularity(g); }}
+            lagDays={lagDays}
+            compareEnabled={compareEnabled}
+            onCompareChange={setCompareEnabled}
+          />
+        </div>
       </div>
 
       {dimensions.length > 0 && (
@@ -303,6 +337,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
                   globalFilters={filters}
                   dimensions={dimensions}
                   anomaliesState={anomaliesState}
+                  onAnomalyDismissed={handleAnomalyDismissed}
                   onSetFilter={handleSetFilter}
                   onEntityClick={handleEntityClick}
                   onDateRangeChange={handleDateRangeChange}

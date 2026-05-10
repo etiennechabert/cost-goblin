@@ -3,13 +3,17 @@ import { getColor } from '../lib/palette.js';
 import { CollapsedChart } from './collapsed-chart.js';
 import { useContainerWidth } from '../lib/use-container-width.js';
 import { formatDollars } from './format.js';
-import type { Dimension, AnomalySeverity, DimensionId, AnomalyId } from '@costgoblin/core/browser';
-import { asAnomalyId } from '@costgoblin/core/browser';
+import type { Anomaly, Dimension } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
 import { usePalette } from '../hooks/use-palette.js';
 import { AnomalyBadge } from './anomaly-badge.js';
 import { AnomalyDetailModal } from './anomaly-detail-modal.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
+
+export interface AnomalyEntry {
+  readonly count: number;
+  readonly primary: Anomaly;
+}
 
 export interface TopNBar {
   readonly name: string;
@@ -34,16 +38,17 @@ interface TopNBarChartProps {
    *  badges are rendered next to each bar. */
   readonly previousCosts?: ReadonlyMap<string, number> | undefined;
   /** Anomaly data keyed by entity name. When present, anomaly badges
-   *  are rendered before entity names. Includes the data needed to show the
-   *  anomaly detail modal for the first/highest severity anomaly. */
-  readonly anomaliesByEntity?: ReadonlyMap<string, {
-    readonly count: number;
-    readonly severity: AnomalySeverity;
-    readonly anomalyId: AnomalyId;
-    readonly dimensionId: DimensionId;
-    readonly service: string;
-    readonly detectedDate: string;
-  }> | undefined;
+   *  are rendered before entity names. `primary` is the highest-severity
+   *  anomaly and seeds the detail modal when the badge is clicked. */
+  readonly anomaliesByEntity?: ReadonlyMap<string, AnomalyEntry> | undefined;
+  /** Lookback window used by detection — passed to the detail modal so its
+   *  daily-trend query stays consistent with what generated the anomalies. */
+  readonly anomalyLookbackDays?: number | undefined;
+  /** σ threshold used by detection — same rationale as `anomalyLookbackDays`. */
+  readonly anomalyStddevThreshold?: number | undefined;
+  /** Called after a successful dismiss so the parent can invalidate its
+   *  anomaly query and re-fetch. */
+  readonly onAnomalyDismissed?: (() => void) | undefined;
 }
 
 const ROW_HEIGHT = 24;
@@ -71,42 +76,31 @@ function TopNBarChartInner({
   onDimensionChange,
   previousCosts,
   anomaliesByEntity,
+  anomalyLookbackDays,
+  anomalyStddevThreshold,
+  onAnomalyDismissed,
   width,
 }: Omit<TopNBarChartProps, 'collapsed'> & { width: number }) {
   const api = useCostApi();
   const { palette } = usePalette();
   const [localHovered, setLocalHovered] = useState<string | null>(null);
   const hoveredName = externalHoveredName ?? localHovered;
-  const [selectedAnomaly, setSelectedAnomaly] = useState<{
-    anomalyId: string;
-    entity: string;
-    service: string;
-    detectedDate: string;
-  } | null>(null);
+  const [selectedAnomaly, setSelectedAnomaly] = useState<Anomaly | null>(null);
 
-  const handleAnomalyBadgeClick = useCallback((entity: string, anomalyData: {
-    readonly anomalyId: AnomalyId;
-    readonly service: string;
-    readonly detectedDate: string;
-  }, event: React.MouseEvent) => {
-    event.stopPropagation(); // Prevent bar click
-    setSelectedAnomaly({
-      anomalyId: anomalyData.anomalyId,
-      entity,
-      service: anomalyData.service,
-      detectedDate: anomalyData.detectedDate,
-    });
+  const handleAnomalyBadgeClick = useCallback((anomaly: Anomaly, event: React.MouseEvent) => {
+    event.stopPropagation();
+    setSelectedAnomaly(anomaly);
   }, []);
 
   const handleAnomalyModalClose = useCallback(() => {
     setSelectedAnomaly(null);
   }, []);
 
-  const handleAnomalyDismiss = useCallback((anomalyId: string) => {
-    api.dismissAnomaly(asAnomalyId(anomalyId))
-      .then(() => { setSelectedAnomaly(null); })
-      .catch(() => undefined); // Ignore errors - the parent component should refetch anomalies
-  }, [api]);
+  const handleAnomalyDismiss = useCallback(async () => {
+    if (selectedAnomaly === null) return;
+    await api.dismissAnomaly(selectedAnomaly.id);
+    onAnomalyDismissed?.();
+  }, [api, selectedAnomaly, onAnomalyDismissed]);
 
   const sliced = useMemo(
     () => [...data].sort((a, b) => b.cost - a.cost).slice(0, topN),
@@ -192,10 +186,10 @@ function TopNBarChartInner({
                 <>
                   {anomalyInfo !== undefined && (
                     <AnomalyBadge
-                      severity={anomalyInfo.severity}
+                      severity={anomalyInfo.primary.severity}
                       count={anomalyInfo.count}
                       className="shrink-0 cursor-pointer"
-                      onClick={(e) => { handleAnomalyBadgeClick(row.name, anomalyInfo, e); }}
+                      onClick={(e) => { handleAnomalyBadgeClick(anomalyInfo.primary, e); }}
                     />
                   )}
                   <span
@@ -266,16 +260,14 @@ function TopNBarChartInner({
         )}
       </div>
 
-      {selectedAnomaly !== null && (
+      {selectedAnomaly !== null && anomalyLookbackDays !== undefined && anomalyStddevThreshold !== undefined && (
         <AnomalyDetailModal
-          anomalyId={selectedAnomaly.anomalyId}
-          entity={selectedAnomaly.entity}
-          service={selectedAnomaly.service}
-          detectedDate={selectedAnomaly.detectedDate}
-          lookbackDays={30}
+          anomaly={selectedAnomaly}
+          lookbackDays={anomalyLookbackDays}
+          stddevThreshold={anomalyStddevThreshold}
           isOpen={true}
           onClose={handleAnomalyModalClose}
-          onDismiss={handleAnomalyDismiss}
+          onDismiss={() => { void handleAnomalyDismiss(); }}
         />
       )}
     </div>

@@ -45,8 +45,12 @@ export interface WidgetCommonProps {
   readonly globalFilters: FilterMap;
   readonly dimensions: readonly Dimension[];
   /** Anomaly detection state computed at the view level. Widgets can use
-   *  this to display anomaly badges on entities with cost spikes. */
+   *  this to display anomaly badges on entities with cost spikes. Status is
+   *  `'idle'` when the user has detection turned off. */
   readonly anomaliesState: QueryState<AnomalyResult>;
+  /** Called when an anomaly is dismissed inside the widget so the host view
+   *  can re-fetch detection results and remove the badge. */
+  readonly onAnomalyDismissed?: (() => void) | undefined;
   readonly onSetFilter: (dim: DimensionId, value: TagValue) => void;
   readonly onEntityClick?: ((entity: EntityRef, dim: DimensionId) => void) | undefined;
   /** Optional callback letting widgets request a new visible range — used by

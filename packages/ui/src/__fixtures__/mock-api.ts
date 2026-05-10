@@ -201,7 +201,7 @@ const mockAnomalies: Anomaly[] = [
   {
     id: asAnomalyId('ml-ec2-2026-03-30'),
     entity: asEntityRef('ml'),
-    dimension: asDimensionId('team'),
+    dimension: asDimensionId('tag_team'),
     service: 'Amazon EC2',
     detectedDate: asDateString('2026-03-30'),
     currentCost: asDollars(250),
@@ -214,7 +214,7 @@ const mockAnomalies: Anomaly[] = [
   {
     id: asAnomalyId('platform-rds-2026-03-29'),
     entity: asEntityRef('platform'),
-    dimension: asDimensionId('team'),
+    dimension: asDimensionId('tag_team'),
     service: 'Amazon RDS',
     detectedDate: asDateString('2026-03-29'),
     currentCost: asDollars(320),
@@ -234,11 +234,7 @@ const anomalyResult: AnomalyResult = {
   lowSeverityCount: 0,
 };
 
-const [firstAnomaly] = mockAnomalies;
-if (firstAnomaly === undefined) throw new Error('mockAnomalies must have at least one element');
-
 const mockAnomalyDetail: AnomalyDetailResult = {
-  anomaly: firstAnomaly,
   dailyCosts: [
     { date: asDateString('2026-03-16'), cost: asDollars(175), isAnomaly: false },
     { date: asDateString('2026-03-17'), cost: asDollars(182), isAnomaly: false },
@@ -258,11 +254,6 @@ const mockAnomalyDetail: AnomalyDetailResult = {
   ],
   rollingAverage: asDollars(180),
   standardDeviation: asDollars(22),
-  affectedResources: [
-    { resourceId: 'i-0a1b2c3d4e5f6g7h8', cost: asDollars(120) },
-    { resourceId: 'i-9h8g7f6e5d4c3b2a1', cost: asDollars(85) },
-    { resourceId: 'i-1z2y3x4w5v6u7t8s9', cost: asDollars(45) },
-  ],
 };
 
 export class MockCostApi implements CostApi {
