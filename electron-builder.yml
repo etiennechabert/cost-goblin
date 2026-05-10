@@ -32,6 +32,13 @@ win:
         - arm64
 linux:
   category: Office
+  desktop:
+    Name: CostGoblin
+    Comment: Cloud cost visibility for AWS billing analysis
+    GenericName: Cloud Cost Analyzer
+    Categories: Office;Finance;Development
+    Keywords: aws;cloud;cost;billing;finops;analytics
+    StartupWMClass: CostGoblin
   target:
     - target: AppImage
       arch:
