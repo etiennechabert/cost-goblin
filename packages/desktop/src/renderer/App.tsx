@@ -3,9 +3,8 @@ import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostS
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagColumnName } from '@costgoblin/core/browser';
-import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, Eraser } from 'lucide-react';
+import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
-import { HomeButton } from './top-menu/home-button.js';
 import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
 import { OptionsMenu } from './top-menu/options-menu.js';
 
@@ -388,6 +387,7 @@ function AppShell(): React.JSX.Element {
   const [debugOpen, setDebugOpen] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [clearingCache, setClearingCache] = useState(false);
+  const [reloadConfirmOpen, setReloadConfirmOpen] = useState(false);
   const inFlightCount = useDebugBadge();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
@@ -618,14 +618,26 @@ function AppShell(): React.JSX.Element {
         <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
         <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
           <nav className="flex items-center gap-1" aria-label="Dashboards and analysis">
-            <HomeButton
-              isActive={view.page === 'custom' && view.viewId === defaultViewId}
-              onClick={handleGoHome}
-              tooltip={(() => {
-                const dv = customNav.find(c => c.id === defaultViewId);
-                return dv === undefined ? 'Go to default dashboard' : `Go to ${dv.name}`;
-              })()}
-            />
+            {(() => {
+              const isActiveDefault = view.page === 'custom' && view.viewId === defaultViewId;
+              const dv = customNav.find(c => c.id === defaultViewId);
+              const tooltip = dv === undefined ? 'Go to default dashboard' : `Go to ${dv.name}`;
+              return (
+                <button
+                  type="button"
+                  onClick={handleGoHome}
+                  className={[
+                    'rounded-md p-1 transition-colors [-webkit-app-region:no-drag]',
+                    isActiveDefault ? 'bg-bg-tertiary' : 'hover:bg-bg-tertiary/50',
+                  ].join(' ')}
+                  aria-label="Home"
+                  aria-current={isActiveDefault ? 'page' : undefined}
+                  title={tooltip}
+                >
+                  <img src="goblin.png" alt="" className="h-7 w-auto object-contain" />
+                </button>
+              );
+            })()}
             <DashboardsDropdown
               items={customNav}
               activeId={active}
@@ -654,14 +666,11 @@ function AppShell(): React.JSX.Element {
               );
             })}
           </nav>
-          <div className="flex items-center justify-center gap-2 px-4">
-            <img src="goblin.png" alt="" className="h-10 w-auto object-contain self-stretch" />
-            <div className="flex flex-col justify-center">
-              <span className="text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
-              <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
-                {appVersion !== '' && <span>v{appVersion}</span>}
-                {isDev && memoryMB > 0 && <span>{memoryMB} MB</span>}
-              </div>
+          <div className="flex flex-col items-center justify-center px-4">
+            <span className="text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
+            <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
+              {appVersion !== '' && <span>v{appVersion}</span>}
+              {isDev && memoryMB > 0 && <span>{memoryMB} MB</span>}
             </div>
           </div>
           <nav className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]" aria-label="Sync and settings">
@@ -687,7 +696,7 @@ function AppShell(): React.JSX.Element {
             </button>
             <button
               type="button"
-              onClick={handleClearCache}
+              onClick={() => { setReloadConfirmOpen(true); }}
               disabled={clearingCache}
               className={[
                 'rounded-md p-1.5 transition-colors',
@@ -695,10 +704,10 @@ function AppShell(): React.JSX.Element {
                   ? 'text-text-muted cursor-wait'
                   : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
               ].join(' ')}
-              aria-label="Clear cache and refresh"
-              title="Clear cache and refresh"
+              aria-label="Reload data"
+              title="Reload data"
             >
-              <Eraser size={16} className={clearingCache ? 'animate-pulse' : undefined} />
+              <RotateCw size={16} className={clearingCache ? 'animate-spin' : undefined} />
             </button>
             {(() => {
               const showError = syncError !== null;
@@ -828,6 +837,29 @@ function AppShell(): React.JSX.Element {
       </div>
       {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} />}
       <ReleaseNotesModal open={releaseNotesOpen} onOpenChange={setReleaseNotesOpen} status={updateStatus} />
+      <Dialog open={reloadConfirmOpen} onOpenChange={setReloadConfirmOpen}>
+        <DialogContent>
+          <DialogTitle>Reload data?</DialogTitle>
+          <DialogDescription>
+            This clears cached query results and refreshes the current view. Any pending queries will be cancelled.
+          </DialogDescription>
+          <div className="mt-4 flex justify-end gap-2">
+            <DialogClose>
+              <Button variant="ghost" size="sm">Cancel</Button>
+            </DialogClose>
+            <Button
+              size="sm"
+              onClick={() => {
+                setReloadConfirmOpen(false);
+                handleClearCache();
+              }}
+            >
+              <RotateCw size={14} className="mr-1.5" />
+              Reload
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       </div>
     </PaletteProvider>
   );
