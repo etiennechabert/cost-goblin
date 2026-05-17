@@ -1,10 +1,13 @@
-import { useState, useEffect, useCallback, useMemo, Profiler } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagColumnName } from '@costgoblin/core/browser';
-import { Download, RefreshCw, Sparkles } from 'lucide-react';
+import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
+import { HomeButton } from './top-menu/home-button.js';
+import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
+import { OptionsMenu } from './top-menu/options-menu.js';
 
 // ---------------------------------------------------------------------------
 // React Profiler — collects render timings when perf mode is active
@@ -60,64 +63,26 @@ type View =
   | { page: 'views-editor' }
   | { page: 'sync' };
 
-const STATIC_LEFT_NAV: { id: string; label: string }[] = [
-  { id: 'trends', label: 'Trends' },
-  { id: 'savings', label: 'Findings' },
-  { id: 'missing-tags', label: 'Tags' },
-  { id: 'explorer', label: 'Explorer' },
+interface AnalyticalNavItem {
+  readonly id: string;
+  readonly label: string;
+  readonly Icon: React.ComponentType<{ size?: number | string }>;
+}
+
+const ANALYTICAL_NAV: readonly AnalyticalNavItem[] = [
+  { id: 'trends', label: 'Trends', Icon: TrendingUp },
+  { id: 'savings', label: 'Findings', Icon: Lightbulb },
+  { id: 'missing-tags', label: 'Tags', Icon: Tag },
+  { id: 'explorer', label: 'Explorer', Icon: Search },
 ];
 
-const RIGHT_NAV: { id: string; label: string }[] = [
+const SETTINGS_NAV: readonly { id: string; label: string }[] = [
   { id: 'cost-scope', label: 'Cost Scope' },
   { id: 'dimensions', label: 'Dimensions' },
   { id: 'views-editor', label: 'Views' },
   { id: 'sync', label: 'Sync' },
+  { id: 'mcp', label: 'AI Assistant' },
 ];
-
-function SunIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="5" />
-      <line x1="12" y1="1" x2="12" y2="3" />
-      <line x1="12" y1="21" x2="12" y2="23" />
-      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-      <line x1="1" y1="12" x2="3" y2="12" />
-      <line x1="21" y1="12" x2="23" y2="12" />
-      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-    </svg>
-  );
-}
-
-function MoonIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-    </svg>
-  );
-}
-
-function TerminalIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="4 17 10 11 4 5" />
-      <line x1="12" y1="19" x2="20" y2="19" />
-    </svg>
-  );
-}
-
-function PaletteIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
-      <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
-      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
-      <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
-      <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
-    </svg>
-  );
-}
 
 type SyncActivity = 'idle' | 'syncing' | 'downloading';
 
@@ -160,52 +125,6 @@ function SyncAnnouncer({
       </div>
     </>
   );
-}
-
-function UpdateNotification({
-  status,
-  onShowReleaseNotes,
-}: Readonly<{
-  status: UpdateStatus;
-  onShowReleaseNotes: () => void;
-}>): React.JSX.Element | null {
-  if (status.state === 'available') {
-    return (
-      <button
-        type="button"
-        onClick={onShowReleaseNotes}
-        className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-accent hover:bg-bg-tertiary/50 transition-colors"
-      >
-        <Download size={14} />
-        v{status.info.version} available
-      </button>
-    );
-  }
-  if (status.state === 'downloading') {
-    return (
-      <button
-        type="button"
-        onClick={onShowReleaseNotes}
-        className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary/50 transition-colors"
-      >
-        <RefreshCw size={14} className="animate-spin" />
-        Downloading {String(status.percent)}%
-      </button>
-    );
-  }
-  if (status.state === 'downloaded') {
-    return (
-      <button
-        type="button"
-        onClick={onShowReleaseNotes}
-        className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-positive hover:bg-bg-tertiary/50 transition-colors"
-      >
-        <Download size={14} />
-        Restart to update
-      </button>
-    );
-  }
-  return null;
 }
 
 function ReleaseNotesModal({
@@ -457,10 +376,11 @@ async function prewarmDimensions(
 function AppShell(): React.JSX.Element {
   const api = useCostApi();
   const confirmLeave = useConfirmLeave();
-  const [view, setView] = useState<View>({ page: 'custom', viewId: 'overview' });
+  const [view, setView] = useState<View>({ page: 'custom', viewId: OVERVIEW_SEED_VIEW.id });
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [isDark, setIsDark] = useState(true);
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
+  const [defaultViewId, setDefaultViewIdState] = useState<string>(OVERVIEW_SEED_VIEW.id);
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const [splashStep, setSplashStep] = useState('Connecting...');
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
@@ -472,6 +392,7 @@ function AppShell(): React.JSX.Element {
   const [appVersion, setAppVersion] = useState('');
   const memoryMB = useMemoryMB();
   const autoOpenRef = useMemo(() => ({ current: false }), []);
+  const initialViewSetRef = useRef(false);
 
   useEffect(() => {
     globalThis.costgoblinUpdate.getAppVersion().then(setAppVersion).catch(() => undefined);
@@ -510,6 +431,15 @@ function AppShell(): React.JSX.Element {
     api.getUIPreferences().then(prefs => {
       setIsDark(prefs.theme === 'dark');
       setPalette(prefs.palette);
+      const defaultId = prefs.defaultViewId ?? OVERVIEW_SEED_VIEW.id;
+      setDefaultViewIdState(defaultId);
+      // Only redirect to the configured default once on startup, so that
+      // navigating around (or starring a different default mid-session)
+      // doesn't yank the user away from the page they're looking at.
+      if (!initialViewSetRef.current) {
+        initialViewSetRef.current = true;
+        setView({ page: 'custom', viewId: defaultId });
+      }
     }).catch(() => undefined);
   }, [api]);
 
@@ -542,13 +472,30 @@ function AppShell(): React.JSX.Element {
   function handleToggleTheme() {
     const next = !isDark;
     setIsDark(next);
-    api.saveUIPreferences({ theme: next ? 'dark' : 'light', palette }).catch(() => undefined);
+    api.saveUIPreferences({ theme: next ? 'dark' : 'light', palette, defaultViewId }).catch(() => undefined);
   }
 
   function handleTogglePalette() {
     const next: 'standard' | 'colorblind' = palette === 'standard' ? 'colorblind' : 'standard';
     setPalette(next);
-    api.saveUIPreferences({ theme: isDark ? 'dark' : 'light', palette: next }).catch(() => undefined);
+    api.saveUIPreferences({ theme: isDark ? 'dark' : 'light', palette: next, defaultViewId }).catch(() => undefined);
+  }
+
+  function handleSetDefaultView(id: string) {
+    setDefaultViewIdState(id);
+    api.saveUIPreferences({
+      theme: isDark ? 'dark' : 'light',
+      palette,
+      defaultViewId: id,
+    }).catch(() => undefined);
+  }
+
+  function handleGoHome() {
+    handleNavClick(defaultViewId);
+  }
+
+  function handleCheckForUpdates() {
+    globalThis.costgoblinUpdate.checkForUpdates().catch(() => undefined);
   }
 
   useEffect(() => {
@@ -609,14 +556,12 @@ function AppShell(): React.JSX.Element {
 
   const views = viewsConfig ?? FALLBACK_VIEWS;
   const viewsReady = viewsConfig !== null;
-  const customNav: { id: string; label: string }[] = views.views.map(v => ({ id: v.id, label: v.name }));
-  const leftNav = [...customNav, ...STATIC_LEFT_NAV];
+  const customNav: { id: string; name: string }[] = views.views.map(v => ({ id: v.id, name: v.name }));
 
   const paletteItems: NavItem[] = useMemo(() => [
-    ...customNav.map(n => ({ id: n.id, label: n.label, group: 'Dashboards' })),
-    ...STATIC_LEFT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Analysis' })),
-    { id: 'mcp', label: 'AI Assistant', group: 'Settings' },
-    ...RIGHT_NAV.map(n => ({ id: n.id, label: n.label, group: 'Settings' })),
+    ...customNav.map(n => ({ id: n.id, label: n.name, group: 'Dashboards' })),
+    ...ANALYTICAL_NAV.map(n => ({ id: n.id, label: n.label, group: 'Analysis' })),
+    ...SETTINGS_NAV.map(n => ({ id: n.id, label: n.label, group: 'Settings' })),
   ], [customNav]);
 
   if (setupCheck.status === 'checking') {
@@ -659,23 +604,42 @@ function AppShell(): React.JSX.Element {
         {/* Title bar + nav */}
         <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
         <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
-          <nav className="flex items-center gap-1" aria-label="Analytical views">
-            {leftNav.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => { handleNavClick(item.id); }}
-                className={[
-                  'px-3 py-1.5 text-sm font-medium rounded-md transition-colors [-webkit-app-region:no-drag]',
-                  active === item.id
-                    ? 'bg-bg-tertiary text-text-primary'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
-                ].join(' ')}
-                aria-current={active === item.id ? 'page' : undefined}
-              >
-                {item.label}
-              </button>
-            ))}
+          <nav className="flex items-center gap-1" aria-label="Dashboards and analysis">
+            <HomeButton
+              isActive={view.page === 'custom' && view.viewId === defaultViewId}
+              onClick={handleGoHome}
+              tooltip={(() => {
+                const dv = customNav.find(c => c.id === defaultViewId);
+                return dv === undefined ? 'Go to default dashboard' : `Go to ${dv.name}`;
+              })()}
+            />
+            <DashboardsDropdown
+              items={customNav}
+              activeId={active}
+              defaultId={defaultViewId}
+              onSelect={handleNavClick}
+              onSetDefault={handleSetDefaultView}
+            />
+            {ANALYTICAL_NAV.map((item) => {
+              const Icon = item.Icon;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => { handleNavClick(item.id); }}
+                  className={[
+                    'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors [-webkit-app-region:no-drag]',
+                    active === item.id
+                      ? 'bg-bg-tertiary text-text-primary'
+                      : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
+                  ].join(' ')}
+                  aria-current={active === item.id ? 'page' : undefined}
+                >
+                  <Icon size={14} />
+                  {item.label}
+                </button>
+              );
+            })}
           </nav>
           <div className="flex items-center justify-center gap-2 px-4">
             <img src="goblin.png" alt="" className="h-10 w-auto object-contain self-stretch" />
@@ -687,75 +651,25 @@ function AppShell(): React.JSX.Element {
               </div>
             </div>
           </div>
-          <nav className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]" aria-label="Configuration views">
-            <UpdateNotification status={updateStatus} onShowReleaseNotes={() => { setReleaseNotesOpen(true); }} />
-            <button
-              type="button"
-              onClick={() => { setDebugOpen(prev => !prev); }}
-              className={[
-                'relative rounded-md p-1.5 transition-colors',
-                debugOpen
-                  ? 'bg-bg-tertiary text-text-primary'
-                  : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
-              ].join(' ')}
-              aria-label="Debug panel"
-            >
-              <TerminalIcon />
-              {inFlightCount > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">
-                  {String(inFlightCount)}
-                </span>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={handleToggleTheme}
-              className="rounded-md p-1.5 text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
-              aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {isDark ? <SunIcon /> : <MoonIcon />}
-            </button>
-            <button
-              type="button"
-              onClick={handleTogglePalette}
-              className="rounded-md p-1.5 text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
-              aria-label={palette === 'standard' ? 'Switch to colorblind palette' : 'Switch to standard palette'}
-            >
-              <PaletteIcon />
-            </button>
-            <button
-              type="button"
-              onClick={() => { handleNavClick('mcp'); }}
-              className={[
-                'rounded-md p-1.5 transition-colors',
-                active === 'mcp'
-                  ? 'bg-bg-tertiary text-text-primary'
-                  : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
-              ].join(' ')}
-              aria-label="AI Assistant"
-            >
-              <Sparkles className="h-4 w-4" />
-            </button>
-            {RIGHT_NAV.map((item) => {
-              const isSync = item.id === 'sync';
-              const showError = isSync && syncError !== null;
-              const showActive = isSync && !showError && syncActivity !== 'idle';
-              const showMissing = isSync && !showError && syncActivity === 'idle' && missingPeriods > 0 && view.page !== 'sync';
+          <nav className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]" aria-label="Sync and settings">
+            {(() => {
+              const showError = syncError !== null;
+              const showActive = !showError && syncActivity !== 'idle';
+              const showMissing = !showError && syncActivity === 'idle' && missingPeriods > 0 && view.page !== 'sync';
               return (
                 <button
-                  key={item.id}
                   type="button"
-                  onClick={() => { handleNavClick(item.id); }}
+                  onClick={() => { handleNavClick('sync'); }}
                   className={[
                     'relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-2',
-                    active === item.id
+                    active === 'sync'
                       ? 'bg-bg-tertiary text-text-primary'
                       : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
                     showError ? 'ring-1 ring-negative/60' : '',
                     showActive ? 'animate-sync-blink' : '',
                   ].join(' ')}
                   title={syncError === null ? undefined : `Sync error — ${syncError}`}
-                  aria-current={active === item.id ? 'page' : undefined}
+                  aria-current={active === 'sync' ? 'page' : undefined}
                 >
                   {showError && (
                     <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-negative animate-pulse" aria-label="sync error" />
@@ -775,7 +689,7 @@ function AppShell(): React.JSX.Element {
                       <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14" />
                     </svg>
                   )}
-                  {item.label}
+                  Sync
                   {showError && (
                     <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-negative px-1 text-[10px] font-bold text-white">
                       !
@@ -793,7 +707,21 @@ function AppShell(): React.JSX.Element {
                   )}
                 </button>
               );
-            })}
+            })()}
+            <OptionsMenu
+              isDark={isDark}
+              onToggleTheme={handleToggleTheme}
+              palette={palette}
+              onTogglePalette={handleTogglePalette}
+              activeNavId={active}
+              onNavigate={handleNavClick}
+              debugOpen={debugOpen}
+              onToggleDebug={() => { setDebugOpen(prev => !prev); }}
+              inFlightCount={inFlightCount}
+              updateStatus={updateStatus}
+              onShowReleaseNotes={() => { setReleaseNotesOpen(true); }}
+              onCheckForUpdates={handleCheckForUpdates}
+            />
           </nav>
         </nav>
       </div>

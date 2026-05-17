@@ -35,6 +35,7 @@ export interface SavingsPreferences {
 export interface UIPreferences {
   readonly theme: 'dark' | 'light';
   readonly palette: 'standard' | 'colorblind';
+  readonly defaultViewId?: string | undefined;
 }
 
 export interface OrgAccount {
