@@ -5,7 +5,6 @@ import {
   Moon,
   Palette,
   Sparkles,
-  Terminal,
   Download,
   RefreshCw,
   RotateCw,
@@ -21,9 +20,6 @@ interface Props {
   onTogglePalette: () => void;
   activeNavId: string | null;
   onNavigate: (id: string) => void;
-  debugOpen: boolean;
-  onToggleDebug: () => void;
-  inFlightCount: number;
   updateStatus: UpdateStatus;
   onShowReleaseNotes: () => void;
   onCheckForUpdates: () => void;
@@ -68,9 +64,6 @@ export function OptionsMenu({
   onTogglePalette,
   activeNavId,
   onNavigate,
-  debugOpen,
-  onToggleDebug,
-  inFlightCount,
   updateStatus,
   onShowReleaseNotes,
   onCheckForUpdates,
@@ -181,17 +174,6 @@ export function OptionsMenu({
             active={activeNavId === 'mcp'}
             icon={<Sparkles size={16} />}
             label="AI Assistant"
-          />
-          <MenuItem
-            onClick={() => { onToggleDebug(); close(); }}
-            active={debugOpen}
-            icon={<Terminal size={16} />}
-            label="Debug Panel"
-            trailing={inFlightCount > 0 ? (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">
-                {String(inFlightCount)}
-              </span>
-            ) : null}
           />
         </CollapsibleSection>
         <CollapsibleSection

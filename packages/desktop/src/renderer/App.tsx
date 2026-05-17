@@ -3,7 +3,7 @@ import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostS
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagColumnName } from '@costgoblin/core/browser';
-import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search } from 'lucide-react';
+import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { HomeButton } from './top-menu/home-button.js';
 import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
@@ -652,6 +652,26 @@ function AppShell(): React.JSX.Element {
             </div>
           </div>
           <nav className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]" aria-label="Sync and settings">
+            <button
+              type="button"
+              onClick={() => { setDebugOpen(prev => !prev); }}
+              className={[
+                'relative rounded-md p-1.5 transition-colors',
+                debugOpen
+                  ? 'bg-bg-tertiary text-text-primary'
+                  : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
+              ].join(' ')}
+              aria-label="Debug panel"
+              aria-pressed={debugOpen}
+              title="Debug panel"
+            >
+              <Terminal size={16} />
+              {inFlightCount > 0 && (
+                <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">
+                  {String(inFlightCount)}
+                </span>
+              )}
+            </button>
             {(() => {
               const showError = syncError !== null;
               const showActive = !showError && syncActivity !== 'idle';
@@ -715,9 +735,6 @@ function AppShell(): React.JSX.Element {
               onTogglePalette={handleTogglePalette}
               activeNavId={active}
               onNavigate={handleNavClick}
-              debugOpen={debugOpen}
-              onToggleDebug={() => { setDebugOpen(prev => !prev); }}
-              inFlightCount={inFlightCount}
               updateStatus={updateStatus}
               onShowReleaseNotes={() => { setReleaseNotesOpen(true); }}
               onCheckForUpdates={handleCheckForUpdates}
