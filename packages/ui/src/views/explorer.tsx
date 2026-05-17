@@ -218,6 +218,7 @@ export function ExplorerView(): React.JSX.Element {
       applyCostScope: scope,
       costMetric: metric,
       costPerspective: perspective,
+      origin: 'explorer:overview',
     })
       .then(data => {
         if (reqId !== overviewReqIdRef.current) return;
@@ -250,6 +251,7 @@ export function ExplorerView(): React.JSX.Element {
       costMetric: metric,
       costPerspective: perspective,
       ...(s === undefined ? {} : { sort: s }),
+      origin: 'explorer:rows',
     })
       .then(data => {
         if (reqId !== rowsReqIdRef.current) return;
@@ -472,6 +474,7 @@ export function ExplorerView(): React.JSX.Element {
             applyCostScope,
             costMetric,
             costPerspective,
+            origin: `explorer:filter-values:${dimId}`,
           })}
         />
         {activeFilterCount > 0 && (

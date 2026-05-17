@@ -366,7 +366,7 @@ async function prewarmDimensions(
   let done = 0;
   setSplashStep(`Loading dimensions 0/${String(dims.length)}...`);
   await Promise.all(dims.map(async (dim) => {
-    await api.getFilterValues(dimId(dim), {}, range).catch(() => undefined);
+    await api.getFilterValues(dimId(dim), {}, range, undefined, `splash:warmup:${dimId(dim)}`).catch(() => undefined);
     done++;
     setSplashStep(`Loading dimensions ${String(done)}/${String(dims.length)}...`);
   }));

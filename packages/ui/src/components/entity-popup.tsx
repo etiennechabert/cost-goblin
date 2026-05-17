@@ -59,6 +59,7 @@ export function EntityPopup({
         dimension: asDimensionId(dimension),
         dateRange: getDateRange(),
         filters: {},
+        origin: 'entity-popup',
       }),
     [entity, dimension, api],
   );

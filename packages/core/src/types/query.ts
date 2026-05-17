@@ -25,6 +25,9 @@ export interface CostQueryParams {
   readonly filters: FilterMap;
   readonly granularity?: Granularity | undefined;
   readonly orgNodeValues?: readonly string[] | undefined;
+  /** Debug-only: tag identifying which widget/view fired this query,
+   *  surfaced in the query log. Not used by SQL builders. */
+  readonly origin?: string | undefined;
 }
 
 export interface CostRow {
@@ -47,6 +50,7 @@ export interface TrendQueryParams {
   readonly filters: FilterMap;
   readonly deltaThreshold: Dollars;
   readonly percentThreshold: number;
+  readonly origin?: string | undefined;
 }
 
 export interface TrendRow {
@@ -69,6 +73,7 @@ export interface MissingTagsParams {
   readonly filters: FilterMap;
   readonly minCost: Dollars;
   readonly tagDimension: DimensionId;
+  readonly origin?: string | undefined;
 }
 
 /**
@@ -133,6 +138,7 @@ export interface EntityDetailParams {
   readonly dateRange: DateRange;
   readonly filters: FilterMap;
   readonly granularity?: Granularity | undefined;
+  readonly origin?: string | undefined;
 }
 
 export interface DailyCost {
@@ -164,6 +170,7 @@ export interface DailyCostsParams {
   readonly filters: FilterMap;
   readonly groupBy: DimensionId;
   readonly granularity?: Granularity | undefined;
+  readonly origin?: string | undefined;
 }
 
 export interface DailyCostDay {

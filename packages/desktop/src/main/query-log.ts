@@ -1,6 +1,12 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { RawRow } from './duckdb-client.js';
 
 export type QueryStatus = 'queued' | 'running' | 'success' | 'error';
+
+/** Per-IPC-call origin tag (e.g. "pie:service"). Set by handlers via
+ *  `originStore.run(origin, fn)` so QueryLog.start can attach it without
+ *  threading origin through every helper signature. */
+export const originStore = new AsyncLocalStorage<string | null>();
 
 export interface QueryLogEntry {
   readonly id: number;
@@ -13,6 +19,7 @@ export interface QueryLogEntry {
   readonly error: string | null;
   readonly materialized: boolean;
   readonly cached: boolean;
+  readonly origin: string | null;
 }
 
 interface InternalEntry {
@@ -27,6 +34,7 @@ interface InternalEntry {
   error: string | null;
   materialized: boolean;
   cached: boolean;
+  origin: string | null;
 }
 
 const MAX_ENTRIES = 200;
@@ -49,6 +57,7 @@ export class QueryLog {
       error: null,
       materialized,
       cached: false,
+      origin: originStore.getStore() ?? null,
     });
     if (this.entries.length > MAX_ENTRIES) {
       this.entries = this.entries.slice(-MAX_ENTRIES);
@@ -92,6 +101,7 @@ export class QueryLog {
       error: e.error,
       materialized: e.materialized,
       cached: e.cached,
+      origin: e.origin,
     }));
   }
 

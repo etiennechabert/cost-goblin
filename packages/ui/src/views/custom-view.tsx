@@ -175,7 +175,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     for (const dim of dimensions) {
       const dimId = getDimensionId(dim);
       if (filterCacheRef.current.has(dimId)) continue;
-      api.getFilterValues(dimId, {}, dateRange).then(values => {
+      api.getFilterValues(dimId, {}, dateRange, undefined, `filter-bar:prefetch:${dimId}`).then(values => {
         filterCacheRef.current.set(dimId, values);
       }).catch(() => undefined);
     }
@@ -225,7 +225,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     }
     const plain: Record<string, readonly string[]> = {};
     for (const [k, v] of Object.entries(currentFilters)) if (v !== undefined) plain[k] = v;
-    return api.getFilterValues(dimensionId, plain, dateRange);
+    return api.getFilterValues(dimensionId, plain, dateRange, undefined, `filter-bar:${dimensionId}`);
   }
 
   return (

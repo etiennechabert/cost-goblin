@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import { originStore } from '../query-log.js';
 import {
   asDimensionId,
   asDateString,
@@ -411,7 +412,7 @@ export function registerExplorerHandlers(app: AppContext): void {
   // Histogram + totals. Depends on filters/range/granularity/scope/metric/
   // perspective — NOT on sort. Kept separate from the rows query so that
   // clicking a column header doesn't wipe the histogram.
-  ipcMain.handle('explorer:query-overview', async (_event, payload: unknown): Promise<ExplorerOverviewResult> => {
+  ipcMain.handle('explorer:query-overview', (_event, payload: unknown): Promise<ExplorerOverviewResult> => originStore.run((payload as ExplorerOverviewParams).origin ?? null, async () => {
     const params = payload as ExplorerOverviewParams;
     const qc = await prepareQueryContext(app, params);
 
@@ -489,10 +490,10 @@ export function registerExplorerHandlers(app: AppContext): void {
       totalCost,
       tagColumns: qc.tagColumns,
     };
-  });
+  }));
 
   // Sample rows. Depends on everything the overview does PLUS sort + rowLimit.
-  ipcMain.handle('explorer:query-rows', async (_event, payload: unknown): Promise<ExplorerRowsResult> => {
+  ipcMain.handle('explorer:query-rows', (_event, payload: unknown): Promise<ExplorerRowsResult> => originStore.run((payload as ExplorerRowsParams).origin ?? null, async () => {
     const params = payload as ExplorerRowsParams;
     const qc = await prepareQueryContext(app, params);
     const rowLimit = clampRowLimit(params.rowLimit);
@@ -555,9 +556,9 @@ export function registerExplorerHandlers(app: AppContext): void {
     }
 
     return { sampleRows, tagColumns: qc.tagColumns };
-  });
+  }));
 
-  ipcMain.handle('explorer:query-aggregated-table', async (_event, payload: unknown): Promise<AggregatedTableResult> => {
+  ipcMain.handle('explorer:query-aggregated-table', (_event, payload: unknown): Promise<AggregatedTableResult> => originStore.run((payload as AggregatedTableParams).origin ?? null, async () => {
     const params = payload as AggregatedTableParams;
     const qc = await prepareQueryContext(app, params);
     const rowLimit = clampRowLimit(params.rowLimit);
@@ -633,9 +634,9 @@ export function registerExplorerHandlers(app: AppContext): void {
     });
 
     return { rows: resultRows, totalRows, tagColumns: qc.tagColumns };
-  });
+  }));
 
-  ipcMain.handle('explorer:filter-values', async (_event, payload: unknown): Promise<ExplorerFilterValue[]> => {
+  ipcMain.handle('explorer:filter-values', (_event, payload: unknown): Promise<ExplorerFilterValue[]> => originStore.run((payload as ExplorerFilterValuesParams).origin ?? null, async () => {
     const params = payload as ExplorerFilterValuesParams;
     const dimId = params.dimensionId;
 
@@ -695,5 +696,5 @@ export function registerExplorerHandlers(app: AppContext): void {
         rows: toNum(r['row_count']),
       };
     });
-  });
+  }));
 }

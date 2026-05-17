@@ -638,7 +638,7 @@ export function CostScopeView(): React.JSX.Element {
     async function fetchDimValues(d: typeof dimensions[number]): Promise<[string, readonly string[]]> {
       const id = getDimensionId(d);
       try {
-        const vals = await api.getFilterValues(id, {}, undefined, { bypassCostScope: true });
+        const vals = await api.getFilterValues(id, {}, undefined, { bypassCostScope: true }, `cost-scope:${id}`);
         return [id, vals.map(v => v.value)];
       } catch {
         return [id, []];

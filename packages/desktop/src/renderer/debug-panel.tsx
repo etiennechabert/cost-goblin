@@ -17,7 +17,8 @@ function serializeLog(entries: DebugQueryLogEntry[]): string {
     const status = labels[e.status] ?? e.status;
     const duration = e.durationMs === null ? '...' : formatDuration(e.durationMs);
     const rows = e.rowCount === null ? '' : `${String(e.rowCount)} rows`;
-    const header = `[${status}] ${formatTimestamp(e.startedAt)}  ${duration}  ${rows}`;
+    const origin = e.origin === null ? '' : `  origin=${e.origin}`;
+    const header = `[${status}] ${formatTimestamp(e.startedAt)}  ${duration}  ${rows}${origin}`;
     const error = e.error === null ? '' : `\nError: ${e.error}`;
     return `${header}\n${e.sql}${error}`;
   }).join('\n\n---\n\n');
@@ -26,6 +27,17 @@ function serializeLog(entries: DebugQueryLogEntry[]): string {
 function sqlPreview(sql: string): string {
   const oneLine = sql.replaceAll(/\s+/g, ' ').trim();
   return oneLine.length > 100 ? `${oneLine.slice(0, 100)}...` : oneLine;
+}
+
+type QuerySource = 'rollup' | 'raw' | null;
+
+/** Infer the on-disk source the query reads from. CACHE / MEM are set on the
+ *  entry directly; ROLLUP / RAW we infer by looking for the path markers in
+ *  the SQL since those flags are not plumbed through. */
+function detectSource(sql: string): QuerySource {
+  if (sql.includes('/aws/rollup/')) return 'rollup';
+  if (sql.includes('/aws/raw/')) return 'raw';
+  return null;
 }
 
 function StatusDot({ status }: Readonly<{ status: DebugQueryLogEntry['status'] }>): React.JSX.Element {
@@ -76,6 +88,12 @@ function QueryRow({ entry }: Readonly<{ entry: DebugQueryLogEntry }>): React.JSX
             {entry.materialized && !entry.cached && (
               <span className="text-[10px] font-medium px-1 rounded bg-positive/15 text-positive">MEM</span>
             )}
+            {!entry.cached && !entry.materialized && (() => {
+              const src = detectSource(entry.sql);
+              if (src === 'rollup') return <span className="text-[10px] font-medium px-1 rounded bg-warning/15 text-warning">ROLLUP</span>;
+              if (src === 'raw') return <span className="text-[10px] font-medium px-1 rounded bg-text-muted/15 text-text-secondary">RAW</span>;
+              return null;
+            })()}
             <span className="text-xs text-text-muted">
               {(() => { if (entry.durationMs !== null) { return formatDuration(entry.durationMs); } return entry.status === 'queued' ? 'queued' : '...'; })()}
             </span>
@@ -91,6 +109,9 @@ function QueryRow({ entry }: Readonly<{ entry: DebugQueryLogEntry }>): React.JSX
           )}
           {entry.error !== null && (
             <span className="text-[10px] text-negative truncate">{entry.error}</span>
+          )}
+          {entry.origin !== null && (
+            <span className="ml-auto text-[10px] font-mono text-text-muted truncate" title={entry.origin}>{entry.origin}</span>
           )}
         </div>
       </button>

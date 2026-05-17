@@ -17,11 +17,12 @@ import {
   resolveAvailablePeriods,
   resolveEntityName,
 } from './query-utils.js';
+import { originStore } from '../query-log.js';
 
 export function registerTrendHandlers(app: AppContext): void {
   const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery, materializedBase } = app;
 
-  ipcMain.handle('query:trends', async (_event, params: TrendQueryParams): Promise<TrendResult> => {
+  ipcMain.handle('query:trends', (_event, params: TrendQueryParams): Promise<TrendResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
@@ -56,5 +57,5 @@ export function registerTrendHandlers(app: AppContext): void {
       };
     }
     return result;
-  });
+  }));
 }

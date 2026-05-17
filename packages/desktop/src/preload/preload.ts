@@ -54,6 +54,9 @@ interface DebugQueryLogEntry {
   readonly durationMs: number | null;
   readonly rowCount: number | null;
   readonly error: string | null;
+  readonly materialized: boolean;
+  readonly cached: boolean;
+  readonly origin: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,8 +121,8 @@ const api: CostApi = {
   getOrgTree(): Promise<OrgNode[]> {
     return invoke<OrgNode[]>('config:org-tree');
   },
-  getFilterValues(dimensionId: string, filters: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }): Promise<{ value: string; label: string; count: number }[]> {
-    return invoke<{ value: string; label: string; count: number }[]>('query:filter-values', dimensionId, filters, dateRange, opts);
+  getFilterValues(dimensionId: string, filters: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]> {
+    return invoke<{ value: string; label: string; count: number }[]>('query:filter-values', dimensionId, filters, dateRange, opts, origin);
   },
   getDataInventory(tier?: DataTier): Promise<DataInventoryResult> {
     return invoke<DataInventoryResult>('data:inventory', tier);

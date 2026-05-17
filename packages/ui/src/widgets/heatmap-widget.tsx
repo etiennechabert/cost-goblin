@@ -60,6 +60,7 @@ export function HeatmapWidget({
     granularity,
     globalFilters,
     specFilters: spec.filters,
+    origin: `heatmap:${String(effectiveGroupBy ?? '')}`,
   });
 
   const { cells, groups, dates } = useMemo(

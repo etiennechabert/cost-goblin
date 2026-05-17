@@ -29,11 +29,12 @@ import {
   resolveAvailablePeriods,
   resolveEntityName,
 } from './query-utils.js';
+import { originStore } from '../query-log.js';
 
 export function registerCostHandlers(app: AppContext): void {
   const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getCostScope, getAvailableColumns, runPreparedQuery, materializedBase } = app;
 
-  ipcMain.handle('query:costs', async (_event, params: CostQueryParams): Promise<CostResult> => {
+  ipcMain.handle('query:costs', (_event, params: CostQueryParams): Promise<CostResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
@@ -67,9 +68,9 @@ export function registerCostHandlers(app: AppContext): void {
     }
 
     return result;
-  });
+  }));
 
-  ipcMain.handle('query:daily-costs', async (_event, params: DailyCostsParams): Promise<DailyCostsResult> => {
+  ipcMain.handle('query:daily-costs', (_event, params: DailyCostsParams): Promise<DailyCostsResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
@@ -127,9 +128,9 @@ export function registerCostHandlers(app: AppContext): void {
       });
 
     return { days, groups: [...groupSet], totalCost: asDollars(totalCost) };
-  });
+  }));
 
-  ipcMain.handle('query:entity-detail', async (_event, params: EntityDetailParams): Promise<EntityDetailResult> => {
+  ipcMain.handle('query:entity-detail', (_event, params: EntityDetailParams): Promise<EntityDetailResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
@@ -165,5 +166,5 @@ export function registerCostHandlers(app: AppContext): void {
         name: resolveEntityName(s.name, accountMap),
       })),
     };
-  });
+  }));
 }
