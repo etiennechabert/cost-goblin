@@ -626,10 +626,7 @@ function AppShell(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={handleGoHome}
-                  className={[
-                    'rounded-md p-1 transition-colors [-webkit-app-region:no-drag]',
-                    isActiveDefault ? 'bg-bg-tertiary' : 'hover:bg-bg-tertiary/50',
-                  ].join(' ')}
+                  className="rounded-md p-1 [-webkit-app-region:no-drag] cursor-pointer"
                   aria-label="Home"
                   aria-current={isActiveDefault ? 'page' : undefined}
                   title={tooltip}
