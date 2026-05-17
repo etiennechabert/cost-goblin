@@ -47,7 +47,7 @@ export function PieWidget({
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
 
-  const origin = `pie:${String(effectiveGroupBy ?? '')}`;
+  const origin = `widget:pie:${String(effectiveGroupBy ?? '')}`;
   const { query, activeGroupBy, costResult } = useCostWidgetQuery({
     specGroupBy: effectiveGroupBy,
     dateRange,

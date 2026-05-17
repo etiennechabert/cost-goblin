@@ -99,7 +99,7 @@ export function TableWidget({
   const [enabledColumns, setEnabledColumns] = useState(specEnabled);
 
   const overviewQuery = useQuery(
-    () => api.queryExplorerOverview({ filters: explorerFilters, dateRange, granularity, origin: 'table:overview' }),
+    () => api.queryExplorerOverview({ filters: explorerFilters, dateRange, granularity, origin: 'widget:table:overview' }),
     [fk, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, granularity, api],
   );
 
@@ -129,7 +129,7 @@ export function TableWidget({
       groupByColumns,
       ...(sort === undefined ? {} : { sort }),
       rowLimit: ROW_LIMIT,
-      origin: 'table:rows',
+      origin: 'widget:table:rows',
     }),
     [fk, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, granularity, groupByKey, sort?.column, sort?.direction, api],
   );
@@ -143,7 +143,7 @@ export function TableWidget({
           applyCostScope: true,
           groupByColumns,
           rowLimit: ROW_LIMIT,
-          origin: 'table:rows/prev',
+          origin: 'widget:table:rows/prev',
         })
       : Promise.resolve(null),
     [compareEnabled, fk, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, granularity, groupByKey, api],
@@ -247,7 +247,7 @@ export function TableWidget({
       groupByColumns: allDimKeys,
       rowLimit: 100,
       rowFilters: row.values,
-      origin: 'table:expand',
+      origin: 'widget:table:expand',
     });
     return result.rows;
   }, [api, explorerFilters, dateRange, granularity, allColumnSpecs]);

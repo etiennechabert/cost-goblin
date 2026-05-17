@@ -182,13 +182,18 @@ export function DebugPanel({ onClose }: Readonly<{ onClose: () => void }>): Reac
 
   const runningCount = visible.filter(e => e.status === 'running').length;
   const queuedCount = visible.filter(e => e.status === 'queued').length;
-  const sorted = [...visible].reverse().sort((a, b) => {
+  // Sort: running first (so the active spinner stays visible), then queued,
+  // then completed entries by duration DESC so the slowest queries float to
+  // the top where they're easiest to spot.
+  const sorted = [...visible].sort((a, b) => {
     const rank = (s: DebugQueryLogEntry['status']): number => {
       if (s === 'running') return 0;
       if (s === 'queued') return 1;
       return 2;
     };
-    return rank(a.status) - rank(b.status);
+    const rankDiff = rank(a.status) - rank(b.status);
+    if (rankDiff !== 0) return rankDiff;
+    return (b.durationMs ?? 0) - (a.durationMs ?? 0);
   });
 
   return (

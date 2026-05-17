@@ -41,7 +41,7 @@ export function TreemapWidget({
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
 
-  const origin = `treemap:${String(effectiveGroupBy ?? '')}`;
+  const origin = `widget:treemap:${String(effectiveGroupBy ?? '')}`;
   const { query, activeGroupBy, costResult } = useCostWidgetQuery({
     specGroupBy: effectiveGroupBy,
     dateRange,

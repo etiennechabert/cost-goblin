@@ -63,7 +63,7 @@ export function StackedBarWidget({
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
 
-  const origin = `stackedBar:${String(effectiveGroupBy ?? '')}`;
+  const origin = `widget:stackedBar:${String(effectiveGroupBy ?? '')}`;
   const { query, activeGroupBy, dailyResult } = useDailyWidgetQuery({
     specGroupBy: effectiveGroupBy,
     dateRange,

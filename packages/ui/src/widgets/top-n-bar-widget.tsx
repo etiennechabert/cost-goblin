@@ -46,7 +46,7 @@ export function TopNBarWidget({
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
 
-  const origin = `topNBar:${String(effectiveGroupBy ?? '')}`;
+  const origin = `widget:topNBar:${String(effectiveGroupBy ?? '')}`;
   const { query, activeGroupBy, costResult } = useCostWidgetQuery({
     specGroupBy: effectiveGroupBy,
     dateRange,

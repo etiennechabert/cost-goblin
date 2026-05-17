@@ -69,7 +69,7 @@ export function LineWidget({
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
 
-  const origin = `line:${String(effectiveGroupBy ?? '')}`;
+  const origin = `widget:line:${String(effectiveGroupBy ?? '')}`;
   const { query, activeGroupBy, dailyResult } = useDailyWidgetQuery({
     specGroupBy: effectiveGroupBy,
     dateRange,
