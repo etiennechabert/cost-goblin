@@ -9,6 +9,9 @@ export function registerQueryHandlers(app: AppContext): void {
   ipcMain.handle('query:cancel-pending', () => {
     app.ctx.db.cancelPendingQueries();
   });
+  ipcMain.handle('cache:clear-all', async () => {
+    await app.clearAllCaches();
+  });
   registerCostHandlers(app);
   registerTrendHandlers(app);
   registerRecommendationHandlers(app);

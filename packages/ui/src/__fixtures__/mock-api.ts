@@ -373,6 +373,7 @@ export class MockCostApi implements CostApi {
   dismissSuggestion(): Promise<void> { return Promise.resolve(); }
   acceptSuggestion(): Promise<void> { return Promise.resolve(); }
   cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
+  clearAllCaches(): Promise<void> { return Promise.resolve(); }
   getMcpServerRunning(): Promise<boolean> { return Promise.resolve(true); }
   setMcpServerRunning(): Promise<void> { return Promise.resolve(); }
 }

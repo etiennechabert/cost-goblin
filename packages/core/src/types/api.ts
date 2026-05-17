@@ -193,6 +193,12 @@ export interface CostApi {
    *  navigation so stale queries from the previous view don't hold pool
    *  connections and slow down the new view's queries. */
   cancelPendingQueries(): Promise<void>;
+  /** Wipe every backend cache (LRU result cache, column probe cache,
+   *  in-flight de-dup map, materialized base table, plus the in-memory
+   *  config/dimensions/views snapshots). The base table is re-warmed in
+   *  the background. The renderer should follow up with its own view
+   *  refresh so the user sees fresh data. */
+  clearAllCaches(): Promise<void>;
   getMcpServerRunning(): Promise<boolean>;
   setMcpServerRunning(enabled: boolean): Promise<void>;
 }

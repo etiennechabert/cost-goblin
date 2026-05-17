@@ -3,7 +3,7 @@ import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostS
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagColumnName } from '@costgoblin/core/browser';
-import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal } from 'lucide-react';
+import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, Eraser } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { HomeButton } from './top-menu/home-button.js';
 import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
@@ -386,6 +386,8 @@ function AppShell(): React.JSX.Element {
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
   const { syncError, setSyncError, syncActivity, syncFilesRemaining } = useSyncPolling(api, setupCheck);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [clearingCache, setClearingCache] = useState(false);
   const inFlightCount = useDebugBadge();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
@@ -496,6 +498,17 @@ function AppShell(): React.JSX.Element {
 
   function handleCheckForUpdates() {
     globalThis.costgoblinUpdate.checkForUpdates().catch(() => undefined);
+  }
+
+  function handleClearCache() {
+    if (clearingCache) return;
+    setClearingCache(true);
+    api.clearAllCaches()
+      .catch(() => undefined)
+      .finally(() => {
+        setClearingCache(false);
+        setRefreshNonce(n => n + 1);
+      });
   }
 
   useEffect(() => {
@@ -672,6 +685,21 @@ function AppShell(): React.JSX.Element {
                 </span>
               )}
             </button>
+            <button
+              type="button"
+              onClick={handleClearCache}
+              disabled={clearingCache}
+              className={[
+                'rounded-md p-1.5 transition-colors',
+                clearingCache
+                  ? 'text-text-muted cursor-wait'
+                  : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
+              ].join(' ')}
+              aria-label="Clear cache and refresh"
+              title="Clear cache and refresh"
+            >
+              <Eraser size={16} className={clearingCache ? 'animate-pulse' : undefined} />
+            </button>
             {(() => {
               const showError = syncError !== null;
               const showActive = !showError && syncActivity !== 'idle';
@@ -743,57 +771,60 @@ function AppShell(): React.JSX.Element {
         </nav>
       </div>
 
-      {/* View content */}
-      {view.page === 'custom' && viewsReady && (() => {
-        const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
-        return (
-          <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
-            <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} />
+      {/* View content — wrapped in a keyed container so "clear cache"
+          forces every mounted view to remount and refetch. */}
+      <div key={`refresh-${String(refreshNonce)}`}>
+        {view.page === 'custom' && viewsReady && (() => {
+          const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
+          return (
+            <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
+              <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} />
+            </Profiler>
+          );
+        })()}
+        {view.page === 'trends' && (
+          <Profiler id="trends" onRender={onPerfRender}>
+            <CostTrends onEntityClick={handleEntityClick} />
           </Profiler>
-        );
-      })()}
-      {view.page === 'trends' && (
-        <Profiler id="trends" onRender={onPerfRender}>
-          <CostTrends onEntityClick={handleEntityClick} />
-        </Profiler>
-      )}
-      {view.page === 'missing-tags' && (
-        <Profiler id="missing-tags" onRender={onPerfRender}>
-          <MissingTags onEntityClick={handleEntityClick} />
-        </Profiler>
-      )}
-      {view.page === 'savings' && (
-        <Profiler id="savings" onRender={onPerfRender}>
-          <Savings />
-        </Profiler>
-      )}
-      {view.page === 'explorer' && (
-        <Profiler id="explorer" onRender={onPerfRender}>
-          <ExplorerView />
-        </Profiler>
-      )}
-      {view.page === 'cost-scope' && (
-        <Profiler id="cost-scope" onRender={onPerfRender}>
-          <CostScopeView />
-        </Profiler>
-      )}
-      {view.page === 'dimensions' && (
-        <Profiler id="dimensions" onRender={onPerfRender}>
-          <DimensionsView />
-        </Profiler>
-      )}
-      {view.page === 'views-editor' && (
-        <Profiler id="views-editor" onRender={onPerfRender}>
-          <ViewsEditor onConfigPersisted={setViewsConfig} />
-        </Profiler>
-      )}
-      {view.page === 'mcp' && (
-        <McpView />
-      )}
-      <div className={view.page === 'sync' ? '' : 'hidden'}>
-        <Profiler id="sync" onRender={onPerfRender}>
-          <DataManagement />
-        </Profiler>
+        )}
+        {view.page === 'missing-tags' && (
+          <Profiler id="missing-tags" onRender={onPerfRender}>
+            <MissingTags onEntityClick={handleEntityClick} />
+          </Profiler>
+        )}
+        {view.page === 'savings' && (
+          <Profiler id="savings" onRender={onPerfRender}>
+            <Savings />
+          </Profiler>
+        )}
+        {view.page === 'explorer' && (
+          <Profiler id="explorer" onRender={onPerfRender}>
+            <ExplorerView />
+          </Profiler>
+        )}
+        {view.page === 'cost-scope' && (
+          <Profiler id="cost-scope" onRender={onPerfRender}>
+            <CostScopeView />
+          </Profiler>
+        )}
+        {view.page === 'dimensions' && (
+          <Profiler id="dimensions" onRender={onPerfRender}>
+            <DimensionsView />
+          </Profiler>
+        )}
+        {view.page === 'views-editor' && (
+          <Profiler id="views-editor" onRender={onPerfRender}>
+            <ViewsEditor onConfigPersisted={setViewsConfig} />
+          </Profiler>
+        )}
+        {view.page === 'mcp' && (
+          <McpView />
+        )}
+        <div className={view.page === 'sync' ? '' : 'hidden'}>
+          <Profiler id="sync" onRender={onPerfRender}>
+            <DataManagement />
+          </Profiler>
+        </div>
       </div>
       {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} />}
       <ReleaseNotesModal open={releaseNotesOpen} onOpenChange={setReleaseNotesOpen} status={updateStatus} />
