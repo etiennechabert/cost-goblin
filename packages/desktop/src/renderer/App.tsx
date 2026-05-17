@@ -652,6 +652,7 @@ function AppShell(): React.JSX.Element {
                   onClick={() => { handleNavClick(item.id); }}
                   className={[
                     'flex items-center rounded-md transition-colors [-webkit-app-region:no-drag]',
+                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary',
                     isActive
                       ? 'gap-1.5 px-3 py-1.5 text-sm font-medium bg-bg-tertiary text-text-primary'
                       : 'p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
