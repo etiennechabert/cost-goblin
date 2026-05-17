@@ -159,6 +159,7 @@ export interface AppContext {
   readonly invalidateCostScope: () => void;
   readonly invalidateColumnCache: () => void;
   readonly warmupBase: () => void;
+  readonly clearAllCaches: () => Promise<void>;
 }
 
 async function loadAccountCsv(
@@ -524,6 +525,21 @@ export function createAppContext(ctx: IpcContext): AppContext {
     },
     invalidateColumnCache: () => { columnCache.clear(); },
     warmupBase: () => { resultCache.clear(); void warmupBase(); },
+    clearAllCaches: async (): Promise<void> => {
+      ctx.db.cancelPendingQueries();
+      state.config = null;
+      state.dimensions = null;
+      state.accountMap = null;
+      state.accountReverseMap = null;
+      state.regionMap = null;
+      state.orgAccountsPath = null;
+      state.views = null;
+      state.costScope = null;
+      columnCache.clear();
+      inflightQueries.clear();
+      await materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); });
+      void warmupBase();
+    },
   };
 }
 

@@ -15,9 +15,11 @@ export function registerUIHandlers(app: AppContext): void {
       const parsed = parseJsonObject(raw);
       const theme = parsed?.['theme'];
       const palette = parsed?.['palette'];
+      const defaultViewId = parsed?.['defaultViewId'];
       return {
         theme: theme === 'light' || theme === 'dark' ? theme : 'dark',
         palette: palette === 'standard' || palette === 'colorblind' ? palette : 'standard',
+        defaultViewId: typeof defaultViewId === 'string' ? defaultViewId : undefined,
       };
     } catch {
       // file doesn't exist yet
