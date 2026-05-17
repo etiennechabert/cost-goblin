@@ -18,7 +18,13 @@ import { DimensionSelector } from '../components/dimension-selector.js';
 import { formatDollars, formatPercent } from '../components/format.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 
-type Direction = 'increases' | 'savings';
+type Direction = 'all' | 'increases' | 'savings';
+
+const DIRECTION_OPTIONS: readonly { value: Direction; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'increases', label: 'Increase' },
+  { value: 'savings', label: 'Savings' },
+];
 
 interface TrendsState {
   selectedDimensionId: DimensionId | null;
@@ -69,7 +75,7 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
 
   const [state, setState] = useState<TrendsState>(() => ({
     selectedDimensionId: null,
-    direction: 'increases',
+    direction: 'all',
     dateRange: getDefaultDateRange(lagDays),
     granularity: 'daily' satisfies Granularity,
     deltaThreshold: 10,
@@ -113,14 +119,23 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
 
   let rows: readonly TrendRow[] = [];
   if (trendData !== null) {
-    rows = state.direction === 'increases' ? trendData.increases : trendData.savings;
+    let pool: TrendRow[];
+    if (state.direction === 'increases') pool = [...trendData.increases];
+    else if (state.direction === 'savings') pool = [...trendData.savings];
+    else pool = [...trendData.increases, ...trendData.savings];
+    pool.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+    rows = pool;
   }
 
   let totalLabel = '';
   if (trendData !== null) {
-    totalLabel = state.direction === 'increases'
-      ? `+${formatDollars(trendData.totalIncrease)} total increase`
-      : `-${formatDollars(trendData.totalSavings)} total savings`;
+    if (state.direction === 'increases') {
+      totalLabel = `+${formatDollars(trendData.totalIncrease)} total increase`;
+    } else if (state.direction === 'savings') {
+      totalLabel = `-${formatDollars(trendData.totalSavings)} total savings`;
+    } else {
+      totalLabel = `+${formatDollars(trendData.totalIncrease)} increase · -${formatDollars(trendData.totalSavings)} savings`;
+    }
   }
 
   function handleEntityClick(entity: EntityRef) {
@@ -151,19 +166,19 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
           />
 
           <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary/30 p-1">
-            {(['increases', 'savings'] as const).map((d) => (
+            {DIRECTION_OPTIONS.map((opt) => (
               <button
-                key={d}
+                key={opt.value}
                 type="button"
-                onClick={() => { setState((p) => ({ ...p, direction: d })); }}
+                onClick={() => { setState((p) => ({ ...p, direction: opt.value })); }}
                 className={[
-                  'rounded-md px-3 py-1.5 text-xs font-medium transition-colors capitalize',
-                  state.direction === d
+                  'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  state.direction === opt.value
                     ? 'bg-accent text-bg-primary shadow-sm'
                     : 'text-text-secondary hover:text-text-primary',
                 ].join(' ')}
               >
-                {d}
+                {opt.label}
               </button>
             ))}
           </div>
@@ -235,7 +250,7 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
 
       {trendData !== null && rows.length === 0 && (
         <div className="rounded-xl border border-border bg-bg-secondary/50 p-12 text-center text-text-secondary">
-          No {state.direction} above thresholds
+          No {state.direction === 'all' ? 'changes' : state.direction} above thresholds
         </div>
       )}
     </div>
