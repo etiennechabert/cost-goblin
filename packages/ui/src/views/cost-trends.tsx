@@ -6,7 +6,7 @@ import type {
   TrendRow,
   EntityRef,
 } from '@costgoblin/core/browser';
-import { asDimensionId, asDollars } from '@costgoblin/core/browser';
+import { asDimensionId, asDollars, asEntityRef } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -78,8 +78,8 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
     direction: 'all',
     dateRange: getDefaultDateRange(lagDays),
     granularity: 'daily' satisfies Granularity,
-    deltaThreshold: 10,
-    percentThreshold: 1,
+    deltaThreshold: 0,
+    percentThreshold: 0,
   }));
 
   const dimensions: Dimension[] =
@@ -118,11 +118,43 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
     trendsQuery.status === 'success' ? trendsQuery.data : null;
 
   let rows: readonly TrendRow[] = [];
+  let totalIncrease = 0;
+  let totalSavings = 0;
   if (trendData !== null) {
+    // The backend partitions raw SQL rows into increases / savings by sign
+    // and then merges within each bucket by friendly entity name. For the
+    // account dim, two account_ids can resolve to the same name with opposing
+    // deltas — leaving the same entity in *both* buckets and hiding its true
+    // net direction. Net the buckets here so each entity surfaces once with
+    // the right sign.
+    const merged = new Map<string, { currentCost: number; previousCost: number; delta: number }>();
+    for (const r of [...trendData.increases, ...trendData.savings]) {
+      const existing = merged.get(r.entity);
+      if (existing === undefined) {
+        merged.set(r.entity, { currentCost: r.currentCost, previousCost: r.previousCost, delta: r.delta });
+      } else {
+        existing.currentCost += r.currentCost;
+        existing.previousCost += r.previousCost;
+        existing.delta += r.delta;
+      }
+    }
+    const allRows: TrendRow[] = [...merged.entries()].map(([entity, d]) => ({
+      entity: asEntityRef(entity),
+      currentCost: asDollars(d.currentCost),
+      previousCost: asDollars(d.previousCost),
+      delta: asDollars(d.delta),
+      percentChange: d.previousCost === 0
+        ? (d.currentCost === 0 ? 0 : 100)
+        : (d.delta / d.previousCost) * 100,
+    }));
+    for (const r of allRows) {
+      if (r.delta > 0) totalIncrease += r.delta;
+      else totalSavings += Math.abs(r.delta);
+    }
     let pool: TrendRow[];
-    if (state.direction === 'increases') pool = [...trendData.increases];
-    else if (state.direction === 'savings') pool = [...trendData.savings];
-    else pool = [...trendData.increases, ...trendData.savings];
+    if (state.direction === 'increases') pool = allRows.filter(r => r.delta > 0);
+    else if (state.direction === 'savings') pool = allRows.filter(r => r.delta < 0);
+    else pool = allRows;
     pool.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
     rows = pool;
   }
@@ -130,11 +162,11 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
   let totalLabel = '';
   if (trendData !== null) {
     if (state.direction === 'increases') {
-      totalLabel = `+${formatDollars(trendData.totalIncrease)} total increase`;
+      totalLabel = `+${formatDollars(asDollars(totalIncrease))} total increase`;
     } else if (state.direction === 'savings') {
-      totalLabel = `-${formatDollars(trendData.totalSavings)} total savings`;
+      totalLabel = `-${formatDollars(asDollars(totalSavings))} total savings`;
     } else {
-      totalLabel = `+${formatDollars(trendData.totalIncrease)} increase · -${formatDollars(trendData.totalSavings)} savings`;
+      totalLabel = `+${formatDollars(asDollars(totalIncrease))} increase · -${formatDollars(asDollars(totalSavings))} savings`;
     }
   }
 
