@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { ChevronDown, Star } from 'lucide-react';
+import { ChevronDown, Star, LayoutDashboard } from 'lucide-react';
 import { Popover, PopoverTrigger, PopoverContent } from '@costgoblin/ui';
 
 export interface DashboardItem {
@@ -38,17 +38,19 @@ export function DashboardsDropdown({
         <button
           type="button"
           className={[
-            'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors [-webkit-app-region:no-drag]',
+            'flex items-center rounded-md transition-colors [-webkit-app-region:no-drag]',
             activeIsCustom
-              ? 'bg-bg-tertiary text-text-primary'
-              : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
+              ? 'gap-1.5 px-3 py-1.5 text-sm font-medium bg-bg-tertiary text-text-primary'
+              : 'gap-1 p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
           ].join(' ')}
           aria-haspopup="menu"
           aria-expanded={open}
+          aria-label={activeIsCustom ? undefined : 'Dashboards'}
+          title={activeIsCustom ? undefined : 'Dashboards'}
         >
-          Dashboards
+          {activeIsCustom ? 'Dashboards' : <LayoutDashboard size={18} />}
           <ChevronDown
-            size={14}
+            size={activeIsCustom ? 14 : 12}
             className={open ? 'rotate-180 transition-transform' : 'transition-transform'}
           />
         </button>

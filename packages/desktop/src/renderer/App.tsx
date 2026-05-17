@@ -644,21 +644,24 @@ function AppShell(): React.JSX.Element {
             />
             {ANALYTICAL_NAV.map((item) => {
               const Icon = item.Icon;
+              const isActive = active === item.id;
               return (
                 <button
                   key={item.id}
                   type="button"
                   onClick={() => { handleNavClick(item.id); }}
                   className={[
-                    'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors [-webkit-app-region:no-drag]',
-                    active === item.id
-                      ? 'bg-bg-tertiary text-text-primary'
-                      : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
+                    'flex items-center rounded-md transition-colors [-webkit-app-region:no-drag]',
+                    isActive
+                      ? 'gap-1.5 px-3 py-1.5 text-sm font-medium bg-bg-tertiary text-text-primary'
+                      : 'p-1.5 text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
                   ].join(' ')}
-                  aria-current={active === item.id ? 'page' : undefined}
+                  aria-current={isActive ? 'page' : undefined}
+                  aria-label={isActive ? undefined : item.label}
+                  title={isActive ? undefined : item.label}
                 >
-                  <Icon size={14} />
-                  {item.label}
+                  <Icon size={isActive ? 14 : 18} />
+                  {isActive && item.label}
                 </button>
               );
             })}
