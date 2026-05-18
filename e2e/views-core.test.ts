@@ -11,6 +11,7 @@ import {
   navigateToText,
   selectDatePreset,
   clickNavButton,
+  openOptionsMenu,
   writeCoverage,
   LOAD_TIMEOUT,
 } from './helpers.js';
@@ -45,29 +46,41 @@ test.describe('App shell', () => {
   });
 
   test('shows all navigation buttons', async () => {
-    for (const label of ['Cost Overview', 'Trends', 'Tags', 'Findings', 'Cost Scope', 'Dimensions', 'Views']) {
-      await expect(page.getByRole('button', { name: label })).toBeVisible();
+    // Inline top-bar buttons.
+    for (const label of ['Dashboards', 'Trends', 'Tags', 'Findings', 'Explorer', 'Options']) {
+      await expect(page.getByRole('button', { name: label, exact: false }).first()).toBeVisible();
     }
     await expect(page.getByRole('button', { name: /Sync/ }).first()).toBeVisible();
+    // Items behind the Options popover.
+    await openOptionsMenu(page);
+    for (const label of ['Cost Scope', 'Dimensions', 'Views Editor']) {
+      await expect(page.getByRole('button', { name: label, exact: false })).toBeVisible();
+    }
+    await page.keyboard.press('Escape');
   });
 
   test('has theme toggle button', async () => {
-    const themeBtn = page.getByRole('button', { name: /Switch to (light|dark) mode/ });
+    await openOptionsMenu(page);
+    const themeBtn = page.getByRole('button', { name: /^(Light|Dark) mode$/ });
     await expect(themeBtn).toBeVisible();
+    await page.keyboard.press('Escape');
   });
 
   test('theme toggle switches dark/light', async () => {
     const html = page.locator('html');
     const hadDark = await html.evaluate(el => el.classList.contains('dark'));
 
-    await page.getByRole('button', { name: /Switch to (light|dark) mode/ }).click();
+    await openOptionsMenu(page);
+    await page.getByRole('button', { name: /^(Light|Dark) mode$/ }).click();
     const hasToggled = await html.evaluate(el => el.classList.contains('dark'));
     expect(hasToggled).toBe(!hadDark);
 
-    // toggle back
-    await page.getByRole('button', { name: /Switch to (light|dark) mode/ }).click();
+    // toggle back — the label has flipped now that the theme switched
+    await openOptionsMenu(page);
+    await page.getByRole('button', { name: /^(Light|Dark) mode$/ }).click();
     const restored = await html.evaluate(el => el.classList.contains('dark'));
     expect(restored).toBe(hadDark);
+    await page.keyboard.press('Escape');
   });
 
   test('navigating between all views changes active content', async () => {
@@ -371,25 +384,29 @@ test.describe('Cost Trends', () => {
     }
   });
 
-  test('Increases/Savings toggle is present and clickable', async () => {
-    // These buttons have CSS capitalize. The nav bar also has a "Savings" button,
-    // so we scope to the toggle container (the bordered pill group).
+  test('All/Increase/Savings toggle is present and clickable', async () => {
+    // Toggle now has three options. The nav bar also has a "Findings" /
+    // "Savings"-flavoured button, so scope to the bordered pill group.
     const toggleContainer = page.locator('.flex.items-center.gap-1.rounded-lg.border').nth(1);
-    const increasesBtn = toggleContainer.getByRole('button', { name: 'increases' });
-    const savingsBtn = toggleContainer.getByRole('button', { name: 'savings' });
+    const allBtn = toggleContainer.getByRole('button', { name: 'All', exact: true });
+    const increaseBtn = toggleContainer.getByRole('button', { name: 'Increase', exact: true });
+    const savingsBtn = toggleContainer.getByRole('button', { name: 'Savings', exact: true });
 
-    await expect(increasesBtn).toBeVisible();
+    await expect(allBtn).toBeVisible();
+    await expect(increaseBtn).toBeVisible();
     await expect(savingsBtn).toBeVisible();
 
-    // toggle to savings
     await savingsBtn.click();
     await waitForQuerySettle(page);
     await screenshot(page, 'trends-savings');
 
-    // toggle back to increases
-    await increasesBtn.click();
+    await increaseBtn.click();
     await waitForQuerySettle(page);
     await screenshot(page, 'trends-increases');
+
+    await allBtn.click();
+    await waitForQuerySettle(page);
+    await screenshot(page, 'trends-all');
   });
 
   test('Min $ and Min % inputs are present and functional', async () => {
@@ -409,8 +426,8 @@ test.describe('Cost Trends', () => {
     await screenshot(page, 'trends-high-threshold');
 
     // restore defaults
-    await minDollar.fill('10');
-    await minPercent.fill('1');
+    await minDollar.fill('0');
+    await minPercent.fill('0');
     await waitForQuerySettle(page);
   });
 

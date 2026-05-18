@@ -104,11 +104,43 @@ export async function hasVisibleData(page: Page): Promise<boolean> {
   return text !== null && text.includes('$') && !text.includes('$0.00');
 }
 
-// Click a nav button, wait for the destination heading, and let initial
-// queries settle. Shared app launch means each describe block navigates
-// between views via clicks instead of relaunching Electron.
+// The top-menu rework moved a number of items behind popovers. Tests that
+// reach for a nav button by name no longer want to know whether that button
+// is inline or hidden in the Dashboards / Options popover — clickNavButton
+// dispatches based on where the item lives.
+//
+// - Inline top-bar items: kept in DIRECT_NAV. Icon-only when inactive, but
+//   their aria-label still matches their human name so getByRole('button',
+//   { name }) finds them either way.
+// - Items behind the Options (☰) popover: settings pages and the AI tool.
+// - Anything else is assumed to be a custom dashboard living inside the
+//   Dashboards popover (Cost Overview, plus whatever views.yaml defines).
+const OPTIONS_ITEMS = new Set(['Cost Scope', 'Dimensions', 'Views Editor', 'AI Assistant']);
+const DIRECT_NAV = new Set(['Trends', 'Findings', 'Tags', 'Explorer', 'Sync', 'Dashboards', 'Options', 'Home']);
+const NAV_ALIASES: Record<string, string> = { Views: 'Views Editor' };
+
+export async function openDashboardsDropdown(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Dashboards', exact: false }).first().click();
+}
+
+export async function openOptionsMenu(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Options', exact: true }).click();
+}
+
 export async function clickNavButton(page: Page, name: string): Promise<void> {
-  await page.getByRole('button', { name: new RegExp(name), exact: false }).first().click();
+  const resolved = NAV_ALIASES[name] ?? name;
+  if (OPTIONS_ITEMS.has(resolved)) {
+    await openOptionsMenu(page);
+    await page.getByRole('button', { name: resolved, exact: false }).click();
+    return;
+  }
+  if (DIRECT_NAV.has(resolved)) {
+    await page.getByRole('button', { name: new RegExp(`^${resolved}`), exact: false }).first().click();
+    return;
+  }
+  // Custom dashboard — hidden behind the Dashboards popover.
+  await openDashboardsDropdown(page);
+  await page.getByRole('menuitem', { name: new RegExp(resolved) }).first().click();
 }
 
 export async function navigateTo(page: Page, buttonName: string, headingName: string): Promise<void> {

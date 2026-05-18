@@ -2,7 +2,7 @@ import { test, expect, type ElectronApplication, type Page } from '@playwright/t
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { FIXTURE_CONFIG_DIR, launchApp, waitForQuerySettle } from './helpers.js';
+import { FIXTURE_CONFIG_DIR, clickNavButton, launchApp, waitForQuerySettle } from './helpers.js';
 
 // ---------------------------------------------------------------------------
 // Widget growth regression — every widget × every size stays bounded
@@ -38,7 +38,7 @@ test.describe('Widget growth', () => {
 
   for (const widgetType of WIDGET_TYPES) {
     test(`${widgetType} stays bounded at all sizes`, async () => {
-      await widgetPage.getByRole('button', { name: `test-${widgetType}`, exact: true }).click();
+      await clickNavButton(widgetPage, `test-${widgetType}`);
       await waitForQuerySettle(widgetPage);
       // Let queries resolve, loaders swap to real data, and any one-shot
       // layout transitions settle — we're hunting runaway growth, not
