@@ -119,12 +119,22 @@ const OPTIONS_ITEMS = new Set(['Cost Scope', 'Dimensions', 'Views Editor', 'AI A
 const DIRECT_NAV = new Set(['Trends', 'Findings', 'Tags', 'Explorer', 'Sync', 'Dashboards', 'Options', 'Home']);
 const NAV_ALIASES: Record<string, string> = { Views: 'Views Editor' };
 
+async function openIfClosed(trigger: ReturnType<Page['getByRole']>): Promise<void> {
+  // Radix Popover toggles open/closed on each trigger click. If a previous
+  // test or step left the popover open, clicking again would CLOSE it and
+  // the subsequent menu-item lookup would time out. Check aria-expanded
+  // first.
+  const expanded = await trigger.getAttribute('aria-expanded').catch(() => null);
+  if (expanded === 'true') return;
+  await trigger.click();
+}
+
 export async function openDashboardsDropdown(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Dashboards', exact: false }).first().click();
+  await openIfClosed(page.getByRole('button', { name: 'Dashboards', exact: false }).first());
 }
 
 export async function openOptionsMenu(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Options', exact: true }).click();
+  await openIfClosed(page.getByRole('button', { name: 'Options', exact: true }));
 }
 
 export async function clickNavButton(page: Page, name: string): Promise<void> {

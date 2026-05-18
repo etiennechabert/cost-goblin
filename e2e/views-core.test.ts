@@ -71,12 +71,13 @@ test.describe('App shell', () => {
     const hadDark = await html.evaluate(el => el.classList.contains('dark'));
 
     await openOptionsMenu(page);
+    // The Appearance items don't auto-close the menu (so users can toggle
+    // theme + palette in one open), so click both toggles back-to-back
+    // without reopening — the label flips between Light mode / Dark mode.
     await page.getByRole('button', { name: /^(Light|Dark) mode$/ }).click();
     const hasToggled = await html.evaluate(el => el.classList.contains('dark'));
     expect(hasToggled).toBe(!hadDark);
 
-    // toggle back — the label has flipped now that the theme switched
-    await openOptionsMenu(page);
     await page.getByRole('button', { name: /^(Light|Dark) mode$/ }).click();
     const restored = await html.evaluate(el => el.classList.contains('dark'));
     expect(restored).toBe(hadDark);
@@ -501,7 +502,9 @@ test.describe('Missing Tags', () => {
   });
 
   test('shows heading and subtitle', async () => {
-    await expect(page.getByRole('heading', { name: 'Missing Tags' })).toBeVisible();
+    // The header is no longer a semantic heading — it's a styled <p> now,
+    // matching the other view headers.
+    await expect(page.getByText('Missing Tags', { exact: true }).first()).toBeVisible();
     await expect(page.getByText(/without the selected allocation tag/i)).toBeVisible();
   });
 
