@@ -31,9 +31,24 @@ export function DashboardsDropdown({
   }, [items, defaultId]);
 
   const activeIsCustom = items.some(i => i.id === activeId);
+  const isOnDefault = activeId === defaultId;
+  const defaultExists = items.some(i => i.id === defaultId);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        // First click acts as Home: if the user isn't already on the default
+        // dashboard, jump them there instead of opening the list. They can
+        // click again (now that they're on the default) to actually see the
+        // list of dashboards.
+        if (next && !isOnDefault && defaultExists) {
+          onSelect(defaultId);
+          return;
+        }
+        setOpen(next);
+      }}
+    >
       <PopoverTrigger asChild>
         <button
           type="button"

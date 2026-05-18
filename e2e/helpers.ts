@@ -130,7 +130,14 @@ async function openIfClosed(trigger: ReturnType<Page['getByRole']>): Promise<voi
 }
 
 export async function openDashboardsDropdown(page: Page): Promise<void> {
-  await openIfClosed(page.getByRole('button', { name: 'Dashboards', exact: false }).first());
+  const trigger = page.getByRole('button', { name: 'Dashboards', exact: false }).first();
+  // The Dashboards trigger now doubles as a Home button: if the user isn't
+  // on the default dashboard, the first click navigates there instead of
+  // opening the popover. Click once, see whether the popover actually
+  // opened, and click again if not.
+  await openIfClosed(trigger);
+  const expanded = await trigger.getAttribute('aria-expanded').catch(() => null);
+  if (expanded !== 'true') await trigger.click();
 }
 
 export async function openOptionsMenu(page: Page): Promise<void> {
