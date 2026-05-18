@@ -1,24 +1,61 @@
 builtIn:
   - name: account
-    label: "Account"
+    label: Account
     field: account_id
     displayField: account_name
-
+    description: AWS account the cost was charged to. Main axis for org/team-level rollups.
   - name: region
-    label: "Region"
+    label: Region
     field: region
-
+    description: AWS region where the resource ran. Useful for spotting unintended
+      multi-region sprawl.
+    useRegionNames: true
   - name: service
-    label: "Service"
+    label: AWS Service
     field: service
-
+    description: AWS service code (EC2, S3, RDS, etc.) — the broadest "what cost me
+      this?" view.
   - name: service_family
-    label: "Service Family"
+    label: Service Category
     field: service_family
-
+    description: Higher-level product category (Compute, Storage, Database). Good
+      for exec summaries.
+  - name: region_country
+    label: Country
+    field: region
+    description: ISO country code derived from the region (DE, US, IE). Useful for
+      data-residency and geo chargeback.
+    enabled: false
+  - name: region_continent
+    label: Continent
+    field: region
+    description: AWS geographic bucket (EU, NA, AS) derived from the region. Useful
+      for continent-level summaries.
+    enabled: false
+  - name: line_item_type
+    label: Line Item Type
+    field: line_item_type
+    description: Usage vs Tax vs Credit vs Discount. Filter this to isolate real
+      usage from billing adjustments.
+  - name: usage_type
+    label: Usage Type
+    field: usage_type
+    description: Fine-grained usage string like USE2-BoxUsage:t3.medium. Use for
+      instance/storage-tier breakdowns.
+  - name: operation
+    label: Operation
+    field: operation
+    description: API operation billed for (RunInstances, GetObject). Useful for
+      API-level cost attribution.
+    enabled: false
+  - name: resource_id
+    label: Resource
+    field: resource_id
+    description: AWS resource ID or ARN (i-0abc…, arn:aws:rds:…). High-cardinality —
+      useful for drilling into specific resources.
 tags:
-  - tagName: "team"
-    label: "Team"
+  - tagName: team
+    label: Team
     concept: owner
     normalize: lowercase-kebab
     aliases:
@@ -29,14 +66,12 @@ tags:
       platform:
         - platform-team
         - platform_team
-
-  - tagName: "system"
-    label: "Service"
+  - tagName: system
+    label: Service
     concept: product
     normalize: lowercase
-
-  - tagName: "environment"
-    label: "Environment"
+  - tagName: environment
+    label: Environment
     concept: environment
     normalize: lowercase
     aliases:
@@ -49,7 +84,18 @@ tags:
       development:
         - dev
         - develop
-
-  - tagName: "cost-center"
-    label: "Cost Center"
+  - tagName: cost-center
+    label: Cost Center
     normalize: uppercase
+order:
+  - builtin:account
+  - builtin:region
+  - builtin:service
+  - builtin:service_family
+  - builtin:line_item_type
+  - builtin:usage_type
+  - builtin:resource_id
+  - tag:team
+  - tag:system
+  - tag:environment
+  - tag:cost-center

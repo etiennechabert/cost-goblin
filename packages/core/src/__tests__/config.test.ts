@@ -20,7 +20,7 @@ describe('loadConfig', () => {
 describe('loadDimensions', () => {
   it('loads built-in and tag dimensions', async () => {
     const dims = await loadDimensions(join(fixturesDir, 'dimensions.yaml'));
-    expect(dims.builtIn).toHaveLength(4);
+    expect(dims.builtIn).toHaveLength(10);
     expect(dims.builtIn[0]?.name).toBe('account');
     expect(dims.builtIn[0]?.displayField).toBe('account_name');
     expect(dims.tags).toHaveLength(4);

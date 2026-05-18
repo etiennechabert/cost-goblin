@@ -65,20 +65,44 @@ async function main() {
   async function selectPreset(label: string) {
     const trigger = page.locator('button:has(svg.lucide-calendar)');
     await trigger.click();
-    await page.getByText(label, { exact: true }).click();
+    // The trigger may already display the preset label; the popover option is the last match.
+    await page.getByText(label, { exact: true }).last().click();
     await settle();
   }
 
-  // --- Tags (Missing) ---
-  await page.getByRole('button', { name: /Tags/ }).first().click();
-  await page.getByText('without the selected allocation tag', { exact: false }).waitFor({ timeout: 5000 });
-  await settle();
+  async function openOptionsMenu() {
+    await page.getByRole('button', { name: 'Options', exact: true }).click();
+    await page.waitForTimeout(150);
+  }
+
+  async function goHome() {
+    await page.getByRole('button', { name: 'Home', exact: true }).click();
+    await settle();
+  }
+
+  // Generous viewport so screenshots are crisp in the landing page.
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // --- Cost Overview (default landing view, also used for hero) ---
+  // App boots into the default custom view ("Cost Overview"). Wait for it to render,
+  // then narrow the time range so the dashboard shows interesting data.
+  await goHome();
   await selectPreset('Last month');
-  await page.screenshot({ path: join(OUTPUT_DIR, 'tags-missing.png') });
-  console.log('✓ tags-missing.png');
+  await page.screenshot({ path: join(OUTPUT_DIR, 'cost-overview.png') });
+  console.log('✓ cost-overview.png');
+  await page.screenshot({ path: join(OUTPUT_DIR, 'hero-final-service.png') });
+  console.log('✓ hero-final-service.png');
+
+  // --- Views (dashboard builder) ---
+  await openOptionsMenu();
+  await page.getByRole('button', { name: 'Views Editor' }).click();
+  await page.getByRole('heading', { name: 'Views', exact: true }).waitFor({ timeout: 5000 });
+  await settle();
+  await page.screenshot({ path: join(OUTPUT_DIR, 'views.png') });
+  console.log('✓ views.png');
 
   // --- Trends ---
-  await page.getByRole('button', { name: /Trends/ }).first().click();
+  await page.getByRole('button', { name: 'Trends', exact: true }).first().click();
   await page.getByText('Period-over-period comparison', { exact: false }).waitFor({ timeout: 5000 });
   await settle();
   await selectPreset('Last month');
@@ -95,12 +119,35 @@ async function main() {
   await page.screenshot({ path: join(OUTPUT_DIR, 'trends.png') });
   console.log('✓ trends.png');
 
+  // --- Tags (Missing) ---
+  await page.getByRole('button', { name: 'Tags', exact: true }).first().click();
+  await page.getByText('without the selected allocation tag', { exact: false }).waitFor({ timeout: 5000 });
+  await settle();
+  await selectPreset('Last month');
+  await page.screenshot({ path: join(OUTPUT_DIR, 'tags-missing.png') });
+  console.log('✓ tags-missing.png');
+
   // --- Cost Optimization (Findings) ---
-  await page.getByRole('button', { name: /Findings/ }).first().click();
+  await page.getByRole('button', { name: 'Findings', exact: true }).first().click();
   await page.getByText('cost optimization recommendations', { exact: false }).waitFor({ timeout: 5000 });
   await settle();
   await page.screenshot({ path: join(OUTPUT_DIR, 'cost-optimization.png') });
   console.log('✓ cost-optimization.png');
+
+  // --- Explorer ---
+  await page.getByRole('button', { name: 'Explorer', exact: true }).first().click();
+  await settle();
+  await selectPreset('Last month');
+  await page.screenshot({ path: join(OUTPUT_DIR, 'explorer.png') });
+  console.log('✓ explorer.png');
+
+  // --- Dimensions ---
+  await openOptionsMenu();
+  await page.getByRole('button', { name: 'Dimensions', exact: true }).click();
+  await page.getByRole('heading', { name: 'Dimensions', exact: true }).waitFor({ timeout: 5000 });
+  await settle();
+  await page.screenshot({ path: join(OUTPUT_DIR, 'dimensions.png') });
+  console.log('✓ dimensions.png');
 
   await app.close();
   console.log('\nDone — screenshots saved to docs/screenshots/');
