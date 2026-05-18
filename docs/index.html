@@ -42,6 +42,8 @@
       overflow-x: hidden;
     }
 
+    section[id] { scroll-margin-top: 72px; }
+
     body {
       font-family: var(--font-display);
       background: var(--bg);
@@ -120,17 +122,36 @@
       text-decoration: none;
     }
 
-    .nav-links { display: flex; gap: 24px; align-items: center; }
+    .nav-links { display: flex; gap: 22px; align-items: center; }
 
     .nav-links a {
+      position: relative;
       font-family: var(--font-mono);
-      font-size: 13px;
+      font-size: 12.5px;
+      letter-spacing: 0.02em;
       color: var(--text-dim);
       text-decoration: none;
+      padding: 4px 0;
       transition: color 0.2s;
     }
 
-    .nav-links a:hover { color: var(--emerald); }
+    .nav-links a:not(.gh-star)::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      bottom: -2px;
+      height: 1px;
+      width: 0;
+      background: var(--emerald);
+      box-shadow: 0 0 8px var(--emerald-glow-strong);
+      transition: width 0.25s ease;
+    }
+
+    .nav-links a:hover { color: var(--text); }
+    .nav-links a:hover:not(.gh-star)::before { width: 100%; }
+
+    .nav-links a.is-active { color: var(--emerald); }
+    .nav-links a.is-active::before { width: 100%; }
 
     .gh-star {
       display: inline-flex;
@@ -371,76 +392,198 @@
       pointer-events: none;
     }
 
-    /* --- VALUE PROPS --- */
-    .values {
-      padding: 100px 24px;
+    /* --- POSITIONING (Why CostGoblin) --- */
+    .positioning {
+      padding: 110px 24px;
       border-top: 1px solid var(--border);
     }
 
-    .values-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 24px;
-    }
-
-    .value-card {
-      position: relative;
-      padding: 36px 32px 32px;
-      border-radius: 12px;
-      background: linear-gradient(160deg, rgba(16, 185, 129, 0.06) 0%, var(--bg) 50%);
-      border: 1px solid var(--border);
+    .positioning-header {
+      max-width: 760px;
+      margin: 0 auto 56px;
+      text-align: center;
       opacity: 0;
-      transform: translateY(20px);
-      transition: all 0.6s ease;
-      overflow: hidden;
+      transform: translateY(12px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
     }
-
-    .value-card::before {
+    .positioning-header.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .positioning-header .section-label { margin-bottom: 18px; }
+    .positioning-title {
+      font-size: clamp(30px, 4.2vw, 46px);
+      font-weight: 600;
+      line-height: 1.1;
+      letter-spacing: -0.025em;
+      margin-bottom: 24px;
+    }
+    .positioning-title .hl {
+      color: var(--emerald);
+      position: relative;
+      white-space: nowrap;
+    }
+    .positioning-title .hl::after {
       content: '';
       position: absolute;
-      top: -1px;
-      left: 24px;
-      right: 24px;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, var(--emerald), transparent);
-      opacity: 0.5;
+      left: 0; right: 0; bottom: 2px;
+      height: 8px;
+      background: var(--emerald-glow);
+      z-index: -1;
+      border-radius: 4px;
+    }
+    .positioning-intro {
+      font-size: 17px;
+      line-height: 1.65;
+      color: var(--text-dim);
+      max-width: 660px;
+      margin: 0 auto;
+    }
+    .positioning-intro .hl-soft {
+      color: var(--text);
+      font-weight: 500;
+    }
+    .positioning-actions {
+      font-size: clamp(18px, 2.1vw, 21px);
+      font-weight: 500;
+      line-height: 1.45;
+      color: var(--text);
+      max-width: 720px;
+      margin: 28px auto 0;
+      letter-spacing: -0.015em;
+    }
+    .positioning-negatives {
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      margin: 24px auto 0;
+      max-width: 560px;
     }
 
-    .value-card.visible {
+    /* Comparison table */
+    .compare {
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      overflow: hidden;
+      background: var(--bg-card);
+      opacity: 0;
+      transform: translateY(14px);
+      transition: opacity 0.7s ease, transform 0.7s ease;
+      position: relative;
+      box-shadow:
+        0 4px 20px rgba(0, 0, 0, 0.25),
+        0 24px 64px rgba(0, 0, 0, 0.25);
+    }
+    .compare.visible {
       opacity: 1;
       transform: translateY(0);
     }
 
-    .value-card:hover {
-      border-color: rgba(16, 185, 129, 0.25);
-      background: linear-gradient(160deg, rgba(16, 185, 129, 0.1) 0%, var(--bg) 50%);
+    .compare-row {
+      display: grid;
+      grid-template-columns: 1.05fr 1.45fr 1.6fr;
     }
-
-    .value-icon {
-      width: 44px;
-      height: 44px;
+    .compare-row + .compare-row {
+      border-top: 1px solid var(--border);
+    }
+    .compare-cell {
+      padding: 20px 28px;
+      font-size: 14.5px;
+      line-height: 1.5;
+      color: var(--text);
       display: flex;
       align-items: center;
-      justify-content: center;
-      border-radius: 10px;
-      margin-bottom: 24px;
-      font-size: 22px;
-      background: rgba(16, 185, 129, 0.08);
-      border: 1px solid rgba(16, 185, 129, 0.15);
     }
-
-    .value-card h3 {
-      font-size: 18px;
-      font-weight: 600;
-      margin-bottom: 10px;
-      letter-spacing: -0.01em;
+    .compare-label {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
     }
-
-    .value-card p {
-      font-size: 14px;
+    .compare-them {
       color: var(--text-dim);
-      line-height: 1.7;
+      border-left: 1px solid var(--border);
     }
+    .compare-us {
+      color: var(--text);
+      font-weight: 500;
+      background: linear-gradient(180deg, rgba(16, 185, 129, 0.05), rgba(16, 185, 129, 0.015));
+      border-left: 1px solid rgba(16, 185, 129, 0.22);
+      position: relative;
+    }
+    .compare-us::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, transparent, var(--emerald) 30%, var(--emerald) 70%, transparent);
+      opacity: 0.7;
+    }
+
+    .compare-head .compare-cell {
+      padding: 26px 28px 22px;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+      background-color: rgba(255, 255, 255, 0.015);
+    }
+    .compare-head .compare-them { color: var(--text-dim); }
+    .compare-head .compare-us {
+      background:
+        linear-gradient(180deg, rgba(16, 185, 129, 0.12), rgba(16, 185, 129, 0.04));
+    }
+    .compare-col-label {
+      font-family: var(--font-display);
+      font-size: 17px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--text);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .compare-head .compare-us .compare-col-label { color: var(--emerald); }
+    .compare-head .compare-us svg { width: 16px; height: 16px; }
+    .compare-col-sub {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+    }
+
+    /* Under-the-hood stack strip */
+    .positioning-stack {
+      margin: 36px auto 0;
+      max-width: 920px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 12px 18px;
+      padding: 18px 24px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0.04em;
+      border: 1px dashed var(--border);
+      border-radius: 999px;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+    .positioning-stack.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .stack-label {
+      color: var(--emerald);
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      font-size: 11px;
+    }
+    .stack-divider { color: var(--text-muted); }
 
     /* --- SHOWCASE --- */
     .showcase {
@@ -448,31 +591,244 @@
       border-top: 1px solid var(--border);
     }
 
-    .showcase-item {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 64px;
-      align-items: center;
+    .showcase-header {
+      max-width: 720px;
+      margin: 0 auto 72px;
+      text-align: center;
       opacity: 0;
-      transform: translateY(24px);
-      transition: all 0.7s ease;
+      transform: translateY(12px);
+      transition: all 0.6s ease;
+    }
+    .showcase-header.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .showcase-header .section-label { margin-bottom: 12px; }
+    .showcase-header .section-title {
+      margin: 0 auto 20px;
+      max-width: 640px;
+    }
+    .showcase-intro {
+      font-size: 16px;
+      line-height: 1.65;
+      color: var(--text-dim);
+      max-width: 560px;
+      margin: 0 auto;
     }
 
-    .showcase-item.visible {
+    .showcase-plus {
+      margin-top: 80px;
+      padding: 28px 32px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(16, 185, 129, 0.025), transparent 70%);
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      flex-wrap: wrap;
+      opacity: 0;
+      transform: translateY(12px);
+      transition: all 0.6s ease;
+    }
+    .showcase-plus.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .showcase-plus-label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--emerald);
+      padding-right: 24px;
+      border-right: 1px solid var(--border);
+    }
+    .showcase-plus-list {
+      list-style: none;
+      display: flex;
+      gap: 24px 32px;
+      flex-wrap: wrap;
+      flex: 1;
+    }
+    .showcase-plus-list li {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13.5px;
+      color: var(--text-dim);
+    }
+    .showcase-plus-list .dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--emerald);
+      box-shadow: 0 0 6px var(--emerald-glow-strong);
+    }
+
+    @media (max-width: 768px) {
+      .showcase-plus { flex-direction: column; align-items: flex-start; gap: 16px; padding: 24px; }
+      .showcase-plus-label { padding-right: 0; border-right: none; padding-bottom: 12px; border-bottom: 1px solid var(--border); width: 100%; }
+    }
+
+    /* Gallery (tabs + stage) */
+    .showcase-gallery {
+      opacity: 0;
+      transform: translateY(16px);
+      transition: opacity 0.7s ease, transform 0.7s ease;
+    }
+    .showcase-gallery.visible {
       opacity: 1;
       transform: translateY(0);
     }
 
-    .showcase-item + .showcase-item {
-      margin-top: 100px;
+    .showcase-tabs {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(0, 1fr));
+      gap: 0;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 56px;
+      position: relative;
+    }
+    .showcase-tab {
+      appearance: none;
+      background: transparent;
+      border: 0;
+      border-top: 2px solid transparent;
+      margin-top: -1px;
+      padding: 18px 14px;
+      text-align: left;
+      cursor: pointer;
+      color: var(--text-dim);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-family: var(--font-display);
+      transition: color 0.2s ease, background 0.25s ease, border-color 0.25s ease;
+      position: relative;
+    }
+    .showcase-tab + .showcase-tab {
+      border-left: 1px solid var(--border);
+    }
+    .showcase-tab-num {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      letter-spacing: 0.12em;
+      color: var(--text-muted);
+      transition: color 0.2s ease;
+    }
+    .showcase-tab-label {
+      font-size: 13.5px;
+      font-weight: 500;
+      letter-spacing: -0.005em;
+    }
+    .showcase-tab:hover {
+      color: var(--text);
+      background: rgba(16, 185, 129, 0.035);
+    }
+    .showcase-tab:hover .showcase-tab-num {
+      color: var(--text-dim);
+    }
+    .showcase-tab.is-active {
+      color: var(--emerald);
+      border-top-color: var(--emerald);
+      background: linear-gradient(180deg, var(--emerald-glow), transparent 75%);
+    }
+    .showcase-tab.is-active::after {
+      content: '';
+      position: absolute;
+      top: -2px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--emerald);
+      box-shadow: 0 0 12px var(--emerald-glow-strong);
+    }
+    .showcase-tab.is-active .showcase-tab-num {
+      color: var(--emerald);
+    }
+    .showcase-tab:focus-visible {
+      outline: none;
+      background: rgba(16, 185, 129, 0.08);
     }
 
-    .showcase-item.reverse {
-      direction: rtl;
+    .tab-star {
+      color: var(--emerald);
+      font-size: 9px;
+      margin-left: 4px;
+      vertical-align: 2px;
+      filter: drop-shadow(0 0 4px var(--emerald-glow-strong));
     }
 
-    .showcase-item.reverse > * {
-      direction: ltr;
+    .showcase-stage {
+      position: relative;
+    }
+
+    /* Slide-level emphasis */
+    .slide-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      align-self: flex-start;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--emerald);
+      padding: 4px 10px;
+      border: 1px solid var(--emerald-dim);
+      border-radius: 999px;
+      background: var(--emerald-glow);
+      margin-bottom: 6px;
+    }
+    .slide-badge::before {
+      content: '★';
+      font-size: 10px;
+      filter: drop-shadow(0 0 4px var(--emerald-glow-strong));
+    }
+
+    .emerald-em {
+      color: var(--emerald);
+      position: relative;
+      white-space: nowrap;
+    }
+    .emerald-em::after {
+      content: '';
+      position: absolute;
+      left: 0; right: 0; bottom: 1px;
+      height: 6px;
+      background: var(--emerald-glow);
+      z-index: -1;
+      border-radius: 3px;
+    }
+
+    .showcase-text code {
+      font-family: var(--font-mono);
+      font-size: 0.86em;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: rgba(16, 185, 129, 0.08);
+      border: 1px solid rgba(16, 185, 129, 0.18);
+      color: var(--emerald);
+    }
+    .showcase-text strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .showcase-slide {
+      display: none;
+      grid-template-columns: 1fr 1.2fr;
+      gap: 56px;
+      align-items: center;
+    }
+    .showcase-slide.is-active {
+      display: grid;
+      animation: slideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
     }
 
     .showcase-text {
@@ -607,12 +963,7 @@
       margin-top: 4px;
     }
 
-    /* --- FEATURES --- */
-    .features {
-      padding: 100px 24px;
-      border-top: 1px solid var(--border);
-    }
-
+    /* --- SHARED SECTION HEADERS --- */
     .section-label {
       font-family: var(--font-mono);
       font-size: 12px;
@@ -628,51 +979,6 @@
       letter-spacing: -0.02em;
       margin-bottom: 64px;
       max-width: 500px;
-    }
-
-    .features-list {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0;
-    }
-
-    .feature-item {
-      padding: 28px 0;
-      border-top: 1px solid var(--border);
-      display: flex;
-      gap: 16px;
-      align-items: flex-start;
-      opacity: 0;
-      transform: translateY(12px);
-      transition: all 0.5s ease;
-    }
-
-    .feature-item:nth-child(odd) { padding-right: 40px; border-right: 1px solid var(--border); }
-    .feature-item:nth-child(even) { padding-left: 40px; }
-
-    .feature-item.visible {
-      opacity: 1;
-      transform: translateY(0);
-    }
-
-    .feature-num {
-      font-family: var(--font-mono);
-      font-size: 11px;
-      color: var(--text-muted);
-      min-width: 24px;
-      padding-top: 2px;
-    }
-
-    .feature-item h4 {
-      font-size: 15px;
-      font-weight: 500;
-      margin-bottom: 4px;
-    }
-
-    .feature-item p {
-      font-size: 13px;
-      color: var(--text-dim);
-      line-height: 1.6;
     }
 
     /* --- DOWNLOAD --- */
@@ -835,6 +1141,93 @@
     .download-note a:hover {
       color: var(--emerald);
       border-color: var(--emerald);
+    }
+
+    .next-step {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      max-width: 720px;
+      margin: 56px auto 0;
+      padding: 22px 28px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background:
+        linear-gradient(135deg, rgba(16, 185, 129, 0.06), transparent 60%),
+        var(--bg-card);
+      text-decoration: none;
+      color: var(--text);
+      position: relative;
+      overflow: hidden;
+      opacity: 0;
+      transform: translateY(12px);
+      transition: transform 0.6s ease, opacity 0.6s ease, border-color 0.25s ease, background 0.25s ease;
+    }
+    .next-step.visible { opacity: 1; transform: translateY(0); }
+    .next-step::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 0% 50%, var(--emerald-glow), transparent 50%);
+      opacity: 0;
+      transition: opacity 0.35s ease;
+      pointer-events: none;
+    }
+    .next-step:hover {
+      border-color: var(--emerald);
+      transform: translateY(-2px);
+    }
+    .next-step:hover::after { opacity: 1; }
+    .next-step:hover .next-step-chev { transform: translateX(4px); color: var(--emerald); }
+
+    .next-step-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border: 1px solid var(--emerald-dim);
+      border-radius: 999px;
+      background: var(--emerald-glow);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--emerald);
+      flex-shrink: 0;
+      position: relative;
+      z-index: 1;
+    }
+    .next-step-arrow {
+      font-size: 13px;
+      line-height: 1;
+    }
+
+    .next-step-body { flex: 1; position: relative; z-index: 1; }
+    .next-step-title {
+      font-size: 16px;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 2px;
+    }
+    .next-step-sub {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+
+    .next-step-chev {
+      width: 18px;
+      height: 18px;
+      color: var(--text-dim);
+      flex-shrink: 0;
+      transition: transform 0.25s ease, color 0.25s ease;
+      position: relative;
+      z-index: 1;
+    }
+
+    @media (max-width: 600px) {
+      .next-step { flex-direction: column; align-items: flex-start; padding: 20px; }
+      .next-step-chev { align-self: flex-end; }
     }
 
     /* --- GET STARTED --- */
@@ -1029,7 +1422,57 @@
       .roadmap-grid { grid-template-columns: 1fr; }
     }
 
-    /* --- CTA / SIGNUP --- */
+    /* Roadmap → Updates CTA (merged block) */
+    .roadmap-cta {
+      margin-top: 80px;
+      padding: 40px 44px;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background:
+        radial-gradient(circle at 20% 50%, var(--emerald-glow), transparent 55%),
+        var(--bg-card);
+      display: grid;
+      grid-template-columns: 1.05fr 1fr;
+      gap: 56px;
+      align-items: center;
+      position: relative;
+      overflow: hidden;
+      opacity: 0;
+      transform: translateY(14px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+    .roadmap-cta.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .roadmap-cta-text .section-label {
+      margin-bottom: 12px;
+    }
+    .roadmap-cta-text h3 {
+      font-size: clamp(22px, 2.6vw, 28px);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-bottom: 10px;
+    }
+    .roadmap-cta-text p {
+      color: var(--text-dim);
+      font-size: 14.5px;
+      line-height: 1.6;
+      max-width: 380px;
+    }
+    .roadmap-cta-form .signup-form {
+      width: 100%;
+    }
+
+    @media (max-width: 768px) {
+      .roadmap-cta {
+        grid-template-columns: 1fr;
+        gap: 28px;
+        padding: 32px 28px;
+      }
+    }
+
+    /* --- CTA / SIGNUP (legacy, used by signup-form within roadmap-cta) --- */
     .cta {
       padding: 120px 24px;
       text-align: center;
@@ -1223,20 +1666,55 @@
 
     /* --- RESPONSIVE --- */
     @media (max-width: 768px) {
-      .values-grid { grid-template-columns: 1fr; }
-      .features-list { grid-template-columns: 1fr; }
-      .feature-item:nth-child(odd) { padding-right: 0; border-right: none; }
-      .feature-item:nth-child(even) { padding-left: 0; }
+      .compare-row {
+        grid-template-columns: 1fr 1fr;
+      }
+      .compare-row > .compare-label {
+        grid-column: 1 / -1;
+        padding-bottom: 4px;
+        padding-top: 18px;
+        border-bottom: 1px dashed var(--border);
+        background: rgba(255, 255, 255, 0.015);
+      }
+      .compare-row > .compare-them,
+      .compare-row > .compare-us {
+        font-size: 13.5px;
+        padding: 14px 18px;
+        align-items: flex-start;
+      }
+      .compare-row > .compare-them { border-left: none; border-right: 1px solid var(--border); }
+      .compare-head { display: grid; grid-template-columns: 1fr 1fr; }
+      .compare-head .compare-label { display: none; }
+      .compare-head .compare-them { border-left: none; border-right: 1px solid var(--border); }
+      .positioning-stack { border-radius: 14px; padding: 16px 18px; font-size: 11.5px; }
       .signup-form { flex-direction: column; }
       .signup-form button { padding: 14px; }
-      .nav-links a:not(.gh-star) { display: none; }
-      .showcase-item,
-      .showcase-item.reverse {
+      .nav-links { gap: 14px; }
+      .nav-links a[href="#why"],
+      .nav-links a[href="#showcase"],
+      .nav-links a[href="#roadmap"] { display: none; }
+      .nav-links a { font-size: 12px; }
+      .showcase-slide.is-active {
         grid-template-columns: 1fr;
-        gap: 32px;
-        direction: ltr;
+        gap: 28px;
       }
       .showcase-text p { max-width: none; }
+      .showcase-tabs {
+        display: flex;
+        overflow-x: auto;
+        scrollbar-width: none;
+        scroll-snap-type: x mandatory;
+        margin-left: -24px;
+        margin-right: -24px;
+        padding: 0 24px;
+      }
+      .showcase-tabs::-webkit-scrollbar { display: none; }
+      .showcase-tab {
+        flex: 0 0 auto;
+        min-width: 120px;
+        scroll-snap-align: start;
+      }
+      .showcase-tab + .showcase-tab { border-left: 1px solid var(--border); }
       .download-grid { grid-template-columns: 1fr; }
       .terminal-line { flex-direction: column; gap: 2px; }
       .t-tool { min-width: auto; }
@@ -1259,9 +1737,11 @@
     <div class="inner">
       <a href="/" class="nav-logo">CostGoblin</a>
       <div class="nav-links">
-        <a href="#features">Features</a>
+        <a href="#why">Why</a>
+        <a href="#showcase">Features</a>
         <a href="#download">Download</a>
-        <a href="#get-started">Get Started</a>
+        <a href="#get-started">Setup</a>
+        <a href="#roadmap">Roadmap</a>
         <a href="https://github.com/etiennechabert/cost-goblin" target="_blank" rel="noopener" class="gh-star">
           <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
           Star
@@ -1274,7 +1754,7 @@
   <section class="hero">
     <div class="hero-badge"><span class="dot"></span> Free &amp; open source</div>
     <div class="hero-icon"><img src="goblin.png" alt="CostGoblin mascot" width="160" height="160"></div>
-    <h1>Know every dollar<br>in your <span>cloud</span></h1>
+    <h1>Know every dollar<br>in your <span>cloud</span>, <span>for free</span>.</h1>
     <p class="hero-sub">
       CostGoblin syncs your AWS billing data locally and queries it with DuckDB.
       No servers. No SaaS fees. Your data never leaves your machine.
@@ -1290,7 +1770,7 @@
       </a>
     </div>
     <div class="hero-meta">
-      <span id="hero-platform-label">macOS Apple Silicon</span><span id="version-meta" style="display:none"></span> — <a href="#download">All platforms</a>
+      <span id="hero-platform-label">macOS Apple Silicon</span><span id="version-meta" style="display:none"></span> — <a href="#download">All platforms</a> · <a href="#get-started">Setup guide</a>
     </div>
     <div class="hero-screenshot">
       <div class="hero-screenshot-inner">
@@ -1299,30 +1779,85 @@
     </div>
   </section>
 
-  <!-- VALUE PROPS -->
-  <section class="values">
+  <!-- POSITIONING -->
+  <section class="positioning" id="why">
     <div class="container">
-      <div class="values-grid">
-        <div class="value-card" data-animate>
-          <div class="value-icon">&#x1F4BB;</div>
-          <h3>Zero servers</h3>
-          <p>No infrastructure to provision or maintain. CostGoblin runs entirely on your laptop as a native desktop app.</p>
+      <div class="positioning-header" data-animate>
+        <div class="section-label">Why CostGoblin</div>
+        <h2 class="positioning-title">A new kind of <span class="hl">developer tool</span>:<br>cloud cost, on your laptop.</h2>
+        <p class="positioning-intro">
+          Cloud cost visibility shouldn't be a finance-only perk. CostGoblin is a desktop app for <span class="hl-soft">anyone curious about their AWS bill</span> — and especially the engineers, architects, and small teams who can act on what they see.
+        </p>
+        <p class="positioning-actions">
+          Delete the orphaned RDS instance. Right-size the cluster. Kill the forgotten NAT gateway.
+        </p>
+        <p class="positioning-negatives">
+          No sales call. No cross-account IAM role. No annual contract.
+        </p>
+      </div>
+
+      <div class="compare" data-animate>
+        <div class="compare-row compare-head">
+          <div class="compare-cell compare-label"></div>
+          <div class="compare-cell compare-them">
+            <span class="compare-col-label">FinOps SaaS</span>
+            <span class="compare-col-sub">CloudHealth, Vantage, Cloudability…</span>
+          </div>
+          <div class="compare-cell compare-us">
+            <span class="compare-col-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+              CostGoblin
+            </span>
+            <span class="compare-col-sub">Open source · runs on your laptop</span>
+          </div>
         </div>
-        <div class="value-card" data-animate>
-          <div class="value-icon">&#x1F512;</div>
-          <h3>Your data stays local</h3>
-          <p>Billing data is downloaded to your machine as Parquet files. Nothing is sent to any third party. Ever.</p>
+
+        <div class="compare-row">
+          <div class="compare-cell compare-label">Built for</div>
+          <div class="compare-cell compare-them">FinOps analysts &amp; procurement</div>
+          <div class="compare-cell compare-us">Engineers, architects &amp; small teams</div>
         </div>
-        <div class="value-card" data-animate>
-          <div class="value-icon">&#x26A1;</div>
-          <h3>DuckDB-powered</h3>
-          <p>Analytical queries over months of billing data complete in milliseconds. Filter, drill down, and slice by any dimension.</p>
+
+        <div class="compare-row">
+          <div class="compare-cell compare-label">Pricing</div>
+          <div class="compare-cell compare-them">% of cloud spend, annual contract</div>
+          <div class="compare-cell compare-us">Free &amp; open source</div>
         </div>
-        <div class="value-card" data-animate>
-          <div class="value-icon">&#x2708;</div>
-          <h3>Works offline</h3>
-          <p>Once synced, your data lives on your machine. Analyze cloud costs from a plane at 10,000 meters — no Wi-Fi required.</p>
+
+        <div class="compare-row">
+          <div class="compare-cell compare-label">Onboarding</div>
+          <div class="compare-cell compare-them">Sales call, MSA, cross-account IAM role</div>
+          <div class="compare-cell compare-us">Download the app, point at your S3 prefix</div>
         </div>
+
+        <div class="compare-row">
+          <div class="compare-cell compare-label">Your billing data</div>
+          <div class="compare-cell compare-them">Stored in the vendor's cloud</div>
+          <div class="compare-cell compare-us">Stays on your laptop, always</div>
+        </div>
+
+        <div class="compare-row">
+          <div class="compare-cell compare-label">Data pipeline</div>
+          <div class="compare-cell compare-them">Proprietary collector &amp; schema</div>
+          <div class="compare-cell compare-us">Native AWS CUR &amp; Cost Optimization Hub</div>
+        </div>
+
+        <div class="compare-row">
+          <div class="compare-cell compare-label">Time to first answer</div>
+          <div class="compare-cell compare-them">Days to weeks</div>
+          <div class="compare-cell compare-us">Minutes</div>
+        </div>
+      </div>
+
+      <div class="positioning-stack" data-animate>
+        <span class="stack-label">Under the hood</span>
+        <span class="stack-item">DuckDB analytical engine</span>
+        <span class="stack-divider">·</span>
+        <span class="stack-item">Apache Parquet storage</span>
+        <span class="stack-divider">·</span>
+        <span class="stack-item">Native AWS CUR</span>
+        <span class="stack-divider">·</span>
+        <span class="stack-item">Offline-capable</span>
       </div>
     </div>
   </section>
@@ -1330,161 +1865,161 @@
   <!-- SHOWCASE -->
   <section class="showcase" id="showcase">
     <div class="container-wide">
-      <div class="showcase-item" data-animate>
-        <div class="showcase-text">
-          <div class="section-label">Explorer</div>
-          <h3>Drill into every line item</h3>
-          <p>Filter, sort, and explore the raw CUR dataset. See daily totals at a glance, slice by any dimension, and click any cell to drill deeper. Thousands of line items queried in milliseconds.</p>
+      <div class="showcase-header" data-animate>
+        <div class="section-label">What it does</div>
+        <h2 class="section-title">Cloud cost visibility<br>without the cloud</h2>
+        <p class="showcase-intro">Seven views, one local DuckDB. From raw line items to AI-driven Q&amp;A — every dollar accounted for, every query in milliseconds.</p>
+      </div>
+      <div class="showcase-gallery" data-animate>
+        <div class="showcase-tabs" role="tablist" aria-label="Feature gallery">
+          <button class="showcase-tab is-active" role="tab" aria-selected="true" data-slide="0">
+            <span class="showcase-tab-num">01</span>
+            <span class="showcase-tab-label">Overview</span>
+          </button>
+          <button class="showcase-tab" role="tab" aria-selected="false" data-slide="1">
+            <span class="showcase-tab-num">02</span>
+            <span class="showcase-tab-label">Dimensions <span class="tab-star" aria-hidden="true">★</span></span>
+          </button>
+          <button class="showcase-tab" role="tab" aria-selected="false" data-slide="2">
+            <span class="showcase-tab-num">03</span>
+            <span class="showcase-tab-label">Views</span>
+          </button>
+          <button class="showcase-tab" role="tab" aria-selected="false" data-slide="3">
+            <span class="showcase-tab-num">04</span>
+            <span class="showcase-tab-label">Trends</span>
+          </button>
+          <button class="showcase-tab" role="tab" aria-selected="false" data-slide="4">
+            <span class="showcase-tab-num">05</span>
+            <span class="showcase-tab-label">Tags</span>
+          </button>
+          <button class="showcase-tab" role="tab" aria-selected="false" data-slide="5">
+            <span class="showcase-tab-num">06</span>
+            <span class="showcase-tab-label">Optimization</span>
+          </button>
+          <button class="showcase-tab" role="tab" aria-selected="false" data-slide="6">
+            <span class="showcase-tab-num">07</span>
+            <span class="showcase-tab-label">Explorer</span>
+          </button>
+          <button class="showcase-tab" role="tab" aria-selected="false" data-slide="7">
+            <span class="showcase-tab-num">08</span>
+            <span class="showcase-tab-label">MCP Server</span>
+          </button>
         </div>
-        <div class="showcase-img">
-          <a href="screenshots/explorer.png" data-lightbox><img src="screenshots/explorer.png" alt="CostGoblin explorer view showing filterable data table with daily cost bar chart" width="1440" height="900" loading="lazy"></a>
+
+        <div class="showcase-stage">
+          <div class="showcase-slide is-active" data-slide="0">
+            <div class="showcase-text">
+              <div class="section-label">Cost Overview</div>
+              <h3>The dashboard that opens to your answer</h3>
+              <p>Cost trends, top services, biggest movers, and your most expensive dimensions — all on the landing screen. Filter by team, environment, region, or any custom tag and the whole view recomputes in milliseconds.</p>
+            </div>
+            <div class="showcase-img">
+              <a href="screenshots/cost-overview.png" data-lightbox><img src="screenshots/cost-overview.png" alt="CostGoblin cost overview dashboard showing daily spend, top services, and dimension breakdowns" width="1440" height="900" loading="lazy"></a>
+            </div>
+          </div>
+
+          <div class="showcase-slide" data-slide="1">
+            <div class="showcase-text">
+              <div class="slide-badge">Power feature</div>
+              <div class="section-label">Dimensions</div>
+              <h3>Messy tags &rarr; clean dimensions, <span class="emerald-em">instantly</span></h3>
+              <p>Most cost tools force you to fix tagging upstream and wait for the next data export. CostGoblin does it at query time. Rename, alias, group, fall back — any tag, any rule. <code>prod</code>, <code>Prod</code>, <code>production</code> become one. Custom dimensions from any tag key. Every change applies <strong>instantly</strong>, across every view, with <strong>zero re-processing</strong>.</p>
+            </div>
+            <div class="showcase-img">
+              <a href="screenshots/dimensions.png" data-lightbox><img src="screenshots/dimensions.png" alt="CostGoblin dimensions configuration showing built-in and custom tag dimensions with drag-to-reorder" width="1440" height="900" loading="lazy"></a>
+            </div>
+          </div>
+
+          <div class="showcase-slide" data-slide="2">
+            <div class="showcase-text">
+              <div class="section-label">Views</div>
+              <h3>Build your own dashboards</h3>
+              <p>Compose custom views from a library of widgets — summary cards, stacked bars, pie charts, tables. Drag to reorder, resize, and group. Export and share as YAML.</p>
+            </div>
+            <div class="showcase-img">
+              <a href="screenshots/views.png" data-lightbox><img src="screenshots/views.png" alt="CostGoblin view builder showing configurable dashboard with summary, chart, and table widgets" width="1440" height="900" loading="lazy"></a>
+            </div>
+          </div>
+
+          <div class="showcase-slide" data-slide="3">
+            <div class="showcase-text">
+              <div class="section-label">Trends</div>
+              <h3>Spot what's moving, fast</h3>
+              <p>Period-over-period bubble chart shows cost increases and savings at a glance. Bubble size maps to current spend. Filter by minimum dollar or percent change, drill into any entity.</p>
+            </div>
+            <div class="showcase-img">
+              <a href="screenshots/trends.png" data-lightbox><img src="screenshots/trends.png" alt="CostGoblin trends view with bubble chart showing period-over-period cost increases and savings by service" width="1440" height="900" loading="lazy"></a>
+            </div>
+          </div>
+
+          <div class="showcase-slide" data-slide="4">
+            <div class="showcase-text">
+              <div class="section-label">Tags (Missing)</div>
+              <h3>Find untagged spend instantly</h3>
+              <p>See which resources are missing allocation tags, grouped by actionable vs. untaggable. Filter by dimension, minimum cost, or fallback owner. Copy findings to Slack or Jira in one click.</p>
+            </div>
+            <div class="showcase-img">
+              <a href="screenshots/tags-missing.png" data-lightbox><img src="screenshots/tags-missing.png" alt="CostGoblin missing tags view showing untagged resources grouped by actionability with cost and category data" width="1440" height="900" loading="lazy"></a>
+            </div>
+          </div>
+
+          <div class="showcase-slide" data-slide="5">
+            <div class="showcase-text">
+              <div class="section-label">Cost Optimization</div>
+              <h3>Actionable savings, ranked</h3>
+              <p>AWS optimization recommendations sorted by monthly savings. See effort level, expand for full resource details, and filter by action type — rightsizing, reserved instances, deletions.</p>
+            </div>
+            <div class="showcase-img">
+              <a href="screenshots/cost-optimization.png" data-lightbox><img src="screenshots/cost-optimization.png" alt="CostGoblin cost optimization view showing AWS savings recommendations with effort badges and expandable details" width="1440" height="900" loading="lazy"></a>
+            </div>
+          </div>
+
+          <div class="showcase-slide" data-slide="6">
+            <div class="showcase-text">
+              <div class="section-label">Explorer</div>
+              <h3>Drill into every line item</h3>
+              <p>Filter, sort, and explore the raw CUR dataset. See daily totals at a glance, slice by any dimension, and click any cell to drill deeper. Thousands of line items queried in milliseconds.</p>
+            </div>
+            <div class="showcase-img">
+              <a href="screenshots/explorer.png" data-lightbox><img src="screenshots/explorer.png" alt="CostGoblin explorer view showing filterable data table with daily cost bar chart" width="1440" height="900" loading="lazy"></a>
+            </div>
+          </div>
+
+          <div class="showcase-slide" data-slide="7">
+            <div class="showcase-text">
+              <div class="section-label">MCP Server</div>
+              <h3>Talk to your costs with AI</h3>
+              <p>Connect any AI assistant via the Model Context Protocol. 10 tools let agents query costs, explore trends, and drill into details — all backed by your local DuckDB data.</p>
+            </div>
+            <div class="showcase-terminal">
+              <div class="terminal-bar">
+                <span class="terminal-dot red"></span>
+                <span class="terminal-dot yellow"></span>
+                <span class="terminal-dot green"></span>
+                <span class="terminal-title">costgoblin-mcp</span>
+              </div>
+              <div class="terminal-body">
+                <div class="terminal-prompt">$ <span>mcp list-tools</span></div>
+                <div class="terminal-line"><span class="t-tool">get_cost_overview</span> <span class="t-desc">Total spend, top services, dimensions</span></div>
+                <div class="terminal-line"><span class="t-tool">query_costs</span> <span class="t-desc">Breakdown by any dimension</span></div>
+                <div class="terminal-line"><span class="t-tool">query_trends</span> <span class="t-desc">Period-over-period changes</span></div>
+                <div class="terminal-line"><span class="t-tool">query_daily_costs</span> <span class="t-desc">Time series by group</span></div>
+                <div class="terminal-line"><span class="t-tool">run_sql</span> <span class="t-desc">Ad-hoc SQL with pre-built costs CTE</span></div>
+                <div class="t-more">...and 5 more tools</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="showcase-item reverse" data-animate>
-        <div class="showcase-text">
-          <div class="section-label">Dimensions</div>
-          <h3>Map tags to cost dimensions</h3>
-          <p>Normalize messy tags with aliases and casing rules applied at query time. Create custom allocation dimensions from any tag key. Changes take effect instantly — no re-processing.</p>
-        </div>
-        <div class="showcase-img">
-          <a href="screenshots/dimensions.png" data-lightbox><img src="screenshots/dimensions.png" alt="CostGoblin dimensions configuration showing built-in and custom tag dimensions with drag-to-reorder" width="1440" height="900" loading="lazy"></a>
-        </div>
-      </div>
-
-      <div class="showcase-item" data-animate>
-        <div class="showcase-text">
-          <div class="section-label">Views</div>
-          <h3>Build your own dashboards</h3>
-          <p>Compose custom views from a library of widgets — summary cards, stacked bars, pie charts, tables. Drag to reorder, resize, and group. Export and share as YAML.</p>
-        </div>
-        <div class="showcase-img">
-          <a href="screenshots/views.png" data-lightbox><img src="screenshots/views.png" alt="CostGoblin view builder showing configurable dashboard with summary, chart, and table widgets" width="1440" height="900" loading="lazy"></a>
-        </div>
-      </div>
-
-      <div class="showcase-item reverse" data-animate>
-        <div class="showcase-text">
-          <div class="section-label">Tags (Missing)</div>
-          <h3>Find untagged spend instantly</h3>
-          <p>See which resources are missing allocation tags, grouped by actionable vs. untaggable. Filter by dimension, minimum cost, or fallback owner. Copy findings to Slack or Jira in one click.</p>
-        </div>
-        <div class="showcase-img">
-          <a href="screenshots/tags-missing.png" data-lightbox><img src="screenshots/tags-missing.png" alt="CostGoblin missing tags view showing untagged resources grouped by actionability with cost and category data" width="1440" height="900" loading="lazy"></a>
-        </div>
-      </div>
-
-      <div class="showcase-item" data-animate>
-        <div class="showcase-text">
-          <div class="section-label">Trends</div>
-          <h3>Spot what's moving, fast</h3>
-          <p>Period-over-period bubble chart shows cost increases and savings at a glance. Bubble size maps to current spend. Filter by minimum dollar or percent change, drill into any entity.</p>
-        </div>
-        <div class="showcase-img">
-          <a href="screenshots/trends.png" data-lightbox><img src="screenshots/trends.png" alt="CostGoblin trends view with bubble chart showing period-over-period cost increases and savings by service" width="1440" height="900" loading="lazy"></a>
-        </div>
-      </div>
-
-      <div class="showcase-item reverse" data-animate>
-        <div class="showcase-text">
-          <div class="section-label">Cost Optimization</div>
-          <h3>Actionable savings, ranked</h3>
-          <p>AWS optimization recommendations sorted by monthly savings. See effort level, expand for full resource details, and filter by action type — rightsizing, reserved instances, deletions.</p>
-        </div>
-        <div class="showcase-img">
-          <a href="screenshots/cost-optimization.png" data-lightbox><img src="screenshots/cost-optimization.png" alt="CostGoblin cost optimization view showing AWS savings recommendations with effort badges and expandable details" width="1440" height="900" loading="lazy"></a>
-        </div>
-      </div>
-
-      <div class="showcase-item" data-animate>
-        <div class="showcase-text">
-          <div class="section-label">MCP Server</div>
-          <h3>Talk to your costs with AI</h3>
-          <p>Connect any AI assistant via the Model Context Protocol. 10 tools let agents query costs, explore trends, and drill into details — all backed by your local DuckDB data.</p>
-        </div>
-        <div class="showcase-terminal">
-          <div class="terminal-bar">
-            <span class="terminal-dot red"></span>
-            <span class="terminal-dot yellow"></span>
-            <span class="terminal-dot green"></span>
-            <span class="terminal-title">costgoblin-mcp</span>
-          </div>
-          <div class="terminal-body">
-            <div class="terminal-prompt">$ <span>mcp list-tools</span></div>
-            <div class="terminal-line"><span class="t-tool">get_cost_overview</span> <span class="t-desc">Total spend, top services, dimensions</span></div>
-            <div class="terminal-line"><span class="t-tool">query_costs</span> <span class="t-desc">Breakdown by any dimension</span></div>
-            <div class="terminal-line"><span class="t-tool">query_trends</span> <span class="t-desc">Period-over-period changes</span></div>
-            <div class="terminal-line"><span class="t-tool">query_daily_costs</span> <span class="t-desc">Time series by group</span></div>
-            <div class="terminal-line"><span class="t-tool">run_sql</span> <span class="t-desc">Ad-hoc SQL with pre-built costs CTE</span></div>
-            <div class="t-more">...and 5 more tools</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- FEATURES -->
-  <section class="features" id="features">
-    <div class="container">
-      <div class="section-label">What it does</div>
-      <div class="section-title">Cloud cost visibility without the cloud</div>
-      <div class="features-list">
-        <div class="feature-item" data-animate>
-          <span class="feature-num">01</span>
-          <div>
-            <h4>S3 billing sync</h4>
-            <p>Downloads AWS Cost and Usage Reports from S3 and stores them as optimized daily Parquet files.</p>
-          </div>
-        </div>
-        <div class="feature-item" data-animate>
-          <span class="feature-num">02</span>
-          <div>
-            <h4>Cost breakdown by any dimension</h4>
-            <p>Slice costs by account, service, region, team, product, environment, or any custom tag.</p>
-          </div>
-        </div>
-        <div class="feature-item" data-animate>
-          <span class="feature-num">03</span>
-          <div>
-            <h4>Tag normalization</h4>
-            <p>Aliases and normalization rules applied at query time. Fix messy tags without re-processing data.</p>
-          </div>
-        </div>
-        <div class="feature-item" data-animate>
-          <span class="feature-num">04</span>
-          <div>
-            <h4>Drill-down analytics</h4>
-            <p>Click through from service to service family. Filter by environment. Cross-chart interactions update everything.</p>
-          </div>
-        </div>
-        <div class="feature-item" data-animate>
-          <span class="feature-num">05</span>
-          <div>
-            <h4>Period-over-period trends</h4>
-            <p>See which accounts, services, or teams are trending up. Spot anomalies before they become incidents.</p>
-          </div>
-        </div>
-        <div class="feature-item" data-animate>
-          <span class="feature-num">06</span>
-          <div>
-            <h4>Multi-account org tree</h4>
-            <p>Map all your AWS accounts with aliases and hierarchy. Drill into any account or roll up across the org.</p>
-          </div>
-        </div>
-        <div class="feature-item" data-animate>
-          <span class="feature-num">07</span>
-          <div>
-            <h4>MCP server for AI agents</h4>
-            <p>Expose cost data to Claude, ChatGPT, or any MCP-compatible AI. 10 tools for querying, trends, and ad-hoc SQL.</p>
-          </div>
-        </div>
-        <div class="feature-item" data-animate>
-          <span class="feature-num">08</span>
-          <div>
-            <h4>CSV &amp; YAML export</h4>
-            <p>Export any view to CSV for reporting and budgeting. Share dashboard configurations as portable YAML files.</p>
-          </div>
-        </div>
+      <div class="showcase-plus" data-animate>
+        <div class="showcase-plus-label">Plus</div>
+        <ul class="showcase-plus-list">
+          <li><span class="dot"></span> S3 billing sync to local Parquet</li>
+          <li><span class="dot"></span> Multi-account AWS org tree</li>
+          <li><span class="dot"></span> CSV export &amp; YAML dashboard sharing</li>
+          <li><span class="dot"></span> Offline-first, zero servers</li>
+        </ul>
       </div>
     </div>
   </section>
@@ -1538,6 +2073,18 @@
         All builds are unsigned. macOS users: right-click &gt; Open on first launch.
         <br>View all assets on <a id="releases-link" href="https://github.com/etiennechabert/cost-goblin/releases/latest" target="_blank" rel="noopener">GitHub Releases</a>.
       </div>
+
+      <a href="#get-started" class="next-step" data-animate>
+        <div class="next-step-tag">
+          <span class="next-step-arrow">&rarr;</span>
+          <span class="next-step-label">Next</span>
+        </div>
+        <div class="next-step-body">
+          <div class="next-step-title">Set up your AWS data exports</div>
+          <div class="next-step-sub">5-minute walkthrough — cost allocation tags, CUR exports, Cost Optimization Hub.</div>
+        </div>
+        <svg class="next-step-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </a>
     </div>
   </section>
 
@@ -1670,8 +2217,8 @@ Format:   <span class="code-file">Parquet</span>
     </div>
   </section>
 
-  <!-- ROADMAP -->
-  <section class="roadmap">
+  <!-- ROADMAP & UPDATES -->
+  <section class="roadmap" id="roadmap">
     <div class="container">
       <div class="section-label">Roadmap</div>
       <div class="section-title">What's next</div>
@@ -1697,24 +2244,25 @@ Format:   <span class="code-file">Parquet</span>
           <p>GCP and Azure billing support alongside AWS. One interface for all your cloud spend.</p>
         </div>
       </div>
-    </div>
-  </section>
 
-  <!-- CTA -->
-  <section class="cta" id="updates">
-    <div class="container">
-      <div class="section-label">Stay in the loop</div>
-      <h2>Subscribe for updates</h2>
-      <p>New features, releases, and cloud cost insights. Low volume, high signal.</p>
-      <div class="signup-success" id="signup-success">You're on the list. We'll keep you posted.</div>
-      <form class="signup-form" id="signup-form" action="/api/signup" method="POST">
-        <input type="text" name="website" class="hp" tabindex="-1" autocomplete="off">
-        <input type="email" name="email" placeholder="you@company.com" required autocomplete="email">
-        <button type="submit">Subscribe</button>
-      </form>
-      <div class="cf-turnstile" id="turnstile-widget" data-sitekey="0x4AAAAAADHTvUnS8efYJ2uh" data-theme="dark" style="margin-top: 12px; display: flex; justify-content: center;"></div>
-      <div class="signup-error" id="signup-error"></div>
-      <div class="signup-note" id="signup-note">No spam. Unsubscribe anytime.</div>
+      <div class="roadmap-cta" id="updates" data-animate>
+        <div class="roadmap-cta-text">
+          <div class="section-label">Stay in the loop</div>
+          <h3>Get a ping when these ship.</h3>
+          <p>New features, releases, and cloud cost insights. Low volume, high signal.</p>
+        </div>
+        <div class="roadmap-cta-form">
+          <div class="signup-success" id="signup-success">You're on the list. We'll keep you posted.</div>
+          <form class="signup-form" id="signup-form" action="/api/signup" method="POST">
+            <input type="text" name="website" class="hp" tabindex="-1" autocomplete="off">
+            <input type="email" name="email" placeholder="you@company.com" required autocomplete="email">
+            <button type="submit">Subscribe</button>
+          </form>
+          <div class="cf-turnstile" id="turnstile-widget" data-sitekey="0x4AAAAAADHTvUnS8efYJ2uh" data-theme="dark" style="margin-top: 12px;"></div>
+          <div class="signup-error" id="signup-error"></div>
+          <div class="signup-note" id="signup-note">No spam. Unsubscribe anytime.</div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -1781,6 +2329,123 @@ Format:   <span class="code-file">Parquet</span>
     }, { threshold: 0.1 });
 
     document.querySelectorAll('[data-animate]').forEach(el => observer.observe(el));
+
+    // --- Showcase gallery ---
+    (function () {
+      const gallery = document.querySelector('.showcase-gallery');
+      if (!gallery) return;
+      const tabs = [...gallery.querySelectorAll('.showcase-tab')];
+      const slides = [...gallery.querySelectorAll('.showcase-slide')];
+      let current = 0;
+      let userInteracted = false;
+      let autoTimer = null;
+      const AUTO_INTERVAL = 6000;
+
+      function show(idx) {
+        current = (idx + slides.length) % slides.length;
+        tabs.forEach((t, i) => {
+          const active = i === current;
+          t.classList.toggle('is-active', active);
+          t.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        slides.forEach((s, i) => {
+          s.classList.toggle('is-active', i === current);
+        });
+      }
+
+      function startAuto() {
+        stopAuto();
+        if (userInteracted) return;
+        autoTimer = setInterval(() => show(current + 1), AUTO_INTERVAL);
+      }
+      function stopAuto() {
+        if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+      }
+
+      tabs.forEach((tab, i) => {
+        tab.addEventListener('click', () => {
+          userInteracted = true;
+          stopAuto();
+          show(i);
+        });
+        tab.addEventListener('keydown', (e) => {
+          if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+            e.preventDefault();
+            userInteracted = true;
+            stopAuto();
+            const next = i + (e.key === 'ArrowRight' ? 1 : -1);
+            show(next);
+            tabs[(next + tabs.length) % tabs.length].focus();
+          }
+        });
+      });
+
+      gallery.addEventListener('mouseenter', stopAuto);
+      gallery.addEventListener('mouseleave', () => { if (!userInteracted) startAuto(); });
+
+      // Only auto-rotate when the gallery is in view
+      const visObserver = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && !userInteracted) startAuto();
+          else stopAuto();
+        });
+      }, { threshold: 0.3 });
+      visObserver.observe(gallery);
+    })();
+
+    // --- Nav scroll-spy ---
+    const navAnchors = [...document.querySelectorAll('.nav-links a[href^="#"]')];
+    const navTargets = navAnchors
+      .map((a) => {
+        const id = a.getAttribute('href').slice(1);
+        const section = document.getElementById(id);
+        return section ? { link: a, section } : null;
+      })
+      .filter(Boolean);
+
+    function setActive(id) {
+      for (const { link, section } of navTargets) {
+        link.classList.toggle('is-active', section.id === id);
+      }
+    }
+
+    function updateActiveNav() {
+      // Nav is ~55px tall + 72px scroll-margin lands sections at ~72px from viewport top.
+      // Trigger generously so a clicked link reliably highlights even if scroll under-shoots.
+      const triggerLine = 160;
+      let current = null;
+      for (const { section } of navTargets) {
+        if (section.getBoundingClientRect().top <= triggerLine) {
+          current = section.id;
+        }
+      }
+      // Lock to last section when at page bottom
+      if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 4) {
+        current = navTargets[navTargets.length - 1]?.section.id ?? current;
+      }
+      setActive(current);
+    }
+
+    let scrollTicking = false;
+    window.addEventListener('scroll', () => {
+      if (scrollTicking) return;
+      scrollTicking = true;
+      requestAnimationFrame(() => {
+        updateActiveNav();
+        scrollTicking = false;
+      });
+    }, { passive: true });
+
+    // Immediately mark a clicked nav link as active so the highlight
+    // doesn't lag behind smooth-scroll. Re-sync once the scroll settles.
+    navTargets.forEach(({ link, section }) => {
+      link.addEventListener('click', () => {
+        setActive(section.id);
+        setTimeout(updateActiveNav, 700);
+      });
+    });
+
+    updateActiveNav();
 
     // --- OS detection ---
     function detectOS() {
