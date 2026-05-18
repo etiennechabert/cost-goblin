@@ -42,6 +42,7 @@ function toUpdateInfo(info: { version: string; releaseDate: string; releaseNotes
 }
 
 let currentInfo: UpdateInfo | null = null;
+let hasTriedFullDownload = false;
 
 export function initAutoUpdater(): void {
   const updater = autoUpdater;
@@ -54,6 +55,8 @@ export function initAutoUpdater(): void {
 
   updater.on('update-available', (info) => {
     currentInfo = toUpdateInfo(info);
+    hasTriedFullDownload = false;
+    updater.disableDifferentialDownload = false;
     setStatus({ state: 'available', info: currentInfo });
   });
 
@@ -73,6 +76,21 @@ export function initAutoUpdater(): void {
   });
 
   updater.on('error', (err) => {
+    // Differential download can hang or fail mid-stream when the cached
+    // blockmap from the previously installed version doesn't reconstruct
+    // cleanly against the new zip. Fall back to a full download once
+    // before surfacing the error.
+    if (currentStatus.state === 'downloading' && !hasTriedFullDownload && currentInfo !== null) {
+      logger.warn('Differential download failed, retrying with full download', { error: err.message });
+      hasTriedFullDownload = true;
+      updater.disableDifferentialDownload = true;
+      setStatus({ state: 'downloading', percent: 0, info: currentInfo });
+      autoUpdater.downloadUpdate().catch((retryErr: unknown) => {
+        const message = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        setStatus({ state: 'error', error: message });
+      });
+      return;
+    }
     setStatus({ state: 'error', error: err.message });
   });
 
