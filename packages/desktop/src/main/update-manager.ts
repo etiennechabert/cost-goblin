@@ -80,14 +80,22 @@ export function initAutoUpdater(): void {
     // blockmap from the previously installed version doesn't reconstruct
     // cleanly against the new zip. Fall back to a full download once
     // before surfacing the error.
+    //
+    // electron-updater emits 'error' synchronously from inside the
+    // download promise's .catch, BEFORE the chained .finally clears its
+    // internal downloadPromise. A synchronous retry here would hit the
+    // "already in progress" guard and return the same rejected promise.
+    // Defer with setImmediate so the .finally runs first.
     if (currentStatus.state === 'downloading' && !hasTriedFullDownload && currentInfo !== null) {
       logger.warn('Differential download failed, retrying with full download', { error: err.message });
       hasTriedFullDownload = true;
       updater.disableDifferentialDownload = true;
       setStatus({ state: 'downloading', percent: 0, info: currentInfo });
-      autoUpdater.downloadUpdate().catch((retryErr: unknown) => {
-        const message = retryErr instanceof Error ? retryErr.message : String(retryErr);
-        setStatus({ state: 'error', error: message });
+      setImmediate(() => {
+        autoUpdater.downloadUpdate().catch((retryErr: unknown) => {
+          const message = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          setStatus({ state: 'error', error: message });
+        });
       });
       return;
     }
