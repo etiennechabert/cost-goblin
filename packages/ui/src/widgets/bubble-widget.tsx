@@ -43,6 +43,7 @@ export function BubbleWidget({
           filters,
           deltaThreshold: DEFAULT_DELTA_THRESHOLD,
           percentThreshold: DEFAULT_PERCENT_THRESHOLD,
+          origin: `widget:bubble:${String(effectiveGroupBy)}`,
         }),
     [effectiveGroupBy, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, api],
   );

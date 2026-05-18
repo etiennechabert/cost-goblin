@@ -17,7 +17,8 @@ function serializeLog(entries: DebugQueryLogEntry[]): string {
     const status = labels[e.status] ?? e.status;
     const duration = e.durationMs === null ? '...' : formatDuration(e.durationMs);
     const rows = e.rowCount === null ? '' : `${String(e.rowCount)} rows`;
-    const header = `[${status}] ${formatTimestamp(e.startedAt)}  ${duration}  ${rows}`;
+    const origin = e.origin === null ? '' : `  origin=${e.origin}`;
+    const header = `[${status}] ${formatTimestamp(e.startedAt)}  ${duration}  ${rows}${origin}`;
     const error = e.error === null ? '' : `\nError: ${e.error}`;
     return `${header}\n${e.sql}${error}`;
   }).join('\n\n---\n\n');
@@ -26,6 +27,17 @@ function serializeLog(entries: DebugQueryLogEntry[]): string {
 function sqlPreview(sql: string): string {
   const oneLine = sql.replaceAll(/\s+/g, ' ').trim();
   return oneLine.length > 100 ? `${oneLine.slice(0, 100)}...` : oneLine;
+}
+
+type QuerySource = 'rollup' | 'raw' | null;
+
+/** Infer the on-disk source the query reads from. CACHE / MEM are set on the
+ *  entry directly; ROLLUP / RAW we infer by looking for the path markers in
+ *  the SQL since those flags are not plumbed through. */
+function detectSource(sql: string): QuerySource {
+  if (sql.includes('/aws/rollup/')) return 'rollup';
+  if (sql.includes('/aws/raw/')) return 'raw';
+  return null;
 }
 
 function StatusDot({ status }: Readonly<{ status: DebugQueryLogEntry['status'] }>): React.JSX.Element {
@@ -76,6 +88,12 @@ function QueryRow({ entry }: Readonly<{ entry: DebugQueryLogEntry }>): React.JSX
             {entry.materialized && !entry.cached && (
               <span className="text-[10px] font-medium px-1 rounded bg-positive/15 text-positive">MEM</span>
             )}
+            {!entry.cached && !entry.materialized && (() => {
+              const src = detectSource(entry.sql);
+              if (src === 'rollup') return <span className="text-[10px] font-medium px-1 rounded bg-warning/15 text-warning">ROLLUP</span>;
+              if (src === 'raw') return <span className="text-[10px] font-medium px-1 rounded bg-text-muted/15 text-text-secondary">RAW</span>;
+              return null;
+            })()}
             <span className="text-xs text-text-muted">
               {(() => { if (entry.durationMs !== null) { return formatDuration(entry.durationMs); } return entry.status === 'queued' ? 'queued' : '...'; })()}
             </span>
@@ -91,6 +109,9 @@ function QueryRow({ entry }: Readonly<{ entry: DebugQueryLogEntry }>): React.JSX
           )}
           {entry.error !== null && (
             <span className="text-[10px] text-negative truncate">{entry.error}</span>
+          )}
+          {entry.origin !== null && (
+            <span className="ml-auto text-[10px] font-mono text-text-muted truncate" title={entry.origin}>{entry.origin}</span>
           )}
         </div>
       </button>
@@ -121,8 +142,14 @@ function QueryRow({ entry }: Readonly<{ entry: DebugQueryLogEntry }>): React.JSX
   );
 }
 
+/** Sentinel value used in the origin dropdown — `<select>` only accepts
+ *  strings, so we encode "no origin" as this token and treat empty string
+ *  ('') as the "all" choice. */
+const NO_ORIGIN = '__no_origin__';
+
 export function DebugPanel({ onClose }: Readonly<{ onClose: () => void }>): React.JSX.Element {
   const [entries, setEntries] = useState<DebugQueryLogEntry[]>([]);
+  const [originFilter, setOriginFilter] = useState('');
   const inFlightCount = useDebugBadge();
 
   useEffect(() => {
@@ -137,33 +164,63 @@ export function DebugPanel({ onClose }: Readonly<{ onClose: () => void }>): Reac
     return () => { cancelled = true; clearInterval(timer); };
   }, []);
 
-  const runningCount = entries.filter(e => e.status === 'running').length;
-  const queuedCount = entries.filter(e => e.status === 'queued').length;
-  const sorted = [...entries].reverse().sort((a, b) => {
+  // Count queries per origin (incl. a bucket for entries with no origin) so
+  // the dropdown can show counts and sort by frequency.
+  const originCounts = new Map<string, number>();
+  for (const e of entries) {
+    const key = e.origin ?? NO_ORIGIN;
+    originCounts.set(key, (originCounts.get(key) ?? 0) + 1);
+  }
+  const originOptions = [...originCounts.entries()].sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return a[0].localeCompare(b[0]);
+  });
+
+  const visible = originFilter === ''
+    ? entries
+    : entries.filter(e => (e.origin ?? NO_ORIGIN) === originFilter);
+
+  const runningCount = visible.filter(e => e.status === 'running').length;
+  const queuedCount = visible.filter(e => e.status === 'queued').length;
+  // Sort: running first (so the active spinner stays visible), then queued,
+  // then completed entries by duration DESC so the slowest queries float to
+  // the top where they're easiest to spot.
+  const sorted = [...visible].sort((a, b) => {
     const rank = (s: DebugQueryLogEntry['status']): number => {
       if (s === 'running') return 0;
       if (s === 'queued') return 1;
       return 2;
     };
-    return rank(a.status) - rank(b.status);
+    const rankDiff = rank(a.status) - rank(b.status);
+    if (rankDiff !== 0) return rankDiff;
+    return (b.durationMs ?? 0) - (a.durationMs ?? 0);
   });
 
   return (
-    <div className="fixed top-[4.5rem] right-0 bottom-0 z-40 w-[75vw] bg-bg-secondary border-l border-border shadow-xl flex flex-col">
+    <div className="fixed top-[5.5rem] right-0 bottom-0 z-40 w-[75vw] bg-bg-secondary border-l border-border shadow-xl flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0 [-webkit-app-region:no-drag]">
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-semibold text-text-primary">Query Log</h2>
-          <span className="text-xs text-text-muted">
-            {String(entries.length)} queries
-            {(runningCount > 0 || queuedCount > 0) && (
-              <span className="ml-1">
-                {runningCount > 0 && <span className="text-accent">{String(runningCount)} running</span>}
-                {runningCount > 0 && queuedCount > 0 && <span className="text-text-muted">, </span>}
-                {queuedCount > 0 && <span className="text-warning">{String(queuedCount)} queued</span>}
-              </span>
-            )}
-          </span>
+          <select
+            value={originFilter}
+            onChange={(e) => { setOriginFilter(e.target.value); }}
+            className="text-xs bg-bg-tertiary text-text-secondary border border-border rounded px-2 py-1 hover:text-text-primary focus:outline-none focus:ring-1 focus:ring-accent"
+          >
+            <option value="">all ({String(entries.length)})</option>
+            {originOptions.map(([origin, count]) => (
+              <option key={origin} value={origin}>
+                {origin === NO_ORIGIN ? '(no origin)' : origin} ({String(count)})
+              </option>
+            ))}
+          </select>
+          {(runningCount > 0 || queuedCount > 0) && (
+            <span className="text-xs text-text-muted">
+              {runningCount > 0 && <span className="text-accent">{String(runningCount)} running</span>}
+              {runningCount > 0 && queuedCount > 0 && <span className="text-text-muted">, </span>}
+              {queuedCount > 0 && <span className="text-warning">{String(queuedCount)} queued</span>}
+            </span>
+          )}
           {inFlightCount > 0 && (
             <span className="text-xs text-text-muted" title="Total IPC calls in-flight (includes config, sync, and other non-SQL calls)">
               <span className="text-accent">{String(inFlightCount)}</span> IPC in-flight

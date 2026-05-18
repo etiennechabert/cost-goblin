@@ -40,6 +40,8 @@ export interface ExplorerBaseParams {
    *  meaningful when the CUR includes `line_item_net_*` columns —
    *  capabilities probe tells the UI whether to show the toggle. */
   readonly costPerspective?: CostPerspective;
+  /** Debug-only: tag identifying which widget/view fired this query. */
+  readonly origin?: string | undefined;
 }
 
 export type ExplorerOverviewParams = ExplorerBaseParams;
@@ -165,4 +167,5 @@ export interface ExplorerFilterValuesParams {
   readonly applyCostScope?: boolean;
   readonly costMetric?: CostMetric;
   readonly costPerspective?: CostPerspective;
+  readonly origin?: string | undefined;
 }

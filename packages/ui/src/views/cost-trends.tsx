@@ -102,6 +102,7 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
         filters: {},
         deltaThreshold: asDollars(state.deltaThreshold),
         percentThreshold: state.percentThreshold,
+        origin: `trends:${String(activeDimensionId)}`,
       });
     },
     [activeDimensionId, state.dateRange.start, state.dateRange.end, state.deltaThreshold, state.percentThreshold, api],

@@ -152,6 +152,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
       dateRange,
       filters: {},
       granularity,
+      origin: 'entity-detail:summary',
     }),
     [entity, dimension, dateRangeKey, granularity, api],
   );
@@ -184,19 +185,19 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
 
   // Pie queries — same as overview but scoped to this entity via filter
   const pie1Query = useQuery(
-    () => api.queryCosts({ groupBy: effectivePie1, dateRange, filters: entityFilter, granularity }),
+    () => api.queryCosts({ groupBy: effectivePie1, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie1:${String(effectivePie1)}` }),
     [effectivePie1, dateRangeKey, filterKey, granularity, api],
   );
   const pie1Slices = costRowsToSlices(pie1Query.status === 'success' ? pie1Query.data : null);
 
   const pie2Query = useQuery(
-    () => api.queryCosts({ groupBy: effectivePie2, dateRange, filters: entityFilter, granularity }),
+    () => api.queryCosts({ groupBy: effectivePie2, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie2:${String(effectivePie2)}` }),
     [effectivePie2, dateRangeKey, filterKey, granularity, api],
   );
   const pie2Slices = costRowsToSlices(pie2Query.status === 'success' ? pie2Query.data : null);
 
   const pie3Query = useQuery(
-    () => api.queryCosts({ groupBy: effectivePie3, dateRange, filters: entityFilter, granularity }),
+    () => api.queryCosts({ groupBy: effectivePie3, dateRange, filters: entityFilter, granularity, origin: `entity-detail:pie3:${String(effectivePie3)}` }),
     [effectivePie3, dateRangeKey, filterKey, granularity, api],
   );
   const pie3Slices = costRowsToSlices(pie3Query.status === 'success' ? pie3Query.data : null);
@@ -209,7 +210,7 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   })();
 
   const dailyQuery = useQuery(
-    () => api.queryDailyCosts({ groupBy: histogramDimId, dateRange, filters: entityFilter, granularity }),
+    () => api.queryDailyCosts({ groupBy: histogramDimId, dateRange, filters: entityFilter, granularity, origin: `entity-detail:histogram:${String(histogramDimId)}` }),
     [histogramDimId, dateRangeKey, filterKey, granularity, api],
   );
   const barDays = bucketBars(dailyCostsToBarDays(dailyQuery.status === 'success' ? dailyQuery.data : null), 170);

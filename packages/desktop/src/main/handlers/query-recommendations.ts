@@ -20,11 +20,12 @@ import {
   toNum,
   toStr,
 } from './query-utils.js';
+import { originStore } from '../query-log.js';
 
 export function registerRecommendationHandlers(app: AppContext): void {
   const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getConfig, getCostScope, getAvailableColumns, runQuery, runPreparedQuery, materializedBase } = app;
 
-  ipcMain.handle('query:missing-tags', async (_event, params: MissingTagsParams): Promise<MissingTagsResult> => {
+  ipcMain.handle('query:missing-tags', (_event, params: MissingTagsParams): Promise<MissingTagsResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
@@ -67,9 +68,9 @@ export function registerRecommendationHandlers(app: AppContext): void {
         accountName: resolveEntityName(r.accountId, accountMap) || r.accountName,
       })),
     };
-  });
+  }));
 
-  ipcMain.handle('query:savings', async (): Promise<SavingsResult> => {
+  ipcMain.handle('query:savings', (): Promise<SavingsResult> => originStore.run('savings', async () => {
     const config = await getConfig();
     const provider = config.providers[0];
     if (provider?.sync.costOptimization === undefined) {
@@ -131,5 +132,5 @@ export function registerRecommendationHandlers(app: AppContext): void {
     });
 
     return { recommendations, totalMonthlySavings: asDollars(totalSavings) };
-  });
+  }));
 }

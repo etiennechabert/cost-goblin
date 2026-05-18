@@ -226,6 +226,7 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
         filters: {},
         minCost: asDollars(minCost),
         tagDimension: activeTagId,
+        origin: `findings:missing-tags:${String(activeTagId)}`,
       });
     },
     [activeTagId, minCost, dateRange.start, dateRange.end, api],

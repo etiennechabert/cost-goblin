@@ -15,6 +15,11 @@ const perfEnabled = globalThis.costgoblinPerf !== undefined;
 const isDev = globalThis.costgoblinDebug.isDev();
 const renderTimings: RenderTiming[] = [];
 
+function formatMemory(mb: number): string {
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`;
+  return `${String(mb)} MB`;
+}
+
 function useMemoryMB(): number {
   const [mb, setMb] = useState(0);
   useEffect(() => {
@@ -366,7 +371,7 @@ async function prewarmDimensions(
   let done = 0;
   setSplashStep(`Loading dimensions 0/${String(dims.length)}...`);
   await Promise.all(dims.map(async (dim) => {
-    await api.getFilterValues(dimId(dim), {}, range).catch(() => undefined);
+    await api.getFilterValues(dimId(dim), {}, range, undefined, `splash:warmup:${dimId(dim)}`).catch(() => undefined);
     done++;
     setSplashStep(`Loading dimensions ${String(done)}/${String(dims.length)}...`);
   }));
@@ -506,6 +511,9 @@ function AppShell(): React.JSX.Element {
     api.clearAllCaches()
       .catch(() => undefined)
       .finally(() => {
+        // Wipe the debug panel's query log too — after clearing the cache,
+        // only the queries that the refresh triggers are interesting.
+        globalThis.costgoblinDebug.clearLog().catch(() => undefined);
         setClearingCache(false);
         setRefreshNonce(n => n + 1);
       });
@@ -671,7 +679,7 @@ function AppShell(): React.JSX.Element {
             <span className="text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
             <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
               {appVersion !== '' && <span>v{appVersion}</span>}
-              {isDev && memoryMB > 0 && <span>{memoryMB} MB</span>}
+              {isDev && memoryMB > 0 && <span>{formatMemory(memoryMB)}</span>}
             </div>
           </div>
           <nav className="flex items-center justify-end gap-1 [-webkit-app-region:no-drag]" aria-label="Sync and settings">

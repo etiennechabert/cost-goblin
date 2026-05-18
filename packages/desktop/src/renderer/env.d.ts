@@ -12,6 +12,7 @@ declare global {
     readonly error: string | null;
     readonly materialized: boolean;
     readonly cached: boolean;
+    readonly origin: string | null;
   }
 
   interface DebugApi {

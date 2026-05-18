@@ -46,19 +46,21 @@ export function TopNBarWidget({
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
 
+  const origin = `widget:topNBar:${String(effectiveGroupBy ?? '')}`;
   const { query, activeGroupBy, costResult } = useCostWidgetQuery({
     specGroupBy: effectiveGroupBy,
     dateRange,
     granularity,
     globalFilters,
     specFilters: spec.filters,
+    origin,
   });
 
   const prevQuery = useQuery<CostResult | null>(
     () => compareEnabled && effectiveGroupBy !== undefined
-      ? api.queryCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters, granularity })
+      ? api.queryCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters, granularity, origin: `${origin}/prev` })
       : Promise.resolve(null),
-    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api],
+    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api, origin],
   );
 
   const bars = useMemo(

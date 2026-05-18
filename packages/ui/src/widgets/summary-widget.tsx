@@ -24,11 +24,11 @@ export function SummaryWidget({
   const fk = filtersKey(filters);
 
   const cur = useQuery<CostResult | null>(
-    () => isSummary ? api.queryCosts({ groupBy, dateRange, filters, granularity }) : Promise.resolve(null),
+    () => isSummary ? api.queryCosts({ groupBy, dateRange, filters, granularity, origin: 'widget:summary:total' }) : Promise.resolve(null),
     [isSummary, groupBy, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api],
   );
   const prev = useQuery<CostResult | null>(
-    () => isSummary && compareEnabled ? api.queryCosts({ groupBy, dateRange: previousDateRange, filters, granularity }) : Promise.resolve(null),
+    () => isSummary && compareEnabled ? api.queryCosts({ groupBy, dateRange: previousDateRange, filters, granularity, origin: 'widget:summary:total/prev' }) : Promise.resolve(null),
     [isSummary, compareEnabled, groupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api],
   );
 

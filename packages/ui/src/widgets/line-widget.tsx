@@ -69,19 +69,21 @@ export function LineWidget({
   const filters = mergeFilters(globalFilters, spec.filters);
   const fk = filtersKey(filters);
 
+  const origin = `widget:line:${String(effectiveGroupBy ?? '')}`;
   const { query, activeGroupBy, dailyResult } = useDailyWidgetQuery({
     specGroupBy: effectiveGroupBy,
     dateRange,
     granularity,
     globalFilters,
     specFilters: spec.filters,
+    origin,
   });
 
   const prevQuery = useQuery<DailyCostsResult | null>(
     () => compareEnabled && effectiveGroupBy !== undefined
-      ? api.queryDailyCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters, granularity })
+      ? api.queryDailyCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters, granularity, origin: `${origin}/prev` })
       : Promise.resolve(null),
-    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api],
+    [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api, origin],
   );
 
   const series = useMemo(

@@ -31,13 +31,14 @@ async function fetchDailyWithFallback(
   dateRange: DateRange,
   filters: FilterMap,
   granularity: Granularity,
+  origin: string,
 ): Promise<DailyQueryResult> {
-  const primary = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
+  const primary = await api.queryDailyCosts({ groupBy: specGroupBy, dateRange, filters, granularity, origin });
   if (fallbackDims.length === 0 || primary.groups.length > 1) {
     return { result: primary, groupBy: specGroupBy };
   }
   for (const dim of fallbackDims) {
-    const result = await api.queryDailyCosts({ groupBy: dim, dateRange, filters, granularity });
+    const result = await api.queryDailyCosts({ groupBy: dim, dateRange, filters, granularity, origin: `${origin}/fallback` });
     if (result.groups.length > 1) return { result, groupBy: dim };
   }
   return { result: primary, groupBy: specGroupBy };
@@ -50,13 +51,14 @@ async function fetchCostsWithFallback(
   dateRange: DateRange,
   filters: FilterMap,
   granularity: Granularity,
+  origin: string,
 ): Promise<CostQueryResult> {
-  const primary = await api.queryCosts({ groupBy: specGroupBy, dateRange, filters, granularity });
+  const primary = await api.queryCosts({ groupBy: specGroupBy, dateRange, filters, granularity, origin });
   if (fallbackDims.length === 0 || primary.rows.length > 1) {
     return { result: primary, groupBy: specGroupBy };
   }
   for (const dim of fallbackDims) {
-    const result = await api.queryCosts({ groupBy: dim, dateRange, filters, granularity });
+    const result = await api.queryCosts({ groupBy: dim, dateRange, filters, granularity, origin: `${origin}/fallback` });
     if (result.rows.length > 1) return { result, groupBy: dim };
   }
   return { result: primary, groupBy: specGroupBy };
@@ -68,6 +70,7 @@ interface WidgetQueryArgs {
   readonly granularity: Granularity;
   readonly globalFilters: FilterMap;
   readonly specFilters: WidgetFilterOverlay | undefined;
+  readonly origin: string;
 }
 
 interface DailyWidgetQueryResult {
@@ -83,6 +86,7 @@ export function useDailyWidgetQuery({
   granularity,
   globalFilters,
   specFilters,
+  origin,
 }: WidgetQueryArgs): DailyWidgetQueryResult {
   const api = useCostApi();
   const filters = mergeFilters(globalFilters, specFilters);
@@ -95,8 +99,8 @@ export function useDailyWidgetQuery({
   const query = useQuery<DailyQueryResult | null>(
     () => specGroupBy === undefined
       ? Promise.resolve(null)
-      : fetchDailyWithFallback(api, specGroupBy, fallbackDims, dateRange, filters, granularity),
-    [specGroupBy, fallbackDims, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api],
+      : fetchDailyWithFallback(api, specGroupBy, fallbackDims, dateRange, filters, granularity, origin),
+    [specGroupBy, fallbackDims, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api, origin],
   );
 
   const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
@@ -121,6 +125,7 @@ export function useCostWidgetQuery({
   granularity,
   globalFilters,
   specFilters,
+  origin,
 }: WidgetQueryArgs): CostWidgetQueryResult {
   const api = useCostApi();
   const filters = mergeFilters(globalFilters, specFilters);
@@ -133,8 +138,8 @@ export function useCostWidgetQuery({
   const query = useQuery<CostQueryResult | null>(
     () => specGroupBy === undefined
       ? Promise.resolve(null)
-      : fetchCostsWithFallback(api, specGroupBy, fallbackDims, dateRange, filters, granularity),
-    [specGroupBy, fallbackDims, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api],
+      : fetchCostsWithFallback(api, specGroupBy, fallbackDims, dateRange, filters, granularity, origin),
+    [specGroupBy, fallbackDims, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api, origin],
   );
 
   const activeGroupBy = query.status === 'success' && query.data !== null ? query.data.groupBy : specGroupBy;
