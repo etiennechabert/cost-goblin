@@ -401,16 +401,14 @@ function AppShell(): React.JSX.Element {
   const autoOpenRef = useMemo(() => ({ current: false }), []);
   const initialViewSetRef = useRef(false);
   const headerRef = useRef<HTMLDivElement>(null);
+  const [headerHeight, setHeaderHeight] = useState(72);
 
-  // Publish the actual rendered header height as a CSS variable so the debug
-  // panel (and anything else that wants to sit flush below the top bar) can
-  // use it instead of guessing with a magic top offset.
+  // Track the actual rendered header height so the debug panel can sit
+  // flush below it without guessing with a magic top offset.
   useLayoutEffect(() => {
     const el = headerRef.current;
     if (el === null) return undefined;
-    const update = () => {
-      document.documentElement.style.setProperty('--top-bar-height', `${String(el.offsetHeight)}px`);
-    };
+    const update = () => { setHeaderHeight(el.offsetHeight); };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(el);
@@ -860,7 +858,7 @@ function AppShell(): React.JSX.Element {
           </Profiler>
         </div>
       </div>
-      {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} />}
+      {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} topOffset={headerHeight} />}
       <ReleaseNotesModal open={releaseNotesOpen} onOpenChange={setReleaseNotesOpen} status={updateStatus} />
       <Dialog open={reloadConfirmOpen} onOpenChange={setReloadConfirmOpen}>
         <DialogContent>
