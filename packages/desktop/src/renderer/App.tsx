@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, Profiler } from 'react';
+import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
@@ -400,6 +400,20 @@ function AppShell(): React.JSX.Element {
   const memoryMB = useMemoryMB();
   const autoOpenRef = useMemo(() => ({ current: false }), []);
   const initialViewSetRef = useRef(false);
+  const headerRef = useRef<HTMLDivElement>(null);
+  const [headerHeight, setHeaderHeight] = useState(72);
+
+  // Track the actual rendered header height so the debug panel can sit
+  // flush below it without guessing with a magic top offset.
+  useLayoutEffect(() => {
+    const el = headerRef.current;
+    if (el === null) return undefined;
+    const update = () => { setHeaderHeight(el.offsetHeight); };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => { observer.disconnect(); };
+  }, []);
 
   useEffect(() => {
     globalThis.costgoblinUpdate.getAppVersion().then(setAppVersion).catch(() => undefined);
@@ -623,7 +637,7 @@ function AppShell(): React.JSX.Element {
           missingPeriods={missingPeriods}
         />
         {/* Title bar + nav */}
-        <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
+        <div ref={headerRef} className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
         <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
           <nav className="flex items-center gap-1" aria-label="Dashboards and analysis">
             {(() => {
@@ -736,9 +750,10 @@ function AppShell(): React.JSX.Element {
                   ].join(' ')}
                   title={syncError === null ? undefined : `Sync error — ${syncError}`}
                   aria-current={active === 'sync' ? 'page' : undefined}
+                  aria-label="Sync"
                 >
                   {showError && (
-                    <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-negative animate-pulse" aria-label="sync error" />
+                    <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-negative animate-pulse" aria-hidden="true" />
                   )}
                   {showActive && syncActivity === 'downloading' && (
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
@@ -844,7 +859,7 @@ function AppShell(): React.JSX.Element {
           </Profiler>
         </div>
       </div>
-      {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} />}
+      {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} topOffset={headerHeight} />}
       <ReleaseNotesModal open={releaseNotesOpen} onOpenChange={setReleaseNotesOpen} status={updateStatus} />
       <Dialog open={reloadConfirmOpen} onOpenChange={setReloadConfirmOpen}>
         <DialogContent>

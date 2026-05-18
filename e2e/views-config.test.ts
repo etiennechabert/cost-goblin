@@ -9,6 +9,7 @@ import {
   waitForCostScopePreview,
   hasVisibleData,
   navigateTo,
+  clickNavButton,
   writeCoverage,
   LOAD_TIMEOUT,
 } from './helpers.js';
@@ -336,7 +337,7 @@ test.describe('Cost Scope', () => {
   test.beforeAll(async () => {
     // Click Cost Scope nav — if the Views editor has unsaved changes,
     // a "Discard" confirm modal will appear. Dismiss it.
-    await page.getByRole('button', { name: 'Cost Scope', exact: true }).first().click();
+    await clickNavButton(page, 'Cost Scope');
     const discardBtn = page.getByRole('button', { name: 'Discard' });
     if (await discardBtn.isVisible({ timeout: 500 }).catch(() => false)) {
       await discardBtn.click();

@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { ChevronDown, Star, LayoutDashboard } from 'lucide-react';
+import { ChevronDown, Star, Gauge } from 'lucide-react';
 import { Popover, PopoverTrigger, PopoverContent } from '@costgoblin/ui';
 
 export interface DashboardItem {
@@ -31,9 +31,24 @@ export function DashboardsDropdown({
   }, [items, defaultId]);
 
   const activeIsCustom = items.some(i => i.id === activeId);
+  const isOnDefault = activeId === defaultId;
+  const defaultExists = items.some(i => i.id === defaultId);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        // First click acts as Home: if the user isn't already on the default
+        // dashboard, jump them there instead of opening the list. They can
+        // click again (now that they're on the default) to actually see the
+        // list of dashboards.
+        if (next && !isOnDefault && defaultExists) {
+          onSelect(defaultId);
+          return;
+        }
+        setOpen(next);
+      }}
+    >
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -48,7 +63,7 @@ export function DashboardsDropdown({
           aria-label={activeIsCustom ? undefined : 'Dashboards'}
           title={activeIsCustom ? undefined : 'Dashboards'}
         >
-          {activeIsCustom ? 'Dashboards' : <LayoutDashboard size={18} />}
+          {activeIsCustom ? 'Dashboards' : <Gauge size={18} />}
           <ChevronDown
             size={activeIsCustom ? 14 : 12}
             className={open ? 'rotate-180 transition-transform' : 'transition-transform'}
