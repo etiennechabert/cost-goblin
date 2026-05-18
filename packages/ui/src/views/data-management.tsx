@@ -4,7 +4,7 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { SetupWizard } from './setup-wizard.js';
-import { OrgAccountsSection } from './data-management-org.js';
+import { OrgAccountsSection, OrgTreeSection } from './data-management-org.js';
 import { SsmParameterSection } from './data-management-ssm.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
 import { SsoLoginButton } from '../components/sso-login-button.js';
@@ -466,6 +466,9 @@ export function DataManagement() {
 
       {/* Account mapping */}
       <OrgAccountsSection profile={awsProfile} />
+
+      {/* Org Tree Editor */}
+      <OrgTreeSection />
 
       {/* Region names enrichment — independent of Org sync */}
       <SsmParameterSection profile={awsProfile} />

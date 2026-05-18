@@ -155,6 +155,7 @@ export interface AppContext {
   readonly runPreparedQuery: (sql: string, params: readonly unknown[], materialized?: boolean) => Promise<RawRow[]>;
   readonly invalidateConfig: () => void;
   readonly invalidateDimensions: () => void;
+  readonly invalidateOrgTree: () => void;
   readonly invalidateViews: () => void;
   readonly invalidateCostScope: () => void;
   readonly invalidateColumnCache: () => void;
@@ -518,6 +519,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
       state.dimensions = null; state.accountMap = null; state.accountReverseMap = null; state.regionMap = null; state.orgAccountsPath = null;
       void materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); }).then(() => { void warmupBase(); });
     },
+    invalidateOrgTree: () => { state.orgTree = null; },
     invalidateViews: () => { state.views = null; },
     invalidateCostScope: () => {
       state.costScope = null;

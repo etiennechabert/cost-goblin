@@ -194,6 +194,8 @@ const orgTree: OrgNode[] = [
 ];
 
 export class MockCostApi implements CostApi {
+  private currentOrgTree: OrgNode[] = orgTree;
+
   queryCosts(): Promise<CostResult> { return Promise.resolve(costResult); }
   queryDailyCosts(): Promise<DailyCostsResult> {
     const days = Array.from({ length: 30 }, (_, i) => {
@@ -232,7 +234,11 @@ export class MockCostApi implements CostApi {
   getSyncStatus(): Promise<SyncStatus> { return Promise.resolve(syncStatus); }
   getConfig(): Promise<CostGoblinConfig> { return Promise.resolve(config); }
   getDimensions(): Promise<Dimension[]> { return Promise.resolve(mockDimensions); }
-  getOrgTree(): Promise<OrgNode[]> { return Promise.resolve(orgTree); }
+  getOrgTree(): Promise<OrgNode[]> { return Promise.resolve(this.currentOrgTree); }
+  saveOrgTree(tree: readonly OrgNode[]): Promise<void> {
+    this.currentOrgTree = [...tree];
+    return Promise.resolve();
+  }
   getFilterValues(): Promise<{ value: string; label: string; count: number }[]> { return Promise.resolve([]); }
   getDataInventory(): Promise<DataInventoryResult> { return Promise.resolve({ periods: [], totalRemoteSize: 0, totalLocalPeriods: 0, totalRemotePeriods: 0, local: { periods: [], diskBytes: 0, oldestPeriod: null, newestPeriod: null } }); }
   syncPeriods(): Promise<{ filesDownloaded: number; rowsProcessed: number }> { return Promise.resolve({ filesDownloaded: 0, rowsProcessed: 0 }); }

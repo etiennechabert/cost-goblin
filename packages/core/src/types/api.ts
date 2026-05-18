@@ -100,6 +100,7 @@ export interface CostApi {
   getConfig(): Promise<CostGoblinConfig>;
   getDimensions(): Promise<Dimension[]>;
   getOrgTree(): Promise<OrgNode[]>;
+  saveOrgTree(tree: readonly OrgNode[]): Promise<void>;
   getDataInventory(tier?: DataTier): Promise<DataInventoryResult>;
   syncPeriods(files: readonly { key: string; contentHash: string; size: number }[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }>;
   cancelSync(syncId?: string): Promise<void>;

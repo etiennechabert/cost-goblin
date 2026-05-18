@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
+import { OrgTreeEditor } from '../components/org-tree-editor.js';
 
 type OrgSyncState =
   | { status: 'idle' }
@@ -352,6 +353,32 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
           onConfirm={() => { handleClear().catch(() => undefined); }}
           onCancel={() => { setShowClearConfirm(false); }}
         />
+      )}
+    </div>
+  );
+}
+
+export function OrgTreeSection(): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="rounded-xl border border-border bg-bg-secondary/50 overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-3">
+        <button
+          type="button"
+          onClick={() => { setExpanded(v => !v); }}
+          className="flex items-center gap-2 flex-1 text-left hover:bg-bg-tertiary/30 transition-colors rounded -mx-1 px-1"
+        >
+          <div className="h-2 w-2 rounded-full bg-accent" />
+          <span className="text-sm font-medium text-text-primary">Organizational Hierarchy Editor</span>
+          <span className="text-text-muted ml-auto text-xs">{expanded ? '▾' : '▸'}</span>
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="border-t border-border p-4">
+          <OrgTreeEditor onClose={() => { setExpanded(false); }} />
+        </div>
       )}
     </div>
   );

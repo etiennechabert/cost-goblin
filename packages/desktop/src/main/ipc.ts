@@ -13,6 +13,7 @@ import { registerCostScopeHandlers } from './handlers/cost-scope.js';
 import { registerExplorerHandlers } from './handlers/explorer.js';
 import { registerDebugHandlers } from './handlers/debug.js';
 import { registerMcpHandlers } from './handlers/mcp-handler.js';
+import { registerOrgTreeHandlers } from './handlers/org-tree.js';
 
 export type { AppContext, IpcContext } from './handlers/context.js';
 
@@ -32,6 +33,7 @@ export function registerIpcHandlers(ctx: IpcContext): AppContext {
   registerExplorerHandlers(app);
   registerDebugHandlers(app);
   registerMcpHandlers(app);
+  registerOrgTreeHandlers(app);
 
   app.warmupBase();
 

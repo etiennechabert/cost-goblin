@@ -121,6 +121,9 @@ const api: CostApi = {
   getOrgTree(): Promise<OrgNode[]> {
     return invoke<OrgNode[]>('config:org-tree');
   },
+  saveOrgTree(tree: readonly OrgNode[]): Promise<void> {
+    return invoke<undefined>('org-tree:save', tree).then(() => undefined);
+  },
   getFilterValues(dimensionId: string, filters: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]> {
     return invoke<{ value: string; label: string; count: number }[]>('query:filter-values', dimensionId, filters, dateRange, opts, origin);
   },
