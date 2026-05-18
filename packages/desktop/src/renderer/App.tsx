@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView } from '@costgoblin/ui';
+import { BudgetsView, CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagColumnName } from '@costgoblin/core/browser';
-import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw } from 'lucide-react';
+import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw, Wallet } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
 import { OptionsMenu } from './top-menu/options-menu.js';
@@ -62,6 +62,7 @@ type View =
   | { page: 'savings' }
   | { page: 'mcp' }
   | { page: 'explorer' }
+  | { page: 'budgets' }
   | { page: 'dimensions' }
   | { page: 'cost-scope' }
   | { page: 'views-editor' }
@@ -78,6 +79,7 @@ const ANALYTICAL_NAV: readonly AnalyticalNavItem[] = [
   { id: 'savings', label: 'Findings', Icon: Lightbulb },
   { id: 'missing-tags', label: 'Tags', Icon: Tag },
   { id: 'explorer', label: 'Explorer', Icon: Search },
+  { id: 'budgets', label: 'Budgets', Icon: Wallet },
 ];
 
 const SETTINGS_NAV: readonly { id: string; label: string }[] = [
@@ -562,6 +564,7 @@ function AppShell(): React.JSX.Element {
         case 'missing-tags': setView({ page: 'missing-tags' }); break;
         case 'savings': setView({ page: 'savings' }); break;
         case 'explorer': setView({ page: 'explorer' }); break;
+        case 'budgets': setView({ page: 'budgets' }); break;
         case 'cost-scope': setView({ page: 'cost-scope' }); break;
         case 'dimensions': setView({ page: 'dimensions' }); break;
         case 'views-editor': setView({ page: 'views-editor' }); break;
@@ -613,6 +616,7 @@ function AppShell(): React.JSX.Element {
     if (view.page === 'missing-tags') return 'missing-tags';
     if (view.page === 'savings') return 'savings';
     if (view.page === 'explorer') return 'explorer';
+    if (view.page === 'budgets') return 'budgets';
     if (view.page === 'cost-scope') return 'cost-scope';
     if (view.page === 'dimensions') return 'dimensions';
     if (view.page === 'views-editor') return 'views-editor';
@@ -833,6 +837,11 @@ function AppShell(): React.JSX.Element {
         {view.page === 'explorer' && (
           <Profiler id="explorer" onRender={onPerfRender}>
             <ExplorerView />
+          </Profiler>
+        )}
+        {view.page === 'budgets' && (
+          <Profiler id="budgets" onRender={onPerfRender}>
+            <BudgetsView />
           </Profiler>
         )}
         {view.page === 'cost-scope' && (

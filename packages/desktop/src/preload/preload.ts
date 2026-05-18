@@ -40,6 +40,8 @@ import type {
   AggregatedTableParams,
   AggregatedTableResult,
   AliasSuggestion,
+  Budget,
+  BudgetId,
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
@@ -293,6 +295,15 @@ const api: CostApi = {
   },
   setMcpServerRunning(enabled: boolean): Promise<void> {
     return invoke<undefined>('mcp:set-running', enabled).then(() => undefined);
+  },
+  getBudgets(): Promise<readonly Budget[]> {
+    return invoke<readonly Budget[]>('budgets:get');
+  },
+  saveBudget(budget: Budget): Promise<void> {
+    return invoke<undefined>('budgets:save', budget).then(() => undefined);
+  },
+  deleteBudget(budgetId: BudgetId): Promise<void> {
+    return invoke<undefined>('budgets:delete', budgetId).then(() => undefined);
   },
 };
 

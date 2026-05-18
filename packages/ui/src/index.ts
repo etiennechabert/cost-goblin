@@ -57,6 +57,7 @@ export { DataManagement } from './views/data-management.js';
 export { DimensionsView } from './views/dimensions.js';
 export { CostScopeView } from './views/cost-scope.js';
 export { ExplorerView } from './views/explorer.js';
+export { BudgetsView } from './views/budgets.js';
 export { SetupWizard } from './views/setup-wizard.js';
 export { McpView } from './views/mcp-view.js';
 

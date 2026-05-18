@@ -28,6 +28,7 @@ import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { getDimensionId } from '../lib/dimensions.js';
 import { bucketKeyToDate, formatBucketKey, normalizeHourKey, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import type { TableColumn } from '../lib/table-types.js';
+import { ValuesPicker, type DropdownState } from '../components/values-picker.js';
 
 const DEBOUNCE_MS = 250;
 const ROW_LIMIT = 500;
@@ -822,11 +823,6 @@ interface MultiFilterBarProps {
   readonly fetchValues: (dimId: string) => Promise<readonly ExplorerFilterValue[]>;
 }
 
-type DropdownState =
-  | { status: 'closed' }
-  | { status: 'loading'; dimId: string }
-  | { status: 'ready'; dimId: string; values: readonly ExplorerFilterValue[] }
-  | { status: 'error'; dimId: string; message: string };
 
 function MultiFilterBar({ dimensions, filters, onChange, fetchValues }: MultiFilterBarProps): React.JSX.Element {
   const [dropdown, setDropdown] = useState<DropdownState>({ status: 'closed' });
@@ -909,8 +905,7 @@ function MultiFilterBar({ dimensions, filters, onChange, fetchValues }: MultiFil
             {isOpen && (
               <ValuesPicker
                 dropdown={dropdown}
-                selected={active}
-                onApply={(next) => { onChange(dimId, next); }}
+                mode={{ kind: 'multi', selected: active, onApply: (next) => { onChange(dimId, next); } }}
                 onClose={() => { setDropdown({ status: 'closed' }); }}
               />
             )}
@@ -923,125 +918,6 @@ function MultiFilterBar({ dimensions, filters, onChange, fetchValues }: MultiFil
     </div>
   );
 }
-
-interface ValuesPickerProps {
-  readonly dropdown: DropdownState;
-  readonly selected: readonly string[];
-  readonly onApply: (next: readonly string[]) => void;
-  readonly onClose: () => void;
-}
-
-function ValuesPicker({ dropdown, selected, onApply, onClose }: ValuesPickerProps): React.JSX.Element {
-  const [search, setSearch] = useState('');
-  const [draft, setDraft] = useState(selected);
-
-  // Reset the draft when the dim changes — otherwise re-opening a
-  // previously-selected dim would show stale draft state.
-  useEffect(() => {
-    setDraft(selected);
-    setSearch('');
-  }, [selected]);
-
-  function toggle(value: string) {
-    setDraft(prev => prev.includes(value) ? prev.filter(v => v !== value) : [...prev, value]);
-  }
-
-  function apply() {
-    onApply(draft);
-    onClose();
-  }
-
-  function clear() {
-    setDraft([]);
-  }
-
-  const filteredValues = dropdown.status === 'ready'
-    ? dropdown.values.filter(v => search.length === 0 || v.label.toLowerCase().includes(search.toLowerCase()))
-    : [];
-
-  return (
-    <div className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-border bg-bg-secondary shadow-lg">
-      <div className="border-b border-border p-2">
-        <input
-          autoFocus
-          type="text"
-          value={search}
-          placeholder="Search values…"
-          onChange={(e) => { setSearch(e.target.value); }}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') onClose();
-            if (e.key === 'Enter') apply();
-          }}
-          className="w-full rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-primary outline-none focus:border-accent"
-        />
-      </div>
-      <div className="max-h-64 overflow-y-auto">
-        {dropdown.status === 'loading' && (
-          <div className="flex items-center justify-center gap-2 py-6 text-xs text-text-muted">
-            <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-border border-t-accent" />
-            <span>Loading…</span>
-          </div>
-        )}
-        {dropdown.status === 'error' && (
-          <div className="px-3 py-4 text-xs text-negative">Failed to load: {dropdown.message}</div>
-        )}
-        {dropdown.status === 'ready' && filteredValues.length === 0 && (
-          <div className="px-3 py-4 text-xs text-text-muted">No matching values.</div>
-        )}
-        {dropdown.status === 'ready' && filteredValues.map(v => {
-          const checked = draft.includes(v.value);
-          return (
-            <label
-              key={v.value}
-              className={[
-                'flex items-center justify-between gap-2 px-3 py-1.5 text-xs cursor-pointer select-none',
-                checked ? 'bg-accent-muted/50 text-text-primary' : 'text-text-secondary hover:bg-bg-tertiary',
-              ].join(' ')}
-            >
-              <span className="flex items-center gap-2 min-w-0 flex-1">
-                <input
-                  type="checkbox"
-                  className="accent-accent shrink-0"
-                  checked={checked}
-                  onChange={() => { toggle(v.value); }}
-                />
-                <span className="truncate">{v.label}</span>
-              </span>
-              <span className="shrink-0 text-text-muted tabular-nums">{formatDollars(v.cost)}</span>
-            </label>
-          );
-        })}
-      </div>
-      <div className="flex items-center justify-between border-t border-border p-2 gap-2">
-        <button
-          type="button"
-          onClick={clear}
-          className="text-xs text-text-secondary hover:text-text-primary"
-          disabled={draft.length === 0}
-        >
-          Clear
-        </button>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md px-2 py-1 text-xs text-text-secondary hover:bg-bg-tertiary"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={apply}
-            className="rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-bg-primary hover:bg-accent/90"
-          >
-            Apply
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 
 const DETAIL_FIELDS: readonly { key: string; label: string; render: (r: import('@costgoblin/core/browser').ExplorerSampleRow) => string }[] = [
   { key: 'date', label: 'Date', render: r => r.date },

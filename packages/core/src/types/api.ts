@@ -2,6 +2,8 @@ import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, Normalizatio
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { CostScopeCapabilities, CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
+import type { BudgetId } from './branded.js';
+import type { Budget } from './budgets.js';
 import type {
   ExplorerFilterValue,
   ExplorerFilterValuesParams,
@@ -201,6 +203,12 @@ export interface CostApi {
   clearAllCaches(): Promise<void>;
   getMcpServerRunning(): Promise<boolean>;
   setMcpServerRunning(enabled: boolean): Promise<void>;
+  /** All budgets across all dimensions. Filter client-side by `dimension`. */
+  getBudgets(): Promise<readonly Budget[]>;
+  /** Create or update; ID determines which. */
+  saveBudget(budget: Budget): Promise<void>;
+  /** Idempotent. */
+  deleteBudget(budgetId: BudgetId): Promise<void>;
 }
 
 export interface AccountMappingEntry {

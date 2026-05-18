@@ -1,10 +1,13 @@
 import {
   asBucketPath,
+  asBudgetId,
   asDimensionId,
   asDollars,
   asDateString,
   asEntityRef,
   type AccountMappingStatus,
+  type Budget,
+  type BudgetId,
   type CostApi,
   type CostResult,
   type DailyCostsResult,
@@ -376,7 +379,49 @@ export class MockCostApi implements CostApi {
   clearAllCaches(): Promise<void> { return Promise.resolve(); }
   getMcpServerRunning(): Promise<boolean> { return Promise.resolve(true); }
   setMcpServerRunning(): Promise<void> { return Promise.resolve(); }
+  budgets: Budget[] = [...MOCK_BUDGETS];
+  getBudgets(): Promise<readonly Budget[]> { return Promise.resolve(this.budgets); }
+  saveBudget(budget: Budget): Promise<void> {
+    const idx = this.budgets.findIndex(b => b.id === budget.id);
+    if (idx >= 0) this.budgets[idx] = budget;
+    else this.budgets.push(budget);
+    return Promise.resolve();
+  }
+  deleteBudget(budgetId: BudgetId): Promise<void> {
+    this.budgets = this.budgets.filter(b => b.id !== budgetId);
+    return Promise.resolve();
+  }
 }
+
+const MOCK_BUDGETS: readonly Budget[] = [
+  {
+    id: asBudgetId('budget-platform'),
+    entity: asEntityRef('platform'),
+    dimension: asDimensionId('account'),
+    annualAmount: asDollars(600_000),
+    fiscalYearStart: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: asBudgetId('budget-data'),
+    entity: asEntityRef('data'),
+    dimension: asDimensionId('account'),
+    annualAmount: asDollars(400_000),
+    fiscalYearStart: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  },
+  {
+    id: asBudgetId('budget-growth'),
+    entity: asEntityRef('growth'),
+    dimension: asDimensionId('account'),
+    annualAmount: asDollars(180_000),
+    fiscalYearStart: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  },
+];
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {
   views: [

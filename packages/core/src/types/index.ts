@@ -6,6 +6,7 @@ export type {
   Dollars,
   DateString,
   HourString,
+  BudgetId,
 } from './branded.js';
 export {
   asDimensionId,
@@ -15,6 +16,7 @@ export {
   asDollars,
   asDateString,
   asHourString,
+  asBudgetId,
   tagColumnName,
 } from './branded.js';
 
@@ -75,6 +77,13 @@ export type {
   ViewsConfig,
 } from './views.js';
 export { OVERVIEW_SEED_VIEW, SEED_VIEWS_CONFIG } from './seed-views.js';
+
+export type {
+  FiscalYearStartMonth,
+  Budget,
+  BudgetProgress,
+} from './budgets.js';
+export { isFiscalYearStartMonth } from './budgets.js';
 
 export type {
   CostMetric,
