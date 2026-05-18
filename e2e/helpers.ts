@@ -118,6 +118,16 @@ export async function hasVisibleData(page: Page): Promise<boolean> {
 const OPTIONS_ITEMS = new Set(['Cost Scope', 'Dimensions', 'Views Editor', 'AI Assistant']);
 const DIRECT_NAV = new Set(['Trends', 'Findings', 'Tags', 'Explorer', 'Sync', 'Dashboards', 'Options', 'Home']);
 const NAV_ALIASES: Record<string, string> = { Views: 'Views Editor' };
+// Both top-bar <nav> elements have aria-labels — scope direct-nav lookups
+// to them so we never pick up a same-named button living inside a view
+// (e.g. "Sync region names" in DataManagement, "Trends" in some chart).
+const LEFT_NAV_LABEL = 'Dashboards and analysis';
+const RIGHT_NAV_LABEL = 'Sync and settings';
+const NAV_SIDE: Record<string, 'left' | 'right'> = {
+  Trends: 'left', Findings: 'left', Tags: 'left', Explorer: 'left',
+  Dashboards: 'left', Home: 'left',
+  Sync: 'right', Options: 'right',
+};
 
 async function openIfClosed(trigger: ReturnType<Page['getByRole']>): Promise<void> {
   // Radix Popover toggles open/closed on each trigger click. If a previous
@@ -129,8 +139,12 @@ async function openIfClosed(trigger: ReturnType<Page['getByRole']>): Promise<voi
   await trigger.click();
 }
 
+function topNav(page: Page, side: 'left' | 'right'): ReturnType<Page['getByRole']> {
+  return page.getByRole('navigation', { name: side === 'left' ? LEFT_NAV_LABEL : RIGHT_NAV_LABEL });
+}
+
 export async function openDashboardsDropdown(page: Page): Promise<void> {
-  const trigger = page.getByRole('button', { name: 'Dashboards', exact: false }).first();
+  const trigger = topNav(page, 'left').getByRole('button', { name: 'Dashboards', exact: false }).first();
   // The Dashboards trigger now doubles as a Home button: if the user isn't
   // on the default dashboard, the first click navigates there instead of
   // opening the popover. Click once, see whether the popover actually
@@ -141,7 +155,7 @@ export async function openDashboardsDropdown(page: Page): Promise<void> {
 }
 
 export async function openOptionsMenu(page: Page): Promise<void> {
-  await openIfClosed(page.getByRole('button', { name: 'Options', exact: true }));
+  await openIfClosed(topNav(page, 'right').getByRole('button', { name: 'Options', exact: true }));
 }
 
 export async function clickNavButton(page: Page, name: string): Promise<void> {
@@ -152,7 +166,8 @@ export async function clickNavButton(page: Page, name: string): Promise<void> {
     return;
   }
   if (DIRECT_NAV.has(resolved)) {
-    await page.getByRole('button', { name: new RegExp(`^${resolved}`), exact: false }).first().click();
+    const side = NAV_SIDE[resolved] ?? 'left';
+    await topNav(page, side).getByRole('button', { name: new RegExp(`^${resolved}`), exact: false }).first().click();
     return;
   }
   // Custom dashboard — hidden behind the Dashboards popover.
