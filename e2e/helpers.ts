@@ -167,7 +167,10 @@ export async function clickNavButton(page: Page, name: string): Promise<void> {
   }
   if (DIRECT_NAV.has(resolved)) {
     const side = NAV_SIDE[resolved] ?? 'left';
-    await topNav(page, side).getByRole('button', { name: new RegExp(`^${resolved}`), exact: false }).first().click();
+    // Substring match (not start-anchored) — the Sync button's accessible
+    // name can be e.g. "sync error Sync !" once status badges decorate it,
+    // so anchoring on ^Sync would never match.
+    await topNav(page, side).getByRole('button', { name: resolved, exact: false }).first().click();
     return;
   }
   // Custom dashboard — hidden behind the Dashboards popover.
