@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, Profiler } from 'react';
+import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
@@ -400,6 +400,22 @@ function AppShell(): React.JSX.Element {
   const memoryMB = useMemoryMB();
   const autoOpenRef = useMemo(() => ({ current: false }), []);
   const initialViewSetRef = useRef(false);
+  const headerRef = useRef<HTMLDivElement>(null);
+
+  // Publish the actual rendered header height as a CSS variable so the debug
+  // panel (and anything else that wants to sit flush below the top bar) can
+  // use it instead of guessing with a magic top offset.
+  useLayoutEffect(() => {
+    const el = headerRef.current;
+    if (el === null) return undefined;
+    const update = () => {
+      document.documentElement.style.setProperty('--top-bar-height', `${String(el.offsetHeight)}px`);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => { observer.disconnect(); };
+  }, []);
 
   useEffect(() => {
     globalThis.costgoblinUpdate.getAppVersion().then(setAppVersion).catch(() => undefined);
@@ -623,7 +639,7 @@ function AppShell(): React.JSX.Element {
           missingPeriods={missingPeriods}
         />
         {/* Title bar + nav */}
-        <div className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
+        <div ref={headerRef} className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
         <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
           <nav className="flex items-center gap-1" aria-label="Dashboards and analysis">
             {(() => {

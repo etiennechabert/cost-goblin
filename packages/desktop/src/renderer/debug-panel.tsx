@@ -197,7 +197,10 @@ export function DebugPanel({ onClose }: Readonly<{ onClose: () => void }>): Reac
   });
 
   return (
-    <div className="fixed top-[5.5rem] right-0 bottom-0 z-40 w-[75vw] bg-bg-secondary border-l border-border shadow-xl flex flex-col">
+    <div
+      className="fixed right-0 bottom-0 z-40 w-[75vw] bg-bg-secondary border-l border-border shadow-xl flex flex-col"
+      style={{ top: 'var(--top-bar-height, 5.5rem)' }}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0 [-webkit-app-region:no-drag]">
         <div className="flex items-center gap-3">
