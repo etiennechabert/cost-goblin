@@ -750,9 +750,10 @@ function AppShell(): React.JSX.Element {
                   ].join(' ')}
                   title={syncError === null ? undefined : `Sync error — ${syncError}`}
                   aria-current={active === 'sync' ? 'page' : undefined}
+                  aria-label="Sync"
                 >
                   {showError && (
-                    <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-negative animate-pulse" aria-label="sync error" />
+                    <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-negative animate-pulse" aria-hidden="true" />
                   )}
                   {showActive && syncActivity === 'downloading' && (
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
