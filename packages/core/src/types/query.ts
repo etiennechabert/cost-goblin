@@ -24,7 +24,6 @@ export interface CostQueryParams {
   readonly dateRange: DateRange;
   readonly filters: FilterMap;
   readonly granularity?: Granularity | undefined;
-  readonly orgNodeValues?: readonly string[] | undefined;
   /** Debug-only: tag identifying which widget/view fired this query,
    *  surfaced in the query log. Not used by SQL builders. */
   readonly origin?: string | undefined;

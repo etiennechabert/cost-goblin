@@ -30,6 +30,7 @@ const data: OrgNode = {
 
 const sre: OrgNode = {
   name: 'SRE',
+  virtual: true,
   children: [
     { name: 'sre-emea' },
     { name: 'sre-us' },
@@ -54,9 +55,9 @@ describe('getDescendantTagValues', () => {
     expect(values).toEqual(['core-banking', 'payments', 'identity', 'platform']);
   });
 
-  it('includes self for non-virtual node with children', () => {
+  it('returns descendants only for parent node (virtual by invariant)', () => {
     const values = getDescendantTagValues(sre);
-    expect(values).toEqual(['SRE', 'sre-emea', 'sre-us']);
+    expect(values).toEqual(['sre-emea', 'sre-us']);
   });
 
   it('returns all leaf values for root', () => {
@@ -64,7 +65,7 @@ describe('getDescendantTagValues', () => {
     expect(values).toContain('core-banking');
     expect(values).toContain('analytics');
     expect(values).toContain('sre-emea');
-    expect(values).toHaveLength(9);
+    expect(values).toHaveLength(8);
   });
 });
 

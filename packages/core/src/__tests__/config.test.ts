@@ -46,7 +46,7 @@ describe('loadOrgTree', () => {
 
     const sre = company?.children?.[2];
     expect(sre?.name).toBe('SRE');
-    expect(sre?.virtual).toBeUndefined();
+    expect(sre?.virtual).toBe(true);
     expect(sre?.children).toHaveLength(2);
   });
 });
@@ -77,9 +77,56 @@ describe('validateDimensions', () => {
 
 describe('validateOrgTree', () => {
   it('validates nested structure', () => {
-    const tree = validateOrgTree({
+    const { config, migrations } = validateOrgTree({
       tree: [{ name: 'Root', virtual: true, children: [{ name: 'leaf' }] }],
     });
-    expect(tree.tree[0]?.children?.[0]?.name).toBe('leaf');
+    expect(config.tree[0]?.children?.[0]?.name).toBe('leaf');
+    expect(migrations.promotedToVirtual).toEqual([]);
+    expect(migrations.wrappedRoots).toBe(false);
+    expect(migrations.addedEmptyRoot).toBe(false);
+  });
+
+  it('synthesizes a root when the tree is empty', () => {
+    const { config, migrations } = validateOrgTree({ tree: [] });
+    expect(config.tree).toHaveLength(1);
+    expect(config.tree[0]?.name).toBe('Organization');
+    expect(config.tree[0]?.virtual).toBe(true);
+    expect(migrations.addedEmptyRoot).toBe(true);
+  });
+
+  it('wraps multiple roots under a synthetic root', () => {
+    const { config, migrations } = validateOrgTree({
+      tree: [
+        { name: 'Engineering', virtual: true, children: [{ name: 'backend' }] },
+        { name: 'Sales', virtual: true, children: [{ name: 'east' }] },
+      ],
+    });
+    expect(config.tree).toHaveLength(1);
+    expect(config.tree[0]?.name).toBe('Organization');
+    expect(config.tree[0]?.children).toHaveLength(2);
+    expect(migrations.wrappedRoots).toBe(true);
+  });
+
+  it('wraps a single non-virtual root under the synthetic root', () => {
+    const { config, migrations } = validateOrgTree({
+      tree: [{ name: 'single-team' }],
+    });
+    expect(config.tree[0]?.name).toBe('Organization');
+    expect(config.tree[0]?.children?.[0]?.name).toBe('single-team');
+    expect(migrations.wrappedRoots).toBe(true);
+  });
+
+  it('auto-promotes a node that has children but no virtual flag', () => {
+    const { config, migrations } = validateOrgTree({
+      tree: [{
+        name: 'Root',
+        virtual: true,
+        children: [{ name: 'SRE', children: [{ name: 'sre-emea' }, { name: 'sre-us' }] }],
+      }],
+    });
+    const sre = config.tree[0]?.children?.[0];
+    expect(sre?.name).toBe('SRE');
+    expect(sre?.virtual).toBe(true);
+    expect(migrations.promotedToVirtual).toEqual(['SRE']);
   });
 });

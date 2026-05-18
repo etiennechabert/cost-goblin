@@ -67,6 +67,20 @@ export interface OrgSyncProgress {
   readonly total: number;
 }
 
+export interface OrgTreeMigrationFlags {
+  readonly promotedToVirtual: readonly string[];
+  readonly wrappedRoots: boolean;
+  readonly addedEmptyRoot: boolean;
+}
+
+/** Shape returned by the `getOrgTree` IPC method: the normalized tree plus
+ *  flags describing any silent migrations the validator performed (auto-promoting
+ *  to virtual, wrapping multi-root, etc.). The editor surfaces these as a banner. */
+export interface OrgTreeWithMigrations {
+  readonly tree: readonly OrgNode[];
+  readonly migrations: OrgTreeMigrationFlags;
+}
+
 export type Dimension = BuiltInDimension | TagDimension;
 
 export type DataTier = 'daily' | 'hourly' | 'cost-optimization';
@@ -99,12 +113,12 @@ export interface CostApi {
   getSyncStatus(syncId?: string): Promise<SyncStatus>;
   getConfig(): Promise<CostGoblinConfig>;
   getDimensions(): Promise<Dimension[]>;
-  getOrgTree(): Promise<OrgNode[]>;
+  getOrgTree(): Promise<OrgTreeWithMigrations>;
   saveOrgTree(tree: readonly OrgNode[]): Promise<void>;
   getDataInventory(tier?: DataTier): Promise<DataInventoryResult>;
   syncPeriods(files: readonly { key: string; contentHash: string; size: number }[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }>;
   cancelSync(syncId?: string): Promise<void>;
-  getFilterValues(dimensionId: string, filters: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]>;
+  getFilterValues(dimensionId: string, filters: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number; isVirtual?: true | undefined }[]>;
   deleteLocalPeriod(period: string, tier?: DataTier): Promise<void>;
   openDataFolder(): Promise<void>;
   ssoLogin(profile: string): Promise<void>;

@@ -1,14 +1,14 @@
 import { ipcMain } from 'electron';
-import { asDimensionId, isStringRecord, logger } from '@costgoblin/core';
+import { asDimensionId, isStringRecord, loadOrgTreeNormalized, logger } from '@costgoblin/core';
 import type {
   CostGoblinConfig,
   Dimension,
-  OrgNode,
+  OrgTreeWithMigrations,
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 
 export function registerConfigHandlers(app: AppContext): void {
-  const { ctx, getConfig, getDimensions, getOrgTreeConfig, invalidateConfig } = app;
+  const { ctx, getConfig, getDimensions, invalidateConfig } = app;
 
   ipcMain.handle('config:get', async (): Promise<CostGoblinConfig> => {
     return getConfig();
@@ -40,9 +40,14 @@ export function registerConfigHandlers(app: AppContext): void {
     return [...builtIn, ...tags];
   });
 
-  ipcMain.handle('config:org-tree', async (): Promise<OrgNode[]> => {
-    const orgTree = await getOrgTreeConfig();
-    return [...orgTree.tree];
+  ipcMain.handle('config:org-tree', async (): Promise<OrgTreeWithMigrations> => {
+    // Re-validate the YAML on every editor open so migration flags (auto-promoted
+    // nodes, wrapped roots, synthetic empty root) reflect the on-disk state and
+    // the editor's banner stays in sync. The cached `getOrgTreeConfig` returns
+    // only the normalized tree without migration info, so we go to the raw file
+    // here instead.
+    const { config, migrations } = await loadOrgTreeNormalized(ctx.orgTreePath);
+    return { tree: [...config.tree], migrations };
   });
 
   // Surgical update: rewrite ONLY the first provider's credentials.profile,

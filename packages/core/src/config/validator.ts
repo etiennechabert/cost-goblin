@@ -222,27 +222,67 @@ export function validateDimensions(raw: unknown): DimensionsConfig {
   return { builtIn, tags, ...(order === undefined ? {} : { order }) };
 }
 
-function validateOrgNode(raw: unknown, path: string): OrgNode {
+export const SYNTHETIC_ROOT_NAME = 'Organization';
+
+export interface OrgTreeMigrations {
+  readonly promotedToVirtual: readonly string[];
+  readonly wrappedRoots: boolean;
+  readonly addedEmptyRoot: boolean;
+}
+
+export interface NormalizedOrgTree {
+  readonly config: OrgTreeConfig;
+  readonly migrations: OrgTreeMigrations;
+}
+
+function validateOrgNode(raw: unknown, path: string, promoted: string[]): OrgNode {
   assertObject(raw, path);
   assertString(raw['name'], `${path}.name`);
 
-  const virtual = raw['virtual'] === true || undefined;
+  const declaredVirtual = raw['virtual'] === true;
   let children: OrgNode[] | undefined;
   if (raw['children'] !== undefined) {
     assertArray(raw['children'], `${path}.children`);
-    children = raw['children'].map((c, i) => validateOrgNode(c, `${path}.children[${String(i)}]`));
+    children = raw['children'].map((c, i) => validateOrgNode(c, `${path}.children[${String(i)}]`, promoted));
   }
+
+  const hasChildren = children !== undefined && children.length > 0;
+  const virtual = declaredVirtual || hasChildren;
+  if (hasChildren && !declaredVirtual) promoted.push(raw['name']);
 
   return {
     name: raw['name'],
-    ...(virtual === undefined ? {} : { virtual }),
+    ...(virtual ? { virtual: true as const } : {}),
     ...(children === undefined ? {} : { children }),
   };
 }
 
-export function validateOrgTree(raw: unknown): OrgTreeConfig {
+export function validateOrgTree(raw: unknown): NormalizedOrgTree {
   assertObject(raw, 'orgTree');
   assertArray(raw['tree'], 'tree');
-  const tree = raw['tree'].map((node, i) => validateOrgNode(node, `tree[${String(i)}]`));
-  return { tree };
+  const promoted: string[] = [];
+  const roots = raw['tree'].map((node, i) => validateOrgNode(node, `tree[${String(i)}]`, promoted));
+
+  let tree: OrgNode[];
+  let wrappedRoots = false;
+  let addedEmptyRoot = false;
+
+  if (roots.length === 0) {
+    tree = [{ name: SYNTHETIC_ROOT_NAME, virtual: true, children: [] }];
+    addedEmptyRoot = true;
+  } else if (roots.length === 1 && roots[0]?.virtual === true) {
+    tree = roots;
+  } else {
+    tree = [{ name: SYNTHETIC_ROOT_NAME, virtual: true, children: roots }];
+    wrappedRoots = true;
+  }
+
+  return {
+    config: { tree },
+    migrations: {
+      promotedToVirtual: promoted,
+      wrappedRoots,
+      addedEmptyRoot,
+    },
+  };
 }

@@ -8,8 +8,8 @@ export function registerOrgTreeHandlers(app: AppContext): void {
   const { ctx, invalidateOrgTree } = app;
 
   ipcMain.handle('org-tree:save', async (_event, raw: unknown): Promise<void> => {
-    const validated = validateOrgTree({ tree: raw });
-    await writeFile(ctx.orgTreePath, stringify(orgTreeToYaml(validated)));
+    const { config } = validateOrgTree({ tree: raw });
+    await writeFile(ctx.orgTreePath, stringify(orgTreeToYaml(config)));
     invalidateOrgTree();
   });
 }

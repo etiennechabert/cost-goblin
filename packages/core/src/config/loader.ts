@@ -3,7 +3,7 @@ import { parse } from 'yaml';
 import type { CostGoblinConfig, DimensionsConfig, OrgTreeConfig } from '../types/index.js';
 import type { ViewsConfig } from '../types/views.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
-import { validateConfig, validateDimensions, validateOrgTree } from './validator.js';
+import { validateConfig, validateDimensions, validateOrgTree, type NormalizedOrgTree } from './validator.js';
 import { validateViews } from './views-validator.js';
 import { validateCostScope } from './cost-scope-validator.js';
 
@@ -20,11 +20,15 @@ export async function loadDimensions(path: string): Promise<DimensionsConfig> {
 }
 
 export async function loadOrgTree(path: string): Promise<OrgTreeConfig> {
+  return (await loadOrgTreeNormalized(path)).config;
+}
+
+export async function loadOrgTreeNormalized(path: string): Promise<NormalizedOrgTree> {
   let content: string;
   try {
     content = await readFile(path, 'utf-8');
   } catch {
-    return { tree: [] };
+    return validateOrgTree({ tree: [] });
   }
   const raw: unknown = parse(content);
   return validateOrgTree(raw);

@@ -3,7 +3,6 @@ import {
   asDollars,
   asDateString,
   computePeriodsInRange,
-  getDescendantTagValues,
   listLocalMonths,
   logger,
   tagColumnName,
@@ -22,7 +21,6 @@ import type {
   EntityDetailResult,
   DailyCost,
   DistributionSlice,
-  OrgNode,
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 
@@ -384,99 +382,3 @@ export function buildEntityDetailResult(rows: RawRow[], entity: string): EntityD
   };
 }
 
-function mergeDescendantCosts(
-  descendants: readonly string[],
-  entityCostMap: Map<string, CostRow>,
-  consumedEntities: Set<string>,
-  skipName?: string,
-  baseCost?: number,
-  baseServices?: Record<string, number>,
-): { totalCost: number; mergedServices: Record<string, number> } {
-  let totalCost = baseCost ?? 0;
-  const mergedServices: Record<string, number> = baseServices === undefined
-    ? {}
-    : { ...baseServices };
-  for (const desc of descendants) {
-    if (desc === skipName) continue;
-    consumedEntities.add(desc);
-    const row = entityCostMap.get(desc);
-    if (row === undefined) continue;
-    totalCost += row.totalCost;
-    for (const [svc, cost] of Object.entries(row.serviceCosts)) {
-      mergedServices[svc] = (mergedServices[svc] ?? 0) + cost;
-    }
-  }
-  return { totalCost, mergedServices };
-}
-
-function makeVirtualRow(name: string, totalCost: number, mergedServices: Record<string, number>): CostRow | null {
-  if (totalCost <= 0) return null;
-  return {
-    entity: asEntityRef(name),
-    totalCost: asDollars(totalCost),
-    serviceCosts: Object.fromEntries(
-      Object.entries(mergedServices).map(([k, v]) => [k, asDollars(v)]),
-    ),
-    isVirtual: true,
-  };
-}
-
-function rollupVirtualNode(
-  node: OrgNode,
-  entityCostMap: Map<string, CostRow>,
-  consumedEntities: Set<string>,
-): CostRow | null {
-  const descendants = getDescendantTagValues(node);
-  const { totalCost, mergedServices } = mergeDescendantCosts(descendants, entityCostMap, consumedEntities);
-  return makeVirtualRow(node.name, totalCost, mergedServices);
-}
-
-function rollupRealNode(
-  node: OrgNode,
-  entityCostMap: Map<string, CostRow>,
-  consumedEntities: Set<string>,
-): CostRow | null {
-  const descendants = node.children === undefined ? [] : getDescendantTagValues(node);
-  for (const desc of descendants) {
-    if (desc !== node.name) consumedEntities.add(desc);
-  }
-
-  const existingRow = entityCostMap.get(node.name);
-  if (node.children === undefined || node.children.length === 0) {
-    return existingRow ?? null;
-  }
-
-  const baseCost = existingRow === undefined ? 0 : existingRow.totalCost;
-  const baseServices = existingRow === undefined
-    ? {}
-    : Object.fromEntries(Object.entries(existingRow.serviceCosts).map(([k, v]) => [k, Number(v)]));
-  const { totalCost, mergedServices } = mergeDescendantCosts(
-    descendants, entityCostMap, consumedEntities, node.name, baseCost, baseServices,
-  );
-  return makeVirtualRow(node.name, totalCost, mergedServices);
-}
-
-export function applyOrgTreeRollup(result: CostResult, tree: readonly OrgNode[]): CostResult {
-  const entityCostMap = new Map<string, CostRow>();
-  for (const row of result.rows) {
-    entityCostMap.set(row.entity, row);
-  }
-
-  const rolledUpRows: CostRow[] = [];
-  const consumedEntities = new Set<string>();
-
-  for (const node of tree) {
-    const row = node.virtual
-      ? rollupVirtualNode(node, entityCostMap, consumedEntities)
-      : rollupRealNode(node, entityCostMap, consumedEntities);
-    if (row !== null) rolledUpRows.push(row);
-  }
-
-  for (const row of result.rows) {
-    if (!consumedEntities.has(row.entity) && !rolledUpRows.some(r => r.entity === row.entity)) {
-      rolledUpRows.push(row);
-    }
-  }
-
-  return { ...result, rows: rolledUpRows };
-}

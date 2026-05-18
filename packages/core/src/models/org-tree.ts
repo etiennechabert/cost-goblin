@@ -2,18 +2,14 @@ import type { OrgNode } from '../types/config.js';
 import type { EntityRef } from '../types/branded.js';
 import { asEntityRef } from '../types/branded.js';
 
+/** Validator invariant: a node with children is always virtual. So a leaf
+ *  (no children) is itself a tag value; a parent (always virtual) contributes
+ *  only its descendants, never its own name. */
 export function getDescendantTagValues(node: OrgNode): string[] {
-  if (node.virtual !== true && (node.children === undefined || node.children.length === 0)) {
+  if (node.children === undefined || node.children.length === 0) {
     return [node.name];
   }
-  if (node.children === undefined) {
-    return [node.name];
-  }
-  const descendants = node.children.flatMap(getDescendantTagValues);
-  if (node.virtual !== true) {
-    return [node.name, ...descendants];
-  }
-  return descendants;
+  return node.children.flatMap(getDescendantTagValues);
 }
 
 export function findNode(tree: readonly OrgNode[], name: string): OrgNode | undefined {

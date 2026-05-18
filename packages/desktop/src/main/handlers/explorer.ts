@@ -9,6 +9,8 @@ import {
   buildAliasSqlCase,
   computePeriodsInRange,
   DEFAULT_LAG_DAYS,
+  expandOrgFiltersPlain,
+  getOwnerDimensionId,
   isStringRecord,
   logger,
   listLocalMonths,
@@ -280,7 +282,7 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
 }
 
 async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams): Promise<QueryContext> {
-  const { ctx, getQueryDimensions, getAccountMap } = app;
+  const { ctx, getQueryDimensions, getAccountMap, getOrgTreeConfig } = app;
   const { startStr, endStr, windowDays, startHour, endHour } = resolveDateRange(params.dateRange);
   // Hour bounds (sub-day drag-zoom) require the hourly tier — that's where
   // usage_hour lives. Promote tier when present, regardless of what
@@ -294,6 +296,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
 
   const dimensions = await getQueryDimensions();
   const accountMap = await getAccountMap();
+  const orgTreeConfig = await getOrgTreeConfig();
 
   const tagColumns: readonly ExplorerTagColumn[] = dimensions.tags.map(t => ({
     id: tagColumnName(t.tagName),
@@ -307,7 +310,8 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   }
 
   const accountReverseMap = buildAccountReverseMap(accountMap);
-  const filterPredicate = buildExplorerFilterPredicate(params.filters, dimensions, accountReverseMap);
+  const expandedFilters = expandOrgFiltersPlain(params.filters, getOwnerDimensionId(dimensions), orgTreeConfig.tree);
+  const filterPredicate = buildExplorerFilterPredicate(expandedFilters, dimensions, accountReverseMap);
 
   // Explorer always reads Parquet directly — the materialized base uses a
   // slim schema (no description, usage_amount, list_cost) that Explorer's

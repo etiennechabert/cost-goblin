@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Folder } from 'lucide-react';
 import type { Dimension, DimensionId, FilterMap, TagValue } from '@costgoblin/core/browser';
 import { asTagValue } from '@costgoblin/core/browser';
 import { getDimensionId } from '../lib/dimensions.js';
@@ -8,6 +9,7 @@ interface FilterValue {
   value: string;
   label: string;
   count: number;
+  isVirtual?: true | undefined;
 }
 
 type DropdownState =
@@ -244,7 +246,13 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
                             onChange={() => { toggleValue(item.value); }}
                             aria-label={item.label}
                           />
-                          <span className="truncate">{item.label}</span>
+                          {item.isVirtual === true && (
+                            <Folder className="h-3 w-3 text-warning shrink-0" aria-label="Department" />
+                          )}
+                          <span className={`truncate ${item.isVirtual === true ? 'font-semibold text-warning' : ''}`}>{item.label}</span>
+                          {item.isVirtual === true && (
+                            <span className="rounded-full border border-warning/40 bg-warning/10 px-1.5 py-0 text-[9px] text-warning shrink-0">department</span>
+                          )}
                         </span>
                         <span className="flex items-center gap-1.5 shrink-0">
                           <button

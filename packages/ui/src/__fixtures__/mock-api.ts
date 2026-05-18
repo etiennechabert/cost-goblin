@@ -234,12 +234,27 @@ export class MockCostApi implements CostApi {
   getSyncStatus(): Promise<SyncStatus> { return Promise.resolve(syncStatus); }
   getConfig(): Promise<CostGoblinConfig> { return Promise.resolve(config); }
   getDimensions(): Promise<Dimension[]> { return Promise.resolve(mockDimensions); }
-  getOrgTree(): Promise<OrgNode[]> { return Promise.resolve(this.currentOrgTree); }
+  getOrgTree(): Promise<{ tree: readonly OrgNode[]; migrations: { promotedToVirtual: readonly string[]; wrappedRoots: boolean; addedEmptyRoot: boolean } }> {
+    return Promise.resolve({
+      tree: this.currentOrgTree,
+      migrations: { promotedToVirtual: [], wrappedRoots: false, addedEmptyRoot: false },
+    });
+  }
   saveOrgTree(tree: readonly OrgNode[]): Promise<void> {
     this.currentOrgTree = [...tree];
     return Promise.resolve();
   }
-  getFilterValues(): Promise<{ value: string; label: string; count: number }[]> { return Promise.resolve([]); }
+  getFilterValues(dimensionId: string): Promise<{ value: string; label: string; count: number; isVirtual?: true | undefined }[]> {
+    if (dimensionId === 'tag_owner') {
+      return Promise.resolve([
+        { value: 'engineering', label: 'engineering', count: 12000, isVirtual: true },
+        { value: 'core-banking', label: 'core-banking', count: 4500 },
+        { value: 'payments', label: 'payments', count: 3500 },
+        { value: 'platform', label: 'platform', count: 4000, isVirtual: true },
+      ]);
+    }
+    return Promise.resolve([]);
+  }
   getDataInventory(): Promise<DataInventoryResult> { return Promise.resolve({ periods: [], totalRemoteSize: 0, totalLocalPeriods: 0, totalRemotePeriods: 0, local: { periods: [], diskBytes: 0, oldestPeriod: null, newestPeriod: null } }); }
   syncPeriods(): Promise<{ filesDownloaded: number; rowsProcessed: number }> { return Promise.resolve({ filesDownloaded: 0, rowsProcessed: 0 }); }
   cancelSync(): Promise<void> { return Promise.resolve(); }

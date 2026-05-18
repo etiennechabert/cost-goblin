@@ -1,9 +1,11 @@
-import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
+import type { BuiltInDimension, DimensionsConfig, OrgNode, TagDimension } from '../types/config.js';
 import type { CostQueryParams, DailyCostsParams, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import type { DimensionId } from '../types/branded.js';
 import { tagColumnName } from '../types/branded.js';
 import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
+import { expandOrgFilters, getOwnerDimensionId } from '../models/org-tree-filter.js';
+import { findNode, getDescendantTagValues } from '../models/org-tree.js';
 import { costExprFor } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
 import { assertDateString, assertHourString, SecurityError } from './identifier-validator.js';
@@ -464,6 +466,7 @@ export interface QueryContextOptions {
   readonly dataDir: string;
   readonly dimensions: DimensionsConfig;
   readonly orgAccountsPath?: string | undefined;
+  readonly orgTree?: readonly OrgNode[] | undefined;
   readonly availablePeriods?: readonly string[] | undefined;
   readonly accountReverseMap?: ReadonlyMap<string, readonly string[]> | undefined;
   readonly costScope?: CostScopeConfig | undefined;
@@ -477,9 +480,10 @@ function setupQuery(
   opts: QueryContextOptions,
   extraSourceOpts?: Partial<BuildSourceOptions>,
 ): CommonQuerySetup {
-  const { dataDir, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns, materializedSource } = opts;
+  const { dataDir, dimensions, orgAccountsPath, orgTree, availablePeriods, accountReverseMap, costScope, availableColumns, materializedSource } = opts;
   const qb = new QueryBuilder();
-  const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
+  const expandedFilters = expandOrgFilters(params.filters, getOwnerDimensionId(dimensions), orgTree ?? []);
+  const filterClauses = buildFilterClauses(expandedFilters, dimensions, accountReverseMap, qb);
   const costMetric = costScope?.costMetric ?? 'unblended';
 
   // The materialized base table is built at daily tier and lacks usage_hour,
@@ -512,11 +516,6 @@ export function buildCostQuery(
     ...filterClauses,
     ...exclusionClauses,
   ];
-
-  if (params.orgNodeValues !== undefined && params.orgNodeValues.length > 0) {
-    const placeholders = params.orgNodeValues.map(v => qb.addParam(v)).join(', ');
-    whereConditions.push(`${groupByResolved.fieldExpr} IN (${placeholders})`);
-  }
 
   const topNPlaceholder = qb.addParam(topN);
 
@@ -818,13 +817,25 @@ export function buildEntityDetailQuery(
 
   // Same display-name collision treatment for the entity selector itself: if
   // the user clicked into "sre default" we need to match every underlying id,
-  // not just one.
+  // not just one. Likewise, if the user clicked into a virtual department row
+  // (e.g. "Engineering") we expand to all descendant tag values so the SQL
+  // matches the same rows the rollup summed.
   const entityClause = (() => {
     if (dimResolved.rawField === 'account_id' && opts.accountReverseMap !== undefined) {
       const ids = opts.accountReverseMap.get(String(params.entity));
       if (ids !== undefined && ids.length > 0) {
         const placeholders = ids.map(id => qb.addParam(id)).join(', ');
         return `${dimResolved.rawField} IN (${placeholders})`;
+      }
+    }
+    const ownerDimId = getOwnerDimensionId(opts.dimensions);
+    const isOwnerDim = ownerDimId !== undefined && params.dimension === ownerDimId;
+    if (isOwnerDim && opts.orgTree !== undefined) {
+      const node = findNode(opts.orgTree, String(params.entity));
+      if (node !== undefined && node.children !== undefined && node.children.length > 0) {
+        const descendants = getDescendantTagValues(node);
+        const placeholders = descendants.map(v => qb.addParam(v)).join(', ');
+        return `${dimResolved.fieldExpr} IN (${placeholders})`;
       }
     }
     const entityPlaceholder = qb.addParam(String(params.entity));

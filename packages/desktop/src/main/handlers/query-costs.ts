@@ -19,9 +19,9 @@ import type {
   EntityDetailResult,
   QueryContextOptions,
 } from '@costgoblin/core';
+import { applyOrgTreeRollup } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import {
-  applyOrgTreeRollup,
   buildCostResult,
   buildEntityDetailResult,
   isOwnerGroupBy,
@@ -39,6 +39,7 @@ export function registerCostHandlers(app: AppContext): void {
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
+    const orgTreeConfig = await getOrgTreeConfig();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const availableColumns = await getAvailableColumns(tier);
@@ -46,7 +47,7 @@ export function registerCostHandlers(app: AppContext): void {
     if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
     const matSource = materializedBase.getSource(params.dateRange, tier);
     const isMat = matSource !== undefined;
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, orgTree: orgTreeConfig.tree, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const { sql, params: queryParams } = buildCostQuery(params, qcOpts);
     logger.info('query:costs', { groupBy: params.groupBy, materialized: isMat });
 
@@ -60,11 +61,8 @@ export function registerCostHandlers(app: AppContext): void {
       };
     }
 
-    if (isOwnerGroupBy(params.groupBy, dimensions) && params.orgNodeValues === undefined) {
-      const orgTreeConfig = await getOrgTreeConfig();
-      if (orgTreeConfig.tree.length > 0) {
-        result = applyOrgTreeRollup(result, orgTreeConfig.tree);
-      }
+    if (isOwnerGroupBy(params.groupBy, dimensions)) {
+      result = applyOrgTreeRollup(result, orgTreeConfig.tree);
     }
 
     return result;
@@ -74,6 +72,7 @@ export function registerCostHandlers(app: AppContext): void {
     const dimensions = await getDimensions();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
+    const orgTreeConfig = await getOrgTreeConfig();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const availableColumns = await getAvailableColumns(tier);
@@ -81,7 +80,7 @@ export function registerCostHandlers(app: AppContext): void {
     if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
     const matSource = materializedBase.getSource(params.dateRange, tier);
     const isMat = matSource !== undefined;
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, orgTree: orgTreeConfig.tree, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const { sql, params: queryParams } = buildDailyCostsQuery(params, qcOpts);
     logger.info('query:daily-costs', { groupBy: params.groupBy, materialized: isMat });
 
@@ -135,6 +134,7 @@ export function registerCostHandlers(app: AppContext): void {
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
+    const orgTreeConfig = await getOrgTreeConfig();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const availableColumns = await getAvailableColumns(tier);
@@ -153,7 +153,7 @@ export function registerCostHandlers(app: AppContext): void {
     }
     const matSource = materializedBase.getSource(params.dateRange, tier);
     const isMat = matSource !== undefined;
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, orgTree: orgTreeConfig.tree, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const { sql, params: queryParams } = buildEntityDetailQuery(params, qcOpts);
     logger.info('query:entity-detail', { entity: params.entity, materialized: isMat });
 

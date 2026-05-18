@@ -4,6 +4,7 @@ import type {
   Dimension,
   CostGoblinConfig,
   OrgNode,
+  OrgTreeWithMigrations,
   CostQueryParams,
   CostResult,
   DailyCostsParams,
@@ -118,14 +119,14 @@ const api: CostApi = {
   getDimensions(): Promise<Dimension[]> {
     return invoke<Dimension[]>('config:dimensions');
   },
-  getOrgTree(): Promise<OrgNode[]> {
-    return invoke<OrgNode[]>('config:org-tree');
+  getOrgTree(): Promise<OrgTreeWithMigrations> {
+    return invoke<OrgTreeWithMigrations>('config:org-tree');
   },
   saveOrgTree(tree: readonly OrgNode[]): Promise<void> {
     return invoke<undefined>('org-tree:save', tree).then(() => undefined);
   },
-  getFilterValues(dimensionId: string, filters: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]> {
-    return invoke<{ value: string; label: string; count: number }[]>('query:filter-values', dimensionId, filters, dateRange, opts, origin);
+  getFilterValues(dimensionId: string, filters: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number; isVirtual?: true | undefined }[]> {
+    return invoke<{ value: string; label: string; count: number; isVirtual?: true | undefined }[]>('query:filter-values', dimensionId, filters, dateRange, opts, origin);
   },
   getDataInventory(tier?: DataTier): Promise<DataInventoryResult> {
     return invoke<DataInventoryResult>('data:inventory', tier);

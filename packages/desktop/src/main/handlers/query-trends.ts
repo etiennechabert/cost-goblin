@@ -20,13 +20,14 @@ import {
 import { originStore } from '../query-log.js';
 
 export function registerTrendHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery, materializedBase } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getCostScope, getAvailableColumns, runPreparedQuery, materializedBase } = app;
 
   ipcMain.handle('query:trends', (_event, params: TrendQueryParams): Promise<TrendResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
+    const orgTreeConfig = await getOrgTreeConfig();
     const costScope = await getCostScope().catch(() => undefined);
     const availableColumns = await getAvailableColumns('daily');
     const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, 'daily', params.dateRange);
@@ -43,7 +44,7 @@ export function registerTrendHandlers(app: AppContext): void {
     const matSource = materializedBase.getSource(fullRange, 'daily');
     const isMat = matSource !== undefined;
 
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, orgTree: orgTreeConfig.tree, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const { sql, params: queryParams } = buildTrendQuery(params, qcOpts);
     logger.info('query:trends', { groupBy: params.groupBy, materialized: isMat });
 

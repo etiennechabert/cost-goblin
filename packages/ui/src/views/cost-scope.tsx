@@ -639,7 +639,10 @@ export function CostScopeView(): React.JSX.Element {
       const id = getDimensionId(d);
       try {
         const vals = await api.getFilterValues(id, {}, undefined, { bypassCostScope: true }, `cost-scope:${id}`);
-        return [id, vals.map(v => v.value)];
+        // Cost-scope exclusion rules apply to literal CUR row values; virtual
+        // department names don't match anything in the data, so they'd be
+        // misleading autocomplete options.
+        return [id, vals.filter(v => v.isVirtual !== true).map(v => v.value)];
       } catch {
         return [id, []];
       }

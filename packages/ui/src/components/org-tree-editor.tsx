@@ -16,6 +16,7 @@ import {
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { useQuery } from '../hooks/use-query.js';
+import { getDimensionId } from '../lib/dimensions.js';
 import { CoinRainLoader } from './coin-rain-loader.js';
 import { ConfirmModal } from './confirm-modal.js';
 
@@ -313,15 +314,16 @@ export function OrgTreeEditor({ onClose }: OrgTreeEditorProps): React.JSX.Elemen
   const ownerDimension = dimensionsQuery.status === 'success'
     ? dimensionsQuery.data.find(d => 'concept' in d && d.concept === 'owner')
     : undefined;
-  const ownerDimensionId = ownerDimension !== undefined
-    ? ('tagName' in ownerDimension ? ownerDimension.tagName : ownerDimension.name)
-    : undefined;
+  const ownerDimensionId = ownerDimension !== undefined ? getDimensionId(ownerDimension) : undefined;
 
   const allValuesQuery = useQuery(
     async () => {
       if (ownerDimensionId === undefined) return [];
       const result = await api.getFilterValues(ownerDimensionId, {});
-      return result.map(v => v.value);
+      // The handler returns both leaf tag values and synthesized virtual
+      // departments. The editor's unassigned panel only cares about leaves
+      // — virtual nodes are part of the tree, not orphans.
+      return result.filter(v => v.isVirtual !== true).map(v => v.value);
     },
     [ownerDimensionId],
   );
@@ -332,11 +334,18 @@ export function OrgTreeEditor({ onClose }: OrgTreeEditorProps): React.JSX.Elemen
 
   useEffect(() => {
     if (treeQuery.status === 'success' && tree === null) {
-      const loaded = treeQuery.data;
+      const loaded = treeQuery.data.tree;
       setTree(loaded);
       initialRef.current = loaded;
     }
   }, [treeQuery, tree]);
+
+  const [migrationsDismissed, setMigrationsDismissed] = useState(false);
+  const visibleMigrations = (() => {
+    if (treeQuery.status !== 'success' || migrationsDismissed) return null;
+    const m = treeQuery.data.migrations;
+    return (m.promotedToVirtual.length > 0 || m.wrappedRoots || m.addedEmptyRoot) ? m : null;
+  })();
 
   const isDirty = tree !== null && initialRef.current !== null &&
     JSON.stringify(tree) !== JSON.stringify(initialRef.current);
@@ -492,6 +501,30 @@ export function OrgTreeEditor({ onClose }: OrgTreeEditorProps): React.JSX.Elemen
       {saveError !== null && (
         <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3 text-sm text-negative">
           Failed to save: {saveError}
+        </div>
+      )}
+
+      {visibleMigrations !== null && (
+        <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3 text-sm text-warning flex items-start justify-between gap-3">
+          <div className="flex-1">
+            <p className="font-medium mb-1">Org tree normalized on load</p>
+            <ul className="text-xs space-y-0.5">
+              {visibleMigrations.addedEmptyRoot && <li>Synthesized an "Organization" root (no tree was configured).</li>}
+              {visibleMigrations.wrappedRoots && <li>Wrapped multiple roots under a single "Organization" parent.</li>}
+              {visibleMigrations.promotedToVirtual.length > 0 && (
+                <li>Promoted to virtual departments: {visibleMigrations.promotedToVirtual.join(', ')}.</li>
+              )}
+            </ul>
+            <p className="text-xs mt-1 opacity-80">Save to persist these changes to the YAML.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => { setMigrationsDismissed(true); }}
+            className="rounded p-1 hover:bg-warning/20 transition-colors"
+            aria-label="Dismiss"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
 

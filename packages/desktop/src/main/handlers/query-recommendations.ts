@@ -23,13 +23,14 @@ import {
 import { originStore } from '../query-log.js';
 
 export function registerRecommendationHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getConfig, getCostScope, getAvailableColumns, runQuery, runPreparedQuery, materializedBase } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getConfig, getCostScope, getAvailableColumns, runQuery, runPreparedQuery, materializedBase } = app;
 
   ipcMain.handle('query:missing-tags', (_event, params: MissingTagsParams): Promise<MissingTagsResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
     const accountMap = await getAccountMap();
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
+    const orgTreeConfig = await getOrgTreeConfig();
     const costScope = await getCostScope().catch(() => undefined);
     const availableColumns = await getAvailableColumns('daily');
     logger.info('query:missing-tags', { tagDimension: params.tagDimension });
@@ -53,7 +54,7 @@ export function registerRecommendationHandlers(app: AppContext): void {
     }
     const matSource = materializedBase.getSource(params.dateRange, 'daily');
     const isMat = matSource !== undefined;
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, orgTree: orgTreeConfig.tree, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const resourceQuery = buildMissingTagsQuery(params, qcOpts);
     const nonResourceQuery = buildNonResourceCostQuery(params, qcOpts);
     const [resourceRows, nonResourceRows] = await Promise.all([
