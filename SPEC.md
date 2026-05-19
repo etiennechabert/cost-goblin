@@ -67,96 +67,69 @@ costgoblin/
         __tests__/       # Core logic tests
     desktop/             # Electron shell — imports @costgoblin/core
       src/
-        main/            # Electron main process: IPC handlers, DuckDB, S3 sync, AWS Org client, auto-sync
+        main/            # Electron main process: IPC handlers, DuckDB worker, sync worker, AWS Org/SSM clients, auto-sync, update manager, MCP lifecycle
         preload/         # IPC bridge (contextBridge.exposeInMainWorld)
         renderer/        # React app entry point
     ui/                  # @costgoblin/ui — shared React components
       src/
         views/           # Full page views
+        widgets/         # Composable widgets (summary, pie, line, stacked bar, treemap, heatmap, bubble, top-n bar, table)
         components/      # Reusable chart, table, filter, modal components
         hooks/           # Data fetching hooks against CostApi interface
         api/             # CostApi interface re-export + provider
         lib/             # Palette, utils, dimension helpers
         __fixtures__/    # MockCostApi + fixture data
         __tests__/       # Component tests
-    web-backend/         # (Maybe Later) Express/Fastify server — imports @costgoblin/core
+    mcp/                 # @costgoblin/mcp — Model Context Protocol server exposing cost-query tools to LLMs
+      src/
+        tools/           # MCP tool implementations
+        formatters/      # Cost/markdown formatting for tool responses
+        http-server.ts   # Streamable HTTP transport
+        context.ts       # Query-side abstraction shared with desktop
 ```
+
+> A `web-backend/` package is sketched in the architecture (Maybe Later — paid tier) but is not yet scaffolded on disk.
 
 ### Data Access Layer
 
 The frontend codes against an abstract `CostApi` interface. The desktop app implements it via Electron IPC. A future web mode would implement it via HTTP.
 
-```typescript
-interface CostApi {
-  // Cost queries
-  queryCosts(params: CostQueryParams): Promise<CostResult>;
-  queryDailyCosts(params: DailyCostsParams): Promise<DailyCostsResult>;
-  queryTrends(params: TrendQueryParams): Promise<TrendResult>;
-  queryMissingTags(params: MissingTagsParams): Promise<MissingTagsResult>;
-  querySavings(): Promise<SavingsResult>;
-  queryEntityDetail(params: EntityDetailParams): Promise<EntityDetailResult>;
-  getFilterValues(dimensionId, filters, dateRange?): Promise<{ value, label, count }[]>;
+The interface is exported from `@costgoblin/core/browser` and defined in [`packages/core/src/types/api.ts`](packages/core/src/types/api.ts). It is the single source of truth — this spec deliberately does not inline it. As of today it covers:
 
-  // Sync
-  getSyncStatus(syncId?): Promise<SyncStatus>;
-  syncPeriods(files, syncId?): Promise<{ filesDownloaded; rowsProcessed }>;
-  cancelSync(syncId?): Promise<void>;
-  getDataInventory(tier?: DataTier): Promise<DataInventoryResult>;
-  deleteLocalPeriod(period, tier?): Promise<void>;
-  openDataFolder(): Promise<void>;
+| Group | Surface |
+|-------|---------|
+| Cost queries | `queryCosts`, `queryDailyCosts`, `queryTrends`, `queryMissingTags`, `querySavings`, `queryEntityDetail` |
+| Explorer | `queryExplorerOverview`, `queryExplorerRows`, `queryAggregatedTable`, `getExplorerFilterValues`, `getExplorerPreferences`, `saveExplorerPreferences` |
+| Filter values | `getFilterValues` |
+| Sync (CUR) | `getSyncStatus`, `syncPeriods`, `cancelSync`, `getDataInventory`, `deleteLocalPeriod`, `openDataFolder` |
+| Auto-sync | `getAutoSyncEnabled`, `setAutoSyncEnabled`, `getAutoSyncIntervalMinutes`, `setAutoSyncIntervalMinutes`, `getAutoSyncStatus` |
+| AWS Org + SSM | `syncOrgAccounts`, `getOrgSyncResult`, `getOrgSyncProgress`, `getAccountMapping`, `getRegionNamesInfo`, `syncRegionNames`, `clearOrgData` |
+| Config | `getConfig`, `getDimensions`, `getDimensionsConfig`, `saveDimensionsConfig`, `getOrgTree`, `discoverTagKeys`, `discoverColumnValues` |
+| Custom views | `getViewsConfig`, `saveViewsConfig`, `resetViewsConfig`, `revealViewsFolder` |
+| Cost Scope (exclusions) | `getCostScope`, `saveCostScope`, `previewCostScope`, `getCostScopeCapabilities`, `revealCostScopeFolder` |
+| Setup wizard | `getSetupStatus`, `testConnection`, `listAwsProfiles`, `listS3Buckets`, `browseS3`, `scaffoldConfig`, `writeConfig`, `ssoLogin`, `updateAwsProfile` |
+| Preferences | `getUIPreferences`, `saveUIPreferences`, `getSavingsPreferences`, `saveSavingsPreferences` |
+| Alias suggestions | `getAliasSuggestions`, `acceptSuggestion`, `dismissSuggestion` |
+| Cache control | `cancelPendingQueries`, `clearAllCaches` |
+| MCP server | `getMcpServerRunning`, `setMcpServerRunning` |
 
-  // Auto-sync
-  getAutoSyncEnabled(): Promise<boolean>;
-  setAutoSyncEnabled(enabled): Promise<void>;
-  getAutoSyncStatus(): Promise<AutoSyncStatus>;
+A separate `UpdateApi` (also in `types/api.ts`) covers auto-update: `checkForUpdates`, `downloadUpdate`, `quitAndInstall`, `onStatusChanged`, `getAppVersion`.
 
-  // AWS Organizations
-  syncOrgAccounts(profile): Promise<OrgSyncResult>;
-  getOrgSyncResult(): Promise<OrgSyncResult | null>;
-  getOrgSyncProgress(): Promise<OrgSyncProgress | null>;
-  getAccountMapping(): Promise<AccountMappingStatus>;
-
-  // Config / dimensions
-  getConfig(): Promise<CostGoblinConfig>;
-  getDimensions(): Promise<Dimension[]>;
-  getDimensionsConfig(): Promise<DimensionsConfig>;
-  saveDimensionsConfig(config): Promise<void>;
-  getOrgTree(): Promise<OrgNode[]>;
-  discoverTagKeys(): Promise<{ tags: TagDiscoveryEntry[]; samplePeriod }>;
-
-  // Setup
-  getSetupStatus(): Promise<{ configured: boolean }>;
-  testConnection(params): Promise<{ ok; error? }>;
-  listAwsProfiles(): Promise<string[]>;
-  listS3Buckets(profile): Promise<{ buckets; error? }>;
-  browseS3(params): Promise<{ prefixes; isCurReport; detectedType; missingColumns }>;
-  scaffoldConfig(): Promise<void>;
-  writeConfig(config): Promise<void>;
-
-  // Savings preferences
-  getSavingsPreferences(): Promise<SavingsPreferences>;
-  saveSavingsPreferences(prefs): Promise<void>;
-}
-
-// Desktop implementation lives in the preload script via contextBridge.exposeInMainWorld.
-// The renderer never sees ipcRenderer directly.
-```
-
-The interface is exported from `@costgoblin/core/browser`. The renderer accesses it through a React context (`useCostApi()`) — never through globals — so component tests can swap in `MockCostApi`.
+Desktop implementation lives in the preload script via `contextBridge.exposeInMainWorld`. The renderer never sees `ipcRenderer` directly, and accesses the API through a React context (`useCostApi()`) — never through globals — so component tests can swap in `MockCostApi`.
 
 ### Worker Thread Architecture
 
-DuckDB and S3 sync run in dedicated worker threads so the main process stays responsive.
+DuckDB and S3 sync run in dedicated `node:worker_threads` workers so the main process stays responsive.
 
 ```
 Main Process
   ├── DuckDB Worker Thread    # All query execution
-  ├── S3 Sync Worker Thread   # Download + repartition
+  ├── S3 Sync Worker Thread   # Download from S3 (per-period)
   └── Window (Renderer)       # React UI
 ```
 
-- **DuckDB worker** owns the database exclusively. Queries arrive via structured-clone messages; results are serialized back to main. Connection pooling and prepared statement cache are internal to the worker.
-- **Sync worker** runs S3 downloads and DuckDB repartitioning. Progress events stream back to main for UI updates. Cancellation propagates via `AbortController` signaling.
+- **DuckDB worker** (`packages/desktop/src/main/duckdb-worker.ts`) owns the database exclusively. Queries arrive via structured-clone messages; results are serialized back to main. Connection pooling, prepared-statement cache, an LRU result cache, and a materialized base table are internal to the worker.
+- **Sync worker** (`packages/desktop/src/main/sync-worker.ts`) runs S3 downloads via the AWS SDK (`@aws-sdk/client-s3`). Progress events stream back to main for UI updates. Cancellation propagates via per-id cancel messages.
 - Workers communicate via typed messages (`{ kind, id, ... }` discriminated unions). No `any` types cross the worker boundary.
 
 ### Electron Security
@@ -246,7 +219,7 @@ The hourly and cost-optimization tiers are optional. Daily is mandatory.
 **Sync behavior (per-period, manifest-aware):**
 - The Sync view computes a per-month inventory from S3 listings (file key + size + content hash).
 - For each missing or stale period, the user (or auto-sync) triggers a per-period download via `syncPeriods()`.
-- Download is delegated to `aws s3 sync` (subprocess), which handles concurrency, retries, and partial-file resume natively.
+- Downloads run in the sync worker via the AWS SDK (`@aws-sdk/client-s3`'s `ListObjectsV2Command` + `GetObjectCommand`). Concurrency and retries are managed in-process; cancellation flows through worker messages.
 - Files land directly in `aws/raw/{tier}-{period}/` — **no repartitioning**, no DuckDB-side rewrite. The downloaded Parquet is the queried Parquet.
 - Per-period etag manifests (`sync-etags-{tier}.json`) record what's locally present so re-sync can skip unchanged files.
 - Tag columns are NOT pre-flattened at sync time. Queries extract from `resource_tags` map and apply aliases via SQL CASE expressions at query time.
@@ -450,7 +423,7 @@ Lives in `state/preferences.json`. Loaded at app startup. Read/written through I
 
 This file is **per-machine, per-user**. It is not shared across the team. It must not contain organization data.
 
-> **Migration note (v1):** Theme is currently in `localStorage` ([App.tsx](packages/desktop/src/renderer/App.tsx)). Move to `preferences.json` via IPC. The renderer must not use `localStorage` or `sessionStorage` for any application state.
+The renderer must not use `localStorage` or `sessionStorage` for any application state — theme, palette, explorer prefs and savings prefs all round-trip through the IPC `getUIPreferences` / `getExplorerPreferences` / `getSavingsPreferences` calls.
 
 ### File Editing Policy
 
@@ -480,30 +453,28 @@ First-run experience that guides the user through initial configuration.
 
 The wizard writes `costgoblin.yaml` and a starter `dimensions.yaml`. The org tree is added later via the Dimensions Editor or by editing YAML.
 
-#### Feature: Cost Overview Page (MVP)
+#### Feature: Cost Overview (MVP)
 
-The home screen — organization-wide cost data.
+Default home screen — implemented as the built-in seed entry in `views.yaml` (see Custom Views Editor). Rendered through the same widget engine the Custom Views Editor produces.
 
-**Layout:**
-- Top bar: current period indicator, sync status, "Sync Now" button.
-- Dimension selector: toggle between any configured dimension.
-- Environment filter chips (when an environment concept is configured).
-- Sortable table with entity rows + cost columns (one per top-N service, plus total).
-- Header row: organization total + per-service totals.
-- CSV export.
+**Seed layout** (rows × widgets, from `packages/core/src/types/seed-views.ts`):
+- Row 1: summary widget (total) + stacked-bar histogram grouped by service.
+- Row 2: three pie widgets — account, region, service.
+- Row 3: full-width table widget (cost / resource_id / description).
 
 **Behavior:**
-- Default sort: total cost descending.
-- Service columns are the top N services by total spend across all entities.
-- Clicking an entity navigates to its detail view.
+- Top bar: date-range picker, sync status, current view selector, "Sync Now" button.
+- Environment filter chips (when an environment concept is configured).
+- Clicking a chart segment opens the entity pop-up; clicking a table row sets all chip filters at once (see [Interaction Model](#interaction-model)).
 - Virtual org-tree nodes show with rollup costs and a drill-down arrow.
+- The user can edit the layout in the Custom Views Editor or reset to seed via `resetViewsConfig`.
 
 #### Feature: Cost Trends View (MVP)
 
 Compares costs between the current period and the previous equivalent period.
 
 **Layout:**
-- Filters: owner dropdown, dimension toggle, direction toggle (Increases / Savings).
+- Filters: owner dropdown, dimension toggle, direction toggle (All / Increases / Savings).
 - Threshold controls: absolute delta slider ($), percentage change slider (%).
 - Summary: count and dollar total of items above thresholds.
 - Bubble visualization: each bubble is an entity with significant change, sized by dollar impact.
@@ -625,15 +596,78 @@ Surfaces AWS Cost Optimization Hub recommendations (Reserved Instances, Savings 
 - Pulls from the latest cost-optimization Parquet snapshot.
 - Recommendations are read-only — the app does not apply them.
 
+#### Feature: Explorer View (MVP)
+
+Free-form table view over the raw cost data — pivot any dimension, filter, sort, drill in.
+
+**Layout:**
+- Daily-cost histogram pinned at the top with brush-select to narrow the date range.
+- Filter chips for every configured dimension (built-in + tag), each backed by `getExplorerFilterValues` so the dropdown re-narrows under the other active filters.
+- Aggregated table with user-controlled row dimensions, columns, sort, and CSV export.
+- Hourly toggle when the hourly tier is configured.
+
+**Behavior:**
+- The histogram and the row sample fire as independent queries (`queryExplorerOverview` and `queryExplorerRows`) so reordering a column doesn't force a histogram refetch.
+- Explorer preferences (row dim, column dim, hidden columns, page size) round-trip through `getExplorerPreferences` / `saveExplorerPreferences`.
+
+#### Feature: Cost Scope (Exclusions) (MVP)
+
+Org-wide WHERE-clause editor that prunes line items from every query (e.g., exclude AWS support charges, refunds, internal accounts) and switches the active cost metric.
+
+**Layout:**
+- Cost-metric selector (unblended / blended / amortized), greying out options when the underlying CUR columns are missing — surfaced via `getCostScopeCapabilities`.
+- One rule panel per exclusion: dimension, operator, values, label.
+- Live preview showing rows kept vs. dropped and the dollar delta, via `previewCostScope`.
+
+**Behavior:**
+- Saved to `config/cost-scope.yaml`; applied to every cost / explorer / trend / missing-tags query.
+- Cache invalidates on save.
+
+#### Feature: Custom Views Editor (MVP)
+
+In-app editor for `config/views.yaml`. Each view is a stack of rows of widgets (summary, pie, line, stacked bar, top-n bar, treemap, heatmap, bubble, table), pinned to a date range and filter set.
+
+**Layout:**
+- Sidebar of user-defined views + a hardcoded "Cost Overview" seed view that the user can reset to.
+- Per-row widget picker; per-widget dimension / breakdown / metric / size settings.
+- "Reveal `views.yaml`" button (`revealViewsFolder`) for git-tracked sharing.
+
+**Behavior:**
+- The default view ID is stored in `UIPreferences.defaultViewId` and opened on launch.
+- `resetViewsConfig` overwrites `views.yaml` with the seed view (escape hatch when the user's edits go sideways).
+
+#### Feature: Region Enrichment (MVP)
+
+Pulls long region names + country + continent from AWS SSM (`/aws/service/global-infrastructure/...`) so the Region dimension can be displayed as "Frankfurt (Germany, Europe)" instead of `eu-central-1`, and so users can group by country or continent.
+
+**Behavior:**
+- Populated as a side effect of `syncOrgAccounts`; can also be re-fetched on its own via `syncRegionNames` without re-running the slow per-account org sync.
+- Failures are non-fatal — the Region dimension still works with the raw AWS code; failures surface in the Data Management view via `getRegionNamesInfo().lastError`.
+
+#### Feature: Smart Alias Suggestions (MVP)
+
+Fuzzy match on a configured tag's distinct values to propose alias groups (e.g., `prod` + `prd` + `production` → `production`). Shown inline in the Dimensions Editor.
+
+**Behavior:**
+- `getAliasSuggestions(tagName)` returns ranked groups.
+- `acceptSuggestion` merges them into the active `dimensions.yaml`; `dismissSuggestion` records the user's "no" so the same group isn't re-suggested.
+
+#### Feature: MCP Server (MVP)
+
+Embedded [Model Context Protocol](https://modelcontextprotocol.io) server that exposes the cost data to AI assistants (Claude, ChatGPT with custom tools, etc.) over a local Streamable HTTP transport.
+
+**Surface:**
+- Lives in `packages/mcp`. Started/stopped in-process via `setMcpServerRunning` (MVP toggle exposed in the MCP view).
+- Tools cover: cost queries, daily breakdowns, trends, entity detail, missing tags, cost overview, dimension listing, filter values, raw data exploration, and ad-hoc SQL.
+- All tools route through the same DuckDB connection pool used by the UI; they respect the active Cost Scope.
+
+**Default port:** `19532`, overridable via `COSTGOBLIN_MCP_PORT`. Runs on `127.0.0.1` only — never exposed to the network.
+
+#### Feature: Auto-Update (MVP)
+
+Background update checks against GitHub Releases via `electron-updater`, with differential download and a full-download fallback when the binary diff fails. Surfaces via the `UpdateApi` (`checkForUpdates`, `downloadUpdate`, `quitAndInstall`, `onStatusChanged`).
+
 ### v1 — Planned Next
-
-#### Worker Threads (v1)
-
-Move DuckDB and S3 sync into Electron worker threads. See [Worker Thread Architecture](#worker-thread-architecture-v1).
-
-#### Move Theme/Palette to `preferences.json` (v1)
-
-Eliminate the renderer's `localStorage` usage. Add IPC handlers `getPreference(key)` / `setPreference(key, value)` and migrate theme + palette + any other UI prefs to the per-user preferences file.
 
 #### Local Budgets (v1)
 
@@ -645,32 +679,6 @@ Eliminate the renderer's `localStorage` usage. Add IPC handlers `getPreference(k
 ### Maybe Later — Designed For, Not Built
 
 These features are explicitly NOT planned but the architecture accounts for them. They represent the paid tier or future work.
-
-#### View Templates (Maybe Later)
-
-Pluggable widget layouts per concept (`views.yaml`). The default hardcoded layouts are working well; this becomes valuable when users want per-team customization or when we want to ship layouts as templates.
-
-```yaml
-viewTemplates:
-  owner:
-    rows:
-      - widgets:
-          - { type: summary, size: small }
-          - { type: histogram, groupBy: product, size: large }
-      - widgets:
-          - { type: distribution, groupBy: account }
-          - { type: distribution, groupBy: childOwner }
-      - widgets:
-          - { type: table, columns: [product, service, serviceFamily, description, cost] }
-```
-
-#### Smart Alias Suggestions (Maybe Later)
-
-On first sync, fuzzy-match unique tag values to suggest aliases ("prod" + "prd" + "production" → group as `production`). Replaced for now by the manual Dimensions Editor, which works well.
-
-#### Auto-Update via electron-updater (Maybe Later)
-
-Silent background update checks against GitHub Releases. Subtle indicator on the settings icon. User-controlled restart.
 
 #### Telemetry — Opt-in (Maybe Later)
 
@@ -746,22 +754,7 @@ Individual cells in dimension columns open the entity pop-up for that one value 
 
 ### Default View (Pre-Configuration)
 
-On first launch after sync, before any concepts are configured, the overview page shows:
-
-**Always-available widgets** (built-in dimensions only):
-- Summary card.
-- Histogram (no stacking).
-- Distribution charts: account, service, region.
-- Breakdown table.
-
-**Concept widgets (grayed/disabled):**
-Three placeholder widget areas, visually present but dimmed, each pointing to the Dimensions Editor for activation:
-
-- **Owner widget**: "Configure an ownership dimension to see cost by team. Open the Dimensions Editor."
-- **Product widget**: "Configure a product dimension to see cost by application or service."
-- **Environment widget**: "Configure an environment dimension to filter by prod/staging/dev."
-
-As concepts are configured, these widgets activate.
+On first launch after sync, before any tag dimensions or concepts are configured, the Cost Overview seed view renders using only built-in dimensions (account, region, service, service_family). Concept-aware widgets (owner, product) light up as the user configures tag dimensions and assigns concepts in the Dimensions Editor; the environment concept appears as a top-level filter chip on every view.
 
 ---
 
@@ -782,7 +775,7 @@ As concepts are configured, these widgets activate.
 | shadcn/ui + Radix primitives | Component library (copy-paste, fully owned) |
 | Tailwind CSS v4 | Styling with design tokens |
 | visx (Airbnb) | Charts — D3 primitives as React components |
-| TanStack Table | Headless table with virtual scrolling (Maybe Later — currently using ad-hoc tables) |
+| TanStack Table | Headless table with virtual scrolling (Explorer, table widget, data tables) |
 | Framer Motion | Subtle animations |
 | Lucide React | Icons |
 | `class-variance-authority` + `clsx` + `tailwind-merge` | Style composition |
@@ -1018,7 +1011,7 @@ const sql = `
 
 DuckDB reads Parquet directly with glob patterns. No import step.
 
-> **v1 hardening:** the query builder currently interpolates several values into the SQL string. Migrate user-controlled values (date ranges, dimension/tag values, `dataDir`) to `?` parameters where DuckDB supports them; for identifiers that can't be parameterized, validate them against allow-lists derived from the dimensions config.
+> **Hardening — shipped:** user-controlled values (date ranges, dimension/tag values, thresholds) flow through `QueryBuilder.addParam()` and become DuckDB `$1`, `$2`, … placeholders. Identifiers (column names, dimension IDs) are validated against the dimensions config allow-list by `resolveField` / `validateColumnName` and throw `SecurityError` on miss. Config string literals interpolated into SQL (`missingValueTemplate`, `accountTagFallback`) are escaped via `sqlEscapeString`. See [CLAUDE.md → SQL Security](CLAUDE.md#sql-security--parameterized-queries-required).
 
 ### Org Tree Rollup
 
@@ -1090,15 +1083,15 @@ Org-shared YAML and per-user JSON are both written exclusively by the app. No fi
 
 **Operational consequence:** if a user edits config externally while the app is running, those edits will be overwritten on the next app-driven save. External edits while the app is closed are loaded normally on next startup. This is the expected and documented behavior.
 
-### Worker Threads — Committed for v1
+### Worker Threads — Shipped
 
-Today, DuckDB and S3 sync run on the Electron main process. v1 moves them into worker threads. The IPC layer abstraction means the renderer is unaffected by the migration; only `packages/desktop/src/main/` changes.
+DuckDB and S3 sync run in `node:worker_threads` workers (`duckdb-worker.ts`, `sync-worker.ts`). The renderer is unaffected; only `packages/desktop/src/main/` knows about the worker boundary.
 
 ### Storage Split: Org Config vs. User Preferences
 
-- **Org config** (`config/*.yaml`) is shared across teammates via git. Edits go through the Dimensions Editor.
+- **Org config** (`config/*.yaml` — `costgoblin.yaml`, `dimensions.yaml`, `org-tree.yaml`, `cost-scope.yaml`, `views.yaml`) is shared across teammates via git. Edits go through the in-app editors.
 - **Per-user preferences** (`state/preferences.json`) are machine-local. Edits go through IPC.
-- The renderer must not use `localStorage`/`sessionStorage` for any application state. (v1 cleanup task: migrate the theme toggle.)
+- The renderer never uses `localStorage` or `sessionStorage`; theme, palette, explorer prefs and savings prefs all round-trip through IPC.
 
 ---
 
