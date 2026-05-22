@@ -47,7 +47,13 @@ export type WidgetSpec =
   | (WidgetBase & {
       readonly type: 'bubble';
       readonly groupBy: DimensionId;
-      readonly logScale?: number | undefined;
+      /** `'linear'` selects `scaleLinear`. A number is the symlog
+       *  "linearization constant" — defaults to 10 when unset. */
+      readonly logScale?: number | 'linear' | undefined;
+      /** Minimum absolute $ delta for a group to appear. Defaults to 0. */
+      readonly deltaThreshold?: number | undefined;
+      /** Minimum absolute % change for a group to appear. Defaults to 0. */
+      readonly percentThreshold?: number | undefined;
     })
   | (WidgetBase & {
       readonly type: 'table';
