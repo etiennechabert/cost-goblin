@@ -124,7 +124,19 @@ export function ExplorerView(): React.JSX.Element {
     // disabled dims, but it needs to fall back to the full list to render
     // chips for dims with active filters — e.g. the user clicks a Resource
     // cell and that dim is disabled-by-default high-cardinality.
-    api.getDimensions().then(dims => { setDimensions(dims); }).catch(() => { setDimensions([]); });
+    api.getDimensions().then(dims => {
+      setDimensions(dims);
+      // Seed defaults exactly once per mount. The Explorer's filter state is
+      // in-memory only, so on next mount the dim defaults re-apply — same
+      // contract as CustomView.
+      const defaults: Record<string, readonly string[]> = {};
+      for (const d of dims) {
+        const vals = d.defaultFilterValues;
+        if (vals === undefined || vals.length === 0) continue;
+        defaults[getDimensionId(d)] = [...vals];
+      }
+      if (Object.keys(defaults).length > 0) setFilters(defaults);
+    }).catch(() => { setDimensions([]); });
     api.getCostScopeCapabilities().then(setCapabilities).catch(() => { setCapabilities(null); });
     api.getExplorerPreferences().then(prefs => {
       setHiddenColumns(prefs.hiddenColumns);

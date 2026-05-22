@@ -26,6 +26,7 @@ export function registerConfigHandlers(app: AppContext): void {
         label: d.label,
         field: d.field,
         ...(d.displayField === undefined ? {} : { displayField: d.displayField }),
+        ...(d.defaultFilterValues === undefined || d.defaultFilterValues.length === 0 ? {} : { defaultFilterValues: d.defaultFilterValues }),
       }));
     const tags: Dimension[] = dimensions.tags
       .filter(d => d.enabled !== false)
@@ -41,6 +42,7 @@ export function registerConfigHandlers(app: AppContext): void {
         ...(d.aliases === undefined ? {} : { aliases: d.aliases }),
         ...(d.accountTagFallback === undefined ? {} : { accountTagFallback: d.accountTagFallback }),
         ...(d.pathSegment === undefined ? {} : { pathSegment: d.pathSegment }),
+        ...(d.defaultFilterValues === undefined || d.defaultFilterValues.length === 0 ? {} : { defaultFilterValues: d.defaultFilterValues }),
       }));
     return [...builtIn, ...tags];
   });

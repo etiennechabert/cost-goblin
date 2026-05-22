@@ -127,6 +127,99 @@ const NORMALIZE_RULES: { value: NormalizationRule; label: string }[] = [
   { value: 'camelCase', label: 'camelCase' },
 ];
 
+/** Per-dim "Default filter" picker. Click-to-open multi-select. Stays out of
+ *  the DB — the enclosing editor already loads & displays the dim's values
+ *  for its own preview, so we pipe that already-resolved list in via
+ *  `available` (calling `getFilterValues` here would re-run the full
+ *  alias-resolving pipeline against every row — we hit 70+s on an 86M-row
+ *  scan in a prior iteration). */
+function DefaultValuesPicker({ available, selected, onChange }: Readonly<{
+  available: readonly string[];
+  selected: readonly string[];
+  onChange: (next: readonly string[]) => void;
+}>) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+  const selectedSet = new Set(selected);
+  // Surface selected values that aren't in the discovered window — so the
+  // user always sees what they've picked, even if older.
+  const allValues = [...new Set([...selected, ...available])];
+  const filtered = search.length === 0
+    ? allValues
+    : allValues.filter(v => v.toLowerCase().includes(search.toLowerCase()));
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent): void {
+      if (!open) return;
+      if (containerRef.current === null) return;
+      if (!(e.target instanceof Node)) return;
+      if (containerRef.current.contains(e.target)) return;
+      setOpen(false);
+      setSearch('');
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => { document.removeEventListener('mousedown', onDocClick); };
+  }, [open]);
+
+  function toggle(value: string): void {
+    if (selectedSet.has(value)) onChange(selected.filter(v => v !== value));
+    else onChange([...selected, value]);
+  }
+
+  const summary = selected.length === 0
+    ? 'No defaults'
+    : selected.length <= 3 ? selected.join(', ') : `${String(selected.length)} selected`;
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => { setOpen(v => !v); }}
+        className="w-full flex items-center justify-between rounded border border-border bg-bg-primary px-3 py-1.5 text-xs text-text-primary hover:bg-bg-tertiary"
+      >
+        <span className={selected.length === 0 ? 'text-text-muted' : ''}>{summary}</span>
+        <span className="text-text-muted">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="absolute z-10 left-0 right-0 mt-1 rounded border border-border bg-bg-secondary shadow-lg flex flex-col">
+          {allValues.length > 6 && (
+            <input
+              type="text"
+              value={search}
+              onChange={e => { setSearch(e.target.value); }}
+              autoFocus
+              className="border-b border-border bg-bg-primary px-2 py-1 text-xs text-text-primary outline-none"
+              placeholder="Search…"
+            />
+          )}
+          {filtered.length === 0 ? (
+            <span className="px-2 py-2 text-[10px] text-text-muted">
+              {allValues.length === 0 ? 'No discovered values yet.' : 'No matches.'}
+            </span>
+          ) : (
+            <div className="max-h-56 overflow-y-auto flex flex-col">
+              {filtered.map(v => (
+                <label key={v} className="flex items-center gap-2 px-2 py-1 text-xs text-text-primary cursor-pointer hover:bg-bg-tertiary">
+                  <input type="checkbox" checked={selectedSet.has(v)} onChange={() => { toggle(v); }} />
+                  <span className="truncate">{v}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          {selected.length > 0 && (
+            <button
+              type="button"
+              onClick={() => { onChange([]); }}
+              className="border-t border-border px-2 py-1 text-[10px] text-text-muted hover:text-text-primary text-left"
+            >Clear selection</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface EditingBuiltIn {
   label: string;
   description: string;
@@ -138,6 +231,7 @@ interface EditingBuiltIn {
   accountNameFromTag: string;
   nameStripPatterns: string;
   useRegionNames: boolean;
+  defaultFilterValues: readonly string[];
 }
 
 const TRANSFORM_FREE_FIELDS = new Set(['service', 'service_family']);
@@ -436,6 +530,17 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
           </div>
         </div>
       )}
+      <div className="flex flex-col gap-1">
+        <span className="text-xs text-text-muted">Default filter</span>
+        <span className="text-[10px] text-text-muted">
+          Pre-applied to the global filter bar when a view opens. Empty = no default.
+        </span>
+        <DefaultValuesPicker
+          available={preview?.values.map(v => v.value) ?? []}
+          selected={state.defaultFilterValues}
+          onChange={vals => { setState(s => ({ ...s, defaultFilterValues: vals })); }}
+        />
+      </div>
       <div className="flex items-center justify-between pt-2">
         <div className="flex gap-2">
           <button
@@ -531,6 +636,7 @@ interface EditingTag {
   fallbackTag: string | undefined;
   missingValueTemplate: string;
   pathSegIndex: string;
+  defaultFilterValues: readonly string[];
 }
 
 /** OU Path values are joined by ` / ` in aws-org-client.ts when the path is
@@ -865,6 +971,25 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   const fallbackOptions = [OU_PATH_SOURCE_KEY, ...acctTags];
   const noSourceWarning = state.tagName.length === 0 && (state.fallbackTag === undefined || state.fallbackTag.length === 0);
 
+  // Resolved value list for the Default filter picker. Mirrors the same
+  // transformation TagValuePreview applies (normalize + alias-resolve) so the
+  // strings here match what flows through FilterMap at query time. Pulls from
+  // already-loaded sources (resource-tag sample values, account-fallback
+  // counts) — no DB call.
+  const defaultValueOptions = (() => {
+    const resourceVals = tagMatch === undefined ? [] : tagMatch.sampleValues;
+    const accountVals = fallbackValues.map(([v]) => v);
+    const allRaw = [...new Set([...resourceVals, ...accountVals])];
+    if (allRaw.length === 0) return [] as readonly string[];
+    const aliasMap = buildAliasMap(state.aliases, state.normalize);
+    const resolved = new Set<string>();
+    for (const raw of allRaw) {
+      const normalized = applyPreviewNormalize(raw, state.normalize);
+      resolved.add(aliasMap.get(normalized) ?? normalized);
+    }
+    return [...resolved].sort();
+  })();
+
   return (
     <div ref={containerRef} className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
       {/* Row 1: Concept + Display Label + Normalization */}
@@ -1068,6 +1193,18 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           });
         }}
       />
+
+      <div className="flex flex-col gap-1">
+        <span className="text-xs text-text-muted">Default filter</span>
+        <span className="text-[10px] text-text-muted">
+          Pre-applied to the global filter bar when a view opens. Empty = no default.
+        </span>
+        <DefaultValuesPicker
+          available={defaultValueOptions}
+          selected={state.defaultFilterValues}
+          onChange={vals => { setState(s => ({ ...s, defaultFilterValues: vals })); }}
+        />
+      </div>
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -1411,7 +1548,10 @@ export function DimensionsView() {
     const pathSegment = usesOuPath && Number.isInteger(parsedIndex) && parsedIndex !== 0
       ? { separator: OU_PATH_SEPARATOR, index: parsedIndex }
       : undefined;
-    return { ...base, concept, normalize, aliases, accountTagFallback, missingValueTemplate, pathSegment };
+    const defaultFilterValues = editing.defaultFilterValues.length > 0
+      ? [...editing.defaultFilterValues]
+      : undefined;
+    return { ...base, concept, normalize, aliases, accountTagFallback, missingValueTemplate, pathSegment, defaultFilterValues };
   }
 
   async function handleSaveTag(idx: number, editing: EditingTag) {
@@ -1473,6 +1613,7 @@ export function DimensionsView() {
         // explicitly (both true AND false) so toggling off sticks past the
         // mergeDefaultBuiltIns backfill that would otherwise re-enable it.
         ...(d.name === 'region' ? { useRegionNames: edited.useRegionNames } : {}),
+        ...(edited.defaultFilterValues.length > 0 ? { defaultFilterValues: [...edited.defaultFilterValues] } : {}),
       };
     });
     const next = { ...config, builtIn, order: reconcileOrder({ ...config, builtIn }) };
@@ -1672,7 +1813,7 @@ export function DimensionsView() {
               user sees where the new pill will land. */}
           {addingNew && (
             <TagEditor
-              tag={quickAddState ?? { tagName: '', label: '', concept: '', normalize: '', aliases: '', fallbackTag: undefined, missingValueTemplate: '', pathSegIndex: '' }}
+              tag={quickAddState ?? { tagName: '', label: '', concept: '', normalize: '', aliases: '', fallbackTag: undefined, missingValueTemplate: '', pathSegIndex: '', defaultFilterValues: [] }}
               onSave={(edited) => { handleAddTag(edited).catch(() => undefined); }}
               onCancel={() => { setAddingNew(false); setQuickAddState(null); }}
               onRemove={undefined}
@@ -1718,6 +1859,7 @@ export function DimensionsView() {
                         accountNameFromTag: d.accountNameFromTag ?? '',
                         nameStripPatterns: d.nameStripPatterns?.join('\n') ?? '',
                         useRegionNames: d.useRegionNames === true,
+                        defaultFilterValues: d.defaultFilterValues ?? [],
                       },
                     }}
                     onSave={(edited) => { handleSaveBuiltIn(row.idx, edited).catch(() => undefined); }}
@@ -1777,6 +1919,7 @@ export function DimensionsView() {
                     fallbackTag: tag.accountTagFallback,
                     missingValueTemplate: tag.missingValueTemplate ?? '',
                     pathSegIndex: tag.pathSegment === undefined ? '' : String(tag.pathSegment.index),
+                    defaultFilterValues: tag.defaultFilterValues ?? [],
                   }}
                   onSave={(edited) => { handleSaveTag(row.idx, edited).catch(() => undefined); }}
                   onCancel={() => { setEditingIdx(null); }}

@@ -244,6 +244,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
         // on legacy configs — we only want that for first-time migration.
         ...(d.useRegionNames === undefined ? {} : { useRegionNames: d.useRegionNames }),
         ...(d.enabled === false ? { enabled: false } : {}),
+        ...(d.defaultFilterValues !== undefined && d.defaultFilterValues.length > 0 ? { defaultFilterValues: [...d.defaultFilterValues] } : {}),
       })),
       tags: config.tags.map(t => ({
         ...(t.tagName === undefined || t.tagName.length === 0 ? {} : { tagName: t.tagName }),
@@ -257,6 +258,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
         ...(t.pathSegment === undefined ? {} : { pathSegment: { separator: t.pathSegment.separator, index: t.pathSegment.index } }),
         ...(t.description === undefined ? {} : { description: t.description }),
         ...(t.enabled === false ? { enabled: false } : {}),
+        ...(t.defaultFilterValues !== undefined && t.defaultFilterValues.length > 0 ? { defaultFilterValues: [...t.defaultFilterValues] } : {}),
       })),
       ...(config.order === undefined ? {} : { order: [...config.order] }),
     });

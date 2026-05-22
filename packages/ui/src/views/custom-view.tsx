@@ -22,6 +22,7 @@ import {
 } from '../hooks/use-cost-focus.js';
 import {
   getDimensionId,
+  defaultsFromDimensions,
   isEnvironmentDimension,
   isOwnerDimension,
   isProductDimension,
@@ -93,6 +94,11 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [compareEnabled, setCompareEnabled] = useState(false);
   const [filters, setFilters] = useState<FilterMap>(initialFilter ?? {});
+  // Per-mount latch: seed defaults exactly once after dims load, unless the
+  // view received an explicit `initialFilter` (drill-through, saved state).
+  // Re-mounting the view (navigation, reload) re-applies defaults — that's
+  // the "always re-apply on open" contract.
+  const defaultsAppliedRef = useRef(initialFilter !== undefined);
   const [hourlyHint, setHourlyHint] = useState(false);
   const prefsLoadedRef = useRef(false);
   const columnPrefsRef = useRef<{ hiddenColumns: readonly string[]; columnOrder: readonly string[] }>({
@@ -106,6 +112,14 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     () => [...rawDimensions].sort((a, b) => priorityFor(a) - priorityFor(b)),
     [rawDimensions],
   );
+
+  useEffect(() => {
+    if (defaultsAppliedRef.current) return;
+    if (dimensionsQuery.status !== 'success') return;
+    const defaults = defaultsFromDimensions(dimensionsQuery.data);
+    defaultsAppliedRef.current = true;
+    if (Object.keys(defaults).length > 0) setFilters(defaults);
+  }, [dimensionsQuery]);
 
   const previousDateRange = useMemo(
     () => previousRangeFor(dateRange),

@@ -159,6 +159,9 @@ function validateBuiltInDimension(dim: unknown, i: number) {
     : validateStringArray(dim['nameStripPatterns'], `${ctx}.nameStripPatterns`);
   const normalize = validateNormalize(dim['normalize'], ctx);
   const aliases = validateAliases(dim['aliases'], ctx);
+  const defaultFilterValues = dim['defaultFilterValues'] === undefined
+    ? undefined
+    : validateStringArray(dim['defaultFilterValues'], `${ctx}.defaultFilterValues`);
   return {
     name: asDimensionId(dim['name']),
     label: dim['label'],
@@ -171,6 +174,7 @@ function validateBuiltInDimension(dim: unknown, i: number) {
     ...(useOrgAccounts === true ? { useOrgAccounts } : {}),
     ...(accountNameFromTag === undefined ? {} : { accountNameFromTag }),
     ...(nameStripPatterns === undefined || nameStripPatterns.length === 0 ? {} : { nameStripPatterns }),
+    ...(defaultFilterValues === undefined || defaultFilterValues.length === 0 ? {} : { defaultFilterValues }),
   };
 }
 
@@ -220,6 +224,10 @@ function validateTagDimension(tag: unknown, i: number) {
     pathSegment = { separator: raw['separator'], index: raw['index'] };
   }
 
+  const defaultFilterValues = tag['defaultFilterValues'] === undefined
+    ? undefined
+    : validateStringArray(tag['defaultFilterValues'], `${ctx}.defaultFilterValues`);
+
   return {
     ...(tagName === undefined ? {} : { tagName }),
     label: tag['label'],
@@ -231,6 +239,7 @@ function validateTagDimension(tag: unknown, i: number) {
     ...(typeof tag['missingValueTemplate'] === 'string' ? { missingValueTemplate: tag['missingValueTemplate'] } : {}),
     ...(pathSegment === undefined ? {} : { pathSegment }),
     ...(enabled === false ? { enabled } : {}),
+    ...(defaultFilterValues === undefined || defaultFilterValues.length === 0 ? {} : { defaultFilterValues }),
   };
 }
 

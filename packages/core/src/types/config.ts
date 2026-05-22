@@ -68,6 +68,11 @@ export interface BuiltInDimension {
    *  friendly names (Europe (Frankfurt)) via the SSM global-infrastructure
    *  snapshot. No-op if the snapshot hasn't been synced. */
   readonly useRegionNames?: boolean | undefined;
+  /** Values pre-applied to the global filter bar when a view opens. The
+   *  user can override or clear during a session; next view-open the
+   *  default is re-applied. Stored as the post-normalize/alias-resolved
+   *  values that flow through `FilterMap`. */
+  readonly defaultFilterValues?: readonly string[] | undefined;
 }
 
 /** Sentinel value usable wherever an account-level tag key is expected
@@ -99,6 +104,10 @@ export interface TagDimension {
   readonly enabled?: boolean | undefined;
   /** Short user-facing explanation shown on the Dimensions view. */
   readonly description?: string | undefined;
+  /** Values pre-applied to the global filter bar when a view opens. The
+   *  user can override or clear during a session; next view-open the
+   *  default is re-applied. */
+  readonly defaultFilterValues?: readonly string[] | undefined;
 }
 
 export interface DimensionsConfig {
