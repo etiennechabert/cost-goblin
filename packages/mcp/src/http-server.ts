@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import type { Server } from 'node:http';
+import type { Server, IncomingMessage, ServerResponse } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -81,7 +81,7 @@ export async function createMcpHttpServer(ctx: McpContext, port?: number): Promi
     await mcpServer.connect(transport as unknown as Transport);
   }
 
-  const httpServer: Server = createServer((req, res) => {
+  const requestHandler = (req: IncomingMessage, res: ServerResponse): void => {
     const url = req.url ?? '';
 
     if (url === '/mcp' && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
@@ -129,12 +129,32 @@ export async function createMcpHttpServer(ctx: McpContext, port?: number): Promi
     }
 
     res.writeHead(404).end();
-  });
+  };
 
-  await new Promise<void>((resolve, reject) => {
-    httpServer.on('error', reject);
-    httpServer.listen(resolvedPort, '127.0.0.1', () => { resolve(); });
-  });
+  // `localhost` resolves to ::1 or 127.0.0.1 depending on the client; bind both so loopback works either way.
+  const ipv4Server: Server = createServer(requestHandler);
+  const ipv6Server: Server = createServer(requestHandler);
+
+  async function listen(server: Server, host: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (err: NodeJS.ErrnoException): void => {
+        if (host === '::1' && (err.code === 'EAFNOSUPPORT' || err.code === 'EADDRNOTAVAIL')) {
+          logger.info('mcp: IPv6 loopback unavailable, skipping');
+          resolve();
+          return;
+        }
+        reject(err);
+      };
+      server.once('error', onError);
+      server.listen(resolvedPort, host, () => {
+        server.off('error', onError);
+        resolve();
+      });
+    });
+  }
+
+  await listen(ipv4Server, '127.0.0.1');
+  await listen(ipv6Server, '::1');
 
   return {
     port: resolvedPort,
@@ -143,9 +163,10 @@ export async function createMcpHttpServer(ctx: McpContext, port?: number): Promi
       const closePromises = [...sessions.values()].map((e) => e.transport.close());
       await Promise.all(closePromises);
       sessions.clear();
-      await new Promise<void>((resolve) => {
-        httpServer.close(() => { resolve(); });
-      });
+      await Promise.all([
+        new Promise<void>((resolve) => { ipv4Server.close(() => { resolve(); }); }),
+        new Promise<void>((resolve) => { ipv6Server.close(() => { resolve(); }); }),
+      ]);
     },
   };
 }
