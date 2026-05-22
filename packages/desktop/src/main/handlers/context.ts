@@ -200,7 +200,7 @@ function applyAccountNameTransforms(
   }));
 }
 
-function extractAccountTagEntry(acct: unknown): { id: string; tags: Record<string, string> } | null {
+function extractAccountTagEntry(acct: unknown): { id: string; tags: Record<string, string>; ouPath: string } | null {
   if (!isStringRecord(acct)) return null;
   const id = acct['id'];
   const tags = acct['tags'];
@@ -209,7 +209,8 @@ function extractAccountTagEntry(acct: unknown): { id: string; tags: Record<strin
   for (const [k, v] of Object.entries(tags)) {
     if (typeof v === 'string') stringTags[k] = v;
   }
-  return { id, tags: stringTags };
+  const ouPath = typeof acct['ouPath'] === 'string' ? acct['ouPath'] : '';
+  return { id, tags: stringTags, ouPath };
 }
 
 async function generateFlatOrgTags(baseDir: string, flatPath: string): Promise<string | undefined> {
@@ -330,8 +331,14 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const flatPath = path.join(baseDir, 'org-account-tags.json');
     let result: string | undefined;
     try {
-      await fs.access(flatPath);
-      result = flatPath;
+      // Probe the existing flat file's schema — older builds wrote {id, tags}
+      // only, but the OU Path fallback needs an `ouPath` field. Regenerate if
+      // missing so DuckDB can resolve `ouPath AS fallback_…`.
+      const raw = await fs.readFile(flatPath, 'utf-8');
+      const parsed: unknown = JSON.parse(raw);
+      const hasOuPath = Array.isArray(parsed)
+        && (parsed.length === 0 || (isStringRecord(parsed[0]) && 'ouPath' in parsed[0]));
+      result = hasOuPath ? flatPath : await generateFlatOrgTags(baseDir, flatPath);
     } catch {
       result = await generateFlatOrgTags(baseDir, flatPath);
     }

@@ -194,16 +194,31 @@ function validateTagDimension(tag: unknown, i: number) {
 
   const concept = tag['concept'] === undefined ? undefined : (() => {
     assertString(tag['concept'], `${ctx}.concept`);
-    const validConcepts = new Set(['owner', 'product', 'environment']);
+    const validConcepts = new Set(['owner', 'product', 'environment', 'unit']);
     if (!validConcepts.has(tag['concept'])) {
-      throw new ConfigValidationError(`${ctx}.concept must be 'owner', 'product', or 'environment'`);
+      throw new ConfigValidationError(`${ctx}.concept must be 'owner', 'product', 'environment', or 'unit'`);
     }
-    return tag['concept'] as 'owner' | 'product' | 'environment';
+    return tag['concept'] as 'owner' | 'product' | 'environment' | 'unit';
   })();
   const normalize = validateNormalize(tag['normalize'], ctx);
   const separator = tag['separator'] === undefined ? undefined : (assertString(tag['separator'], `${ctx}.separator`), tag['separator']);
   const aliases = validateAliases(tag['aliases'], ctx);
   const enabled = tag['enabled'] === false ? false : undefined;
+
+  let pathSegment: { separator: string; index: number } | undefined;
+  if (tag['pathSegment'] !== undefined) {
+    const raw = tag['pathSegment'];
+    assertObject(raw, `${ctx}.pathSegment`);
+    assertString(raw['separator'], `${ctx}.pathSegment.separator`);
+    assertNumber(raw['index'], `${ctx}.pathSegment.index`);
+    if (raw['separator'].length === 0) {
+      throw new ConfigValidationError(`${ctx}.pathSegment.separator must be non-empty`);
+    }
+    if (!Number.isInteger(raw['index']) || raw['index'] === 0) {
+      throw new ConfigValidationError(`${ctx}.pathSegment.index must be a non-zero integer (1-based; -1 = last)`);
+    }
+    pathSegment = { separator: raw['separator'], index: raw['index'] };
+  }
 
   return {
     ...(tagName === undefined ? {} : { tagName }),
@@ -214,6 +229,7 @@ function validateTagDimension(tag: unknown, i: number) {
     ...(aliases === undefined ? {} : { aliases }),
     ...(accountTagFallback === undefined ? {} : { accountTagFallback }),
     ...(typeof tag['missingValueTemplate'] === 'string' ? { missingValueTemplate: tag['missingValueTemplate'] } : {}),
+    ...(pathSegment === undefined ? {} : { pathSegment }),
     ...(enabled === false ? { enabled } : {}),
   };
 }

@@ -7,6 +7,16 @@ const OU_PATH_LABEL = 'OU Path';
 function formatAccountSource(key: string): string {
   return key === OU_PATH_SOURCE_KEY ? OU_PATH_LABEL : key;
 }
+
+/** Mirror of DuckDB's split_part for the in-editor preview: 1-based,
+ *  negative indices count from the end. Returns '' when the segment
+ *  doesn't exist, matching split_part's out-of-range behaviour. */
+function takeSegment(value: string, separator: string, index: number): string {
+  const parts = value.split(separator);
+  const i = index > 0 ? index - 1 : parts.length + index;
+  if (i < 0 || i >= parts.length) return '';
+  return parts[i] ?? '';
+}
 function tagOrderKey(t: { tagName?: string | undefined; accountTagFallback?: string | undefined; label: string }): string {
   if (t.tagName !== undefined && t.tagName.length > 0) return `tag:${t.tagName}`;
   const src = t.accountTagFallback ?? '';
@@ -103,9 +113,10 @@ function reconcileOrder(config: DimensionsConfig): string[] {
 }
 
 const CONCEPTS: { value: ConceptType; label: string }[] = [
-  { value: 'owner', label: 'Owner (team)' },
-  { value: 'product', label: 'Product (system)' },
   { value: 'environment', label: 'Environment' },
+  { value: 'product', label: 'System' },
+  { value: 'owner', label: 'Owner' },
+  { value: 'unit', label: 'Unit' },
 ];
 
 const NORMALIZE_RULES: { value: NormalizationRule; label: string }[] = [
@@ -519,7 +530,13 @@ interface EditingTag {
   aliases: string;
   fallbackTag: string | undefined;
   missingValueTemplate: string;
+  pathSegIndex: string;
 }
+
+/** OU Path values are joined by ` / ` in aws-org-client.ts when the path is
+ *  built — it's an internal choice, not user data — so we hardcode the same
+ *  separator wherever we segment it. */
+const OU_PATH_SEPARATOR = ' / ';
 
 function aliasesToText(aliases: Readonly<Record<string, readonly string[]>> | undefined): string {
   if (aliases === undefined) return '';
@@ -832,12 +849,16 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
 
   const fallbackValues = (() => {
     if (state.fallbackTag === undefined || state.fallbackTag.length === 0) return [];
+    const usesOuPath = state.fallbackTag === OU_PATH_SOURCE_KEY;
+    const parsedSegIndex = parseInt(state.pathSegIndex, 10);
+    const segActive = usesOuPath && Number.isInteger(parsedSegIndex) && parsedSegIndex !== 0;
     const counts = new Map<string, number>();
     for (const acct of orgAccounts) {
-      const val = state.fallbackTag === OU_PATH_SOURCE_KEY ? acct.ouPath : acct.tags[state.fallbackTag];
-      if (val !== undefined && val.length > 0) {
-        counts.set(val, (counts.get(val) ?? 0) + 1);
-      }
+      const raw = usesOuPath ? acct.ouPath : acct.tags[state.fallbackTag];
+      if (raw === undefined || raw.length === 0) continue;
+      const val = segActive ? takeSegment(raw, OU_PATH_SEPARATOR, parsedSegIndex) : raw;
+      if (val.length === 0) continue;
+      counts.set(val, (counts.get(val) ?? 0) + 1);
     }
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   })();
@@ -852,7 +873,19 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           <span className="text-xs text-text-muted">Concept</span>
           <select
             value={state.concept}
-            onChange={e => { setState(s => ({ ...s, concept: e.target.value })); }}
+            onChange={e => {
+              const next = e.target.value;
+              const nextLabel = CONCEPTS.find(c => c.value === next)?.label;
+              setState(s => {
+                // Auto-fill Display Label with the concept's label when the
+                // user hasn't customised it yet — empty, or still equal to the
+                // previously-selected concept's label.
+                const prevConceptLabel = CONCEPTS.find(c => c.value === s.concept)?.label;
+                const labelIsAutoFilled = s.label.length === 0 || (prevConceptLabel !== undefined && s.label === prevConceptLabel);
+                const label = labelIsAutoFilled && nextLabel !== undefined ? nextLabel : s.label;
+                return { ...s, concept: next, label };
+              });
+            }}
             className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
           >
             <option value="">None</option>
@@ -913,7 +946,10 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           <span className="text-xs text-text-muted">{state.tagName.length === 0 ? 'Account source' : 'Fallback (account)'}</span>
           <select
             value={state.fallbackTag ?? ''}
-            onChange={e => { setState(s => ({ ...s, fallbackTag: e.target.value.length > 0 ? e.target.value : undefined })); }}
+            onChange={e => {
+              const next = e.target.value;
+              setState(s => ({ ...s, fallbackTag: next.length > 0 ? next : undefined }));
+            }}
             className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
           >
             <option value="">{state.tagName.length === 0 ? 'Select a source…' : 'No fallback'}</option>
@@ -940,6 +976,27 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
           </span>
         </label>
       </div>
+
+      {/* OU-Path-only: extract a single segment of the slash-joined path.
+          The OU Path is built with ` / ` in aws-org-client; users only pick
+          which segment to keep, not the separator. */}
+      {state.fallbackTag === OU_PATH_SOURCE_KEY && (
+        <div className="grid grid-cols-3 gap-4">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-text-muted">OU Path segment</span>
+            <input
+              type="number"
+              value={state.pathSegIndex}
+              onChange={e => { setState(s => ({ ...s, pathSegIndex: e.target.value })); }}
+              className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary font-mono outline-none focus:border-accent"
+              placeholder="full path"
+            />
+            <span className="text-[10px] text-text-muted">
+              1-based; negative counts from the end (-1 = last). Blank keeps the full path.
+            </span>
+          </label>
+        </div>
+      )}
 
       {/* Alias rules */}
       <div className="flex flex-col gap-1">
@@ -1349,7 +1406,12 @@ export function DimensionsView() {
     const aliases = textToAliases(editing.aliases);
     const accountTagFallback = editing.fallbackTag !== undefined && editing.fallbackTag.length > 0 ? editing.fallbackTag : undefined;
     const missingValueTemplate = editing.missingValueTemplate.length > 0 ? editing.missingValueTemplate : undefined;
-    return { ...base, concept, normalize, aliases, accountTagFallback, missingValueTemplate };
+    const usesOuPath = editing.fallbackTag === OU_PATH_SOURCE_KEY;
+    const parsedIndex = parseInt(editing.pathSegIndex, 10);
+    const pathSegment = usesOuPath && Number.isInteger(parsedIndex) && parsedIndex !== 0
+      ? { separator: OU_PATH_SEPARATOR, index: parsedIndex }
+      : undefined;
+    return { ...base, concept, normalize, aliases, accountTagFallback, missingValueTemplate, pathSegment };
   }
 
   async function handleSaveTag(idx: number, editing: EditingTag) {
@@ -1610,7 +1672,7 @@ export function DimensionsView() {
               user sees where the new pill will land. */}
           {addingNew && (
             <TagEditor
-              tag={quickAddState ?? { tagName: '', label: '', concept: '', normalize: '', aliases: '', fallbackTag: undefined, missingValueTemplate: '' }}
+              tag={quickAddState ?? { tagName: '', label: '', concept: '', normalize: '', aliases: '', fallbackTag: undefined, missingValueTemplate: '', pathSegIndex: '' }}
               onSave={(edited) => { handleAddTag(edited).catch(() => undefined); }}
               onCancel={() => { setAddingNew(false); setQuickAddState(null); }}
               onRemove={undefined}
@@ -1714,6 +1776,7 @@ export function DimensionsView() {
                     aliases: aliasesToText(tag.aliases),
                     fallbackTag: tag.accountTagFallback,
                     missingValueTemplate: tag.missingValueTemplate ?? '',
+                    pathSegIndex: tag.pathSegment === undefined ? '' : String(tag.pathSegment.index),
                   }}
                   onSave={(edited) => { handleSaveTag(row.idx, edited).catch(() => undefined); }}
                   onCancel={() => { setEditingIdx(null); }}
@@ -1755,6 +1818,9 @@ export function DimensionsView() {
                     )}
                     {tag.missingValueTemplate !== undefined && (
                       <span className="text-[10px] text-text-muted font-mono">missing: {tag.missingValueTemplate}</span>
+                    )}
+                    {tag.pathSegment !== undefined && (
+                      <span className="text-[10px] text-text-muted font-mono">segment {String(tag.pathSegment.index)}</span>
                     )}
                   </div>
                   {tag.description !== undefined && tag.description.length > 0 && (

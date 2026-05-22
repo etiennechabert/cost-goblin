@@ -254,6 +254,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
         ...(t.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(t.aliases).map(([k, v]) => [k, [...v]])) }),
         ...(t.accountTagFallback === undefined ? {} : { accountTagFallback: t.accountTagFallback }),
         ...(t.missingValueTemplate === undefined ? {} : { missingValueTemplate: t.missingValueTemplate }),
+        ...(t.pathSegment === undefined ? {} : { pathSegment: { separator: t.pathSegment.separator, index: t.pathSegment.index } }),
         ...(t.description === undefined ? {} : { description: t.description }),
         ...(t.enabled === false ? { enabled: false } : {}),
       })),

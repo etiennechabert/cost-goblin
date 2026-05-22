@@ -30,12 +30,17 @@ export function registerConfigHandlers(app: AppContext): void {
     const tags: Dimension[] = dimensions.tags
       .filter(d => d.enabled !== false)
       .map(d => ({
-        tagName: d.tagName,
+        // tagName is optional now (account-only dims like OU Path / Unit have
+        // none). Omit the key when absent so the renderer's `tagDimColumn`
+        // falls back to accountTagFallback to compute the column name.
+        ...(d.tagName === undefined || d.tagName.length === 0 ? {} : { tagName: d.tagName }),
         label: d.label,
         ...(d.concept === undefined ? {} : { concept: d.concept }),
         ...(d.normalize === undefined ? {} : { normalize: d.normalize }),
         ...(d.separator === undefined ? {} : { separator: d.separator }),
         ...(d.aliases === undefined ? {} : { aliases: d.aliases }),
+        ...(d.accountTagFallback === undefined ? {} : { accountTagFallback: d.accountTagFallback }),
+        ...(d.pathSegment === undefined ? {} : { pathSegment: d.pathSegment }),
       }));
     return [...builtIn, ...tags];
   });

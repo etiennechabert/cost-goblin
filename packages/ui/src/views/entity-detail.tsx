@@ -20,7 +20,7 @@ import { PieChart } from '../components/pie-chart.js';
 import type { PieSlice } from '../components/pie-chart.js';
 import { StackedBarChart, bucketBars } from '../components/stacked-bar-chart.js';
 import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
-import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension } from '../lib/dimensions.js';
+import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension, isUnitDimension } from '../lib/dimensions.js';
 import { computeBucketedHourRange, computeBucketedRange, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 
 interface EntityDetailProps {
@@ -165,10 +165,11 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   const dimensions = [...rawDimensions].sort((a, b) => {
     const priority = (d: Dimension) => {
       if (isEnvironmentDimension(d)) return 0;
-      if (isOwnerDimension(d)) return 1;
-      if (isProductDimension(d)) return 2;
-      if ('field' in d) return 3;
-      return 4;
+      if (isProductDimension(d)) return 1;
+      if (isOwnerDimension(d)) return 2;
+      if (isUnitDimension(d)) return 3;
+      if ('field' in d) return 4;
+      return 5;
     };
     return priority(a) - priority(b);
   });

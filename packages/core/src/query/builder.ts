@@ -272,16 +272,23 @@ function buildTagSelect(
   needsOrgJoin: boolean,
 ): string {
   const colName = tagDimColumn(t);
+  const valueExpr = buildTagValueExpr(t, needsOrgJoin, colName);
+  const wrapped = applyPathSegment(valueExpr, t.pathSegment);
+  return `${wrapped} AS ${colName}`;
+}
+
+function buildTagValueExpr(
+  t: DimensionsConfig['tags'][number],
+  needsOrgJoin: boolean,
+  colName: string,
+): string {
   const hasResourceTag = t.tagName !== undefined && t.tagName.length > 0;
   const hasFallback = t.accountTagFallback !== undefined;
 
   // Account-source-only dimension: emit just the fallback column.
   if (!hasResourceTag) {
-    if (needsOrgJoin && hasFallback) {
-      return `acct_tags.fallback_${colName} AS ${colName}`;
-    }
-    // No org join available — dimension can't resolve; emit NULL so SQL stays valid.
-    return `NULL AS ${colName}`;
+    if (needsOrgJoin && hasFallback) return `acct_tags.fallback_${colName}`;
+    return 'NULL';
   }
 
   const tagName = t.tagName ?? '';
@@ -290,9 +297,7 @@ function buildTagSelect(
   const tablePrefix = needsOrgJoin ? 'cur.' : '';
   const resourceExpr = `element_at(${tablePrefix}resource_tags, '${curKey}')[1]`;
 
-  if (!hasFallback || !needsOrgJoin) {
-    return `${resourceExpr} AS ${colName}`;
-  }
+  if (!hasFallback || !needsOrgJoin) return resourceExpr;
 
   const fallbackExpr = `acct_tags.fallback_${colName}`;
   if (t.missingValueTemplate !== undefined && t.missingValueTemplate.length > 0 && t.missingValueTemplate !== '{fallback}') {
@@ -300,9 +305,18 @@ function buildTagSelect(
     const prefix = sqlEscapeString(parts[0] ?? '');
     const suffix = sqlEscapeString(parts[1] ?? '');
     const formatted = `'${prefix}' || ${fallbackExpr} || '${suffix}'`;
-    return `COALESCE(NULLIF(${resourceExpr}, ''), ${formatted}) AS ${colName}`;
+    return `COALESCE(NULLIF(${resourceExpr}, ''), ${formatted})`;
   }
-  return `COALESCE(NULLIF(${resourceExpr}, ''), ${fallbackExpr}) AS ${colName}`;
+  return `COALESCE(NULLIF(${resourceExpr}, ''), ${fallbackExpr})`;
+}
+
+function applyPathSegment(expr: string, pathSegment: { separator: string; index: number } | undefined): string {
+  if (pathSegment === undefined) return expr;
+  const sep = sqlEscapeString(pathSegment.separator);
+  // DuckDB's split_part is 1-based and supports negative indices (-1 = last).
+  // NULLIF guards against returning the empty string when the segment index
+  // is out of range (split_part returns '' rather than NULL in that case).
+  return `NULLIF(split_part(${expr}, '${sep}', ${String(pathSegment.index)}), '')`;
 }
 
 export interface BuildSourceOptions {

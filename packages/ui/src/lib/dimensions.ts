@@ -31,3 +31,7 @@ export function isOwnerDimension(dim: Dimension): boolean {
 export function isProductDimension(dim: Dimension): boolean {
   return isTagDim(dim) && dim.concept === 'product';
 }
+
+export function isUnitDimension(dim: Dimension): boolean {
+  return isTagDim(dim) && dim.concept === 'unit';
+}
