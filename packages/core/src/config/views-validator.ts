@@ -1,10 +1,8 @@
-import { asDimensionId, asTagValue } from '../types/branded.js';
-import type { DimensionId, TagValue } from '../types/branded.js';
+import { asDimensionId } from '../types/branded.js';
 import type {
   SummaryMetric,
   ViewSpec,
   ViewsConfig,
-  WidgetFilterOverlay,
   WidgetSize,
   WidgetSpec,
   WidgetType,
@@ -37,22 +35,10 @@ function isSummaryMetric(s: string): s is SummaryMetric {
   return (SUMMARY_METRICS as readonly string[]).includes(s);
 }
 
-function validateFilters(raw: unknown, ctx: string): WidgetFilterOverlay | undefined {
-  if (raw === undefined) return undefined;
-  assertObject(raw, ctx);
-  const out: Partial<Record<DimensionId, TagValue>> = {};
-  for (const [k, v] of Object.entries(raw)) {
-    assertString(v, `${ctx}.${k}`);
-    out[asDimensionId(k)] = asTagValue(v);
-  }
-  return out;
-}
-
 interface WidgetBase {
   readonly id: string;
   readonly size: WidgetSize;
   readonly title?: string;
-  readonly filters?: WidgetFilterOverlay;
 }
 
 function parseWidgetBase(raw: Record<string, unknown>, ctx: string): WidgetBase {
@@ -70,12 +56,10 @@ function parseWidgetBase(raw: Record<string, unknown>, ctx: string): WidgetBase 
     );
   }
   const title = raw['title'] === undefined ? undefined : (assertString(raw['title'], `${ctx}.title`), raw['title']);
-  const filters = validateFilters(raw['filters'], `${ctx}.filters`);
   return {
     id: raw['id'],
     size: raw['size'],
     ...(title === undefined ? {} : { title }),
-    ...(filters === undefined ? {} : { filters }),
   };
 }
 

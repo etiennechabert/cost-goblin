@@ -27,7 +27,6 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
   const common = {
     id: w.id,
     size: w.size,
-    ...(w.filters === undefined ? {} : { filters: w.filters }),
   };
   switch (w.type) {
     case 'summary':

@@ -6,7 +6,7 @@ import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { asDimensionId } from '@costgoblin/core/browser';
 import type { CostResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { filtersKey, mergeFilters, hasSufficientCoverage } from './widget.js';
+import { filtersKey, hasSufficientCoverage } from './widget.js';
 
 export function SummaryWidget({
   dateRange,
@@ -20,15 +20,14 @@ export function SummaryWidget({
   const isSummary = spec.type === 'summary';
 
   const groupBy = asDimensionId('account');
-  const filters = mergeFilters(globalFilters, spec.filters);
-  const fk = filtersKey(filters);
+  const fk = filtersKey(globalFilters);
 
   const cur = useQuery<CostResult | null>(
-    () => isSummary ? api.queryCosts({ groupBy, dateRange, filters, granularity, origin: 'widget:summary:total' }) : Promise.resolve(null),
+    () => isSummary ? api.queryCosts({ groupBy, dateRange, filters: globalFilters, granularity, origin: 'widget:summary:total' }) : Promise.resolve(null),
     [isSummary, groupBy, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api],
   );
   const prev = useQuery<CostResult | null>(
-    () => isSummary && compareEnabled ? api.queryCosts({ groupBy, dateRange: previousDateRange, filters, granularity, origin: 'widget:summary:total/prev' }) : Promise.resolve(null),
+    () => isSummary && compareEnabled ? api.queryCosts({ groupBy, dateRange: previousDateRange, filters: globalFilters, granularity, origin: 'widget:summary:total/prev' }) : Promise.resolve(null),
     [isSummary, compareEnabled, groupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api],
   );
 

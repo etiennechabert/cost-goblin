@@ -9,7 +9,6 @@ import type {
   FilterMap,
   Granularity,
   TagValue,
-  WidgetFilterOverlay,
   WidgetSize,
   WidgetSpec,
 } from '@costgoblin/core/browser';
@@ -65,18 +64,6 @@ const SIZE_TO_FRACTION: Readonly<Record<WidgetSize, number>> = {
 export function widgetFlexBasis(size: WidgetSize): string {
   const frac = SIZE_TO_FRACTION[size];
   return `${((frac / 4) * 100).toFixed(2)}%`;
-}
-
-/** Compose global filters with a widget's optional overlay. Overlay wins on
- *  conflict so a widget can pin a specific dimension while the FilterBar
- *  remains the user's primary control. */
-export function mergeFilters(global: FilterMap, overlay?: WidgetFilterOverlay): FilterMap {
-  if (overlay === undefined) return global;
-  const merged = { ...global };
-  for (const [k, v] of Object.entries(overlay)) {
-    if (v !== undefined) (merged as Record<string, readonly TagValue[]>)[k] = [v];
-  }
-  return merged;
 }
 
 /** Stable key for a FilterMap. Used as a useQuery dep so widgets refetch on

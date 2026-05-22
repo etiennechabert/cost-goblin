@@ -9,7 +9,7 @@ import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import { asTagValue } from '@costgoblin/core/browser';
 import type { CostResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { dimensionLabelFor, filtersKey, mergeFilters, hasSufficientCoverage } from './widget.js';
+import { dimensionLabelFor, filtersKey, hasSufficientCoverage } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
 
 function rowsToBars(data: CostResult | null): TopNBar[] {
@@ -43,8 +43,7 @@ export function TopNBarWidget({
   const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'topNBar' ? spec.groupBy : undefined;
   const effectiveGroupBy = groupByOverride ?? specGroupBy;
-  const filters = mergeFilters(globalFilters, spec.filters);
-  const fk = filtersKey(filters);
+  const fk = filtersKey(globalFilters);
 
   const origin = `widget:topNBar:${String(effectiveGroupBy ?? '')}`;
   const { query, activeGroupBy, costResult } = useCostWidgetQuery({
@@ -52,13 +51,12 @@ export function TopNBarWidget({
     dateRange,
     granularity,
     globalFilters,
-    specFilters: spec.filters,
     origin,
   });
 
   const prevQuery = useQuery<CostResult | null>(
     () => compareEnabled && effectiveGroupBy !== undefined
-      ? api.queryCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters, granularity, origin: `${origin}/prev` })
+      ? api.queryCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters: globalFilters, granularity, origin: `${origin}/prev` })
       : Promise.resolve(null),
     [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api, origin],
   );

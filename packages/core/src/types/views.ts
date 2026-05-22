@@ -1,11 +1,6 @@
-import type { DimensionId, TagValue } from './branded.js';
+import type { DimensionId } from './branded.js';
 
 export type WidgetSize = 'small' | 'medium' | 'large' | 'full';
-
-/** Extra filter overlay applied on top of the view's global FilterBar. The
- *  widget's own filters compose via object spread; widget filters win on key
- *  conflict so the global bar stays the user's primary control. */
-export type WidgetFilterOverlay = Readonly<Partial<Record<DimensionId, TagValue>>>;
 
 export type SummaryMetric = 'total' | 'delta' | 'topEntity' | 'entityCount';
 
@@ -13,7 +8,6 @@ interface WidgetBase {
   readonly id: string;
   readonly title?: string | undefined;
   readonly size: WidgetSize;
-  readonly filters?: WidgetFilterOverlay | undefined;
 }
 
 export type WidgetSpec =

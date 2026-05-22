@@ -3,13 +3,6 @@ import type { ViewSpec, ViewsConfig, WidgetSpec } from '../types/views.js';
 function buildWidgetBase(w: WidgetSpec): Record<string, unknown> {
   const base: Record<string, unknown> = { id: w.id, type: w.type, size: w.size };
   if (w.title !== undefined) base['title'] = w.title;
-  if (w.filters !== undefined) {
-    const f: Record<string, string> = {};
-    for (const [k, v] of Object.entries(w.filters)) {
-      if (v !== undefined) f[k] = v;
-    }
-    if (Object.keys(f).length > 0) base['filters'] = f;
-  }
   return base;
 }
 

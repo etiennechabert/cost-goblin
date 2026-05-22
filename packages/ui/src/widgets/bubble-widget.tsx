@@ -6,7 +6,7 @@ import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { asDollars } from '@costgoblin/core/browser';
 import type { DimensionId, TrendResult } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { dimensionLabelFor, filtersKey, mergeFilters } from './widget.js';
+import { dimensionLabelFor, filtersKey } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
 import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 
@@ -32,15 +32,14 @@ export function BubbleWidget({
   const specGroupBy = spec.type === 'bubble' ? spec.groupBy : undefined;
   const effectiveGroupBy = groupByOverride ?? specGroupBy;
 
-  const filters = mergeFilters(globalFilters, spec.filters);
-  const fk = filtersKey(filters);
+  const fk = filtersKey(globalFilters);
   const query = useQuery(
     () => effectiveGroupBy === undefined
       ? Promise.resolve(null)
       : api.queryTrends({
           groupBy: effectiveGroupBy,
           dateRange,
-          filters,
+          filters: globalFilters,
           deltaThreshold: DEFAULT_DELTA_THRESHOLD,
           percentThreshold: DEFAULT_PERCENT_THRESHOLD,
           origin: `widget:bubble:${String(effectiveGroupBy)}`,

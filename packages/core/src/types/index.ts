@@ -68,7 +68,6 @@ export type { Dimension, CostApi, DataInventoryResult, DataTier, AccountMappingS
 
 export type {
   WidgetSize,
-  WidgetFilterOverlay,
   SummaryMetric,
   WidgetSpec,
   WidgetType,

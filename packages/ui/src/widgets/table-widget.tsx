@@ -9,7 +9,7 @@ import { asDimensionId, asTagValue, OVERVIEW_SEED_VIEW } from '@costgoblin/core/
 import type { AggregatedTableRow, ExplorerFilterMap, ExplorerSort } from '@costgoblin/core/browser';
 import type { SortingState } from '@tanstack/react-table';
 import type { WidgetCommonProps } from './widget.js';
-import { filtersKey, mergeFilters } from './widget.js';
+import { filtersKey } from './widget.js';
 import { getDimensionId } from '../lib/dimensions.js';
 import type { TableColumn } from '../lib/table-types.js';
 
@@ -84,16 +84,15 @@ export function TableWidget({
 
   const specEnabled = spec.type === 'table' ? (spec.enabledColumns ?? DEFAULT_ENABLED) : DEFAULT_ENABLED;
 
-  const widgetFilters = mergeFilters(globalFilters, spec.filters);
-  const fk = filtersKey(widgetFilters);
+  const fk = filtersKey(globalFilters);
 
   const explorerFilters = useMemo<ExplorerFilterMap>(() => {
     const map: Record<string, readonly string[]> = {};
-    for (const [k, v] of Object.entries(widgetFilters)) {
+    for (const [k, v] of Object.entries(globalFilters)) {
       if (v !== undefined) map[k] = v;
     }
     return map;
-  }, [widgetFilters]);
+  }, [globalFilters]);
 
   const [sort, setSort] = useState<ExplorerSort | undefined>(undefined);
   const [enabledColumns, setEnabledColumns] = useState(specEnabled);
