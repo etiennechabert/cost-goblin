@@ -7,7 +7,7 @@ import { asDateString, asHourString, asTagValue } from '@costgoblin/core/browser
 import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
 import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
-import { dimensionLabelFor, filtersKey, mergeFilters, hasSufficientDailyCoverage } from './widget.js';
+import { dimensionLabelFor, filtersKey, hasSufficientDailyCoverage } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
 import { computeBucketedHourRange, computeBucketedRange } from '../lib/drag-select.js';
 
@@ -60,8 +60,7 @@ export function StackedBarWidget({
   const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
   const specGroupBy = spec.type === 'stackedBar' ? spec.groupBy : undefined;
   const effectiveGroupBy = groupByOverride ?? specGroupBy;
-  const filters = mergeFilters(globalFilters, spec.filters);
-  const fk = filtersKey(filters);
+  const fk = filtersKey(globalFilters);
 
   const origin = `widget:stackedBar:${String(effectiveGroupBy ?? '')}`;
   const { query, activeGroupBy, dailyResult } = useDailyWidgetQuery({
@@ -69,13 +68,12 @@ export function StackedBarWidget({
     dateRange,
     granularity,
     globalFilters,
-    specFilters: spec.filters,
     origin,
   });
 
   const prevQuery = useQuery<DailyCostsResult | null>(
     () => compareEnabled && effectiveGroupBy !== undefined
-      ? api.queryDailyCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters, granularity, origin: `${origin}/prev` })
+      ? api.queryDailyCosts({ groupBy: effectiveGroupBy, dateRange: previousDateRange, filters: globalFilters, granularity, origin: `${origin}/prev` })
       : Promise.resolve(null),
     [compareEnabled, effectiveGroupBy, previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api, origin],
   );

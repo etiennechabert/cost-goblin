@@ -10,9 +10,8 @@ import type {
   FilterMap,
   Granularity,
   QueryState,
-  WidgetFilterOverlay,
 } from '@costgoblin/core/browser';
-import { filtersKey, getDimensionFallbacks, mergeFilters } from '../widgets/widget.js';
+import { filtersKey, getDimensionFallbacks } from '../widgets/widget.js';
 
 interface DailyQueryResult {
   readonly result: DailyCostsResult;
@@ -69,7 +68,6 @@ interface WidgetQueryArgs {
   readonly dateRange: DateRange;
   readonly granularity: Granularity;
   readonly globalFilters: FilterMap;
-  readonly specFilters: WidgetFilterOverlay | undefined;
   readonly origin: string;
 }
 
@@ -85,12 +83,10 @@ export function useDailyWidgetQuery({
   dateRange,
   granularity,
   globalFilters,
-  specFilters,
   origin,
 }: WidgetQueryArgs): DailyWidgetQueryResult {
   const api = useCostApi();
-  const filters = mergeFilters(globalFilters, specFilters);
-  const fk = filtersKey(filters);
+  const fk = filtersKey(globalFilters);
   const fallbackDims = useMemo(
     () => specGroupBy === undefined ? [] : getDimensionFallbacks(specGroupBy),
     [specGroupBy],
@@ -99,7 +95,7 @@ export function useDailyWidgetQuery({
   const query = useQuery<DailyQueryResult | null>(
     () => specGroupBy === undefined
       ? Promise.resolve(null)
-      : fetchDailyWithFallback(api, specGroupBy, fallbackDims, dateRange, filters, granularity, origin),
+      : fetchDailyWithFallback(api, specGroupBy, fallbackDims, dateRange, globalFilters, granularity, origin),
     [specGroupBy, fallbackDims, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api, origin],
   );
 
@@ -109,7 +105,7 @@ export function useDailyWidgetQuery({
     [query],
   );
 
-  return { query, activeGroupBy, dailyResult, filters };
+  return { query, activeGroupBy, dailyResult, filters: globalFilters };
 }
 
 interface CostWidgetQueryResult {
@@ -124,12 +120,10 @@ export function useCostWidgetQuery({
   dateRange,
   granularity,
   globalFilters,
-  specFilters,
   origin,
 }: WidgetQueryArgs): CostWidgetQueryResult {
   const api = useCostApi();
-  const filters = mergeFilters(globalFilters, specFilters);
-  const fk = filtersKey(filters);
+  const fk = filtersKey(globalFilters);
   const fallbackDims = useMemo(
     () => specGroupBy === undefined ? [] : getDimensionFallbacks(specGroupBy),
     [specGroupBy],
@@ -138,7 +132,7 @@ export function useCostWidgetQuery({
   const query = useQuery<CostQueryResult | null>(
     () => specGroupBy === undefined
       ? Promise.resolve(null)
-      : fetchCostsWithFallback(api, specGroupBy, fallbackDims, dateRange, filters, granularity, origin),
+      : fetchCostsWithFallback(api, specGroupBy, fallbackDims, dateRange, globalFilters, granularity, origin),
     [specGroupBy, fallbackDims, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api, origin],
   );
 
@@ -148,5 +142,5 @@ export function useCostWidgetQuery({
     [query],
   );
 
-  return { query, activeGroupBy, costResult, filters };
+  return { query, activeGroupBy, costResult, filters: globalFilters };
 }

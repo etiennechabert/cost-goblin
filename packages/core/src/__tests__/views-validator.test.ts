@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validateViews } from '../config/views-validator.js';
 import { ConfigValidationError } from '../config/validator.js';
-import { asDimensionId } from '../types/branded.js';
 
 describe('validateViews', () => {
   it('parses a valid views config', () => {
@@ -69,22 +68,6 @@ describe('validateViews', () => {
         ] }],
       }],
     })).toThrow(ConfigValidationError);
-  });
-
-  it('parses widget filter overlay', () => {
-    const cfg = validateViews({
-      views: [{
-        id: 'v', name: 'V', rows: [{ widgets: [
-          { id: 'w', type: 'pie', size: 'medium', groupBy: 'service', filters: { account: '111111111111' } },
-        ] }],
-      }],
-    });
-    const w = cfg.views[0]?.rows[0]?.widgets[0];
-    expect(w?.filters).toBeDefined();
-    if (w?.type === 'pie') {
-      const accountDim = asDimensionId('account');
-      expect(w.filters?.[accountDim]).toBe('111111111111');
-    }
   });
 
   it('rejects duplicate widget ids within a view', () => {

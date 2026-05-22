@@ -59,7 +59,6 @@ export function HeatmapWidget({
     dateRange,
     granularity,
     globalFilters,
-    specFilters: spec.filters,
     origin: `widget:heatmap:${String(effectiveGroupBy ?? '')}`,
   });
 
