@@ -3,7 +3,7 @@ import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostS
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
-import { RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw } from 'lucide-react';
+import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
 import { OptionsMenu } from './top-menu/options-menu.js';
@@ -210,12 +210,6 @@ function ReleaseNotesModal({
         <DialogDescription>
           Released {info.releaseDate}
         </DialogDescription>
-        {status.state === 'available' && (
-          <div className="mt-3 flex items-center gap-1.5 text-xs text-text-secondary">
-            <RefreshCw size={12} className="animate-spin" />
-            Preparing download...
-          </div>
-        )}
         {status.state === 'downloading' && (
           <div className="mt-3">
             <div className="flex items-center justify-between text-xs text-text-secondary mb-1.5">
@@ -243,6 +237,17 @@ function ReleaseNotesModal({
           <DialogClose>
             <Button variant="ghost" size="sm">Dismiss</Button>
           </DialogClose>
+          {status.state === 'available' && (
+            <Button
+              size="sm"
+              onClick={() => {
+                globalThis.costgoblinUpdate.downloadUpdate().catch(() => undefined);
+              }}
+            >
+              <Download size={14} className="mr-1.5" />
+              Download
+            </Button>
+          )}
           {status.state === 'downloaded' && (
             <Button
               size="sm"

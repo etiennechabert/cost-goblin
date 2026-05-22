@@ -79,9 +79,7 @@ let hasTriedFullDownload = false;
 
 export function initAutoUpdater(): void {
   const updater = autoUpdater;
-  // Start downloading immediately on update-available; the user is only
-  // prompted to confirm the install/restart at the end.
-  updater.autoDownload = true;
+  updater.autoDownload = false;
   updater.autoInstallOnAppQuit = false;
 
   updater.on('checking-for-update', () => {
