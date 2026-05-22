@@ -3,7 +3,7 @@ import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostS
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
-import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw } from 'lucide-react';
+import { RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
 import { OptionsMenu } from './top-menu/options-menu.js';
@@ -131,6 +131,18 @@ function SyncAnnouncer({
   );
 }
 
+function formatLogTimestamp(ts: number): string {
+  const d = new Date(ts);
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function stageLabel(stage: 'check' | 'download' | 'install'): string {
+  if (stage === 'check') return 'Checking for updates';
+  if (stage === 'download') return 'Downloading update';
+  return 'Installing update';
+}
+
 function ReleaseNotesModal({
   open,
   onOpenChange,
@@ -140,6 +152,46 @@ function ReleaseNotesModal({
   onOpenChange: (open: boolean) => void;
   status: UpdateStatus;
 }>): React.JSX.Element | null {
+  if (status.state === 'error') {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent>
+          <DialogTitle>Update failed</DialogTitle>
+          <DialogDescription>
+            {stageLabel(status.stage)} did not complete. You can try again or copy the log below.
+          </DialogDescription>
+          <div className="mt-3 rounded-md border border-negative/40 bg-negative-muted p-3 text-sm text-text-primary">
+            {status.error}
+          </div>
+          {status.logs.length > 0 && (
+            <div className="mt-3">
+              <div className="text-xs text-text-secondary mb-1">Recent events</div>
+              <pre className="max-h-60 overflow-y-auto rounded-md bg-bg-primary p-3 text-xs text-text-secondary whitespace-pre-wrap break-words">
+                {status.logs.map((entry, i) => (
+                  <div key={i} className={entry.level === 'error' ? 'text-negative' : entry.level === 'warn' ? 'text-warning' : undefined}>
+                    [{formatLogTimestamp(entry.timestamp)}] {entry.level.toUpperCase()}: {entry.message}
+                  </div>
+                ))}
+              </pre>
+            </div>
+          )}
+          <div className="mt-4 flex justify-end gap-2">
+            <DialogClose>
+              <Button variant="ghost" size="sm">Close</Button>
+            </DialogClose>
+            <Button
+              size="sm"
+              onClick={() => { globalThis.costgoblinUpdate.checkForUpdates().catch(() => undefined); }}
+            >
+              <RotateCw size={14} className="mr-1.5" />
+              Retry
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   if (status.state !== 'available' && status.state !== 'downloading' && status.state !== 'downloaded') return null;
   const { info } = status;
 
@@ -158,6 +210,12 @@ function ReleaseNotesModal({
         <DialogDescription>
           Released {info.releaseDate}
         </DialogDescription>
+        {status.state === 'available' && (
+          <div className="mt-3 flex items-center gap-1.5 text-xs text-text-secondary">
+            <RefreshCw size={12} className="animate-spin" />
+            Preparing download...
+          </div>
+        )}
         {status.state === 'downloading' && (
           <div className="mt-3">
             <div className="flex items-center justify-between text-xs text-text-secondary mb-1.5">
@@ -185,17 +243,6 @@ function ReleaseNotesModal({
           <DialogClose>
             <Button variant="ghost" size="sm">Dismiss</Button>
           </DialogClose>
-          {status.state === 'available' && (
-            <Button
-              size="sm"
-              onClick={() => {
-                globalThis.costgoblinUpdate.downloadUpdate().catch(() => undefined);
-              }}
-            >
-              <Download size={14} className="mr-1.5" />
-              Download
-            </Button>
-          )}
           {status.state === 'downloaded' && (
             <Button
               size="sm"
@@ -424,8 +471,14 @@ function AppShell(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    if (autoOpenRef.current) return;
     if (setupCheck.status !== 'ready') return;
+    // Always surface errors so the user can see what went wrong; for other
+    // user-visible states open only once per session.
+    if (updateStatus.state === 'error') {
+      setReleaseNotesOpen(true);
+      return;
+    }
+    if (autoOpenRef.current) return;
     if (updateStatus.state === 'available' || updateStatus.state === 'downloaded') {
       autoOpenRef.current = true;
       setReleaseNotesOpen(true);

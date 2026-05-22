@@ -64,7 +64,7 @@ export type {
   QueryState,
 } from './query.js';
 
-export type { Dimension, CostApi, DataInventoryResult, DataTier, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateStatus, UpdateApi } from './api.js';
+export type { Dimension, CostApi, DataInventoryResult, DataTier, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateLogEntry, UpdateStage, UpdateStatus, UpdateApi } from './api.js';
 
 export type {
   WidgetSize,
