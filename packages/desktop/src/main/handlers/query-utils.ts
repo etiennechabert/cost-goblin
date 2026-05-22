@@ -6,7 +6,7 @@ import {
   getDescendantTagValues,
   listLocalMonths,
   logger,
-  tagColumnName,
+  tagDimColumn,
 } from '@costgoblin/core';
 import type {
   CostResult,
@@ -51,7 +51,7 @@ export function toStr(v: unknown): string {
 
 export function isOwnerGroupBy(groupBy: string, dimensions: DimensionsConfig): boolean {
   return dimensions.tags.some(
-    t => t.concept === 'owner' && tagColumnName(t.tagName) === groupBy,
+    t => t.concept === 'owner' && tagDimColumn(t) === groupBy,
   );
 }
 

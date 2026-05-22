@@ -1,7 +1,8 @@
 import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
 import type { CostQueryParams, DailyCostsParams, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import type { DimensionId } from '../types/branded.js';
-import { tagColumnName } from '../types/branded.js';
+import { tagDimColumn } from '../types/branded.js';
+import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor } from './cost-metric.js';
@@ -75,9 +76,9 @@ function tryResolveField(dimensionId: DimensionId, dimensions: DimensionsConfig)
     return { fieldExpr, rawField: builtIn.field, dim: builtIn };
   }
 
-  const tag = dimensions.tags.find(d => tagColumnName(d.tagName) === dimensionId);
+  const tag = dimensions.tags.find(d => tagDimColumn(d) === dimensionId);
   if (tag !== undefined) {
-    const rawField = tagColumnName(tag.tagName);
+    const rawField = tagDimColumn(tag);
     return { fieldExpr: buildAliasSqlCase(rawField, tag), rawField, dim: tag };
   }
 
@@ -270,13 +271,26 @@ function buildTagSelect(
   t: DimensionsConfig['tags'][number],
   needsOrgJoin: boolean,
 ): string {
-  const rawKey = t.tagName.startsWith('user_') ? t.tagName : `user_${t.tagName}`;
+  const colName = tagDimColumn(t);
+  const hasResourceTag = t.tagName !== undefined && t.tagName.length > 0;
+  const hasFallback = t.accountTagFallback !== undefined;
+
+  // Account-source-only dimension: emit just the fallback column.
+  if (!hasResourceTag) {
+    if (needsOrgJoin && hasFallback) {
+      return `acct_tags.fallback_${colName} AS ${colName}`;
+    }
+    // No org join available — dimension can't resolve; emit NULL so SQL stays valid.
+    return `NULL AS ${colName}`;
+  }
+
+  const tagName = t.tagName ?? '';
+  const rawKey = tagName.startsWith('user_') ? tagName : `user_${tagName}`;
   const curKey = sqlEscapeString(rawKey);
-  const colName = tagColumnName(t.tagName);
   const tablePrefix = needsOrgJoin ? 'cur.' : '';
   const resourceExpr = `element_at(${tablePrefix}resource_tags, '${curKey}')[1]`;
 
-  if (t.accountTagFallback === undefined || !needsOrgJoin) {
+  if (!hasFallback || !needsOrgJoin) {
     return `${resourceExpr} AS ${colName}`;
   }
 
@@ -314,9 +328,10 @@ function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
   const selects: string[] = [];
   for (const t of dimensions.tags) {
     if (t.accountTagFallback === undefined) continue;
+    if (t.tagName === undefined || t.tagName.length === 0) continue;
     const rawKey = t.tagName.startsWith('user_') ? t.tagName : `user_${t.tagName}`;
     const curKey = sqlEscapeString(rawKey);
-    const colName = tagColumnName(t.tagName);
+    const colName = tagDimColumn(t);
     selects.push(`element_at(cur.resource_tags, '${curKey}')[1] AS raw_${colName}`);
   }
   return selects;
@@ -338,8 +353,12 @@ function buildFromClause(
   const fallbackSelects = dimensions.tags
     .filter(t => t.accountTagFallback !== undefined)
     .map(t => {
-      const colName = tagColumnName(t.tagName);
-      const fallbackKey = sqlEscapeString(t.accountTagFallback ?? '');
+      const colName = tagDimColumn(t);
+      const fallback = t.accountTagFallback ?? '';
+      if (fallback === OU_PATH_SOURCE_KEY) {
+        return `ouPath AS fallback_${colName}`;
+      }
+      const fallbackKey = sqlEscapeString(fallback);
       return `tags->>'${fallbackKey}' AS fallback_${colName}`;
     });
   return `${parquetSource} AS cur
@@ -673,8 +692,8 @@ export function buildMissingTagsQuery(
 
   // Use the raw_ column (before COALESCE fallback) when available, so that
   // resources with only an account-level fallback are still reported as untagged.
-  const tagDim = tagResolved.dim !== null && 'tagName' in tagResolved.dim ? tagResolved.dim : undefined;
-  const hasRawColumn = tagDim?.accountTagFallback !== undefined && opts.orgAccountsPath !== undefined;
+  const tagDim = tagResolved.dim !== null && !('field' in tagResolved.dim) ? tagResolved.dim : undefined;
+  const hasRawColumn = tagDim?.accountTagFallback !== undefined && tagDim.tagName !== undefined && tagDim.tagName.length > 0 && opts.orgAccountsPath !== undefined;
   const tagCheckField = hasRawColumn ? `raw_${tagResolved.rawField}` : tagResolved.rawField;
 
   const whereConditions = [

@@ -177,8 +177,20 @@ function validateBuiltInDimension(dim: unknown, i: number) {
 function validateTagDimension(tag: unknown, i: number) {
   const ctx = `tags[${String(i)}]`;
   assertObject(tag, ctx);
-  assertString(tag['tagName'], `${ctx}.tagName`);
+  // tagName is optional — when omitted, the dimension is sourced purely from
+  // accountTagFallback (e.g. the OU Path sentinel).
+  const tagName = tag['tagName'] === undefined || tag['tagName'] === ''
+    ? undefined
+    : (assertString(tag['tagName'], `${ctx}.tagName`), tag['tagName']);
   assertString(tag['label'], `${ctx}.label`);
+
+  const accountTagFallback = typeof tag['accountTagFallback'] === 'string' && tag['accountTagFallback'].length > 0
+    ? tag['accountTagFallback']
+    : undefined;
+
+  if (tagName === undefined && accountTagFallback === undefined) {
+    throw new ConfigValidationError(`${ctx} must set either tagName or accountTagFallback`);
+  }
 
   const concept = tag['concept'] === undefined ? undefined : (() => {
     assertString(tag['concept'], `${ctx}.concept`);
@@ -194,13 +206,13 @@ function validateTagDimension(tag: unknown, i: number) {
   const enabled = tag['enabled'] === false ? false : undefined;
 
   return {
-    tagName: tag['tagName'],
+    ...(tagName === undefined ? {} : { tagName }),
     label: tag['label'],
     ...(concept === undefined ? {} : { concept }),
     ...(normalize === undefined ? {} : { normalize }),
     ...(separator === undefined ? {} : { separator }),
     ...(aliases === undefined ? {} : { aliases }),
-    ...(typeof tag['accountTagFallback'] === 'string' ? { accountTagFallback: tag['accountTagFallback'] } : {}),
+    ...(accountTagFallback === undefined ? {} : { accountTagFallback }),
     ...(typeof tag['missingValueTemplate'] === 'string' ? { missingValueTemplate: tag['missingValueTemplate'] } : {}),
     ...(enabled === false ? { enabled } : {}),
   };

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Pro
 import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
-import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagColumnName } from '@costgoblin/core/browser';
+import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
 import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
@@ -316,7 +316,7 @@ function shuffled<T>(arr: readonly T[]): T[] {
 }
 
 function dimId(dim: Dimension): string {
-  return 'tagName' in dim ? tagColumnName(dim.tagName) : dim.name;
+  return 'field' in dim ? dim.name : tagDimColumn(dim);
 }
 
 function defaultDateRange(): { start: string; end: string } {

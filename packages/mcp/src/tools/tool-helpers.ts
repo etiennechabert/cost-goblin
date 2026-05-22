@@ -7,6 +7,7 @@ import {
   DEFAULT_LAG_DAYS,
   listLocalMonths,
   logger,
+  tagDimColumn,
 } from '@costgoblin/core';
 import type {
   DateRange,
@@ -131,10 +132,7 @@ export function toolResult(text: string): { content: [{ type: 'text'; text: stri
 export function lookupDimension(dimensionId: string, dimensions: DimensionsConfig): { label: string; found: boolean } {
   const builtIn = dimensions.builtIn.find(d => d.name === dimensionId);
   if (builtIn !== undefined) return { label: builtIn.label, found: true };
-  const tag = dimensions.tags.find(d => {
-    const colName = `tag_${d.tagName.replaceAll(/[^a-zA-Z0-9]/g, '_')}`;
-    return colName === dimensionId;
-  });
+  const tag = dimensions.tags.find(d => tagDimColumn(d) === dimensionId);
   if (tag !== undefined) return { label: tag.label, found: true };
   return { label: dimensionId, found: false };
 }

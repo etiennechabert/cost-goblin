@@ -4,7 +4,7 @@ import {
   buildAliasSqlCase,
   buildRuleMatchExpr,
   computePeriodsInRange,
-  tagColumnName,
+  tagDimColumn,
   QueryBuilder,
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
@@ -19,7 +19,7 @@ function resolveFieldExpr(
   dimensions: import('@costgoblin/core').DimensionsConfig,
 ): { field: string; fieldExpr: string } {
   const builtIn = dimensions.builtIn.find(d => d.name === dimensionId);
-  const tag = dimensions.tags.find(d => tagColumnName(d.tagName) === dimensionId);
+  const tag = dimensions.tags.find(d => tagDimColumn(d) === dimensionId);
   const field = builtIn === undefined ? dimensionId : builtIn.field;
   let fieldExpr = field;
   if (builtIn !== undefined) fieldExpr = buildAliasSqlCase(field, builtIn);

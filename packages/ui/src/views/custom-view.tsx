@@ -46,7 +46,7 @@ function priorityFor(d: Dimension): number {
   if (isEnvironmentDimension(d)) return 0;
   if (isOwnerDimension(d)) return 1;
   if (isProductDimension(d)) return 2;
-  if (!('tagName' in d)) return 3;
+  if ('field' in d) return 3;
   return 4;
 }
 

@@ -246,7 +246,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
         ...(d.enabled === false ? { enabled: false } : {}),
       })),
       tags: config.tags.map(t => ({
-        tagName: t.tagName,
+        ...(t.tagName === undefined || t.tagName.length === 0 ? {} : { tagName: t.tagName }),
         label: t.label,
         ...(t.concept === undefined ? {} : { concept: t.concept }),
         ...(t.normalize === undefined ? {} : { normalize: t.normalize }),

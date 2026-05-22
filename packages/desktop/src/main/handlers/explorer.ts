@@ -13,7 +13,7 @@ import {
   logger,
   listLocalMonths,
   parseJsonObject,
-  tagColumnName,
+  tagDimColumn,
 } from '@costgoblin/core';
 import type {
   CostMetric,
@@ -296,7 +296,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   const accountMap = await getAccountMap();
 
   const tagColumns: readonly ExplorerTagColumn[] = dimensions.tags.map(t => ({
-    id: tagColumnName(t.tagName),
+    id: tagDimColumn(t),
     label: t.label,
   }));
   const tagIdSet = new Set(tagColumns.map(t => t.id));
@@ -651,11 +651,11 @@ export function registerExplorerHandlers(app: AppContext): void {
     if (qc.empty) return [];
 
     const builtIn = qc.dimensions.builtIn.find(d => d.name === dimId);
-    const tag = qc.dimensions.tags.find(d => tagColumnName(d.tagName) === dimId);
+    const tag = qc.dimensions.tags.find(d => tagDimColumn(d) === dimId);
     const field = builtIn === undefined ? dimId : builtIn.field;
     let fieldExpr = field;
     if (builtIn !== undefined) fieldExpr = buildAliasSqlCase(field, builtIn);
-    else if (tag !== undefined) fieldExpr = buildAliasSqlCase(tagColumnName(tag.tagName), tag);
+    else if (tag !== undefined) fieldExpr = buildAliasSqlCase(tagDimColumn(tag), tag);
 
     const sql = `
       SELECT ${fieldExpr} AS val,

@@ -545,9 +545,13 @@ export function createAppContext(ctx: IpcContext): AppContext {
 
 /** Read org-accounts.json and return an id→name map. When tagKey is set,
  *  each account's "name" is the value of that tag; accounts missing the tag
- *  fall back to the Name field. */
+ *  fall back to the Name field. The OU Path sentinel routes to the
+ *  account's `ouPath` field instead of `tags`. */
 function resolveAccountName(acct: Record<string, unknown>, tagKey: string | undefined): string | undefined {
-  if (tagKey !== undefined && tagKey.length > 0 && isStringRecord(acct['tags'])) {
+  if (tagKey === '__ouPath__') {
+    const ouPath = acct['ouPath'];
+    if (typeof ouPath === 'string' && ouPath.length > 0) return ouPath;
+  } else if (tagKey !== undefined && tagKey.length > 0 && isStringRecord(acct['tags'])) {
     const tagVal = acct['tags'][tagKey];
     if (typeof tagVal === 'string' && tagVal.length > 0) return tagVal;
   }

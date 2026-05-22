@@ -70,8 +70,18 @@ export interface BuiltInDimension {
   readonly useRegionNames?: boolean | undefined;
 }
 
+/** Sentinel value usable wherever an account-level tag key is expected
+ *  (`TagDimension.accountTagFallback`, `BuiltInDimension.accountNameFromTag`)
+ *  to mean "use the account's OU Path from the AWS Organizations sync"
+ *  instead of an account-level tag value. */
+export const OU_PATH_SOURCE_KEY = '__ouPath__';
+
 export interface TagDimension {
-  readonly tagName: string;
+  /** Resource tag key (without the `user_` prefix). When omitted, the
+   *  dimension is sourced purely from `accountTagFallback` (which may be
+   *  the OU Path sentinel) — useful for account-level concepts like
+   *  Department/BU that don't appear on individual resources. */
+  readonly tagName?: string | undefined;
   readonly label: string;
   readonly concept?: ConceptType | undefined;
   readonly normalize?: NormalizationRule | undefined;

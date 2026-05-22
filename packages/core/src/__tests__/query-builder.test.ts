@@ -265,6 +265,29 @@ describe('buildSource with account tag fallback', () => {
     expect(sql).not.toContain('LEFT JOIN');
     expect(sql).not.toContain('fallback');
   });
+
+  it('reads ouPath from org-accounts when accountTagFallback is the OU Path sentinel', () => {
+    const dims: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
+      tags: [{ tagName: 'team', label: 'Team', accountTagFallback: '__ouPath__' }],
+    };
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    expect(sql).toContain('ouPath AS fallback_tag_team');
+    expect(sql).toContain('COALESCE(NULLIF(');
+  });
+
+  it('emits account-source-only column when tagName is omitted', () => {
+    const dims: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
+      tags: [{ label: 'Department', accountTagFallback: '__ouPath__' }],
+    };
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    // Column name derives from "ou_path" since no tagName was provided.
+    expect(sql).toContain('acct_tags.fallback_tag_ou_path AS tag_ou_path');
+    expect(sql).toContain('ouPath AS fallback_tag_ou_path');
+    // No resource-tag COALESCE — there is no resource tag to read.
+    expect(sql).not.toContain('element_at(cur.resource_tags');
+  });
 });
 
 describe('buildEntityDetailQuery', () => {

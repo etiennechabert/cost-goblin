@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronUp, ChevronDown, GripVertical, Lock } from 'lucide-react';
 import type { BuiltInDimension, DimensionsConfig, TagDimension, ConceptType, NormalizationRule } from '@costgoblin/core/browser';
-import { asDimensionId } from '@costgoblin/core/browser';
+import { asDimensionId, OU_PATH_SOURCE_KEY } from '@costgoblin/core/browser';
+
+const OU_PATH_LABEL = 'OU Path';
+function formatAccountSource(key: string): string {
+  return key === OU_PATH_SOURCE_KEY ? OU_PATH_LABEL : key;
+}
+function tagOrderKey(t: { tagName?: string | undefined; accountTagFallback?: string | undefined; label: string }): string {
+  if (t.tagName !== undefined && t.tagName.length > 0) return `tag:${t.tagName}`;
+  const src = t.accountTagFallback ?? '';
+  return `tag:@${src}:${t.label}`;
+}
 
 // Core dimensions that cannot be disabled — they power the fallback chain and are always needed.
 const LOCKED_DIMENSIONS = new Set([asDimensionId('service'), asDimensionId('service_family'), asDimensionId('usage_type')]);
@@ -51,7 +61,6 @@ function useClickOutsideDismiss(
 interface DragRef { orderIdx: number }
 
 function builtInKey(name: string): string { return `builtin:${name}`; }
-function tagKey(tagName: string): string { return `tag:${tagName}`; }
 
 function defaultOrder(config: DimensionsConfig): string[] {
   const keys: string[] = [];
@@ -59,7 +68,7 @@ function defaultOrder(config: DimensionsConfig): string[] {
     if (d.enabled !== false) keys.push(builtInKey(d.name));
   }
   for (const t of config.tags) {
-    if (t.enabled !== false) keys.push(tagKey(t.tagName));
+    if (t.enabled !== false) keys.push(tagOrderKey(t));
   }
   return keys;
 }
@@ -70,7 +79,7 @@ function collectValidKeys(config: DimensionsConfig): Set<string> {
     if (d.enabled !== false) valid.add(builtInKey(d.name));
   }
   for (const t of config.tags) {
-    if (t.enabled !== false) valid.add(tagKey(t.tagName));
+    if (t.enabled !== false) valid.add(tagOrderKey(t));
   }
   return valid;
 }
@@ -87,7 +96,7 @@ function reconcileOrder(config: DimensionsConfig): string[] {
     if (d.enabled !== false && !seen.has(k)) { out.push(k); seen.add(k); }
   }
   for (const t of config.tags) {
-    const k = tagKey(t.tagName);
+    const k = tagOrderKey(t);
     if (t.enabled !== false && !seen.has(k)) { out.push(k); seen.add(k); }
   }
   return out;
@@ -236,9 +245,10 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
   // unknown (no sync data) we still let the user pre-select it from the
   // saved value, but the dropdown won't have suggestions.
   const nameSource: 'name' | 'tag' = state.accountNameFromTag.length > 0 ? 'tag' : 'name';
-  const tagKeyOptions = state.accountNameFromTag.length > 0 && !accountTagKeys.includes(state.accountNameFromTag)
+  const baseTagKeyOptions = state.accountNameFromTag.length > 0 && !accountTagKeys.includes(state.accountNameFromTag) && state.accountNameFromTag !== OU_PATH_SOURCE_KEY
     ? [state.accountNameFromTag, ...accountTagKeys]
     : [...accountTagKeys];
+  const tagKeyOptions = [OU_PATH_SOURCE_KEY, ...baseTagKeyOptions];
   const nameSourceField = (
     <div className="flex flex-col gap-2">
       <label className="flex flex-col gap-1">
@@ -248,7 +258,7 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
           onChange={e => {
             const v = e.target.value;
             if (v === 'name') setState(s => ({ ...s, accountNameFromTag: '' }));
-            else setState(s => ({ ...s, accountNameFromTag: s.accountNameFromTag.length > 0 ? s.accountNameFromTag : (accountTagKeys[0] ?? '') }));
+            else setState(s => ({ ...s, accountNameFromTag: s.accountNameFromTag.length > 0 ? s.accountNameFromTag : (accountTagKeys[0] ?? OU_PATH_SOURCE_KEY) }));
           }}
           className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
         >
@@ -269,7 +279,7 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
             ) : (
               <>
                 {state.accountNameFromTag.length === 0 && <option value="">Select a tag...</option>}
-                {tagKeyOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                {tagKeyOptions.map(t => <option key={t} value={t}>{formatAccountSource(t)}</option>)}
               </>
             )}
           </select>
@@ -798,7 +808,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   availableTags: readonly string[];
   discoveredTags: readonly { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[];
   accountTagKeys: readonly string[];
-  orgAccounts: readonly { tags: Readonly<Record<string, string>> }[];
+  orgAccounts: readonly { tags: Readonly<Record<string, string>>; ouPath: string }[];
 }>) {
   const [state, setState] = useState(tag);
   const initialRef = useRef(tag);
@@ -824,13 +834,15 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
     if (state.fallbackTag === undefined || state.fallbackTag.length === 0) return [];
     const counts = new Map<string, number>();
     for (const acct of orgAccounts) {
-      const val = acct.tags[state.fallbackTag];
+      const val = state.fallbackTag === OU_PATH_SOURCE_KEY ? acct.ouPath : acct.tags[state.fallbackTag];
       if (val !== undefined && val.length > 0) {
         counts.set(val, (counts.get(val) ?? 0) + 1);
       }
     }
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   })();
+  const fallbackOptions = [OU_PATH_SOURCE_KEY, ...acctTags];
+  const noSourceWarning = state.tagName.length === 0 && (state.fallbackTag === undefined || state.fallbackTag.length === 0);
 
   return (
     <div ref={containerRef} className="rounded-xl border border-accent/30 bg-bg-tertiary/10 px-5 py-4 flex flex-col gap-4">
@@ -871,7 +883,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
       </div>
 
       {/* Row 2: Tag Name + Fallback + Fallback format */}
-      <div className={`grid ${acctTags.length > 0 ? 'grid-cols-3' : 'grid-cols-1'} gap-4`}>
+      <div className="grid grid-cols-3 gap-4">
         <label className="flex flex-col gap-1">
           <span className="text-xs text-text-muted">Resource Tag</span>
           <select
@@ -887,44 +899,46 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
             }}
             className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
           >
-            <option value="">Select a tag...</option>
+            <option value="">No resource tag</option>
             {tagOptions.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
           {tagMatch !== undefined && (
             <span className="text-[10px] text-text-muted">{String(tagMatch.coveragePct)}% coverage · {String(tagMatch.distinctCount)} distinct values</span>
           )}
+          {state.tagName.length === 0 && (
+            <span className="text-[10px] text-text-muted">Account-level only (no resource tag)</span>
+          )}
         </label>
-        {acctTags.length > 0 && (
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-text-muted">Fallback (account tag)</span>
-            <select
-              value={state.fallbackTag ?? ''}
-              onChange={e => { setState(s => ({ ...s, fallbackTag: e.target.value.length > 0 ? e.target.value : undefined })); }}
-              className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
-            >
-              <option value="">No fallback</option>
-              {acctTags.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-            {fallbackValues.length > 0 && (
-              <span className="text-[10px] text-text-muted">{String(fallbackValues.length)} distinct values</span>
-            )}
-          </label>
-        )}
-        {acctTags.length > 0 && (
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-text-muted">Fallback format</span>
-            <input
-              type="text"
-              value={state.missingValueTemplate}
-              onChange={e => { setState(s => ({ ...s, missingValueTemplate: e.target.value })); }}
-              className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary font-mono outline-none focus:border-accent"
-              placeholder="{fallback}"
-            />
-            <span className="text-[10px] text-text-muted">
-              {'{fallback}'} = account tag value
-            </span>
-          </label>
-        )}
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-text-muted">{state.tagName.length === 0 ? 'Account source' : 'Fallback (account)'}</span>
+          <select
+            value={state.fallbackTag ?? ''}
+            onChange={e => { setState(s => ({ ...s, fallbackTag: e.target.value.length > 0 ? e.target.value : undefined })); }}
+            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary outline-none focus:border-accent"
+          >
+            <option value="">{state.tagName.length === 0 ? 'Select a source…' : 'No fallback'}</option>
+            {fallbackOptions.map(t => <option key={t} value={t}>{formatAccountSource(t)}</option>)}
+          </select>
+          {fallbackValues.length > 0 && (
+            <span className="text-[10px] text-text-muted">{String(fallbackValues.length)} distinct values</span>
+          )}
+          {noSourceWarning && (
+            <span className="text-[10px] text-warning">Pick a resource tag or an account source.</span>
+          )}
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-text-muted">Fallback format</span>
+          <input
+            type="text"
+            value={state.missingValueTemplate}
+            onChange={e => { setState(s => ({ ...s, missingValueTemplate: e.target.value })); }}
+            className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary font-mono outline-none focus:border-accent"
+            placeholder="{fallback}"
+          />
+          <span className="text-[10px] text-text-muted">
+            {'{fallback}'} = account value
+          </span>
+        </label>
       </div>
 
       {/* Alias rules */}
@@ -1247,8 +1261,7 @@ function resolveOrderedRow(key: string, config: DimensionsConfig): OrderedRow | 
     const dim = idx >= 0 ? config.builtIn[idx] : undefined;
     if (dim !== undefined) return { kind: 'builtIn', key, idx, dim };
   } else if (key.startsWith('tag:')) {
-    const tagName = key.slice('tag:'.length);
-    const idx = config.tags.findIndex(t => t.tagName === tagName);
+    const idx = config.tags.findIndex(t => tagOrderKey(t) === key);
     const dim = idx >= 0 ? config.tags[idx] : undefined;
     if (dim !== undefined) return { kind: 'tag', key, idx, dim };
   }
@@ -1317,7 +1330,11 @@ export function DimensionsView() {
     : [...new Set(orgData.accounts.flatMap(a => Object.keys(a.tags)))].sort((a, b) => a.localeCompare(b));
 
   // Which resource tags are already mapped as dimensions
-  const mappedTagNames = new Set(config?.tags.map(t => t.tagName) ?? []);
+  const mappedTagNames = new Set(
+    (config?.tags ?? [])
+      .map(t => t.tagName)
+      .filter((n): n is string => n !== undefined && n.length > 0),
+  );
 
   // CUR resource tags for the primary dropdown — same order as table, exclude hidden columns
   const unmappedTagKeys = discoveredTags
@@ -1325,7 +1342,8 @@ export function DimensionsView() {
     .filter(k => !mappedTagNames.has(k) && !hiddenResourceCols.has(k));
 
   function editingToTagDimension(editing: EditingTag): TagDimension {
-    const base: { tagName: string; label: string } = { tagName: editing.tagName, label: editing.label };
+    const tagName = editing.tagName.length > 0 ? editing.tagName : undefined;
+    const base: { label: string; tagName?: string } = { label: editing.label, ...(tagName === undefined ? {} : { tagName }) };
     const concept = editing.concept.length > 0 ? editing.concept as ConceptType : undefined;
     const normalize = editing.normalize.length > 0 ? editing.normalize as NormalizationRule : undefined;
     const aliases = textToAliases(editing.aliases);
@@ -1568,7 +1586,7 @@ export function DimensionsView() {
                 const isOn = tag.enabled !== false;
                 return (
                   <button
-                    key={tag.tagName}
+                    key={tagOrderKey(tag)}
                     type="button"
                     onClick={() => { toggleTagEnabled(idx); }}
                     title={isOn ? 'Click to disable' : 'Click to enable'}
@@ -1689,7 +1707,7 @@ export function DimensionsView() {
                 <TagEditor
                   key={row.key}
                   tag={{
-                    tagName: tag.tagName,
+                    tagName: tag.tagName ?? '',
                     label: tag.label,
                     concept: tag.concept ?? '',
                     normalize: tag.normalize ?? '',
@@ -1716,7 +1734,9 @@ export function DimensionsView() {
                 >
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-medium text-text-primary">{tag.label}</span>
-                    <span className="text-xs text-text-muted font-mono">tag:{tag.tagName}</span>
+                    {tag.tagName !== undefined && tag.tagName.length > 0 && (
+                      <span className="text-xs text-text-muted font-mono">tag:{tag.tagName}</span>
+                    )}
                     {tag.concept !== undefined && (
                       <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
                         {tag.concept}
@@ -1729,7 +1749,9 @@ export function DimensionsView() {
                       <span className="text-[10px] text-text-muted">{String(Object.keys(tag.aliases).length)} alias rules</span>
                     )}
                     {tag.accountTagFallback !== undefined && (
-                      <span className="text-[10px] text-text-muted">fallback: {tag.accountTagFallback}</span>
+                      <span className="text-[10px] text-text-muted">
+                        {tag.tagName === undefined || tag.tagName.length === 0 ? 'source' : 'fallback'}: {formatAccountSource(tag.accountTagFallback)}
+                      </span>
                     )}
                     {tag.missingValueTemplate !== undefined && (
                       <span className="text-[10px] text-text-muted font-mono">missing: {tag.missingValueTemplate}</span>

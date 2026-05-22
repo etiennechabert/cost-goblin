@@ -1,4 +1,4 @@
-import { tagColumnName } from '@costgoblin/core';
+import { tagDimColumn } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import { markdownTable, type ColumnDef } from '../formatters/markdown-table.js';
 import { toolResult } from './tool-helpers.js';
@@ -30,7 +30,7 @@ export async function listDimensions(
 
   for (const dim of dimensions.tags) {
     rows.push([
-      tagColumnName(dim.tagName),
+      tagDimColumn(dim),
       dim.label,
       dim.concept !== undefined ? `tag (${dim.concept})` : 'tag',
       dim.enabled === false ? 'no' : 'yes',

@@ -39,3 +39,15 @@ export function asHourString(value: string): HourString {
 export function tagColumnName(tagName: string): string {
   return `tag_${tagName.replaceAll(/[^a-zA-Z0-9]/g, '_')}`;
 }
+
+/** Returns the SQL column name for a tag dimension. When the dimension has no
+ *  resource `tagName` (account-only dimension), the column name is derived
+ *  from the account-level source: `tag_ou_path` for the OU Path sentinel, or
+ *  a slugified `accountTagFallback`. */
+export function tagDimColumn(t: { readonly tagName?: string | undefined; readonly accountTagFallback?: string | undefined }): string {
+  if (t.tagName !== undefined && t.tagName.length > 0) return tagColumnName(t.tagName);
+  const fallback = t.accountTagFallback;
+  if (fallback === '__ouPath__') return tagColumnName('ou_path');
+  if (fallback !== undefined && fallback.length > 0) return tagColumnName(fallback);
+  return tagColumnName('unknown');
+}
