@@ -10,6 +10,24 @@ interface FilterValue {
   count: number;
 }
 
+function filterMapsEqual(a: FilterMap, b: FilterMap): boolean {
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const k of keysA) {
+    const va = a[k as DimensionId];
+    const vb = b[k as DimensionId];
+    if (va === undefined || vb === undefined) return false;
+    if (va.length !== vb.length) return false;
+    const sortedA = [...va].sort();
+    const sortedB = [...vb].sort();
+    for (let i = 0; i < sortedA.length; i++) {
+      if (sortedA[i] !== sortedB[i]) return false;
+    }
+  }
+  return true;
+}
+
 type DropdownState =
   | { status: 'closed' }
   | { status: 'loading' }
@@ -21,9 +39,13 @@ interface FilterBarProps {
   filters: FilterMap;
   onFilterChange: (filters: FilterMap) => void;
   getFilterValues: (dimensionId: DimensionId, currentFilters: FilterMap) => Promise<FilterValue[]>;
+  /** Per-dim default values pre-applied on view open. Exposed here so the
+   *  filter bar can show a "Reset defaults" affordance once the user's
+   *  current selection has drifted away from the defaults. */
+  defaults?: FilterMap | undefined;
 }
 
-export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues }: Readonly<FilterBarProps>) {
+export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues, defaults }: Readonly<FilterBarProps>) {
   const [openDimId, setOpenDimId] = useState<DimensionId | null>(null);
   const [dropdown, setDropdown] = useState<DropdownState>({ status: 'closed' });
   const [search, setSearch] = useState('');
@@ -33,6 +55,9 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
   const requestIdRef = useRef(0);
 
   const hasActiveFilters = Object.keys(filters).length > 0;
+  const defaultsAvailable = defaults !== undefined && Object.keys(defaults).length > 0;
+  const matchesDefaults = defaultsAvailable && filterMapsEqual(filters, defaults);
+  const canResetDefaults = defaultsAvailable && !matchesDefaults;
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -132,6 +157,11 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
 
   function handleClearAll() {
     onFilterChange({});
+  }
+
+  function handleResetDefaults() {
+    if (defaults === undefined) return;
+    onFilterChange(defaults);
   }
 
   function chipLabel(dim: Dimension, active: readonly TagValue[] | undefined): string {
@@ -310,6 +340,15 @@ export function FilterBar({ dimensions, filters, onFilterChange, getFilterValues
           className="rounded-full px-3 py-1 text-xs text-text-secondary underline-offset-2 hover:text-text-primary hover:underline"
         >
           Clear all
+        </button>
+      )}
+      {canResetDefaults && (
+        <button
+          type="button"
+          onClick={handleResetDefaults}
+          className="rounded-full px-3 py-1 text-xs text-text-secondary underline-offset-2 hover:text-text-primary hover:underline"
+        >
+          Reset defaults
         </button>
       )}
     </div>

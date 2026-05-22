@@ -269,6 +269,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
           filters={filters}
           onFilterChange={setFilters}
           getFilterValues={handleGetFilterValues}
+          defaults={defaultsFromDimensions(dimensions)}
         />
       )}
 
