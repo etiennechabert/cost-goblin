@@ -33,7 +33,14 @@ interface TrendsState {
   granularity: Granularity;
   deltaThreshold: number;
   percentThreshold: number;
+  logScale: number | 'linear';
 }
+
+const SCALE_OPTIONS: readonly { value: number | 'linear'; label: string }[] = [
+  { value: 'linear', label: 'Linear' },
+  { value: 2, label: 'Log 2' },
+  { value: 10, label: 'Log 10' },
+];
 
 function TrendRowItem({ row, onClick }: Readonly<{ row: TrendRow; onClick: (e: EntityRef) => void }>) {
   const isIncrease = row.delta > 0;
@@ -80,6 +87,7 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
     granularity: 'daily' satisfies Granularity,
     deltaThreshold: 0,
     percentThreshold: 0,
+    logScale: 10,
   }));
 
   const dimensions: Dimension[] =
@@ -234,6 +242,24 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
                 className="w-16 rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-primary"
               />
             </label>
+            <div className="flex items-center gap-1.5">
+              <span>Scale</span>
+              <div className="flex items-center gap-0.5 rounded border border-border p-0.5">
+                {SCALE_OPTIONS.map(o => (
+                  <button
+                    key={String(o.value)}
+                    type="button"
+                    onClick={() => { setState(p => ({ ...p, logScale: o.value })); }}
+                    className={[
+                      'rounded px-2 py-0.5 text-[11px]',
+                      state.logScale === o.value ? 'bg-bg-tertiary text-text-primary' : 'text-text-secondary hover:text-text-primary',
+                    ].join(' ')}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -256,7 +282,7 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
       )}
 
       {rows.length > 0 && (
-        <BubbleChart data={rows} onEntityClick={handleEntityClick} />
+        <BubbleChart data={rows} logScale={state.logScale} onEntityClick={handleEntityClick} />
       )}
 
       {rows.length > 0 && (

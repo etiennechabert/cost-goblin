@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Group } from '@visx/group';
-import { scaleSymlog, scaleSqrt } from '@visx/scale';
+import { scaleLinear, scaleSymlog, scaleSqrt } from '@visx/scale';
 import { AxisBottom, AxisLeft } from '@visx/axis';
 import { GridRows, GridColumns } from '@visx/grid';
 import { useTooltip, TooltipWithBounds } from '@visx/tooltip';
@@ -18,7 +18,8 @@ const DEFAULT_LOG_SCALE = 10;
 
 interface BubbleChartProps {
   readonly data: readonly TrendRow[];
-  readonly logScale?: number | undefined;
+  /** `'linear'` selects `scaleLinear`. A number is the symlog constant. */
+  readonly logScale?: number | 'linear' | undefined;
   readonly onEntityClick: (entity: EntityRef) => void;
   readonly externalHoveredName?: string | null | undefined;
   readonly onEntityHover?: ((name: string | null) => void) | undefined;
@@ -94,21 +95,35 @@ function BubbleChartInner({
   const deltaMax = Math.max(...absDeltas);
   const costMax = Math.max(...costs);
 
-  const symlogConstant = logScale ?? DEFAULT_LOG_SCALE;
+  const scaleKind: 'linear' | number = logScale === 'linear'
+    ? 'linear'
+    : (typeof logScale === 'number' ? logScale : DEFAULT_LOG_SCALE);
 
-  const xScale = scaleSymlog<number>({
-    domain: [percentMin - percentPad, percentMax + percentPad],
-    range: [0, innerWidth],
-    nice: true,
-    constant: symlogConstant,
-  });
+  const xScale = scaleKind === 'linear'
+    ? scaleLinear<number>({
+        domain: [percentMin - percentPad, percentMax + percentPad],
+        range: [0, innerWidth],
+        nice: true,
+      })
+    : scaleSymlog<number>({
+        domain: [percentMin - percentPad, percentMax + percentPad],
+        range: [0, innerWidth],
+        nice: true,
+        constant: scaleKind,
+      });
 
-  const yScale = scaleSymlog<number>({
-    domain: [0, deltaMax * 1.15],
-    range: [innerHeight, 0],
-    nice: true,
-    constant: symlogConstant,
-  });
+  const yScale = scaleKind === 'linear'
+    ? scaleLinear<number>({
+        domain: [0, deltaMax * 1.15],
+        range: [innerHeight, 0],
+        nice: true,
+      })
+    : scaleSymlog<number>({
+        domain: [0, deltaMax * 1.15],
+        range: [innerHeight, 0],
+        nice: true,
+        constant: scaleKind,
+      });
 
   const rScale = scaleSqrt<number>({
     domain: [0, costMax],

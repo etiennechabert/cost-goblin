@@ -88,12 +88,31 @@ function validateGroupByWidget(raw: Record<string, unknown>, ctx: string, base: 
   }
   if (type === 'pie') return { type, ...base, groupBy };
   if (type === 'bubble') {
-    let logScale: number | undefined;
-    if (raw['logScale'] !== undefined) {
-      assertNumber(raw['logScale'], `${ctx}.logScale`);
-      logScale = raw['logScale'];
+    let logScale: number | 'linear' | undefined;
+    const rawLog: unknown = raw['logScale'];
+    if (rawLog === 'linear') {
+      logScale = 'linear';
+    } else if (typeof rawLog === 'number') {
+      logScale = rawLog;
+    } else if (rawLog !== undefined) {
+      throw new ConfigValidationError(`${ctx}.logScale must be a number or 'linear'`);
     }
-    return { type, ...base, groupBy, ...(logScale === undefined ? {} : { logScale }) };
+    let deltaThreshold: number | undefined;
+    if (raw['deltaThreshold'] !== undefined) {
+      assertNumber(raw['deltaThreshold'], `${ctx}.deltaThreshold`);
+      deltaThreshold = raw['deltaThreshold'];
+    }
+    let percentThreshold: number | undefined;
+    if (raw['percentThreshold'] !== undefined) {
+      assertNumber(raw['percentThreshold'], `${ctx}.percentThreshold`);
+      percentThreshold = raw['percentThreshold'];
+    }
+    return {
+      type, ...base, groupBy,
+      ...(logScale === undefined ? {} : { logScale }),
+      ...(deltaThreshold === undefined ? {} : { deltaThreshold }),
+      ...(percentThreshold === undefined ? {} : { percentThreshold }),
+    };
   }
   return { type, ...base, groupBy };
 }

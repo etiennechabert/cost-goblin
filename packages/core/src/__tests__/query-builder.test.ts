@@ -139,6 +139,63 @@ describe('buildSource narrowed paths', () => {
   });
 });
 
+describe('buildTrendQuery with fallback-bearing tag dim', () => {
+  // Mirrors the user's real-world `user_sb_system` setup: resource-tag + account
+  // fallback + missingValueTemplate + normalize + aliases. The trend query needs
+  // to compile cleanly and reference the materialized column in the alias CASE.
+  const dims: DimensionsConfig = {
+    builtIn: [{ name: asDimensionId('service'), label: 'Service', field: 'service' }],
+    tags: [{
+      tagName: 'user_sb_system',
+      label: 'System',
+      concept: 'product',
+      normalize: 'lowercase',
+      aliases: {
+        'core-banking': ['core_banking', 'corebanking'],
+        'platform': ['cpe'],
+      },
+      accountTagFallback: 'sb:account-owner',
+      missingValueTemplate: 'unknown-{fallback}',
+    }],
+  };
+
+  it('produces SQL referencing the materialized column in the alias CASE', () => {
+    const { sql } = buildTrendQuery(
+      {
+        groupBy: asDimensionId('tag_user_sb_system'),
+        dateRange: { start: asDateString('2026-04-01'), end: asDateString('2026-04-30') },
+        filters: {},
+        deltaThreshold: asDollars(0),
+        percentThreshold: 0,
+      },
+      { dataDir: '/data', dimensions: dims, orgAccountsPath: '/org.json' },
+    );
+    // The COALESCE / missingValueTemplate expression lives in the source subquery.
+    expect(sql).toContain("COALESCE(NULLIF(element_at(cur.resource_tags, 'user_sb_system')[1], '')");
+    expect(sql).toContain("'unknown-' || acct_tags.fallback_tag_user_sb_system || ''");
+    // The OUTER group-by references the bare column name (not the COALESCE), so
+    // the alias CASE doesn't repeat the full expression for every WHEN.
+    expect(sql).toContain('LOWER(tag_user_sb_system)');
+    expect(sql).toContain("WHEN LOWER(tag_user_sb_system) IN ('core_banking', 'corebanking') THEN 'core-banking'");
+    expect(sql).not.toContain("WHEN LOWER(COALESCE");
+  });
+
+  it('runs cleanly with the user-style materializedSource path too', () => {
+    const { sql } = buildTrendQuery(
+      {
+        groupBy: asDimensionId('tag_user_sb_system'),
+        dateRange: { start: asDateString('2026-04-01'), end: asDateString('2026-04-30') },
+        filters: {},
+        deltaThreshold: asDollars(0),
+        percentThreshold: 0,
+      },
+      { dataDir: '/data', dimensions: dims, orgAccountsPath: '/org.json', materializedSource: 'mat_table' },
+    );
+    expect(sql).toContain('FROM mat_table');
+    expect(sql).toContain('LOWER(tag_user_sb_system)');
+  });
+});
+
 describe('buildTrendQuery', () => {
   it('includes periods from both current and previous spans', () => {
     // 30-day window ending 2026-04-18 → current is 2026-03/2026-04, previous

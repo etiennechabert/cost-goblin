@@ -25,6 +25,8 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
     case 'bubble':
       addGroupByFields(base, w);
       if (w.logScale !== undefined) base['logScale'] = w.logScale;
+      if (w.deltaThreshold !== undefined) base['deltaThreshold'] = w.deltaThreshold;
+      if (w.percentThreshold !== undefined) base['percentThreshold'] = w.percentThreshold;
       return base;
     case 'treemap':
       addGroupByFields(base, w);

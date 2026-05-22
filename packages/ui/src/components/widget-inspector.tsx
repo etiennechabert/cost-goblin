@@ -36,7 +36,12 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
     case 'stackedBar':
       return { ...common, type: w.type, groupBy: w.groupBy };
     case 'bubble':
-      return { ...common, type: w.type, groupBy: w.groupBy, ...(w.logScale === undefined ? {} : { logScale: w.logScale }) };
+      return {
+        ...common, type: w.type, groupBy: w.groupBy,
+        ...(w.logScale === undefined ? {} : { logScale: w.logScale }),
+        ...(w.deltaThreshold === undefined ? {} : { deltaThreshold: w.deltaThreshold }),
+        ...(w.percentThreshold === undefined ? {} : { percentThreshold: w.percentThreshold }),
+      };
     case 'treemap':
       return { ...common, type: w.type, groupBy: w.groupBy, ...(w.drillTo === undefined ? {} : { drillTo: w.drillTo }) };
     case 'line':
@@ -233,22 +238,63 @@ export function WidgetInspector({
         </div>
       )}
 
-      {widget.type === 'bubble' && (
-        <label className="flex items-center gap-2">
-          <span className="text-text-muted shrink-0 w-14">Log scale</span>
-          <input
-            type="number"
-            min={1}
-            max={1000}
-            value={widget.logScale ?? 10}
-            onChange={(e) => {
-              const v = Number.parseInt(e.target.value, 10);
-              if (Number.isFinite(v) && v >= 1) onChange({ ...widget, logScale: v });
-            }}
-            className="w-20 bg-transparent border border-border rounded px-2 py-1 text-text-primary"
-          />
-        </label>
-      )}
+      {widget.type === 'bubble' && (() => {
+        type ScaleOpt = { value: number | 'linear'; label: string };
+        const SCALE_OPTIONS: readonly ScaleOpt[] = [
+          { value: 'linear', label: 'Linear' },
+          { value: 2, label: 'Log 2' },
+          { value: 10, label: 'Log 10' },
+        ];
+        const current: number | 'linear' = widget.logScale ?? 10;
+        return (
+          <>
+            <label className="flex items-center gap-2">
+              <span className="text-text-muted shrink-0 w-14">Scale</span>
+              <div className="flex items-center gap-0.5 rounded border border-border p-0.5">
+                {SCALE_OPTIONS.map(o => (
+                  <button
+                    key={String(o.value)}
+                    type="button"
+                    onClick={() => { onChange({ ...widget, logScale: o.value }); }}
+                    className={[
+                      'px-2 py-0.5 rounded text-[11px]',
+                      current === o.value ? 'bg-bg-tertiary text-text-primary' : 'text-text-secondary hover:text-text-primary',
+                    ].join(' ')}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="text-text-muted shrink-0 w-14">Min $</span>
+              <input
+                type="number"
+                min={0}
+                value={widget.deltaThreshold ?? 0}
+                onChange={(e) => {
+                  const v = Number.parseFloat(e.target.value);
+                  if (Number.isFinite(v) && v >= 0) onChange({ ...widget, deltaThreshold: v });
+                }}
+                className="w-20 bg-transparent border border-border rounded px-2 py-1 text-text-primary"
+              />
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="text-text-muted shrink-0 w-14">Min %</span>
+              <input
+                type="number"
+                min={0}
+                value={widget.percentThreshold ?? 0}
+                onChange={(e) => {
+                  const v = Number.parseFloat(e.target.value);
+                  if (Number.isFinite(v) && v >= 0) onChange({ ...widget, percentThreshold: v });
+                }}
+                className="w-20 bg-transparent border border-border rounded px-2 py-1 text-text-primary"
+              />
+            </label>
+          </>
+        );
+      })()}
 
       {(widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap') && (
         <label className="flex items-center gap-2">
