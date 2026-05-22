@@ -25,6 +25,7 @@ import {
   isEnvironmentDimension,
   isOwnerDimension,
   isProductDimension,
+  isUnitDimension,
 } from '../lib/dimensions.js';
 import { FilterBar } from '../components/filter-bar.js';
 import { FilterActiveBanner } from '../components/filter-active-banner.js';
@@ -44,10 +45,11 @@ interface CustomViewProps {
 
 function priorityFor(d: Dimension): number {
   if (isEnvironmentDimension(d)) return 0;
-  if (isOwnerDimension(d)) return 1;
-  if (isProductDimension(d)) return 2;
-  if (!('tagName' in d)) return 3;
-  return 4;
+  if (isProductDimension(d)) return 1;
+  if (isOwnerDimension(d)) return 2;
+  if (isUnitDimension(d)) return 3;
+  if ('field' in d) return 4;
+  return 5;
 }
 
 function formatHour(d: Date): string {

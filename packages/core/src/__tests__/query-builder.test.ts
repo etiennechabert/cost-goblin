@@ -265,6 +265,71 @@ describe('buildSource with account tag fallback', () => {
     expect(sql).not.toContain('LEFT JOIN');
     expect(sql).not.toContain('fallback');
   });
+
+  it('reads ouPath from org-accounts when accountTagFallback is the OU Path sentinel', () => {
+    const dims: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
+      tags: [{ tagName: 'team', label: 'Team', accountTagFallback: '__ouPath__' }],
+    };
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    expect(sql).toContain('ouPath AS fallback_tag_team');
+    expect(sql).toContain('COALESCE(NULLIF(');
+  });
+
+  it('emits account-source-only column when tagName is omitted', () => {
+    const dims: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
+      tags: [{ label: 'Department', accountTagFallback: '__ouPath__' }],
+    };
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    // Column name derives from "ou_path" since no tagName was provided.
+    expect(sql).toContain('acct_tags.fallback_tag_ou_path AS tag_ou_path');
+    expect(sql).toContain('ouPath AS fallback_tag_ou_path');
+    // No resource-tag COALESCE — there is no resource tag to read.
+    expect(sql).not.toContain('element_at(cur.resource_tags');
+  });
+
+  it('wraps the resolved value with split_part when pathSegment is set', () => {
+    const dims: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
+      tags: [{
+        tagName: 'department',
+        label: 'Department',
+        accountTagFallback: '__ouPath__',
+        pathSegment: { separator: ' / ', index: 1 },
+      }],
+    };
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    expect(sql).toContain("split_part(COALESCE(NULLIF(element_at(cur.resource_tags, 'user_department')[1], ''), acct_tags.fallback_tag_department), ' / ', 1)");
+    expect(sql).toContain('AS tag_department');
+  });
+
+  it('segments an account-source-only column', () => {
+    const dims: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
+      tags: [{
+        label: 'Unit',
+        accountTagFallback: '__ouPath__',
+        pathSegment: { separator: ' / ', index: 1 },
+      }],
+    };
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    expect(sql).toContain("split_part(acct_tags.fallback_tag_ou_path, ' / ', 1)");
+    expect(sql).toContain('AS tag_ou_path');
+  });
+
+  it('supports negative segment indices', () => {
+    const dims: DimensionsConfig = {
+      builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
+      tags: [{
+        label: 'Environment',
+        accountTagFallback: '__ouPath__',
+        pathSegment: { separator: ' / ', index: -1 },
+      }],
+    };
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    expect(sql).toContain("split_part(acct_tags.fallback_tag_ou_path, ' / ', -1)");
+  });
 });
 
 describe('buildEntityDetailQuery', () => {

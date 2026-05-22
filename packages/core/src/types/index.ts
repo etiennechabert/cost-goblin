@@ -16,6 +16,7 @@ export {
   asDateString,
   asHourString,
   tagColumnName,
+  tagDimColumn,
 } from './branded.js';
 
 export type {
@@ -33,6 +34,7 @@ export type {
   OrgNode,
   OrgTreeConfig,
 } from './config.js';
+export { OU_PATH_SOURCE_KEY } from './config.js';
 
 export type {
   Granularity,

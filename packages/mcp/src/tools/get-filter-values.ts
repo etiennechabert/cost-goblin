@@ -3,7 +3,7 @@ import {
   buildSource,
   computePeriodsInRange,
   QueryBuilder,
-  tagColumnName,
+  tagDimColumn,
   logger,
 } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
@@ -46,7 +46,7 @@ export async function getFilterValues(
   const availableColumns = await ctx.getAvailableColumns('daily');
 
   const builtIn = dimensions.builtIn.find(d => d.name === dimensionId);
-  const tag = dimensions.tags.find(d => tagColumnName(d.tagName) === dimensionId);
+  const tag = dimensions.tags.find(d => tagDimColumn(d) === dimensionId);
   const field = builtIn !== undefined ? builtIn.field : dimensionId;
   let fieldExpr = field;
   if (builtIn !== undefined) fieldExpr = buildAliasSqlCase(field, builtIn);

@@ -2,7 +2,7 @@ import type { BucketPath, DimensionId } from './branded.js';
 
 export type NormalizationRule = 'lowercase' | 'uppercase' | 'lowercase-kebab' | 'lowercase-underscore' | 'camelCase';
 
-export type ConceptType = 'owner' | 'product' | 'environment';
+export type ConceptType = 'owner' | 'product' | 'environment' | 'unit';
 
 export interface ProviderConfig {
   readonly name: string;
@@ -70,8 +70,18 @@ export interface BuiltInDimension {
   readonly useRegionNames?: boolean | undefined;
 }
 
+/** Sentinel value usable wherever an account-level tag key is expected
+ *  (`TagDimension.accountTagFallback`, `BuiltInDimension.accountNameFromTag`)
+ *  to mean "use the account's OU Path from the AWS Organizations sync"
+ *  instead of an account-level tag value. */
+export const OU_PATH_SOURCE_KEY = '__ouPath__';
+
 export interface TagDimension {
-  readonly tagName: string;
+  /** Resource tag key (without the `user_` prefix). When omitted, the
+   *  dimension is sourced purely from `accountTagFallback` (which may be
+   *  the OU Path sentinel) — useful for account-level concepts like
+   *  Department/BU that don't appear on individual resources. */
+  readonly tagName?: string | undefined;
   readonly label: string;
   readonly concept?: ConceptType | undefined;
   readonly normalize?: NormalizationRule | undefined;
@@ -79,6 +89,12 @@ export interface TagDimension {
   readonly aliases?: Readonly<Record<string, readonly string[]>> | undefined;
   readonly accountTagFallback?: string | undefined;
   readonly missingValueTemplate?: string | undefined;
+  /** When set, the resolved value is split by `separator` and only the
+   *  `index`-th part (1-based; negative counts from the end, -1 = last)
+   *  is emitted. Applied after the resource-tag/account-fallback COALESCE
+   *  so every downstream consumer (group-by, filters, preview) sees only
+   *  the segmented value. */
+  readonly pathSegment?: { readonly separator: string; readonly index: number } | undefined;
   /** Hidden from selectors/filter bar when false. Default true. */
   readonly enabled?: boolean | undefined;
   /** Short user-facing explanation shown on the Dimensions view. */
