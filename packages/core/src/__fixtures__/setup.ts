@@ -77,7 +77,7 @@ function generateFixtureRow(date: string, cfg: FixtureConfig, rand: () => number
   if (env !== null) tagEntries.push(`'user_environment': '${env}'`);
 
   const netCost = Math.round(cost * 0.97 * 100) / 100;
-  return `(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', '${meta.family}', '${operation}', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(cost)}, ${String(netCost)}, ${String(listCost)}, NULL, NULL, NULL, NULL, 'Usage', '${operation}', 'Usage', MAP {${tagEntries.join(', ')}})`;
+  return `(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', '${meta.family}', '${operation}', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(netCost)}, ${String(listCost)}, NULL, NULL, NULL, NULL, 'Usage', '${operation}', 'Usage', MAP {${tagEntries.join(', ')}})`;
 }
 
 interface ActionType {
@@ -213,7 +213,6 @@ export async function setup(): Promise<void> {
       line_item_resource_id VARCHAR,
       line_item_usage_amount DOUBLE,
       line_item_unblended_cost DOUBLE,
-      line_item_blended_cost DOUBLE,
       line_item_net_unblended_cost DOUBLE,
       pricing_public_on_demand_cost DOUBLE,
       reservation_effective_cost DOUBLE,

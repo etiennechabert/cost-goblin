@@ -185,7 +185,7 @@ Then use the Data tab to repartition the downloaded files.
 - **Custom dimensions** — map any AWS tag to a first-class cost allocation dimension
 - **Tag normalization** — aliases applied at query time, fix messy tags without re-processing
 - **Composable views** — drag-and-drop widget builder with 9 widget types (pie, bar, stacked bar, line, treemap, heatmap, bubble, table, summary)
-- **Cost Scope** — configure cost metrics (unblended, blended, amortized) and exclusion rules
+- **Cost Scope** — configure cost metrics (amortized, on-demand list price, unblended) and exclusion rules
 - **Vault encryption** — optional AES-256-GCM at-rest encryption for local billing data, with system keychain integration
 - **MCP server** — Model Context Protocol integration for querying cost data from AI assistants
 - **Dark/light mode** — theme toggle with two chart color palettes (standard + Okabe-Ito colorblind-safe)
