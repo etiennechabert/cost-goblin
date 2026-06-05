@@ -290,7 +290,7 @@ export class MockCostApi implements CostApi {
     });
   }
   getCostScopeCapabilities(): Promise<CostScopeCapabilities> {
-    return Promise.resolve({ hasEffectiveCostColumns: true, hasBlendedColumn: true, hasNetColumns: true });
+    return Promise.resolve({ hasEffectiveCostColumns: true, hasNetColumns: true, hasListPriceColumn: true });
   }
   revealCostScopeFolder(): Promise<void> { return Promise.resolve(); }
   queryExplorerOverview(): Promise<ExplorerOverviewResult> {

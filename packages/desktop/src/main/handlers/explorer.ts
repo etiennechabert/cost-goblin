@@ -118,7 +118,7 @@ function clampRowLimit(n: number): number {
 
 function pickMetric(metric: CostMetric | undefined, cols: ReadonlySet<string>): CostMetric {
   if (metric === 'amortized' && cols.has('reservation_effective_cost') && cols.has('savings_plan_savings_plan_effective_cost')) return 'amortized';
-  if (metric === 'blended' && cols.has('line_item_blended_cost')) return 'blended';
+  if (metric === 'list' && cols.has('pricing_public_on_demand_cost')) return 'list';
   return 'unblended';
 }
 

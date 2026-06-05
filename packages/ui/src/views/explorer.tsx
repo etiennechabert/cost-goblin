@@ -209,7 +209,7 @@ export function ExplorerView(): React.JSX.Element {
   useEffect(() => {
     if (capabilities === null) return;
     if (costMetric === 'amortized' && !capabilities.hasEffectiveCostColumns) setCostMetric('unblended');
-    if (costMetric === 'blended' && !capabilities.hasBlendedColumn) setCostMetric('unblended');
+    if (costMetric === 'list' && !capabilities.hasListPriceColumn) setCostMetric('unblended');
     if (costPerspective === 'net' && !capabilities.hasNetColumns) setCostPerspective('gross');
   }, [capabilities, costMetric, costPerspective]);
 
@@ -563,9 +563,9 @@ function ExplorerOptions({
   onCostPerspectiveChange,
 }: ExplorerOptionsProps): React.JSX.Element {
   const metricOptions: { value: CostMetric; label: string; available: boolean }[] = [
-    { value: 'unblended', label: 'Unblended', available: true },
-    { value: 'blended', label: 'Blended', available: capabilities?.hasBlendedColumn !== false },
     { value: 'amortized', label: 'Amortized', available: capabilities?.hasEffectiveCostColumns !== false },
+    { value: 'list', label: 'List price', available: capabilities?.hasListPriceColumn !== false },
+    { value: 'unblended', label: 'Unblended', available: true },
   ];
   const netAvailable = capabilities?.hasNetColumns !== false;
 

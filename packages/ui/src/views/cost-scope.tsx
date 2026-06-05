@@ -12,7 +12,7 @@ import type {
   ExclusionRule,
   Dimension,
 } from '@costgoblin/core/browser';
-import { BUILTIN_EXCLUSION_RULES, COST_METRICS, DEFAULT_COST_SCOPE, DEFAULT_LAG_DAYS, asDimensionId } from '@costgoblin/core/browser';
+import { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, DEFAULT_LAG_DAYS, asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId } from '../lib/dimensions.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
@@ -20,19 +20,43 @@ import { formatDollars } from '../components/format.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
 
-const METRIC_LABELS: Record<CostMetric, { label: string; description: string }> = {
-  unblended: {
-    label: 'Unblended',
-    description: 'Cost as billed each day. Upfront RI/SP fees land as a lump on their purchase day; RI/SP-covered usage shows the discounted rate. Default.',
-  },
-  blended: {
-    label: 'Blended',
-    description: 'Consolidated-billing rate — each linked account is charged the org-wide weighted average for the same usage type. Accounting construct for per-account comparisons; not what you actually pay.',
-  },
+type MetricTone = 'recommended' | 'specific' | 'rarely';
+
+interface MetricMeta {
+  readonly label: string;
+  readonly description: string;
+  readonly tag: { readonly text: string; readonly tone: MetricTone };
+}
+
+const METRIC_LABELS: Record<CostMetric, MetricMeta> = {
   amortized: {
     label: 'Amortized',
-    description: 'Spreads RI/SP purchases over the commitment term and uses effective cost for covered usage. Smooths the bursts in Unblended; best for run-rate and forecasting.',
+    tag: { text: 'Recommended', tone: 'recommended' },
+    description:
+      'Spreads RI/SP purchases evenly across the commitment term and charges each covered hour at its effective amortized rate. What AWS Cost Explorer shows by default. Use this for run-rate, forecasting, team chargeback, and almost any "what did this cost?" question.',
   },
+  list: {
+    label: 'On-demand list price',
+    tag: { text: 'Fair chargeback & sizing', tone: 'specific' },
+    description:
+      'What your usage would have cost at AWS retail rates with no commitments — hypothetical, NOT money spent. The fair view for per-team chargeback when RIs/SPs are bought at the org level: AWS allocates commitment discounts unevenly across teams, so two teams running identical workloads can have very different Amortized/Unblended bills. List price values every hour at the same retail rate. Also useful for sizing future RI/SP purchases and comparing to vendor list rates. RI/SP fee rows are filtered out automatically.',
+  },
+  unblended: {
+    label: 'Unblended',
+    tag: { text: 'Recommended for reconciliation', tone: 'recommended' },
+    description:
+      'Matches your AWS invoice line by line. Upfront RI/SP fees appear as one-day spikes in the month bought; covered usage shows the discounted rate. Use this when reconciling with finance, auditing a specific charge, or trying to answer "what did AWS actually bill on day X?".',
+  },
+};
+
+/** Display order, top to bottom. Independent from COST_METRICS (the type
+ *  enum's order) so the picker can lead with the recommended choice. */
+const METRIC_DISPLAY_ORDER: readonly CostMetric[] = ['amortized', 'list', 'unblended'];
+
+const TAG_TONE_CLASSES: Record<MetricTone, string> = {
+  recommended: 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30',
+  specific: 'bg-amber-500/15 text-amber-300 border border-amber-500/30',
+  rarely: 'bg-text-muted/10 text-text-muted border border-text-muted/20',
 };
 
 function formatExcluded(cost: number, rows: number): string {
@@ -626,7 +650,7 @@ export function CostScopeView(): React.JSX.Element {
     api.getCostScopeCapabilities().then(setCapabilities).catch(() => {
       // capabilities are advisory — if the probe fails, assume
       // everything is present (matches legacy behaviour).
-      setCapabilities({ hasEffectiveCostColumns: true, hasBlendedColumn: true, hasNetColumns: true });
+      setCapabilities({ hasEffectiveCostColumns: true, hasNetColumns: true, hasListPriceColumn: true });
     });
   }, [api]);
 
@@ -826,7 +850,7 @@ export function CostScopeView(): React.JSX.Element {
               <CardTitle className="text-base">Cost metric</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {COST_METRICS.map(metric => (
+              {METRIC_DISPLAY_ORDER.map(metric => (
                 <label key={metric} className="flex items-start gap-3 cursor-pointer group">
                   <input
                     type="radio"
@@ -837,8 +861,13 @@ export function CostScopeView(): React.JSX.Element {
                     className="mt-0.5 accent-accent"
                   />
                   <div>
-                    <span className="text-sm font-medium text-text-primary">{METRIC_LABELS[metric].label}</span>
-                    <span className="ml-2 text-xs text-text-muted">{METRIC_LABELS[metric].description}</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium text-text-primary">{METRIC_LABELS[metric].label}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider ${TAG_TONE_CLASSES[METRIC_LABELS[metric].tag.tone]}`}>
+                        {METRIC_LABELS[metric].tag.text}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-text-muted leading-relaxed">{METRIC_LABELS[metric].description}</p>
                     {metric === 'amortized' && capabilities !== null && !capabilities.hasEffectiveCostColumns && (
                       <div className="mt-1 text-xs text-warning">
                         Degraded &mdash; falls back to Unblended because your CUR export doesn&apos;t include{' '}
@@ -849,10 +878,16 @@ export function CostScopeView(): React.JSX.Element {
                         an accurate amortized view (takes one billing cycle to land).
                       </div>
                     )}
-                    {metric === 'blended' && capabilities !== null && !capabilities.hasBlendedColumn && (
+                    {metric === 'list' && capabilities !== null && !capabilities.hasListPriceColumn && (
                       <div className="mt-1 text-xs text-warning">
                         Degraded &mdash; falls back to Unblended because your CUR export doesn&apos;t include{' '}
-                        <code className="mx-1 text-[11px]">line_item_blended_cost</code>.
+                        <code className="mx-1 text-[11px]">pricing_public_on_demand_cost</code>.
+                      </div>
+                    )}
+                    {metric === 'list' && (capabilities === null || capabilities.hasListPriceColumn) && (
+                      <div className="mt-1 text-xs text-warning">
+                        Hypothetical &mdash; this is not money you actually paid. Queries are restricted to usage rows ({' '}
+                        <code className="text-[11px]">Usage</code>, <code className="text-[11px]">SavingsPlanCoveredUsage</code>, <code className="text-[11px]">DiscountedUsage</code>) because RI/SP fee rows have no list price.
                       </div>
                     )}
                   </div>

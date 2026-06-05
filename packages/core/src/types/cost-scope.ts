@@ -3,18 +3,29 @@ import type { DimensionId } from './branded.js';
 /** Which cost perspective backs the `cost` alias in every query.
  *  - `unblended`  — what you were actually billed; upfront RI/SP fees land
  *                   as a lump in their month.
- *  - `blended`    — consolidated-billing blended rate (weighted average of
- *                   usage rates across the accounts in the org). Reporting
- *                   construct; makes linked-account costs comparable.
  *  - `amortized`  — spreads RI/SP upfront payments over their term and uses
  *                   effective cost for covered usage. Best for run-rate and
  *                   forecasting.
+ *  - `list`       — hypothetical on-demand list price (`pricing_public_on_demand_cost`),
+ *                   ignoring all RI/SP discounts. Not money actually spent;
+ *                   shows what usage would have cost without commitments.
+ *                   When selected, queries are automatically restricted to
+ *                   usage-bearing line items (`Usage`, `SavingsPlanCoveredUsage`,
+ *                   `DiscountedUsage`) because RI/SP fee rows have no list price.
+ *
+ *  AWS's `blended` (consolidated-billing weighted-average) metric was
+ *  intentionally NOT shipped: AWS never extended blended math to Savings
+ *  Plans, so on any modern SP-based fleet it's nearly indistinguishable
+ *  from unblended and ships none of the chargeback fairness it was
+ *  originally designed for. Users on legacy configs with
+ *  `costMetric: 'blended'` are silently migrated to `'amortized'` at load
+ *  time (see cost-scope-validator.ts).
+ *
  *  The SQL expression that each value resolves to lives in
- *  packages/core/src/query/cost-metric.ts. Net-of-credits is a separate
- *  axis we haven't shipped yet; see `costPerspective` below when it lands. */
-export type CostMetric = 'unblended' | 'blended' | 'amortized';
+ *  packages/core/src/query/cost-metric.ts. */
+export type CostMetric = 'unblended' | 'amortized' | 'list';
 
-export const COST_METRICS: readonly CostMetric[] = ['unblended', 'blended', 'amortized'] as const;
+export const COST_METRICS: readonly CostMetric[] = ['unblended', 'amortized', 'list'] as const;
 
 /** Whether the cost column should be the as-billed ("gross") value or the
  *  post-credit/refund ("net") value. Orthogonal to the metric axis —
@@ -119,14 +130,14 @@ export interface CostScopeCapabilities {
    *  degrade to Unblended. Both columns ship only when the CUR has
    *  "Include Resource IDs" enabled. */
   readonly hasEffectiveCostColumns: boolean;
-  /** `line_item_blended_cost` is present. Usually true, but some CUR
-   *  configurations omit it — when missing we degrade Blended to
-   *  Unblended. */
-  readonly hasBlendedColumn: boolean;
   /** `line_item_net_unblended_cost` is present. Ships only when the
    *  CUR has "Include Net Columns" enabled. Without it, the Net
    *  perspective toggle falls back to Gross. */
   readonly hasNetColumns: boolean;
+  /** `pricing_public_on_demand_cost` is present. Almost always true
+   *  for CUR v2 exports but technically optional. Required for the
+   *  `list` metric — without it, list-price queries return zeros. */
+  readonly hasListPriceColumn: boolean;
 }
 
 export interface CostScopePreviewResult {

@@ -5,7 +5,7 @@ import { tagDimColumn } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
-import { costExprFor } from './cost-metric.js';
+import { costExprFor, LIST_METRIC_LINE_ITEM_TYPES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
 import { assertDateString, assertHourString, SecurityError } from './identifier-validator.js';
 
@@ -409,6 +409,15 @@ export function buildSource(opts: BuildSourceOptions): string {
       COALESCE(${tablePrefix}line_item_usage_amount, 0) AS usage_amount,
       COALESCE(${tablePrefix}pricing_public_on_demand_cost, 0) AS list_cost,`;
 
+  // The `list` metric reports on-demand list price for usage that actually
+  // happened. RI/SP fee rows (RIFee, SavingsPlanRecurringFee, etc.) have no
+  // retail equivalent, and including them just adds zero-cost rows that bloat
+  // group-by buckets. Restrict at the source level so every downstream query
+  // (Explorer, custom views, MCP, materialized base) sees a consistent slice.
+  const metricWhere = costMetric === 'list'
+    ? `\n    WHERE COALESCE(${tablePrefix}line_item_line_item_type, '') IN (${LIST_METRIC_LINE_ITEM_TYPES.map(t => `'${t}'`).join(', ')})`
+    : '';
+
   return `(
     SELECT
       ${dateExpr},
@@ -422,7 +431,7 @@ export function buildSource(opts: BuildSourceOptions): string {
       COALESCE(${tablePrefix}line_item_line_item_type, '') AS line_item_type,
       COALESCE(${tablePrefix}line_item_operation, '') AS operation,
       COALESCE(${tablePrefix}line_item_usage_type, '') AS usage_type${tagClause}
-    FROM ${fromClause}
+    FROM ${fromClause}${metricWhere}
   )`;
 }
 

@@ -23,20 +23,6 @@ export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
     ],
   },
   {
-    id: 'builtin:ri-sp-purchases',
-    name: 'RI & Savings Plan purchases',
-    description:
-      'Upfront/recurring fees for Reserved Instances and Savings Plans, plus SP negation adjustments. RI/SP-covered usage still appears under DiscountedUsage / SavingsPlanCoveredUsage and is not affected by this rule.',
-    enabled: false,
-    builtIn: true,
-    conditions: [
-      {
-        dimensionId: asDimensionId('line_item_type'),
-        values: ['RIFee', 'SavingsPlanRecurringFee', 'SavingsPlanUpfrontFee', 'SavingsPlanNegation'],
-      },
-    ],
-  },
-  {
     id: 'builtin:tax',
     name: 'Tax',
     description:
@@ -69,21 +55,20 @@ export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
       { dimensionId: asDimensionId('line_item_type'), values: ['BundledDiscount'] },
     ],
   },
-  {
-    id: 'builtin:commitment-covered-usage',
-    name: 'RI & SP covered usage',
-    description:
-      'Usage already covered by a Reserved Instance (DiscountedUsage) or Savings Plan (SavingsPlanCoveredUsage paired with SavingsPlanNegation). Toggle on to isolate on-demand spend — the workloads NOT yet covered by a commitment. SP negation is bundled so its discount does not leak when the usage it offsets is removed.',
-    enabled: false,
-    builtIn: true,
-    conditions: [
-      {
-        dimensionId: asDimensionId('line_item_type'),
-        values: ['DiscountedUsage', 'SavingsPlanCoveredUsage', 'SavingsPlanNegation'],
-      },
-    ],
-  },
 ];
+
+/** Built-in rule IDs that have been removed since older configs were written.
+ *  Loaded configs may still carry them; the merge step drops them silently and
+ *  may migrate other fields (see mergeBuiltInExclusionRules) to preserve the
+ *  spirit of the user's prior choice. */
+const RETIRED_BUILTIN_RULE_IDS: ReadonlySet<string> = new Set([
+  // Subsumed by the `list` cost metric — when that metric is selected, the
+  // query layer auto-filters the same line item types this rule used to.
+  'builtin:ri-sp-purchases',
+  // Removed entirely: this was a savings-sizing tool, not a coherent
+  // cost-scope toggle. Belongs in a dedicated commitment-coverage view.
+  'builtin:commitment-covered-usage',
+]);
 
 export const DEFAULT_COST_SCOPE: CostScopeConfig = {
   costMetric: 'unblended',
@@ -92,10 +77,28 @@ export const DEFAULT_COST_SCOPE: CostScopeConfig = {
 
 /** Merge shipped built-in rules into a loaded config. Mirrors
  *  mergeDefaultBuiltIns for dimensions: preserve user edits on existing
- *  built-ins, add any that are missing. User rules are untouched. */
+ *  built-ins, add any that are missing. User rules are untouched.
+ *
+ *  Also drops retired built-in rules (RETIRED_BUILTIN_RULE_IDS) silently —
+ *  these were superseded by the `list` cost metric. If the user had the
+ *  retired `builtin:ri-sp-purchases` rule enabled, the metric is rewritten
+ *  to `list` so the spirit of their choice (exclude RI/SP fee rows) is
+ *  preserved with the new coherent model. */
 export function mergeBuiltInExclusionRules(loaded: CostScopeConfig): CostScopeConfig {
-  const loadedById = new Map(loaded.rules.map(r => [r.id, r]));
-  const missingBuiltins = BUILTIN_EXCLUSION_RULES.filter(b => !loadedById.has(b.id));
-  if (missingBuiltins.length === 0) return loaded;
-  return { ...loaded, rules: [...loaded.rules, ...missingBuiltins] };
+  const retiredRiSpPurchasesEnabled = loaded.rules.some(
+    r => r.id === 'builtin:ri-sp-purchases' && r.enabled,
+  );
+
+  const survivingRules = loaded.rules.filter(r => !RETIRED_BUILTIN_RULE_IDS.has(r.id));
+  const survivingIds = new Set(survivingRules.map(r => r.id));
+  const missingBuiltins = BUILTIN_EXCLUSION_RULES.filter(b => !survivingIds.has(b.id));
+
+  const droppedAny = survivingRules.length !== loaded.rules.length;
+  if (!droppedAny && missingBuiltins.length === 0 && !retiredRiSpPurchasesEnabled) {
+    return loaded;
+  }
+
+  const rules = [...survivingRules, ...missingBuiltins];
+  const costMetric = retiredRiSpPurchasesEnabled ? 'list' : loaded.costMetric;
+  return { ...loaded, costMetric, rules };
 }
