@@ -115,6 +115,47 @@ jobs:
           path: playwright-report/
           retention-days: 30
 
+  version-bump:
+    name: version bumped past latest release
+    runs-on: ubuntu-latest
+    # PR-only: pushes to main shouldn't fail (main IS where the version
+    # eventually equals a fresh tag, between bump and tagging).
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # Full tag history needed to find the latest `v*` tag.
+          fetch-depth: 0
+      - name: Verify package.json version is ahead of latest released tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg_v=$(node -p "require('./package.json').version")
+          desktop_v=$(node -p "require('./packages/desktop/package.json').version")
+          if [ "$pkg_v" != "$desktop_v" ]; then
+            echo "::error::root package.json ($pkg_v) and packages/desktop/package.json ($desktop_v) disagree — bump both together."
+            exit 1
+          fi
+          latest=$(git tag -l 'v*' | sed 's/^v//' | sort -V | tail -n1)
+          echo "package.json version: $pkg_v"
+          echo "Latest released tag : ${latest:-<none>}"
+          if [ -z "$latest" ]; then
+            echo "No v* tag exists yet — nothing to compare against; skipping."
+            exit 0
+          fi
+          if [ "$pkg_v" = "$latest" ]; then
+            echo "::error file=package.json::version $pkg_v matches the latest released tag v$latest — bump it before merging so the next release has a fresh version to tag."
+            exit 1
+          fi
+          # Defence-in-depth: also reject regressions, since release.yml's
+          # tag-vs-package.json guard only catches them at tag-push time.
+          highest=$(printf '%s\n%s\n' "$pkg_v" "$latest" | sort -V | tail -n1)
+          if [ "$highest" != "$pkg_v" ]; then
+            echo "::error file=package.json::version $pkg_v is older than the latest released tag v$latest."
+            exit 1
+          fi
+          echo "OK: $pkg_v > $latest"
+
   sonarcloud:
     runs-on: ubuntu-latest
     needs: [lint, test-unit, test-e2e]
