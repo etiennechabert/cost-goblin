@@ -373,7 +373,9 @@ test.describe('Cost Scope', () => {
     await expect(page.getByRole('heading', { name: 'Exclusion rules' })).toBeVisible();
     // Rule names are rendered in inputs (they're editable).
     await expect(page.locator('input[value="AWS Premium Support"]')).toBeVisible();
-    await expect(page.locator('input[value="Tax"]')).toBeVisible();
+    // Tax rule has values=["Tax"] so two inputs match (name + value field).
+    // Just assert the name input exists.
+    await expect(page.locator('input[value="Tax"]').first()).toBeVisible();
     // RI & Savings Plan purchases rule was retired — subsumed by the
     // On-demand list price metric. Stripped silently on load.
     await expect(page.locator('input[value="RI & Savings Plan purchases"]')).toHaveCount(0);
