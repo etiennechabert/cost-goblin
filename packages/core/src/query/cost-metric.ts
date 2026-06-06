@@ -33,28 +33,63 @@ function unblendedExpr(prefix: string, net: boolean, has: (col: string) => boole
   return coalesceCol(prefix, 'line_item_unblended_cost');
 }
 
-function blendedExpr(prefix: string, net: boolean, has: (col: string) => boolean): string {
-  if (net && has('line_item_net_unblended_cost')) {
-    return coalesceCol(prefix, 'line_item_net_unblended_cost');
-  }
-  if (has('line_item_blended_cost')) {
-    return coalesceCol(prefix, 'line_item_blended_cost');
+function listExpr(prefix: string, has: (col: string) => boolean): string {
+  // On-demand list price. Net perspective is meaningless here (credits/refunds
+  // don't apply to a hypothetical retail rate), so perspective is ignored.
+  // When the column isn't present we fall back to unblended so the query still
+  // returns numbers rather than zeros — the UI gates this case with a warning.
+  if (has('pricing_public_on_demand_cost')) {
+    return coalesceCol(prefix, 'pricing_public_on_demand_cost');
   }
   return coalesceCol(prefix, 'line_item_unblended_cost');
 }
 
 function amortizedExpr(prefix: string, net: boolean, has: (col: string) => boolean): string {
-  const parts: string[] = [];
-  if (net) {
-    if (has('reservation_net_effective_cost')) parts.push(`${prefix}reservation_net_effective_cost`);
-    if (has('savings_plan_net_savings_plan_effective_cost')) parts.push(`${prefix}savings_plan_net_savings_plan_effective_cost`);
-    if (has('line_item_net_unblended_cost')) parts.push(`${prefix}line_item_net_unblended_cost`);
-  } else {
-    if (has('reservation_effective_cost')) parts.push(`${prefix}reservation_effective_cost`);
-    if (has('savings_plan_savings_plan_effective_cost')) parts.push(`${prefix}savings_plan_savings_plan_effective_cost`);
+  // True amortized cost per AWS Cost Explorer's definition, keyed on
+  // line_item_type rather than a flat COALESCE:
+  //
+  //   DiscountedUsage         → reservation_effective_cost
+  //                             (per-hour amortized RI value)
+  //   SavingsPlanCoveredUsage → savings_plan_savings_plan_effective_cost
+  //                             (per-hour amortized SP value)
+  //   RIFee / SP*Fee / SP-Negation → 0
+  //                             (these are already amortized into the
+  //                              covered-usage rows above; counting both
+  //                              double-counts the commitment cost)
+  //   everything else         → line_item_unblended_cost
+  //                             (Usage, Tax, Credit, EdpDiscount,
+  //                              BundledDiscount, Refund, …)
+  //
+  // A plain COALESCE on the effective-cost columns does NOT work here:
+  // AWS populates `reservation_effective_cost` and the SP equivalent with
+  // 0 (not NULL) for non-applicable rows, so COALESCE returns 0 for every
+  // Usage row and silently zeroes out ~90% of cost.
+  const litCol = `${prefix}line_item_line_item_type`;
+  const unblended = net && has('line_item_net_unblended_cost')
+    ? `${prefix}line_item_net_unblended_cost`
+    : `${prefix}line_item_unblended_cost`;
+  const riCol = net && has('reservation_net_effective_cost')
+    ? `${prefix}reservation_net_effective_cost`
+    : has('reservation_effective_cost') ? `${prefix}reservation_effective_cost` : null;
+  const spCol = net && has('savings_plan_net_savings_plan_effective_cost')
+    ? `${prefix}savings_plan_net_savings_plan_effective_cost`
+    : has('savings_plan_savings_plan_effective_cost') ? `${prefix}savings_plan_savings_plan_effective_cost` : null;
+
+  // Without either effective-cost family, amortized has nothing to amortize
+  // against — degrade to unblended, same as the old code.
+  if (riCol === null && spCol === null) {
+    return `COALESCE(${unblended}, 0)`;
   }
-  parts.push(`${prefix}line_item_unblended_cost`);
-  return `COALESCE(${parts.join(', ')}, 0)`;
+
+  const branches: string[] = [];
+  if (riCol !== null) {
+    branches.push(`WHEN ${litCol} = 'DiscountedUsage' THEN COALESCE(${riCol}, ${unblended}, 0)`);
+  }
+  if (spCol !== null) {
+    branches.push(`WHEN ${litCol} = 'SavingsPlanCoveredUsage' THEN COALESCE(${spCol}, ${unblended}, 0)`);
+  }
+  branches.push(`WHEN ${litCol} IN ('RIFee', 'SavingsPlanRecurringFee', 'SavingsPlanUpfrontFee', 'SavingsPlanNegation') THEN 0`);
+  return `CASE ${branches.join(' ')} ELSE COALESCE(${unblended}, 0) END`;
 }
 
 export function costExprFor(
@@ -67,7 +102,19 @@ export function costExprFor(
   const net = perspective === 'net';
   switch (metric) {
     case 'unblended': return unblendedExpr(prefix, net, has);
-    case 'blended': return blendedExpr(prefix, net, has);
     case 'amortized': return amortizedExpr(prefix, net, has);
+    case 'list': return listExpr(prefix, has);
   }
 }
+
+/** Line-item types that carry a list price. RI/SP fee rows have
+ *  `pricing_public_on_demand_cost = 0` (no retail equivalent) so the
+ *  `list` metric restricts to these types to avoid muddying the picture
+ *  with zero-cost rows that still inflate row counts and group-by buckets.
+ *
+ *  Mirrors what the Backstage AWS Cost plugin filters on. */
+export const LIST_METRIC_LINE_ITEM_TYPES: readonly string[] = [
+  'Usage',
+  'SavingsPlanCoveredUsage',
+  'DiscountedUsage',
+] as const;

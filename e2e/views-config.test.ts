@@ -350,14 +350,17 @@ test.describe('Cost Scope', () => {
     await expect(page.getByText(/Define what counts as cost/)).toBeVisible();
   });
 
-  test('cost metric picker lists Unblended, Blended, Amortized (no List)', async () => {
+  test('cost metric picker lists Amortized, List, Unblended (Blended retired)', async () => {
     await expect(page.getByRole('heading', { name: 'Cost metric' })).toBeVisible();
     // Check the actual radio values, which are unique — the labels repeat
     // in adjacent description copy so role/name queries are ambiguous.
-    await expect(page.locator('input[type="radio"][value="unblended"]')).toBeVisible();
-    await expect(page.locator('input[type="radio"][value="blended"]')).toBeVisible();
     await expect(page.locator('input[type="radio"][value="amortized"]')).toBeVisible();
-    await expect(page.locator('input[type="radio"][value="list"]')).toHaveCount(0);
+    await expect(page.locator('input[type="radio"][value="list"]')).toBeVisible();
+    await expect(page.locator('input[type="radio"][value="unblended"]')).toBeVisible();
+    // Blended was removed; AWS never extended it to Savings Plans and on an
+    // SP-based fleet it barely differs from Unblended. Legacy configs with
+    // costMetric: 'blended' are migrated to 'amortized' at load time.
+    await expect(page.locator('input[type="radio"][value="blended"]')).toHaveCount(0);
 
     // Exactly one metric radio is selected — the specific one depends on
     // what the user has saved to cost-scope.yaml, so we don't assume a
@@ -366,11 +369,16 @@ test.describe('Cost Scope', () => {
     await screenshot(page, 'cost-scope-metric');
   });
 
-  test('exclusion rules section lists both built-in rules', async () => {
+  test('exclusion rules section lists shipped built-in rules', async () => {
     await expect(page.getByRole('heading', { name: 'Exclusion rules' })).toBeVisible();
     // Rule names are rendered in inputs (they're editable).
     await expect(page.locator('input[value="AWS Premium Support"]')).toBeVisible();
-    await expect(page.locator('input[value="RI & Savings Plan purchases"]')).toBeVisible();
+    // Tax rule has values=["Tax"] so two inputs match (name + value field).
+    // Just assert the name input exists.
+    await expect(page.locator('input[value="Tax"]').first()).toBeVisible();
+    // RI & Savings Plan purchases rule was retired — subsumed by the
+    // On-demand list price metric. Stripped silently on load.
+    await expect(page.locator('input[value="RI & Savings Plan purchases"]')).toHaveCount(0);
     // Built-in pill appears next to each
     const builtInPills = page.getByText('built-in', { exact: true });
     expect(await builtInPills.count()).toBeGreaterThanOrEqual(2);

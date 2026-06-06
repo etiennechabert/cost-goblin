@@ -30,6 +30,7 @@ import {
 } from '../lib/dimensions.js';
 import { FilterBar } from '../components/filter-bar.js';
 import { FilterActiveBanner } from '../components/filter-active-banner.js';
+import { ListMetricBanner } from '../components/list-metric-banner.js';
 import {
   DateRangePicker,
   getDefaultDateRange,
@@ -272,6 +273,8 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
           defaults={defaultsFromDimensions(dimensions)}
         />
       )}
+
+      <ListMetricBanner />
 
       <FilterActiveBanner />
 

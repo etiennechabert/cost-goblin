@@ -394,10 +394,18 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const fetch = (async (): Promise<ReadonlySet<string>> => {
       try {
         const months = await listLocalMonths(ctx.dataDir, tier);
-        if (months.length === 0) return new Set<string>();
-        // First-month sample is enough — CUR schema is stable across
-        // months within a billing report (AWS bumps schema on CUR
-        // version changes, which is rare and user-initiated).
+        if (months.length === 0) {
+          // No data on disk for this tier — log loudly because the silent
+          // fallback used to surface as misleading "Degraded" warnings in
+          // Cost Scope when capability checks interpreted the empty set as
+          // "all columns missing."
+          logger.warn('column-probe: no months on disk', { tier, dataDir: ctx.dataDir });
+          return new Set<string>();
+        }
+        // Latest month sample is enough — CUR schema is stable across months
+        // within a billing report (AWS bumps schema on version changes, rare
+        // and user-initiated). Recent months also reflect any newly enabled
+        // optional columns whereas older months won't.
         const month = months.at(-1);
         const glob = `${ctx.dataDir}/aws/raw/${tier}-${String(month)}/*.parquet`;
         const rows = await ctx.db.runQuery(`DESCRIBE SELECT * FROM read_parquet('${glob}') LIMIT 0`);
@@ -407,10 +415,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
           if (typeof name === 'string') cols.add(name);
         }
         return cols;
-      } catch {
-        // If the probe fails, return an empty set. Downstream code treats
-        // "unknown columns" as "assume present" to preserve previous
-        // behaviour — we only gate columns when we KNOW they're missing.
+      } catch (err: unknown) {
+        logger.warn(`column-probe: failed — ${err instanceof Error ? err.message : String(err)}`, { tier });
         return new Set<string>();
       }
     })();

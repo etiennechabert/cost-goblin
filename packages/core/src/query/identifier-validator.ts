@@ -50,7 +50,6 @@ const ALLOWED_CUR_COLUMNS = new Set([
   'line_item_resource_id',
   'line_item_usage_amount',
   'line_item_unblended_cost',
-  'line_item_blended_cost',
   'pricing_public_on_demand_cost',
   'line_item_line_item_type',
   'line_item_operation',

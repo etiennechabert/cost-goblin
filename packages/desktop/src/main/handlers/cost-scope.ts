@@ -324,8 +324,8 @@ export function registerCostScopeHandlers(app: AppContext): void {
     return {
       hasEffectiveCostColumns:
         cols.has('reservation_effective_cost') && cols.has('savings_plan_savings_plan_effective_cost'),
-      hasBlendedColumn: cols.has('line_item_blended_cost'),
       hasNetColumns: cols.has('line_item_net_unblended_cost'),
+      hasListPriceColumn: cols.has('pricing_public_on_demand_cost'),
     };
   });
 

@@ -4,8 +4,9 @@ import {
   buildDailyCostsQuery,
 } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
-import type { CostScopeConfig } from '../types/cost-scope.js';
-import { DEFAULT_COST_SCOPE } from '../config/cost-scope-seed.js';
+import type { CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
+import { DEFAULT_COST_SCOPE, BUILTIN_EXCLUSION_RULES, mergeBuiltInExclusionRules } from '../config/cost-scope-seed.js';
+import { validateCostScope } from '../config/cost-scope-validator.js';
 import { asDimensionId, asDateString } from '../types/branded.js';
 
 const dimensions: DimensionsConfig = {
@@ -45,15 +46,22 @@ describe('cost metric column selection', () => {
     expect(sql).toMatch(/COALESCE\(line_item_unblended_cost, 0\) AS cost/);
   });
 
-  it('uses blended when metric is blended', () => {
-    const sql = buildQuery({ costMetric: 'blended', rules: [] });
-    expect(sql).toMatch(/COALESCE\(line_item_blended_cost, 0\) AS cost/);
+  it('amortized uses CASE on line_item_type per AWS amortized definition', () => {
+    const sql = buildQuery({ costMetric: 'amortized', rules: [] });
+    // DiscountedUsage → reservation_effective_cost; SP-covered → SP effective;
+    // RI/SP fee rows → 0 (already amortized into covered-usage); else unblended.
+    expect(sql).toContain("WHEN line_item_line_item_type = 'DiscountedUsage' THEN COALESCE(reservation_effective_cost, line_item_unblended_cost, 0)");
+    expect(sql).toContain("WHEN line_item_line_item_type = 'SavingsPlanCoveredUsage' THEN COALESCE(savings_plan_savings_plan_effective_cost, line_item_unblended_cost, 0)");
+    expect(sql).toContain("WHEN line_item_line_item_type IN ('RIFee', 'SavingsPlanRecurringFee', 'SavingsPlanUpfrontFee', 'SavingsPlanNegation') THEN 0");
+    expect(sql).toContain('ELSE COALESCE(line_item_unblended_cost, 0)');
   });
 
-  it('falls back through effective cost → unblended when metric is amortized', () => {
+  it('amortized does NOT use a flat COALESCE on effective-cost columns', () => {
+    // Regression: AWS populates reservation_effective_cost / savings_plan_*_effective_cost
+    // with 0 (not NULL) for non-applicable rows. A flat COALESCE returned 0 for every
+    // Usage / Tax / Credit row and silently zeroed out ~90% of cost.
     const sql = buildQuery({ costMetric: 'amortized', rules: [] });
-    // Amortized layers effective-cost columns over unblended via COALESCE.
-    expect(sql).toMatch(/COALESCE\(reservation_effective_cost, savings_plan_savings_plan_effective_cost, line_item_unblended_cost, 0\) AS cost/);
+    expect(sql).not.toMatch(/COALESCE\(reservation_effective_cost, savings_plan_savings_plan_effective_cost, line_item_unblended_cost, 0\)/);
   });
 
   it('net perspective uses line_item_net_unblended_cost when available', () => {
@@ -92,7 +100,9 @@ describe('cost metric column selection', () => {
       ]) },
       5,
     );
-    expect(sql).toMatch(/COALESCE\(reservation_net_effective_cost, savings_plan_net_savings_plan_effective_cost, line_item_net_unblended_cost, line_item_unblended_cost, 0\) AS cost/);
+    expect(sql).toContain("WHEN line_item_line_item_type = 'DiscountedUsage' THEN COALESCE(reservation_net_effective_cost, line_item_net_unblended_cost, 0)");
+    expect(sql).toContain("WHEN line_item_line_item_type = 'SavingsPlanCoveredUsage' THEN COALESCE(savings_plan_net_savings_plan_effective_cost, line_item_net_unblended_cost, 0)");
+    expect(sql).toContain('ELSE COALESCE(line_item_net_unblended_cost, 0)');
   });
 
   it('amortized + net degrades to unblended when no net/effective columns present', () => {
@@ -106,6 +116,33 @@ describe('cost metric column selection', () => {
     expect(sql).toMatch(/COALESCE\(line_item_unblended_cost, 0\) AS cost/);
     expect(sql).not.toContain('net_effective_cost');
     expect(sql).not.toContain('net_unblended_cost');
+  });
+
+  it('list metric uses pricing_public_on_demand_cost', () => {
+    const sql = buildQuery({ costMetric: 'list', rules: [] });
+    expect(sql).toMatch(/COALESCE\(pricing_public_on_demand_cost, 0\) AS cost/);
+  });
+
+  it('list metric restricts source to usage-bearing line item types', () => {
+    const sql = buildQuery({ costMetric: 'list', rules: [] });
+    // Filter is inlined in the source subquery so every downstream query
+    // (Explorer, custom views, MCP, materialized base) sees the same slice.
+    expect(sql).toContain("line_item_line_item_type, '') IN ('Usage', 'SavingsPlanCoveredUsage', 'DiscountedUsage')");
+  });
+
+  it('list metric degrades to unblended when on-demand column missing', () => {
+    const { sql } = buildCostQuery(
+      baseParams,
+      { dataDir: '/data', dimensions, costScope: { costMetric: 'list', rules: [] }, availableColumns: new Set(['line_item_unblended_cost']) },
+      5,
+    );
+    expect(sql).toMatch(/COALESCE\(line_item_unblended_cost, 0\) AS cost/);
+    expect(sql).not.toContain('pricing_public_on_demand_cost, 0) AS cost');
+  });
+
+  it('non-list metrics do not inject the line-item-type filter', () => {
+    const sql = buildQuery({ costMetric: 'unblended', rules: [] });
+    expect(sql).not.toContain("'Usage', 'SavingsPlanCoveredUsage', 'DiscountedUsage'");
   });
 });
 
@@ -276,18 +313,119 @@ describe('exclusion clauses', () => {
   });
 });
 
+describe('mergeBuiltInExclusionRules', () => {
+  function retiredRiSpRule(enabled: boolean): ExclusionRule {
+    return {
+      id: 'builtin:ri-sp-purchases',
+      name: 'RI & Savings Plan purchases',
+      enabled,
+      builtIn: true,
+      conditions: [{ dimensionId: asDimensionId('line_item_type'), values: ['RIFee'] }],
+    };
+  }
+
+  function retiredCoveredUsageRule(enabled: boolean): ExclusionRule {
+    return {
+      id: 'builtin:commitment-covered-usage',
+      name: 'RI & SP covered usage',
+      enabled,
+      builtIn: true,
+      conditions: [{ dimensionId: asDimensionId('line_item_type'), values: ['DiscountedUsage'] }],
+    };
+  }
+
+  it('does not ship the retired RI/SP rules in the default seed', () => {
+    const ids = BUILTIN_EXCLUSION_RULES.map(r => r.id);
+    expect(ids).not.toContain('builtin:ri-sp-purchases');
+    expect(ids).not.toContain('builtin:commitment-covered-usage');
+  });
+
+  it('drops retired rules from loaded configs silently', () => {
+    const loaded: CostScopeConfig = {
+      costMetric: 'unblended',
+      rules: [retiredRiSpRule(false), retiredCoveredUsageRule(false)],
+    };
+    const merged = mergeBuiltInExclusionRules(loaded);
+    const ids = merged.rules.map(r => r.id);
+    expect(ids).not.toContain('builtin:ri-sp-purchases');
+    expect(ids).not.toContain('builtin:commitment-covered-usage');
+  });
+
+  it('migrates costMetric to `list` when the retired ri-sp-purchases rule was enabled', () => {
+    const loaded: CostScopeConfig = {
+      costMetric: 'unblended',
+      rules: [retiredRiSpRule(true)],
+    };
+    const merged = mergeBuiltInExclusionRules(loaded);
+    expect(merged.costMetric).toBe('list');
+  });
+
+  it('does not change costMetric when ri-sp-purchases rule was disabled', () => {
+    const loaded: CostScopeConfig = {
+      costMetric: 'amortized',
+      rules: [retiredRiSpRule(false)],
+    };
+    const merged = mergeBuiltInExclusionRules(loaded);
+    expect(merged.costMetric).toBe('amortized');
+  });
+
+  it('preserves user-authored custom rules', () => {
+    const customRule: ExclusionRule = {
+      id: 'user-uuid',
+      name: 'Custom',
+      enabled: true,
+      builtIn: false,
+      conditions: [{ dimensionId: asDimensionId('service'), values: ['AmazonS3'] }],
+    };
+    const loaded: CostScopeConfig = {
+      costMetric: 'unblended',
+      rules: [retiredRiSpRule(false), customRule],
+    };
+    const merged = mergeBuiltInExclusionRules(loaded);
+    expect(merged.rules.find(r => r.id === 'user-uuid')).toEqual(customRule);
+  });
+
+  it('backfills surviving built-ins missing from the loaded config', () => {
+    const loaded: CostScopeConfig = { costMetric: 'unblended', rules: [] };
+    const merged = mergeBuiltInExclusionRules(loaded);
+    const ids = merged.rules.map(r => r.id);
+    expect(ids).toContain('builtin:tax');
+    expect(ids).toContain('builtin:aws-premium-support');
+  });
+
+  it('returns input unchanged when config is already coherent', () => {
+    const loaded: CostScopeConfig = {
+      costMetric: 'unblended',
+      rules: [...BUILTIN_EXCLUSION_RULES],
+    };
+    const merged = mergeBuiltInExclusionRules(loaded);
+    expect(merged).toBe(loaded);
+  });
+});
+
+describe('validateCostScope: blended migration', () => {
+  it('migrates costMetric "blended" to "amortized" silently', () => {
+    const result = validateCostScope({ costMetric: 'blended', rules: [] });
+    expect(result.costMetric).toBe('amortized');
+  });
+
+  it('rejects truly unknown costMetric values', () => {
+    expect(() => validateCostScope({ costMetric: 'nonsense', rules: [] })).toThrow(/costScope.costMetric must be one of/);
+  });
+});
+
 describe('buildDailyCostsQuery with costScope', () => {
   it('injects exclusion clause in daily costs query', () => {
     const { sql, params } = buildDailyCostsQuery(
       { ...baseParams, granularity: 'daily' },
       { dataDir: '/data', dimensions, costScope: {
-        costMetric: 'blended',
+        costMetric: 'unblended',
         rules: [{ id: 'support', name: 'Support', enabled: true, builtIn: true, conditions: [{ dimensionId: asDimensionId('service_family'), values: ['Support'] }] }],
       } },
     );
     // Single-condition rules use merged NOT IN form
     expect(sql).toContain('service_family NOT IN ($');
     expect(params).toContain('Support');
-    expect(sql).toContain('line_item_blended_cost');
+    expect(sql).toContain('line_item_unblended_cost');
   });
 });
