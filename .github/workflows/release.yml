@@ -90,4 +90,4 @@ jobs:
           NOTES=$(gh api -X POST "repos/${GITHUB_REPO}/releases/generate-notes" \
             -f tag_name="${TAG}" \
             --jq .body)
-          gh release edit "${TAG}" --notes "${NOTES}"
+          gh release edit "${TAG}" --repo "${GITHUB_REPO}" --notes "${NOTES}"
