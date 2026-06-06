@@ -50,3 +50,26 @@ jobs:
           APPLE_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_ID || '' }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'mac' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_TEAM_ID || '' }}
+
+  # electron-builder creates the GitHub release but leaves the body empty.
+  # Populate it with GitHub's auto-generated changelog (PR titles + commit
+  # subjects since the previous tag) after all matrix builds have finished
+  # uploading their assets. Single job to avoid the matrix-vs-release-body
+  # race that would happen if we patched the body from inside the build job.
+  notes:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Set release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          NOTES=$(gh api -X POST "repos/${GITHUB_REPO}/releases/generate-notes" \
+            -f tag_name="${TAG}" \
+            --jq .body)
+          gh release edit "${TAG}" --notes "${NOTES}"
