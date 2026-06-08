@@ -74,7 +74,30 @@ export interface MissingTagsParams {
   readonly minCost: Dollars;
   readonly tagDimension: DimensionId;
   readonly origin?: string | undefined;
+  /**
+   * SQL LIKE patterns whose matching tag values are treated as missing in
+   * addition to NULL and empty string. Common backfill placeholders like
+   * `unknown-{team}` or `none` are not real tags — counting them as tagged
+   * understates the true tagging gap. Pass an empty array to treat all
+   * non-null non-empty values as tagged.
+   */
+  readonly placeholderPatterns?: readonly string[] | undefined;
 }
+
+/**
+ * Default placeholder patterns used by query_missing_tags when the caller
+ * does not specify any. Matches common backfill conventions seen in real
+ * tagging pipelines.
+ */
+export const DEFAULT_PLACEHOLDER_PATTERNS: readonly string[] = [
+  'unknown-%',
+  'unknown_%',
+  'unassigned-%',
+  'unassigned_%',
+  'none',
+  'n/a',
+  'tbd',
+];
 
 /**
  * Classification of an untagged resource line:

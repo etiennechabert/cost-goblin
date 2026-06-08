@@ -255,6 +255,39 @@ describe('buildMissingTagsQuery', () => {
     const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions });
     expect(result.sql).not.toContain('r.cost >= $');
   });
+
+  it('treats default placeholder patterns as missing tags', () => {
+    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions });
+    // Each default placeholder pattern becomes a parameterized NOT ILIKE clause.
+    expect(result.sql).toMatch(/NOT ILIKE \$\d+/);
+    expect(result.params).toContain('unknown-%');
+    expect(result.params).toContain('unknown_%');
+    expect(result.params).toContain('unassigned-%');
+    expect(result.params).toContain('none');
+    expect(result.params).toContain('n/a');
+    expect(result.params).toContain('tbd');
+  });
+
+  it('uses custom placeholder patterns when provided', () => {
+    const result = buildMissingTagsQuery(
+      { ...baseParams, placeholderPatterns: ['placeholder-%', 'TODO'] },
+      { dataDir: '/data', dimensions },
+    );
+    expect(result.params).toContain('placeholder-%');
+    expect(result.params).toContain('TODO');
+    expect(result.params).not.toContain('unknown-%');
+    expect(result.params).not.toContain('none');
+  });
+
+  it('treats empty placeholderPatterns as no placeholder filtering', () => {
+    const result = buildMissingTagsQuery(
+      { ...baseParams, placeholderPatterns: [] },
+      { dataDir: '/data', dimensions },
+    );
+    expect(result.sql).not.toContain('NOT ILIKE');
+    expect(result.params).not.toContain('unknown-%');
+    expect(result.params).not.toContain('none');
+  });
 });
 
 describe('buildNonResourceCostQuery', () => {

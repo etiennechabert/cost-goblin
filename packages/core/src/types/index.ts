@@ -63,6 +63,7 @@ export type {
   SyncStatus,
   QueryState,
 } from './query.js';
+export { DEFAULT_PLACEHOLDER_PATTERNS } from './query.js';
 
 export type { Dimension, CostApi, DataInventoryResult, DataTier, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateStatus, UpdateApi } from './api.js';
 
