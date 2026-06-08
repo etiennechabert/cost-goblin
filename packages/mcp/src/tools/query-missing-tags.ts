@@ -1,6 +1,7 @@
 import {
   buildMissingTagsQuery,
   buildNonResourceCostQuery,
+  DEFAULT_PLACEHOLDER_PATTERNS,
   logger,
 } from '@costgoblin/core';
 import type { DateRange, DimensionId } from '@costgoblin/core';
@@ -31,6 +32,7 @@ export async function queryMissingTags(
     filters?: Record<string, readonly string[]> | undefined;
     minCost?: number | undefined;
     limit?: number | undefined;
+    placeholderPatterns?: readonly string[] | undefined;
     format?: string | undefined;
   },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
@@ -42,12 +44,13 @@ export async function queryMissingTags(
   const filters = toFilterMap(params.filters);
   const minCost = toDollars(params.minCost ?? 10);
   const limit = params.limit ?? 20;
+  const placeholderPatterns = params.placeholderPatterns ?? DEFAULT_PLACEHOLDER_PATTERNS;
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);
   if (empty) return emptyRangeResult(ctx, dateRange, format, `Missing Tags: ${params.tagDimension} (${dateRange.start} to ${dateRange.end})`);
 
   const resourceQuery = buildMissingTagsQuery(
-    { tagDimension, dateRange, filters, minCost },
+    { tagDimension, dateRange, filters, minCost, placeholderPatterns },
     opts,
   );
   const nonResourceQuery = buildNonResourceCostQuery(
@@ -140,6 +143,10 @@ export async function queryMissingTags(
       { label: 'Likely Untaggable Resources', value: untaggableCount, type: 'number' },
       { label: 'Likely Untaggable Cost', value: untaggableCost, type: 'currency' },
       { label: 'Non-Resource Cost', value: nonResourceCost, type: 'currency' },
+      {
+        label: 'Placeholder Patterns Treated As Missing',
+        value: placeholderPatterns.length === 0 ? '(none)' : placeholderPatterns.join(', '),
+      },
     ],
     notes,
     tables,

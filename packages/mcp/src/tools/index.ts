@@ -179,6 +179,11 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
         filters: filtersSchema,
         minCost: z.number().optional().describe('Min cost per resource to include (default $10)'),
         limit: z.number().optional().describe('Max resources to show (default 20)'),
+        placeholderPatterns: z.array(z.string()).optional().describe(
+          'SQL LIKE patterns (case-insensitive) whose matching tag values are treated as missing in addition to NULL and empty string. ' +
+          'Defaults to ["unknown-%", "unknown_%", "unassigned-%", "unassigned_%", "none", "n/a", "tbd"] — common backfill placeholders that are not real tags. ' +
+          'Pass an empty array to count any non-null non-empty value as tagged.',
+        ),
         format: formatSchema,
       },
     },

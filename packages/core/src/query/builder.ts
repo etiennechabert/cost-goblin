@@ -1,5 +1,6 @@
 import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
 import type { CostQueryParams, DailyCostsParams, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
+import { DEFAULT_PLACEHOLDER_PATTERNS } from '../types/query.js';
 import type { DimensionId } from '../types/branded.js';
 import { tagDimColumn } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
@@ -727,6 +728,21 @@ export function buildMissingTagsQuery(
     ...exclusionClauses,
   ];
 
+  // Treat placeholder values (e.g. `unknown-cyber-security`, `none`, `n/a`)
+  // as missing in addition to NULL and empty string. Without this, tagging
+  // pipelines that backfill a placeholder to satisfy "non-empty" downstream
+  // constraints would be counted as tagged and the gap would be understated.
+  const placeholderPatterns = params.placeholderPatterns ?? DEFAULT_PLACEHOLDER_PATTERNS;
+  const placeholderClauses = placeholderPatterns.map(pattern => {
+    const placeholder = qb.addParam(pattern);
+    return `${tagCheckField} NOT ILIKE ${placeholder}`;
+  });
+  const isTaggedExpr = [
+    `${tagCheckField} IS NOT NULL`,
+    `${tagCheckField} != ''`,
+    ...placeholderClauses,
+  ].join(' AND ');
+
   const sql = `
     WITH resources AS (
       SELECT
@@ -736,7 +752,7 @@ export function buildMissingTagsQuery(
         service_family,
         resource_id,
         SUM(cost) AS cost,
-        MAX(CASE WHEN ${tagCheckField} IS NOT NULL AND ${tagCheckField} != '' THEN 1 ELSE 0 END) AS has_tag,
+        MAX(CASE WHEN ${isTaggedExpr} THEN 1 ELSE 0 END) AS has_tag,
         MAX(${tagResolved.rawField}) AS closest_owner
       FROM ${source}
       WHERE ${whereConditions.join(' AND ')}

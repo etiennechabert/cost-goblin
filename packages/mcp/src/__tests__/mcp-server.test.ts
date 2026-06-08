@@ -388,6 +388,40 @@ describe('MCP server E2E', () => {
     expect(text).toMatch(/missing|untagged|tag/i);
   });
 
+  it('query_missing_tags shows default placeholder patterns in response', async () => {
+    const { text } = await client.callTool('query_missing_tags', {
+      tagDimension: 'tag_team',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      minCost: 0,
+    });
+    expect(text).toContain('Placeholder Patterns Treated As Missing');
+    expect(text).toContain('unknown-%');
+    expect(text).toContain('none');
+  });
+
+  it('query_missing_tags accepts custom placeholderPatterns', async () => {
+    const { text } = await client.callTool('query_missing_tags', {
+      tagDimension: 'tag_team',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      minCost: 0,
+      placeholderPatterns: ['todo-%', 'placeholder'],
+    });
+    expect(text).toContain('todo-%');
+    expect(text).toContain('placeholder');
+    expect(text).not.toContain('unknown-%');
+  });
+
+  it('query_missing_tags accepts empty placeholderPatterns array', async () => {
+    const { text } = await client.callTool('query_missing_tags', {
+      tagDimension: 'tag_team',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      minCost: 0,
+      placeholderPatterns: [],
+    });
+    expect(text).toContain('Placeholder Patterns Treated As Missing');
+    expect(text).toContain('(none)');
+  });
+
   // ---------- explore_data ----------
 
   it('explore_data returns raw rows', async () => {
