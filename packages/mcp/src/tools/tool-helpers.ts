@@ -19,6 +19,7 @@ import type {
   TagValue,
 } from '@costgoblin/core';
 import type { McpContext, RawRow } from '../context.js';
+import { formatResult, type ResponseFormat, type StructuredResult } from '../formatters/result.js';
 
 export function toNum(v: unknown): number {
   if (typeof v === 'number') return v;
@@ -127,6 +128,18 @@ export function toolError(message: string): { content: [{ type: 'text'; text: st
 
 export function toolResult(text: string): { content: [{ type: 'text'; text: string }] } {
   return { content: [{ type: 'text' as const, text }] };
+}
+
+export function structuredToolResult(
+  result: StructuredResult,
+  format: ResponseFormat,
+): { content: [{ type: 'text'; text: string }] } {
+  return toolResult(formatResult(result, format));
+}
+
+export function resolveFormat(raw: string | undefined): ResponseFormat {
+  if (raw === 'json' || raw === 'csv' || raw === 'markdown') return raw;
+  return 'markdown';
 }
 
 export function lookupDimension(dimensionId: string, dimensions: DimensionsConfig): { label: string; found: boolean } {

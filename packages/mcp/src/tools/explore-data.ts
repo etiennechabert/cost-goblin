@@ -6,15 +6,15 @@ import {
 } from '@costgoblin/core';
 import type { DateRange } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
-import { formatDollars, formatNumber } from '../formatters/cost.js';
-import { markdownTable, type ColumnDef } from '../formatters/markdown-table.js';
+import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
   defaultDateRange,
+  resolveFormat,
+  structuredToolResult,
   toDateRange,
   toNum,
   toStr,
   toolError,
-  toolResult,
 } from './tool-helpers.js';
 
 const VALID_COLUMNS: ReadonlySet<string> = new Set([
@@ -35,8 +35,10 @@ export async function exploreData(
     groupByColumns?: readonly string[] | undefined;
     sort?: { column: string; direction: 'asc' | 'desc' } | undefined;
     limit?: number | undefined;
+    format?: string | undefined;
   },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
+  const format = resolveFormat(params.format);
   const dateRange: DateRange = params.dateRange !== undefined
     ? toDateRange(params.dateRange)
     : defaultDateRange();
@@ -98,24 +100,24 @@ export async function exploreData(
 
     const rows = await ctx.runQuery(sql);
 
-    const columns: ColumnDef[] = [
-      ...groupByColumns.map(c => ({ header: c })),
-      { header: 'Cost', align: 'right' as const },
-      { header: 'Rows', align: 'right' as const },
+    const columns: Column[] = [
+      ...groupByColumns.map((c): Column => ({ key: c, header: c })),
+      { key: 'cost', header: 'Cost', type: 'currency' },
+      { key: 'row_count', header: 'Rows', type: 'number' },
     ];
 
-    const tableRows = rows.map(r => [
-      ...groupByColumns.map(c => toStr(r[c])),
-      formatDollars(toNum(r['cost'])),
-      formatNumber(toNum(r['row_count'])),
+    const tableRows: Cell[][] = rows.map(r => [
+      ...groupByColumns.map((c): Cell => toStr(r[c])),
+      toNum(r['cost']),
+      toNum(r['row_count']),
     ]);
 
-    const sections: string[] = [];
-    sections.push(`## Aggregated Data (${dateRange.start} to ${dateRange.end})`);
-    sections.push(`**Group By**: ${groupByColumns.join(', ')}`);
-    sections.push('');
-    sections.push(markdownTable(columns, tableRows));
-    return toolResult(sections.join('\n'));
+    const result: StructuredResult = {
+      title: `Aggregated Data (${dateRange.start} to ${dateRange.end})`,
+      meta: [{ label: 'Group By', value: groupByColumns.join(', ') }],
+      tables: [{ columns, rows: tableRows }],
+    };
+    return structuredToolResult(result, format);
   }
 
   const sortExpr = params.sort !== undefined && isValidColumn(params.sort.column)
@@ -141,30 +143,29 @@ export async function exploreData(
 
   const rows = await ctx.runQuery(sql);
 
-  const columns: ColumnDef[] = [
-    { header: 'Date' },
-    { header: 'Account' },
-    { header: 'Service' },
-    { header: 'Resource' },
-    { header: 'Cost', align: 'right' },
+  const columns: Column[] = [
+    { key: 'date', header: 'Date' },
+    { key: 'account', header: 'Account' },
+    { key: 'service', header: 'Service' },
+    { key: 'resource', header: 'Resource' },
+    { key: 'cost', header: 'Cost', type: 'currency' },
   ];
 
-  const tableRows = rows.map(r => {
+  const tableRows: Cell[][] = rows.map(r => {
     const resourceId = toStr(r['resource_id']);
     return [
       toStr(r['usage_date']),
       toStr(r['account_name']) || toStr(r['account_id']),
       toStr(r['service']),
       resourceId.length > 30 ? `${resourceId.slice(0, 27)}...` : resourceId,
-      formatDollars(toNum(r['cost'])),
+      toNum(r['cost']),
     ];
   });
 
-  const sections: string[] = [];
-  sections.push(`## Raw Data (${dateRange.start} to ${dateRange.end})`);
-  sections.push(`**Showing**: ${String(rows.length)} rows (sorted by |cost|)`);
-  sections.push('');
-  sections.push(markdownTable(columns, tableRows));
-
-  return toolResult(sections.join('\n'));
+  const result: StructuredResult = {
+    title: `Raw Data (${dateRange.start} to ${dateRange.end})`,
+    meta: [{ label: 'Showing', value: `${String(rows.length)} rows (sorted by |cost|)` }],
+    tables: [{ columns, rows: tableRows }],
+  };
+  return structuredToolResult(result, format);
 }

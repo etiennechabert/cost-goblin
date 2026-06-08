@@ -21,6 +21,12 @@ const dateRangeSchema = z.object({
 const filtersSchema = z.record(z.string(), z.array(z.string())).optional()
   .describe('Filter map: dimension ID -> array of values to include');
 
+const formatSchema = z.enum(['markdown', 'json', 'csv']).optional().describe(
+  'Response format. "markdown" (default) for human-readable tables. ' +
+  '"json" for machine-readable rows the LLM can ingest directly without re-parsing markdown — use this when reasoning over many rows or chaining queries. ' +
+  '"csv" for downstream tooling.',
+);
+
 export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'get_cost_overview',
@@ -28,6 +34,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
       description: 'Get a high-level overview of cloud costs: total spend, top services, top accounts, available dimensions. Start here.',
       inputSchema: {
         dateRange: dateRangeSchema,
+        format: formatSchema,
       },
     },
     async (params) => {
@@ -43,10 +50,13 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     'list_dimensions',
     {
       description: 'List all available dimensions (groupBy/filter fields) with their IDs, labels, types, and descriptions.',
+      inputSchema: {
+        format: formatSchema,
+      },
     },
-    async () => {
+    async (params) => {
       try {
-        return await listDimensions(ctx);
+        return await listDimensions(ctx, params);
       } catch (err: unknown) {
         return toolError(err instanceof Error ? err.message : String(err));
       }
@@ -62,6 +72,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
         dateRange: dateRangeSchema,
         filters: filtersSchema,
         limit: z.number().optional().describe('Max values to return (default 50)'),
+        format: formatSchema,
       },
     },
     async (params) => {
@@ -82,6 +93,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
         dateRange: dateRangeSchema,
         filters: filtersSchema,
         limit: z.number().optional().describe('Max rows to return (default 15)'),
+        format: formatSchema,
       },
     },
     async (params) => {
@@ -101,6 +113,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
         groupBy: z.string().optional().describe('Dimension ID to group by (default: "service")'),
         dateRange: dateRangeSchema,
         filters: filtersSchema,
+        format: formatSchema,
       },
     },
     async (params) => {
@@ -123,6 +136,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
         deltaThreshold: z.number().optional().describe('Min absolute delta to include (default $1)'),
         percentThreshold: z.number().optional().describe('Min % change to include (default 5%)'),
         limit: z.number().optional().describe('Max rows per section (default 15)'),
+        format: formatSchema,
       },
     },
     async (params) => {
@@ -143,6 +157,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
         dimension: z.string().describe('Dimension ID the entity belongs to'),
         dateRange: dateRangeSchema,
         filters: filtersSchema,
+        format: formatSchema,
       },
     },
     async (params) => {
@@ -164,6 +179,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
         filters: filtersSchema,
         minCost: z.number().optional().describe('Min cost per resource to include (default $10)'),
         limit: z.number().optional().describe('Max resources to show (default 20)'),
+        format: formatSchema,
       },
     },
     async (params) => {
@@ -189,6 +205,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
           direction: z.enum(['asc', 'desc']),
         }).optional().describe('Sort order'),
         limit: z.number().optional().describe('Max rows (default 50, max 200)'),
+        format: formatSchema,
       },
     },
     async (params) => {
@@ -208,6 +225,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
         sql: z.string().describe('SQL query (SELECT/WITH only). A "costs" CTE with columns: usage_date, account_id, account_name, region, service, service_family, line_item_type, operation, usage_type, description, resource_id, usage_amount, cost, list_cost, plus tag columns.'),
         dateRange: dateRangeSchema,
         limit: z.number().optional().describe('Max rows (default 100, max 500)'),
+        format: formatSchema,
       },
     },
     async (params) => {

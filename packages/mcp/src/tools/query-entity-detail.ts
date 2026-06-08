@@ -5,20 +5,20 @@ import {
 } from '@costgoblin/core';
 import type { DateRange, DimensionId, EntityRef } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
-import { formatDollars } from '../formatters/cost.js';
-import { markdownTable, type ColumnDef } from '../formatters/markdown-table.js';
+import type { Cell, Column, StructuredResult, Table } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
   defaultDateRange,
   lookupDimension,
   resolveEntityName,
+  resolveFormat,
+  structuredToolResult,
   toDimensionId,
   toDateRange,
   toFilterMap,
   toNum,
   toStr,
   toolError,
-  toolResult,
 } from './tool-helpers.js';
 
 export async function queryEntityDetail(
@@ -28,8 +28,10 @@ export async function queryEntityDetail(
     dimension: string;
     dateRange?: { start: string; end: string } | undefined;
     filters?: Record<string, readonly string[]> | undefined;
+    format?: string | undefined;
   },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
+  const format = resolveFormat(params.format);
   const entity: EntityRef = asEntityRef(params.entity);
   const dimension: DimensionId = toDimensionId(params.dimension);
   const dateRange: DateRange = params.dateRange !== undefined
@@ -76,55 +78,46 @@ export async function queryEntityDetail(
 
   const { label: dimLabel } = lookupDimension(dimension, opts.dimensions);
 
-  const sections: string[] = [];
-  sections.push(`## ${params.entity} (${dimLabel})`);
-  sections.push(`**Period**: ${dateRange.start} to ${dateRange.end}`);
-  sections.push(`**Total Cost**: ${formatDollars(totalCost)}`);
-  sections.push('');
+  const tables: Table[] = [];
 
   const svcSlices = [...serviceMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
   if (svcSlices.length > 0) {
-    sections.push('### Service Breakdown');
-    const svcCols: ColumnDef[] = [
-      { header: 'Service' },
-      { header: 'Cost', align: 'right' },
-      { header: '% Total', align: 'right' },
+    const svcCols: Column[] = [
+      { key: 'service', header: 'Service' },
+      { key: 'cost', header: 'Cost', type: 'currency' },
+      { key: 'pct', header: '% Total', type: 'percent' },
     ];
-    const svcRows = svcSlices.map(([name, cost]) => [
+    const svcRows: Cell[][] = svcSlices.map(([name, cost]) => [
       name,
-      formatDollars(cost),
-      totalCost > 0 ? `${((cost / totalCost) * 100).toFixed(1)}%` : '0%',
+      cost,
+      totalCost > 0 ? (cost / totalCost) * 100 : 0,
     ]);
-    sections.push(markdownTable(svcCols, svcRows));
-    sections.push('');
+    tables.push({ title: 'Service Breakdown', columns: svcCols, rows: svcRows });
   }
 
   const acctSlices = [...accountCostMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
   if (acctSlices.length > 1) {
-    sections.push('### Account Breakdown');
-    const acctCols: ColumnDef[] = [
-      { header: 'Account' },
-      { header: 'Cost', align: 'right' },
-      { header: '% Total', align: 'right' },
+    const acctCols: Column[] = [
+      { key: 'account', header: 'Account' },
+      { key: 'cost', header: 'Cost', type: 'currency' },
+      { key: 'pct', header: '% Total', type: 'percent' },
     ];
-    const acctRows = acctSlices.map(([id, cost]) => [
+    const acctRows: Cell[][] = acctSlices.map(([id, cost]) => [
       resolveEntityName(id, accountMap),
-      formatDollars(cost),
-      totalCost > 0 ? `${((cost / totalCost) * 100).toFixed(1)}%` : '0%',
+      cost,
+      totalCost > 0 ? (cost / totalCost) * 100 : 0,
     ]);
-    sections.push(markdownTable(acctCols, acctRows));
-    sections.push('');
+    tables.push({ title: 'Account Breakdown', columns: acctCols, rows: acctRows });
   }
 
   const sortedDays = [...dailyMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   if (sortedDays.length > 0 && sortedDays.length <= 31) {
-    sections.push('### Daily Trend');
-    const dailyCols: ColumnDef[] = [
-      { header: 'Date' },
-      { header: 'Cost', align: 'right' },
+    const dailyCols: Column[] = [
+      { key: 'date', header: 'Date' },
+      { key: 'cost', header: 'Cost', type: 'currency' },
     ];
-    const dailyRows = sortedDays.map(([date, data]) => [date, formatDollars(data.cost)]);
-    sections.push(markdownTable(dailyCols, dailyRows));
+    const dailyRows: Cell[][] = sortedDays.map(([date, data]) => [date, data.cost]);
+    tables.push({ title: 'Daily Trend', columns: dailyCols, rows: dailyRows });
   } else if (sortedDays.length > 31) {
     const weekMap = new Map<string, number>();
     for (const [date, data] of sortedDays) {
@@ -134,16 +127,23 @@ export async function queryEntityDetail(
       const weekKey = monday.toISOString().slice(0, 10);
       weekMap.set(weekKey, (weekMap.get(weekKey) ?? 0) + data.cost);
     }
-    sections.push('### Weekly Trend');
-    const weeklyCols: ColumnDef[] = [
-      { header: 'Week' },
-      { header: 'Cost', align: 'right' },
+    const weeklyCols: Column[] = [
+      { key: 'week', header: 'Week' },
+      { key: 'cost', header: 'Cost', type: 'currency' },
     ];
-    const weeklyRows = [...weekMap.entries()]
+    const weeklyRows: Cell[][] = [...weekMap.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([week, cost]) => [`w/${week}`, formatDollars(cost)]);
-    sections.push(markdownTable(weeklyCols, weeklyRows));
+      .map(([week, cost]) => [`w/${week}`, cost]);
+    tables.push({ title: 'Weekly Trend', columns: weeklyCols, rows: weeklyRows });
   }
 
-  return toolResult(sections.join('\n'));
+  const result: StructuredResult = {
+    title: `${params.entity} (${dimLabel})`,
+    meta: [
+      { label: 'Period', value: `${dateRange.start} to ${dateRange.end}` },
+      { label: 'Total Cost', value: totalCost, type: 'currency' },
+    ],
+    tables,
+  };
+  return structuredToolResult(result, format);
 }

@@ -428,6 +428,64 @@ describe('MCP server E2E', () => {
     expect(text).toMatch(/error|select|not allowed/i);
   });
 
+  // ---------- format parameter ----------
+
+  it('format=json returns a JSON-parseable response with meta and tables', async () => {
+    const { text } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      format: 'json',
+    });
+    const parsed = JSON.parse(text) as { title: string; meta: { label: string; value: unknown; type: string }[]; tables: { columns: { key: string; type: string }[]; rows: unknown[][] }[] };
+    expect(parsed.title).toMatch(/Costs by/);
+    expect(parsed.meta.find(m => m.label === 'Total')?.type).toBe('currency');
+    expect(typeof parsed.meta.find(m => m.label === 'Total')?.value).toBe('number');
+    expect(parsed.tables[0]?.columns.find(c => c.key === 'cost')?.type).toBe('currency');
+    expect(parsed.tables[0]?.rows.length).toBeGreaterThan(0);
+    const firstRow = parsed.tables[0]?.rows[0];
+    expect(Array.isArray(firstRow)).toBe(true);
+    expect(typeof firstRow?.[1]).toBe('number');
+  });
+
+  it('format=csv returns CSV with header and data rows', async () => {
+    const { text } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      format: 'csv',
+    });
+    const lines = text.split('\n');
+    const dataLines = lines.filter(l => !l.startsWith('#') && l.length > 0);
+    expect(dataLines[0]).toContain('Service');
+    expect(dataLines[0]).toContain('Cost');
+    expect(dataLines.length).toBeGreaterThan(1);
+    expect(dataLines[1]).toMatch(/^[^,]+,[\d.]+,/);
+  });
+
+  it('format=markdown is the default and matches no-format behavior', async () => {
+    const { text: defaultText } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+    });
+    const { text: mdText } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      format: 'markdown',
+    });
+    expect(defaultText).toBe(mdText);
+    expect(defaultText).toContain('|');
+    expect(defaultText).toMatch(/## Costs by/);
+  });
+
+  it('format=json on get_cost_overview includes multiple tables', async () => {
+    const { text } = await client.callTool('get_cost_overview', {
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      format: 'json',
+    });
+    const parsed = JSON.parse(text) as { tables: { title?: string }[] };
+    expect(parsed.tables.length).toBeGreaterThanOrEqual(1);
+    expect(parsed.tables.some(t => t.title === 'Top Services')).toBe(true);
+  });
+
   // ---------- Error handling ----------
 
   it('returns error for invalid dimension', async () => {
