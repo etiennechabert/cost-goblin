@@ -7,8 +7,14 @@ import {
   logger,
 } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
-import { markdownTable, type ColumnDef } from '../formatters/markdown-table.js';
-import { toStr, toolError, toolResult } from './tool-helpers.js';
+import type { Cell, Column, StructuredResult } from '../formatters/result.js';
+import {
+  resolveFormat,
+  structuredToolResult,
+  toStr,
+  toolError,
+  toolResult,
+} from './tool-helpers.js';
 
 const MAX_LIMIT = 500;
 
@@ -24,8 +30,10 @@ export async function runSql(
     sql: string;
     limit?: number | undefined;
     dateRange?: { start: string; end: string } | undefined;
+    format?: string | undefined;
   },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
+  const format = resolveFormat(params.format);
   const userSql = params.sql.trim();
   const limit = Math.min(params.limit ?? 100, MAX_LIMIT);
 
@@ -101,24 +109,37 @@ export async function runSql(
   }
   const columnNames = Object.keys(firstRow);
 
-  const columns: ColumnDef[] = columnNames.map(name => ({ header: name }));
-  const tableRows = rows.map(r =>
-    columnNames.map(name => {
+  const columns: Column[] = columnNames.map(name => {
+    const sample = firstRow[name];
+    return {
+      key: name,
+      header: name,
+      type: typeof sample === 'number' ? 'number' : 'string',
+    };
+  });
+
+  const tableRows: Cell[][] = rows.map(r =>
+    columnNames.map((name): Cell => {
       const val = r[name];
-      if (typeof val === 'number') {
-        return Number.isInteger(val) ? String(val) : val.toFixed(4);
-      }
+      if (typeof val === 'number') return val;
+      if (typeof val === 'bigint') return Number(val);
       return toStr(val);
     }),
   );
 
-  const sections: string[] = [];
-  sections.push(`## Query Result (${String(rows.length)} rows)`);
-  sections.push('');
-  sections.push(markdownTable(columns, tableRows));
+  const meta: { label: string; value: string | number; type?: 'number' }[] = [
+    { label: 'Rows', value: rows.length, type: 'number' },
+  ];
+  const notes: string[] = [];
   if (rows.length >= limit) {
-    sections.push(`\n*Results limited to ${String(limit)} rows.*`);
+    notes.push(`*Results limited to ${String(limit)} rows.*`);
   }
 
-  return toolResult(sections.join('\n'));
+  const result: StructuredResult = {
+    title: `Query Result`,
+    meta,
+    notes,
+    tables: [{ columns, rows: tableRows }],
+  };
+  return structuredToolResult(result, format);
 }
