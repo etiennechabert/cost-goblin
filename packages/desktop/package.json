@@ -12,29 +12,29 @@
     "dev": "npm run build:worker && npm run build:preload && electron-vite dev"
   },
   "dependencies": {
-    "@aws-sdk/client-organizations": "^3.1041.0",
-    "@aws-sdk/client-s3": "^3.1041.0",
-    "@aws-sdk/client-ssm": "^3.1041.0",
-    "@duckdb/node-api": "^1.5.2-r.1",
-    "@smithy/shared-ini-file-loader": "^4.4.9",
-    "electron-updater": "^6.8.3",
-    "yaml": "^2.8.4"
+    "@aws-sdk/client-organizations": "^3.1063.0",
+    "@aws-sdk/client-s3": "^3.1063.0",
+    "@aws-sdk/client-ssm": "^3.1063.0",
+    "@duckdb/node-api": "^1.5.2-r.2",
+    "@smithy/shared-ini-file-loader": "^4.5.6",
+    "electron-updater": "^6.8.9",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@costgoblin/core": "*",
     "@costgoblin/mcp": "*",
     "@costgoblin/ui": "*",
-    "@tailwindcss/vite": "^4.2.4",
-    "@types/react": "^19.2.14",
+    "@tailwindcss/vite": "^4.3.0",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
-    "electron": "^41.5.0",
+    "@vitejs/plugin-react": "^6.0.2",
+    "electron": "^42.3.3",
     "electron-vite": "^5.0.0",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "tailwindcss": "^4.2.4",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.10",
-    "vitest": "^4.1.5"
+    "vite": "^8.0.16",
+    "vitest": "^4.1.8"
   }
 }
