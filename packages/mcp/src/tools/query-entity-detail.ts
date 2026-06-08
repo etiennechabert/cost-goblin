@@ -8,7 +8,9 @@ import type { McpContext } from '../context.js';
 import type { Cell, Column, StructuredResult, Table } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
+  computeDataCoverage,
   defaultDateRange,
+  emptyRangeResult,
   lookupDimension,
   resolveEntityName,
   resolveFormat,
@@ -18,7 +20,6 @@ import {
   toFilterMap,
   toNum,
   toStr,
-  toolError,
 } from './tool-helpers.js';
 
 export async function queryEntityDetail(
@@ -40,7 +41,7 @@ export async function queryEntityDetail(
   const filters = toFilterMap(params.filters);
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);
-  if (empty) return toolError(`No data for ${dateRange.start} to ${dateRange.end}.`);
+  if (empty) return emptyRangeResult(ctx, dateRange, format, `${params.entity} (${dateRange.start} to ${dateRange.end})`);
 
   const { sql, params: queryParams } = buildEntityDetailQuery(
     { entity, dimension, dateRange, filters },
@@ -137,8 +138,10 @@ export async function queryEntityDetail(
     tables.push({ title: 'Weekly Trend', columns: weeklyCols, rows: weeklyRows });
   }
 
+  const coverage = await computeDataCoverage(ctx, dateRange);
   const result: StructuredResult = {
     title: `${params.entity} (${dimLabel})`,
+    coverage,
     meta: [
       { label: 'Period', value: `${dateRange.start} to ${dateRange.end}` },
       { label: 'Total Cost', value: totalCost, type: 'currency' },

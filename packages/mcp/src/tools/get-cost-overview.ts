@@ -8,7 +8,9 @@ import type { McpContext } from '../context.js';
 import type { Cell, Column, StructuredResult, Table } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
+  computeDataCoverage,
   defaultDateRange,
+  emptyRangeResult,
   resolveFormat,
   structuredToolResult,
   toDateRange,
@@ -34,7 +36,7 @@ export async function getCostOverview(
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);
   if (empty) {
-    return toolError(`No data available for the period ${dateRange.start} to ${dateRange.end}. Available months: ${months.join(', ')}`);
+    return emptyRangeResult(ctx, dateRange, format, `Cost Overview (${dateRange.start} to ${dateRange.end})`);
   }
 
   const emptyFilters: FilterMap = {};
@@ -112,11 +114,12 @@ export async function getCostOverview(
     });
   }
 
+  const coverage = await computeDataCoverage(ctx, dateRange);
   const result: StructuredResult = {
     title: `Cost Overview (${dateRange.start} to ${dateRange.end})`,
+    coverage,
     meta: [
       { label: 'Total Cost', value: serviceTotalCost, type: 'currency' },
-      { label: 'Data Range', value: `${months[0] ?? '?'} to ${months[months.length - 1] ?? '?'}` },
       { label: 'Available Dimensions', value: enabledDims.join(', ') },
     ],
     tables,

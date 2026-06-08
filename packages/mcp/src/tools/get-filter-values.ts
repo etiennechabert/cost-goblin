@@ -10,6 +10,7 @@ import type { McpContext } from '../context.js';
 import { truncateFooter, truncateRows } from '../formatters/cost.js';
 import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
+  computeDataCoverage,
   defaultDateRange,
   lookupDimension,
   resolveEntityName,
@@ -118,8 +119,10 @@ export async function getFilterValues(
     totalCost > 0 ? (i.cost / totalCost) * 100 : 0,
   ]);
 
+  const coverage = await computeDataCoverage(ctx, dateRange);
   const result: StructuredResult = {
     title: `${dimLabel} Values (${dateRange.start} to ${dateRange.end})`,
+    coverage,
     meta: [
       { label: 'Total', value: totalCost, type: 'currency' },
       { label: 'Distinct Values', value: items.length, type: 'number' },

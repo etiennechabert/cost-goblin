@@ -8,7 +8,9 @@ import type { McpContext } from '../context.js';
 import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
+  computeDataCoverage,
   defaultDateRange,
+  emptyRangeResult,
   lookupDimension,
   resolveFormat,
   structuredToolResult,
@@ -16,7 +18,6 @@ import {
   toDateRange,
   toFilterMap,
   toNum,
-  toolError,
 } from './tool-helpers.js';
 
 export async function queryDailyCosts(
@@ -38,7 +39,7 @@ export async function queryDailyCosts(
   const filters = toFilterMap(params.filters);
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);
-  if (empty) return toolError(`No data for ${dateRange.start} to ${dateRange.end}.`);
+  if (empty) return emptyRangeResult(ctx, dateRange, format, `Daily Costs (${dateRange.start} to ${dateRange.end})`);
 
   const { sql, params: queryParams } = buildDailyCostsQuery(
     { groupBy, dateRange, filters },
@@ -138,8 +139,10 @@ export async function queryDailyCosts(
     });
   }
 
+  const coverage = await computeDataCoverage(ctx, dateRange);
   const result: StructuredResult = {
     title: `${useWeekly ? 'Weekly' : 'Daily'} Costs by ${dimLabel} (${dateRange.start} to ${dateRange.end})`,
+    coverage,
     meta: [{ label: 'Total', value: totalCost, type: 'currency' }],
     tables: [{ columns, rows: tableRows }],
   };

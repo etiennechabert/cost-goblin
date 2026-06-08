@@ -1,7 +1,7 @@
 import { tagDimColumn } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import type { Cell, Column, StructuredResult } from '../formatters/result.js';
-import { resolveFormat, structuredToolResult } from './tool-helpers.js';
+import { computeDataCoverage, resolveFormat, structuredToolResult } from './tool-helpers.js';
 
 export async function listDimensions(
   ctx: McpContext,
@@ -38,8 +38,10 @@ export async function listDimensions(
     ]);
   }
 
+  const coverage = await computeDataCoverage(ctx);
   const result: StructuredResult = {
     title: 'Available Dimensions',
+    coverage,
     tables: [{ columns, rows }],
     notes: ['Use the `id` column value as the `groupBy`, `dimensionId`, or filter key in other tools.'],
   };

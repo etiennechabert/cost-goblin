@@ -8,13 +8,14 @@ import type { DateRange } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
 import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
+  computeDataCoverage,
   defaultDateRange,
+  emptyRangeResult,
   resolveFormat,
   structuredToolResult,
   toDateRange,
   toNum,
   toStr,
-  toolError,
 } from './tool-helpers.js';
 
 const VALID_COLUMNS: ReadonlySet<string> = new Set([
@@ -50,7 +51,7 @@ export async function exploreData(
   const available = await listLocalMonths(ctx.dataDir, 'daily');
   const required = computePeriodsInRange(dateRange);
   const periods = required.filter(p => available.includes(p));
-  if (periods.length === 0) return toolError(`No data for ${dateRange.start} to ${dateRange.end}.`);
+  if (periods.length === 0) return emptyRangeResult(ctx, dateRange, format, `Explore Data (${dateRange.start} to ${dateRange.end})`);
 
   const matSource = ctx.materializedBase.getSource(dateRange, 'daily');
   const source = matSource ?? buildSource({
@@ -112,8 +113,10 @@ export async function exploreData(
       toNum(r['row_count']),
     ]);
 
+    const coverage = await computeDataCoverage(ctx, dateRange);
     const result: StructuredResult = {
       title: `Aggregated Data (${dateRange.start} to ${dateRange.end})`,
+      coverage,
       meta: [{ label: 'Group By', value: groupByColumns.join(', ') }],
       tables: [{ columns, rows: tableRows }],
     };
@@ -162,8 +165,10 @@ export async function exploreData(
     ];
   });
 
+  const coverage = await computeDataCoverage(ctx, dateRange);
   const result: StructuredResult = {
     title: `Raw Data (${dateRange.start} to ${dateRange.end})`,
+    coverage,
     meta: [{ label: 'Showing', value: `${String(rows.length)} rows (sorted by |cost|)` }],
     tables: [{ columns, rows: tableRows }],
   };
