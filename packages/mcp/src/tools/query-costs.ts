@@ -8,7 +8,9 @@ import { truncateRows, truncateFooter } from '../formatters/cost.js';
 import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
+  computeDataCoverage,
   defaultDateRange,
+  emptyRangeResult,
   lookupDimension,
   resolveEntityName,
   resolveFormat,
@@ -18,7 +20,6 @@ import {
   toFilterMap,
   toNum,
   toStr,
-  toolError,
 } from './tool-helpers.js';
 
 export async function queryCosts(
@@ -40,7 +41,7 @@ export async function queryCosts(
   const limit = params.limit ?? 15;
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);
-  if (empty) return toolError(`No data for ${dateRange.start} to ${dateRange.end}.`);
+  if (empty) return emptyRangeResult(ctx, dateRange, format, `Costs by ${params.groupBy} (${dateRange.start} to ${dateRange.end})`);
 
   const { sql, params: queryParams } = buildCostQuery(
     { groupBy, dateRange, filters },
@@ -104,8 +105,10 @@ export async function queryCosts(
     ...topServices.map((s): Cell => r.serviceCosts[s] ?? 0),
   ]);
 
+  const coverage = await computeDataCoverage(ctx, dateRange);
   const result: StructuredResult = {
     title: `Costs by ${dimLabel} (${dateRange.start} to ${dateRange.end})`,
+    coverage,
     meta: [{ label: 'Total', value: grandTotal, type: 'currency' }],
     tables: [{ columns, rows: tableRows, footer: truncateFooter(hiddenCount, hiddenCost) }],
   };

@@ -10,7 +10,9 @@ import { formatDollars, truncateRows, truncateFooter } from '../formatters/cost.
 import type { Cell, Column, StructuredResult, Table } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
+  computeDataCoverage,
   defaultDateRange,
+  emptyRangeResult,
   lookupDimension,
   resolveEntityName,
   resolveFormat,
@@ -21,7 +23,6 @@ import {
   toFilterMap,
   toNum,
   toStr,
-  toolError,
 } from './tool-helpers.js';
 
 export async function queryTrends(
@@ -47,7 +48,7 @@ export async function queryTrends(
   const limit = params.limit ?? 15;
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);
-  if (empty) return toolError(`No data for ${dateRange.start} to ${dateRange.end}.`);
+  if (empty) return emptyRangeResult(ctx, dateRange, format, `Cost Trends (${dateRange.start} to ${dateRange.end})`);
 
   const { sql, params: queryParams } = buildTrendQuery(
     { groupBy, dateRange, filters, deltaThreshold, percentThreshold },
@@ -135,8 +136,10 @@ export async function queryTrends(
     notes.push('*No significant savings found.*');
   }
 
+  const coverage = await computeDataCoverage(ctx, dateRange);
   const result: StructuredResult = {
     title: `Cost Trends by ${dimLabel} (${dateRange.start} to ${dateRange.end})`,
+    coverage,
     notes,
     tables,
   };

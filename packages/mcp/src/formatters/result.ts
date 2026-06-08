@@ -3,6 +3,40 @@ import { formatDollars, formatPercent, formatDelta, formatNumber } from './cost.
 
 export type ResponseFormat = 'markdown' | 'json' | 'csv';
 
+export interface DataCoverage {
+  readonly availableMonths: readonly string[];
+  readonly latestDay: string | null;
+  readonly earliestDay: string | null;
+  readonly lagDays: number | null;
+  readonly totalDays: number | null;
+  /** Months between earliest and latest available with NO data (global gaps). */
+  readonly missingPeriods: readonly string[];
+  /** Months from the requested range with no data. */
+  readonly missingInRange: readonly string[];
+}
+
+export function dataCoverageBanner(coverage: DataCoverage): string {
+  if (coverage.availableMonths.length === 0) {
+    return '*Data coverage: no synced data found.*';
+  }
+  const parts: string[] = [];
+  if (coverage.earliestDay !== null && coverage.latestDay !== null && coverage.totalDays !== null) {
+    parts.push(`${coverage.earliestDay} to ${coverage.latestDay} (${String(coverage.totalDays)} days)`);
+  }
+  if (coverage.latestDay !== null && coverage.lagDays !== null) {
+    const lagWord = coverage.lagDays === 0 ? 'today'
+      : coverage.lagDays === 1 ? '1 day ago'
+      : `${String(coverage.lagDays)} days ago`;
+    parts.push(`Latest day: ${coverage.latestDay} (${lagWord})`);
+  }
+  if (coverage.missingInRange.length > 0) {
+    parts.push(`Missing periods in your requested range: ${coverage.missingInRange.join(', ')}`);
+  } else if (coverage.missingPeriods.length > 0) {
+    parts.push(`Missing periods: ${coverage.missingPeriods.join(', ')}`);
+  }
+  return `*Data coverage: ${parts.join('. ')}.*`;
+}
+
 export type CellType = 'string' | 'currency' | 'percent' | 'change' | 'number' | 'delta';
 
 export type Cell = string | number | null;
@@ -32,6 +66,7 @@ export interface StructuredResult {
   readonly meta?: readonly MetaField[];
   readonly notes?: readonly string[];
   readonly tables?: readonly Table[];
+  readonly coverage?: DataCoverage;
 }
 
 function formatCell(value: Cell, type: CellType | undefined): string {
@@ -75,6 +110,10 @@ function formatTableMarkdown(table: Table): string {
 
 export function formatAsMarkdown(result: StructuredResult): string {
   const parts: string[] = [];
+  if (result.coverage !== undefined) {
+    parts.push(dataCoverageBanner(result.coverage));
+    parts.push('');
+  }
   parts.push(`## ${result.title}`);
   parts.push('');
   if (result.meta !== undefined) {
@@ -115,6 +154,7 @@ interface JsonMetaField {
 
 interface JsonResult {
   readonly title: string;
+  readonly coverage?: DataCoverage;
   readonly meta?: readonly JsonMetaField[];
   readonly notes?: readonly string[];
   readonly tables?: readonly JsonTable[];
@@ -123,6 +163,7 @@ interface JsonResult {
 export function formatAsJson(result: StructuredResult): string {
   const out: JsonResult = {
     title: result.title,
+    ...(result.coverage !== undefined ? { coverage: result.coverage } : {}),
     ...(result.meta !== undefined ? {
       meta: result.meta.map(f => ({ label: f.label, value: f.value, type: f.type ?? 'string' })),
     } : {}),
@@ -158,6 +199,9 @@ function cellToCsv(value: Cell, type: CellType | undefined): string {
 
 export function formatAsCsv(result: StructuredResult): string {
   const lines: string[] = [];
+  if (result.coverage !== undefined) {
+    lines.push(`# ${dataCoverageBanner(result.coverage).replace(/^\*|\*$/g, '')}`);
+  }
   lines.push(`# ${result.title}`);
   if (result.meta !== undefined) {
     for (const field of result.meta) {

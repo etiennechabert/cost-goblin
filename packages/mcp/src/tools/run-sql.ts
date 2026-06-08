@@ -9,6 +9,8 @@ import {
 import type { McpContext } from '../context.js';
 import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
+  computeDataCoverage,
+  emptyRangeResult,
   resolveFormat,
   structuredToolResult,
   toStr,
@@ -70,7 +72,7 @@ export async function runSql(
     const required = computePeriodsInRange(dateRange);
     const periods = required.filter(p => available.includes(p));
     if (periods.length === 0) {
-      return toolError(`No data available for ${dateRange.start} to ${dateRange.end}.`);
+      return emptyRangeResult(ctx, dateRange, format, `Query Result`);
     }
     const source = buildSource({
       dataDir: ctx.dataDir,
@@ -135,8 +137,10 @@ export async function runSql(
     notes.push(`*Results limited to ${String(limit)} rows.*`);
   }
 
+  const coverage = await computeDataCoverage(ctx, dateRange);
   const result: StructuredResult = {
     title: `Query Result`,
+    coverage,
     meta,
     notes,
     tables: [{ columns, rows: tableRows }],

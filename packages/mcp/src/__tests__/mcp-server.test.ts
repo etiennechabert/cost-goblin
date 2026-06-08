@@ -428,6 +428,49 @@ describe('MCP server E2E', () => {
     expect(text).toMatch(/error|select|not allowed/i);
   });
 
+  // ---------- data-coverage banner ----------
+
+  it('every response includes a data-coverage banner', async () => {
+    const { text } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+    });
+    expect(text).toMatch(/\*Data coverage:/);
+    expect(text).toMatch(/Latest day: \d{4}-\d{2}-\d{2}/);
+  });
+
+  it('coverage banner makes missing requested periods explicit on partial overlap', async () => {
+    // 2025-12 is missing, 2026-01 is present in fixtures — banner should call this out
+    const { text } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2025-12-01', end: '2026-01-31' },
+    });
+    expect(text).toMatch(/Missing periods in your requested range: 2025-12/);
+  });
+
+  it('coverage is included as a structured field when format=json', async () => {
+    const { text } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      format: 'json',
+    });
+    const parsed = JSON.parse(text) as { coverage: { latestDay: string; lagDays: number; availableMonths: string[]; missingPeriods: string[]; missingInRange: string[] } };
+    expect(parsed.coverage).toBeDefined();
+    expect(parsed.coverage.latestDay).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(Array.isArray(parsed.coverage.availableMonths)).toBe(true);
+    expect(parsed.coverage.availableMonths.length).toBeGreaterThan(0);
+    expect(typeof parsed.coverage.lagDays).toBe('number');
+  });
+
+  it('coverage is included as a CSV comment when format=csv', async () => {
+    const { text } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      format: 'csv',
+    });
+    expect(text).toMatch(/^# Data coverage:/m);
+  });
+
   // ---------- format parameter ----------
 
   it('format=json returns a JSON-parseable response with meta and tables', async () => {

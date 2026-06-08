@@ -9,7 +9,9 @@ import { truncateRows, truncateFooter } from '../formatters/cost.js';
 import type { Cell, Column, StructuredResult, Table } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
+  computeDataCoverage,
   defaultDateRange,
+  emptyRangeResult,
   resolveEntityName,
   resolveFormat,
   structuredToolResult,
@@ -19,7 +21,6 @@ import {
   toFilterMap,
   toNum,
   toStr,
-  toolError,
 } from './tool-helpers.js';
 
 export async function queryMissingTags(
@@ -43,7 +44,7 @@ export async function queryMissingTags(
   const limit = params.limit ?? 20;
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);
-  if (empty) return toolError(`No data for ${dateRange.start} to ${dateRange.end}.`);
+  if (empty) return emptyRangeResult(ctx, dateRange, format, `Missing Tags: ${params.tagDimension} (${dateRange.start} to ${dateRange.end})`);
 
   const resourceQuery = buildMissingTagsQuery(
     { tagDimension, dateRange, filters, minCost },
@@ -129,8 +130,10 @@ export async function queryMissingTags(
     notes.push('*No actionable untagged resources above the cost threshold.*');
   }
 
+  const coverage = await computeDataCoverage(ctx, dateRange);
   const result: StructuredResult = {
     title: `Missing Tags: ${params.tagDimension} (${dateRange.start} to ${dateRange.end})`,
+    coverage,
     meta: [
       { label: 'Actionable Resources', value: actionableCount, type: 'number' },
       { label: 'Actionable Cost', value: actionableCost, type: 'currency' },
