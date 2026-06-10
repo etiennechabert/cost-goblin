@@ -81,8 +81,28 @@ export async function createMcpHttpServer(ctx: McpContext, port?: number): Promi
     await mcpServer.connect(transport as unknown as Transport);
   }
 
+  // Only loopback Host headers are accepted. The server binds 127.0.0.1/::1, but
+  // a Host check is still needed to defeat DNS rebinding: a browser tricked into
+  // resolving an attacker domain to 127.0.0.1 would send that domain in Host, so
+  // rejecting non-loopback Hosts stops a malicious web page from driving the
+  // (unauthenticated) MCP tools against the user's local data.
+  const allowedHosts = new Set<string>();
+  for (const h of ['127.0.0.1', 'localhost', '[::1]']) {
+    allowedHosts.add(h);
+    allowedHosts.add(`${h}:${String(resolvedPort)}`);
+  }
+  function isAllowedHost(hostHeader: string | undefined): boolean {
+    return hostHeader !== undefined && allowedHosts.has(hostHeader.toLowerCase());
+  }
+
   const requestHandler = (req: IncomingMessage, res: ServerResponse): void => {
     const url = req.url ?? '';
+
+    if (!isAllowedHost(req.headers.host)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' })
+        .end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Forbidden: invalid Host header' }, id: null }));
+      return;
+    }
 
     if (url === '/mcp' && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
       const sessionId = req.headers['mcp-session-id'];

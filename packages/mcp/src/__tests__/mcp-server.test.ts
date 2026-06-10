@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
+import { request as httpRequest } from 'node:http';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -460,6 +461,27 @@ describe('MCP server E2E', () => {
     });
     expect(isError).toBe(true);
     expect(text).toMatch(/error|select|not allowed/i);
+  });
+
+  it('run_sql blocks reading local files via DuckDB file functions', async () => {
+    const { text, isError } = await client.callTool('run_sql', {
+      sql: "SELECT * FROM read_text('/etc/hostname')",
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+    });
+    expect(isError).toBe(true);
+    expect(text).toMatch(/not allowed|read_text/i);
+  });
+
+  it('rejects requests with a non-loopback Host header (anti DNS-rebinding)', async () => {
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = httpRequest(
+        { host: '127.0.0.1', port, path: '/health', method: 'GET', headers: { Host: 'evil.example.com' } },
+        (res) => { res.resume(); resolve(res.statusCode ?? 0); },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    expect(status).toBe(403);
   });
 
   // ---------- data-coverage banner ----------
