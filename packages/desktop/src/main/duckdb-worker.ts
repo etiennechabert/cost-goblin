@@ -202,13 +202,19 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
     return;
   }
 
-  queuedIds.add(req.id);
-  const pool = await getPool();
-  const conn = await pool.acquire();
-  queuedIds.delete(req.id);
-  send({ kind: 'started', id: req.id });
-
+  // pool/conn are hoisted and the acquisition runs inside the try so that a
+  // getPool() or pool.acquire() rejection is turned into an error response by
+  // the catch below — otherwise the request would never settle and the caller
+  // would hang forever (and its id would leak in queuedIds).
+  let pool: ResourcePool<DuckDBConnection> | undefined;
+  let conn: DuckDBConnection | undefined;
   try {
+    queuedIds.add(req.id);
+    pool = await getPool();
+    conn = await pool.acquire();
+    queuedIds.delete(req.id);
+    send({ kind: 'started', id: req.id });
+
     // Check after acquiring — cancel may have arrived while queued
     if (cancelledIds.has(req.id)) {
       cancelledIds.delete(req.id);
@@ -233,9 +239,10 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
     cancelledIds.delete(req.id);
     send({ kind: 'error', id: req.id, message: isCancelled ? 'Query cancelled' : message });
   } finally {
+    queuedIds.delete(req.id);
     runningIds.delete(req.id);
     runningConns.delete(req.id);
-    pool.release(conn);
+    if (pool !== undefined && conn !== undefined) pool.release(conn);
   }
 }
 
@@ -247,13 +254,17 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
     return;
   }
 
-  queuedIds.add(req.id);
-  const pool = await getPool();
-  const conn = await pool.acquire();
-  queuedIds.delete(req.id);
-  send({ kind: 'started', id: req.id });
-
+  // See handleRequest: acquisition runs inside the try so a pool failure can't
+  // leave the request hung.
+  let pool: ResourcePool<DuckDBConnection> | undefined;
+  let conn: DuckDBConnection | undefined;
   try {
+    queuedIds.add(req.id);
+    pool = await getPool();
+    conn = await pool.acquire();
+    queuedIds.delete(req.id);
+    send({ kind: 'started', id: req.id });
+
     // Check after acquiring — cancel may have arrived while queued
     if (cancelledIds.has(req.id)) {
       cancelledIds.delete(req.id);
@@ -278,9 +289,10 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
     cancelledIds.delete(req.id);
     send({ kind: 'error', id: req.id, message: isCancelled ? 'Query cancelled' : message });
   } finally {
+    queuedIds.delete(req.id);
     runningIds.delete(req.id);
     runningConns.delete(req.id);
-    pool.release(conn);
+    if (pool !== undefined && conn !== undefined) pool.release(conn);
   }
 }
 
@@ -308,11 +320,25 @@ async function handleConfigure(req: { kind: 'configure'; tempDir: string }): Pro
   }
 }
 
+// Last-resort guard: the handlers settle every request themselves, but if one
+// ever rejects unexpectedly we still send an error response (and clean up the
+// id) so the caller never hangs waiting on a reply that won't come.
+function reportUnexpectedFailure(id: number, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  cancelledIds.delete(id);
+  queuedIds.delete(id);
+  runningIds.delete(id);
+  runningConns.delete(id);
+  send({ kind: 'error', id, message: `DuckDB worker error: ${message}` });
+}
+
 port.on('message', (msg: unknown) => {
   if (isQueryRequest(msg)) {
-    handleRequest(msg).catch(() => undefined);
+    const { id } = msg;
+    handleRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); });
   } else if (isPreparedQueryRequest(msg)) {
-    handlePreparedRequest(msg).catch(() => undefined);
+    const { id } = msg;
+    handlePreparedRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); });
   } else if (isCancelRequest(msg)) {
     handleCancelPending();
   } else if (isConfigureRequest(msg)) {
