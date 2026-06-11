@@ -1,11 +1,21 @@
 import type { Table } from '@tanstack/react-table';
 import { Download } from 'lucide-react';
 
-function escapeCsv(value: unknown): string {
+// A leading =, +, -, @, tab, or CR makes Excel/Sheets evaluate the cell as a
+// formula. Cell values can come from billing-derived text (resource tag values
+// an AWS user controls), so neutralise the trigger on string cells by prefixing
+// a single quote. Numeric cells are left as-is — a negative number is not an
+// injection vector.
+const FORMULA_TRIGGER = /^[=+\-@\t\r]/;
+
+export function escapeCsv(value: unknown): string {
   if (value === null || value === undefined) return '';
   let str = '';
-  if (typeof value === 'string') str = value;
-  else if (typeof value === 'number') str = value.toString();
+  if (typeof value === 'string') {
+    str = FORMULA_TRIGGER.test(value) ? `'${value}` : value;
+  } else if (typeof value === 'number') {
+    str = value.toString();
+  }
   if (str.includes(',') || str.includes('"') || str.includes('\n')) {
     return `"${str.replaceAll('"', '""')}"`;
   }

@@ -6,14 +6,21 @@ interface CsvExportProps {
   filename?: string;
 }
 
-function escapeCell(value: string): string {
-  if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-    return `"${value.replaceAll('"', '""')}"`;
+// A leading =, +, -, @, tab, or CR makes Excel/Sheets evaluate the cell as a
+// formula. Entity/header values are derived from billing data (service names,
+// account names, resource tag values an AWS user controls), so neutralise the
+// trigger by prefixing the cell with a single quote before quoting.
+const FORMULA_TRIGGER = /^[=+\-@\t\r]/;
+
+export function escapeCell(value: string): string {
+  const guarded = FORMULA_TRIGGER.test(value) ? `'${value}` : value;
+  if (guarded.includes(',') || guarded.includes('"') || guarded.includes('\n')) {
+    return `"${guarded.replaceAll('"', '""')}"`;
   }
-  return value;
+  return guarded;
 }
 
-function buildCsv(rows: readonly CostRow[], topServices: readonly string[]): string {
+export function buildCsv(rows: readonly CostRow[], topServices: readonly string[]): string {
   const headers = ['Entity', 'Total Cost', ...topServices];
   const lines = [headers.map(escapeCell).join(',')];
 
