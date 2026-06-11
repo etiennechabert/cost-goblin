@@ -1,10 +1,29 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Check, Copy, Sparkles } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Check, Copy, KeyRound, RefreshCw, Sparkles } from 'lucide-react';
 
 import { useCostApi } from '../hooks/use-cost-api.js';
 
 const MCP_PORT = 19532;
 const MCP_URL = `http://localhost:${String(MCP_PORT)}/mcp`;
+const TOKEN_MASK = '•'.repeat(28);
+
+function buildJsonConfig(token: string): string {
+  return JSON.stringify({
+    mcpServers: {
+      costgoblin: {
+        type: 'streamable-http',
+        url: MCP_URL,
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    },
+  }, null, 2);
+}
+
+/** URL with the token as a query param, for clients that only accept a URL and
+ *  can't set an Authorization header. */
+function buildUrlWithToken(token: string): string {
+  return `${MCP_URL}?token=${token}`;
+}
 
 function CopyButton({ text }: Readonly<{ text: string }>) {
   const [copied, setCopied] = useState(false);
@@ -39,15 +58,6 @@ function CodeBlock({ children }: Readonly<{ children: string }>) {
   );
 }
 
-const MCP_CONFIG = JSON.stringify({
-  mcpServers: {
-    costgoblin: {
-      type: 'streamable-http',
-      url: MCP_URL,
-    },
-  },
-}, null, 2);
-
 const EXAMPLE_PROMPTS = [
   {
     title: 'Cost overview',
@@ -75,32 +85,39 @@ const EXAMPLE_PROMPTS = [
   },
 ];
 
-const PROVIDERS: { name: string; config: string; docs: string }[] = [
-  {
-    name: 'Claude / Cursor / Windsurf',
-    config: MCP_CONFIG,
-    docs: 'Add to claude_desktop_config.json, .mcp.json, or your editor MCP settings:',
-  },
-  {
-    name: 'ChatGPT',
-    config: MCP_URL,
-    docs: 'In ChatGPT \u2192 Settings \u2192 Add MCP server, paste this URL:',
-  },
-  {
-    name: 'Gemini',
-    config: MCP_URL,
-    docs: 'In Gemini \u2192 Settings \u2192 Extensions \u2192 Add MCP server, paste this URL:',
-  },
-];
+function buildProviders(token: string): { name: string; config: string; docs: string }[] {
+  return [
+    {
+      name: 'Claude / Cursor / Windsurf',
+      config: buildJsonConfig(token),
+      docs: 'Add to claude_desktop_config.json, .mcp.json, or your editor MCP settings:',
+    },
+    {
+      name: 'ChatGPT',
+      config: buildUrlWithToken(token),
+      docs: 'In ChatGPT \u2192 Settings \u2192 Add MCP server, paste this URL (token included):',
+    },
+    {
+      name: 'Gemini',
+      config: buildUrlWithToken(token),
+      docs: 'In Gemini \u2192 Settings \u2192 Extensions \u2192 Add MCP server, paste this URL (token included):',
+    },
+  ];
+}
 
 export function McpView() {
   const api = useCostApi();
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [running, setRunning] = useState(true);
   const [toggling, setToggling] = useState(false);
+  const [token, setToken] = useState('');
+  const [tokenRevealed, setTokenRevealed] = useState(false);
+  const [confirmingRegen, setConfirmingRegen] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
 
   useEffect(() => {
     void api.getMcpServerRunning().then(setRunning);
+    void api.getMcpToken().then(setToken).catch(() => undefined);
   }, [api]);
 
   const handleToggle = useCallback(() => {
@@ -111,6 +128,19 @@ export function McpView() {
       setToggling(false);
     });
   }, [api, running]);
+
+  const handleRegenerate = useCallback(() => {
+    setRegenerating(true);
+    void api.regenerateMcpToken().then((next) => {
+      setToken(next);
+      setTokenRevealed(true);
+    }).finally(() => {
+      setRegenerating(false);
+      setConfirmingRegen(false);
+    });
+  }, [api]);
+
+  const providers = useMemo(() => buildProviders(token), [token]);
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-3xl mx-auto">
@@ -147,11 +177,68 @@ export function McpView() {
         </div>
       </div>
 
+      {/* Access token */}
+      <div className="rounded-xl border border-border bg-bg-secondary/50 p-5">
+        <div className="flex items-center gap-2 mb-1.5">
+          <KeyRound className="size-4 text-accent" />
+          <h3 className="text-sm font-semibold text-text-primary">Access token</h3>
+        </div>
+        <p className="text-xs text-text-secondary mb-3">
+          Every request to the server must include this token, so only apps you&rsquo;ve configured can reach your billing data. It&rsquo;s already baked into the configs below. Keep it private &mdash; anyone with it (and access to this machine) can query your costs.
+        </p>
+        <div className="relative">
+          {token.length > 0 && <CopyButton text={token} />}
+          <pre className="rounded-lg bg-bg-primary border border-border p-4 pr-12 text-sm text-text-secondary overflow-x-auto font-mono">
+            {token.length === 0 ? 'Loading…' : tokenRevealed ? token : TOKEN_MASK}
+          </pre>
+        </div>
+        <div className="flex items-center gap-2 mt-2">
+          <button
+            type="button"
+            onClick={() => { setTokenRevealed((v) => !v); }}
+            disabled={token.length === 0}
+            className="text-xs px-2.5 py-1 rounded-md border border-border text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50 transition-colors disabled:opacity-50"
+          >
+            {tokenRevealed ? 'Hide' : 'Reveal'}
+          </button>
+          {confirmingRegen ? (
+            <>
+              <span className="text-xs text-text-secondary">Existing clients will stop working until updated.</span>
+              <button
+                type="button"
+                onClick={handleRegenerate}
+                disabled={regenerating}
+                className="text-xs px-2.5 py-1 rounded-md border border-negative/50 text-negative hover:bg-negative/10 transition-colors disabled:opacity-50"
+              >
+                {regenerating ? 'Regenerating…' : 'Confirm'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setConfirmingRegen(false); }}
+                className="text-xs px-2.5 py-1 rounded-md border border-border text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50 transition-colors"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => { setConfirmingRegen(true); }}
+              disabled={token.length === 0}
+              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border border-border text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className="size-3" />
+              Regenerate
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Setup */}
       <div>
         <h3 className="text-sm font-semibold text-text-primary mb-3">Connect your AI assistant</h3>
         <div className="space-y-2">
-          {PROVIDERS.map((provider) => {
+          {providers.map((provider) => {
             const isExpanded = expandedProvider === provider.name;
             return (
               <div key={provider.name} className="rounded-lg border border-border bg-bg-secondary/50 overflow-hidden">
