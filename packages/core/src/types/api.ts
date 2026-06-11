@@ -213,10 +213,12 @@ export interface CostApi {
    *  files are copied to a timestamped backup folder first. The chosen AWS
    *  profile is injected into every imported provider. */
   applyConfigBundle(params: ApplyConfigBundleParams): Promise<ApplyConfigBundleResult>;
-  /** Publish the current config as a bundle to the well-known beacon key
-   *  (`costgoblin/org-config.yaml`) at the root of the daily CUR bucket,
-   *  where teammates' setup wizards can discover it. */
-  publishConfigBundle(): Promise<PublishConfigBundleResult>;
+  /** Publish the current config as a bundle to S3. Defaults to the
+   *  well-known beacon key (`costgoblin/org-config.yaml`) at the root of
+   *  the daily CUR bucket, where teammates' setup wizards discover it;
+   *  `location` overrides the destination (custom keys publish fine but
+   *  are not auto-discovered). */
+  publishConfigBundle(params?: { location?: string | undefined }): Promise<PublishConfigBundleResult>;
   /** Probe a bucket for a published team configuration. Used by the setup
    *  wizard right after bucket selection. */
   checkConfigBeacon(params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult>;

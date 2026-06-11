@@ -3,6 +3,7 @@ import type {
   ExportConfigBundleResult,
   PublishConfigBundleResult,
 } from '@costgoblin/core/browser';
+import { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from '@costgoblin/core/browser';
 import { CloudUpload, FileDown, FileUp, TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
@@ -109,6 +110,21 @@ export function ShareConfigDialog({ onClose }: Readonly<{ onClose: () => void }>
   const [exportResult, setExportResult] = useState<ExportConfigBundleResult | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<PublishConfigBundleResult | null>(null);
+  // null until the config has loaded and the default destination is known.
+  const [location, setLocation] = useState<string | null>(null);
+  const [defaultLocation, setDefaultLocation] = useState<string>('');
+
+  useEffect(() => {
+    api.getConfig().then(config => {
+      const dailyBucket = config.providers[0]?.sync.daily.bucket;
+      const suggested = dailyBucket === undefined ? '' : suggestedConfigBeaconLocation(String(dailyBucket));
+      setDefaultLocation(suggested);
+      setLocation(prev => prev ?? suggested);
+    }).catch(() => { setLocation(prev => prev ?? ''); });
+  }, [api]);
+
+  const locationValid = location !== null && splitS3Location(location) !== null;
+  const locationDiscoverable = location !== null && isDiscoverableBeaconLocation(location);
 
   function handleExport(): void {
     setExporting(true);
@@ -120,9 +136,10 @@ export function ShareConfigDialog({ onClose }: Readonly<{ onClose: () => void }>
   }
 
   function handlePublish(): void {
+    if (location === null || !locationValid) return;
     setPublishing(true);
     setPublishResult(null);
-    api.publishConfigBundle()
+    api.publishConfigBundle({ location })
       .then(setPublishResult)
       .catch((err: unknown) => { setPublishResult({ status: 'error', message: err instanceof Error ? err.message : String(err) }); })
       .finally(() => { setPublishing(false); });
@@ -161,15 +178,53 @@ export function ShareConfigDialog({ onClose }: Readonly<{ onClose: () => void }>
           <div className="flex items-center gap-2">
             <CloudUpload size={16} className="text-text-secondary" />
             <div>
-              <p className="text-sm font-medium text-text-primary">Publish to your CUR bucket</p>
+              <p className="text-sm font-medium text-text-primary">Publish to S3</p>
               <p className="text-xs text-text-muted">
                 Teammates&apos; setup wizards find it automatically. Anyone who can read the billing data can read it.
               </p>
             </div>
           </div>
-          <Button onClick={handlePublish} disabled={publishing} className="bg-accent hover:bg-accent-hover text-white shrink-0">
+          <Button
+            onClick={handlePublish}
+            disabled={publishing || location === null || !locationValid}
+            className="bg-accent hover:bg-accent-hover text-white shrink-0"
+          >
             {publishing ? 'Publishing…' : 'Publish'}
           </Button>
+        </div>
+        <div className="flex flex-col gap-1">
+          <div className="flex items-baseline justify-between gap-2">
+            <label htmlFor="publish-location" className="text-xs text-text-muted uppercase tracking-wider">
+              Destination
+            </label>
+            {location !== null && defaultLocation.length > 0 && location !== defaultLocation && (
+              <button
+                type="button"
+                onClick={() => { setLocation(defaultLocation); }}
+                className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2"
+              >
+                Reset to default
+              </button>
+            )}
+          </div>
+          <input
+            id="publish-location"
+            type="text"
+            value={location ?? ''}
+            disabled={location === null}
+            onChange={(e) => { setLocation(e.target.value); }}
+            placeholder="s3://bucket/costgoblin/org-config.yaml"
+            spellCheck={false}
+            className="w-full rounded-lg border border-border bg-bg-primary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+          />
+          {location !== null && !locationValid && (
+            <p className="text-xs text-negative">Enter a full object location like s3://bucket/costgoblin/org-config.yaml</p>
+          )}
+          {locationValid && !locationDiscoverable && (
+            <p className="text-xs text-warning">
+              Custom path: setup wizards only auto-discover <span className="font-mono">costgoblin/org-config.yaml</span> at a bucket root — share this location with teammates yourself.
+            </p>
+          )}
         </div>
         {publishResult?.status === 'published' && (
           <p className="text-xs text-positive break-all">Published to {publishResult.location}</p>

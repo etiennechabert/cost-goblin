@@ -4,4 +4,5 @@ export * from './models/index.js';
 export { validateViews } from './config/views-validator.js';
 export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './config/views-serialize.js';
 export { ConfigValidationError } from './config/validator.js';
+export { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from './config/sharing-location.js';
 export { DEFAULT_COST_SCOPE, BUILTIN_EXCLUSION_RULES } from './config/cost-scope-seed.js';

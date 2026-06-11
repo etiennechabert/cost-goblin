@@ -12,8 +12,9 @@ import {
   logger,
   orgTreeToYaml,
   parseConfigBundle,
-  parseS3Path,
   serializeConfigBundle,
+  splitS3Location,
+  suggestedConfigBeaconLocation,
   summarizeConfigBundle,
   viewsConfigToYaml,
 } from '@costgoblin/core';
@@ -168,14 +169,23 @@ export function registerSharingHandlers(app: AppContext): void {
     }
   });
 
-  ipcMain.handle('sharing:publish-bundle', async (): Promise<PublishConfigBundleResult> => {
+  ipcMain.handle('sharing:publish-bundle', async (_event, raw: unknown): Promise<PublishConfigBundleResult> => {
     try {
       const config = await getConfig();
       const provider = config.providers[0];
       if (provider === undefined) {
         return { status: 'error', message: 'No provider configured — complete setup before publishing' };
       }
-      const { bucket } = parseS3Path(String(provider.sync.daily.bucket));
+      // Caller may override the destination (e.g. write-locked CUR bucket →
+      // sibling config bucket). Default is the discoverable beacon key at
+      // the daily bucket's root.
+      const requested = isStringRecord(raw) && typeof raw['location'] === 'string' && raw['location'].trim().length > 0
+        ? raw['location']
+        : suggestedConfigBeaconLocation(String(provider.sync.daily.bucket));
+      const target = splitS3Location(requested);
+      if (target === null) {
+        return { status: 'error', message: 'Invalid S3 location — expected s3://bucket/path/to/org-config.yaml' };
+      }
       const body = serializeConfigBundle(await buildCurrentBundle());
 
       const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
@@ -186,12 +196,12 @@ export function registerSharingHandlers(app: AppContext): void {
         ...(profile === 'default' ? {} : { profile }),
       });
       await client.send(new PutObjectCommand({
-        Bucket: bucket,
-        Key: CONFIG_BEACON_KEY,
+        Bucket: target.bucket,
+        Key: target.key,
         Body: body,
         ContentType: 'application/yaml',
       }));
-      const location = `s3://${bucket}/${CONFIG_BEACON_KEY}`;
+      const location = `s3://${target.bucket}/${target.key}`;
       logger.info('Published configuration bundle', { location });
       return { status: 'published', location };
     } catch (err: unknown) {

@@ -296,8 +296,8 @@ const api: CostApi = {
   applyConfigBundle(params: ApplyConfigBundleParams): Promise<ApplyConfigBundleResult> {
     return invoke<ApplyConfigBundleResult>('sharing:apply-bundle', params);
   },
-  publishConfigBundle(): Promise<PublishConfigBundleResult> {
-    return invoke<PublishConfigBundleResult>('sharing:publish-bundle');
+  publishConfigBundle(params?: { location?: string | undefined }): Promise<PublishConfigBundleResult> {
+    return invoke<PublishConfigBundleResult>('sharing:publish-bundle', params);
   },
   checkConfigBeacon(params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult> {
     return invoke<CheckConfigBeaconResult>('sharing:check-beacon', params);

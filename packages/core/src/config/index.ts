@@ -16,4 +16,5 @@ export {
   summarizeConfigBundle,
 } from './sharing-bundle.js';
 export type { BuildConfigBundleInput, ParsedConfigBundle } from './sharing-bundle.js';
+export { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from './sharing-location.js';
 export { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, mergeBuiltInExclusionRules } from './cost-scope-seed.js';

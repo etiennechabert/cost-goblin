@@ -41,15 +41,81 @@ describe('ShareConfigDialog', () => {
     expect(exportSpy).toHaveBeenCalledOnce();
   });
 
-  it('publishes to the beacon and shows the location', async () => {
+  it('prefills the publish destination from the daily CUR bucket root', async () => {
+    renderWithApi(new MockCostApi(), <ShareConfigDialog onClose={() => undefined} />);
+    const input = await screen.findByLabelText('Destination');
+    await waitFor(() => {
+      expect(input).toHaveProperty('value', 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml');
+    });
+    expect(screen.queryByText('Reset to default')).toBeNull();
+  });
+
+  it('publishes to the shown destination and reports the location', async () => {
+    const api = new MockCostApi();
+    const publishSpy = vi.spyOn(api, 'publishConfigBundle');
+    const user = userEvent.setup();
+    renderWithApi(api, <ShareConfigDialog onClose={() => undefined} />);
+
+    const input = await screen.findByLabelText('Destination');
+    await waitFor(() => {
+      expect(input).toHaveProperty('value', 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml');
+    });
+    await user.click(screen.getByText('Publish'));
+    await waitFor(() => {
+      expect(screen.getByText(/Published to s3:\/\/costgoblin-cur-bucket\/costgoblin\/org-config\.yaml/)).toBeDefined();
+    });
+    expect(publishSpy).toHaveBeenCalledWith({ location: 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml' });
+  });
+
+  it('publishes to an edited destination and warns it is not auto-discovered', async () => {
+    const api = new MockCostApi();
+    const publishSpy = vi.spyOn(api, 'publishConfigBundle');
+    const user = userEvent.setup();
+    renderWithApi(api, <ShareConfigDialog onClose={() => undefined} />);
+
+    const input = await screen.findByLabelText('Destination');
+    await waitFor(() => {
+      expect(input).toHaveProperty('value', 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml');
+    });
+    await user.clear(input);
+    await user.type(input, 's3://config-bucket/shared/finops.yaml');
+    expect(screen.getByText(/share this location with teammates yourself/i)).toBeDefined();
+
+    await user.click(screen.getByText('Publish'));
+    await waitFor(() => {
+      expect(screen.getByText(/Published to s3:\/\/config-bucket\/shared\/finops\.yaml/)).toBeDefined();
+    });
+    expect(publishSpy).toHaveBeenCalledWith({ location: 's3://config-bucket/shared/finops.yaml' });
+  });
+
+  it('resets an edited destination back to the default', async () => {
     const api = new MockCostApi();
     const user = userEvent.setup();
     renderWithApi(api, <ShareConfigDialog onClose={() => undefined} />);
 
-    await user.click(screen.getByText('Publish'));
+    const input = await screen.findByLabelText('Destination');
     await waitFor(() => {
-      expect(screen.getByText(/s3:\/\/my-cur-bucket\/costgoblin\/org-config\.yaml/)).toBeDefined();
+      expect(input).toHaveProperty('value', 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml');
     });
+    await user.clear(input);
+    await user.type(input, 's3://elsewhere/org.yaml');
+    await user.click(screen.getByText('Reset to default'));
+    expect(input).toHaveProperty('value', 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml');
+  });
+
+  it('disables publish while the destination is invalid', async () => {
+    const api = new MockCostApi();
+    const user = userEvent.setup();
+    renderWithApi(api, <ShareConfigDialog onClose={() => undefined} />);
+
+    const input = await screen.findByLabelText('Destination');
+    await waitFor(() => {
+      expect(input).toHaveProperty('value', 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml');
+    });
+    await user.clear(input);
+    await user.type(input, 's3://bucket-only');
+    expect(screen.getByText(/Enter a full object location/)).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Publish' }).hasAttribute('disabled')).toBe(true);
   });
 
   it('surfaces publish errors', async () => {
@@ -58,6 +124,10 @@ describe('ShareConfigDialog', () => {
     const user = userEvent.setup();
     renderWithApi(api, <ShareConfigDialog onClose={() => undefined} />);
 
+    const input = await screen.findByLabelText('Destination');
+    await waitFor(() => {
+      expect(input).toHaveProperty('value', 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml');
+    });
     await user.click(screen.getByText('Publish'));
     await waitFor(() => {
       expect(screen.getByText(/AccessDenied/)).toBeDefined();
