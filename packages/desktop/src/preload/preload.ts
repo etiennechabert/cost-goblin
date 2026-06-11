@@ -40,6 +40,13 @@ import type {
   AggregatedTableParams,
   AggregatedTableResult,
   AliasSuggestion,
+  ApplyConfigBundleParams,
+  ApplyConfigBundleResult,
+  CheckConfigBeaconParams,
+  CheckConfigBeaconResult,
+  ExportConfigBundleResult,
+  PreviewConfigBundleResult,
+  PublishConfigBundleResult,
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
@@ -279,6 +286,21 @@ const api: CostApi = {
   },
   acceptSuggestion(tagName: string, canonical: string, aliases: readonly string[]): Promise<void> {
     return invoke<undefined>('dimensions:accept-suggestion', tagName, canonical, aliases).then(() => undefined);
+  },
+  exportConfigBundle(): Promise<ExportConfigBundleResult> {
+    return invoke<ExportConfigBundleResult>('sharing:export-bundle');
+  },
+  previewConfigBundleFile(): Promise<PreviewConfigBundleResult> {
+    return invoke<PreviewConfigBundleResult>('sharing:preview-bundle-file');
+  },
+  applyConfigBundle(params: ApplyConfigBundleParams): Promise<ApplyConfigBundleResult> {
+    return invoke<ApplyConfigBundleResult>('sharing:apply-bundle', params);
+  },
+  publishConfigBundle(): Promise<PublishConfigBundleResult> {
+    return invoke<PublishConfigBundleResult>('sharing:publish-bundle');
+  },
+  checkConfigBeacon(params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult> {
+    return invoke<CheckConfigBeaconResult>('sharing:check-beacon', params);
   },
   cancelPendingQueries(): Promise<void> {
     void invoke<undefined>('debug:clear-completed');

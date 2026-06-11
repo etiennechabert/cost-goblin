@@ -22,6 +22,7 @@ export { BubbleChart } from './components/bubble-chart.js';
 export { CostTable } from './components/cost-table.js';
 export { EntityPopup } from './components/entity-popup.js';
 export { ConfirmModal } from './components/confirm-modal.js';
+export { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog } from './components/config-sharing.js';
 export { CsvExport } from './components/csv-export.js';
 export { SyncStatusIndicator } from './components/sync-status.js';
 export { formatDollars, formatPercent, formatDate } from './components/format.js';

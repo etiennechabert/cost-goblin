@@ -3,6 +3,15 @@ import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { CostScopeCapabilities, CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
 import type {
+  ApplyConfigBundleParams,
+  ApplyConfigBundleResult,
+  CheckConfigBeaconParams,
+  CheckConfigBeaconResult,
+  ExportConfigBundleResult,
+  PreviewConfigBundleResult,
+  PublishConfigBundleResult,
+} from './sharing.js';
+import type {
   ExplorerFilterValue,
   ExplorerFilterValuesParams,
   ExplorerOverviewParams,
@@ -192,6 +201,25 @@ export interface CostApi {
   /** Cancel all queued (not yet running) DuckDB queries. Call on view
    *  navigation so stale queries from the previous view don't hold pool
    *  connections and slow down the new view's queries. */
+  /** Export the org-shared config (providers minus credentials, dimensions,
+   *  org tree, cost scope, views) as a single bundle file via a save
+   *  dialog. */
+  exportConfigBundle(): Promise<ExportConfigBundleResult>;
+  /** Open-dialog + parse + validate a bundle file. Returns the raw content
+   *  alongside the summary — the renderer hands the content back to
+   *  `applyConfigBundle`, which re-validates in the main process. */
+  previewConfigBundleFile(): Promise<PreviewConfigBundleResult>;
+  /** Validate and write a bundle to the config directory. Existing config
+   *  files are copied to a timestamped backup folder first. The chosen AWS
+   *  profile is injected into every imported provider. */
+  applyConfigBundle(params: ApplyConfigBundleParams): Promise<ApplyConfigBundleResult>;
+  /** Publish the current config as a bundle to the well-known beacon key
+   *  (`costgoblin/org-config.yaml`) at the root of the daily CUR bucket,
+   *  where teammates' setup wizards can discover it. */
+  publishConfigBundle(): Promise<PublishConfigBundleResult>;
+  /** Probe a bucket for a published team configuration. Used by the setup
+   *  wizard right after bucket selection. */
+  checkConfigBeacon(params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult>;
   cancelPendingQueries(): Promise<void>;
   /** Wipe every backend cache (LRU result cache, column probe cache,
    *  in-flight de-dup map, materialized base table, plus the in-memory

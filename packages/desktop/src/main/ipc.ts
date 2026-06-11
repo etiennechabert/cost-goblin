@@ -10,6 +10,7 @@ import { registerOrgHandlers } from './handlers/org.js';
 import { registerAutoSyncHandlers } from './handlers/auto-sync.js';
 import { registerViewsHandlers } from './handlers/views.js';
 import { registerCostScopeHandlers } from './handlers/cost-scope.js';
+import { registerSharingHandlers } from './handlers/sharing.js';
 import { registerExplorerHandlers } from './handlers/explorer.js';
 import { registerDebugHandlers } from './handlers/debug.js';
 import { registerMcpHandlers } from './handlers/mcp-handler.js';
@@ -29,6 +30,7 @@ export function registerIpcHandlers(ctx: IpcContext): AppContext {
   registerAutoSyncHandlers(app);
   registerViewsHandlers(app);
   registerCostScopeHandlers(app);
+  registerSharingHandlers(app);
   registerExplorerHandlers(app);
   registerDebugHandlers(app);
   registerMcpHandlers(app);

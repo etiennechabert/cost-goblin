@@ -1,3 +1,4 @@
+import type { CheckConfigBeaconParams, CheckConfigBeaconResult } from '@costgoblin/core/browser';
 import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
@@ -58,5 +59,94 @@ describe('SetupWizard', () => {
     await waitFor(() => {
       expect(screen.getByText('my-cur-bucket')).toBeDefined();
     });
+  });
+
+  it('continues to manual browsing when the bucket has no published config', async () => {
+    const { api, user } = renderWizard();
+    const beaconSpy = vi.spyOn(api, 'checkConfigBeacon');
+    await user.click(screen.getByText('Get Started'));
+    await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
+    await user.click(screen.getByText('default'));
+    await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
+    await user.click(screen.getByText('my-cur-bucket'));
+    // Default mock beacon answer is 'none' → manual prefix browsing.
+    await waitFor(() => { expect(screen.getAllByText('data/').length).toBeGreaterThan(0); });
+    expect(beaconSpy).toHaveBeenCalledWith({ profile: 'default', bucket: 'my-cur-bucket' });
+  });
+
+  it('offers a discovered team configuration and applies it with the chosen profile', async () => {
+    const { api, user, onComplete } = renderWizard();
+    api.checkConfigBeacon = (params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult> => Promise.resolve({
+      status: 'found',
+      location: `s3://${params.bucket}/costgoblin/org-config.yaml`,
+      content: 'kind: costgoblin-config-bundle',
+      summary: {
+        schemaVersion: 1,
+        appVersion: '0.2.0',
+        exportedAt: '2026-06-01T09:00:00.000Z',
+        fingerprint: 'feedfacefeedfacefeedfacefeedface',
+        fingerprintValid: true,
+        sections: ['config', 'dimensions'],
+        providers: [{ name: 'aws-main', dailyBucket: 's3://my-cur-bucket/daily/' }],
+        builtInDimensionCount: 7,
+        tagDimensionCount: 3,
+        orgTreeNodeCount: 0,
+        exclusionRuleCount: 0,
+        viewCount: 0,
+      },
+    });
+    const applySpy = vi.spyOn(api, 'applyConfigBundle');
+
+    await user.click(screen.getByText('Get Started'));
+    await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
+    await user.click(screen.getByText('default'));
+    await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
+    await user.click(screen.getByText('my-cur-bucket'));
+
+    await waitFor(() => { expect(screen.getByText('Team configuration found')).toBeDefined(); });
+    expect(screen.getByText('s3://my-cur-bucket/daily/')).toBeDefined();
+
+    await user.click(screen.getByText('Use this configuration'));
+    await waitFor(() => { expect(onComplete).toHaveBeenCalledOnce(); });
+    expect(applySpy).toHaveBeenCalledWith({ content: 'kind: costgoblin-config-bundle', profile: 'default' });
+  });
+
+  it('lets the user decline the discovered configuration and set up manually', async () => {
+    const { api, user } = renderWizard();
+    api.checkConfigBeacon = () => Promise.resolve({
+      status: 'found',
+      location: 's3://my-cur-bucket/costgoblin/org-config.yaml',
+      content: 'kind: costgoblin-config-bundle',
+      summary: {
+        schemaVersion: 1,
+        appVersion: '0.2.0',
+        exportedAt: '2026-06-01T09:00:00.000Z',
+        fingerprint: 'feedfacefeedfacefeedfacefeedface',
+        fingerprintValid: true,
+        sections: ['config', 'dimensions'],
+        providers: [{ name: 'aws-main', dailyBucket: 's3://my-cur-bucket/daily/' }],
+        builtInDimensionCount: 7,
+        tagDimensionCount: 3,
+        orgTreeNodeCount: 0,
+        exclusionRuleCount: 0,
+        viewCount: 0,
+      },
+    });
+
+    await user.click(screen.getByText('Get Started'));
+    await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
+    await user.click(screen.getByText('default'));
+    await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
+    await user.click(screen.getByText('my-cur-bucket'));
+    await waitFor(() => { expect(screen.getByText('Team configuration found')).toBeDefined(); });
+
+    await user.click(screen.getByText('Set up manually instead'));
+    await waitFor(() => { expect(screen.getAllByText('data/').length).toBeGreaterThan(0); });
+  });
+
+  it('opens the import dialog from the welcome step', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByText(/Have a configuration file from a teammate/));
+    await waitFor(() => { expect(screen.getByText('Choose bundle file…')).toBeDefined(); });
   });
 });

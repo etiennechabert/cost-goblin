@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, ImportConfigDialog, ShareConfigDialog } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
 import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
@@ -396,6 +396,7 @@ function AppShell(): React.JSX.Element {
   const inFlightCount = useDebugBadge();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
+  const [sharingDialog, setSharingDialog] = useState<'share' | 'import' | null>(null);
   const [appVersion, setAppVersion] = useState('');
   const memoryMB = useMemoryMB();
   const autoOpenRef = useMemo(() => ({ current: false }), []);
@@ -799,6 +800,8 @@ function AppShell(): React.JSX.Element {
               updateStatus={updateStatus}
               onShowReleaseNotes={() => { setReleaseNotesOpen(true); }}
               onCheckForUpdates={handleCheckForUpdates}
+              onShareConfig={() => { setSharingDialog('share'); }}
+              onImportConfig={() => { setSharingDialog('import'); }}
             />
           </nav>
         </nav>
@@ -860,6 +863,20 @@ function AppShell(): React.JSX.Element {
         </div>
       </div>
       {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} topOffset={headerHeight} />}
+      {sharingDialog === 'share' && (
+        <ShareConfigDialog onClose={() => { setSharingDialog(null); }} />
+      )}
+      {sharingDialog === 'import' && (
+        <ImportConfigDialog
+          onClose={() => { setSharingDialog(null); }}
+          onApplied={() => {
+            // The whole org config just changed under the renderer —
+            // a full reload re-runs the boot path (setup check, views,
+            // dimensions prewarm) so nothing serves stale state.
+            window.location.reload();
+          }}
+        />
+      )}
       <ReleaseNotesModal open={releaseNotesOpen} onOpenChange={setReleaseNotesOpen} status={updateStatus} />
       <Dialog open={reloadConfirmOpen} onOpenChange={setReloadConfirmOpen}>
         <DialogContent>
