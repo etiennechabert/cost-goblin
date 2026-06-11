@@ -7,6 +7,7 @@ import { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLoc
 import { CloudDownload, CloudUpload, FileDown, FileUp, TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { ProfilePicker } from './profile-picker.js';
 import { Button } from './ui/button.js';
 
 // ---------------------------------------------------------------------------
@@ -384,17 +385,13 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
             <label htmlFor="import-fetch-profile" className="text-xs text-text-muted uppercase tracking-wider">
               AWS profile
             </label>
-            <select
-              id="import-fetch-profile"
-              value={fetchProfile}
-              disabled={profiles.length === 0}
-              onChange={(e) => { setFetchProfile(e.target.value); }}
-              className="w-full rounded-lg border border-border bg-bg-primary px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent/50"
-            >
-              {profiles.map(p => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
+            <ProfilePicker
+              profiles={profiles}
+              selected={fetchProfile}
+              onSelect={setFetchProfile}
+              listClassName="max-h-32"
+              inputId="import-fetch-profile"
+            />
           </div>
           <div className="flex flex-col gap-1.5">
             <label htmlFor="import-s3-location" className="text-xs text-text-muted uppercase tracking-wider">
@@ -438,16 +435,13 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
             <label htmlFor="import-profile" className="text-xs text-text-muted uppercase tracking-wider">
               Your AWS profile
             </label>
-            <select
-              id="import-profile"
-              value={state.profile}
-              onChange={(e) => { const profile = e.target.value; setState(prev => prev.phase === 'preview' ? { ...prev, profile } : prev); }}
-              className="w-full rounded-lg border border-border bg-bg-primary px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent/50"
-            >
-              {profiles.map(p => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
+            <ProfilePicker
+              profiles={profiles}
+              selected={state.profile}
+              onSelect={(profile) => { setState(prev => prev.phase === 'preview' ? { ...prev, profile } : prev); }}
+              listClassName="max-h-32"
+              inputId="import-profile"
+            />
             <p className="text-xs text-text-muted">Bundles never contain credentials — this profile is used to access the S3 buckets above.</p>
           </div>
           {state.error !== null && (

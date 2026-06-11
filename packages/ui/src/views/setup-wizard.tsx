@@ -4,6 +4,7 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
 import { BundleSummaryCard, ImportConfigDialog } from '../components/config-sharing.js';
+import { ProfilePicker } from '../components/profile-picker.js';
 import { SsoLoginButton } from '../components/sso-login-button.js';
 
 type DataSource = 'daily' | 'hourly' | 'costOptimization';
@@ -114,9 +115,6 @@ function ProfileStep({ state, onSelect, onSkip, onBack }: Readonly<{
   onSkip: () => void;
   onBack: () => void;
 }>) {
-  const [filter, setFilter] = useState('');
-  const filtered = state.profiles.filter(p => p.toLowerCase().includes(filter.toLowerCase()));
-
   return (
     <div className="flex flex-col gap-5">
       <div>
@@ -142,32 +140,13 @@ function ProfileStep({ state, onSelect, onSkip, onBack }: Readonly<{
         </div>
       )}
       {!state.loading && state.profiles.length > 0 && (
-        <>
-          <input
-            type="text"
-            value={filter}
-            onChange={(e) => { setFilter(e.target.value); }}
-            placeholder="Filter profiles..."
-            className="w-full rounded-lg border border-border bg-bg-primary px-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
-          />
-          <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
-            {filtered.map(profile => (
-              <button
-                key={profile}
-                type="button"
-                onClick={() => { onSelect(profile); }}
-                className={[
-                  'flex items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors',
-                  state.selected === profile
-                    ? 'border-accent bg-accent-muted text-accent'
-                    : 'border-border bg-bg-tertiary/20 text-text-primary hover:border-border hover:bg-bg-tertiary/40',
-                ].join(' ')}
-              >
-                <span className="font-mono text-xs px-1.5 py-0.5 rounded bg-bg-tertiary text-text-secondary">{profile}</span>
-              </button>
-            ))}
-          </div>
-        </>
+        <ProfilePicker
+          profiles={state.profiles}
+          selected={state.selected}
+          onSelect={onSelect}
+          listClassName="max-h-64"
+          autoFocus
+        />
       )}
 
       <div className="flex items-center justify-between pt-2">
