@@ -102,6 +102,9 @@ describe('DuckDB Worker', () => {
 
   beforeAll(async () => {
     worker = new Worker(workerPath);
+    // The concurrency test attaches one transient listener per in-flight query,
+    // which can exceed the default cap of 10. Raise it to avoid noisy warnings.
+    worker.setMaxListeners(100);
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => { reject(new Error('Worker ready timeout')); }, 10000);
       worker.once('message', (msg) => {
@@ -172,6 +175,21 @@ describe('DuckDB Worker', () => {
     if (result.kind === 'error') {
       expect(typeof result.message).toBe('string');
     }
+  });
+
+  it('releases connections on the error path under concurrency', async () => {
+    // Fire many more failing queries than the pool has connections. If a failed
+    // query leaked its pool connection (or hung without responding), the pool
+    // would drain and later queries would never settle.
+    const failIds = Array.from({ length: 40 }, () => nextId++);
+    for (const id of failIds) sendQuery(id, 'SELECT FROM totally invalid');
+    const results = await Promise.all(failIds.map(id => waitForResult(id)));
+    for (const r of results) expect(r.kind).toBe('error');
+
+    // Worker is still healthy afterwards.
+    const okId = nextId++;
+    sendQuery(okId, 'SELECT 1 AS ok');
+    expect((await waitForResult(okId)).kind).toBe('rows');
   });
 
   it('ignores malformed messages without crashing', async () => {
