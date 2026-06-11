@@ -9,20 +9,21 @@ jobs:
   build:
     environment: release
     strategy:
+      # Exactly ONE job per platform. electron-builder.yml pins the arch list
+      # per target, so a single invocation builds every arch for the platform
+      # (CLI --x64/--arm64 flags do NOT narrow it). Splitting mac into per-arch
+      # jobs made both jobs build BOTH archs and race on publishing: each
+      # "overwrite published file" replaced the other's binaries, leaving a
+      # latest-mac.yml whose sha512/size didn't match the surviving zips —
+      # which made every macOS auto-update fail checksum validation (v0.2.6).
       matrix:
         include:
           - os: macos-latest
             platform: mac
-            arch: arm64
-          - os: macos-latest
-            platform: mac
-            arch: x64
           - os: windows-latest
             platform: win
-            arch: x64
           - os: ubuntu-latest
             platform: linux
-            arch: x64
 
     runs-on: ${{ matrix.os }}
 
@@ -60,7 +61,7 @@ jobs:
       - run: npm run build --workspaces --if-present
 
       - name: Build installers
-        run: npx --no-install electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish always
+        run: npx --no-install electron-builder --${{ matrix.platform }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ matrix.platform == 'mac' && secrets.MAC_CERTIFICATE_P12 || '' }}
