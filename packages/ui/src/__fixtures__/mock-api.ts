@@ -400,7 +400,7 @@ export class MockCostApi implements CostApi {
   }
   // Property-style so the declared type keeps the params (see
   // checkConfigBeacon below).
-  publishConfigBundle: (params?: { location?: string | undefined }) => Promise<PublishConfigBundleResult> =
+  publishConfigBundle: (params?: { location?: string | undefined; profile?: string | undefined }) => Promise<PublishConfigBundleResult> =
     (params) => Promise.resolve({ status: 'published', location: params?.location ?? 's3://my-cur-bucket/costgoblin/org-config.yaml' });
   // Property-style so the declared type keeps the params even though this
   // default implementation ignores them — tests override with param-aware

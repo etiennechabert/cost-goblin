@@ -189,7 +189,12 @@ export function registerSharingHandlers(app: AppContext): void {
       const body = serializeConfigBundle(await buildCurrentBundle());
 
       const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
-      const profile = provider.credentials.profile;
+      // Publishing needs s3:PutObject, which day-to-day read-only profiles
+      // often lack — callers can hand in an elevated profile for just this
+      // action. Default stays the configured sync profile.
+      const profile = isStringRecord(raw) && typeof raw['profile'] === 'string' && raw['profile'].trim().length > 0
+        ? raw['profile']
+        : provider.credentials.profile;
       const client = new S3Client({
         region: 'eu-central-1',
         followRegionRedirects: true,

@@ -5,7 +5,7 @@ import type {
 } from '@costgoblin/core/browser';
 import { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from '@costgoblin/core/browser';
 import { CloudDownload, CloudUpload, FileDown, FileUp, TriangleAlert } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { ProfilePicker } from './profile-picker.js';
 import { Button } from './ui/button.js';
@@ -114,10 +114,21 @@ export function ShareConfigDialog({ onClose }: Readonly<{ onClose: () => void }>
   // null until the config has loaded and the default destination is known.
   const [location, setLocation] = useState<string | null>(null);
   const [defaultLocation, setDefaultLocation] = useState<string>('');
+  // Publishing usually needs more than the day-to-day read-only profile
+  // (s3:PutObject), so the profile is selectable per-publish. The default
+  // is the configured sync profile.
+  const [profiles, setProfiles] = useState<readonly string[]>([]);
+  const [publishProfile, setPublishProfile] = useState('');
+  const [configProfile, setConfigProfile] = useState('');
 
   useEffect(() => {
+    api.listAwsProfiles().then(setProfiles).catch(() => undefined);
     api.getConfig().then(config => {
-      const dailyBucket = config.providers[0]?.sync.daily.bucket;
+      const provider = config.providers[0];
+      const profile = provider?.credentials.profile ?? '';
+      setConfigProfile(profile);
+      setPublishProfile(prev => prev.length > 0 ? prev : profile);
+      const dailyBucket = provider?.sync.daily.bucket;
       const suggested = dailyBucket === undefined ? '' : suggestedConfigBeaconLocation(String(dailyBucket));
       setDefaultLocation(suggested);
       setLocation(prev => prev ?? suggested);
@@ -140,7 +151,7 @@ export function ShareConfigDialog({ onClose }: Readonly<{ onClose: () => void }>
     if (location === null || !locationValid) return;
     setPublishing(true);
     setPublishResult(null);
-    api.publishConfigBundle({ location })
+    api.publishConfigBundle({ location, ...(publishProfile.length > 0 ? { profile: publishProfile } : {}) })
       .then(setPublishResult)
       .catch((err: unknown) => { setPublishResult({ status: 'error', message: err instanceof Error ? err.message : String(err) }); })
       .finally(() => { setPublishing(false); });
@@ -227,6 +238,22 @@ export function ShareConfigDialog({ onClose }: Readonly<{ onClose: () => void }>
             </p>
           )}
         </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="publish-profile" className="text-xs text-text-muted uppercase tracking-wider">
+            Publish with profile
+          </label>
+          <ProfilePicker
+            profiles={profiles}
+            selected={publishProfile}
+            onSelect={setPublishProfile}
+            currentProfile={configProfile}
+            listClassName="max-h-32"
+            inputId="publish-profile"
+          />
+          <p className="text-xs text-text-muted">
+            Publishing needs <span className="font-mono">s3:PutObject</span> on the destination — pick an elevated profile if your day-to-day one is read-only. Sync keeps using the configured profile.
+          </p>
+        </div>
         {publishResult?.status === 'published' && (
           <p className="text-xs text-positive break-all">Published to {publishResult.location}</p>
         )}
@@ -271,17 +298,31 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
   const [fetchProfile, setFetchProfile] = useState('');
   const [s3Location, setS3Location] = useState('');
   const [fetching, setFetching] = useState(false);
+  // The configured sync profile is the only one guaranteed to reach the
+  // CUR bucket, so it beats the alphabetical-first fallback as the
+  // default. Once the user picks a profile themselves, neither async
+  // loader may override it.
+  const userPickedProfileRef = useRef(false);
+
+  function handlePickProfile(profile: string): void {
+    userPickedProfileRef.current = true;
+    setFetchProfile(profile);
+  }
 
   useEffect(() => {
     api.listAwsProfiles().then(loaded => {
       setProfiles(loaded);
-      setFetchProfile(prev => prev.length > 0 ? prev : (loaded[0] ?? 'default'));
+      if (!userPickedProfileRef.current) {
+        setFetchProfile(prev => prev.length > 0 ? prev : (loaded[0] ?? 'default'));
+      }
     }).catch(() => undefined);
     api.getConfig().then(config => {
-      const dailyBucket = config.providers[0]?.sync.daily.bucket;
-      if (dailyBucket !== undefined) {
-        setS3Location(prev => prev.length > 0 ? prev : suggestedConfigBeaconLocation(String(dailyBucket)));
+      const provider = config.providers[0];
+      if (provider === undefined) return;
+      if (!userPickedProfileRef.current) {
+        setFetchProfile(provider.credentials.profile);
       }
+      setS3Location(prev => prev.length > 0 ? prev : suggestedConfigBeaconLocation(String(provider.sync.daily.bucket)));
     }).catch(() => undefined);
   }, [api]);
 
@@ -388,7 +429,7 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
             <ProfilePicker
               profiles={profiles}
               selected={fetchProfile}
-              onSelect={setFetchProfile}
+              onSelect={handlePickProfile}
               listClassName="max-h-32"
               inputId="import-fetch-profile"
             />

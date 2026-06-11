@@ -221,8 +221,11 @@ export interface CostApi {
    *  well-known beacon key (`costgoblin/org-config.yaml`) at the root of
    *  the daily CUR bucket, where teammates' setup wizards discover it;
    *  `location` overrides the destination (custom keys publish fine but
-   *  are not auto-discovered). */
-  publishConfigBundle(params?: { location?: string | undefined }): Promise<PublishConfigBundleResult>;
+   *  are not auto-discovered). `profile` overrides the AWS profile for
+   *  just this action (publishing needs s3:PutObject, which day-to-day
+   *  read-only profiles often lack); defaults to the configured sync
+   *  profile. */
+  publishConfigBundle(params?: { location?: string | undefined; profile?: string | undefined }): Promise<PublishConfigBundleResult>;
   /** Probe a bucket for a published team configuration. Used by the setup
    *  wizard right after bucket selection. */
   checkConfigBeacon(params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult>;

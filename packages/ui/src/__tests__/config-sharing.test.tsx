@@ -1,9 +1,24 @@
+import { asBucketPath } from '@costgoblin/core/browser';
 import { render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog } from '../components/config-sharing.js';
 import { MOCK_BUNDLE_SUMMARY, MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
+
+/** Config whose sync profile differs from the alphabetical-first AWS
+ *  profile, to pin down "configured profile wins as the default". */
+function configWithProfile(profile: string): MockCostApi['getConfig'] {
+  return () => Promise.resolve({
+    providers: [{
+      name: 'aws-main',
+      type: 'aws',
+      credentials: { profile },
+      sync: { daily: { bucket: asBucketPath('costgoblin-cur-bucket/daily'), retentionDays: 90 }, intervalMinutes: 60 },
+    }],
+    defaults: { periodDays: 30, costMetric: 'unblended', lagDays: 2 },
+  });
+}
 
 function renderWithApi(api: MockCostApi, ui: React.JSX.Element) {
   return render(<CostApiProvider value={api}>{ui}</CostApiProvider>);
@@ -64,7 +79,24 @@ describe('ShareConfigDialog', () => {
     await waitFor(() => {
       expect(screen.getByText(/Published to s3:\/\/costgoblin-cur-bucket\/costgoblin\/org-config\.yaml/)).toBeDefined();
     });
-    expect(publishSpy).toHaveBeenCalledWith({ location: 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml' });
+    expect(publishSpy).toHaveBeenCalledWith({ location: 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml', profile: 'default' });
+  });
+
+  it('publishes with an explicitly chosen elevated profile', async () => {
+    const api = new MockCostApi();
+    const publishSpy = vi.spyOn(api, 'publishConfigBundle');
+    const user = userEvent.setup();
+    renderWithApi(api, <ShareConfigDialog onClose={() => undefined} />);
+
+    const input = await screen.findByLabelText('Destination');
+    await waitFor(() => {
+      expect(input).toHaveProperty('value', 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml');
+    });
+    await user.click(screen.getByRole('option', { name: 'staging' }));
+    await user.click(screen.getByText('Publish'));
+    await waitFor(() => {
+      expect(publishSpy).toHaveBeenCalledWith({ location: 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml', profile: 'staging' });
+    });
   });
 
   it('publishes to an edited destination and warns it is not auto-discovered', async () => {
@@ -85,7 +117,7 @@ describe('ShareConfigDialog', () => {
     await waitFor(() => {
       expect(screen.getByText(/Published to s3:\/\/config-bucket\/shared\/finops\.yaml/)).toBeDefined();
     });
-    expect(publishSpy).toHaveBeenCalledWith({ location: 's3://config-bucket/shared/finops.yaml' });
+    expect(publishSpy).toHaveBeenCalledWith({ location: 's3://config-bucket/shared/finops.yaml', profile: 'default' });
   });
 
   it('resets an edited destination back to the default', async () => {
@@ -227,6 +259,23 @@ describe('ImportConfigDialog', () => {
       expect(screen.getByText('Apply configuration')).toBeDefined();
     });
     expect(fetchSpy).toHaveBeenCalledWith({ profile: 'staging', location: 's3://client-bucket/costgoblin/org-config.yaml' });
+  });
+
+  it('defaults the fetch profile to the configured sync profile, not the first profile', async () => {
+    const api = new MockCostApi();
+    api.getConfig = configWithProfile('staging');
+    const fetchSpy = vi.spyOn(api, 'fetchConfigBundleFromS3');
+    const user = userEvent.setup();
+    renderWithApi(api, <ImportConfigDialog onClose={() => undefined} onApplied={() => undefined} />);
+
+    const input = await screen.findByLabelText('S3 location');
+    await waitFor(() => {
+      expect(input).toHaveProperty('value', 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml');
+    });
+    await user.click(screen.getByText('Fetch from S3'));
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith({ profile: 'staging', location: 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml' });
+    });
   });
 
   it('shows S3 fetch errors and stays on the picker', async () => {
