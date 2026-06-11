@@ -185,6 +185,67 @@ describe('ImportConfigDialog', () => {
     expect(screen.queryByText('Apply configuration')).toBeNull();
   });
 
+  it('fetches a bundle from S3 (prefilled with the team beacon) and applies it', async () => {
+    const api = new MockCostApi();
+    const fetchSpy = vi.spyOn(api, 'fetchConfigBundleFromS3');
+    const applySpy = vi.spyOn(api, 'applyConfigBundle');
+    const user = userEvent.setup();
+    renderWithApi(api, <ImportConfigDialog onClose={() => undefined} onApplied={() => undefined} />);
+
+    const input = await screen.findByLabelText('S3 location');
+    await waitFor(() => {
+      expect(input).toHaveProperty('value', 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml');
+    });
+    await user.click(screen.getByText('Fetch from S3'));
+    await waitFor(() => {
+      expect(screen.getByText('s3://my-cur-bucket/daily/')).toBeDefined();
+    });
+    expect(fetchSpy).toHaveBeenCalledWith({ profile: 'default', location: 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml' });
+
+    await user.click(screen.getByText('Apply configuration'));
+    await waitFor(() => {
+      expect(screen.getByText('Configuration applied.')).toBeDefined();
+    });
+    expect(applySpy).toHaveBeenCalledWith({ content: 'kind: costgoblin-config-bundle', profile: 'default' });
+  });
+
+  it('fetches from an edited S3 location with the chosen profile', async () => {
+    const api = new MockCostApi();
+    const fetchSpy = vi.spyOn(api, 'fetchConfigBundleFromS3');
+    const user = userEvent.setup();
+    renderWithApi(api, <ImportConfigDialog onClose={() => undefined} onApplied={() => undefined} />);
+
+    const input = await screen.findByLabelText('S3 location');
+    await waitFor(() => {
+      expect(input).toHaveProperty('value', 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml');
+    });
+    await user.selectOptions(screen.getByLabelText('AWS profile'), 'staging');
+    await user.clear(input);
+    await user.type(input, 's3://client-bucket/costgoblin/org-config.yaml');
+    await user.click(screen.getByText('Fetch from S3'));
+    await waitFor(() => {
+      expect(screen.getByText('Apply configuration')).toBeDefined();
+    });
+    expect(fetchSpy).toHaveBeenCalledWith({ profile: 'staging', location: 's3://client-bucket/costgoblin/org-config.yaml' });
+  });
+
+  it('shows S3 fetch errors and stays on the picker', async () => {
+    const api = new MockCostApi();
+    api.fetchConfigBundleFromS3 = () => Promise.resolve({ status: 'error', message: 'No bundle found at s3://bucket/costgoblin/org-config.yaml (missing object or access denied)' });
+    const user = userEvent.setup();
+    renderWithApi(api, <ImportConfigDialog onClose={() => undefined} onApplied={() => undefined} />);
+
+    const input = await screen.findByLabelText('S3 location');
+    await waitFor(() => {
+      expect(input).toHaveProperty('value', 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml');
+    });
+    await user.click(screen.getByText('Fetch from S3'));
+    await waitFor(() => {
+      expect(screen.getByText(/No bundle found at/)).toBeDefined();
+    });
+    expect(screen.getByText('Choose bundle file…')).toBeDefined();
+  });
+
   it('keeps the preview visible when apply fails', async () => {
     const api = new MockCostApi();
     api.applyConfigBundle = () => Promise.resolve({ status: 'error', message: 'disk full' });

@@ -495,7 +495,7 @@ Lets one user hand their full working configuration to teammates — dimensions,
 
 **Export / import.**
 - Options menu → "Share configuration…": export the bundle to a file via save dialog, or publish it to S3 (below).
-- Options menu → "Import configuration…" and the setup wizard's welcome-step import link: pick a bundle file, see a validated summary preview (providers + buckets, dimension/org-tree/rule/view counts, fingerprint), choose a local AWS profile, apply.
+- Options menu → "Import configuration…" and the setup wizard's welcome-step import link: pick a bundle file or fetch one from an explicit S3 location (prefilled with the team's published beacon when a config exists), see a validated summary preview (providers + buckets, dimension/org-tree/rule/view counts, fingerprint), choose a local AWS profile, apply.
 - Before an import overwrites anything, existing config files are copied to `config/backups/<timestamp>/`; the backup location is reported in the UI.
 - After a successful import all caches are invalidated; in a configured app the renderer reloads.
 

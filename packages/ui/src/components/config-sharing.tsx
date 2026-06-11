@@ -4,7 +4,7 @@ import type {
   PublishConfigBundleResult,
 } from '@costgoblin/core/browser';
 import { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from '@costgoblin/core/browser';
-import { CloudUpload, FileDown, FileUp, TriangleAlert } from 'lucide-react';
+import { CloudDownload, CloudUpload, FileDown, FileUp, TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Button } from './ui/button.js';
@@ -248,7 +248,6 @@ type ImportPhase =
       phase: 'preview';
       content: string;
       summary: ConfigBundleSummary;
-      profiles: readonly string[];
       profile: string;
       applying: boolean;
       error: string | null;
@@ -263,11 +262,34 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
 }>): React.JSX.Element {
   const api = useCostApi();
   const [state, setState] = useState<ImportPhase>({ phase: 'pick', error: null });
+  // Ambient resources for the "fetch from S3" source. Profiles double as
+  // the apply-step picker options. The location prefills with the team's
+  // published beacon when a config exists (the "pull team updates" case);
+  // in the setup wizard there is no config yet and it starts empty.
+  const [profiles, setProfiles] = useState<readonly string[]>([]);
+  const [fetchProfile, setFetchProfile] = useState('');
+  const [s3Location, setS3Location] = useState('');
+  const [fetching, setFetching] = useState(false);
+
+  useEffect(() => {
+    api.listAwsProfiles().then(loaded => {
+      setProfiles(loaded);
+      setFetchProfile(prev => prev.length > 0 ? prev : (loaded[0] ?? 'default'));
+    }).catch(() => undefined);
+    api.getConfig().then(config => {
+      const dailyBucket = config.providers[0]?.sync.daily.bucket;
+      if (dailyBucket !== undefined) {
+        setS3Location(prev => prev.length > 0 ? prev : suggestedConfigBeaconLocation(String(dailyBucket)));
+      }
+    }).catch(() => undefined);
+  }, [api]);
+
+  const s3LocationValid = splitS3Location(s3Location) !== null;
 
   function handlePickFile(): void {
     setState({ phase: 'loading' });
-    Promise.all([api.previewConfigBundleFile(), api.listAwsProfiles()])
-      .then(([preview, profiles]) => {
+    api.previewConfigBundleFile()
+      .then(preview => {
         if (preview.status === 'canceled') {
           setState({ phase: 'pick', error: null });
           return;
@@ -280,8 +302,7 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
           phase: 'preview',
           content: preview.content,
           summary: preview.summary,
-          profiles,
-          profile: profiles[0] ?? 'default',
+          profile: fetchProfile.length > 0 ? fetchProfile : 'default',
           applying: false,
           error: null,
         });
@@ -289,6 +310,33 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
       .catch((err: unknown) => {
         setState({ phase: 'pick', error: err instanceof Error ? err.message : String(err) });
       });
+  }
+
+  function handleFetchFromS3(): void {
+    if (fetching || !s3LocationValid || fetchProfile.length === 0) return;
+    setFetching(true);
+    setState({ phase: 'pick', error: null });
+    api.fetchConfigBundleFromS3({ profile: fetchProfile, location: s3Location })
+      .then(preview => {
+        if (preview.status === 'ok') {
+          setState({
+            phase: 'preview',
+            content: preview.content,
+            summary: preview.summary,
+            profile: fetchProfile,
+            applying: false,
+            error: null,
+          });
+        } else if (preview.status === 'error') {
+          setState({ phase: 'pick', error: preview.message });
+        } else {
+          setState({ phase: 'pick', error: null });
+        }
+      })
+      .catch((err: unknown) => {
+        setState({ phase: 'pick', error: err instanceof Error ? err.message : String(err) });
+      })
+      .finally(() => { setFetching(false); });
   }
 
   function handleApply(): void {
@@ -314,7 +362,7 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
       {state.phase === 'pick' && (
         <>
           <p className="text-sm text-text-secondary">
-            Apply a configuration bundle exported by a teammate. You&apos;ll see exactly what it contains before anything is written, and your current configuration is backed up first.
+            Apply a configuration bundle from a teammate — choose an exported file, or fetch one straight from S3. You&apos;ll see exactly what it contains before anything is written, and your current configuration is backed up first.
           </p>
           {state.error !== null && (
             <div className="rounded-lg border border-negative/50 bg-negative-muted px-3 py-2">
@@ -324,6 +372,54 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
           <Button onClick={handlePickFile} className="bg-accent hover:bg-accent-hover text-white self-start">
             <FileUp size={16} className="mr-1.5" />
             Choose bundle file…
+          </Button>
+
+          <div className="flex items-center gap-3" aria-hidden="true">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-xs text-text-muted">or fetch from S3</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="import-fetch-profile" className="text-xs text-text-muted uppercase tracking-wider">
+              AWS profile
+            </label>
+            <select
+              id="import-fetch-profile"
+              value={fetchProfile}
+              disabled={profiles.length === 0}
+              onChange={(e) => { setFetchProfile(e.target.value); }}
+              className="w-full rounded-lg border border-border bg-bg-primary px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent/50"
+            >
+              {profiles.map(p => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="import-s3-location" className="text-xs text-text-muted uppercase tracking-wider">
+              S3 location
+            </label>
+            <input
+              id="import-s3-location"
+              type="text"
+              value={s3Location}
+              onChange={(e) => { setS3Location(e.target.value); }}
+              placeholder="s3://bucket/costgoblin/org-config.yaml"
+              spellCheck={false}
+              className="w-full rounded-lg border border-border bg-bg-primary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+            />
+            {s3Location.length > 0 && !s3LocationValid && (
+              <p className="text-xs text-negative">Enter a full object location like s3://bucket/costgoblin/org-config.yaml</p>
+            )}
+          </div>
+          <Button
+            onClick={handleFetchFromS3}
+            disabled={fetching || !s3LocationValid || profiles.length === 0}
+            className="bg-accent hover:bg-accent-hover text-white self-start"
+          >
+            <CloudDownload size={16} className="mr-1.5" />
+            {fetching ? 'Fetching…' : 'Fetch from S3'}
           </Button>
         </>
       )}
@@ -348,7 +444,7 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
               onChange={(e) => { const profile = e.target.value; setState(prev => prev.phase === 'preview' ? { ...prev, profile } : prev); }}
               className="w-full rounded-lg border border-border bg-bg-primary px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent/50"
             >
-              {state.profiles.map(p => (
+              {profiles.map(p => (
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>

@@ -293,6 +293,9 @@ const api: CostApi = {
   previewConfigBundleFile(): Promise<PreviewConfigBundleResult> {
     return invoke<PreviewConfigBundleResult>('sharing:preview-bundle-file');
   },
+  fetchConfigBundleFromS3(params: { profile: string; location: string }): Promise<PreviewConfigBundleResult> {
+    return invoke<PreviewConfigBundleResult>('sharing:fetch-bundle-from-s3', params);
+  },
   applyConfigBundle(params: ApplyConfigBundleParams): Promise<ApplyConfigBundleResult> {
     return invoke<ApplyConfigBundleResult>('sharing:apply-bundle', params);
   },

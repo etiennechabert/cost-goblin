@@ -391,6 +391,10 @@ export class MockCostApi implements CostApi {
   previewConfigBundleFile(): Promise<PreviewConfigBundleResult> {
     return Promise.resolve({ status: 'ok', content: 'kind: costgoblin-config-bundle', summary: MOCK_BUNDLE_SUMMARY });
   }
+  // Property-style so the declared type keeps the params (see
+  // checkConfigBeacon below).
+  fetchConfigBundleFromS3: (params: { profile: string; location: string }) => Promise<PreviewConfigBundleResult> =
+    () => Promise.resolve({ status: 'ok', content: 'kind: costgoblin-config-bundle', summary: MOCK_BUNDLE_SUMMARY });
   applyConfigBundle(): Promise<ApplyConfigBundleResult> {
     return Promise.resolve({ status: 'applied', sections: ['config', 'dimensions', 'orgTree', 'costScope', 'views'], backupDir: null });
   }

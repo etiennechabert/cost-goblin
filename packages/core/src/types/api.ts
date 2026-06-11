@@ -209,6 +209,10 @@ export interface CostApi {
    *  alongside the summary — the renderer hands the content back to
    *  `applyConfigBundle`, which re-validates in the main process. */
   previewConfigBundleFile(): Promise<PreviewConfigBundleResult>;
+  /** Fetch + parse + validate a bundle from an explicit S3 location (the
+   *  import dialog's "fetch from S3" source). Unlike `checkConfigBeacon`,
+   *  failures are reported, never swallowed. */
+  fetchConfigBundleFromS3(params: { profile: string; location: string }): Promise<PreviewConfigBundleResult>;
   /** Validate and write a bundle to the config directory. Existing config
    *  files are copied to a timestamped backup folder first. The chosen AWS
    *  profile is injected into every imported provider. */

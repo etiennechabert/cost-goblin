@@ -209,6 +209,41 @@ export function registerSharingHandlers(app: AppContext): void {
     }
   });
 
+  /** Explicit fetch of a bundle from a user-typed S3 location. Unlike the
+   *  wizard's silent beacon probe, every failure here is surfaced — the
+   *  user asked for this exact object and wants to know why it failed. */
+  ipcMain.handle('sharing:fetch-bundle-from-s3', async (_event, raw: unknown): Promise<PreviewConfigBundleResult> => {
+    if (!isStringRecord(raw) || typeof raw['profile'] !== 'string' || typeof raw['location'] !== 'string') {
+      return { status: 'error', message: 'Invalid fetch parameters' };
+    }
+    const profile = raw['profile'];
+    const target = splitS3Location(raw['location']);
+    if (target === null) {
+      return { status: 'error', message: 'Invalid S3 location — expected s3://bucket/path/to/org-config.yaml' };
+    }
+    const location = `s3://${target.bucket}/${target.key}`;
+    try {
+      const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3');
+      const client = new S3Client({
+        region: 'eu-central-1',
+        followRegionRedirects: true,
+        ...(profile === 'default' ? {} : { profile }),
+      });
+      const response = await client.send(new GetObjectCommand({ Bucket: target.bucket, Key: target.key }));
+      const content = await response.Body?.transformToString();
+      if (content === undefined) {
+        return { status: 'error', message: `Nothing found at ${location}` };
+      }
+      const parsed = parseConfigBundle(content);
+      return { status: 'ok', content, summary: summarizeConfigBundle(parsed) };
+    } catch (err: unknown) {
+      if (isBeaconAbsence(err)) {
+        return { status: 'error', message: `No bundle found at ${location} (missing object or access denied)` };
+      }
+      return { status: 'error', message: errorMessage(err) };
+    }
+  });
+
   ipcMain.handle('sharing:check-beacon', async (_event, raw: unknown): Promise<CheckConfigBeaconResult> => {
     if (!isStringRecord(raw) || typeof raw['profile'] !== 'string' || typeof raw['bucket'] !== 'string' || raw['bucket'].length === 0) {
       return { status: 'error', message: 'Invalid beacon parameters' };
