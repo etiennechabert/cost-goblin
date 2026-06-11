@@ -133,6 +133,13 @@ interface CostApi {
   scaffoldConfig(): Promise<void>;
   writeConfig(config): Promise<void>;
 
+  // Configuration sharing
+  exportConfigBundle(): Promise<ExportConfigBundleResult>;
+  previewConfigBundleFile(): Promise<PreviewConfigBundleResult>;
+  applyConfigBundle(params: { content; profile }): Promise<ApplyConfigBundleResult>;
+  publishConfigBundle(): Promise<PublishConfigBundleResult>;
+  checkConfigBeacon(params: { profile; bucket }): Promise<CheckConfigBeaconResult>;
+
   // Savings preferences
   getSavingsPreferences(): Promise<SavingsPreferences>;
   saveSavingsPreferences(prefs): Promise<void>;
@@ -470,8 +477,8 @@ This file is **per-machine, per-user**. It is not shared across the team. It mus
 First-run experience that guides the user through initial configuration.
 
 **Flow:**
-1. **AWS profile selection** — list profiles from `~/.aws/credentials`. User picks one.
-2. **S3 bucket discovery** — list buckets accessible to the selected profile. User picks the CUR bucket.
+1. **AWS profile selection** — list profiles from `~/.aws/credentials`. User picks one. The welcome step also offers "import a configuration file" for users handed a bundle by a teammate (see Configuration Sharing).
+2. **S3 bucket discovery** — list buckets accessible to the selected profile. User picks the CUR bucket. If the bucket contains a published team configuration (`costgoblin/org-config.yaml`), the wizard offers one-click setup from it instead of manual browsing.
 3. **Prefix browsing** — browse the bucket's prefixes. The app inspects each prefix and detects whether it looks like a CUR 2.0 export (presence of `manifest.json`, required columns in the Parquet schema). Detected type is shown: `daily`, `hourly`, `cost-optimization`, or `unknown`.
 4. **Tier selection** — user assigns each detected prefix to a tier (daily required; hourly and cost-optimization optional).
 5. **Tag discovery (optional)** — sample a Parquet file to list available tag keys with their coverage. User picks which to track and assigns labels.
@@ -479,6 +486,27 @@ First-run experience that guides the user through initial configuration.
 7. **Ready** — navigate to Sync view to confirm data is loaded, then to the Cost Overview.
 
 The wizard writes `costgoblin.yaml` and a starter `dimensions.yaml`. The org tree is added later via the Dimensions Editor or by editing YAML.
+
+#### Feature: Configuration Sharing (MVP)
+
+Lets one user hand their full working configuration to teammates — dimensions, tag mappings, aliases, org tree, cost scope, dashboards, and S3 data locations — so a new user skips setup entirely.
+
+**Bundle format.** A single YAML file (`kind: costgoblin-config-bundle`) containing a manifest (schema version, app version, export date, SHA-256 fingerprint over the sections) plus up to five sections: `config` (providers minus credentials + defaults), `dimensions`, and optionally `orgTree`, `costScope`, `views`. Credentials are excluded structurally — the bundle's provider entries have no `credentials` field, and receivers pick their own AWS profile on import. The fingerprint flags files modified after export (shown as a warning on import, not a hard failure).
+
+**Export / import.**
+- Options menu → "Share configuration…": export the bundle to a file via save dialog, or publish it to S3 (below).
+- Options menu → "Import configuration…" and the setup wizard's welcome-step import link: pick a bundle file or fetch one from an explicit S3 location (prefilled with the team's published beacon when a config exists), see a validated summary preview (providers + buckets, dimension/org-tree/rule/view counts, fingerprint), choose a local AWS profile, apply.
+- Before an import overwrites anything, existing config files are copied to `config/backups/<timestamp>/`; the backup location is reported in the UI.
+- After a successful import all caches are invalidated; in a configured app the renderer reloads.
+
+**S3 beacon.** "Publish" writes the bundle to S3. The destination is shown in the share dialog as an editable field, prefilled with the well-known beacon key at the root of the daily CUR bucket: `s3://<bucket>/costgoblin/org-config.yaml` (orgs with write-locked CUR buckets can point it at a sibling config bucket). The publish profile is also selectable per-action — it defaults to the configured sync profile, but publishing needs `s3:PutObject`, which day-to-day read-only profiles often lack, so an elevated profile can be chosen for just this operation without touching the sync config. When a new user's setup wizard selects a bucket, the app probes `costgoblin/org-config.yaml` at that bucket's root; when found, the wizard shows "Team configuration found" with the same summary preview and offers one-click setup. Custom destinations publish fine but are not auto-discovered — the dialog says so and the location must be shared manually. Access control rides on the IAM permissions the user must already hold: anyone who can read the billing data can read the config.
+
+**Profile defaults.** Every sharing flow that needs an AWS profile (the import dialog's S3 fetch, the apply step, the publish action) defaults to the app's configured sync profile — the one known to reach the CUR bucket — never to the alphabetically-first profile from `~/.aws`. In the unconfigured setup wizard, where no sync profile exists yet, the first available profile is used.
+
+**Security model.**
+- No credentials in bundles by construction; `credentials` keys smuggled into a hand-crafted bundle are discarded at parse time.
+- Bundles are untrusted input: every section runs through the same validators as the on-disk YAML before anything is written, and `applyConfigBundle` re-parses in the main process — it never trusts the renderer's preview.
+- Beacon absence, access-denied, and network errors silently fall back to manual setup (a beacon must never block the wizard); a published-but-invalid bundle surfaces an explanatory error.
 
 #### Feature: Cost Overview Page (MVP)
 

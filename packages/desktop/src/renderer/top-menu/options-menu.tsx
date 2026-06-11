@@ -4,8 +4,10 @@ import {
   Sun,
   Moon,
   Palette,
+  Share2,
   Sparkles,
   Download,
+  FileUp,
   RefreshCw,
   RotateCw,
 } from 'lucide-react';
@@ -23,6 +25,8 @@ interface Props {
   updateStatus: UpdateStatus;
   onShowReleaseNotes: () => void;
   onCheckForUpdates: () => void;
+  onShareConfig: () => void;
+  onImportConfig: () => void;
 }
 
 function hasUpdateIndicator(status: UpdateStatus): boolean {
@@ -67,6 +71,8 @@ export function OptionsMenu({
   updateStatus,
   onShowReleaseNotes,
   onCheckForUpdates,
+  onShareConfig,
+  onImportConfig,
 }: Readonly<Props>): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const indicator = hasUpdateIndicator(updateStatus);
@@ -166,6 +172,18 @@ export function OptionsMenu({
             onClick={() => { onNavigate('views-editor'); close(); }}
             active={activeNavId === 'views-editor'}
             label="Views Editor"
+          />
+        </CollapsibleSection>
+        <CollapsibleSection title="Sharing">
+          <MenuItem
+            onClick={() => { onShareConfig(); close(); }}
+            icon={<Share2 size={16} />}
+            label="Share configuration…"
+          />
+          <MenuItem
+            onClick={() => { onImportConfig(); close(); }}
+            icon={<FileUp size={16} />}
+            label="Import configuration…"
           />
         </CollapsibleSection>
         <CollapsibleSection title="Tools">

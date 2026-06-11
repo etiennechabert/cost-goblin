@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, applyStripPatterns, generateAliasSuggestions, isStringRecord } from '@costgoblin/core';
+import { applyNormalizationRule, applyStripPatterns, dimensionsConfigToYaml, generateAliasSuggestions, isStringRecord } from '@costgoblin/core';
 import type { AliasSuggestion, DimensionsConfig, NormalizationRule } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { toNum, toStr } from './query-utils.js';
@@ -225,44 +225,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
   async function saveDimensionsConfig(config: DimensionsConfig): Promise<void> {
     const yaml = await import('yaml');
     const fs = await import('node:fs/promises');
-
-    const output = yaml.stringify({
-      builtIn: config.builtIn.map(d => ({
-        name: d.name,
-        label: d.label,
-        field: d.field,
-        ...(d.displayField === undefined ? {} : { displayField: d.displayField }),
-        ...(d.description === undefined ? {} : { description: d.description }),
-        ...(d.normalize === undefined ? {} : { normalize: d.normalize }),
-        ...(d.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(d.aliases).map(([k, v]) => [k, [...v]])) }),
-        ...(d.useOrgAccounts === true ? { useOrgAccounts: true } : {}),
-        ...(typeof d.accountNameFromTag === 'string' && d.accountNameFromTag.length > 0 ? { accountNameFromTag: d.accountNameFromTag } : {}),
-        ...(d.nameStripPatterns !== undefined && d.nameStripPatterns.length > 0 ? { nameStripPatterns: [...d.nameStripPatterns] } : {}),
-        // Persist useRegionNames whenever the user has set it explicitly
-        // (either value), so toggling off sticks past a reload. Leaving it
-        // unset lets mergeDefaultBuiltIns backfill `true` for the Region dim
-        // on legacy configs — we only want that for first-time migration.
-        ...(d.useRegionNames === undefined ? {} : { useRegionNames: d.useRegionNames }),
-        ...(d.enabled === false ? { enabled: false } : {}),
-        ...(d.defaultFilterValues !== undefined && d.defaultFilterValues.length > 0 ? { defaultFilterValues: [...d.defaultFilterValues] } : {}),
-      })),
-      tags: config.tags.map(t => ({
-        ...(t.tagName === undefined || t.tagName.length === 0 ? {} : { tagName: t.tagName }),
-        label: t.label,
-        ...(t.concept === undefined ? {} : { concept: t.concept }),
-        ...(t.normalize === undefined ? {} : { normalize: t.normalize }),
-        ...(t.separator === undefined ? {} : { separator: t.separator }),
-        ...(t.aliases === undefined ? {} : { aliases: Object.fromEntries(Object.entries(t.aliases).map(([k, v]) => [k, [...v]])) }),
-        ...(t.accountTagFallback === undefined ? {} : { accountTagFallback: t.accountTagFallback }),
-        ...(t.missingValueTemplate === undefined ? {} : { missingValueTemplate: t.missingValueTemplate }),
-        ...(t.pathSegment === undefined ? {} : { pathSegment: { separator: t.pathSegment.separator, index: t.pathSegment.index } }),
-        ...(t.description === undefined ? {} : { description: t.description }),
-        ...(t.enabled === false ? { enabled: false } : {}),
-        ...(t.defaultFilterValues !== undefined && t.defaultFilterValues.length > 0 ? { defaultFilterValues: [...t.defaultFilterValues] } : {}),
-      })),
-      ...(config.order === undefined ? {} : { order: [...config.order] }),
-    });
-    await fs.writeFile(ctx.dimensionsPath, output);
+    await fs.writeFile(ctx.dimensionsPath, yaml.stringify(dimensionsConfigToYaml(config)));
     invalidateDimensions();
   }
 
