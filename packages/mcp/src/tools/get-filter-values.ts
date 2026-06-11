@@ -7,18 +7,19 @@ import {
   logger,
 } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
-import { formatDollars } from '../formatters/cost.js';
 import { truncateFooter, truncateRows } from '../formatters/cost.js';
-import { markdownTable, type ColumnDef } from '../formatters/markdown-table.js';
+import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
+  computeDataCoverage,
   defaultDateRange,
   lookupDimension,
   resolveEntityName,
+  resolveFormat,
+  structuredToolResult,
   toDateRange,
   toNum,
   toStr,
   toolError,
-  toolResult,
 } from './tool-helpers.js';
 import type { DateRange } from '@costgoblin/core';
 
@@ -29,8 +30,10 @@ export async function getFilterValues(
     filters?: Record<string, readonly string[]> | undefined;
     dateRange?: { start: string; end: string } | undefined;
     limit?: number | undefined;
+    format?: string | undefined;
   },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
+  const format = resolveFormat(params.format);
   const dimensionId = params.dimensionId;
   const dateRange: DateRange = params.dateRange !== undefined
     ? toDateRange(params.dateRange)
@@ -103,26 +106,28 @@ export async function getFilterValues(
 
   const totalCost = items.reduce((sum, i) => sum + i.cost, 0);
 
-  const columns: ColumnDef[] = [
-    { header: dimLabel },
-    { header: 'Cost', align: 'right' },
-    { header: '% Total', align: 'right' },
+  const columns: Column[] = [
+    { key: 'value', header: dimLabel },
+    { key: 'cost', header: 'Cost', type: 'currency' },
+    { key: 'pct', header: '% Total', type: 'percent' },
   ];
 
   const { visible, hiddenCount, hiddenCost } = truncateRows(items, limit, i => i.cost);
-  const tableRows = visible.map(i => [
+  const tableRows: Cell[][] = visible.map(i => [
     i.value,
-    formatDollars(i.cost),
-    totalCost > 0 ? `${((i.cost / totalCost) * 100).toFixed(1)}%` : '0%',
+    i.cost,
+    totalCost > 0 ? (i.cost / totalCost) * 100 : 0,
   ]);
 
-  const sections: string[] = [];
-  sections.push(`## ${dimLabel} Values (${dateRange.start} to ${dateRange.end})`);
-  sections.push('');
-  sections.push(`**Total**: ${formatDollars(totalCost)} across ${String(items.length)} values`);
-  sections.push('');
-  sections.push(markdownTable(columns, tableRows));
-  sections.push(truncateFooter(hiddenCount, hiddenCost));
-
-  return toolResult(sections.join('\n'));
+  const coverage = await computeDataCoverage(ctx, dateRange);
+  const result: StructuredResult = {
+    title: `${dimLabel} Values (${dateRange.start} to ${dateRange.end})`,
+    coverage,
+    meta: [
+      { label: 'Total', value: totalCost, type: 'currency' },
+      { label: 'Distinct Values', value: items.length, type: 'number' },
+    ],
+    tables: [{ columns, rows: tableRows, footer: truncateFooter(hiddenCount, hiddenCost) }],
+  };
+  return structuredToolResult(result, format);
 }

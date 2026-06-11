@@ -1,7 +1,10 @@
+import type { ConfigBundleSummary } from '@costgoblin/core/browser';
 import { useState, useEffect } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
+import { BundleSummaryCard, ImportConfigDialog } from '../components/config-sharing.js';
+import { ProfilePicker } from '../components/profile-picker.js';
 import { SsoLoginButton } from '../components/sso-login-button.js';
 
 type DataSource = 'daily' | 'hourly' | 'costOptimization';
@@ -16,6 +19,7 @@ type WizardStep =
   | { step: 'welcome' }
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
+  | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[]; path: string[] }
   | { step: 'confirm'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
 
@@ -25,7 +29,7 @@ interface SetupWizardProps {
   profile?: string | undefined;
 }
 
-function WelcomeStep({ onNext }: Readonly<{ onNext: () => void }>) {
+function WelcomeStep({ onNext, onImport }: Readonly<{ onNext: () => void; onImport: () => void }>) {
   return (
     <div className="flex flex-col items-center gap-6 text-center">
       <div className="flex flex-col items-center gap-2">
@@ -41,6 +45,13 @@ function WelcomeStep({ onNext }: Readonly<{ onNext: () => void }>) {
       >
         Get Started
       </Button>
+      <button
+        type="button"
+        onClick={onImport}
+        className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2"
+      >
+        Have a configuration file from a teammate? Import it
+      </button>
       <p className="text-text-muted text-xs">
         {"Don't have a CUR yet? "}
         <a
@@ -56,15 +67,54 @@ function WelcomeStep({ onNext }: Readonly<{ onNext: () => void }>) {
   );
 }
 
+function BeaconStep({ state, onApply, onSkip, onBack }: Readonly<{
+  state: Extract<WizardStep, { step: 'beacon' }>;
+  onApply: () => void;
+  onSkip: () => void;
+  onBack: () => void;
+}>) {
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <h2 className="text-xl font-semibold text-text-primary">Team configuration found</h2>
+        <p className="text-sm text-text-secondary mt-1">
+          <code className="text-text-primary">{state.bucket}</code> contains a configuration published by your team — dimensions, dashboards and data locations are already set up.
+        </p>
+      </div>
+
+      <BundleSummaryCard summary={state.summary} />
+
+      {state.error.length > 0 && (
+        <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
+          <p className="text-sm text-negative">{state.error}</p>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between pt-2">
+        <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={onSkip} className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2">
+            Set up manually instead
+          </button>
+          <Button
+            onClick={onApply}
+            disabled={state.applying}
+            className="bg-accent hover:bg-accent-hover text-white px-8"
+          >
+            {state.applying ? 'Applying…' : 'Use this configuration'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProfileStep({ state, onSelect, onSkip, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'profile' }>;
   onSelect: (profile: string) => void;
   onSkip: () => void;
   onBack: () => void;
 }>) {
-  const [filter, setFilter] = useState('');
-  const filtered = state.profiles.filter(p => p.toLowerCase().includes(filter.toLowerCase()));
-
   return (
     <div className="flex flex-col gap-5">
       <div>
@@ -90,32 +140,13 @@ function ProfileStep({ state, onSelect, onSkip, onBack }: Readonly<{
         </div>
       )}
       {!state.loading && state.profiles.length > 0 && (
-        <>
-          <input
-            type="text"
-            value={filter}
-            onChange={(e) => { setFilter(e.target.value); }}
-            placeholder="Filter profiles..."
-            className="w-full rounded-lg border border-border bg-bg-primary px-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
-          />
-          <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
-            {filtered.map(profile => (
-              <button
-                key={profile}
-                type="button"
-                onClick={() => { onSelect(profile); }}
-                className={[
-                  'flex items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors',
-                  state.selected === profile
-                    ? 'border-accent bg-accent-muted text-accent'
-                    : 'border-border bg-bg-tertiary/20 text-text-primary hover:border-border hover:bg-bg-tertiary/40',
-                ].join(' ')}
-              >
-                <span className="font-mono text-xs px-1.5 py-0.5 rounded bg-bg-tertiary text-text-secondary">{profile}</span>
-              </button>
-            ))}
-          </div>
-        </>
+        <ProfilePicker
+          profiles={state.profiles}
+          selected={state.selected}
+          onSelect={onSelect}
+          listClassName="max-h-64"
+          autoFocus
+        />
       )}
 
       <div className="flex items-center justify-between pt-2">
@@ -464,6 +495,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   );
   const [collectedPaths, setCollectedPaths] = useState({ daily: '', hourly: '', costOpt: '' });
   const [bucketsLoaded, setBucketsLoaded] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     if (isSourceMode && !bucketsLoaded) {
@@ -498,7 +530,38 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
 
   function handleBucketSelect(bucket: string) {
     if (wizard.step !== 'bucket') return;
-    browseTo(wizard.profile, wizard.source, bucket, '');
+    const { profile, source } = wizard;
+    // On the first pass of initial setup, look for a team configuration
+    // published at the bucket's beacon key before walking prefixes by hand.
+    // Skipped in source mode (adding hourly/cost-opt to an existing setup).
+    if (source === 'daily' && !isSourceMode) {
+      setWizard({ ...wizard, selected: bucket, loading: true });
+      api.checkConfigBeacon({ profile, bucket }).then(result => {
+        if (result.status === 'found') {
+          setWizard({ step: 'beacon', profile, source, bucket, content: result.content, summary: result.summary, applying: false, error: '' });
+        } else {
+          browseTo(profile, source, bucket, '');
+        }
+      }).catch(() => { browseTo(profile, source, bucket, ''); });
+      return;
+    }
+    browseTo(profile, source, bucket, '');
+  }
+
+  function handleBeaconApply() {
+    if (wizard.step !== 'beacon') return;
+    const { content, profile } = wizard;
+    setWizard({ ...wizard, applying: true, error: '' });
+    api.applyConfigBundle({ content, profile }).then(result => {
+      if (result.status === 'applied') {
+        onComplete();
+      } else {
+        setWizard(prev => prev.step === 'beacon' ? { ...prev, applying: false, error: result.message } : prev);
+      }
+    }).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      setWizard(prev => prev.step === 'beacon' ? { ...prev, applying: false, error: message } : prev);
+    });
   }
 
   function browseTo(profile: string, source: DataSource, bucket: string, prefix: string) {
@@ -563,6 +626,8 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   function handleBack() {
     if (wizard.step === 'profile') {
       setWizard({ step: 'welcome' });
+    } else if (wizard.step === 'beacon') {
+      startBucketStep(wizard.profile, wizard.source);
     } else if (wizard.step === 'bucket') {
       if (wizard.source === 'daily') {
         goToProfileStep();
@@ -585,8 +650,16 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
           <div className="flex justify-center mb-6">
             <img src="goblin.png" alt="CostGoblin" className="h-16 w-auto" />
           </div>
-          {wizard.step === 'welcome' && <WelcomeStep onNext={handleWelcomeNext} />}
+          {wizard.step === 'welcome' && <WelcomeStep onNext={handleWelcomeNext} onImport={() => { setImportOpen(true); }} />}
           {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={onComplete} onBack={handleBack} />}
+          {wizard.step === 'beacon' && (
+            <BeaconStep
+              state={wizard}
+              onApply={handleBeaconApply}
+              onSkip={() => { browseTo(wizard.profile, wizard.source, wizard.bucket, ''); }}
+              onBack={handleBack}
+            />
+          )}
           {wizard.step === 'bucket' && (
             <BucketStep
               state={wizard}
@@ -614,6 +687,12 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
           )}
         </CardContent>
       </Card>
+      {importOpen && (
+        <ImportConfigDialog
+          onClose={() => { setImportOpen(false); }}
+          onApplied={onComplete}
+        />
+      )}
     </div>
   );
 }

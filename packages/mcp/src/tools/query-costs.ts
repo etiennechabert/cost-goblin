@@ -4,21 +4,22 @@ import {
 } from '@costgoblin/core';
 import type { DateRange, DimensionId } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
-import { formatDollars } from '../formatters/cost.js';
 import { truncateRows, truncateFooter } from '../formatters/cost.js';
-import { markdownTable, type ColumnDef } from '../formatters/markdown-table.js';
+import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
+  computeDataCoverage,
   defaultDateRange,
+  emptyRangeResult,
   lookupDimension,
   resolveEntityName,
+  resolveFormat,
+  structuredToolResult,
   toDimensionId,
   toDateRange,
   toFilterMap,
   toNum,
   toStr,
-  toolError,
-  toolResult,
 } from './tool-helpers.js';
 
 export async function queryCosts(
@@ -28,8 +29,10 @@ export async function queryCosts(
     dateRange?: { start: string; end: string } | undefined;
     filters?: Record<string, readonly string[]> | undefined;
     limit?: number | undefined;
+    format?: string | undefined;
   },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
+  const format = resolveFormat(params.format);
   const groupBy: DimensionId = toDimensionId(params.groupBy);
   const dateRange: DateRange = params.dateRange !== undefined
     ? toDateRange(params.dateRange)
@@ -38,7 +41,7 @@ export async function queryCosts(
   const limit = params.limit ?? 15;
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);
-  if (empty) return toolError(`No data for ${dateRange.start} to ${dateRange.end}.`);
+  if (empty) return emptyRangeResult(ctx, dateRange, format, `Costs by ${params.groupBy} (${dateRange.start} to ${dateRange.end})`);
 
   const { sql, params: queryParams } = buildCostQuery(
     { groupBy, dateRange, filters },
@@ -86,29 +89,28 @@ export async function queryCosts(
 
   const { label: dimLabel } = lookupDimension(groupBy, opts.dimensions);
 
-  const columns: ColumnDef[] = [
-    { header: dimLabel },
-    { header: 'Cost', align: 'right' },
-    { header: '% Total', align: 'right' },
-    ...topServices.map(s => ({ header: s, align: 'right' as const })),
+  const columns: Column[] = [
+    { key: 'entity', header: dimLabel },
+    { key: 'cost', header: 'Cost', type: 'currency' },
+    { key: 'pct', header: '% Total', type: 'percent' },
+    ...topServices.map((s): Column => ({ key: `svc_${s}`, header: s, type: 'currency' })),
   ];
 
   const { visible, hiddenCount, hiddenCost } = truncateRows(costRows, limit, r => r.totalCost);
 
-  const tableRows = visible.map(r => [
+  const tableRows: Cell[][] = visible.map(r => [
     r.entity,
-    formatDollars(r.totalCost),
-    grandTotal > 0 ? `${((r.totalCost / grandTotal) * 100).toFixed(1)}%` : '0%',
-    ...topServices.map(s => formatDollars(r.serviceCosts[s] ?? 0)),
+    r.totalCost,
+    grandTotal > 0 ? (r.totalCost / grandTotal) * 100 : 0,
+    ...topServices.map((s): Cell => r.serviceCosts[s] ?? 0),
   ]);
 
-  const sections: string[] = [];
-  sections.push(`## Costs by ${dimLabel} (${dateRange.start} to ${dateRange.end})`);
-  sections.push('');
-  sections.push(`**Total**: ${formatDollars(grandTotal)}`);
-  sections.push('');
-  sections.push(markdownTable(columns, tableRows));
-  sections.push(truncateFooter(hiddenCount, hiddenCost));
-
-  return toolResult(sections.join('\n'));
+  const coverage = await computeDataCoverage(ctx, dateRange);
+  const result: StructuredResult = {
+    title: `Costs by ${dimLabel} (${dateRange.start} to ${dateRange.end})`,
+    coverage,
+    meta: [{ label: 'Total', value: grandTotal, type: 'currency' }],
+    tables: [{ columns, rows: tableRows, footer: truncateFooter(hiddenCount, hiddenCost) }],
+  };
+  return structuredToolResult(result, format);
 }

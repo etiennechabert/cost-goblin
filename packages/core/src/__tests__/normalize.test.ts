@@ -21,6 +21,14 @@ describe('applyNormalizationRule', () => {
     expect(applyNormalizationRule('Core_Banking', 'lowercase-kebab')).toBe('core-banking');
     expect(applyNormalizationRule('CoreBanking', 'lowercase-kebab')).toBe('core-banking');
     expect(applyNormalizationRule('core banking', 'lowercase-kebab')).toBe('core-banking');
+    // Multi-hump: every camelCase boundary is split, not just the first.
+    expect(applyNormalizationRule('fooBarBaz', 'lowercase-kebab')).toBe('foo-bar-baz');
+  });
+
+  it('applies camelCase', () => {
+    expect(applyNormalizationRule('Core Banking', 'camelCase')).toBe('coreBanking');
+    expect(applyNormalizationRule('core_banking', 'camelCase')).toBe('coreBanking');
+    expect(applyNormalizationRule('my-cost-team', 'camelCase')).toBe('myCostTeam');
   });
 });
 

@@ -10,13 +10,13 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - run: npm ci
@@ -34,11 +34,11 @@ jobs:
   security-audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - run: npm ci
@@ -49,11 +49,11 @@ jobs:
   test-unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - run: npm ci
@@ -80,10 +80,10 @@ jobs:
       matrix:
         shard: [views-core, views-config, stress]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
       - run: npm ci
       - name: Generate fixtures
@@ -115,12 +115,68 @@ jobs:
           path: playwright-report/
           retention-days: 30
 
+  version-bump:
+    name: version bumped past latest release
+    runs-on: ubuntu-latest
+    # PR-only: pushes to main shouldn't fail (main IS where the version
+    # eventually equals a fresh tag, between bump and tagging).
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          # Full tag history needed to find the latest `v*` tag.
+          fetch-depth: 0
+      - name: Verify package.json is exactly one release ahead of the latest tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg_v=$(node -p "require('./package.json').version")
+          desktop_v=$(node -p "require('./packages/desktop/package.json').version")
+          if [ "$pkg_v" != "$desktop_v" ]; then
+            echo "::error::root package.json ($pkg_v) and packages/desktop/package.json ($desktop_v) disagree — bump both together."
+            exit 1
+          fi
+          latest=$(git tag -l 'v*' | sed 's/^v//' | sort -V | tail -n1)
+          echo "package.json version: $pkg_v"
+          echo "Latest released tag : ${latest:-<none>}"
+          if [ -z "$latest" ]; then
+            echo "No v* tag exists yet — nothing to compare against; skipping."
+            exit 0
+          fi
+          if ! printf '%s' "$latest" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Latest tag v$latest is not a plain X.Y.Z version — skipping the strict check."
+            exit 0
+          fi
+          # package.json must sit EXACTLY one release ahead of the latest tag —
+          # the next patch (X.Y.Z+1), minor (X.Y+1.0), or major (X+1.0.0). Once
+          # main is already one ahead, later PRs inherit that version and need no
+          # bump; only the first PR after a release bumps. This also rejects
+          # over-incrementing (e.g. 0.2.8 while 0.2.7 was never released) and
+          # regressions. `10#` forces base-10 so a value like `08` isn't read as
+          # octal.
+          IFS=. read -r maj min pat <<< "$latest"
+          next_patch="${maj}.${min}.$((10#$pat + 1))"
+          next_minor="${maj}.$((10#$min + 1)).0"
+          next_major="$((10#$maj + 1)).0.0"
+          case "$pkg_v" in
+            "$next_patch"|"$next_minor"|"$next_major")
+              echo "OK: $pkg_v is exactly one release ahead of v$latest"
+              exit 0
+              ;;
+          esac
+          if [ "$pkg_v" = "$latest" ]; then
+            echo "::error file=package.json::version $pkg_v matches the latest released tag v$latest — bump it to $next_patch (or $next_minor / $next_major) before merging."
+          else
+            echo "::error file=package.json::version $pkg_v must be exactly one release ahead of the latest tag v$latest. Expected one of: $next_patch (patch), $next_minor (minor), $next_major (major). Don't skip or over-increment versions."
+          fi
+          exit 1
+
   sonarcloud:
     runs-on: ubuntu-latest
     needs: [lint, test-unit, test-e2e]
     if: always() && needs.lint.result == 'success' && needs.test-unit.result == 'success'
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
       - name: Download unit coverage
@@ -141,6 +197,6 @@ jobs:
           cat coverage-e2e-shards/lcov.info > coverage-e2e/lcov.info 2>/dev/null || true
         continue-on-error: true
       - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@59db25f34e16620e48ab4bb9e4a5dce155cb5432 # v8.0.0
+        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

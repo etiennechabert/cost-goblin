@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
+import { request as httpRequest } from 'node:http';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -62,7 +63,7 @@ interface McpClient {
   close(): Promise<void>;
 }
 
-async function createMcpClient(port: number): Promise<McpClient> {
+async function createMcpClient(port: number, token: string): Promise<McpClient> {
   const base = `http://127.0.0.1:${String(port)}/mcp`;
   let nextId = 1;
 
@@ -71,6 +72,7 @@ async function createMcpClient(port: number): Promise<McpClient> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'application/json, text/event-stream',
+      'Authorization': `Bearer ${token}`,
     };
     if (client.sessionId.length > 0) {
       headers['Mcp-Session-Id'] = client.sessionId;
@@ -98,6 +100,7 @@ async function createMcpClient(port: number): Promise<McpClient> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'application/json, text/event-stream',
+      'Authorization': `Bearer ${token}`,
     };
     if (client.sessionId.length > 0) {
       headers['Mcp-Session-Id'] = client.sessionId;
@@ -134,6 +137,7 @@ async function createMcpClient(port: number): Promise<McpClient> {
           headers: {
             'Mcp-Session-Id': client.sessionId,
             'Mcp-Protocol-Version': '2025-03-26',
+            'Authorization': `Bearer ${token}`,
           },
         });
       }
@@ -164,6 +168,7 @@ describe('MCP server E2E', () => {
   let server: McpHttpServer;
   let client: McpClient;
   const port = 19599; // avoid conflict with running dev server
+  const TEST_TOKEN = 'test-secret-token';
 
   beforeAll(async () => {
     db = await DuckDBInstance.create();
@@ -215,8 +220,8 @@ describe('MCP server E2E', () => {
       warmup: () => Promise.resolve(),
     };
 
-    server = await createMcpHttpServer(ctx, port);
-    client = await createMcpClient(port);
+    server = await createMcpHttpServer(ctx, { port, authToken: TEST_TOKEN });
+    client = await createMcpClient(port, TEST_TOKEN);
   }, 30_000);
 
   afterAll(async () => {
@@ -243,7 +248,7 @@ describe('MCP server E2E', () => {
   });
 
   it('supports multiple concurrent sessions', async () => {
-    const client2 = await createMcpClient(port);
+    const client2 = await createMcpClient(port, TEST_TOKEN);
     expect(client2.sessionId).not.toBe(client.sessionId);
     const tools = await client2.listTools();
     expect(tools.length).toBe(10);
@@ -388,6 +393,40 @@ describe('MCP server E2E', () => {
     expect(text).toMatch(/missing|untagged|tag/i);
   });
 
+  it('query_missing_tags shows default placeholder patterns in response', async () => {
+    const { text } = await client.callTool('query_missing_tags', {
+      tagDimension: 'tag_team',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      minCost: 0,
+    });
+    expect(text).toContain('Placeholder Patterns Treated As Missing');
+    expect(text).toContain('unknown-%');
+    expect(text).toContain('none');
+  });
+
+  it('query_missing_tags accepts custom placeholderPatterns', async () => {
+    const { text } = await client.callTool('query_missing_tags', {
+      tagDimension: 'tag_team',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      minCost: 0,
+      placeholderPatterns: ['todo-%', 'placeholder'],
+    });
+    expect(text).toContain('todo-%');
+    expect(text).toContain('placeholder');
+    expect(text).not.toContain('unknown-%');
+  });
+
+  it('query_missing_tags accepts empty placeholderPatterns array', async () => {
+    const { text } = await client.callTool('query_missing_tags', {
+      tagDimension: 'tag_team',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      minCost: 0,
+      placeholderPatterns: [],
+    });
+    expect(text).toContain('Placeholder Patterns Treated As Missing');
+    expect(text).toContain('(none)');
+  });
+
   // ---------- explore_data ----------
 
   it('explore_data returns raw rows', async () => {
@@ -426,6 +465,172 @@ describe('MCP server E2E', () => {
     });
     expect(isError).toBe(true);
     expect(text).toMatch(/error|select|not allowed/i);
+  });
+
+  it('run_sql blocks reading local files via DuckDB file functions', async () => {
+    const { text, isError } = await client.callTool('run_sql', {
+      sql: "SELECT * FROM read_text('/etc/hostname')",
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+    });
+    expect(isError).toBe(true);
+    expect(text).toMatch(/not allowed|read_text/i);
+  });
+
+  it('rejects requests with a non-loopback Host header (anti DNS-rebinding)', async () => {
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = httpRequest(
+        { host: '127.0.0.1', port, path: '/health', method: 'GET', headers: { Host: 'evil.example.com' } },
+        (res) => { res.resume(); resolve(res.statusCode ?? 0); },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    expect(status).toBe(403);
+  });
+
+  it('rejects /mcp requests without the auth token', async () => {
+    const res = await fetch(`http://127.0.0.1:${String(port)}/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects /mcp requests with the wrong auth token', async () => {
+    const res = await fetch(`http://127.0.0.1:${String(port)}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        'Authorization': 'Bearer not-the-real-token',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('accepts the token via a ?token= query param (passes the auth gate)', async () => {
+    const res = await fetch(`http://127.0.0.1:${String(port)}/mcp?token=${TEST_TOKEN}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'initialize',
+        id: 1,
+        params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'q', version: '0.0.0' } },
+      }),
+    });
+    // The query token satisfies auth, so this is not a 401 (the transport
+    // handles the initialize and responds 200).
+    expect(res.status).not.toBe(401);
+    expect(res.status).toBe(200);
+  });
+
+  it('leaves /health open (unauthenticated liveness probe)', async () => {
+    const res = await fetch(`http://127.0.0.1:${String(port)}/health`);
+    expect(res.status).toBe(200);
+  });
+
+  // ---------- data-coverage banner ----------
+
+  it('every response includes a data-coverage banner', async () => {
+    const { text } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+    });
+    expect(text).toMatch(/\*Data coverage:/);
+    expect(text).toMatch(/Latest day: \d{4}-\d{2}-\d{2}/);
+  });
+
+  it('coverage banner makes missing requested periods explicit on partial overlap', async () => {
+    // 2025-12 is missing, 2026-01 is present in fixtures — banner should call this out
+    const { text } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2025-12-01', end: '2026-01-31' },
+    });
+    expect(text).toMatch(/Missing periods in your requested range: 2025-12/);
+  });
+
+  it('coverage is included as a structured field when format=json', async () => {
+    const { text } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      format: 'json',
+    });
+    const parsed = JSON.parse(text) as { coverage: { latestDay: string; lagDays: number; availableMonths: string[]; missingPeriods: string[]; missingInRange: string[] } };
+    expect(parsed.coverage).toBeDefined();
+    expect(parsed.coverage.latestDay).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(Array.isArray(parsed.coverage.availableMonths)).toBe(true);
+    expect(parsed.coverage.availableMonths.length).toBeGreaterThan(0);
+    expect(typeof parsed.coverage.lagDays).toBe('number');
+  });
+
+  it('coverage is included as a CSV comment when format=csv', async () => {
+    const { text } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      format: 'csv',
+    });
+    expect(text).toMatch(/^# Data coverage:/m);
+  });
+
+  // ---------- format parameter ----------
+
+  it('format=json returns a JSON-parseable response with meta and tables', async () => {
+    const { text } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      format: 'json',
+    });
+    const parsed = JSON.parse(text) as { title: string; meta: { label: string; value: unknown; type: string }[]; tables: { columns: { key: string; type: string }[]; rows: unknown[][] }[] };
+    expect(parsed.title).toMatch(/Costs by/);
+    expect(parsed.meta.find(m => m.label === 'Total')?.type).toBe('currency');
+    expect(typeof parsed.meta.find(m => m.label === 'Total')?.value).toBe('number');
+    expect(parsed.tables[0]?.columns.find(c => c.key === 'cost')?.type).toBe('currency');
+    expect(parsed.tables[0]?.rows.length).toBeGreaterThan(0);
+    const firstRow = parsed.tables[0]?.rows[0];
+    expect(Array.isArray(firstRow)).toBe(true);
+    expect(typeof firstRow?.[1]).toBe('number');
+  });
+
+  it('format=csv returns CSV with header and data rows', async () => {
+    const { text } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      format: 'csv',
+    });
+    const lines = text.split('\n');
+    const dataLines = lines.filter(l => !l.startsWith('#') && l.length > 0);
+    expect(dataLines[0]).toContain('Service');
+    expect(dataLines[0]).toContain('Cost');
+    expect(dataLines.length).toBeGreaterThan(1);
+    expect(dataLines[1]).toMatch(/^[^,]+,[\d.]+,/);
+  });
+
+  it('format=markdown is the default and matches no-format behavior', async () => {
+    const { text: defaultText } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+    });
+    const { text: mdText } = await client.callTool('query_costs', {
+      groupBy: 'service',
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      format: 'markdown',
+    });
+    expect(defaultText).toBe(mdText);
+    expect(defaultText).toContain('|');
+    expect(defaultText).toMatch(/## Costs by/);
+  });
+
+  it('format=json on get_cost_overview includes multiple tables', async () => {
+    const { text } = await client.callTool('get_cost_overview', {
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+      format: 'json',
+    });
+    const parsed = JSON.parse(text) as { tables: { title?: string }[] };
+    expect(parsed.tables.length).toBeGreaterThanOrEqual(1);
+    expect(parsed.tables.some(t => t.title === 'Top Services')).toBe(true);
   });
 
   // ---------- Error handling ----------

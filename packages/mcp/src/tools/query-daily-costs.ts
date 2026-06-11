@@ -5,18 +5,19 @@ import {
 } from '@costgoblin/core';
 import type { DateRange, DimensionId } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
-import { formatDollars } from '../formatters/cost.js';
-import { markdownTable, type ColumnDef } from '../formatters/markdown-table.js';
+import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
+  computeDataCoverage,
   defaultDateRange,
+  emptyRangeResult,
   lookupDimension,
+  resolveFormat,
+  structuredToolResult,
   toDimensionId,
   toDateRange,
   toFilterMap,
   toNum,
-  toolError,
-  toolResult,
 } from './tool-helpers.js';
 
 export async function queryDailyCosts(
@@ -25,8 +26,10 @@ export async function queryDailyCosts(
     groupBy?: string | undefined;
     dateRange?: { start: string; end: string } | undefined;
     filters?: Record<string, readonly string[]> | undefined;
+    format?: string | undefined;
   },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
+  const format = resolveFormat(params.format);
   const groupBy: DimensionId = params.groupBy !== undefined
     ? toDimensionId(params.groupBy)
     : asDimensionId('service');
@@ -36,7 +39,7 @@ export async function queryDailyCosts(
   const filters = toFilterMap(params.filters);
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);
-  if (empty) return toolError(`No data for ${dateRange.start} to ${dateRange.end}.`);
+  if (empty) return emptyRangeResult(ctx, dateRange, format, `Daily Costs (${dateRange.start} to ${dateRange.end})`);
 
   const { sql, params: queryParams } = buildDailyCostsQuery(
     { groupBy, dateRange, filters },
@@ -88,19 +91,18 @@ export async function queryDailyCosts(
 
   const { label: dimLabel } = lookupDimension(groupBy, opts.dimensions);
 
-  const columns: ColumnDef[] = [
-    { header: 'Date' },
-    { header: 'Total', align: 'right' },
-    ...topGroups.map(g => ({ header: g, align: 'right' as const })),
-  ];
-
   const startMs = new Date(`${dateRange.start}T00:00:00Z`).getTime();
   const endMs = new Date(`${dateRange.end}T00:00:00Z`).getTime();
   const windowDays = Math.round((endMs - startMs) / 86_400_000) + 1;
   const useWeekly = windowDays > 14;
 
-  let tableRows: string[][];
+  const columns: Column[] = [
+    { key: 'date', header: useWeekly ? 'Week' : 'Date' },
+    { key: 'total', header: 'Total', type: 'currency' },
+    ...topGroups.map((g): Column => ({ key: `grp_${g}`, header: g, type: 'currency' })),
+  ];
 
+  let tableRows: Cell[][];
   if (useWeekly) {
     const weekMap = new Map<string, Record<string, number>>();
     for (const [date, breakdown] of sortedDays) {
@@ -118,31 +120,31 @@ export async function queryDailyCosts(
       }
     }
     const sortedWeeks = [...weekMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    tableRows = sortedWeeks.map(([week, breakdown]) => {
+    tableRows = sortedWeeks.map(([week, breakdown]): Cell[] => {
       const dayTotal = Object.values(breakdown).reduce((s, v) => s + v, 0);
       return [
         `w/${week}`,
-        formatDollars(dayTotal),
-        ...topGroups.map(g => formatDollars(breakdown[g] ?? 0)),
+        dayTotal,
+        ...topGroups.map((g): Cell => breakdown[g] ?? 0),
       ];
     });
   } else {
-    tableRows = sortedDays.map(([date, breakdown]) => {
+    tableRows = sortedDays.map(([date, breakdown]): Cell[] => {
       const dayTotal = Object.values(breakdown).reduce((s, v) => s + v, 0);
       return [
         date,
-        formatDollars(dayTotal),
-        ...topGroups.map(g => formatDollars(breakdown[g] ?? 0)),
+        dayTotal,
+        ...topGroups.map((g): Cell => breakdown[g] ?? 0),
       ];
     });
   }
 
-  const sections: string[] = [];
-  sections.push(`## ${useWeekly ? 'Weekly' : 'Daily'} Costs by ${dimLabel} (${dateRange.start} to ${dateRange.end})`);
-  sections.push('');
-  sections.push(`**Total**: ${formatDollars(totalCost)}`);
-  sections.push('');
-  sections.push(markdownTable(columns, tableRows));
-
-  return toolResult(sections.join('\n'));
+  const coverage = await computeDataCoverage(ctx, dateRange);
+  const result: StructuredResult = {
+    title: `${useWeekly ? 'Weekly' : 'Daily'} Costs by ${dimLabel} (${dateRange.start} to ${dateRange.end})`,
+    coverage,
+    meta: [{ label: 'Total', value: totalCost, type: 'currency' }],
+    tables: [{ columns, rows: tableRows }],
+  };
+  return structuredToolResult(result, format);
 }

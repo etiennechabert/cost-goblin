@@ -6,21 +6,23 @@ import {
 } from '@costgoblin/core';
 import type { DateRange, DimensionId, TrendRow } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
-import { formatDollars, formatPercent, formatDelta, truncateRows, truncateFooter } from '../formatters/cost.js';
-import { markdownTable, type ColumnDef } from '../formatters/markdown-table.js';
+import { formatDollars, truncateRows, truncateFooter } from '../formatters/cost.js';
+import type { Cell, Column, StructuredResult, Table } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
+  computeDataCoverage,
   defaultDateRange,
+  emptyRangeResult,
   lookupDimension,
   resolveEntityName,
+  resolveFormat,
+  structuredToolResult,
   toDimensionId,
   toDollars,
   toDateRange,
   toFilterMap,
   toNum,
   toStr,
-  toolError,
-  toolResult,
 } from './tool-helpers.js';
 
 export async function queryTrends(
@@ -32,8 +34,10 @@ export async function queryTrends(
     deltaThreshold?: number | undefined;
     percentThreshold?: number | undefined;
     limit?: number | undefined;
+    format?: string | undefined;
   },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
+  const format = resolveFormat(params.format);
   const groupBy: DimensionId = toDimensionId(params.groupBy);
   const dateRange: DateRange = params.dateRange !== undefined
     ? toDateRange(params.dateRange)
@@ -44,7 +48,7 @@ export async function queryTrends(
   const limit = params.limit ?? 15;
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);
-  if (empty) return toolError(`No data for ${dateRange.start} to ${dateRange.end}.`);
+  if (empty) return emptyRangeResult(ctx, dateRange, format, `Cost Trends (${dateRange.start} to ${dateRange.end})`);
 
   const { sql, params: queryParams } = buildTrendQuery(
     { groupBy, dateRange, filters, deltaThreshold, percentThreshold },
@@ -95,53 +99,49 @@ export async function queryTrends(
 
   const { label: dimLabel } = lookupDimension(groupBy, opts.dimensions);
 
-  const sections: string[] = [];
-  sections.push(`## Cost Trends by ${dimLabel} (${dateRange.start} to ${dateRange.end})`);
-  sections.push('');
-
-  const trendColumns: ColumnDef[] = [
-    { header: dimLabel },
-    { header: 'Current', align: 'right' },
-    { header: 'Previous', align: 'right' },
-    { header: 'Delta', align: 'right' },
-    { header: 'Change', align: 'right' },
+  const trendColumns: Column[] = [
+    { key: 'entity', header: dimLabel },
+    { key: 'current', header: 'Current', type: 'currency' },
+    { key: 'previous', header: 'Previous', type: 'currency' },
+    { key: 'delta', header: 'Delta', type: 'delta' },
+    { key: 'change', header: 'Change', type: 'change' },
   ];
 
-  if (increases.length > 0) {
-    sections.push(`### Top Increases (${formatDollars(totalIncrease)} total)`);
-    sections.push('');
-    const { visible, hiddenCount, hiddenCost } = truncateRows(increases, limit, r => r.delta);
-    const tableRows = visible.map(r => [
-      r.entity,
-      formatDollars(r.currentCost),
-      formatDollars(r.previousCost),
-      formatDelta(r.delta),
-      formatPercent(r.percentChange),
-    ]);
-    sections.push(markdownTable(trendColumns, tableRows));
-    sections.push(truncateFooter(hiddenCount, hiddenCost));
-  } else {
-    sections.push('*No significant increases found.*');
-  }
+  const tables: Table[] = [];
+  const notes: string[] = [];
 
-  sections.push('');
+  if (increases.length > 0) {
+    const { visible, hiddenCount, hiddenCost } = truncateRows(increases, limit, r => r.delta);
+    const rows: Cell[][] = visible.map(r => [r.entity, r.currentCost, r.previousCost, r.delta, r.percentChange]);
+    tables.push({
+      title: `Top Increases (${formatDollars(totalIncrease)} total)`,
+      columns: trendColumns,
+      rows,
+      footer: truncateFooter(hiddenCount, hiddenCost),
+    });
+  } else {
+    notes.push('*No significant increases found.*');
+  }
 
   if (savings.length > 0) {
-    sections.push(`### Top Savings (${formatDollars(totalSavings)} total)`);
-    sections.push('');
     const { visible, hiddenCount, hiddenCost } = truncateRows(savings, limit, r => Math.abs(r.delta));
-    const tableRows = visible.map(r => [
-      r.entity,
-      formatDollars(r.currentCost),
-      formatDollars(r.previousCost),
-      formatDelta(r.delta),
-      formatPercent(r.percentChange),
-    ]);
-    sections.push(markdownTable(trendColumns, tableRows));
-    sections.push(truncateFooter(hiddenCount, hiddenCost));
+    const rows: Cell[][] = visible.map(r => [r.entity, r.currentCost, r.previousCost, r.delta, r.percentChange]);
+    tables.push({
+      title: `Top Savings (${formatDollars(totalSavings)} total)`,
+      columns: trendColumns,
+      rows,
+      footer: truncateFooter(hiddenCount, hiddenCost),
+    });
   } else {
-    sections.push('*No significant savings found.*');
+    notes.push('*No significant savings found.*');
   }
 
-  return toolResult(sections.join('\n'));
+  const coverage = await computeDataCoverage(ctx, dateRange);
+  const result: StructuredResult = {
+    title: `Cost Trends by ${dimLabel} (${dateRange.start} to ${dateRange.end})`,
+    coverage,
+    notes,
+    tables,
+  };
+  return structuredToolResult(result, format);
 }

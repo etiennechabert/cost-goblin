@@ -143,12 +143,34 @@ interface NormalizableDimension {
   readonly aliases?: Readonly<Record<string, readonly string[]>> | undefined;
 }
 
+/** DuckDB SQL that mirrors the JS `camelCase` rule in `applyNormalizationRule`.
+ *  RE2 (DuckDB's regex engine) can't upper-case a captured group, so the
+ *  transform is built from list primitives: split on runs of delimiters,
+ *  upper-case the first character of every word after the first, then
+ *  lower-case the very first character of the joined result. `expr` is a
+ *  column/sub-expression produced by trusted config, never user data, so the
+ *  duplicate interpolation is safe. */
+function camelCaseSql(expr: string): string {
+  const joined =
+    `array_to_string(` +
+      `list_transform(` +
+        `regexp_split_to_array(${expr}, '[-_ ]+'), ` +
+        `(w, i) -> CASE WHEN i = 1 OR length(w) = 0 THEN w ` +
+                       `ELSE upper(substr(w, 1, 1)) || substr(w, 2) END` +
+      `), ''` +
+    `)`;
+  return `(lower(substr(${joined}, 1, 1)) || substr(${joined}, 2))`;
+}
+
 const NORMALIZE_SQL: Record<NormalizationRule, (expr: string) => string> = {
   'lowercase': (expr) => `LOWER(${expr})`,
   'uppercase': (expr) => `UPPER(${expr})`,
-  'lowercase-kebab': (expr) => String.raw`LOWER(REGEXP_REPLACE(REGEXP_REPLACE(${expr}, '([a-z])([A-Z])', '\1-\2'), '[_\s]+', '-', 'g'))`,
-  'lowercase-underscore': (expr) => String.raw`LOWER(REGEXP_REPLACE(REGEXP_REPLACE(${expr}, '([a-z])([A-Z])', '\1_\2'), '[-\s]+', '_', 'g'))`,
-  'camelCase': (expr) => `LOWER(REPLACE(REPLACE(REPLACE(${expr}, '-', ''), '_', ''), ' ', ''))`,
+  // The inner REGEXP_REPLACE needs the 'g' flag too: without it only the first
+  // camelCase boundary is split, so multi-hump values (e.g. `fooBarBaz`)
+  // diverged from the JS rule, which splits every boundary.
+  'lowercase-kebab': (expr) => String.raw`LOWER(REGEXP_REPLACE(REGEXP_REPLACE(${expr}, '([a-z])([A-Z])', '\1-\2', 'g'), '[_\s]+', '-', 'g'))`,
+  'lowercase-underscore': (expr) => String.raw`LOWER(REGEXP_REPLACE(REGEXP_REPLACE(${expr}, '([a-z])([A-Z])', '\1_\2', 'g'), '[-\s]+', '_', 'g'))`,
+  'camelCase': camelCaseSql,
 };
 
 function buildAliasCases(

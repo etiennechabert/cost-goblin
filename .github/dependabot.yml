@@ -1,6 +1,10 @@
 version: 2
 updates:
-  # Root workspace package.json
+  # npm dependencies across the whole workspace. A single "/" config covers
+  # every workspace package (core, ui, desktop, mcp) AND updates the shared
+  # root package-lock.json in the same PR. Per-package configs are deliberately
+  # NOT used: with one root lockfile, a sub-package-only PR leaves the lockfile
+  # out of sync and every `npm ci` job fails.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
@@ -13,72 +17,6 @@ updates:
     labels:
       - "dependencies"
       - "npm"
-    commit-message:
-      prefix: "chore"
-      include: "scope"
-    groups:
-      all-dependencies:
-        patterns:
-          - "*"
-
-  # Core package (business logic, DuckDB)
-  - package-ecosystem: "npm"
-    directory: "/packages/core"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "UTC"
-    open-pull-requests-limit: 5
-    versioning-strategy: "increase"
-    labels:
-      - "dependencies"
-      - "npm"
-      - "core"
-    commit-message:
-      prefix: "chore"
-      include: "scope"
-    groups:
-      all-dependencies:
-        patterns:
-          - "*"
-
-  # UI package (React components)
-  - package-ecosystem: "npm"
-    directory: "/packages/ui"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "UTC"
-    open-pull-requests-limit: 5
-    versioning-strategy: "increase"
-    labels:
-      - "dependencies"
-      - "npm"
-      - "ui"
-    commit-message:
-      prefix: "chore"
-      include: "scope"
-    groups:
-      all-dependencies:
-        patterns:
-          - "*"
-
-  # Desktop package (Electron shell)
-  - package-ecosystem: "npm"
-    directory: "/packages/desktop"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "UTC"
-    open-pull-requests-limit: 5
-    versioning-strategy: "increase"
-    labels:
-      - "dependencies"
-      - "npm"
-      - "desktop"
     commit-message:
       prefix: "chore"
       include: "scope"

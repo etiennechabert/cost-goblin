@@ -1,25 +1,27 @@
 import {
   buildMissingTagsQuery,
   buildNonResourceCostQuery,
+  DEFAULT_PLACEHOLDER_PATTERNS,
   logger,
 } from '@costgoblin/core';
 import type { DateRange, DimensionId } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
-import { formatDollars } from '../formatters/cost.js';
 import { truncateRows, truncateFooter } from '../formatters/cost.js';
-import { markdownTable, type ColumnDef } from '../formatters/markdown-table.js';
+import type { Cell, Column, StructuredResult, Table } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
+  computeDataCoverage,
   defaultDateRange,
+  emptyRangeResult,
   resolveEntityName,
+  resolveFormat,
+  structuredToolResult,
   toDimensionId,
   toDollars,
   toDateRange,
   toFilterMap,
   toNum,
   toStr,
-  toolError,
-  toolResult,
 } from './tool-helpers.js';
 
 export async function queryMissingTags(
@@ -30,8 +32,11 @@ export async function queryMissingTags(
     filters?: Record<string, readonly string[]> | undefined;
     minCost?: number | undefined;
     limit?: number | undefined;
+    placeholderPatterns?: readonly string[] | undefined;
+    format?: string | undefined;
   },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
+  const format = resolveFormat(params.format);
   const tagDimension: DimensionId = toDimensionId(params.tagDimension);
   const dateRange: DateRange = params.dateRange !== undefined
     ? toDateRange(params.dateRange)
@@ -39,12 +44,13 @@ export async function queryMissingTags(
   const filters = toFilterMap(params.filters);
   const minCost = toDollars(params.minCost ?? 10);
   const limit = params.limit ?? 20;
+  const placeholderPatterns = params.placeholderPatterns ?? DEFAULT_PLACEHOLDER_PATTERNS;
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);
-  if (empty) return toolError(`No data for ${dateRange.start} to ${dateRange.end}.`);
+  if (empty) return emptyRangeResult(ctx, dateRange, format, `Missing Tags: ${params.tagDimension} (${dateRange.start} to ${dateRange.end})`);
 
   const resourceQuery = buildMissingTagsQuery(
-    { tagDimension, dateRange, filters, minCost },
+    { tagDimension, dateRange, filters, minCost, placeholderPatterns },
     opts,
   );
   const nonResourceQuery = buildNonResourceCostQuery(
@@ -98,37 +104,52 @@ export async function queryMissingTags(
     nonResourceCost += toNum(row['cost']);
   }
 
-  const sections: string[] = [];
-  sections.push(`## Missing Tags: ${params.tagDimension} (${dateRange.start} to ${dateRange.end})`);
-  sections.push('');
-  sections.push(`**Actionable**: ${String(actionableCount)} resources, ${formatDollars(actionableCost)}`);
-  sections.push(`**Likely Untaggable**: ${String(untaggableCount)} resources, ${formatDollars(untaggableCost)}`);
-  sections.push(`**Non-Resource Cost**: ${formatDollars(nonResourceCost)} (tax, support, credits, etc.)`);
-  sections.push('');
-
   const actionableItems = items.filter(i => i.bucket === 'actionable').sort((a, b) => b.cost - a.cost);
 
+  const notes: string[] = [];
+  const tables: Table[] = [];
+
   if (actionableItems.length > 0) {
-    sections.push('### Top Actionable Untagged Resources');
-    sections.push('');
-    const columns: ColumnDef[] = [
-      { header: 'Account' },
-      { header: 'Service' },
-      { header: 'Resource' },
-      { header: 'Cost', align: 'right' },
+    const columns: Column[] = [
+      { key: 'account', header: 'Account' },
+      { key: 'service', header: 'Service' },
+      { key: 'resource', header: 'Resource' },
+      { key: 'cost', header: 'Cost', type: 'currency' },
     ];
     const { visible, hiddenCount, hiddenCost } = truncateRows(actionableItems, limit, i => i.cost);
-    const tableRows = visible.map(i => [
+    const rows: Cell[][] = visible.map(i => [
       i.accountName,
       i.service,
       i.resourceId.length > 40 ? `${i.resourceId.slice(0, 37)}...` : i.resourceId,
-      formatDollars(i.cost),
+      i.cost,
     ]);
-    sections.push(markdownTable(columns, tableRows));
-    sections.push(truncateFooter(hiddenCount, hiddenCost));
+    tables.push({
+      title: 'Top Actionable Untagged Resources',
+      columns,
+      rows,
+      footer: truncateFooter(hiddenCount, hiddenCost),
+    });
   } else {
-    sections.push('*No actionable untagged resources above the cost threshold.*');
+    notes.push('*No actionable untagged resources above the cost threshold.*');
   }
 
-  return toolResult(sections.join('\n'));
+  const coverage = await computeDataCoverage(ctx, dateRange);
+  const result: StructuredResult = {
+    title: `Missing Tags: ${params.tagDimension} (${dateRange.start} to ${dateRange.end})`,
+    coverage,
+    meta: [
+      { label: 'Actionable Resources', value: actionableCount, type: 'number' },
+      { label: 'Actionable Cost', value: actionableCost, type: 'currency' },
+      { label: 'Likely Untaggable Resources', value: untaggableCount, type: 'number' },
+      { label: 'Likely Untaggable Cost', value: untaggableCost, type: 'currency' },
+      { label: 'Non-Resource Cost', value: nonResourceCost, type: 'currency' },
+      {
+        label: 'Placeholder Patterns Treated As Missing',
+        value: placeholderPatterns.length === 0 ? '(none)' : placeholderPatterns.join(', '),
+      },
+    ],
+    notes,
+    tables,
+  };
+  return structuredToolResult(result, format);
 }

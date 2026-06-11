@@ -3,6 +3,15 @@ import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { CostScopeCapabilities, CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
 import type {
+  ApplyConfigBundleParams,
+  ApplyConfigBundleResult,
+  CheckConfigBeaconParams,
+  CheckConfigBeaconResult,
+  ExportConfigBundleResult,
+  PreviewConfigBundleResult,
+  PublishConfigBundleResult,
+} from './sharing.js';
+import type {
   ExplorerFilterValue,
   ExplorerFilterValuesParams,
   ExplorerOverviewParams,
@@ -192,6 +201,34 @@ export interface CostApi {
   /** Cancel all queued (not yet running) DuckDB queries. Call on view
    *  navigation so stale queries from the previous view don't hold pool
    *  connections and slow down the new view's queries. */
+  /** Export the org-shared config (providers minus credentials, dimensions,
+   *  org tree, cost scope, views) as a single bundle file via a save
+   *  dialog. */
+  exportConfigBundle(): Promise<ExportConfigBundleResult>;
+  /** Open-dialog + parse + validate a bundle file. Returns the raw content
+   *  alongside the summary — the renderer hands the content back to
+   *  `applyConfigBundle`, which re-validates in the main process. */
+  previewConfigBundleFile(): Promise<PreviewConfigBundleResult>;
+  /** Fetch + parse + validate a bundle from an explicit S3 location (the
+   *  import dialog's "fetch from S3" source). Unlike `checkConfigBeacon`,
+   *  failures are reported, never swallowed. */
+  fetchConfigBundleFromS3(params: { profile: string; location: string }): Promise<PreviewConfigBundleResult>;
+  /** Validate and write a bundle to the config directory. Existing config
+   *  files are copied to a timestamped backup folder first. The chosen AWS
+   *  profile is injected into every imported provider. */
+  applyConfigBundle(params: ApplyConfigBundleParams): Promise<ApplyConfigBundleResult>;
+  /** Publish the current config as a bundle to S3. Defaults to the
+   *  well-known beacon key (`costgoblin/org-config.yaml`) at the root of
+   *  the daily CUR bucket, where teammates' setup wizards discover it;
+   *  `location` overrides the destination (custom keys publish fine but
+   *  are not auto-discovered). `profile` overrides the AWS profile for
+   *  just this action (publishing needs s3:PutObject, which day-to-day
+   *  read-only profiles often lack); defaults to the configured sync
+   *  profile. */
+  publishConfigBundle(params?: { location?: string | undefined; profile?: string | undefined }): Promise<PublishConfigBundleResult>;
+  /** Probe a bucket for a published team configuration. Used by the setup
+   *  wizard right after bucket selection. */
+  checkConfigBeacon(params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult>;
   cancelPendingQueries(): Promise<void>;
   /** Wipe every backend cache (LRU result cache, column probe cache,
    *  in-flight de-dup map, materialized base table, plus the in-memory
@@ -201,6 +238,12 @@ export interface CostApi {
   clearAllCaches(): Promise<void>;
   getMcpServerRunning(): Promise<boolean>;
   setMcpServerRunning(enabled: boolean): Promise<void>;
+  /** The shared secret a client must send (as `Authorization: Bearer <token>`
+   *  or a `?token=` query param) to reach the MCP server. */
+  getMcpToken(): Promise<string>;
+  /** Rotate the MCP token, restarting the server if running. Returns the new
+   *  token. Existing clients must update their config to keep working. */
+  regenerateMcpToken(): Promise<string>;
 }
 
 export interface AccountMappingEntry {

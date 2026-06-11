@@ -3,6 +3,7 @@ import type { DataInventoryResult, CostGoblinConfig, SyncStatus } from '@costgob
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
+import { ProfilePicker } from '../components/profile-picker.js';
 import { SetupWizard } from './setup-wizard.js';
 import { OrgAccountsSection } from './data-management-org.js';
 import { SsmParameterSection } from './data-management-ssm.js';
@@ -635,22 +636,15 @@ function ProfileSwapModal({ currentProfile, onClose, onSaved }: Readonly<{
           <p className="text-sm text-warning mt-4">No AWS profiles found in ~/.aws.</p>
         )}
         {profilesQuery.status === 'success' && profiles.length > 0 && (
-          <div className="mt-4 flex flex-col gap-2 max-h-64 overflow-y-auto">
-            {profiles.map(p => (
-              <label key={p} className="flex items-center gap-2 rounded border border-border bg-bg-primary px-3 py-2 cursor-pointer hover:border-accent">
-                <input
-                  type="radio"
-                  name="profile"
-                  value={p}
-                  checked={selected === p}
-                  onChange={() => { setSelected(p); }}
-                />
-                <span className="text-sm text-text-primary">{p}</span>
-                {p === currentProfile && (
-                  <span className="ml-auto text-[10px] text-text-muted uppercase tracking-wider">Current</span>
-                )}
-              </label>
-            ))}
+          <div className="mt-4">
+            <ProfilePicker
+              profiles={profiles}
+              selected={selected}
+              onSelect={setSelected}
+              currentProfile={currentProfile ?? undefined}
+              listClassName="max-h-64"
+              autoFocus
+            />
           </div>
         )}
 

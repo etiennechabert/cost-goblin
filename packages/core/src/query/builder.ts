@@ -1,11 +1,12 @@
 import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
 import type { CostQueryParams, DailyCostsParams, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
+import { DEFAULT_PLACEHOLDER_PATTERNS } from '../types/query.js';
 import type { DimensionId } from '../types/branded.js';
 import { tagDimColumn } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
-import { costExprFor } from './cost-metric.js';
+import { costExprFor, LIST_METRIC_LINE_ITEM_TYPES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
 import { assertDateString, assertHourString, SecurityError } from './identifier-validator.js';
 
@@ -409,6 +410,15 @@ export function buildSource(opts: BuildSourceOptions): string {
       COALESCE(${tablePrefix}line_item_usage_amount, 0) AS usage_amount,
       COALESCE(${tablePrefix}pricing_public_on_demand_cost, 0) AS list_cost,`;
 
+  // The `list` metric reports on-demand list price for usage that actually
+  // happened. RI/SP fee rows (RIFee, SavingsPlanRecurringFee, etc.) have no
+  // retail equivalent, and including them just adds zero-cost rows that bloat
+  // group-by buckets. Restrict at the source level so every downstream query
+  // (Explorer, custom views, MCP, materialized base) sees a consistent slice.
+  const metricWhere = costMetric === 'list'
+    ? `\n    WHERE COALESCE(${tablePrefix}line_item_line_item_type, '') IN (${LIST_METRIC_LINE_ITEM_TYPES.map(t => `'${t}'`).join(', ')})`
+    : '';
+
   return `(
     SELECT
       ${dateExpr},
@@ -422,7 +432,7 @@ export function buildSource(opts: BuildSourceOptions): string {
       COALESCE(${tablePrefix}line_item_line_item_type, '') AS line_item_type,
       COALESCE(${tablePrefix}line_item_operation, '') AS operation,
       COALESCE(${tablePrefix}line_item_usage_type, '') AS usage_type${tagClause}
-    FROM ${fromClause}
+    FROM ${fromClause}${metricWhere}
   )`;
 }
 
@@ -718,6 +728,21 @@ export function buildMissingTagsQuery(
     ...exclusionClauses,
   ];
 
+  // Treat placeholder values (e.g. `unknown-cyber-security`, `none`, `n/a`)
+  // as missing in addition to NULL and empty string. Without this, tagging
+  // pipelines that backfill a placeholder to satisfy "non-empty" downstream
+  // constraints would be counted as tagged and the gap would be understated.
+  const placeholderPatterns = params.placeholderPatterns ?? DEFAULT_PLACEHOLDER_PATTERNS;
+  const placeholderClauses = placeholderPatterns.map(pattern => {
+    const placeholder = qb.addParam(pattern);
+    return `${tagCheckField} NOT ILIKE ${placeholder}`;
+  });
+  const isTaggedExpr = [
+    `${tagCheckField} IS NOT NULL`,
+    `${tagCheckField} != ''`,
+    ...placeholderClauses,
+  ].join(' AND ');
+
   const sql = `
     WITH resources AS (
       SELECT
@@ -727,7 +752,7 @@ export function buildMissingTagsQuery(
         service_family,
         resource_id,
         SUM(cost) AS cost,
-        MAX(CASE WHEN ${tagCheckField} IS NOT NULL AND ${tagCheckField} != '' THEN 1 ELSE 0 END) AS has_tag,
+        MAX(CASE WHEN ${isTaggedExpr} THEN 1 ELSE 0 END) AS has_tag,
         MAX(${tagResolved.rawField}) AS closest_owner
       FROM ${source}
       WHERE ${whereConditions.join(' AND ')}

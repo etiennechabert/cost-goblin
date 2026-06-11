@@ -9,20 +9,21 @@ jobs:
   build:
     environment: release
     strategy:
+      # Exactly ONE job per platform. electron-builder.yml pins the arch list
+      # per target, so a single invocation builds every arch for the platform
+      # (CLI --x64/--arm64 flags do NOT narrow it). Splitting mac into per-arch
+      # jobs made both jobs build BOTH archs and race on publishing: each
+      # "overwrite published file" replaced the other's binaries, leaving a
+      # latest-mac.yml whose sha512/size didn't match the surviving zips —
+      # which made every macOS auto-update fail checksum validation (v0.2.6).
       matrix:
         include:
           - os: macos-latest
             platform: mac
-            arch: arm64
-          - os: macos-latest
-            platform: mac
-            arch: x64
           - os: windows-latest
             platform: win
-            arch: x64
           - os: ubuntu-latest
             platform: linux
-            arch: x64
 
     runs-on: ${{ matrix.os }}
 
@@ -30,7 +31,25 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # Fail fast if someone tags `v0.2.5` without first bumping
+      # package.json to 0.2.5. Without this guard, electron-builder
+      # publishes artifacts named for the old version and (worse) silently
+      # skips uploads when the matching release is >2h old, leaving a
+      # tag with no binaries attached — exactly what happened to v0.2.5.
+      - name: Verify package.json version matches tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/v}"
+          pkg_v=$(node -p "require('./package.json').version")
+          desktop_v=$(node -p "require('./packages/desktop/package.json').version")
+          if [ "$pkg_v" != "$tag" ] || [ "$desktop_v" != "$tag" ]; then
+            echo "::error::Tag v$tag does not match package.json ($pkg_v) / packages/desktop/package.json ($desktop_v). Bump both, push, then re-tag."
+            exit 1
+          fi
+          echo "OK: tag v$tag == package.json $pkg_v"
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
@@ -42,7 +61,7 @@ jobs:
       - run: npm run build --workspaces --if-present
 
       - name: Build installers
-        run: npx --no-install electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish always
+        run: npx --no-install electron-builder --${{ matrix.platform }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ matrix.platform == 'mac' && secrets.MAC_CERTIFICATE_P12 || '' }}
@@ -50,3 +69,26 @@ jobs:
           APPLE_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_ID || '' }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'mac' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_TEAM_ID || '' }}
+
+  # electron-builder creates the GitHub release but leaves the body empty.
+  # Populate it with GitHub's auto-generated changelog (PR titles + commit
+  # subjects since the previous tag) after all matrix builds have finished
+  # uploading their assets. Single job to avoid the matrix-vs-release-body
+  # race that would happen if we patched the body from inside the build job.
+  notes:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Set release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          NOTES=$(gh api -X POST "repos/${GITHUB_REPO}/releases/generate-notes" \
+            -f tag_name="${TAG}" \
+            --jq .body)
+          gh release edit "${TAG}" --repo "${GITHUB_REPO}" --notes "${NOTES}"

@@ -26,6 +26,13 @@ import {
   type ExplorerOverviewResult,
   type ExplorerRowsResult,
   type AliasSuggestion,
+  type ApplyConfigBundleResult,
+  type CheckConfigBeaconParams,
+  type CheckConfigBeaconResult,
+  type ConfigBundleSummary,
+  type ExportConfigBundleResult,
+  type PreviewConfigBundleResult,
+  type PublishConfigBundleResult,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE } from '@costgoblin/core/browser';
 
@@ -290,7 +297,7 @@ export class MockCostApi implements CostApi {
     });
   }
   getCostScopeCapabilities(): Promise<CostScopeCapabilities> {
-    return Promise.resolve({ hasEffectiveCostColumns: true, hasBlendedColumn: true, hasNetColumns: true });
+    return Promise.resolve({ hasEffectiveCostColumns: true, hasNetColumns: true, hasListPriceColumn: true });
   }
   revealCostScopeFolder(): Promise<void> { return Promise.resolve(); }
   queryExplorerOverview(): Promise<ExplorerOverviewResult> {
@@ -376,7 +383,46 @@ export class MockCostApi implements CostApi {
   clearAllCaches(): Promise<void> { return Promise.resolve(); }
   getMcpServerRunning(): Promise<boolean> { return Promise.resolve(true); }
   setMcpServerRunning(): Promise<void> { return Promise.resolve(); }
+  getMcpToken(): Promise<string> { return Promise.resolve('mock-token-abc123'); }
+  regenerateMcpToken(): Promise<string> { return Promise.resolve('mock-token-regenerated'); }
+  exportConfigBundle(): Promise<ExportConfigBundleResult> {
+    return Promise.resolve({ status: 'saved', path: '/mock/costgoblin-config-2026-06-11.yaml' });
+  }
+  previewConfigBundleFile(): Promise<PreviewConfigBundleResult> {
+    return Promise.resolve({ status: 'ok', content: 'kind: costgoblin-config-bundle', summary: MOCK_BUNDLE_SUMMARY });
+  }
+  // Property-style so the declared type keeps the params (see
+  // checkConfigBeacon below).
+  fetchConfigBundleFromS3: (params: { profile: string; location: string }) => Promise<PreviewConfigBundleResult> =
+    () => Promise.resolve({ status: 'ok', content: 'kind: costgoblin-config-bundle', summary: MOCK_BUNDLE_SUMMARY });
+  applyConfigBundle(): Promise<ApplyConfigBundleResult> {
+    return Promise.resolve({ status: 'applied', sections: ['config', 'dimensions', 'orgTree', 'costScope', 'views'], backupDir: null });
+  }
+  // Property-style so the declared type keeps the params (see
+  // checkConfigBeacon below).
+  publishConfigBundle: (params?: { location?: string | undefined; profile?: string | undefined }) => Promise<PublishConfigBundleResult> =
+    (params) => Promise.resolve({ status: 'published', location: params?.location ?? 's3://my-cur-bucket/costgoblin/org-config.yaml' });
+  // Property-style so the declared type keeps the params even though this
+  // default implementation ignores them — tests override with param-aware
+  // functions.
+  checkConfigBeacon: (params: CheckConfigBeaconParams) => Promise<CheckConfigBeaconResult> =
+    () => Promise.resolve({ status: 'none' });
 }
+
+export const MOCK_BUNDLE_SUMMARY: ConfigBundleSummary = {
+  schemaVersion: 1,
+  appVersion: '0.2.0',
+  exportedAt: '2026-06-01T09:00:00.000Z',
+  fingerprint: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
+  fingerprintValid: true,
+  sections: ['config', 'dimensions', 'orgTree', 'costScope', 'views'],
+  providers: [{ name: 'aws-main', dailyBucket: 's3://my-cur-bucket/daily/' }],
+  builtInDimensionCount: 7,
+  tagDimensionCount: 3,
+  orgTreeNodeCount: 12,
+  exclusionRuleCount: 6,
+  viewCount: 2,
+};
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {
   views: [

@@ -5,23 +5,26 @@ import {
   logger,
 } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
-import { formatDollars } from '../formatters/cost.js';
-import { markdownTable, type ColumnDef } from '../formatters/markdown-table.js';
+import type { Cell, Column, StructuredResult, Table } from '../formatters/result.js';
 import {
   buildQueryContextOpts,
+  computeDataCoverage,
   defaultDateRange,
+  emptyRangeResult,
+  resolveFormat,
+  structuredToolResult,
   toDateRange,
   toNum,
   toStr,
   toolError,
-  toolResult,
 } from './tool-helpers.js';
 import type { DateRange, FilterMap } from '@costgoblin/core';
 
 export async function getCostOverview(
   ctx: McpContext,
-  params: { dateRange?: { start: string; end: string } | undefined },
+  params: { dateRange?: { start: string; end: string } | undefined; format?: string | undefined },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
+  const format = resolveFormat(params.format);
   const dateRange: DateRange = params.dateRange !== undefined
     ? toDateRange(params.dateRange)
     : defaultDateRange();
@@ -33,7 +36,7 @@ export async function getCostOverview(
 
   const { opts, empty } = await buildQueryContextOpts(ctx, dateRange);
   if (empty) {
-    return toolError(`No data available for the period ${dateRange.start} to ${dateRange.end}. Available months: ${months.join(', ')}`);
+    return emptyRangeResult(ctx, dateRange, format, `Cost Overview (${dateRange.start} to ${dateRange.end})`);
   }
 
   const emptyFilters: FilterMap = {};
@@ -85,37 +88,41 @@ export async function getCostOverview(
     ...dimensions.tags.filter(d => d.enabled !== false).map(d => d.label),
   ];
 
-  const sections: string[] = [];
-  sections.push(`## Cost Overview (${dateRange.start} to ${dateRange.end})`);
-  sections.push('');
-  sections.push(`**Total Cost**: ${formatDollars(serviceTotalCost)}`);
-  sections.push(`**Data Range**: ${months[0] ?? '?'} to ${months[months.length - 1] ?? '?'}`);
-  sections.push(`**Available Dimensions**: ${enabledDims.join(', ')}`);
-
-  sections.push('');
-  sections.push('### Top Services');
-  const svcCols: ColumnDef[] = [
-    { header: 'Service' },
-    { header: 'Cost', align: 'right' },
-    { header: '% of Total', align: 'right' },
+  const svcColumns: Column[] = [
+    { key: 'service', header: 'Service' },
+    { key: 'cost', header: 'Cost', type: 'currency' },
+    { key: 'pct', header: '% of Total', type: 'percent' },
   ];
-  const svcRows = topServices.map(([name, cost]) => [
+  const svcRows: Cell[][] = topServices.map(([name, cost]) => [
     name,
-    formatDollars(cost),
-    serviceTotalCost > 0 ? `${((cost / serviceTotalCost) * 100).toFixed(1)}%` : '0%',
+    cost,
+    serviceTotalCost > 0 ? (cost / serviceTotalCost) * 100 : 0,
   ]);
-  sections.push(markdownTable(svcCols, svcRows));
+
+  const tables: Table[] = [
+    { title: 'Top Services', columns: svcColumns, rows: svcRows },
+  ];
 
   if (topAccounts.length > 0) {
-    sections.push('');
-    sections.push('### Top Accounts');
-    const acctCols: ColumnDef[] = [
-      { header: 'Account' },
-      { header: 'Cost', align: 'right' },
-    ];
-    const acctRows = topAccounts.map(([name, cost]) => [name, formatDollars(cost)]);
-    sections.push(markdownTable(acctCols, acctRows));
+    tables.push({
+      title: 'Top Accounts',
+      columns: [
+        { key: 'account', header: 'Account' },
+        { key: 'cost', header: 'Cost', type: 'currency' },
+      ],
+      rows: topAccounts.map(([name, cost]): Cell[] => [name, cost]),
+    });
   }
 
-  return toolResult(sections.join('\n'));
+  const coverage = await computeDataCoverage(ctx, dateRange);
+  const result: StructuredResult = {
+    title: `Cost Overview (${dateRange.start} to ${dateRange.end})`,
+    coverage,
+    meta: [
+      { label: 'Total Cost', value: serviceTotalCost, type: 'currency' },
+      { label: 'Available Dimensions', value: enabledDims.join(', ') },
+    ],
+    tables,
+  };
+  return structuredToolResult(result, format);
 }

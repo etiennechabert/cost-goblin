@@ -40,6 +40,13 @@ import type {
   AggregatedTableParams,
   AggregatedTableResult,
   AliasSuggestion,
+  ApplyConfigBundleParams,
+  ApplyConfigBundleResult,
+  CheckConfigBeaconParams,
+  CheckConfigBeaconResult,
+  ExportConfigBundleResult,
+  PreviewConfigBundleResult,
+  PublishConfigBundleResult,
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
@@ -280,6 +287,24 @@ const api: CostApi = {
   acceptSuggestion(tagName: string, canonical: string, aliases: readonly string[]): Promise<void> {
     return invoke<undefined>('dimensions:accept-suggestion', tagName, canonical, aliases).then(() => undefined);
   },
+  exportConfigBundle(): Promise<ExportConfigBundleResult> {
+    return invoke<ExportConfigBundleResult>('sharing:export-bundle');
+  },
+  previewConfigBundleFile(): Promise<PreviewConfigBundleResult> {
+    return invoke<PreviewConfigBundleResult>('sharing:preview-bundle-file');
+  },
+  fetchConfigBundleFromS3(params: { profile: string; location: string }): Promise<PreviewConfigBundleResult> {
+    return invoke<PreviewConfigBundleResult>('sharing:fetch-bundle-from-s3', params);
+  },
+  applyConfigBundle(params: ApplyConfigBundleParams): Promise<ApplyConfigBundleResult> {
+    return invoke<ApplyConfigBundleResult>('sharing:apply-bundle', params);
+  },
+  publishConfigBundle(params?: { location?: string | undefined; profile?: string | undefined }): Promise<PublishConfigBundleResult> {
+    return invoke<PublishConfigBundleResult>('sharing:publish-bundle', params);
+  },
+  checkConfigBeacon(params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult> {
+    return invoke<CheckConfigBeaconResult>('sharing:check-beacon', params);
+  },
   cancelPendingQueries(): Promise<void> {
     void invoke<undefined>('debug:clear-completed');
     // Use ipcRenderer directly — cancel calls shouldn't inflate the in-flight badge
@@ -293,6 +318,12 @@ const api: CostApi = {
   },
   setMcpServerRunning(enabled: boolean): Promise<void> {
     return invoke<undefined>('mcp:set-running', enabled).then(() => undefined);
+  },
+  getMcpToken(): Promise<string> {
+    return invoke<string>('mcp:get-token');
+  },
+  regenerateMcpToken(): Promise<string> {
+    return invoke<string>('mcp:regenerate-token');
   },
 };
 

@@ -63,6 +63,7 @@ export type {
   SyncStatus,
   QueryState,
 } from './query.js';
+export { DEFAULT_PLACEHOLDER_PATTERNS } from './query.js';
 
 export type { Dimension, CostApi, DataInventoryResult, DataTier, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateLogEntry, UpdateStage, UpdateStatus, UpdateApi } from './api.js';
 
@@ -90,6 +91,23 @@ export type {
   CostScopeSampleRow,
 } from './cost-scope.js';
 export { COST_METRICS, COST_PERSPECTIVES, DEFAULT_LAG_DAYS } from './cost-scope.js';
+
+export type {
+  ApplyConfigBundleParams,
+  ApplyConfigBundleResult,
+  BundleSectionId,
+  CheckConfigBeaconParams,
+  CheckConfigBeaconResult,
+  ConfigBundle,
+  ConfigBundleSections,
+  ConfigBundleSummary,
+  ExportConfigBundleResult,
+  PreviewConfigBundleResult,
+  PublishConfigBundleResult,
+  SharedCostGoblinConfig,
+  SharedProviderConfig,
+} from './sharing.js';
+export { CONFIG_BUNDLE_KIND, CONFIG_BUNDLE_SCHEMA_VERSION, CONFIG_BEACON_KEY } from './sharing.js';
 
 export type {
   ExplorerFilterMap,

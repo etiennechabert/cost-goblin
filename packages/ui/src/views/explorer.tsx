@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CostMetric,
   CostPerspective,
@@ -209,7 +209,7 @@ export function ExplorerView(): React.JSX.Element {
   useEffect(() => {
     if (capabilities === null) return;
     if (costMetric === 'amortized' && !capabilities.hasEffectiveCostColumns) setCostMetric('unblended');
-    if (costMetric === 'blended' && !capabilities.hasBlendedColumn) setCostMetric('unblended');
+    if (costMetric === 'list' && !capabilities.hasListPriceColumn) setCostMetric('unblended');
     if (costPerspective === 'net' && !capabilities.hasNetColumns) setCostPerspective('gross');
   }, [capabilities, costMetric, costPerspective]);
 
@@ -234,7 +234,9 @@ export function ExplorerView(): React.JSX.Element {
     })
       .then(data => {
         if (reqId !== overviewReqIdRef.current) return;
-        setOverview({ data, loading: false, error: null });
+        // Transition: keep the histogram render interruptible so input isn't
+        // starved while it commits (see use-query.ts for the rationale).
+        startTransition(() => { setOverview({ data, loading: false, error: null }); });
       })
       .catch((err: unknown) => {
         if (reqId !== overviewReqIdRef.current) return;
@@ -267,7 +269,9 @@ export function ExplorerView(): React.JSX.Element {
     })
       .then(data => {
         if (reqId !== rowsReqIdRef.current) return;
-        setRows({ data, loading: false, error: null });
+        // Transition: the rows table can be large; keep its render interruptible
+        // so the UI stays responsive while it commits.
+        startTransition(() => { setRows({ data, loading: false, error: null }); });
       })
       .catch((err: unknown) => {
         if (reqId !== rowsReqIdRef.current) return;
@@ -563,9 +567,9 @@ function ExplorerOptions({
   onCostPerspectiveChange,
 }: ExplorerOptionsProps): React.JSX.Element {
   const metricOptions: { value: CostMetric; label: string; available: boolean }[] = [
-    { value: 'unblended', label: 'Unblended', available: true },
-    { value: 'blended', label: 'Blended', available: capabilities?.hasBlendedColumn !== false },
     { value: 'amortized', label: 'Amortized', available: capabilities?.hasEffectiveCostColumns !== false },
+    { value: 'list', label: 'List price', available: capabilities?.hasListPriceColumn !== false },
+    { value: 'unblended', label: 'Unblended', available: true },
   ];
   const netAvailable = capabilities?.hasNetColumns !== false;
 
