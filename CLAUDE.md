@@ -156,6 +156,19 @@ fi
 npm run check
 ```
 
+## Versioning & releases
+
+The project version lives in `package.json` and `packages/desktop/package.json` — **keep the two in sync** (CI rejects a mismatch). Releases are cut by pushing a `v<version>` tag, which triggers `release.yml` (it verifies the tag matches `package.json`, then builds and publishes).
+
+**Rule: `package.json` must be exactly one release ahead of the latest `v*` tag** — the next patch (`X.Y.Z+1`), or a deliberate minor (`X.Y+1.0`) / major (`X+1.0.0`). The `version bumped past latest release` CI job enforces this on every PR.
+
+What this means in practice:
+- **Don't bump on every PR.** Once `main` is one release ahead of the latest tag, that version is correct — further PRs inherit it and change nothing. Only the **first** PR of a new release cycle bumps the version.
+- **Don't over-increment.** If the latest tag is `v0.2.6`, the target is `0.2.7`. Setting `0.2.8` (skipping `0.2.7`) is rejected — pick `0.2.7`, or, for an intentional minor/major release, `0.3.0` / `1.0.0`.
+- A bump (when needed) updates **both** `package.json` files together.
+
+So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` → subsequent PRs stay at `0.2.7` → maintainer tags `v0.2.7` to release → next PR bumps to `0.2.8`.
+
 ## Key Architecture Decisions
 
 - **Tag normalization at query time** — aliases applied via SQL, not during sync. Changing aliases takes effect immediately.
