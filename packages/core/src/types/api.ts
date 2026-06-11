@@ -264,13 +264,26 @@ export interface UpdateInfo {
   readonly releaseNotes: string | null;
 }
 
+export type UpdateStage = 'check' | 'download' | 'install';
+
+export interface UpdateLogEntry {
+  readonly timestamp: number;
+  readonly level: 'info' | 'warn' | 'error';
+  readonly message: string;
+}
+
 export type UpdateStatus =
   | { readonly state: 'idle' }
   | { readonly state: 'checking' }
   | { readonly state: 'available'; readonly info: UpdateInfo }
   | { readonly state: 'downloading'; readonly percent: number; readonly info: UpdateInfo }
   | { readonly state: 'downloaded'; readonly info: UpdateInfo }
-  | { readonly state: 'error'; readonly error: string };
+  | {
+      readonly state: 'error';
+      readonly error: string;
+      readonly stage: UpdateStage;
+      readonly logs: readonly UpdateLogEntry[];
+    };
 
 export interface UpdateApi {
   checkForUpdates(): Promise<void>;
