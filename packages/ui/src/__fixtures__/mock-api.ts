@@ -376,6 +376,8 @@ export class MockCostApi implements CostApi {
   clearAllCaches(): Promise<void> { return Promise.resolve(); }
   getMcpServerRunning(): Promise<boolean> { return Promise.resolve(true); }
   setMcpServerRunning(): Promise<void> { return Promise.resolve(); }
+  getMcpToken(): Promise<string> { return Promise.resolve('mock-token-abc123'); }
+  regenerateMcpToken(): Promise<string> { return Promise.resolve('mock-token-regenerated'); }
 }
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {

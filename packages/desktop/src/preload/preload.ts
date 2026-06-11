@@ -294,6 +294,12 @@ const api: CostApi = {
   setMcpServerRunning(enabled: boolean): Promise<void> {
     return invoke<undefined>('mcp:set-running', enabled).then(() => undefined);
   },
+  getMcpToken(): Promise<string> {
+    return invoke<string>('mcp:get-token');
+  },
+  regenerateMcpToken(): Promise<string> {
+    return invoke<string>('mcp:regenerate-token');
+  },
 };
 
 contextBridge.exposeInMainWorld('costgoblin', api);

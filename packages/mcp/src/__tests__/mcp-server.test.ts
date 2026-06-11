@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
+import { request as httpRequest } from 'node:http';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -62,7 +63,7 @@ interface McpClient {
   close(): Promise<void>;
 }
 
-async function createMcpClient(port: number): Promise<McpClient> {
+async function createMcpClient(port: number, token: string): Promise<McpClient> {
   const base = `http://127.0.0.1:${String(port)}/mcp`;
   let nextId = 1;
 
@@ -71,6 +72,7 @@ async function createMcpClient(port: number): Promise<McpClient> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'application/json, text/event-stream',
+      'Authorization': `Bearer ${token}`,
     };
     if (client.sessionId.length > 0) {
       headers['Mcp-Session-Id'] = client.sessionId;
@@ -98,6 +100,7 @@ async function createMcpClient(port: number): Promise<McpClient> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'application/json, text/event-stream',
+      'Authorization': `Bearer ${token}`,
     };
     if (client.sessionId.length > 0) {
       headers['Mcp-Session-Id'] = client.sessionId;
@@ -134,6 +137,7 @@ async function createMcpClient(port: number): Promise<McpClient> {
           headers: {
             'Mcp-Session-Id': client.sessionId,
             'Mcp-Protocol-Version': '2025-03-26',
+            'Authorization': `Bearer ${token}`,
           },
         });
       }
@@ -164,6 +168,7 @@ describe('MCP server E2E', () => {
   let server: McpHttpServer;
   let client: McpClient;
   const port = 19599; // avoid conflict with running dev server
+  const TEST_TOKEN = 'test-secret-token';
 
   beforeAll(async () => {
     db = await DuckDBInstance.create();
@@ -215,8 +220,8 @@ describe('MCP server E2E', () => {
       warmup: () => Promise.resolve(),
     };
 
-    server = await createMcpHttpServer(ctx, port);
-    client = await createMcpClient(port);
+    server = await createMcpHttpServer(ctx, { port, authToken: TEST_TOKEN });
+    client = await createMcpClient(port, TEST_TOKEN);
   }, 30_000);
 
   afterAll(async () => {
@@ -243,7 +248,7 @@ describe('MCP server E2E', () => {
   });
 
   it('supports multiple concurrent sessions', async () => {
-    const client2 = await createMcpClient(port);
+    const client2 = await createMcpClient(port, TEST_TOKEN);
     expect(client2.sessionId).not.toBe(client.sessionId);
     const tools = await client2.listTools();
     expect(tools.length).toBe(10);
@@ -460,6 +465,71 @@ describe('MCP server E2E', () => {
     });
     expect(isError).toBe(true);
     expect(text).toMatch(/error|select|not allowed/i);
+  });
+
+  it('run_sql blocks reading local files via DuckDB file functions', async () => {
+    const { text, isError } = await client.callTool('run_sql', {
+      sql: "SELECT * FROM read_text('/etc/hostname')",
+      dateRange: { start: '2026-01-01', end: '2026-01-31' },
+    });
+    expect(isError).toBe(true);
+    expect(text).toMatch(/not allowed|read_text/i);
+  });
+
+  it('rejects requests with a non-loopback Host header (anti DNS-rebinding)', async () => {
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = httpRequest(
+        { host: '127.0.0.1', port, path: '/health', method: 'GET', headers: { Host: 'evil.example.com' } },
+        (res) => { res.resume(); resolve(res.statusCode ?? 0); },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    expect(status).toBe(403);
+  });
+
+  it('rejects /mcp requests without the auth token', async () => {
+    const res = await fetch(`http://127.0.0.1:${String(port)}/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects /mcp requests with the wrong auth token', async () => {
+    const res = await fetch(`http://127.0.0.1:${String(port)}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        'Authorization': 'Bearer not-the-real-token',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 1 }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('accepts the token via a ?token= query param (passes the auth gate)', async () => {
+    const res = await fetch(`http://127.0.0.1:${String(port)}/mcp?token=${TEST_TOKEN}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'initialize',
+        id: 1,
+        params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'q', version: '0.0.0' } },
+      }),
+    });
+    // The query token satisfies auth, so this is not a 401 (the transport
+    // handles the initialize and responds 200).
+    expect(res.status).not.toBe(401);
+    expect(res.status).toBe(200);
+  });
+
+  it('leaves /health open (unauthenticated liveness probe)', async () => {
+    const res = await fetch(`http://127.0.0.1:${String(port)}/health`);
+    expect(res.status).toBe(200);
   });
 
   // ---------- data-coverage banner ----------

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { Server, IncomingMessage, ServerResponse } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -17,13 +17,48 @@ export interface McpHttpServer {
   close(): Promise<void>;
 }
 
+export interface McpHttpServerOptions {
+  readonly port?: number | undefined;
+  /** Shared secret required on every /mcp request. When set, callers must send
+   *  it as `Authorization: Bearer <token>` or a `?token=<token>` query param.
+   *  When undefined the server is open (used only in tests). */
+  readonly authToken?: string | undefined;
+}
+
 interface SessionEntry {
   readonly transport: StreamableHTTPServerTransport;
   lastActivity: number;
 }
 
-export async function createMcpHttpServer(ctx: McpContext, port?: number): Promise<McpHttpServer> {
-  const resolvedPort = port ?? DEFAULT_PORT;
+/** Constant-time token comparison. Returns false on any length mismatch without
+ *  leaking it through timing. */
+function tokenMatches(provided: string | undefined, expected: string): boolean {
+  if (provided === undefined) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/** Pull the caller's token from the Authorization header (preferred) or a
+ *  `token` query param (for clients that can only be given a URL). */
+function extractToken(req: IncomingMessage, rawUrl: string): string | undefined {
+  const auth = req.headers['authorization'];
+  if (typeof auth === 'string') {
+    const match = /^Bearer\s+(.+)$/i.exec(auth.trim());
+    if (match?.[1] !== undefined) return match[1].trim();
+  }
+  const qIndex = rawUrl.indexOf('?');
+  if (qIndex >= 0) {
+    const token = new URLSearchParams(rawUrl.slice(qIndex + 1)).get('token');
+    if (token !== null) return token;
+  }
+  return undefined;
+}
+
+export async function createMcpHttpServer(ctx: McpContext, options?: McpHttpServerOptions): Promise<McpHttpServer> {
+  const resolvedPort = options?.port ?? DEFAULT_PORT;
+  const authToken = options?.authToken;
   const sessions = new Map<string, SessionEntry>();
 
   function removeSession(sessionId: string): void {
@@ -81,10 +116,42 @@ export async function createMcpHttpServer(ctx: McpContext, port?: number): Promi
     await mcpServer.connect(transport as unknown as Transport);
   }
 
+  // Only loopback Host headers are accepted. The server binds 127.0.0.1/::1, but
+  // a Host check is still needed to defeat DNS rebinding: a browser tricked into
+  // resolving an attacker domain to 127.0.0.1 would send that domain in Host, so
+  // rejecting non-loopback Hosts stops a malicious web page from driving the
+  // (unauthenticated) MCP tools against the user's local data.
+  const allowedHosts = new Set<string>();
+  for (const h of ['127.0.0.1', 'localhost', '[::1]']) {
+    allowedHosts.add(h);
+    allowedHosts.add(`${h}:${String(resolvedPort)}`);
+  }
+  function isAllowedHost(hostHeader: string | undefined): boolean {
+    return hostHeader !== undefined && allowedHosts.has(hostHeader.toLowerCase());
+  }
+
   const requestHandler = (req: IncomingMessage, res: ServerResponse): void => {
     const url = req.url ?? '';
+    const pathname = url.split('?')[0] ?? url;
 
-    if (url === '/mcp' && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
+    if (!isAllowedHost(req.headers.host)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' })
+        .end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Forbidden: invalid Host header' }, id: null }));
+      return;
+    }
+
+    // /health stays open as an unauthenticated liveness probe (no data).
+    if (pathname === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"status":"ok"}');
+      return;
+    }
+
+    if (pathname === '/mcp' && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
+      if (authToken !== undefined && !tokenMatches(extractToken(req, url), authToken)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' })
+          .end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized: missing or invalid token' }, id: null }));
+        return;
+      }
       const sessionId = req.headers['mcp-session-id'];
       const existing = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;
 
@@ -120,11 +187,6 @@ export async function createMcpHttpServer(ctx: McpContext, port?: number): Promi
 
       res.writeHead(400, { 'Content-Type': 'application/json' })
         .end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Bad Request: No valid session' }, id: null }));
-      return;
-    }
-
-    if (url === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"status":"ok"}');
       return;
     }
 

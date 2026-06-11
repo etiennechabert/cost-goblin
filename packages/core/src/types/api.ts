@@ -201,6 +201,12 @@ export interface CostApi {
   clearAllCaches(): Promise<void>;
   getMcpServerRunning(): Promise<boolean>;
   setMcpServerRunning(enabled: boolean): Promise<void>;
+  /** The shared secret a client must send (as `Authorization: Bearer <token>`
+   *  or a `?token=` query param) to reach the MCP server. */
+  getMcpToken(): Promise<string>;
+  /** Rotate the MCP token, restarting the server if running. Returns the new
+   *  token. Existing clients must update their config to keep working. */
+  regenerateMcpToken(): Promise<string>;
 }
 
 export interface AccountMappingEntry {
