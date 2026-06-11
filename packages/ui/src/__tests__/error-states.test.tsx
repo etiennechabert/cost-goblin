@@ -32,11 +32,13 @@ describe('DataManagement error states', () => {
       new Error('To authenticate, run: aws sso login --profile prod'),
     );
     renderDataManagement(api);
-    await waitFor(() => {
-      expect(screen.getByText('To authenticate, run: aws sso login --profile prod')).toBeDefined();
-    });
-    expect(screen.getByText('Open SSO Login')).toBeDefined();
-    expect(screen.getByText('A browser window will open. Refresh this page after logging in.')).toBeDefined();
+    // The error message renders as soon as the inventory query rejects, but the
+    // SSO button is gated on a second query (awsProfile) also resolving. Assert
+    // each with findByText so the button/hint wait for that later commit rather
+    // than racing it — the synchronous getByText was flaky on slow CI runners.
+    expect(await screen.findByText('To authenticate, run: aws sso login --profile prod')).toBeDefined();
+    expect(await screen.findByText('Open SSO Login')).toBeDefined();
+    expect(await screen.findByText('A browser window will open. Refresh this page after logging in.')).toBeDefined();
   });
 
   it('shows permission denied error without refresh hint', async () => {
