@@ -126,7 +126,7 @@ jobs:
         with:
           # Full tag history needed to find the latest `v*` tag.
           fetch-depth: 0
-      - name: Verify package.json version is ahead of latest released tag
+      - name: Verify package.json is exactly one release ahead of the latest tag
         shell: bash
         run: |
           set -euo pipefail
@@ -143,18 +143,33 @@ jobs:
             echo "No v* tag exists yet — nothing to compare against; skipping."
             exit 0
           fi
+          if ! printf '%s' "$latest" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Latest tag v$latest is not a plain X.Y.Z version — skipping the strict check."
+            exit 0
+          fi
+          # package.json must sit EXACTLY one release ahead of the latest tag —
+          # the next patch (X.Y.Z+1), minor (X.Y+1.0), or major (X+1.0.0). Once
+          # main is already one ahead, later PRs inherit that version and need no
+          # bump; only the first PR after a release bumps. This also rejects
+          # over-incrementing (e.g. 0.2.8 while 0.2.7 was never released) and
+          # regressions. `10#` forces base-10 so a value like `08` isn't read as
+          # octal.
+          IFS=. read -r maj min pat <<< "$latest"
+          next_patch="${maj}.${min}.$((10#$pat + 1))"
+          next_minor="${maj}.$((10#$min + 1)).0"
+          next_major="$((10#$maj + 1)).0.0"
+          case "$pkg_v" in
+            "$next_patch"|"$next_minor"|"$next_major")
+              echo "OK: $pkg_v is exactly one release ahead of v$latest"
+              exit 0
+              ;;
+          esac
           if [ "$pkg_v" = "$latest" ]; then
-            echo "::error file=package.json::version $pkg_v matches the latest released tag v$latest — bump it before merging so the next release has a fresh version to tag."
-            exit 1
+            echo "::error file=package.json::version $pkg_v matches the latest released tag v$latest — bump it to $next_patch (or $next_minor / $next_major) before merging."
+          else
+            echo "::error file=package.json::version $pkg_v must be exactly one release ahead of the latest tag v$latest. Expected one of: $next_patch (patch), $next_minor (minor), $next_major (major). Don't skip or over-increment versions."
           fi
-          # Defence-in-depth: also reject regressions, since release.yml's
-          # tag-vs-package.json guard only catches them at tag-push time.
-          highest=$(printf '%s\n%s\n' "$pkg_v" "$latest" | sort -V | tail -n1)
-          if [ "$highest" != "$pkg_v" ]; then
-            echo "::error file=package.json::version $pkg_v is older than the latest released tag v$latest."
-            exit 1
-          fi
-          echo "OK: $pkg_v > $latest"
+          exit 1
 
   sonarcloud:
     runs-on: ubuntu-latest
