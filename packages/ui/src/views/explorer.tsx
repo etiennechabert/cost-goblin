@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CostMetric,
   CostPerspective,
@@ -234,7 +234,9 @@ export function ExplorerView(): React.JSX.Element {
     })
       .then(data => {
         if (reqId !== overviewReqIdRef.current) return;
-        setOverview({ data, loading: false, error: null });
+        // Transition: keep the histogram render interruptible so input isn't
+        // starved while it commits (see use-query.ts for the rationale).
+        startTransition(() => { setOverview({ data, loading: false, error: null }); });
       })
       .catch((err: unknown) => {
         if (reqId !== overviewReqIdRef.current) return;
@@ -267,7 +269,9 @@ export function ExplorerView(): React.JSX.Element {
     })
       .then(data => {
         if (reqId !== rowsReqIdRef.current) return;
-        setRows({ data, loading: false, error: null });
+        // Transition: the rows table can be large; keep its render interruptible
+        // so the UI stays responsive while it commits.
+        startTransition(() => { setRows({ data, loading: false, error: null }); });
       })
       .catch((err: unknown) => {
         if (reqId !== rowsReqIdRef.current) return;
