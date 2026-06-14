@@ -12,7 +12,17 @@ const monorepoRoot = resolve(root, '..', '..');
 // from the desktop renderer's public dir so the UI loads identically.
 export default defineConfig({
   root,
-  plugins: [react()],
+  // Strip Vite's `crossorigin` from the bundled tags — under Tauri's custom
+  // asset protocol a CORS-mode fetch can be blocked. (Build-only; dev unaffected.)
+  plugins: [
+    react(),
+    {
+      name: 'tauri-strip-crossorigin',
+      transformIndexHtml(html: string): string {
+        return html.replace(/\s+crossorigin/g, '');
+      },
+    },
+  ],
   publicDir: resolve(root, '..', 'desktop', 'src', 'renderer', 'public'),
   clearScreen: false,
   server: {

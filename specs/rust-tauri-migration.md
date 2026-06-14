@@ -54,27 +54,50 @@ It validates the three things that actually carried risk:
 
 ### Scope of the spike (honest boundaries)
 
-- **Real, served by Rust + DuckDB:** Overview (summary, stacked bar, pies,
-  table), Trends, Missing Tags, Explorer (overview / sample rows / aggregated
-  table / facet filter-values), Entity detail, all config reads (config,
-  dimensions, org tree, views, cost scope), data inventory, tag/column
-  discovery, filter values.
-- **Stubbed with valid shapes (inert):** everything that mutates cloud/AWS
-  state or has no fixture data — S3 sync, AWS Organizations/SSM, config sharing,
-  the MCP server, the auto-updater, Savings (no cost-optimization fixture), and
-  all `save*` writes (config edits are in-memory for the spike). These are
-  client-side canned responses in `bridge.ts`, clearly grouped.
-- **Deliberate fidelity deviations** (documented in the package README): the
-  `account` dimension is grouped by `account_name` (its `displayField`) so
-  labels/filters are self-consistent without an org-accounts map; cost-scope
-  exclusions and the org-tree rollup are not applied (the fixture has all rules
-  disabled and the landing views don't roll up by owner); dates are strictly
-  validated and interpolated while arbitrary filter values stay parameterized.
-- **Fixture freshness:** the committed fixtures are dated Jan–Feb 2026 but the
-  renderer's default window is "last 30 days". A build step
-  ([`prepare-fixtures.ts`](../packages/tauri-shell/scripts/prepare-fixtures.ts))
-  date-shifts a *copy* into `.fixtures/` so the landing dashboard is populated.
-  The committed fixtures are never modified.
+The spike was driven against a **real CUR dataset** (18 months, 138 org
+accounts), which pushed it well past the original read-only core. Current state:
+
+- **Real, served by Rust:** all analytical views (Overview, Trends, Missing
+  Tags, Explorer, Entity detail) with **full-fidelity numbers matching Electron**
+  — cost-metric from `cost-scope.yaml` (unblended/list/amortized), **cost-scope
+  exclusion rules**, and the **org-account join** (resource→account tag
+  fallback, account display names via `accountNameFromTag`, account-only dims
+  like Unit via OU-path). Plus **Findings/Savings** (local cost-optimization
+  Parquet), all config reads, data inventory, AWS profile list, tag/column
+  discovery, filter values, and a live Debug query log.
+- **Real AWS SDK (validated):** the **AWS Organizations sync** uses
+  `aws-sdk-organizations` + `aws-config` (SSO/profile) for a real read-only
+  traversal — confirming the issue's "AWS SDK for Rust is mature" claim end to
+  end (credential resolution + live calls work).
+- **Still stubbed (Phase 3/4):** S3 CUR download sync, SSM region names, config
+  sharing, the auto-updater, the MCP server, and `save*` writes — client-side
+  canned responses in `bridge.ts`.
+- **Threading:** all commands are `#[tauri::command(async)]` so DuckDB/AWS work
+  runs off the main thread (sync commands run on Tauri's main thread and freeze
+  the UI). The spike has no result cache / materialized base yet, so repeat
+  queries are slower than Electron but never block — Phase-2 work.
+- **SQL safety:** dates strictly validated + interpolated; filter values bound as
+  parameters.
+- **Production rendering:** the official `tauri build` bundle renders; Vite's
+  `crossorigin` attribute is stripped so embedded assets load under
+  `tauri://localhost`.
+- **Fixture freshness:** committed fixtures are Jan–Feb 2026; the renderer
+  defaults to "last 30 days", so
+  [`prepare-fixtures.ts`](../packages/tauri-shell/scripts/prepare-fixtures.ts)
+  date-shifts a *copy* into `.fixtures/`. Committed fixtures are never modified.
+
+### Footprint (measured, vs Electron v0.3.1 on macOS arm64)
+
+| | Electron v0.3.1 | Tauri spike (release) |
+|---|--:|--:|
+| Installed `.app` | 409 MB | ~70 MB (**~6× smaller**) |
+| Download (zipped) | 158 MB | ~22–30 MB |
+| Runtime RSS (real data loaded) | ~3.3 GB | ~2.6 GB |
+
+Bundle size is the clean structural win (no bundled Chromium/Node). Runtime RSS
+is dominated by DuckDB's working set in **both**, so the memory delta is modest —
+the "much lower idle memory" claim is overstated for real workloads; the
+defensible wins are distribution size and startup.
 
 ## Architecture
 
@@ -107,12 +130,14 @@ Each phase keeps Electron shipping and is independently revertible. A phase is
 "done" when its surface reaches parity behind `CostApi` (functional + the
 existing Playwright E2E + a visual check).
 
-### Phase 0 — Spike *(this PR)*
-Tauri shell loading the real renderer; read-path `CostApi` over fixtures via the
-`duckdb` crate; AWS/sync/sharing/update stubbed. **Deliverable: a runnable
-`npm run tauri:dev`.**
+### Phase 0 — Spike *(this PR)* ✅
+Tauri shell loading the real renderer; `CostApi` read-path via the `duckdb`
+crate. In this PR the spike grew past the original boundary — see "Scope" above:
+full-fidelity numbers, the org-account join, savings, a real AWS Organizations
+sync, the Debug query log, and the off-main-thread command fix, validated on a
+real CUR dataset.
 
-### Phase 1 — Port the pure-logic `core` modules to Rust
+### Phase 1 — Port the pure-logic `core` modules to Rust *(partially done in the spike)*
 Config loader/validator, tag normalization + alias resolution, org-tree
 traversal, cost math, sharing-bundle fingerprinting. These are pure functions
 with rich Vitest suites — port them to Rust with **parity tests** that assert
@@ -121,16 +146,17 @@ the Rust output matches the TS output for the existing fixtures. Branded types
 unions become enums with exhaustive `match`; `{status:'error'}` states become
 `Result<T, E>`.
 
-### Phase 2 — Query builder + DuckDB execution
-Replace the spike's per-query Rust with a faithful port of the full
-`query/builder.ts` (cost scope exclusions, amortized/net cost expressions, the
-materialized base table, account reverse-map merging, org-tree rollup) plus the
-result cache and in-flight dedup from `handlers/context.ts`. Parity-test SQL
-output against the TS builder.
+### Phase 2 — Query builder + DuckDB execution *(largely done in the spike)*
+The spike already ports cost-scope exclusions, the cost-metric expressions, the
+org-account join, and account name/reverse-map merging. **Remaining:** the
+in-memory materialized base table, the result cache + in-flight dedup from
+`handlers/context.ts` (the spike re-reads Parquet per query — correct but
+slower), org-tree rollup, and SQL-shape parity tests against the TS builder.
 
-### Phase 3 — S3 sync + AWS Organizations + SSM
-Port the sync pipeline (`core/sync`) and the desktop AWS clients to
-`aws-sdk-s3`, `aws-sdk-organizations`, `aws-sdk-ssm`. This is the largest
+### Phase 3 — S3 sync + AWS Organizations + SSM *(Organizations done in the spike)*
+Organizations sync is ported (`aws_org.rs`, validated read-only). **Remaining:**
+port the S3 sync pipeline (`core/sync`) and SSM region names to `aws-sdk-s3` /
+`aws-sdk-ssm`. This is the largest
 behavioural surface (selective sync, data inventory, etag manifests, SSO
 login). Validate against a real bucket in a controlled account.
 

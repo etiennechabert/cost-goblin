@@ -63,6 +63,13 @@ function invoke<T>(cmd: string, params?: unknown): Promise<T> {
   });
 }
 
+// Debug/diagnostic calls — do NOT inflate the in-flight badge (matches the
+// Electron preload, which excludes `debug:` channels).
+function invokeRaw<T>(cmd: string, params?: unknown): Promise<T> {
+  const args = params === undefined ? undefined : { params };
+  return tauriInvoke<T>(cmd, args);
+}
+
 function ok<T>(value: T): Promise<T> {
   return Promise.resolve(value);
 }
@@ -113,7 +120,7 @@ const api: CostApi = {
   // ---- Stubbed: configured, but cloud/cost-optimization data is absent ----
   getSetupStatus: (): Promise<{ configured: boolean }> => ok({ configured: true }),
   getSyncStatus: (): Promise<SyncStatus> => ok({ status: 'idle', lastSync: null }),
-  querySavings: (): Promise<SavingsResult> => ok({ recommendations: [], totalMonthlySavings: 0 as SavingsResult['totalMonthlySavings'] }),
+  querySavings: (): Promise<SavingsResult> => invoke('query_savings'),
   getAccountMapping: (): Promise<AccountMappingStatus> => ok({ status: 'missing' }),
   getSavingsPreferences: (): Promise<SavingsPreferences> => ok({ hiddenActionTypes: [] }),
   getCostScopeCapabilities: (): Promise<CostScopeCapabilities> => ok({ hasEffectiveCostColumns: false, hasNetColumns: false, hasListPriceColumn: true }),
@@ -144,7 +151,7 @@ const api: CostApi = {
   deleteLocalPeriod: (): Promise<void> => ok(undefined),
   ssoLogin: (): Promise<void> => ok(undefined),
   testConnection: (): Promise<{ ok: boolean; error?: string | undefined }> => ok({ ok: false, error: 'Disabled in Tauri spike (fixture mode)' }),
-  listAwsProfiles: (): Promise<string[]> => ok([]),
+  listAwsProfiles: (): Promise<string[]> => invoke('list_aws_profiles'),
   listS3Buckets: (): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> => ok({ buckets: [] }),
   browseS3: (): Promise<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }> =>
     ok({ prefixes: [], isCurReport: false, detectedType: 'unknown', missingColumns: [] }),
@@ -160,8 +167,8 @@ const api: CostApi = {
   getAutoSyncStatus: (): Promise<AutoSyncStatus> => ok({ state: 'disabled' }),
 
   // ---- Stubbed: AWS Organizations / SSM ----
-  syncOrgAccounts: (): Promise<OrgSyncResult> => ok({ accounts: [], orgId: '', syncedAt: new Date(0).toISOString() }),
-  getOrgSyncResult: (): Promise<OrgSyncResult | null> => ok(null),
+  syncOrgAccounts: (profile: string): Promise<OrgSyncResult> => invoke('sync_org_accounts', { profile }),
+  getOrgSyncResult: (): Promise<OrgSyncResult | null> => invoke('get_org_sync_result'),
   getOrgSyncProgress: (): Promise<OrgSyncProgress | null> => ok(null),
   getRegionNamesInfo: (): Promise<{ count: number; syncedAt: string; lastError: string | null; regions: Record<string, { longName: string; country: string; continent: string }> } | null> => ok(null),
   clearOrgData: (): Promise<void> => ok(undefined),
@@ -209,9 +216,9 @@ const debugApi = {
   isE2E: (): boolean => false,
   getMemoryMB: (): Promise<number> => ok(0),
   getInFlightCount: (): number => inFlightCount,
-  getQueryLog: (): Promise<unknown[]> => ok([]),
-  runExplain: (): Promise<string> => ok(''),
-  clearLog: (): Promise<void> => ok(undefined),
+  getQueryLog: (): Promise<unknown[]> => invokeRaw('get_query_log'),
+  runExplain: (queryId: number): Promise<string> => invokeRaw('run_explain', { queryId }),
+  clearLog: (): Promise<void> => invokeRaw<undefined>('clear_query_log').then(() => undefined),
 };
 
 export function installBridge(): void {

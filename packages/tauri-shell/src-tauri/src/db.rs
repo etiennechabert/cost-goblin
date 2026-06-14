@@ -36,17 +36,30 @@ pub fn query_map<T>(
     params: &[DV],
     mut f: impl FnMut(&Row) -> T,
 ) -> Result<Vec<T>, String> {
-    let mut stmt = conn
-        .prepare(sql)
-        .map_err(|e| format!("prepare failed: {e}\nSQL: {sql}"))?;
-    let mut rows = stmt
-        .query(params_from_iter(params.iter()))
-        .map_err(|e| format!("query failed: {e}\nSQL: {sql}"))?;
-    let mut out = Vec::new();
-    while let Some(row) = rows.next().map_err(|e| format!("row fetch failed: {e}"))? {
-        out.push(f(row));
+    let id = crate::querylog::start(sql, params.len());
+    let mut run = || -> Result<Vec<T>, String> {
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| format!("prepare failed: {e}\nSQL: {sql}"))?;
+        let mut rows = stmt
+            .query(params_from_iter(params.iter()))
+            .map_err(|e| format!("query failed: {e}\nSQL: {sql}"))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().map_err(|e| format!("row fetch failed: {e}"))? {
+            out.push(f(row));
+        }
+        Ok(out)
+    };
+    match run() {
+        Ok(out) => {
+            crate::querylog::complete(id, out.len());
+            Ok(out)
+        }
+        Err(e) => {
+            crate::querylog::fail(id, &e);
+            Err(e)
+        }
     }
-    Ok(out)
 }
 
 /// Read a column as f64. NULL or unexpected type → 0.0. All numeric outputs in
@@ -61,4 +74,9 @@ pub fn str_at(row: &Row, i: usize) -> String {
         .ok()
         .flatten()
         .unwrap_or_default()
+}
+
+/// Read a column as bool. NULL/other → false.
+pub fn bool_at(row: &Row, i: usize) -> bool {
+    row.get::<usize, Option<bool>>(i).ok().flatten().unwrap_or(false)
 }
