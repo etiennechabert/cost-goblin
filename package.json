@@ -1,6 +1,6 @@
 {
   "name": "costgoblin",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Desktop app for cloud cost visibility",
   "main": "packages/desktop/out/main/main.js",
   "private": true,
@@ -11,7 +11,8 @@
     "packages/core",
     "packages/ui",
     "packages/desktop",
-    "packages/mcp"
+    "packages/mcp",
+    "packages/tauri-shell"
   ],
   "scripts": {
     "check": "tsc --noEmit -p packages/core/tsconfig.json && tsc --noEmit -p packages/ui/tsconfig.json && tsc --noEmit -p packages/desktop/tsconfig.json && tsc --noEmit -p packages/mcp/tsconfig.json && eslint packages/core/src/ packages/ui/src/ packages/desktop/src/ packages/mcp/src/ && vitest run",

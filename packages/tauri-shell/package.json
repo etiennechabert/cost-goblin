@@ -1,0 +1,33 @@
+{
+  "name": "@costgoblin/tauri-shell",
+  "version": "0.0.0",
+  "description": "Spike: Tauri + Rust backend hosting the existing CostGoblin React renderer (issue #360)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build:web": "vite build",
+    "tauri": "tauri",
+    "prepare:fixtures": "tsx scripts/prepare-fixtures.ts",
+    "tauri:dev": "npm run prepare:fixtures && COSTGOBLIN_DATA_DIR=$PWD/.fixtures COSTGOBLIN_CONFIG_DIR=$PWD/../core/src/__fixtures__/config tauri dev",
+    "tauri:build": "npm run prepare:fixtures && COSTGOBLIN_DATA_DIR=$PWD/.fixtures COSTGOBLIN_CONFIG_DIR=$PWD/../core/src/__fixtures__/config tauri build"
+  },
+  "dependencies": {
+    "@costgoblin/core": "*",
+    "@costgoblin/ui": "*",
+    "@tauri-apps/api": "^2.11.0",
+    "lucide-react": "^1.17.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.0",
+    "@tauri-apps/cli": "^2.11.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^4.3.0",
+    "vite": "^8.0.16"
+  }
+}

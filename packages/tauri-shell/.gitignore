@@ -1,0 +1,10 @@
+# Build output
+dist/
+
+# Date-shifted spike fixtures (generated from packages/core fixtures)
+.fixtures/
+
+# Rust / Tauri build artifacts
+src-tauri/target/
+src-tauri/gen/
+src-tauri/Cargo.lock

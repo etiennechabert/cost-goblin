@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Core webview permissions for the spike window. Custom invoke commands are not gated by capabilities.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

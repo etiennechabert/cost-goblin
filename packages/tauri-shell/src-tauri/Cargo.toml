@@ -1,0 +1,23 @@
+[package]
+name = "costgoblin-tauri-spike"
+version = "0.0.0"
+description = "CostGoblin Tauri + Rust core spike (issue #360)"
+edition = "2021"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+duckdb = { version = "1", features = ["bundled"] }
+
+[profile.dev]
+# DuckDB's bundled C++ is huge; without some opt the debug build is painfully
+# slow to run. opt-level 1 on deps keeps incremental Rust builds fast while
+# making the bundled libduckdb usable.
+[profile.dev.package."*"]
+opt-level = 2
