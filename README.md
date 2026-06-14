@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/etiennechabert/cost-goblin/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/Node.js-%3E%3D%2020-339933.svg?logo=node.js&logoColor=white" alt="Node.js">
-  <img src="https://img.shields.io/badge/Electron-41-47848F.svg?logo=electron&logoColor=white" alt="Electron">
+  <img src="https://img.shields.io/badge/Electron-42-47848F.svg?logo=electron&logoColor=white" alt="Electron">
   <img src="https://img.shields.io/badge/DuckDB-1.5-FFF000.svg?logo=duckdb&logoColor=black" alt="DuckDB">
   <a href="https://github.com/etiennechabert/cost-goblin/actions/workflows/ci.yml"><img src="https://github.com/etiennechabert/cost-goblin/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://buymeacoffee.com/etiennechak"><img src="https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buymeacoffee&logoColor=white" alt="Buy Me A Coffee"></a>
@@ -44,7 +44,7 @@ CostGoblin is a desktop app that syncs your AWS billing data locally and queries
 
 Download the latest release for your platform from [costgoblin.com](https://costgoblin.com/#download). macOS binaries are signed and notarized. See the [code signing policy](https://costgoblin.com/code-signing.html) for details.
 
-The app auto-updates when a new version is available.
+The app auto-updates when a new version is available. See [`CHANGELOG.md`](./CHANGELOG.md) for the release history and what landed in each version.
 
 ## Quick Start
 
@@ -186,13 +186,25 @@ Then use the Data tab to repartition the downloaded files.
 - **Tag normalization** — aliases applied at query time, fix messy tags without re-processing
 - **Composable views** — drag-and-drop widget builder with 9 widget types (pie, bar, stacked bar, line, treemap, heatmap, bubble, table, summary)
 - **Cost Scope** — configure cost metrics (amortized, on-demand list price, unblended) and exclusion rules
-- **Vault encryption** — optional AES-256-GCM at-rest encryption for local billing data, with system keychain integration
+- **Configuration sharing** — export your dimensions, views, and Cost Scope as a portable bundle; import it back, or let teammates auto-discover a shared config via an S3 beacon
 - **MCP server** — Model Context Protocol integration for querying cost data from AI assistants
 - **Dark/light mode** — theme toggle with two chart color palettes (standard + Okabe-Ito colorblind-safe)
 - **Auto-updates** — the app checks for new versions on startup and installs them automatically
 - **CSV export** — export any view for reporting
 - **Works offline** — once synced, no internet needed
 
+## Screenshots
+
+| | |
+|---|---|
+| **Cost Overview** — the default dashboard<br><img src="docs/screenshots/cost-overview.png" alt="Cost Overview" width="420"> | **Trends** — period-over-period bubble chart<br><img src="docs/screenshots/trends.png" alt="Trends" width="420"> |
+| **Findings** — cost optimization recommendations<br><img src="docs/screenshots/cost-optimization.png" alt="Findings" width="420"> | **Missing Tags** — untagged resources by taggability<br><img src="docs/screenshots/tags-missing.png" alt="Missing Tags" width="420"> |
+| **Explorer** — raw line items, configurable columns<br><img src="docs/screenshots/explorer.png" alt="Explorer" width="420"> | **Views** — drag-and-drop dashboard builder<br><img src="docs/screenshots/views.png" alt="Views editor" width="420"> |
+
+> Screenshots are regenerated from synthetic fixture data (no real account data) with:
+> ```bash
+> npm run build --workspace=packages/desktop && npx tsx e2e/homepage-screenshots.ts
+> ```
 
 ## Architecture
 
