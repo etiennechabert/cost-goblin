@@ -20,25 +20,25 @@ type R = Result<J, String>;
 
 // --- request context: dims + cost metric/scope + org-account maps ---
 
-struct ReqCtx {
-    dims: Dimensions,
-    metric: String,
-    net: bool,
-    exclusions: Vec<String>,
-    org_path: Option<String>,
-    account_name_map: HashMap<String, String>,
-    account_reverse: HashMap<String, Vec<String>>,
+pub struct ReqCtx {
+    pub dims: Dimensions,
+    pub metric: String,
+    pub net: bool,
+    pub exclusions: Vec<String>,
+    pub org_path: Option<String>,
+    pub account_name_map: HashMap<String, String>,
+    pub account_reverse: HashMap<String, Vec<String>>,
 }
 
 impl ReqCtx {
-    fn is_account_group(&self, group_by: &str) -> bool {
+    pub fn is_account_group(&self, group_by: &str) -> bool {
         group_by == "account_id"
             || self.dims.account_built_in().map_or(false, |b| b.name == group_by)
     }
-    fn source(&self, data_dir: &str, tier: &str, periods: &[String], metric: &str, net: bool) -> String {
+    pub fn source(&self, data_dir: &str, tier: &str, periods: &[String], metric: &str, net: bool) -> String {
         build_source(data_dir, tier, periods, metric, net, &self.dims, self.org_path.as_deref())
     }
-    fn args<'a>(&'a self, source: &'a str, with_exclusions: bool) -> QueryArgs<'a> {
+    pub fn args<'a>(&'a self, source: &'a str, with_exclusions: bool) -> QueryArgs<'a> {
         QueryArgs {
             dims: &self.dims,
             source,
@@ -46,25 +46,31 @@ impl ReqCtx {
             account_reverse: Some(&self.account_reverse),
         }
     }
-    fn map_account(&self, id: &str) -> String {
+    pub fn map_account(&self, id: &str) -> String {
         self.account_name_map.get(id).cloned().unwrap_or_else(|| id.to_string())
     }
 }
 
-fn req_ctx(state: &AppState) -> Result<ReqCtx, String> {
-    let dims = config::load_dimensions(&state.config_dir)?;
-    let cs = config::load_cost_scope(&state.config_dir);
+/// Build the request context (dims + cost metric/scope + org-account maps) from
+/// raw dirs — reused by the Tauri commands and the MCP server.
+pub fn req_ctx_from(data_dir: &str, config_dir: &Path) -> Result<ReqCtx, String> {
+    let dims = config::load_dimensions(config_dir)?;
+    let cs = config::load_cost_scope(config_dir);
     let metric = config::normalize_metric(&cs.cost_metric);
     let net = cs.cost_perspective.as_deref() == Some("net");
     let exclusions = query::build_exclusion_clauses(&cs, &dims);
-    let org_path = config::org_tags_path(Path::new(&state.data_dir));
+    let org_path = config::org_tags_path(Path::new(data_dir));
     let name_from_tag = dims.account_built_in().and_then(|b| b.account_name_from_tag.clone());
-    let account_name_map = config::load_account_name_map(Path::new(&state.data_dir), name_from_tag.as_deref());
+    let account_name_map = config::load_account_name_map(Path::new(data_dir), name_from_tag.as_deref());
     let mut account_reverse: HashMap<String, Vec<String>> = HashMap::new();
     for (id, name) in &account_name_map {
         account_reverse.entry(name.clone()).or_default().push(id.clone());
     }
     Ok(ReqCtx { dims, metric, net, exclusions, org_path, account_name_map, account_reverse })
+}
+
+fn req_ctx(state: &AppState) -> Result<ReqCtx, String> {
+    req_ctx_from(&state.data_dir, &state.config_dir)
 }
 
 // --- param helpers ---
@@ -193,13 +199,62 @@ pub fn get_views_config(state: tauri::State<AppState>) -> R {
 pub fn get_cost_scope(state: tauri::State<AppState>) -> R {
     config::load_yaml_json(&state.config_dir.join("cost-scope.yaml"))
 }
+// Preferences live as JSON next to the data dir (userData root), like Electron.
+fn prefs_path(state: &AppState, name: &str) -> PathBuf {
+    Path::new(&state.data_dir)
+        .parent()
+        .unwrap_or(Path::new("/"))
+        .join(format!("{name}.json"))
+}
+fn read_json_or(path: &Path, default: J) -> J {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<J>(&s).ok())
+        .unwrap_or(default)
+}
+fn write_json(path: &Path, value: &J) -> Result<(), String> {
+    std::fs::write(path, serde_json::to_string_pretty(value).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("write {}: {e}", path.display()))
+}
+fn open_path(p: &Path) -> Result<(), String> {
+    std::process::Command::new("open")
+        .arg(p)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("open {}: {e}", p.display()))
+}
+
 #[tauri::command(async)]
-pub fn get_ui_preferences() -> R {
-    Ok(json!({ "theme": "dark", "palette": "standard" }))
+pub fn get_ui_preferences(state: tauri::State<AppState>) -> R {
+    Ok(read_json_or(&prefs_path(&state, "ui-preferences"), json!({ "theme": "dark", "palette": "standard" })))
 }
 #[tauri::command(async)]
-pub fn get_explorer_preferences() -> R {
-    Ok(json!({ "hiddenColumns": [], "columnOrder": [] }))
+pub fn save_ui_preferences(params: J, state: tauri::State<AppState>) -> Result<(), String> {
+    write_json(&prefs_path(&state, "ui-preferences"), &params)
+}
+#[tauri::command(async)]
+pub fn get_explorer_preferences(state: tauri::State<AppState>) -> R {
+    Ok(read_json_or(&prefs_path(&state, "explorer-preferences"), json!({ "hiddenColumns": [], "columnOrder": [] })))
+}
+#[tauri::command(async)]
+pub fn save_explorer_preferences(params: J, state: tauri::State<AppState>) -> Result<(), String> {
+    write_json(&prefs_path(&state, "explorer-preferences"), &params)
+}
+#[tauri::command(async)]
+pub fn get_savings_preferences(state: tauri::State<AppState>) -> R {
+    Ok(read_json_or(&prefs_path(&state, "savings-preferences"), json!({ "hiddenActionTypes": [] })))
+}
+#[tauri::command(async)]
+pub fn save_savings_preferences(params: J, state: tauri::State<AppState>) -> Result<(), String> {
+    write_json(&prefs_path(&state, "savings-preferences"), &params)
+}
+#[tauri::command(async)]
+pub fn open_data_folder(state: tauri::State<AppState>) -> Result<(), String> {
+    open_path(Path::new(&state.data_dir))
+}
+#[tauri::command(async)]
+pub fn reveal_config_folder(state: tauri::State<AppState>) -> Result<(), String> {
+    open_path(&state.config_dir)
 }
 
 #[tauri::command(async)]
@@ -823,4 +878,32 @@ pub fn query_savings(state: tauri::State<AppState>) -> R {
     let total: f64 = rows.iter().map(|(s, _)| *s).sum();
     let recs: Vec<J> = rows.into_iter().map(|(_, j)| j).collect();
     Ok(json!({ "recommendations": recs, "totalMonthlySavings": total }))
+}
+
+// --- MCP server (AI Assistant) ---
+
+#[tauri::command(async)]
+pub fn get_mcp_server_running() -> Result<bool, String> {
+    Ok(crate::mcp::is_running())
+}
+
+#[tauri::command(async)]
+pub fn set_mcp_server_running(params: J, state: tauri::State<AppState>) -> Result<(), String> {
+    let enabled = params.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+    if enabled {
+        crate::mcp::start(state.data_dir.clone(), state.config_dir.clone())
+    } else {
+        crate::mcp::stop();
+        Ok(())
+    }
+}
+
+#[tauri::command(async)]
+pub fn get_mcp_token(state: tauri::State<AppState>) -> Result<String, String> {
+    Ok(crate::mcp::get_token(&state.data_dir))
+}
+
+#[tauri::command(async)]
+pub fn regenerate_mcp_token(state: tauri::State<AppState>) -> Result<String, String> {
+    Ok(crate::mcp::regenerate_token(&state.data_dir))
 }

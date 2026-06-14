@@ -57,6 +57,7 @@ The Rust backend (`src-tauri/src`):
 | `config.rs` | Loads the YAML config + `org-accounts.json` (account-name + tag-fallback maps). |
 | `aws_org.rs` | Real read-only AWS Organizations sync via `aws-sdk-organizations` (accounts + OU paths + tags), credentials/SSO via `aws-config`. |
 | `querylog.rs` | In-memory query log powering the Debug panel. |
+| `mcp.rs` | Token-authed JSON-RPC MCP server (`tiny_http`, loopback) over the query layer. |
 | `db.rs` | `duckdb` crate helpers (per-query in-memory connection, param binding, row → JSON), with query-log instrumentation. |
 
 ## What's real vs. stubbed
@@ -73,11 +74,16 @@ The Rust backend (`src-tauri/src`):
   (SSO/profile via `aws-config`); refreshes `org-accounts.json`.
 - All config reads, data inventory, AWS profile list (`~/.aws`), tag/column
   discovery, filter values, Debug query log.
+- **MCP server** (`mcp.rs`) — token-authed JSON-RPC HTTP server (loopback) over
+  the query layer (`get_cost_overview`, `query_costs`, `list_dimensions`,
+  `get_filter_values`), toggled from the AI Assistant view.
+- **Preferences persist** (UI / explorer / savings JSON) and **Open/Reveal
+  Folder** use the OS opener.
 
 **Still stubbed (migration Phase 3/4 — "desktop-main → Tauri"):** S3 CUR
 download sync, SSM region-name enrichment, config-sharing (export/import + S3
-beacon), the auto-updater, and the MCP server. Plus `save*` writes (config edits
-are in-memory). These are client-side canned responses in `bridge.ts`.
+beacon), the auto-updater, and YAML config `save*` writes. These are client-side
+canned responses in `bridge.ts`.
 
 ## Threading
 

@@ -97,6 +97,7 @@ const api: CostApi = {
   getDataInventory: (tier?: DataTier): Promise<DataInventoryResult> => invoke('get_data_inventory', { tier }),
   getUIPreferences: (): Promise<UIPreferences> => invoke('get_ui_preferences'),
   getExplorerPreferences: (): Promise<ExplorerPreferences> => invoke('get_explorer_preferences'),
+  getSavingsPreferences: (): Promise<SavingsPreferences> => invoke('get_savings_preferences'),
   getFilterValues: (
     dimensionId: string,
     filters: Record<string, readonly string[]>,
@@ -122,7 +123,6 @@ const api: CostApi = {
   getSyncStatus: (): Promise<SyncStatus> => ok({ status: 'idle', lastSync: null }),
   querySavings: (): Promise<SavingsResult> => invoke('query_savings'),
   getAccountMapping: (): Promise<AccountMappingStatus> => ok({ status: 'missing' }),
-  getSavingsPreferences: (): Promise<SavingsPreferences> => ok({ hiddenActionTypes: [] }),
   getCostScopeCapabilities: (): Promise<CostScopeCapabilities> => ok({ hasEffectiveCostColumns: false, hasNetColumns: false, hasListPriceColumn: true }),
   previewCostScope: (_config: CostScopeConfig): Promise<CostScopePreviewResult> => ok({
     windowDays: 0, startDate: '', endDate: '', perRule: [],
@@ -131,17 +131,18 @@ const api: CostApi = {
     sampleTotalRowCount: 0, tagColumns: [],
   }),
 
-  // ---- Stubbed writes / no-ops (config edits are in-memory for the spike) ----
-  saveUIPreferences: (): Promise<void> => ok(undefined),
-  saveSavingsPreferences: (): Promise<void> => ok(undefined),
-  saveExplorerPreferences: (): Promise<void> => ok(undefined),
+  // ---- Preferences persist to JSON; folder reveals use the OS opener ----
+  saveUIPreferences: (prefs: UIPreferences): Promise<void> => invoke<undefined>('save_ui_preferences', prefs).then(() => undefined),
+  saveSavingsPreferences: (prefs: SavingsPreferences): Promise<void> => invoke<undefined>('save_savings_preferences', prefs).then(() => undefined),
+  saveExplorerPreferences: (prefs: ExplorerPreferences): Promise<void> => invoke<undefined>('save_explorer_preferences', prefs).then(() => undefined),
+  openDataFolder: (): Promise<void> => invoke<undefined>('open_data_folder').then(() => undefined),
+  revealViewsFolder: (): Promise<void> => invoke<undefined>('reveal_config_folder').then(() => undefined),
+  revealCostScopeFolder: (): Promise<void> => invoke<undefined>('reveal_config_folder').then(() => undefined),
+  // ---- Still in-memory for the spike (YAML config writes not ported) ----
   saveDimensionsConfig: (): Promise<void> => ok(undefined),
   saveViewsConfig: (): Promise<void> => ok(undefined),
   resetViewsConfig: (): Promise<ViewsConfig> => invoke('get_views_config'),
-  revealViewsFolder: (): Promise<void> => ok(undefined),
   saveCostScope: (): Promise<void> => ok(undefined),
-  revealCostScopeFolder: (): Promise<void> => ok(undefined),
-  openDataFolder: (): Promise<void> => ok(undefined),
   cancelPendingQueries: (): Promise<void> => ok(undefined),
   clearAllCaches: (): Promise<void> => ok(undefined),
 
@@ -187,11 +188,11 @@ const api: CostApi = {
   publishConfigBundle: (): Promise<PublishConfigBundleResult> => ok({ status: 'error', message: 'Disabled in Tauri spike' }),
   checkConfigBeacon: (_params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult> => ok({ status: 'none' }),
 
-  // ---- Stubbed: MCP server ----
-  getMcpServerRunning: (): Promise<boolean> => ok(false),
-  setMcpServerRunning: (): Promise<void> => ok(undefined),
-  getMcpToken: (): Promise<string> => ok(''),
-  regenerateMcpToken: (): Promise<string> => ok(''),
+  // ---- MCP server (real: tiny_http JSON-RPC over the query layer) ----
+  getMcpServerRunning: (): Promise<boolean> => invoke('get_mcp_server_running'),
+  setMcpServerRunning: (enabled: boolean): Promise<void> => invoke<undefined>('set_mcp_server_running', { enabled }).then(() => undefined),
+  getMcpToken: (): Promise<string> => invoke('get_mcp_token'),
+  regenerateMcpToken: (): Promise<string> => invoke('regenerate_mcp_token'),
 };
 
 // ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ mod aws_org;
 mod commands;
 mod config;
 mod db;
+mod mcp;
 mod query;
 mod querylog;
 
@@ -53,7 +54,13 @@ fn main() {
             commands::get_views_config,
             commands::get_cost_scope,
             commands::get_ui_preferences,
+            commands::save_ui_preferences,
             commands::get_explorer_preferences,
+            commands::save_explorer_preferences,
+            commands::get_savings_preferences,
+            commands::save_savings_preferences,
+            commands::open_data_folder,
+            commands::reveal_config_folder,
             commands::get_data_inventory,
             commands::query_costs,
             commands::query_daily_costs,
@@ -68,6 +75,10 @@ fn main() {
             commands::query_missing_tags,
             commands::discover_tag_keys,
             commands::discover_column_values,
+            commands::get_mcp_server_running,
+            commands::set_mcp_server_running,
+            commands::get_mcp_token,
+            commands::regenerate_mcp_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -165,5 +176,37 @@ mod smoke {
         let with_tags = r["accounts"].as_array().map(|a| a.iter().filter(|x| x["tags"].as_object().map(|t| !t.is_empty()).unwrap_or(false)).count()).unwrap_or(0);
         eprintln!("ORG SYNC LIVE OK: {} accounts ({} with tags), orgId={}", n, with_tags, r["orgId"]);
         assert!(n > 0, "expected > 0 accounts");
+    }
+
+    /// End-to-end MCP server check: start it, POST a tools/call over HTTP with
+    /// the auth token, assert a JSON-RPC result comes back. Runs on whatever
+    /// COSTGOBLIN_DATA_DIR points at (fixtures by default).
+    #[test]
+    fn mcp_server_responds() {
+        use std::io::{Read, Write};
+        let dd = data_dir();
+        crate::mcp::start(dd.clone(), config_dir()).expect("mcp start");
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        let token = crate::mcp::get_token(&dd);
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_cost_overview","arguments":{}}}"#;
+        let req = format!(
+            "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:19532\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let mut stream = std::net::TcpStream::connect("127.0.0.1:19532").expect("connect mcp");
+        stream.write_all(req.as_bytes()).unwrap();
+        let mut resp = String::new();
+        stream.read_to_string(&mut resp).unwrap();
+
+        // and a no-token request must be rejected
+        let mut s2 = std::net::TcpStream::connect("127.0.0.1:19532").expect("connect mcp 2");
+        s2.write_all(b"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:19532\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").unwrap();
+        let mut resp2 = String::new();
+        s2.read_to_string(&mut resp2).unwrap();
+        crate::mcp::stop();
+
+        eprintln!("MCP RESP (tail): {}", &resp[resp.len().saturating_sub(300)..]);
+        assert!(resp.contains("\"result\"") && resp.contains("totalCost"), "expected tool result, got: {resp}");
+        assert!(resp2.contains("401") || resp2.contains("Unauthorized"), "expected 401 without token, got: {resp2}");
     }
 }

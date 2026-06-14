@@ -69,9 +69,12 @@ accounts), which pushed it well past the original read-only core. Current state:
   `aws-sdk-organizations` + `aws-config` (SSO/profile) for a real read-only
   traversal — confirming the issue's "AWS SDK for Rust is mature" claim end to
   end (credential resolution + live calls work).
+- **MCP server (ported):** a token-authed JSON-RPC HTTP server (`mcp.rs`, loopback)
+  over the query layer — `get_cost_overview` / `query_costs` / `list_dimensions` /
+  `get_filter_values`, validated via an HTTP test. Preferences also persist now.
 - **Still stubbed (Phase 3/4):** S3 CUR download sync, SSM region names, config
-  sharing, the auto-updater, the MCP server, and `save*` writes — client-side
-  canned responses in `bridge.ts`.
+  sharing, the auto-updater, and YAML config `save*` writes — client-side canned
+  responses in `bridge.ts`.
 - **Threading:** all commands are `#[tauri::command(async)]` so DuckDB/AWS work
   runs off the main thread (sync commands run on Tauri's main thread and freeze
   the UI). The spike has no result cache / materialized base yet, so repeat
