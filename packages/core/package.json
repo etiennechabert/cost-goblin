@@ -18,7 +18,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1063.0",
+    "@aws-sdk/client-s3": "^3.1068.0",
     "@duckdb/node-api": "^1.5.2-r.2",
     "yaml": "^2.9.0"
   },
