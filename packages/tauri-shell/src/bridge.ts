@@ -138,11 +138,11 @@ const api: CostApi = {
   openDataFolder: (): Promise<void> => invoke<undefined>('open_data_folder').then(() => undefined),
   revealViewsFolder: (): Promise<void> => invoke<undefined>('reveal_config_folder').then(() => undefined),
   revealCostScopeFolder: (): Promise<void> => invoke<undefined>('reveal_config_folder').then(() => undefined),
-  // ---- Still in-memory for the spike (YAML config writes not ported) ----
-  saveDimensionsConfig: (): Promise<void> => ok(undefined),
-  saveViewsConfig: (): Promise<void> => ok(undefined),
+  // ---- YAML config writes (real: serde_yaml, matching the core *ToYaml shape) ----
+  saveDimensionsConfig: (config: DimensionsConfig): Promise<void> => invoke<undefined>('save_dimensions_config', config).then(() => undefined),
+  saveViewsConfig: (config: ViewsConfig): Promise<void> => invoke<undefined>('save_views_config', config).then(() => undefined),
   resetViewsConfig: (): Promise<ViewsConfig> => invoke('get_views_config'),
-  saveCostScope: (): Promise<void> => ok(undefined),
+  saveCostScope: (config: CostScopeConfig): Promise<void> => invoke<undefined>('save_cost_scope', config).then(() => undefined),
   cancelPendingQueries: (): Promise<void> => ok(undefined),
   clearAllCaches: (): Promise<void> => ok(undefined),
 
@@ -158,7 +158,7 @@ const api: CostApi = {
     ok({ prefixes: [], isCurReport: false, detectedType: 'unknown', missingColumns: [] }),
   scaffoldConfig: (): Promise<void> => ok(undefined),
   writeConfig: (): Promise<void> => ok(undefined),
-  updateAwsProfile: (): Promise<void> => ok(undefined),
+  updateAwsProfile: (profile: string): Promise<void> => invoke<undefined>('update_aws_profile', { profile }).then(() => undefined),
 
   // ---- Stubbed: auto-sync ----
   getAutoSyncEnabled: (): Promise<boolean> => ok(false),
@@ -167,13 +167,13 @@ const api: CostApi = {
   setAutoSyncIntervalMinutes: (): Promise<void> => ok(undefined),
   getAutoSyncStatus: (): Promise<AutoSyncStatus> => ok({ state: 'disabled' }),
 
-  // ---- Stubbed: AWS Organizations / SSM ----
+  // ---- AWS Organizations / SSM (real: aws-sdk-organizations + aws-sdk-ssm) ----
   syncOrgAccounts: (profile: string): Promise<OrgSyncResult> => invoke('sync_org_accounts', { profile }),
   getOrgSyncResult: (): Promise<OrgSyncResult | null> => invoke('get_org_sync_result'),
   getOrgSyncProgress: (): Promise<OrgSyncProgress | null> => ok(null),
-  getRegionNamesInfo: (): Promise<{ count: number; syncedAt: string; lastError: string | null; regions: Record<string, { longName: string; country: string; continent: string }> } | null> => ok(null),
-  clearOrgData: (): Promise<void> => ok(undefined),
-  syncRegionNames: (): Promise<{ count: number; syncedAt: string }> => ok({ count: 0, syncedAt: new Date(0).toISOString() }),
+  getRegionNamesInfo: (): Promise<{ count: number; syncedAt: string; lastError: string | null; regions: Record<string, { longName: string; country: string; continent: string }> } | null> => invoke('get_region_names_info'),
+  clearOrgData: (): Promise<void> => invoke<undefined>('clear_org_data').then(() => undefined),
+  syncRegionNames: (profile: string): Promise<{ count: number; syncedAt: string }> => invoke('sync_region_names', { profile }),
 
   // ---- Stubbed: alias suggestions ----
   getAliasSuggestions: (): Promise<AliasSuggestion[]> => ok([]),

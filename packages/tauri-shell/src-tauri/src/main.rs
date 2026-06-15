@@ -2,8 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod aws_org;
+mod aws_ssm;
 mod commands;
 mod config;
+mod config_write;
 mod db;
 mod mcp;
 mod query;
@@ -38,6 +40,7 @@ fn main() {
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             commands::get_app_version,
@@ -47,6 +50,9 @@ fn main() {
             commands::list_aws_profiles,
             commands::sync_org_accounts,
             commands::get_org_sync_result,
+            commands::sync_region_names,
+            commands::get_region_names_info,
+            commands::clear_org_data,
             commands::get_config,
             commands::get_dimensions,
             commands::get_dimensions_config,
@@ -59,6 +65,10 @@ fn main() {
             commands::save_explorer_preferences,
             commands::get_savings_preferences,
             commands::save_savings_preferences,
+            commands::save_dimensions_config,
+            commands::save_views_config,
+            commands::save_cost_scope,
+            commands::update_aws_profile,
             commands::open_data_folder,
             commands::reveal_config_folder,
             commands::get_data_inventory,

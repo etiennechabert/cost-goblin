@@ -140,7 +140,11 @@ pub fn list_aws_profiles() -> R {
 pub async fn sync_org_accounts(params: J, state: tauri::State<'_, AppState>) -> R {
     let data_dir = state.data_dir.clone();
     let profile = params.get("profile").and_then(|v| v.as_str()).unwrap_or("default").to_string();
-    crate::aws_org::sync(&profile, Path::new(&data_dir)).await
+    let result = crate::aws_org::sync(&profile, Path::new(&data_dir)).await?;
+    // Piggyback the SSM region-name sync (non-fatal — display nicety; the user
+    // already paid the auth cost). Failure is captured in get_region_names_info.
+    let _ = crate::aws_ssm::sync(&profile, Path::new(&data_dir)).await;
+    Ok(result)
 }
 
 /// Reads the persisted org-accounts.json so the Data Management card shows the
@@ -148,6 +152,26 @@ pub async fn sync_org_accounts(params: J, state: tauri::State<'_, AppState>) -> 
 #[tauri::command(async)]
 pub fn get_org_sync_result(state: tauri::State<AppState>) -> R {
     Ok(crate::aws_org::read_result(Path::new(&state.data_dir)))
+}
+
+/// Standalone SSM region-name resync (doesn't drag the slow org sync along).
+#[tauri::command]
+pub async fn sync_region_names(params: J, state: tauri::State<'_, AppState>) -> R {
+    let profile = params.get("profile").and_then(|v| v.as_str()).unwrap_or("default").to_string();
+    let map = crate::aws_ssm::sync(&profile, Path::new(&state.data_dir)).await?;
+    let count = map.get("regions").and_then(|r| r.as_object()).map(|o| o.len()).unwrap_or(0);
+    Ok(json!({ "count": count, "syncedAt": map.get("syncedAt").cloned().unwrap_or(J::Null) }))
+}
+
+#[tauri::command(async)]
+pub fn get_region_names_info(state: tauri::State<AppState>) -> R {
+    Ok(crate::aws_ssm::read_info(Path::new(&state.data_dir)))
+}
+
+#[tauri::command(async)]
+pub fn clear_org_data(state: tauri::State<AppState>) -> Result<(), String> {
+    crate::aws_ssm::clear(Path::new(&state.data_dir));
+    Ok(())
 }
 
 /// Debug panel: live query log (sql, timing, rows) recorded by db::query_map.
@@ -248,6 +272,26 @@ pub fn get_savings_preferences(state: tauri::State<AppState>) -> R {
 pub fn save_savings_preferences(params: J, state: tauri::State<AppState>) -> Result<(), String> {
     write_json(&prefs_path(&state, "savings-preferences"), &params)
 }
+// --- config writes (YAML) ---
+
+#[tauri::command(async)]
+pub fn save_dimensions_config(params: J, state: tauri::State<AppState>) -> Result<(), String> {
+    crate::config_write::save_dimensions(&state.config_dir, &params)
+}
+#[tauri::command(async)]
+pub fn save_views_config(params: J, state: tauri::State<AppState>) -> Result<(), String> {
+    crate::config_write::save_views(&state.config_dir, &params)
+}
+#[tauri::command(async)]
+pub fn save_cost_scope(params: J, state: tauri::State<AppState>) -> Result<(), String> {
+    crate::config_write::save_cost_scope(&state.config_dir, &params)
+}
+#[tauri::command(async)]
+pub fn update_aws_profile(params: J, state: tauri::State<AppState>) -> Result<(), String> {
+    let profile = pstr(&pobj(&params), "profile").unwrap_or("").to_string();
+    crate::config_write::update_aws_profile(&state.config_dir, &profile)
+}
+
 #[tauri::command(async)]
 pub fn open_data_folder(state: tauri::State<AppState>) -> Result<(), String> {
     open_path(Path::new(&state.data_dir))
