@@ -182,13 +182,13 @@ const api: CostApi = {
   dismissSuggestion: (): Promise<void> => ok(undefined),
   acceptSuggestion: (): Promise<void> => ok(undefined),
 
-  // ---- Stubbed: config sharing ----
-  exportConfigBundle: (): Promise<ExportConfigBundleResult> => ok({ status: 'error', message: 'Disabled in Tauri spike' }),
-  previewConfigBundleFile: (): Promise<PreviewConfigBundleResult> => ok({ status: 'error', message: 'Disabled in Tauri spike' }),
-  fetchConfigBundleFromS3: (): Promise<PreviewConfigBundleResult> => ok({ status: 'error', message: 'Disabled in Tauri spike' }),
-  applyConfigBundle: (_params: ApplyConfigBundleParams): Promise<ApplyConfigBundleResult> => ok({ status: 'error', message: 'Disabled in Tauri spike' }),
-  publishConfigBundle: (): Promise<PublishConfigBundleResult> => ok({ status: 'error', message: 'Disabled in Tauri spike' }),
-  checkConfigBeacon: (_params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult> => ok({ status: 'none' }),
+  // ---- Config sharing (real: bundle fingerprint + native dialogs + S3) ----
+  exportConfigBundle: (): Promise<ExportConfigBundleResult> => invoke('export_config_bundle'),
+  previewConfigBundleFile: (): Promise<PreviewConfigBundleResult> => invoke('preview_config_bundle_file'),
+  fetchConfigBundleFromS3: (params: { profile: string; location: string }): Promise<PreviewConfigBundleResult> => invoke('fetch_config_bundle_from_s3', params),
+  applyConfigBundle: (params: ApplyConfigBundleParams): Promise<ApplyConfigBundleResult> => invoke('apply_config_bundle', params),
+  publishConfigBundle: (params?: { location?: string; profile?: string }): Promise<PublishConfigBundleResult> => invoke('publish_config_bundle', params ?? {}),
+  checkConfigBeacon: (params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult> => invoke('check_config_beacon', params),
 
   // ---- MCP server (real: tiny_http JSON-RPC over the query layer) ----
   getMcpServerRunning: (): Promise<boolean> => invoke('get_mcp_server_running'),

@@ -3,6 +3,7 @@
 
 mod aws_org;
 mod aws_ssm;
+mod bundle;
 mod commands;
 mod config;
 mod config_write;
@@ -10,6 +11,7 @@ mod db;
 mod mcp;
 mod query;
 mod querylog;
+mod sharing;
 mod sync;
 
 use commands::AppState;
@@ -91,6 +93,12 @@ fn main() {
             commands::query_missing_tags,
             commands::discover_tag_keys,
             commands::discover_column_values,
+            commands::export_config_bundle,
+            commands::preview_config_bundle_file,
+            commands::fetch_config_bundle_from_s3,
+            commands::apply_config_bundle,
+            commands::publish_config_bundle,
+            commands::check_config_beacon,
             commands::get_mcp_server_running,
             commands::set_mcp_server_running,
             commands::get_mcp_token,

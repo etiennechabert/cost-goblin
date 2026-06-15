@@ -6,9 +6,11 @@
 use crate::config::{self, Dimensions};
 use crate::db::{self, f64_at, str_at};
 use crate::query::{self, available_periods, build_source, list_local_months, QueryArgs};
+use chrono::{SecondsFormat, Utc};
 use serde_json::{json, Map, Value as J};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use tauri_plugin_dialog::DialogExt;
 
 pub struct AppState {
     pub data_dir: String,
@@ -977,6 +979,151 @@ pub fn query_savings(state: tauri::State<AppState>) -> R {
     let total: f64 = rows.iter().map(|(s, _)| *s).sum();
     let recs: Vec<J> = rows.into_iter().map(|(_, j)| j).collect();
     Ok(json!({ "recommendations": recs, "totalMonthlySavings": total }))
+}
+
+// --- config sharing (bundle export/import + S3 beacon) ---
+
+fn now_iso() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+/// Build a bundle from the local config and save it via a native dialog.
+#[tauri::command]
+pub async fn export_config_bundle(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> R {
+    let exported_at = now_iso();
+    let yaml = match crate::bundle::build_bundle_yaml(&state.config_dir, &state.app_version, &exported_at) {
+        Ok(y) => y,
+        Err(e) => return Ok(json!({ "status": "error", "message": e })),
+    };
+    let default_name = format!("costgoblin-config-{}.yaml", &exported_at[..10]);
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("CostGoblin configuration bundle", &["yaml", "yml"])
+        .set_file_name(&default_name)
+        .blocking_save_file();
+    let Some(fp) = picked else { return Ok(json!({ "status": "canceled" })) };
+    let path = fp.as_path().map(|p| p.to_path_buf());
+    let Some(path) = path else { return Ok(json!({ "status": "error", "message": "Unsupported save location" })) };
+    match std::fs::write(&path, yaml) {
+        Ok(()) => Ok(json!({ "status": "saved", "path": path.to_string_lossy() })),
+        Err(e) => Ok(json!({ "status": "error", "message": format!("write {}: {e}", path.display()) })),
+    }
+}
+
+/// Pick a bundle file, parse + summarize it for the import preview.
+#[tauri::command]
+pub async fn preview_config_bundle_file(app: tauri::AppHandle) -> R {
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("CostGoblin configuration bundle", &["yaml", "yml"])
+        .add_filter("All files", &["*"])
+        .blocking_pick_file();
+    let Some(fp) = picked else { return Ok(json!({ "status": "canceled" })) };
+    let Some(path) = fp.as_path().map(|p| p.to_path_buf()) else { return Ok(json!({ "status": "error", "message": "Unsupported file location" })) };
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => return Ok(json!({ "status": "error", "message": format!("read {}: {e}", path.display()) })),
+    };
+    match crate::bundle::parse_bundle(&content) {
+        Ok(parsed) => Ok(json!({ "status": "ok", "content": content, "summary": crate::bundle::summarize(&parsed) })),
+        Err(e) => Ok(json!({ "status": "error", "message": e })),
+    }
+}
+
+/// Fetch a bundle from an explicit S3 location (every failure surfaced).
+#[tauri::command]
+pub async fn fetch_config_bundle_from_s3(params: J, _state: tauri::State<'_, AppState>) -> R {
+    let o = pobj(&params);
+    let profile = pstr(&o, "profile").unwrap_or("default").to_string();
+    let location = pstr(&o, "location").unwrap_or("");
+    let Some((bucket, key)) = crate::sharing::split_s3_location(location) else {
+        return Ok(json!({ "status": "error", "message": "Invalid S3 location — expected s3://bucket/path/to/org-config.yaml" }));
+    };
+    let loc = format!("s3://{bucket}/{key}");
+    match crate::sharing::s3_get(&bucket, &key, &profile).await {
+        Ok(content) => match crate::bundle::parse_bundle(&content) {
+            Ok(parsed) => Ok(json!({ "status": "ok", "content": content, "summary": crate::bundle::summarize(&parsed) })),
+            Err(e) => Ok(json!({ "status": "error", "message": e })),
+        },
+        Err(e) if crate::sharing::is_beacon_absence(&e) => Ok(json!({ "status": "error", "message": format!("No bundle found at {loc} (missing object or access denied)") })),
+        Err(e) => Ok(json!({ "status": "error", "message": e })),
+    }
+}
+
+/// Re-parse + re-validate, back up existing config, materialize the bundle.
+#[tauri::command(async)]
+pub fn apply_config_bundle(params: J, state: tauri::State<AppState>) -> R {
+    let o = pobj(&params);
+    let content = pstr(&o, "content").unwrap_or("");
+    let profile = pstr(&o, "profile").unwrap_or("");
+    if profile.is_empty() {
+        return Ok(json!({ "status": "error", "message": "Invalid import parameters" }));
+    }
+    let parsed = match crate::bundle::parse_bundle(content) {
+        Ok(p) => p,
+        Err(e) => return Ok(json!({ "status": "error", "message": e })),
+    };
+    let backup_dir = match crate::sharing::backup_config(&state.config_dir) {
+        Ok(b) => b,
+        Err(e) => return Ok(json!({ "status": "error", "message": e })),
+    };
+    match crate::bundle::materialize(&state.config_dir, &parsed.sections, profile) {
+        Ok(sections) => Ok(json!({ "status": "applied", "sections": sections, "backupDir": backup_dir })),
+        Err(e) => Ok(json!({ "status": "error", "message": e })),
+    }
+}
+
+/// Publish the current bundle to S3 (default: beacon key at the daily bucket root).
+#[tauri::command]
+pub async fn publish_config_bundle(params: J, state: tauri::State<'_, AppState>) -> R {
+    let (default_profile, sync) = match resolve_provider(state.inner()) {
+        Ok(v) => v,
+        Err(_) => return Ok(json!({ "status": "error", "message": "No provider configured — complete setup before publishing" })),
+    };
+    let o = pobj(&params);
+    let requested = match pstr(&o, "location") {
+        Some(l) if !l.trim().is_empty() => l.to_string(),
+        _ => crate::sharing::suggested_beacon_location(sync.get("daily").and_then(|d| d.get("bucket")).and_then(|b| b.as_str()).unwrap_or("")),
+    };
+    let Some((bucket, key)) = crate::sharing::split_s3_location(&requested) else {
+        return Ok(json!({ "status": "error", "message": "Invalid S3 location — expected s3://bucket/path/to/org-config.yaml" }));
+    };
+    let profile = match pstr(&o, "profile") {
+        Some(p) if !p.trim().is_empty() => p.to_string(),
+        _ => default_profile,
+    };
+    let yaml = match crate::bundle::build_bundle_yaml(&state.config_dir, &state.app_version, &now_iso()) {
+        Ok(y) => y,
+        Err(e) => return Ok(json!({ "status": "error", "message": e })),
+    };
+    match crate::sharing::s3_put(&bucket, &key, yaml, &profile).await {
+        Ok(()) => Ok(json!({ "status": "published", "location": format!("s3://{bucket}/{key}") })),
+        Err(e) => Ok(json!({ "status": "error", "message": e })),
+    }
+}
+
+/// Probe the well-known beacon key at a bucket root (silent on absence).
+#[tauri::command]
+pub async fn check_config_beacon(params: J, _state: tauri::State<'_, AppState>) -> R {
+    let o = pobj(&params);
+    let profile = pstr(&o, "profile").unwrap_or("default").to_string();
+    let bucket = pstr(&o, "bucket").unwrap_or("");
+    if bucket.is_empty() {
+        return Ok(json!({ "status": "error", "message": "Invalid beacon parameters" }));
+    }
+    let key = crate::bundle::CONFIG_BEACON_KEY;
+    let location = format!("s3://{bucket}/{key}");
+    match crate::sharing::s3_get(bucket, key, &profile).await {
+        Ok(content) => match crate::bundle::parse_bundle(&content) {
+            Ok(parsed) => Ok(json!({ "status": "found", "location": location, "content": content, "summary": crate::bundle::summarize(&parsed) })),
+            // Something IS published but unusable — worth telling the user.
+            Err(e) => Ok(json!({ "status": "error", "message": format!("Found {location} but it is not a valid bundle: {e}") })),
+        },
+        // Absence OR network/credential hiccup → never block manual setup.
+        Err(_) => Ok(json!({ "status": "none" })),
+    }
 }
 
 // --- MCP server (AI Assistant) ---
