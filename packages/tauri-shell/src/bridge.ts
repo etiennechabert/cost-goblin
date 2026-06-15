@@ -120,7 +120,7 @@ const api: CostApi = {
 
   // ---- Stubbed: configured, but cloud/cost-optimization data is absent ----
   getSetupStatus: (): Promise<{ configured: boolean }> => ok({ configured: true }),
-  getSyncStatus: (): Promise<SyncStatus> => ok({ status: 'idle', lastSync: null }),
+  getSyncStatus: (syncId?: string): Promise<SyncStatus> => invoke('get_sync_status', { syncId: syncId ?? 'default' }),
   querySavings: (): Promise<SavingsResult> => invoke('query_savings'),
   getAccountMapping: (): Promise<AccountMappingStatus> => ok({ status: 'missing' }),
   getCostScopeCapabilities: (): Promise<CostScopeCapabilities> => ok({ hasEffectiveCostColumns: false, hasNetColumns: false, hasListPriceColumn: true }),
@@ -146,11 +146,13 @@ const api: CostApi = {
   cancelPendingQueries: (): Promise<void> => ok(undefined),
   clearAllCaches: (): Promise<void> => ok(undefined),
 
-  // ---- Stubbed: sync / AWS / data management ----
-  syncPeriods: (): Promise<{ filesDownloaded: number; rowsProcessed: number }> => ok({ filesDownloaded: 0, rowsProcessed: 0 }),
-  cancelSync: (): Promise<void> => ok(undefined),
-  deleteLocalPeriod: (): Promise<void> => ok(undefined),
-  ssoLogin: (): Promise<void> => ok(undefined),
+  // ---- S3 CUR sync (real: `aws s3 sync` CLI + SDK ListObjectsV2 inventory) ----
+  syncPeriods: (files: readonly { key: string; contentHash: string; size: number }[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }> =>
+    invoke('sync_periods', { files, syncId: syncId ?? 'default' }),
+  cancelSync: (syncId?: string): Promise<void> => invoke<undefined>('cancel_sync', { syncId: syncId ?? 'default' }).then(() => undefined),
+  deleteLocalPeriod: (period: string, tier?: DataTier): Promise<void> => invoke<undefined>('delete_local_period', { period, tier: tier ?? 'daily' }).then(() => undefined),
+  ssoLogin: (profile: string): Promise<void> => invoke<undefined>('sso_login', { profile }).then(() => undefined),
+  // ---- Stubbed: setup-wizard-only AWS discovery (app is already configured) ----
   testConnection: (): Promise<{ ok: boolean; error?: string | undefined }> => ok({ ok: false, error: 'Disabled in Tauri spike (fixture mode)' }),
   listAwsProfiles: (): Promise<string[]> => invoke('list_aws_profiles'),
   listS3Buckets: (): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> => ok({ buckets: [] }),

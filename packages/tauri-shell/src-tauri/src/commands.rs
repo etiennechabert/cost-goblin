@@ -301,39 +301,94 @@ pub fn reveal_config_folder(state: tauri::State<AppState>) -> Result<(), String>
     open_path(&state.config_dir)
 }
 
-#[tauri::command(async)]
-pub fn get_data_inventory(params: J, state: tauri::State<AppState>) -> R {
-    let o = pobj(&params);
-    let tier = pstr(&o, "tier").unwrap_or("daily");
-    let months = list_local_months(&state.data_dir, tier);
-    let mut periods = vec![];
-    let mut disk_bytes: u64 = 0;
-    for m in &months {
-        let dir = PathBuf::from(&state.data_dir).join("aws").join("raw").join(format!("{tier}-{m}"));
-        let mut total: u64 = 0;
-        let mut files = vec![];
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for e in entries.flatten() {
-                let p = e.path();
-                if p.extension().and_then(|s| s.to_str()) == Some("parquet") {
-                    let size = std::fs::metadata(&p).map(|md| md.len()).unwrap_or(0);
-                    total += size;
-                    files.push(json!({ "key": p.file_name().and_then(|s| s.to_str()).unwrap_or(""), "contentHash": "", "size": size }));
-                }
+// --- S3 CUR sync ---
+
+/// (profile, sync-object) from costgoblin.yaml's first provider.
+fn resolve_provider(state: &AppState) -> Result<(String, J), String> {
+    let cfg = config::load_yaml_json(&state.config_dir.join("costgoblin.yaml"))?;
+    let p = cfg.get("providers").and_then(|v| v.as_array()).and_then(|a| a.first()).ok_or("No provider configured")?;
+    let profile = p.get("credentials").and_then(|c| c.get("profile")).and_then(|v| v.as_str()).unwrap_or("default").to_string();
+    Ok((profile, p.get("sync").cloned().unwrap_or_else(|| json!({}))))
+}
+fn bucket_for_tier(sync: &J, tier: &str) -> Option<String> {
+    let daily = sync.get("daily").and_then(|d| d.get("bucket")).and_then(|v| v.as_str());
+    let pick = match tier {
+        "hourly" => sync.get("hourly").and_then(|d| d.get("bucket")).and_then(|v| v.as_str()).or(daily),
+        "cost-optimization" => sync.get("costOptimization").and_then(|d| d.get("bucket")).and_then(|v| v.as_str()),
+        _ => daily,
+    };
+    pick.map(|s| s.to_string())
+}
+
+/// Real remote inventory via S3 ListObjectsV2 (so the user can pick periods to
+/// sync), falling back to a local-only scan when no bucket is configured or S3
+/// is unreachable (offline / SSO expired) so the app still shows local data.
+#[tauri::command]
+pub async fn get_data_inventory(params: J, state: tauri::State<'_, AppState>) -> R {
+    let tier = pstr(&pobj(&params), "tier").unwrap_or("daily").to_string();
+    let data_dir = state.data_dir.clone();
+    if let Ok((profile, sync)) = resolve_provider(state.inner()) {
+        if let Some(bucket) = bucket_for_tier(&sync, &tier) {
+            if let Ok(v) = crate::sync::remote_inventory(&bucket, &profile, &data_dir, &tier).await {
+                return Ok(v);
             }
         }
-        disk_bytes += total;
-        periods.push(json!({ "period": m, "files": files, "totalSize": total, "localStatus": "repartitioned" }));
     }
-    Ok(json!({
-        "periods": periods, "totalRemoteSize": disk_bytes,
-        "totalLocalPeriods": months.len(), "totalRemotePeriods": months.len(),
-        "local": {
-            "periods": months, "diskBytes": disk_bytes,
-            "oldestPeriod": months.first().cloned().map(J::String).unwrap_or(J::Null),
-            "newestPeriod": months.last().cloned().map(J::String).unwrap_or(J::Null),
-        }
-    }))
+    Ok(crate::sync::local_inventory(&data_dir, &tier))
+}
+
+fn tier_from_sync_id(sync_id: &str) -> &'static str {
+    match sync_id {
+        "hourly" => "hourly",
+        "cost-optimization" => "cost-optimization",
+        _ => "daily",
+    }
+}
+
+/// Download the selected CUR Parquet files via the `aws s3 sync` CLI. Runs on a
+/// worker thread (`#[tauri::command(async)]` on a sync fn) so the blocking
+/// subprocess + progress parsing never touches the UI thread.
+#[tauri::command(async)]
+pub fn sync_periods(params: J, state: tauri::State<AppState>) -> R {
+    let o = pobj(&params);
+    let files = o.get("files").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let sync_id = pstr(&o, "syncId").unwrap_or("default").to_string();
+    let tier = tier_from_sync_id(&sync_id);
+    let (profile, sync) = resolve_provider(state.inner())?;
+    let bucket = bucket_for_tier(&sync, tier).ok_or("No bucket configured for this tier")?;
+    let (downloaded, rows) = crate::sync::sync_periods(&files, tier, &profile, &bucket, &state.data_dir, &sync_id)?;
+    Ok(json!({ "filesDownloaded": downloaded, "rowsProcessed": rows }))
+}
+
+#[tauri::command(async)]
+pub fn cancel_sync(params: J) -> Result<(), String> {
+    crate::sync::cancel(pstr(&pobj(&params), "syncId").unwrap_or("default"));
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn delete_local_period(params: J, state: tauri::State<AppState>) -> Result<(), String> {
+    let o = pobj(&params);
+    let period = pstr(&o, "period").ok_or("missing period")?;
+    let tier = pstr(&o, "tier").unwrap_or("daily");
+    crate::sync::delete_local_period(period, tier, &state.data_dir)
+}
+
+#[tauri::command(async)]
+pub fn get_sync_status(params: J) -> R {
+    Ok(crate::sync::status(pstr(&pobj(&params), "syncId").unwrap_or("default")))
+}
+
+/// Kick off `aws sso login --profile <profile>` (detached) — the Data
+/// Management "Sign in" button.
+#[tauri::command(async)]
+pub fn sso_login(params: J) -> Result<(), String> {
+    let profile = pstr(&pobj(&params), "profile").unwrap_or("default").to_string();
+    std::process::Command::new(crate::sync::find_aws_cli())
+        .args(["sso", "login", "--profile", &profile])
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { "AWS CLI not found — install it with: brew install awscli".to_string() } else { format!("aws sso login: {e}") })
 }
 
 // --- cost queries ---

@@ -10,6 +10,7 @@ mod db;
 mod mcp;
 mod query;
 mod querylog;
+mod sync;
 
 use commands::AppState;
 use std::path::PathBuf;
@@ -72,6 +73,11 @@ fn main() {
             commands::open_data_folder,
             commands::reveal_config_folder,
             commands::get_data_inventory,
+            commands::sync_periods,
+            commands::cancel_sync,
+            commands::delete_local_period,
+            commands::get_sync_status,
+            commands::sso_login,
             commands::query_costs,
             commands::query_daily_costs,
             commands::query_savings,
