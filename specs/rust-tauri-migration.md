@@ -71,10 +71,25 @@ accounts), which pushed it well past the original read-only core. Current state:
   end (credential resolution + live calls work).
 - **MCP server (ported):** a token-authed JSON-RPC HTTP server (`mcp.rs`, loopback)
   over the query layer — `get_cost_overview` / `query_costs` / `list_dimensions` /
-  `get_filter_values`, validated via an HTTP test. Preferences also persist now.
-- **Still stubbed (Phase 3/4):** S3 CUR download sync, SSM region names, config
-  sharing, the auto-updater, and YAML config `save*` writes — client-side canned
-  responses in `bridge.ts`.
+  `get_filter_values`, validated via an HTTP test.
+- **Phase 3/4 desktop-main surface — now ported:**
+  - **YAML config writes** (`config_write.rs`): dimensions / views / cost-scope
+    saves + the surgical change-AWS-profile, reusing the core `*ConfigToYaml`
+    shape so files round-trip.
+  - **SSM region-name sync** (`aws_ssm.rs`): real read-only `aws-sdk-ssm`; org
+    sync piggybacks it like Electron.
+  - **S3 CUR download sync** (`sync.rs`): bulk download via the `aws s3 sync`
+    CLI (the faithful mechanism — Electron does the same), remote inventory via
+    `aws-sdk-s3`, progress polled through `getSyncStatus`, cancellable.
+  - **Config sharing** (`bundle.rs` + `sharing.rs`): bundle export/import with a
+    matching SHA-256 fingerprint, native dialogs, and S3 publish/fetch/beacon.
+  - **Preferences** persist (UI/explorer/savings) + Open/Reveal folder.
+- **One genuine blocker — auto-updater:** the command surface + status machine +
+  `onStatusChanged` are ported (the modal works), but a real check needs a
+  **Tauri-format signed release feed**; the GitHub releases are electron-builder
+  format, so `tauri-plugin-updater` can't consume them. A check honestly reports
+  "idle" until that feed + EdDSA signing exist. The remaining stubs are
+  setup-wizard-only AWS discovery (the spike runs on an already-configured set).
 - **Threading:** all commands are `#[tauri::command(async)]` so DuckDB/AWS work
   runs off the main thread (sync commands run on Tauri's main thread and freeze
   the UI). The spike has no result cache / materialized base yet, so repeat

@@ -47,6 +47,7 @@ import type {
   ExportConfigBundleResult,
   PreviewConfigBundleResult,
   PublishConfigBundleResult,
+  UpdateStatus,
 } from '@costgoblin/core/browser';
 
 // ---------------------------------------------------------------------------
@@ -198,14 +199,32 @@ const api: CostApi = {
 };
 
 // ---------------------------------------------------------------------------
-// costgoblinUpdate — no auto-updater in the spike. onStatusChanged returns an
-// unsubscribe fn (the renderer relies on that contract).
+// costgoblinUpdate — the interface is fully ported (state machine + a real
+// onStatusChanged subscription), so the ReleaseNotesModal works end-to-end. The
+// Rust commands honestly report "idle": actually finding an update needs a
+// Tauri-format signed release feed, which doesn't exist yet (the GitHub
+// releases are electron-builder format). See specs/rust-tauri-migration.md.
 // ---------------------------------------------------------------------------
+let updateStatus: UpdateStatus = { state: 'idle' };
+const updateListeners = new Set<(status: UpdateStatus) => void>();
+function emitUpdate(status: UpdateStatus): void {
+  updateStatus = status;
+  for (const cb of updateListeners) cb(status);
+}
 const updateApi = {
-  checkForUpdates: (): Promise<void> => ok(undefined),
-  downloadUpdate: (): Promise<void> => ok(undefined),
-  quitAndInstall: (): void => undefined,
-  onStatusChanged: (_callback: (status: unknown) => void): (() => void) => () => undefined,
+  checkForUpdates: async (): Promise<void> => {
+    emitUpdate({ state: 'checking' });
+    emitUpdate(await invoke<UpdateStatus>('check_for_updates'));
+  },
+  downloadUpdate: async (): Promise<void> => {
+    emitUpdate(await invoke<UpdateStatus>('download_update'));
+  },
+  quitAndInstall: (): void => { void invokeRaw('quit_and_install'); },
+  onStatusChanged: (callback: (status: UpdateStatus) => void): (() => void) => {
+    updateListeners.add(callback);
+    callback(updateStatus);
+    return () => { updateListeners.delete(callback); };
+  },
   getAppVersion: (): Promise<string> => invoke('get_app_version'),
 };
 

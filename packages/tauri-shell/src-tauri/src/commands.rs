@@ -101,6 +101,29 @@ pub fn get_app_version(state: tauri::State<AppState>) -> Result<String, String> 
     Ok(state.app_version.clone())
 }
 
+// --- auto-updater ---
+//
+// The command surface + status state machine are ported (the renderer's
+// ReleaseNotesModal + onStatusChanged subscription work end-to-end). Actually
+// *finding* an update needs a Tauri-format signed release feed — the project's
+// GitHub releases are electron-builder format, so there's nothing for Tauri's
+// updater to consume yet. Until that feed + EdDSA signing exist, a check
+// honestly reports "idle" (up to date). See specs/rust-tauri-migration.md.
+
+#[tauri::command(async)]
+pub fn check_for_updates() -> R {
+    Ok(json!({ "state": "idle" }))
+}
+#[tauri::command(async)]
+pub fn download_update() -> R {
+    Ok(json!({ "state": "idle" }))
+}
+#[tauri::command(async)]
+pub fn quit_and_install() -> Result<(), String> {
+    // No downloaded update in the spike (no Tauri feed) → nothing to install.
+    Ok(())
+}
+
 /// Real read of ~/.aws/config + ~/.aws/credentials (no SDK / network) — the
 /// one piece of the AWS surface that's purely local.
 #[tauri::command(async)]

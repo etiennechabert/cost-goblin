@@ -55,7 +55,12 @@ The Rust backend (`src-tauri/src`):
 | `commands.rs` | One `#[tauri::command(async)]` per CostApi method — **async so DuckDB/AWS work runs off the main thread** (see Threading). Shapes results to the exact CostApi JSON. |
 | `query.rs` | SQL builders ported from `@costgoblin/core` (`buildSource` incl. **org-account join**, cost/daily/trend/entity/missing-tags + explorer queries), cost-metric selection, **cost-scope exclusions**, normalize/alias `CASE`. |
 | `config.rs` | Loads the YAML config + `org-accounts.json` (account-name + tag-fallback maps). |
+| `config_write.rs` | YAML config **writes** — ports the core `*ConfigToYaml` transformers (dimensions / views / cost-scope) + the surgical `updateAwsProfile`. |
 | `aws_org.rs` | Real read-only AWS Organizations sync via `aws-sdk-organizations` (accounts + OU paths + tags), credentials/SSO via `aws-config`. |
+| `aws_ssm.rs` | Real read-only SSM region-name enrichment (`aws-sdk-ssm`) → `region-names.json`. |
+| `sync.rs` | S3 CUR download sync — bulk download via the `aws s3 sync` CLI; remote inventory via `aws-sdk-s3` ListObjectsV2; progress + cancel. |
+| `bundle.rs` | Config-bundle assembly + SHA-256 fingerprint + parse/summarize/materialize (config sharing). |
+| `sharing.rs` | Config-sharing S3 get/put + pre-import backup. |
 | `querylog.rs` | In-memory query log powering the Debug panel. |
 | `mcp.rs` | Token-authed JSON-RPC MCP server (`tiny_http`, loopback) over the query layer. |
 | `db.rs` | `duckdb` crate helpers (per-query in-memory connection, param binding, row → JSON), with query-log instrumentation. |
@@ -79,11 +84,35 @@ The Rust backend (`src-tauri/src`):
   `get_filter_values`), toggled from the AI Assistant view.
 - **Preferences persist** (UI / explorer / savings JSON) and **Open/Reveal
   Folder** use the OS opener.
+- **YAML config writes** (`config_write.rs`) — saving dimensions / views /
+  cost-scope and the surgical "change AWS profile" write the real YAML files,
+  reusing the core `*ConfigToYaml` shape so they round-trip cleanly.
+- **AWS Organizations + SSM region sync** — real read-only `aws-sdk-organizations`
+  and `aws-sdk-ssm` calls (org sync piggybacks the region-name sync, as Electron
+  does); `clearOrgData` wipes the caches.
+- **S3 CUR download sync** (`sync.rs`) — the faithful port: bulk download shells
+  out to the **`aws s3 sync` CLI** (reuses SSO, multipart, incremental skips;
+  files land directly in `aws/raw/{tier}-{period}/`). Remote inventory via
+  `aws-sdk-s3` ListObjectsV2 drives the period picker; progress is polled via
+  `getSyncStatus`; cancellation kills the child process. `aws sso login` from the
+  app via `ssoLogin`.
+- **Config sharing** (`bundle.rs` + `sharing.rs`) — bundle export/import via
+  native file dialogs, SHA-256 fingerprint (round-trips as valid), and S3
+  publish / fetch / beacon discovery.
 
-**Still stubbed (migration Phase 3/4 — "desktop-main → Tauri"):** S3 CUR
-download sync, SSM region-name enrichment, config-sharing (export/import + S3
-beacon), the auto-updater, and YAML config `save*` writes. These are client-side
-canned responses in `bridge.ts`.
+**Caveats / one genuine blocker:**
+- **Auto-updater** — the *interface* is ported (state machine + a working
+  `onStatusChanged`, so the release-notes modal works), but a check honestly
+  reports "idle": actually finding an update needs a **Tauri-format signed
+  release feed**, and the project's GitHub releases are electron-builder format.
+  Wiring `tauri-plugin-updater` is blocked on that feed + EdDSA signing, not on
+  the Rust port.
+- **Live AWS** (org/SSM/S3 sync, config publish/fetch) needs a valid SSO session
+  (`aws sso login --profile <profile>`); the S3 sync also needs the AWS CLI
+  installed. The remote inventory falls back to a local-only scan when offline.
+- **Still stubbed:** setup-wizard-only AWS discovery (`listS3Buckets`,
+  `browseS3`, `testConnection`, `scaffoldConfig`/`writeConfig`) — the spike runs
+  against an already-configured dataset, so the wizard path is inert.
 
 ## Threading
 

@@ -47,6 +47,9 @@ fn main() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![
             commands::get_app_version,
+            commands::check_for_updates,
+            commands::download_update,
+            commands::quit_and_install,
             commands::get_query_log,
             commands::clear_query_log,
             commands::run_explain,
