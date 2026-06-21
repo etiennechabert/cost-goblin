@@ -1,32 +1,24 @@
-import { app as electronApp, dialog, ipcMain } from 'electron';
+import { dialog, ipcMain } from 'electron';
 import {
   CONFIG_BEACON_KEY,
   ConfigValidationError,
-  buildConfigBundle,
-  bundleConfigWithProfile,
-  bundleSectionIds,
-  costGoblinConfigToYaml,
-  costScopeToYaml,
-  dimensionsConfigToYaml,
   isStringRecord,
   logger,
-  orgTreeToYaml,
   parseConfigBundle,
   serializeConfigBundle,
   splitS3Location,
   suggestedConfigBeaconLocation,
   summarizeConfigBundle,
-  viewsConfigToYaml,
 } from '@costgoblin/core';
 import type {
   ApplyConfigBundleResult,
   CheckConfigBeaconResult,
-  ConfigBundle,
   ExportConfigBundleResult,
   PreviewConfigBundleResult,
   PublishConfigBundleResult,
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
+import { applyBundleSectionsToDisk, buildCurrentBundle } from './bundle-io.js';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -41,30 +33,11 @@ function isBeaconAbsence(err: unknown): boolean {
 }
 
 export function registerSharingHandlers(app: AppContext): void {
-  const { ctx, getConfig, getDimensions, getOrgTreeConfig, getViews, getCostScope, clearAllCaches } = app;
-
-  /** Assemble a bundle from whatever org config exists locally. Config and
-   *  dimensions are mandatory; the optional files are skipped when missing
-   *  or unreadable instead of failing the whole export. */
-  async function buildCurrentBundle(): Promise<ConfigBundle> {
-    const config = await getConfig();
-    const dimensions = await getDimensions();
-    const orgTree = await getOrgTreeConfig().catch(() => undefined);
-    const costScope = await getCostScope().catch(() => undefined);
-    const views = await getViews().catch(() => undefined);
-    return buildConfigBundle({
-      config,
-      dimensions,
-      orgTree,
-      costScope,
-      views,
-      appVersion: electronApp.getVersion(),
-    });
-  }
+  const { ctx, getConfig, clearAllCaches } = app;
 
   ipcMain.handle('sharing:export-bundle', async (): Promise<ExportConfigBundleResult> => {
     try {
-      const bundle = await buildCurrentBundle();
+      const bundle = await buildCurrentBundle(app);
       const result = await dialog.showSaveDialog({
         title: 'Export CostGoblin configuration',
         defaultPath: `costgoblin-config-${new Date().toISOString().slice(0, 10)}.yaml`,
@@ -101,69 +74,17 @@ export function registerSharingHandlers(app: AppContext): void {
     }
   });
 
-  /** Copy whichever org config files exist into config/backups/<timestamp>/
-   *  so an import is always one folder-copy away from being undone. */
-  async function backupExistingConfig(): Promise<string | null> {
-    const fs = await import('node:fs/promises');
-    const path = await import('node:path');
-    const configDir = path.dirname(ctx.configPath);
-    const candidates = [ctx.configPath, ctx.dimensionsPath, ctx.orgTreePath, ctx.costScopePath, ctx.viewsPath];
-    const existing: string[] = [];
-    for (const file of candidates) {
-      try {
-        await fs.access(file);
-        existing.push(file);
-      } catch {
-        // not present — nothing to back up
-      }
-    }
-    if (existing.length === 0) return null;
-    const stamp = new Date().toISOString().replaceAll(':', '-');
-    const backupDir = path.join(configDir, 'backups', stamp);
-    await fs.mkdir(backupDir, { recursive: true });
-    for (const file of existing) {
-      await fs.copyFile(file, path.join(backupDir, path.basename(file)));
-    }
-    return backupDir;
-  }
-
   ipcMain.handle('sharing:apply-bundle', async (_event, raw: unknown): Promise<ApplyConfigBundleResult> => {
     if (!isStringRecord(raw) || typeof raw['content'] !== 'string' || typeof raw['profile'] !== 'string' || raw['profile'].length === 0) {
       return { status: 'error', message: 'Invalid import parameters' };
     }
-    const content = raw['content'];
-    const profile = raw['profile'];
     try {
-      // Never trust the renderer's earlier preview — re-parse and
-      // re-validate here, in the process that writes the files.
-      const parsed = parseConfigBundle(content);
-      const { sections } = parsed.bundle;
-
-      const fs = await import('node:fs/promises');
-      const path = await import('node:path');
-      const { stringify } = await import('yaml');
-      await fs.mkdir(path.dirname(ctx.configPath), { recursive: true });
-      const backupDir = await backupExistingConfig();
-
-      const config = bundleConfigWithProfile(sections.config, profile);
-      await fs.writeFile(ctx.configPath, stringify(costGoblinConfigToYaml(config)), 'utf-8');
-      await fs.writeFile(ctx.dimensionsPath, stringify(dimensionsConfigToYaml(sections.dimensions)), 'utf-8');
-      if (sections.orgTree !== undefined) {
-        await fs.writeFile(ctx.orgTreePath, stringify(orgTreeToYaml(sections.orgTree)), 'utf-8');
-      }
-      if (sections.costScope !== undefined) {
-        await fs.writeFile(ctx.costScopePath, stringify(costScopeToYaml(sections.costScope)), 'utf-8');
-      }
-      if (sections.views !== undefined) {
-        await fs.writeFile(ctx.viewsPath, stringify(viewsConfigToYaml(sections.views)), 'utf-8');
-      }
-
+      // Never trust the renderer's earlier preview — applyBundleSectionsToDisk
+      // re-parses and re-validates in the process that writes the files.
+      const { sectionIds, backupDir } = await applyBundleSectionsToDisk(ctx, raw['content'], raw['profile']);
       await clearAllCaches();
-      logger.info('Applied configuration bundle', {
-        sections: bundleSectionIds(sections).join(','),
-        backupDir: backupDir ?? 'none',
-      });
-      return { status: 'applied', sections: bundleSectionIds(sections), backupDir };
+      logger.info('Applied configuration bundle', { sections: sectionIds.join(','), backupDir: backupDir ?? 'none' });
+      return { status: 'applied', sections: sectionIds, backupDir };
     } catch (err: unknown) {
       return { status: 'error', message: errorMessage(err) };
     }
@@ -186,7 +107,7 @@ export function registerSharingHandlers(app: AppContext): void {
       if (target === null) {
         return { status: 'error', message: 'Invalid S3 location — expected s3://bucket/path/to/org-config.yaml' };
       }
-      const body = serializeConfigBundle(await buildCurrentBundle());
+      const body = serializeConfigBundle(await buildCurrentBundle(app));
 
       const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
       // Publishing needs s3:PutObject, which day-to-day read-only profiles

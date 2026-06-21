@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assertDateString, assertHourString, validateColumnName, validateTablePath, SecurityError } from '../query/identifier-validator.js';
+import { assertDateString, assertHourString, isSafeColumnIdentifier, validateColumnName, validateTablePath, SecurityError } from '../query/identifier-validator.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId } from '../types/branded.js';
 
@@ -82,6 +82,31 @@ describe('validateColumnName', () => {
   it('throws SecurityError with descriptive message', () => {
     expect(() => { validateColumnName('bad_column', testDimensions); })
       .toThrow('Invalid column name "bad_column" - not in dimensions config allow-list');
+  });
+});
+
+describe('isSafeColumnIdentifier', () => {
+  it('accepts bare snake_case column identifiers', () => {
+    for (const col of ['account_id', 'region', 'service_family', 'line_item_type', 'product_service_name', '_internal', 'col123']) {
+      expect(isSafeColumnIdentifier(col)).toBe(true);
+    }
+  });
+
+  it('rejects identifiers that could break out of an interpolated SQL position', () => {
+    for (const bad of [
+      'account_id; DROP TABLE cost_base',
+      "account_id') OR 1=1 --",
+      'account_id IN (SELECT 1)',
+      'MAX(cost)',
+      'a b',
+      '1cost',
+      'résumé',
+      '',
+      'tag-name',
+      'a.b',
+    ]) {
+      expect(isSafeColumnIdentifier(bad)).toBe(false);
+    }
   });
 });
 

@@ -44,9 +44,13 @@ import type {
   ApplyConfigBundleResult,
   CheckConfigBeaconParams,
   CheckConfigBeaconResult,
+  DataSharingResult,
+  DataSharingStatus,
   ExportConfigBundleResult,
   PreviewConfigBundleResult,
   PublishConfigBundleResult,
+  PullSharedSourceResult,
+  SharedSourceInfo,
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
@@ -304,6 +308,30 @@ const api: CostApi = {
   },
   checkConfigBeacon(params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult> {
     return invoke<CheckConfigBeaconResult>('sharing:check-beacon', params);
+  },
+  getDataSharingStatus(): Promise<DataSharingStatus> {
+    return invoke<DataSharingStatus>('data-sharing:status');
+  },
+  enableDataSharing(): Promise<DataSharingResult> {
+    return invoke<DataSharingResult>('data-sharing:enable');
+  },
+  disableDataSharing(): Promise<DataSharingResult> {
+    return invoke<DataSharingResult>('data-sharing:disable');
+  },
+  rotateDataSharingKey(): Promise<DataSharingResult> {
+    return invoke<DataSharingResult>('data-sharing:rotate');
+  },
+  addSharedSource(key: string): Promise<PullSharedSourceResult> {
+    return invoke<PullSharedSourceResult>('data-sharing:add-source', key);
+  },
+  getSharedSource(): Promise<SharedSourceInfo | null> {
+    return invoke<SharedSourceInfo | null>('data-sharing:get-source');
+  },
+  refreshSharedSource(): Promise<PullSharedSourceResult> {
+    return invoke<PullSharedSourceResult>('data-sharing:refresh-source');
+  },
+  removeSharedSource(): Promise<void> {
+    return invoke<undefined>('data-sharing:remove-source').then(() => undefined);
   },
   cancelPendingQueries(): Promise<void> {
     void invoke<undefined>('debug:clear-completed');

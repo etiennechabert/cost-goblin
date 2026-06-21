@@ -101,11 +101,15 @@ export type {
   ConfigBundle,
   ConfigBundleSections,
   ConfigBundleSummary,
+  DataSharingResult,
+  DataSharingStatus,
   ExportConfigBundleResult,
   PreviewConfigBundleResult,
   PublishConfigBundleResult,
+  PullSharedSourceResult,
   SharedCostGoblinConfig,
   SharedProviderConfig,
+  SharedSourceInfo,
 } from './sharing.js';
 export { CONFIG_BUNDLE_KIND, CONFIG_BUNDLE_SCHEMA_VERSION, CONFIG_BEACON_KEY } from './sharing.js';
 

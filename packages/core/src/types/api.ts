@@ -7,9 +7,13 @@ import type {
   ApplyConfigBundleResult,
   CheckConfigBeaconParams,
   CheckConfigBeaconResult,
+  DataSharingResult,
+  DataSharingStatus,
   ExportConfigBundleResult,
   PreviewConfigBundleResult,
   PublishConfigBundleResult,
+  PullSharedSourceResult,
+  SharedSourceInfo,
 } from './sharing.js';
 import type {
   ExplorerFilterValue,
@@ -229,6 +233,25 @@ export interface CostApi {
   /** Probe a bucket for a published team configuration. Used by the setup
    *  wizard right after bucket selection. */
   checkConfigBeacon(params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult>;
+  // --- Peer data sharing (LAN, TLS-PSK) ---
+  /** Publisher: current sharing state, including the sharing key while on. */
+  getDataSharingStatus(): Promise<DataSharingStatus>;
+  /** Publisher: start sharing this machine's data on the local network. */
+  enableDataSharing(): Promise<DataSharingResult>;
+  /** Publisher: stop sharing. */
+  disableDataSharing(): Promise<DataSharingResult>;
+  /** Publisher: rotate the access secret (revokes outstanding keys) and
+   *  return a fresh sharing key. */
+  rotateDataSharingKey(): Promise<DataSharingResult>;
+  /** Consumer: connect with a pasted sharing key, pull the snapshot over the
+   *  encrypted channel, verify it, and import data + config locally. */
+  addSharedSource(key: string): Promise<PullSharedSourceResult>;
+  /** Consumer: the configured shared source, or null if none. */
+  getSharedSource(): Promise<SharedSourceInfo | null>;
+  /** Consumer: re-pull the latest snapshot from the configured source. */
+  refreshSharedSource(): Promise<PullSharedSourceResult>;
+  /** Consumer: forget the configured source (local data is left in place). */
+  removeSharedSource(): Promise<void>;
   cancelPendingQueries(): Promise<void>;
   /** Wipe every backend cache (LRU result cache, column probe cache,
    *  in-flight de-dup map, materialized base table, plus the in-memory

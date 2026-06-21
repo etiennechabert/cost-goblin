@@ -1,10 +1,13 @@
 import type {
   ConfigBundleSummary,
+  DataSharingResult,
+  DataSharingStatus,
   ExportConfigBundleResult,
   PublishConfigBundleResult,
+  PullSharedSourceResult,
 } from '@costgoblin/core/browser';
 import { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from '@costgoblin/core/browser';
-import { CloudDownload, CloudUpload, FileDown, FileUp, TriangleAlert } from 'lucide-react';
+import { Check, CloudDownload, CloudUpload, Copy, FileDown, FileUp, Network, Plug, RotateCw, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { ProfilePicker } from './profile-picker.js';
@@ -98,6 +101,143 @@ function SharingModal({ title, onClose, children }: Readonly<{
         <div className="mt-4 flex flex-col gap-4">{children}</div>
       </div>
     </dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Share data on the local network (peer-to-peer, TLS-PSK). Lets a teammate
+// with zero AWS access pull this machine's data + config from one pasted key.
+// ---------------------------------------------------------------------------
+
+function ShareDataSection(): React.JSX.Element {
+  const api = useCostApi();
+  const [status, setStatus] = useState<DataSharingStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    api.getDataSharingStatus().then(setStatus).catch(() => undefined);
+  }, [api]);
+
+  function run(action: () => Promise<DataSharingResult>): void {
+    setBusy(true);
+    setError(null);
+    action()
+      .then(r => { if (r.status === 'ok') setStatus(r.sharing); else setError(r.message); })
+      .catch((e: unknown) => { setError(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { setBusy(false); });
+  }
+
+  function copyKey(): void {
+    if (status === null || status.sharingKey === null) return;
+    void navigator.clipboard.writeText(status.sharingKey);
+    setCopied(true);
+    setTimeout(() => { setCopied(false); }, 1500);
+  }
+
+  const enabled = status?.enabled === true;
+
+  return (
+    <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3 flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Network size={16} className="text-text-secondary" />
+          <div>
+            <p className="text-sm font-medium text-text-primary">Share data on this network</p>
+            <p className="text-xs text-text-muted">Teammates without S3 access paste your key to pull your data — encrypted, peer-to-peer.</p>
+          </div>
+        </div>
+        {enabled ? (
+          <Button onClick={() => { run(() => api.disableDataSharing()); }} disabled={busy} className="bg-bg-tertiary hover:bg-bg-tertiary/70 text-text-primary shrink-0">
+            {busy ? 'Stopping…' : 'Stop'}
+          </Button>
+        ) : (
+          <Button onClick={() => { run(() => api.enableDataSharing()); }} disabled={busy} className="bg-accent hover:bg-accent-hover text-white shrink-0">
+            {busy ? 'Starting…' : 'Start sharing'}
+          </Button>
+        )}
+      </div>
+
+      {status !== null && status.enabled && status.sharingKey !== null && (
+        <div className="flex flex-col gap-2">
+          <label htmlFor="cg-sharing-key" className="text-xs text-text-muted uppercase tracking-wider">Sharing key</label>
+          <textarea
+            id="cg-sharing-key"
+            readOnly
+            value={status.sharingKey}
+            rows={3}
+            className="w-full rounded-lg border border-border bg-bg-primary px-3 py-2 font-mono text-xs text-text-primary resize-none focus:outline-none focus:border-accent/50"
+          />
+          <div className="flex items-center gap-2">
+            <Button onClick={copyKey} className="bg-accent hover:bg-accent-hover text-white">
+              {copied ? <><Check size={14} className="mr-1.5" />Copied</> : <><Copy size={14} className="mr-1.5" />Copy key</>}
+            </Button>
+            <button
+              type="button"
+              onClick={() => { run(() => api.rotateDataSharingKey()); }}
+              disabled={busy}
+              className="inline-flex items-center rounded-md px-2.5 py-1.5 text-xs text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors"
+            >
+              <RotateCw size={13} className="mr-1.5" />Rotate (revokes old key)
+            </button>
+          </div>
+          <p className="text-xs text-text-muted">
+            Reachable at <span className="font-mono">{status.hosts.join(', ')}:{status.port}</span> · fingerprint <span className="font-mono">{status.fingerprint}</span>. Re-share if this machine&apos;s IP changes.
+          </p>
+        </div>
+      )}
+      {error !== null && <p className="text-xs text-negative">{error}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Add a shared data source — paste a teammate's sharing key, pull the snapshot.
+// ---------------------------------------------------------------------------
+
+function AddSharedSourceSection({ onPulled }: Readonly<{ onPulled: () => void }>): React.JSX.Element {
+  const api = useCostApi();
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<PullSharedSourceResult | null>(null);
+
+  function handleConnect(): void {
+    if (busy || key.trim().length === 0) return;
+    setBusy(true);
+    setResult(null);
+    api.addSharedSource(key.trim())
+      .then(setResult)
+      .catch((e: unknown) => { setResult({ status: 'error', message: e instanceof Error ? e.message : String(e) }); })
+      .finally(() => { setBusy(false); });
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor="cg-add-source-key" className="text-xs text-text-muted uppercase tracking-wider">Sharing key from a teammate</label>
+      <textarea
+        id="cg-add-source-key"
+        value={key}
+        onChange={(e) => { setKey(e.target.value); }}
+        rows={3}
+        placeholder="CGSHARE1-…  (no AWS access needed — pulls data + config over your network)"
+        spellCheck={false}
+        className="w-full rounded-lg border border-border bg-bg-primary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:border-accent/50"
+      />
+      <Button onClick={handleConnect} disabled={busy || key.trim().length === 0} className="bg-accent hover:bg-accent-hover text-white self-start">
+        <Plug size={16} className="mr-1.5" />
+        {busy ? 'Connecting…' : 'Connect & pull'}
+      </Button>
+      {result?.status === 'ok' && (
+        <div className="rounded-lg border border-positive/40 bg-bg-tertiary/20 px-3 py-2 flex flex-col gap-2">
+          <p className="text-xs text-positive">
+            Pulled {result.filesDownloaded} file{result.filesDownloaded === 1 ? '' : 's'} from {result.source.label} · {result.source.periods.length} period{result.source.periods.length === 1 ? '' : 's'}.
+          </p>
+          <Button onClick={onPulled} className="bg-accent hover:bg-accent-hover text-white self-end">Done</Button>
+        </div>
+      )}
+      {result?.status === 'error' && <p className="text-xs text-negative">{result.message}</p>}
+    </div>
   );
 }
 
@@ -261,6 +401,8 @@ export function ShareConfigDialog({ onClose }: Readonly<{ onClose: () => void }>
           <p className="text-xs text-negative">{publishResult.message}</p>
         )}
       </div>
+
+      <ShareDataSection />
     </SharingModal>
   );
 }
@@ -459,6 +601,13 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
             <CloudDownload size={16} className="mr-1.5" />
             {fetching ? 'Fetching…' : 'Fetch from S3'}
           </Button>
+
+          <div className="flex items-center gap-3" aria-hidden="true">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-xs text-text-muted">or pull from a teammate on your network</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+          <AddSharedSourceSection onPulled={onApplied} />
         </>
       )}
 

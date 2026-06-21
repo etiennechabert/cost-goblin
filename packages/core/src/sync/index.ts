@@ -20,6 +20,7 @@ export {
   type BillingPeriod,
   type DataInventory,
   getDataInventory,
+  getLocalDataInventory,
 } from './data-inventory.js';
 
 export {

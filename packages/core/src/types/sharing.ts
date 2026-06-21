@@ -112,3 +112,40 @@ export type CheckConfigBeaconResult =
   | { readonly status: 'found'; readonly location: string; readonly content: string; readonly summary: ConfigBundleSummary }
   | { readonly status: 'none' }
   | { readonly status: 'error'; readonly message: string };
+
+// ---------------------------------------------------------------------------
+// Peer data sharing — LAN, TLS-PSK (see packages/core/src/peer/). Lets a
+// teammate with zero AWS access pull a teammate's billing data + config from
+// one pasted "sharing key", with no S3 and no server.
+// ---------------------------------------------------------------------------
+
+/** Publisher-side state. When `enabled`, `sharingKey` is the CGSHARE1 token a
+ *  teammate pastes to connect — it packs the host(s), port, this machine's
+ *  public key, and the access secret. */
+export interface DataSharingStatus {
+  readonly enabled: boolean;
+  readonly sharingKey: string | null;
+  readonly label: string;
+  readonly port: number | null;
+  readonly hosts: readonly string[];
+  /** Short fingerprint of this machine's identity, for out-of-band comparison. */
+  readonly fingerprint: string | null;
+}
+
+export type DataSharingResult =
+  | { readonly status: 'ok'; readonly sharing: DataSharingStatus }
+  | { readonly status: 'error'; readonly message: string };
+
+/** Consumer-side: the single shared source this machine pulls from. */
+export interface SharedSourceInfo {
+  readonly label: string;
+  readonly fingerprint: string;
+  readonly host: string;
+  readonly port: number;
+  readonly lastPulledAt: string | null;
+  readonly periods: readonly string[];
+}
+
+export type PullSharedSourceResult =
+  | { readonly status: 'ok'; readonly source: SharedSourceInfo; readonly filesDownloaded: number }
+  | { readonly status: 'error'; readonly message: string };
