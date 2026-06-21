@@ -91,6 +91,33 @@ export function isSafePackPath(path: string): boolean {
   return !path.includes('..') && PACK_FILE_PATH.test(path);
 }
 
+/** A data tier as named in selections/availability. The on-disk directory
+ *  prefix differs for cost-optimization (`cost-opt`), so callers must not
+ *  assume tier === prefix. */
+export type PackTier = 'daily' | 'hourly' | 'cost-optimization';
+
+/** Maps an on-disk `aws/raw/` directory prefix to its tier. Mirrors
+ *  sync-utils' TIER_RAW_PREFIXES; kept here so the peer module stays
+ *  self-contained. */
+const TIER_BY_PREFIX: ReadonlyMap<string, PackTier> = new Map([
+  ['daily', 'daily'],
+  ['hourly', 'hourly'],
+  ['cost-opt', 'cost-optimization'],
+]);
+
+/** Classify a pack file path — `aws/raw/{prefix}-{YYYY-MM}[-DD]/<file>.parquet`
+ *  — into its tier and YYYY-MM period. Returns null for paths that don't match
+ *  a known tier prefix. NOTE: do not reuse a `[a-z-]+` period regex for this —
+ *  it swallows the prefix and can't distinguish daily/hourly/cost-opt. */
+export function classifyPackPath(path: string): { readonly tier: PackTier; readonly period: string } | null {
+  const m = /^aws\/raw\/([a-z][a-z-]*)-(\d{4}-\d{2})(?:-\d{2})?\//.exec(path);
+  const prefix = m?.[1];
+  const period = m?.[2];
+  if (prefix === undefined || period === undefined) return null;
+  const tier = TIER_BY_PREFIX.get(prefix);
+  return tier === undefined ? null : { tier, period };
+}
+
 function validateEnrichment(raw: unknown): PackEnrichment {
   if (!isStringRecord(raw)) throw new PackManifestError('manifest.enrichment is malformed');
   const field = (key: string): string | null => {

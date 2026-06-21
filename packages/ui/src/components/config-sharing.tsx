@@ -4,15 +4,27 @@ import type {
   DataSharingStatus,
   ExportConfigBundleResult,
   PublishConfigBundleResult,
-  PullSharedSourceResult,
+  SharedDataTier,
   SharedPullProgress,
+  SharedPullSelection,
+  SharedSourceInfo,
+  SharedSourcePreview,
+  SharedSourceTier,
 } from '@costgoblin/core/browser';
 import { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from '@costgoblin/core/browser';
 import { Check, CloudDownload, CloudUpload, Copy, FileDown, FileUp, Network, Plug, RotateCw, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
+import { formatBytes } from './format.js';
 import { ProfilePicker } from './profile-picker.js';
 import { Button } from './ui/button.js';
+
+const DATA_TIER_LABELS: Record<SharedDataTier, string> = {
+  'daily': 'Daily CUR',
+  'hourly': 'Hourly CUR',
+  'cost-optimization': 'Cost optimization',
+};
+const DATA_TIERS: readonly SharedDataTier[] = ['daily', 'hourly', 'cost-optimization'];
 
 // ---------------------------------------------------------------------------
 // Bundle summary — shared by the import dialog and the setup wizard's
@@ -71,33 +83,43 @@ export function BundleSummaryCard({ summary }: Readonly<{ summary: ConfigBundleS
 // Shared dialog chrome — same overlay pattern as ConfirmModal.
 // ---------------------------------------------------------------------------
 
-function SharingModal({ title, onClose, children }: Readonly<{
+function SharingModal({ title, onClose, children, dismissable = true }: Readonly<{
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  /** When false, the modal cannot be dismissed (no Escape, no backdrop click,
+   *  no ✕) — used to hold the window open during an in-progress pull. */
+  dismissable?: boolean;
 }>): React.JSX.Element {
   useEffect(() => {
+    if (!dismissable) return undefined;
     function handleKey(e: KeyboardEvent): void {
       if (e.key === 'Escape') onClose();
     }
     document.addEventListener('keydown', handleKey);
     return () => { document.removeEventListener('keydown', handleKey); };
-  }, [onClose]);
+  }, [onClose, dismissable]);
 
   return (
     <dialog open className="fixed inset-0 z-[100] flex items-center justify-center bg-transparent m-0 p-0 max-w-none max-h-none w-full h-full border-none" aria-modal="true">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        {...(dismissable ? { onClick: onClose } : {})}
+        aria-hidden="true"
+      />
       <div className="relative rounded-xl border border-border bg-bg-secondary p-6 shadow-2xl max-w-md w-full mx-4 max-h-[85vh] overflow-y-auto">
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold text-text-primary">{title}</h3>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md px-2 py-1 text-sm text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors"
-            aria-label="Close"
-          >
-            ✕
-          </button>
+          {dismissable && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md px-2 py-1 text-sm text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors"
+              aria-label="Close"
+            >
+              ✕
+            </button>
+          )}
         </div>
         <div className="mt-4 flex flex-col gap-4">{children}</div>
       </div>
@@ -209,36 +231,262 @@ function ShareDataSection(): React.JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
-// Add a shared data source — paste a teammate's sharing key, pull the snapshot.
+// Add a shared data source — reconnect to a saved teammate or paste a key,
+// preview what's on offer, pick tiers + months, then pull (locked) the snapshot.
 // ---------------------------------------------------------------------------
 
-function AddSharedSourceSection({ onPulled }: Readonly<{ onPulled: () => void }>): React.JSX.Element {
+type AddState =
+  | { kind: 'entry'; error: string | null }
+  | { kind: 'previewing' }
+  | { kind: 'choosing'; mode: 'key' | 'stored'; preview: SharedSourcePreview }
+  | { kind: 'pulling' }
+  | { kind: 'done'; source: SharedSourceInfo; filesDownloaded: number }
+  | { kind: 'error'; message: string };
+
+function pullPhaseLabel(progress: SharedPullProgress | null): string {
+  switch (progress?.phase) {
+    case 'downloading': return 'Downloading…';
+    case 'importing': return 'Importing…';
+    default: return 'Connecting…';
+  }
+}
+
+function availablePeriods(preview: SharedSourcePreview): string[] {
+  return [...new Set(preview.tiers.flatMap(t => t.periods))].sort((a, b) => a.localeCompare(b));
+}
+
+function AddSharedSourceSection({ onPulled, onBusyChange }: Readonly<{
+  onPulled: () => void;
+  /** Notifies the parent dialog so it can lock itself while a pull runs. */
+  onBusyChange?: (busy: boolean) => void;
+}>): React.JSX.Element {
   const api = useCostApi();
   const [key, setKey] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<PullSharedSourceResult | null>(null);
+  const [stored, setStored] = useState<SharedSourceInfo | null>(null);
+  const [state, setState] = useState<AddState>({ kind: 'entry', error: null });
+  const [mode, setMode] = useState<'key' | 'stored'>('key');
+  const [tiers, setTiers] = useState<ReadonlySet<SharedSourceTier>>(new Set());
+  const [periods, setPeriods] = useState<ReadonlySet<string>>(new Set());
   const [progress, setProgress] = useState<SharedPullProgress | null>(null);
 
-  // Poll live pull progress while connecting/downloading.
+  useEffect(() => { api.getSharedSource().then(setStored).catch(() => undefined); }, [api]);
+
+  // Poll live progress only while a pull is running.
   useEffect(() => {
-    if (!busy) { setProgress(null); return; }
+    if (state.kind !== 'pulling') return undefined;
     const id = setInterval(() => { api.getSharedPullProgress().then(setProgress).catch(() => undefined); }, 300);
     return () => { clearInterval(id); };
-  }, [api, busy]);
+  }, [api, state.kind]);
 
-  function handleConnect(): void {
-    if (busy || key.trim().length === 0) return;
-    setBusy(true);
-    setResult(null);
-    api.addSharedSource(key.trim())
-      .then(setResult)
-      .catch((e: unknown) => { setResult({ status: 'error', message: e instanceof Error ? e.message : String(e) }); })
-      .finally(() => { setBusy(false); });
+  // Hold the parent modal open while pulling.
+  useEffect(() => { onBusyChange?.(state.kind === 'pulling'); }, [state.kind, onBusyChange]);
+
+  function startPreview(m: 'key' | 'stored'): void {
+    setMode(m);
+    setState({ kind: 'previewing' });
+    const request = m === 'key' ? api.previewSharedSource(key.trim()) : api.previewStoredSource();
+    request.then(res => {
+      if (res.status === 'error') { setState({ kind: 'entry', error: res.message }); return; }
+      const seed = m === 'stored' ? stored?.selection : undefined;
+      const defaultTiers: SharedSourceTier[] = [
+        ...(res.preview.hasConfig ? (['config'] satisfies SharedSourceTier[]) : []),
+        ...res.preview.tiers.map(t => t.tier),
+      ];
+      setTiers(new Set(seed?.sources ?? defaultTiers));
+      setPeriods(new Set(seed?.periods ?? availablePeriods(res.preview)));
+      setState({ kind: 'choosing', mode: m, preview: res.preview });
+    }).catch((e: unknown) => { setState({ kind: 'entry', error: e instanceof Error ? e.message : String(e) }); });
   }
 
+  function toggleTier(t: SharedSourceTier): void {
+    setTiers(prev => { const next = new Set(prev); if (next.has(t)) next.delete(t); else next.add(t); return next; });
+  }
+  function togglePeriod(p: string): void {
+    setPeriods(prev => { const next = new Set(prev); if (next.has(p)) next.delete(p); else next.add(p); return next; });
+  }
+
+  function startPull(): void {
+    const selection: SharedPullSelection = { sources: [...tiers], periods: [...periods].sort((a, b) => a.localeCompare(b)) };
+    setProgress(null);
+    setState({ kind: 'pulling' });
+    const request = mode === 'key' ? api.addSharedSource(key.trim(), selection) : api.refreshSharedSource(selection);
+    request.then(res => {
+      if (res.status === 'ok') {
+        setStored(res.source);
+        setState({ kind: 'done', source: res.source, filesDownloaded: res.filesDownloaded });
+      } else {
+        setState({ kind: 'error', message: res.message });
+      }
+    }).catch((e: unknown) => { setState({ kind: 'error', message: e instanceof Error ? e.message : String(e) }); });
+  }
+
+  function handleForget(): void {
+    api.removeSharedSource().then(() => { setStored(null); }).catch(() => undefined);
+  }
+
+  if (state.kind === 'previewing') {
+    return (
+      <div className="flex items-center justify-center py-6">
+        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border border-t-accent" />
+        <span className="ml-2 text-sm text-text-secondary">Connecting to teammate…</span>
+      </div>
+    );
+  }
+
+  if (state.kind === 'pulling') {
+    const pct = progress !== null && progress.bytesTotal > 0
+      ? Math.round((progress.bytesDone / progress.bytesTotal) * 100)
+      : 0;
+    return (
+      <div className="flex flex-col gap-3 py-1">
+        <div className="flex items-center gap-2">
+          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border border-t-accent" />
+          <span className="text-sm text-text-primary">{pullPhaseLabel(progress)}</span>
+        </div>
+        {progress !== null && progress.bytesTotal > 0 && (
+          <div className="flex flex-col gap-1">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-tertiary">
+              <div className="h-full bg-accent transition-all" style={{ width: `${String(pct)}%` }} />
+            </div>
+            <p className="text-xs text-text-muted">
+              {formatBytes(progress.bytesDone)} / {formatBytes(progress.bytesTotal)} · {progress.filesDone}/{progress.filesTotal} files{progress.currentPeriod !== null ? ` · ${progress.currentPeriod}` : ''}
+            </p>
+          </div>
+        )}
+        <p className="text-xs text-text-muted">Keep this window open until the transfer finishes.</p>
+      </div>
+    );
+  }
+
+  if (state.kind === 'done') {
+    return (
+      <div className="flex flex-col gap-2 rounded-lg border border-positive/40 bg-bg-tertiary/20 px-3 py-2">
+        <p className="text-xs text-positive">
+          Pulled {state.filesDownloaded} file{state.filesDownloaded === 1 ? '' : 's'} from {state.source.label} · {state.source.periods.length} period{state.source.periods.length === 1 ? '' : 's'}.
+        </p>
+        <Button onClick={onPulled} className="bg-accent hover:bg-accent-hover text-white self-end">Done</Button>
+      </div>
+    );
+  }
+
+  if (state.kind === 'error') {
+    return (
+      <div className="flex flex-col gap-2 rounded-lg border border-negative/50 bg-negative-muted px-3 py-2">
+        <p className="text-xs text-negative">{state.message}</p>
+        <div className="flex items-center gap-2 self-end">
+          <button type="button" onClick={() => { setState({ kind: 'entry', error: null }); }} className="text-xs text-text-muted hover:text-text-secondary">Start over</button>
+          <Button onClick={startPull} className="bg-accent hover:bg-accent-hover text-white">Retry</Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.kind === 'choosing') {
+    const months = availablePeriods(state.preview);
+    const hasData = DATA_TIERS.some(t => tiers.has(t));
+    const canPull = tiers.has('config') || (hasData && periods.size > 0);
+    return (
+      <div className="flex flex-col gap-3">
+        <p className="text-sm text-text-primary">
+          From <span className="font-medium">{state.preview.label}</span> — choose what to pull.
+        </p>
+
+        {state.preview.hasConfig && (
+          <label className="flex items-start gap-2 rounded-lg border border-border bg-bg-tertiary/20 px-3 py-2 cursor-pointer">
+            <input type="checkbox" checked={tiers.has('config')} onChange={() => { toggleTier('config'); }} className="mt-0.5 accent-accent" />
+            <span>
+              <span className="text-sm text-text-primary">Configuration</span>
+              <span className="block text-xs text-text-muted">Dimensions, dashboards, cost scope &amp; org tree — applied under your AWS profile.</span>
+            </span>
+          </label>
+        )}
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs text-text-muted uppercase tracking-wider">Data</span>
+          <div className="flex flex-wrap gap-2">
+            {state.preview.tiers.map(t => (
+              <button
+                key={t.tier}
+                type="button"
+                onClick={() => { toggleTier(t.tier); }}
+                className={[
+                  'rounded-md border px-2.5 py-1.5 text-xs transition-colors',
+                  tiers.has(t.tier) ? 'border-accent bg-accent-muted text-accent' : 'border-border bg-bg-tertiary/20 text-text-secondary hover:text-text-primary',
+                ].join(' ')}
+              >
+                {DATA_TIER_LABELS[t.tier]} <span className="opacity-70">· {formatBytes(t.bytes)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {months.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-text-muted uppercase tracking-wider">Months</span>
+              <div className="flex items-center gap-2 text-xs">
+                <button type="button" onClick={() => { setPeriods(new Set(months)); }} className="text-text-muted hover:text-text-secondary">All</button>
+                <button type="button" onClick={() => { setPeriods(new Set()); }} className="text-text-muted hover:text-text-secondary">None</button>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {months.map(m => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => { togglePeriod(m); }}
+                  className={[
+                    'rounded-md border px-2 py-1 font-mono text-xs transition-colors',
+                    periods.has(m) ? 'border-accent bg-accent-muted text-accent' : 'border-border bg-bg-tertiary/20 text-text-secondary hover:text-text-primary',
+                  ].join(' ')}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between pt-1">
+          <button type="button" onClick={() => { setState({ kind: 'entry', error: null }); }} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
+          <Button onClick={startPull} disabled={!canPull} className="bg-accent hover:bg-accent-hover text-white">
+            <CloudDownload size={16} className="mr-1.5" />
+            Pull
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // state.kind === 'entry'
   return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor="cg-add-source-key" className="text-xs text-text-muted uppercase tracking-wider">Sharing key from a teammate</label>
+    <div className="flex flex-col gap-2">
+      {stored !== null && (
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-bg-tertiary/20 px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate text-sm text-text-primary">Reconnect to <span className="font-medium">{stored.label}</span></p>
+              <p className="text-xs text-text-muted">
+                {stored.lastPulledAt !== null ? `Last pulled ${stored.lastPulledAt.slice(0, 10)}` : 'Saved source'} · fingerprint <span className="font-mono">{stored.fingerprint.slice(0, 8)}</span>
+              </p>
+            </div>
+            <Button onClick={() => { startPreview('stored'); }} className="bg-accent hover:bg-accent-hover text-white shrink-0">
+              <RotateCw size={14} className="mr-1.5" />
+              Reconnect
+            </Button>
+          </div>
+          <button type="button" onClick={handleForget} className="self-start text-xs text-text-muted hover:text-text-secondary underline underline-offset-2">
+            Forget this teammate
+          </button>
+        </div>
+      )}
+
+      <label htmlFor="cg-add-source-key" className="text-xs text-text-muted uppercase tracking-wider">
+        {stored !== null ? 'Or a key from someone else' : 'Sharing key from a teammate'}
+      </label>
+      <p className="text-xs text-text-muted">
+        Your teammate creates this by clicking <span className="font-medium text-text-secondary">Start sharing</span> in their CostGoblin (under <span className="font-medium text-text-secondary">Share configuration…</span>). Their app needs to stay open on the same network while you connect.
+      </p>
       <textarea
         id="cg-add-source-key"
         value={key}
@@ -248,31 +496,11 @@ function AddSharedSourceSection({ onPulled }: Readonly<{ onPulled: () => void }>
         spellCheck={false}
         className="w-full rounded-lg border border-border bg-bg-primary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:border-accent/50"
       />
-      <Button onClick={handleConnect} disabled={busy || key.trim().length === 0} className="bg-accent hover:bg-accent-hover text-white self-start">
+      {state.error !== null && <p className="text-xs text-negative">{state.error}</p>}
+      <Button onClick={() => { startPreview('key'); }} disabled={key.trim().length === 0} className="bg-accent hover:bg-accent-hover text-white self-start">
         <Plug size={16} className="mr-1.5" />
-        {busy ? 'Connecting…' : 'Connect & pull'}
+        Continue
       </Button>
-      {busy && progress !== null && progress.filesTotal > 0 && (
-        <div className="flex flex-col gap-1">
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-tertiary">
-            <div className="h-full bg-accent transition-all" style={{ width: `${String(Math.round((progress.filesDone / progress.filesTotal) * 100))}%` }} />
-          </div>
-          <p className="text-xs text-text-muted">
-            {progress.phase === 'importing'
-              ? 'Importing…'
-              : `Downloading ${String(progress.filesDone)}/${String(progress.filesTotal)}${progress.currentPeriod !== null ? ` · ${progress.currentPeriod}` : ''}`}
-          </p>
-        </div>
-      )}
-      {result?.status === 'ok' && (
-        <div className="rounded-lg border border-positive/40 bg-bg-tertiary/20 px-3 py-2 flex flex-col gap-2">
-          <p className="text-xs text-positive">
-            Pulled {result.filesDownloaded} file{result.filesDownloaded === 1 ? '' : 's'} from {result.source.label} · {result.source.periods.length} period{result.source.periods.length === 1 ? '' : 's'}.
-          </p>
-          <Button onClick={onPulled} className="bg-accent hover:bg-accent-hover text-white self-end">Done</Button>
-        </div>
-      )}
-      {result?.status === 'error' && <p className="text-xs text-negative">{result.message}</p>}
     </div>
   );
 }
@@ -468,6 +696,8 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
 }>): React.JSX.Element {
   const api = useCostApi();
   const [state, setState] = useState<ImportPhase>({ phase: 'pick', error: null });
+  // True while a teammate pull is in flight — locks the modal shut.
+  const [pullBusy, setPullBusy] = useState(false);
   // Ambient resources for the "fetch from S3" source. Profiles double as
   // the apply-step picker options. The location prefills with the team's
   // published beacon when a config exists (the "pull team updates" case);
@@ -578,9 +808,11 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
   }
 
   return (
-    <SharingModal title="Import configuration" onClose={state.phase === 'done' ? onApplied : onClose}>
+    <SharingModal title="Import configuration" onClose={state.phase === 'done' ? onApplied : onClose} dismissable={!pullBusy}>
       {state.phase === 'pick' && (
         <>
+          {!pullBusy && (
+          <>
           <p className="text-sm text-text-secondary">
             Apply a configuration bundle from a teammate — choose an exported file, or fetch one straight from S3. You&apos;ll see exactly what it contains before anything is written, and your current configuration is backed up first.
           </p>
@@ -643,7 +875,9 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
             <span className="text-xs text-text-muted">or pull from a teammate on your network</span>
             <div className="h-px flex-1 bg-border" />
           </div>
-          <AddSharedSourceSection onPulled={onApplied} />
+          </>
+          )}
+          <AddSharedSourceSection onPulled={onApplied} onBusyChange={setPullBusy} />
         </>
       )}
 

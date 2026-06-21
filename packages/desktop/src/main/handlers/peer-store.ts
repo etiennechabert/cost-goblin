@@ -2,7 +2,26 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
-import { generateIdentityKeyPair, isStringRecord, type IdentityKeyPair } from '@costgoblin/core';
+import { generateIdentityKeyPair, isStringRecord, type IdentityKeyPair, type SharedPullSelection, type SharedSourceTier } from '@costgoblin/core';
+
+const SHARED_SOURCE_TIERS: readonly SharedSourceTier[] = ['config', 'daily', 'hourly', 'cost-optimization'];
+
+/** Parse/validate an untrusted selection (from a persisted file or the
+ *  renderer), tolerating absence → undefined ("pull everything", the
+ *  back-compatible default). */
+export function parseSharedPullSelection(raw: unknown): SharedPullSelection | undefined {
+  // Absent (not an object) means "no choice made" → pull everything. A present
+  // object with zero valid sources is a real, if empty, selection → pull
+  // nothing; we must NOT collapse it back to "everything".
+  if (!isStringRecord(raw)) return undefined;
+  const sources = Array.isArray(raw['sources'])
+    ? raw['sources'].filter((s: unknown): s is SharedSourceTier => typeof s === 'string' && (SHARED_SOURCE_TIERS as readonly string[]).includes(s))
+    : [];
+  const periods = Array.isArray(raw['periods'])
+    ? raw['periods'].filter((p: unknown): p is string => typeof p === 'string')
+    : undefined;
+  return periods === undefined ? { sources } : { sources, periods };
+}
 
 /** Peer-sharing secrets live alongside the YAML config, owner-only (0600). */
 function configDir(configPath: string): string {
@@ -80,6 +99,8 @@ export interface StoredSharedSource {
   readonly port: number;
   readonly lastPulledAt: string | null;
   readonly periods: readonly string[];
+  /** The tiers/periods last chosen, reused on refresh. Undefined = everything. */
+  readonly selection?: SharedPullSelection | undefined;
 }
 
 export function loadSharedSource(configPath: string): StoredSharedSource | null {
@@ -96,7 +117,11 @@ export function loadSharedSource(configPath: string): StoredSharedSource | null 
   }
   const periods = Array.isArray(r['periods']) ? r['periods'].filter((p: unknown): p is string => typeof p === 'string') : [];
   const lastPulledAt = typeof r['lastPulledAt'] === 'string' ? r['lastPulledAt'] : null;
-  return { key: r['key'], label: r['label'], fingerprint: r['fingerprint'], host: r['host'], port: r['port'], lastPulledAt, periods };
+  const selection = parseSharedPullSelection(r['selection']);
+  return {
+    key: r['key'], label: r['label'], fingerprint: r['fingerprint'], host: r['host'], port: r['port'], lastPulledAt, periods,
+    ...(selection === undefined ? {} : { selection }),
+  };
 }
 
 export function saveSharedSource(configPath: string, source: StoredSharedSource): void {

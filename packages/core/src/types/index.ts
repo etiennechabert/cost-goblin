@@ -105,13 +105,19 @@ export type {
   DataSharingStatus,
   ExportConfigBundleResult,
   PreviewConfigBundleResult,
+  PreviewSharedSourceResult,
   PublishConfigBundleResult,
   PullSharedSourceResult,
   SharedCostGoblinConfig,
+  SharedDataTier,
   SharedProviderConfig,
   SharedPullPhase,
   SharedPullProgress,
+  SharedPullSelection,
   SharedSourceInfo,
+  SharedSourcePreview,
+  SharedSourceTier,
+  SharedSourceTierAvailability,
 } from './sharing.js';
 export { CONFIG_BUNDLE_KIND, CONFIG_BUNDLE_SCHEMA_VERSION, CONFIG_BEACON_KEY } from './sharing.js';
 

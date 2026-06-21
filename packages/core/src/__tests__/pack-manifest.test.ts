@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateIdentityKeyPair } from '../peer/identity.js';
 import {
+  classifyPackPath,
   isSafePackPath,
   parseSignedManifest,
   serializeSignedManifest,
@@ -50,6 +51,24 @@ describe('isSafePackPath', () => {
     ]) {
       expect(isSafePackPath(p)).toBe(false);
     }
+  });
+});
+
+describe('classifyPackPath', () => {
+  it('classifies daily and hourly paths by their tier prefix', () => {
+    expect(classifyPackPath('aws/raw/daily-2026-06/part-0.parquet')).toEqual({ tier: 'daily', period: '2026-06' });
+    expect(classifyPackPath('aws/raw/hourly-2026-05/part-1.parquet')).toEqual({ tier: 'hourly', period: '2026-05' });
+  });
+
+  it('maps the cost-opt directory prefix to the cost-optimization tier and a YYYY-MM period', () => {
+    // cost-opt directories carry a -DD day suffix; the period is still the month.
+    expect(classifyPackPath('aws/raw/cost-opt-2026-04-08/r.parquet')).toEqual({ tier: 'cost-optimization', period: '2026-04' });
+  });
+
+  it('returns null for unknown prefixes and non-pack paths', () => {
+    expect(classifyPackPath('aws/raw/weekly-2026-06/x.parquet')).toBeNull();
+    expect(classifyPackPath('config/dimensions.yaml')).toBeNull();
+    expect(classifyPackPath('../../etc/passwd')).toBeNull();
   });
 });
 

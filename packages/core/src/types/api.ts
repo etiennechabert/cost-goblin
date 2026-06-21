@@ -11,9 +11,11 @@ import type {
   DataSharingStatus,
   ExportConfigBundleResult,
   PreviewConfigBundleResult,
+  PreviewSharedSourceResult,
   PublishConfigBundleResult,
   PullSharedSourceResult,
   SharedPullProgress,
+  SharedPullSelection,
   SharedSourceInfo,
 } from './sharing.js';
 import type {
@@ -244,15 +246,23 @@ export interface CostApi {
   /** Publisher: rotate the access secret (revokes outstanding keys) and
    *  return a fresh sharing key. */
   rotateDataSharingKey(): Promise<DataSharingResult>;
+  /** Consumer: fetch + verify a teammate's manifest WITHOUT downloading data,
+   *  so the UI can show which tiers/months are on offer before committing. */
+  previewSharedSource(key: string): Promise<PreviewSharedSourceResult>;
+  /** Consumer: same preview, but for the already-saved source (the key stays
+   *  in the main process — used by the "reconnect" affordance). */
+  previewStoredSource(): Promise<PreviewSharedSourceResult>;
   /** Consumer: connect with a pasted sharing key, pull the snapshot over the
-   *  encrypted channel, verify it, and import data + config locally. */
-  addSharedSource(key: string): Promise<PullSharedSourceResult>;
+   *  encrypted channel, verify it, and import data + config locally. `selection`
+   *  limits which tiers/periods are pulled; omit to pull everything. */
+  addSharedSource(key: string, selection?: SharedPullSelection): Promise<PullSharedSourceResult>;
   /** Consumer: the configured shared source, or null if none. */
   getSharedSource(): Promise<SharedSourceInfo | null>;
   /** Consumer: live progress of an in-flight pull (polled by the UI). */
   getSharedPullProgress(): Promise<SharedPullProgress>;
-  /** Consumer: re-pull the latest snapshot from the configured source. */
-  refreshSharedSource(): Promise<PullSharedSourceResult>;
+  /** Consumer: re-pull from the configured source. `selection` overrides the
+   *  stored choice; omit to reuse what was last pulled. */
+  refreshSharedSource(selection?: SharedPullSelection): Promise<PullSharedSourceResult>;
   /** Consumer: forget the configured source (local data is left in place). */
   removeSharedSource(): Promise<void>;
   cancelPendingQueries(): Promise<void>;

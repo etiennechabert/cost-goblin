@@ -15,6 +15,7 @@ export {
 } from './sharing-key.js';
 export type { SharingKeyPayload } from './sharing-key.js';
 export {
+  classifyPackPath,
   isSafePackPath,
   parseSignedManifest,
   serializeSignedManifest,
@@ -28,6 +29,7 @@ export type {
   PackEnrichment,
   PackFileEntry,
   PackManifest,
+  PackTier,
   SignedPackManifest,
 } from './pack-manifest.js';
 export { startSharingServer } from './secure-server.js';

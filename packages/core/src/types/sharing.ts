@@ -136,9 +136,15 @@ export interface DataSharingStatus {
   readonly filesServed: number;
   /** Address of the most recent peer to connect, or null. */
   readonly lastPeer: string | null;
+  /** Total bytes served to peers this sharing session. */
+  readonly bytesServed: number;
+  /** Peers currently connected (TLS-PSK handshake completed). */
+  readonly connectedClients: number;
+  /** Recent serving throughput in bytes/second (trailing window), 0 when idle. */
+  readonly bytesPerSecond: number;
 }
 
-export type SharedPullPhase = 'idle' | 'connecting' | 'downloading' | 'importing' | 'done';
+export type SharedPullPhase = 'idle' | 'connecting' | 'downloading' | 'importing' | 'done' | 'error';
 
 /** Live progress of a consumer pull, polled by the UI while it runs. */
 export interface SharedPullProgress {
@@ -147,7 +153,53 @@ export interface SharedPullProgress {
   readonly filesDone: number;
   readonly filesTotal: number;
   readonly currentPeriod: string | null;
+  /** Bytes downloaded so far / total to download (filtered to the selection). */
+  readonly bytesDone: number;
+  readonly bytesTotal: number;
+  /** Set when `phase === 'error'`; the failure message to surface. */
+  readonly error: string | null;
 }
+
+/** The selectable parts of a shared snapshot. `config` gates the config +
+ *  enrichment bundle; the rest are data tiers, gated and period-filtered. */
+export type SharedSourceTier = 'config' | 'daily' | 'hourly' | 'cost-optimization';
+
+/** A data tier (no `config`). */
+export type SharedDataTier = 'daily' | 'hourly' | 'cost-optimization';
+
+/** What the consumer chooses to pull. Omitting it pulls everything (the
+ *  default, preserving refresh-without-choosing behaviour). */
+export interface SharedPullSelection {
+  /** Tiers to pull. Includes 'config' to apply the config/enrichment bundle. */
+  readonly sources: readonly SharedSourceTier[];
+  /** Explicit YYYY-MM periods to include for the data tiers, mirroring the
+   *  sync month picker. Omit (undefined) to pull every available period. */
+  readonly periods?: readonly string[] | undefined;
+}
+
+/** Per-tier availability derived from a teammate's signed manifest, so the UI
+ *  can offer a month picker before committing to a download. */
+export interface SharedSourceTierAvailability {
+  readonly tier: SharedDataTier;
+  /** Distinct YYYY-MM periods available for this tier, sorted ascending. */
+  readonly periods: readonly string[];
+  readonly fileCount: number;
+  readonly bytes: number;
+}
+
+/** What a teammate is offering, fetched + verified without downloading data. */
+export interface SharedSourcePreview {
+  readonly label: string;
+  readonly fingerprint: string;
+  readonly hasConfig: boolean;
+  /** Digest of the bundled config, when present, for the "what will I apply?" card. */
+  readonly configSummary: ConfigBundleSummary | null;
+  readonly tiers: readonly SharedSourceTierAvailability[];
+}
+
+export type PreviewSharedSourceResult =
+  | { readonly status: 'ok'; readonly preview: SharedSourcePreview }
+  | { readonly status: 'error'; readonly message: string };
 
 export type DataSharingResult =
   | { readonly status: 'ok'; readonly sharing: DataSharingStatus }
@@ -161,6 +213,8 @@ export interface SharedSourceInfo {
   readonly port: number;
   readonly lastPulledAt: string | null;
   readonly periods: readonly string[];
+  /** The tiers/periods chosen on the last pull, for pre-seeding a reconnect. */
+  readonly selection?: SharedPullSelection | undefined;
 }
 
 export type PullSharedSourceResult =

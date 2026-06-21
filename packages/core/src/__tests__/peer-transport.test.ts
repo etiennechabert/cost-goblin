@@ -67,6 +67,52 @@ describe('encrypted peer transport (TLS-PSK)', () => {
     expect(accesses.filter(a => a.kind === 'file')).toHaveLength(files.size);
   });
 
+  it('reports served byte counts and observes peer connections', async () => {
+    const id = generateIdentityKeyPair();
+    const psk = Buffer.from('shared-access-secret-0123456789ab');
+    const signed = signManifest(buildManifest(id.publicKey), id.privateKey);
+    const body = serializeSignedManifest(signed);
+    const accesses: SharingAccessEvent[] = [];
+    const connectionCounts: number[] = [];
+
+    const server = await startSharingServer(
+      {
+        psk,
+        host: '127.0.0.1',
+        onAccess: (e) => accesses.push(e),
+        onConnectionsChanged: (n) => connectionCounts.push(n),
+      },
+      {
+        getManifest: () => body,
+        readFile: (p) => {
+          const buf = files.get(p);
+          if (buf === undefined) throw new Error(`unknown file ${p}`);
+          return Promise.resolve(buf);
+        },
+      },
+    );
+
+    try {
+      const endpoint = { host: '127.0.0.1', port: server.port, psk };
+      await fetchManifest(endpoint);
+      for (const entry of signed.manifest.files) {
+        await fetchFile(endpoint, entry.path);
+      }
+    } finally {
+      await server.close();
+    }
+
+    // Manifest byte count matches the serialized body.
+    const manifestAccess = accesses.find(a => a.kind === 'manifest');
+    expect(manifestAccess?.bytes).toBe(Buffer.byteLength(body));
+    // Each file's reported byte count matches its actual size.
+    const fileBytes = accesses.filter(a => a.kind === 'file').map(a => a.bytes).sort((x, y) => x - y);
+    const expected = [...files.values()].map(b => b.length).sort((x, y) => x - y);
+    expect(fileBytes).toEqual(expected);
+    // At least one authenticated peer connection was observed.
+    expect(Math.max(0, ...connectionCounts)).toBeGreaterThanOrEqual(1);
+  });
+
   it('rejects a client presenting the wrong psk', async () => {
     const id = generateIdentityKeyPair();
     const server = await startSharingServer(

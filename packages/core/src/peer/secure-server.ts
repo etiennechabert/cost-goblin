@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:https';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { TLSSocket } from 'node:tls';
 import { isSafePackPath } from './pack-manifest.js';
 import {
   SHARING_PSK_IDENTITY,
@@ -21,6 +22,8 @@ export interface SharingAccessEvent {
   readonly kind: 'manifest' | 'file';
   readonly path: string | null;
   readonly remoteAddress: string | null;
+  /** Bytes written for this response — drives served-byte totals + throughput. */
+  readonly bytes: number;
 }
 
 export interface SharingServerConfig {
@@ -33,6 +36,8 @@ export interface SharingServerConfig {
   readonly pskIdentity?: string;
   /** Called after each served request, for activity feedback. */
   readonly onAccess?: (event: SharingAccessEvent) => void;
+  /** Called whenever the count of authenticated, connected peers changes. */
+  readonly onConnectionsChanged?: (count: number) => void;
 }
 
 export interface SharingServer {
@@ -58,12 +63,25 @@ export async function startSharingServer(
     },
     (req, res) => {
       const remoteAddress = req.socket.remoteAddress ?? null;
-      const report = (kind: 'manifest' | 'file', path: string | null): void => {
-        config.onAccess?.({ kind, path, remoteAddress });
+      const report = (kind: 'manifest' | 'file', path: string | null, bytes: number): void => {
+        config.onAccess?.({ kind, path, remoteAddress, bytes });
       };
       void handleRequest(req, res, handlers, report);
     },
   );
+
+  // Track authenticated peer sockets so we can report a live connected count
+  // and force-close them on stop (server.close() alone waits for keep-alive
+  // sockets to idle out, which would make "Stop sharing" appear to hang).
+  const sockets = new Set<TLSSocket>();
+  server.on('secureConnection', (socket: TLSSocket) => {
+    sockets.add(socket);
+    config.onConnectionsChanged?.(sockets.size);
+    socket.on('close', () => {
+      sockets.delete(socket);
+      config.onConnectionsChanged?.(sockets.size);
+    });
+  });
 
   await new Promise<void>((resolve, reject) => {
     const onError = (err: Error): void => { reject(err); };
@@ -78,7 +96,10 @@ export async function startSharingServer(
   const port = typeof address === 'object' && address !== null ? address.port : 0;
   return {
     port,
-    close: () => new Promise<void>((resolve) => { server.close(() => { resolve(); }); }),
+    close: () => new Promise<void>((resolve) => {
+      for (const socket of sockets) socket.destroy();
+      server.close(() => { resolve(); });
+    }),
   };
 }
 
@@ -86,7 +107,7 @@ async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   handlers: SharingServerHandlers,
-  report: (kind: 'manifest' | 'file', path: string | null) => void,
+  report: (kind: 'manifest' | 'file', path: string | null, bytes: number) => void,
 ): Promise<void> {
   try {
     if (req.method !== 'GET') { res.writeHead(405); res.end(); return; }
@@ -96,7 +117,7 @@ async function handleRequest(
       const body = await handlers.getManifest();
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(body);
-      report('manifest', null);
+      report('manifest', null, Buffer.byteLength(body));
       return;
     }
 
@@ -106,7 +127,7 @@ async function handleRequest(
       const file = await handlers.readFile(path);
       res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': String(file.length) });
       res.end(file);
-      report('file', path);
+      report('file', path, file.length);
       return;
     }
 
