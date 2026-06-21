@@ -5,6 +5,7 @@ import type {
   ExportConfigBundleResult,
   PublishConfigBundleResult,
   PullSharedSourceResult,
+  SharedPullProgress,
 } from '@costgoblin/core/browser';
 import { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from '@costgoblin/core/browser';
 import { Check, CloudDownload, CloudUpload, Copy, FileDown, FileUp, Network, Plug, RotateCw, TriangleAlert } from 'lucide-react';
@@ -120,6 +121,13 @@ function ShareDataSection(): React.JSX.Element {
     api.getDataSharingStatus().then(setStatus).catch(() => undefined);
   }, [api]);
 
+  // While sharing, poll so the "who pulled" activity stays live.
+  useEffect(() => {
+    if (status?.enabled !== true) return;
+    const id = setInterval(() => { api.getDataSharingStatus().then(setStatus).catch(() => undefined); }, 3000);
+    return () => { clearInterval(id); };
+  }, [api, status?.enabled]);
+
   function run(action: () => Promise<DataSharingResult>): void {
     setBusy(true);
     setError(null);
@@ -185,6 +193,14 @@ function ShareDataSection(): React.JSX.Element {
           <p className="text-xs text-text-muted">
             Reachable at <span className="font-mono">{status.hosts.join(', ')}:{status.port}</span> · fingerprint <span className="font-mono">{status.fingerprint}</span>. Re-share if this machine&apos;s IP changes.
           </p>
+          <div className="flex items-center gap-2 rounded-md bg-bg-tertiary/40 px-2.5 py-1.5">
+            <span className={`inline-block h-2 w-2 rounded-full ${status.lastServedAt === null ? 'bg-text-muted' : 'bg-positive animate-pulse'}`} aria-hidden="true" />
+            <p className="text-xs text-text-secondary">
+              {status.lastServedAt === null
+                ? 'Waiting for a teammate to connect…'
+                : `Last pull from ${status.lastPeer ?? 'a peer'} · ${String(status.filesServed)} file${status.filesServed === 1 ? '' : 's'} served`}
+            </p>
+          </div>
         </div>
       )}
       {error !== null && <p className="text-xs text-negative">{error}</p>}
@@ -201,6 +217,14 @@ function AddSharedSourceSection({ onPulled }: Readonly<{ onPulled: () => void }>
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<PullSharedSourceResult | null>(null);
+  const [progress, setProgress] = useState<SharedPullProgress | null>(null);
+
+  // Poll live pull progress while connecting/downloading.
+  useEffect(() => {
+    if (!busy) { setProgress(null); return; }
+    const id = setInterval(() => { api.getSharedPullProgress().then(setProgress).catch(() => undefined); }, 300);
+    return () => { clearInterval(id); };
+  }, [api, busy]);
 
   function handleConnect(): void {
     if (busy || key.trim().length === 0) return;
@@ -228,6 +252,18 @@ function AddSharedSourceSection({ onPulled }: Readonly<{ onPulled: () => void }>
         <Plug size={16} className="mr-1.5" />
         {busy ? 'Connecting…' : 'Connect & pull'}
       </Button>
+      {busy && progress !== null && progress.filesTotal > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-tertiary">
+            <div className="h-full bg-accent transition-all" style={{ width: `${String(Math.round((progress.filesDone / progress.filesTotal) * 100))}%` }} />
+          </div>
+          <p className="text-xs text-text-muted">
+            {progress.phase === 'importing'
+              ? 'Importing…'
+              : `Downloading ${String(progress.filesDone)}/${String(progress.filesTotal)}${progress.currentPeriod !== null ? ` · ${progress.currentPeriod}` : ''}`}
+          </p>
+        </div>
+      )}
       {result?.status === 'ok' && (
         <div className="rounded-lg border border-positive/40 bg-bg-tertiary/20 px-3 py-2 flex flex-col gap-2">
           <p className="text-xs text-positive">

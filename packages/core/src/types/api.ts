@@ -13,6 +13,7 @@ import type {
   PreviewConfigBundleResult,
   PublishConfigBundleResult,
   PullSharedSourceResult,
+  SharedPullProgress,
   SharedSourceInfo,
 } from './sharing.js';
 import type {
@@ -248,6 +249,8 @@ export interface CostApi {
   addSharedSource(key: string): Promise<PullSharedSourceResult>;
   /** Consumer: the configured shared source, or null if none. */
   getSharedSource(): Promise<SharedSourceInfo | null>;
+  /** Consumer: live progress of an in-flight pull (polled by the UI). */
+  getSharedPullProgress(): Promise<SharedPullProgress>;
   /** Consumer: re-pull the latest snapshot from the configured source. */
   refreshSharedSource(): Promise<PullSharedSourceResult>;
   /** Consumer: forget the configured source (local data is left in place). */

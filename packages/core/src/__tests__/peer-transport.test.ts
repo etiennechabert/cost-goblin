@@ -8,7 +8,7 @@ import {
   verifyManifestSignature,
   type PackManifest,
 } from '../peer/pack-manifest.js';
-import { startSharingServer } from '../peer/secure-server.js';
+import { startSharingServer, type SharingAccessEvent } from '../peer/secure-server.js';
 import { fetchFile, fetchManifest } from '../peer/secure-client.js';
 
 const files = new Map<string, Buffer>([
@@ -33,9 +33,10 @@ describe('encrypted peer transport (TLS-PSK)', () => {
     const id = generateIdentityKeyPair();
     const psk = Buffer.from('shared-access-secret-0123456789ab');
     const signed = signManifest(buildManifest(id.publicKey), id.privateKey);
+    const accesses: SharingAccessEvent[] = [];
 
     const server = await startSharingServer(
-      { psk, host: '127.0.0.1' },
+      { psk, host: '127.0.0.1', onAccess: (e) => accesses.push(e) },
       {
         getManifest: () => serializeSignedManifest(signed),
         readFile: (p) => {
@@ -60,6 +61,10 @@ describe('encrypted peer transport (TLS-PSK)', () => {
     } finally {
       await server.close();
     }
+
+    // Publisher-side feedback fired for the manifest and each file.
+    expect(accesses.some(a => a.kind === 'manifest')).toBe(true);
+    expect(accesses.filter(a => a.kind === 'file')).toHaveLength(files.size);
   });
 
   it('rejects a client presenting the wrong psk', async () => {

@@ -36,6 +36,7 @@ import {
   type PreviewConfigBundleResult,
   type PublishConfigBundleResult,
   type PullSharedSourceResult,
+  type SharedPullProgress,
   type SharedSourceInfo,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE } from '@costgoblin/core/browser';
@@ -412,16 +413,19 @@ export class MockCostApi implements CostApi {
   checkConfigBeacon: (params: CheckConfigBeaconParams) => Promise<CheckConfigBeaconResult> =
     () => Promise.resolve({ status: 'none' });
   getDataSharingStatus(): Promise<DataSharingStatus> {
-    return Promise.resolve({ enabled: false, sharingKey: null, label: 'Mock · CostGoblin', port: null, hosts: [], fingerprint: 'ABCD-EF01-2345-6789' });
+    return Promise.resolve({ enabled: false, sharingKey: null, label: 'Mock · CostGoblin', port: null, hosts: [], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null });
   }
   enableDataSharing(): Promise<DataSharingResult> {
-    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-mock-sharing-key', label: 'Mock · CostGoblin', port: 53178, hosts: ['192.168.1.42'], fingerprint: 'ABCD-EF01-2345-6789' } });
+    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-mock-sharing-key', label: 'Mock · CostGoblin', port: 53178, hosts: ['192.168.1.42'], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null } });
   }
   disableDataSharing(): Promise<DataSharingResult> {
-    return Promise.resolve({ status: 'ok', sharing: { enabled: false, sharingKey: null, label: 'Mock · CostGoblin', port: null, hosts: [], fingerprint: 'ABCD-EF01-2345-6789' } });
+    return Promise.resolve({ status: 'ok', sharing: { enabled: false, sharingKey: null, label: 'Mock · CostGoblin', port: null, hosts: [], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null } });
   }
   rotateDataSharingKey(): Promise<DataSharingResult> {
-    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-rotated-key', label: 'Mock · CostGoblin', port: 53178, hosts: ['192.168.1.42'], fingerprint: 'ABCD-EF01-2345-6789' } });
+    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-rotated-key', label: 'Mock · CostGoblin', port: 53178, hosts: ['192.168.1.42'], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null } });
+  }
+  getSharedPullProgress(): Promise<SharedPullProgress> {
+    return Promise.resolve({ active: false, phase: 'idle', filesDone: 0, filesTotal: 0, currentPeriod: null });
   }
   // Property-style so the declared type keeps the param (see checkConfigBeacon).
   addSharedSource: (key: string) => Promise<PullSharedSourceResult> =

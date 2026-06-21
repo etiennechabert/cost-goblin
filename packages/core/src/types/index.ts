@@ -109,6 +109,8 @@ export type {
   PullSharedSourceResult,
   SharedCostGoblinConfig,
   SharedProviderConfig,
+  SharedPullPhase,
+  SharedPullProgress,
   SharedSourceInfo,
 } from './sharing.js';
 export { CONFIG_BUNDLE_KIND, CONFIG_BUNDLE_SCHEMA_VERSION, CONFIG_BEACON_KEY } from './sharing.js';

@@ -15,6 +15,14 @@ export interface SharingServerHandlers {
   readonly readFile: (path: string) => Promise<Buffer>;
 }
 
+/** Emitted after a request is successfully served, so the publisher can show
+ *  who is pulling. Fired only for authenticated (handshake-passed) requests. */
+export interface SharingAccessEvent {
+  readonly kind: 'manifest' | 'file';
+  readonly path: string | null;
+  readonly remoteAddress: string | null;
+}
+
 export interface SharingServerConfig {
   /** Pre-shared access secret. Only a peer holding it can complete the handshake. */
   readonly psk: Buffer;
@@ -23,6 +31,8 @@ export interface SharingServerConfig {
   /** Port to bind. Default 0 (ephemeral) — the chosen port is reported back. */
   readonly port?: number;
   readonly pskIdentity?: string;
+  /** Called after each served request, for activity feedback. */
+  readonly onAccess?: (event: SharingAccessEvent) => void;
 }
 
 export interface SharingServer {
@@ -46,7 +56,13 @@ export async function startSharingServer(
       maxVersion: SHARING_TLS_MAX_VERSION,
       pskCallback: (_socket, id) => (id === identity ? config.psk : null),
     },
-    (req, res) => { void handleRequest(req, res, handlers); },
+    (req, res) => {
+      const remoteAddress = req.socket.remoteAddress ?? null;
+      const report = (kind: 'manifest' | 'file', path: string | null): void => {
+        config.onAccess?.({ kind, path, remoteAddress });
+      };
+      void handleRequest(req, res, handlers, report);
+    },
   );
 
   await new Promise<void>((resolve, reject) => {
@@ -66,7 +82,12 @@ export async function startSharingServer(
   };
 }
 
-async function handleRequest(req: IncomingMessage, res: ServerResponse, handlers: SharingServerHandlers): Promise<void> {
+async function handleRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  handlers: SharingServerHandlers,
+  report: (kind: 'manifest' | 'file', path: string | null) => void,
+): Promise<void> {
   try {
     if (req.method !== 'GET') { res.writeHead(405); res.end(); return; }
     const url = new URL(req.url ?? '/', 'https://peer.local');
@@ -75,6 +96,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, handlers
       const body = await handlers.getManifest();
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(body);
+      report('manifest', null);
       return;
     }
 
@@ -84,6 +106,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, handlers
       const file = await handlers.readFile(path);
       res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': String(file.length) });
       res.end(file);
+      report('file', path);
       return;
     }
 

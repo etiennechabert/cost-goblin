@@ -130,6 +130,23 @@ export interface DataSharingStatus {
   readonly hosts: readonly string[];
   /** Short fingerprint of this machine's identity, for out-of-band comparison. */
   readonly fingerprint: string | null;
+  /** When a peer last fetched anything this sharing session (ISO), or null. */
+  readonly lastServedAt: string | null;
+  /** Data files served to peers this sharing session. */
+  readonly filesServed: number;
+  /** Address of the most recent peer to connect, or null. */
+  readonly lastPeer: string | null;
+}
+
+export type SharedPullPhase = 'idle' | 'connecting' | 'downloading' | 'importing' | 'done';
+
+/** Live progress of a consumer pull, polled by the UI while it runs. */
+export interface SharedPullProgress {
+  readonly active: boolean;
+  readonly phase: SharedPullPhase;
+  readonly filesDone: number;
+  readonly filesTotal: number;
+  readonly currentPeriod: string | null;
 }
 
 export type DataSharingResult =

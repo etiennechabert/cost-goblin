@@ -50,6 +50,7 @@ import type {
   PreviewConfigBundleResult,
   PublishConfigBundleResult,
   PullSharedSourceResult,
+  SharedPullProgress,
   SharedSourceInfo,
 } from '@costgoblin/core';
 
@@ -326,6 +327,9 @@ const api: CostApi = {
   },
   getSharedSource(): Promise<SharedSourceInfo | null> {
     return invoke<SharedSourceInfo | null>('data-sharing:get-source');
+  },
+  getSharedPullProgress(): Promise<SharedPullProgress> {
+    return invoke<SharedPullProgress>('data-sharing:pull-progress');
   },
   refreshSharedSource(): Promise<PullSharedSourceResult> {
     return invoke<PullSharedSourceResult>('data-sharing:refresh-source');

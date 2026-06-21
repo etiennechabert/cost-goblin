@@ -27,6 +27,7 @@ import type {
   PackManifest,
   PeerEndpoint,
   PullSharedSourceResult,
+  SharedPullProgress,
   SharedSourceInfo,
   SharingKeyPayload,
   SharingServer,
@@ -72,6 +73,14 @@ function extractPeriodFromPath(path: string): string | null {
 export function registerDataSharingHandlers(app: AppContext): void {
   const { ctx, clearAllCaches } = app;
   let server: SharingServer | null = null;
+
+  // Publisher-side activity, reset each time sharing is enabled.
+  let lastServedAt: string | null = null;
+  let filesServed = 0;
+  let lastPeer: string | null = null;
+
+  // Consumer-side pull progress, polled by the UI while a pull is running.
+  let pullProgress: SharedPullProgress = { active: false, phase: 'idle', filesDone: 0, filesTotal: 0, currentPeriod: null };
 
   async function readEnrichment(): Promise<PackEnrichment> {
     const fs = await import('node:fs/promises');
@@ -149,7 +158,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
     const secret = loadOrCreateSharingSecret(ctx.configPath);
     const fingerprint = publicKeyFingerprint(identity.publicKey);
     if (server === null) {
-      return { enabled: false, sharingKey: null, label: secret.label, port: null, hosts: [], fingerprint };
+      return { enabled: false, sharingKey: null, label: secret.label, port: null, hosts: [], fingerprint, lastServedAt: null, filesServed: 0, lastPeer: null };
     }
     const hosts = lanHosts();
     const sharingKey = encodeSharingKey({
@@ -160,15 +169,26 @@ export function registerDataSharingHandlers(app: AppContext): void {
       psk: secret.psk,
       label: secret.label,
     });
-    return { enabled: true, sharingKey, label: secret.label, port: server.port, hosts, fingerprint };
+    return { enabled: true, sharingKey, label: secret.label, port: server.port, hosts, fingerprint, lastServedAt, filesServed, lastPeer };
   }
 
   async function enable(): Promise<DataSharingStatus> {
     if (server !== null) return currentStatus();
     const identity = loadOrCreateIdentity(ctx.configPath);
     const secret = loadOrCreateSharingSecret(ctx.configPath);
+    lastServedAt = null;
+    filesServed = 0;
+    lastPeer = null;
     server = await startSharingServer(
-      { psk: Buffer.from(secret.psk, 'base64url'), port: SHARING_PORT },
+      {
+        psk: Buffer.from(secret.psk, 'base64url'),
+        port: SHARING_PORT,
+        onAccess: (event) => {
+          lastServedAt = new Date().toISOString();
+          lastPeer = event.remoteAddress;
+          if (event.kind === 'file') filesServed++;
+        },
+      },
       {
         getManifest: async () =>
           serializeSignedManifest(signManifest(await buildLocalManifest(identity, secret.label), identity.privateKey)),
@@ -200,66 +220,80 @@ export function registerDataSharingHandlers(app: AppContext): void {
     host: string;
   }> {
     const psk = Buffer.from(payload.psk, 'base64url');
-    let endpoint: PeerEndpoint | null = null;
-    let signed = null;
-    let lastError: unknown = null;
-    for (const host of payload.hosts) {
-      try {
-        const candidate: PeerEndpoint = { host, port: payload.port, psk };
-        signed = parseSignedManifest(await fetchManifest(candidate));
-        endpoint = candidate;
-        break;
-      } catch (err: unknown) {
-        lastError = err;
+    pullProgress = { active: true, phase: 'connecting', filesDone: 0, filesTotal: 0, currentPeriod: null };
+    try {
+      let endpoint: PeerEndpoint | null = null;
+      let signed = null;
+      let lastError: unknown = null;
+      for (const host of payload.hosts) {
+        try {
+          const candidate: PeerEndpoint = { host, port: payload.port, psk };
+          signed = parseSignedManifest(await fetchManifest(candidate));
+          endpoint = candidate;
+          break;
+        } catch (err: unknown) {
+          lastError = err;
+        }
       }
-    }
-    if (endpoint === null || signed === null) {
-      throw new Error(`Could not reach the shared source. ${errorMessage(lastError)}`);
-    }
-    if (!verifyManifestSignature(signed)) {
-      throw new Error('Snapshot signature is invalid — refusing to import.');
-    }
-    if (signed.manifest.publisher !== payload.pub) {
-      throw new Error('Snapshot publisher does not match the sharing key — refusing to import.');
-    }
-
-    const fs = await import('node:fs/promises');
-    const path = await import('node:path');
-    let downloaded = 0;
-    for (const entry of signed.manifest.files) {
-      const dest = path.join(ctx.dataDir, entry.path);
-      try {
-        const existing = await fs.readFile(dest);
-        if (existing.length === entry.size && sha256Hex(existing) === entry.sha256) continue;
-      } catch {
-        // not present locally — fetch it
+      if (endpoint === null || signed === null) {
+        throw new Error(`Could not reach the shared source. ${errorMessage(lastError)}`);
       }
-      const buf = await fetchFile(endpoint, entry.path);
-      if (sha256Hex(buf) !== entry.sha256) {
-        throw new Error(`Checksum mismatch for ${entry.path} — refusing to import.`);
+      if (!verifyManifestSignature(signed)) {
+        throw new Error('Snapshot signature is invalid — refusing to import.');
       }
-      await fs.mkdir(path.dirname(dest), { recursive: true });
-      await fs.writeFile(dest, buf);
-      downloaded++;
-    }
+      if (signed.manifest.publisher !== payload.pub) {
+        throw new Error('Snapshot publisher does not match the sharing key — refusing to import.');
+      }
 
-    if (signed.manifest.configBundle !== null) {
-      await applyBundleSectionsToDisk(ctx, signed.manifest.configBundle, 'default');
-    }
-    await writeEnrichment(signed.manifest.enrichment);
-    await clearAllCaches();
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
+      const total = signed.manifest.files.length;
+      pullProgress = { active: true, phase: 'downloading', filesDone: 0, filesTotal: total, currentPeriod: null };
+      let downloaded = 0;
+      let done = 0;
+      for (const entry of signed.manifest.files) {
+        pullProgress = { active: true, phase: 'downloading', filesDone: done, filesTotal: total, currentPeriod: extractPeriodFromPath(entry.path) };
+        const dest = path.join(ctx.dataDir, entry.path);
+        try {
+          const existing = await fs.readFile(dest);
+          if (existing.length === entry.size && sha256Hex(existing) === entry.sha256) {
+            done++;
+            continue;
+          }
+        } catch {
+          // not present locally — fetch it
+        }
+        const buf = await fetchFile(endpoint, entry.path);
+        if (sha256Hex(buf) !== entry.sha256) {
+          throw new Error(`Checksum mismatch for ${entry.path} — refusing to import.`);
+        }
+        await fs.mkdir(path.dirname(dest), { recursive: true });
+        await fs.writeFile(dest, buf);
+        downloaded++;
+        done++;
+      }
 
-    const periods = [...new Set(
-      signed.manifest.files.map(f => extractPeriodFromPath(f.path)).filter((p): p is string => p !== null),
-    )].sort();
-    logger.info('Pulled shared snapshot', { from: endpoint.host, files: downloaded, periods: periods.length });
-    return {
-      filesDownloaded: downloaded,
-      periods,
-      label: signed.manifest.label,
-      fingerprint: publicKeyFingerprint(signed.manifest.publisher),
-      host: endpoint.host,
-    };
+      pullProgress = { active: true, phase: 'importing', filesDone: done, filesTotal: total, currentPeriod: null };
+      if (signed.manifest.configBundle !== null) {
+        await applyBundleSectionsToDisk(ctx, signed.manifest.configBundle, 'default');
+      }
+      await writeEnrichment(signed.manifest.enrichment);
+      await clearAllCaches();
+
+      const periods = [...new Set(
+        signed.manifest.files.map(f => extractPeriodFromPath(f.path)).filter((p): p is string => p !== null),
+      )].sort();
+      logger.info('Pulled shared snapshot', { from: endpoint.host, files: downloaded, periods: periods.length });
+      return {
+        filesDownloaded: downloaded,
+        periods,
+        label: signed.manifest.label,
+        fingerprint: publicKeyFingerprint(signed.manifest.publisher),
+        host: endpoint.host,
+      };
+    } finally {
+      pullProgress = { ...pullProgress, active: false, phase: 'done' };
+    }
   }
 
   function toInfo(source: StoredSharedSource): SharedSourceInfo {
@@ -330,6 +364,8 @@ export function registerDataSharingHandlers(app: AppContext): void {
     const stored = loadSharedSource(ctx.configPath);
     return stored === null ? null : toInfo(stored);
   });
+
+  ipcMain.handle('data-sharing:pull-progress', (): SharedPullProgress => pullProgress);
 
   ipcMain.handle('data-sharing:refresh-source', async (): Promise<PullSharedSourceResult> => {
     const stored = loadSharedSource(ctx.configPath);
