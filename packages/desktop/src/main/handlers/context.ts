@@ -1,7 +1,7 @@
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import { LRUCache } from '../lru-cache.js';
 import { QueryLog } from '../query-log.js';
-import { MaterializedBase, configHash } from '../materialized-base.js';
+import { MaterializedBase, configHash, awaitWithTimeout } from '../materialized-base.js';
 import {
   asDimensionId,
   applyNormalizationRule,
@@ -159,6 +159,11 @@ export interface AppContext {
   readonly invalidateCostScope: () => void;
   readonly invalidateColumnCache: () => void;
   readonly warmupBase: () => void;
+  /** Resolve once the latest cost_base warmup settles (true if the base is
+   *  ready, false if it timed out or no base was built). Lets the renderer
+   *  hold the startup prewarm until the in-memory base exists, so those probes
+   *  don't race the materialize with concurrent raw-parquet scans. */
+  readonly awaitWarmup: (timeoutMs: number) => Promise<boolean>;
   readonly clearAllCaches: () => Promise<void>;
 }
 
@@ -508,6 +513,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
     }
   }
 
+  let warmupInFlight: Promise<void> = Promise.resolve();
+  function triggerWarmup(): void { warmupInFlight = warmupBase().catch(() => undefined); }
+
   return {
     ctx,
     state,
@@ -529,15 +537,19 @@ export function createAppContext(ctx: IpcContext): AppContext {
     invalidateConfig: () => { state.config = null; },
     invalidateDimensions: () => {
       state.dimensions = null; state.accountMap = null; state.accountReverseMap = null; state.regionMap = null; state.orgAccountsPath = null;
-      void materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); }).then(() => { void warmupBase(); });
+      void materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); }).then(() => { triggerWarmup(); });
     },
     invalidateViews: () => { state.views = null; },
     invalidateCostScope: () => {
       state.costScope = null;
-      void materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); }).then(() => { void warmupBase(); });
+      void materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); }).then(() => { triggerWarmup(); });
     },
     invalidateColumnCache: () => { columnCache.clear(); },
-    warmupBase: () => { resultCache.clear(); void warmupBase(); },
+    warmupBase: () => { resultCache.clear(); triggerWarmup(); },
+    awaitWarmup: async (timeoutMs: number): Promise<boolean> => {
+      await awaitWithTimeout(warmupInFlight, timeoutMs);
+      return materializedBase.isReady();
+    },
     clearAllCaches: async (): Promise<void> => {
       ctx.db.cancelPendingQueries();
       state.config = null;
@@ -551,7 +563,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
       columnCache.clear();
       inflightQueries.clear();
       await materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); });
-      void warmupBase();
+      triggerWarmup();
     },
   };
 }

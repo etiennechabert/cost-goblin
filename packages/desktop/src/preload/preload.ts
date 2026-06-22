@@ -361,6 +361,9 @@ const api: CostApi = {
   setPerformanceSettings(perf: PerformanceSettings): Promise<void> {
     return invoke<undefined>('perf:set', perf).then(() => undefined);
   },
+  awaitMaterializedBase(timeoutMs: number): Promise<boolean> {
+    return invoke<boolean>('costs:await-base', timeoutMs);
+  },
   getMcpServerRunning(): Promise<boolean> {
     return invoke<boolean>('mcp:get-running');
   },
