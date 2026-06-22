@@ -17,6 +17,35 @@ globalThis.ResizeObserver = class ResizeObserver {
   disconnect() { /* noop */ }
 };
 
+// jsdom has no IntersectionObserver. Dashboard widgets defer mounting until
+// their slot is in view (use-query / widget-load-scheduler), so report every
+// observed element as immediately intersecting — keeps tests rendering all
+// widgets as before.
+globalThis.IntersectionObserver = class IntersectionObserver {
+  private readonly cb: IntersectionObserverCallback;
+  constructor(cb: IntersectionObserverCallback) { this.cb = cb; }
+  observe(target: Element): void {
+    const rect = target.getBoundingClientRect();
+    const entry: IntersectionObserverEntry = {
+      isIntersecting: true,
+      target,
+      intersectionRatio: 1,
+      time: 0,
+      boundingClientRect: rect,
+      intersectionRect: rect,
+      rootBounds: null,
+    };
+    this.cb([entry], this);
+  }
+  unobserve(): void { /* noop */ }
+  disconnect(): void { /* noop */ }
+  takeRecords(): IntersectionObserverEntry[] { return []; }
+  readonly root = null;
+  readonly rootMargin = '';
+  readonly scrollMargin = '';
+  readonly thresholds = [];
+};
+
 Element.prototype.scrollIntoView = () => { /* noop */ };
 
 afterEach(() => {
