@@ -540,8 +540,13 @@ function AppShell(): React.JSX.Element {
 
       setSplashStep('Preparing cost data...');
       await api.awaitMaterializedBase(BASE_READY_TIMEOUT_MS);
-      await prewarmDimensions(api, setSplashStep);
+      // Reveal the app as soon as the in-memory base is ready. The dimension
+      // filter-value prewarm previously blocked the splash here for ~13s (~8
+      // concurrent probes). Run it in the background instead: with cost_base
+      // ready those probes hit the in-memory table, and filter dropdowns also
+      // load fast on demand — so there's no reason to hold the splash for them.
       setSetupCheck({ status: 'ready' });
+      void prewarmDimensions(api, () => undefined);
     }
     initialize().catch(() => undefined);
   }, [api]);
