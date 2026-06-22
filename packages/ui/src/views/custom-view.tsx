@@ -38,6 +38,15 @@ import {
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
 import { WIDGET_REGISTRY } from '../widgets/registry.js';
 import { widgetFlexBasis } from '../widgets/widget.js';
+import { LazyWidgetSlot, WidgetSchedulerProvider } from '../hooks/widget-load-scheduler.js';
+
+/** Reserve roughly a widget's eventual height while its slot is deferred, so
+ *  the page doesn't jump when it mounts (and charts get a sized container). */
+function placeholderMinHeight(type: string): number {
+  if (type === 'summary') return 150;
+  if (type === 'table') return 360;
+  return 300;
+}
 
 interface CustomViewProps {
   readonly spec: ViewSpec;
@@ -286,33 +295,42 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
         <div className="text-sm text-text-secondary">Loading...</div>
       )}
 
-      {spec.rows.map((row) => (
-        <div key={row.widgets.map(w => w.id).join('-')} className="flex gap-4 items-stretch min-w-0">
-          {row.widgets.map((w) => {
-            const Renderer = WIDGET_REGISTRY[w.type];
-            return (
-              <div
-                key={w.id}
-                className="min-w-0 flex flex-col"
-                style={{ flexBasis: widgetFlexBasis(w.size), flexGrow: 1, flexShrink: 1 }}
-              >
-                <Renderer
-                  spec={w}
-                  dateRange={dateRange}
-                  previousDateRange={previousDateRange}
-                  compareEnabled={compareEnabled}
-                  granularity={granularity}
-                  globalFilters={filters}
-                  dimensions={dimensions}
-                  onSetFilter={handleSetFilter}
-                  onEntityClick={handleEntityClick}
-                  onDateRangeChange={handleDateRangeChange}
-                />
-              </div>
-            );
-          })}
-        </div>
-      ))}
+      <WidgetSchedulerProvider>
+        {spec.rows.map((row, rowIdx) => {
+          // Flat display order across rows = load priority (top-left first).
+          const offset = spec.rows.slice(0, rowIdx).reduce((n, r) => n + r.widgets.length, 0);
+          return (
+            <div key={row.widgets.map(w => w.id).join('-')} className="flex gap-4 items-stretch min-w-0">
+              {row.widgets.map((w, colIdx) => {
+                const Renderer = WIDGET_REGISTRY[w.type];
+                return (
+                  <LazyWidgetSlot
+                    key={w.id}
+                    id={w.id}
+                    priority={offset + colIdx}
+                    minHeight={placeholderMinHeight(w.type)}
+                    className="min-w-0 flex flex-col"
+                    style={{ flexBasis: widgetFlexBasis(w.size), flexGrow: 1, flexShrink: 1 }}
+                  >
+                    <Renderer
+                      spec={w}
+                      dateRange={dateRange}
+                      previousDateRange={previousDateRange}
+                      compareEnabled={compareEnabled}
+                      granularity={granularity}
+                      globalFilters={filters}
+                      dimensions={dimensions}
+                      onSetFilter={handleSetFilter}
+                      onEntityClick={handleEntityClick}
+                      onDateRangeChange={handleDateRangeChange}
+                    />
+                  </LazyWidgetSlot>
+                );
+              })}
+            </div>
+          );
+        })}
+      </WidgetSchedulerProvider>
     </div>
   );
 }
