@@ -14,6 +14,7 @@ import {
 import { Popover, PopoverTrigger, PopoverContent } from '@costgoblin/ui';
 import type { UpdateStatus } from '@costgoblin/core/browser';
 import { CollapsibleSection } from './collapsible-section.js';
+import { PerformanceSettings } from './performance-settings.js';
 
 interface Props {
   isDark: boolean;
@@ -173,6 +174,9 @@ export function OptionsMenu({
             active={activeNavId === 'views-editor'}
             label="Views Editor"
           />
+        </CollapsibleSection>
+        <CollapsibleSection title="Performance">
+          <PerformanceSettings />
         </CollapsibleSection>
         <CollapsibleSection title="Sharing">
           <MenuItem
