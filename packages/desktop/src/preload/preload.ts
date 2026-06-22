@@ -353,6 +353,9 @@ const api: CostApi = {
   clearAllCaches(): Promise<void> {
     return invoke<undefined>('cache:clear-all').then(() => undefined);
   },
+  awaitMaterializedBase(timeoutMs: number): Promise<boolean> {
+    return invoke<boolean>('costs:await-base', timeoutMs);
+  },
   getMcpServerRunning(): Promise<boolean> {
     return invoke<boolean>('mcp:get-running');
   },

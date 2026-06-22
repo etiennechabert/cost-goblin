@@ -272,6 +272,12 @@ export interface CostApi {
    *  the background. The renderer should follow up with its own view
    *  refresh so the user sees fresh data. */
   clearAllCaches(): Promise<void>;
+  /** Resolve once the in-memory cost_base materialized table is ready (`true`)
+   *  or the wait times out / no base is being built (`false`). The renderer
+   *  awaits this before the startup dimension prewarm so those probes — and the
+   *  first dashboard queries that follow — hit the in-memory base instead of
+   *  racing the materialize with concurrent full raw-parquet scans. */
+  awaitMaterializedBase(timeoutMs: number): Promise<boolean>;
   getMcpServerRunning(): Promise<boolean>;
   setMcpServerRunning(enabled: boolean): Promise<void>;
   /** The shared secret a client must send (as `Authorization: Bearer <token>`
