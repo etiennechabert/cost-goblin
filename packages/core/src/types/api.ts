@@ -52,6 +52,26 @@ export interface UIPreferences {
   readonly theme: 'dark' | 'light';
   readonly palette: 'standard' | 'colorblind';
   readonly defaultViewId?: string | undefined;
+  readonly performance?: PerformanceSettings | undefined;
+}
+
+/** User overrides for DuckDB resource tuning. `null` means "auto" — use the
+ *  machine-derived default. */
+export interface PerformanceSettings {
+  readonly memoryLimitGB: number | null;
+  readonly threads: number | null;
+}
+
+/** Performance tuning context for the settings UI: the machine-derived defaults
+ *  and valid ranges, plus the user's current overrides. */
+export interface PerformanceInfo {
+  readonly defaultMemoryGB: number;
+  readonly defaultThreads: number;
+  readonly totalMemoryGB: number;
+  readonly maxThreads: number;
+  readonly minMemoryGB: number;
+  readonly maxMemoryGB: number;
+  readonly current: PerformanceSettings;
 }
 
 export interface OrgAccount {
@@ -272,6 +292,11 @@ export interface CostApi {
    *  the background. The renderer should follow up with its own view
    *  refresh so the user sees fresh data. */
   clearAllCaches(): Promise<void>;
+  /** Machine-derived DuckDB tuning defaults + ranges + the user's current
+   *  overrides, for the performance settings UI. */
+  getPerformanceInfo(): Promise<PerformanceInfo>;
+  /** Persist DuckDB tuning overrides (null = auto) and apply them live. */
+  setPerformanceSettings(perf: PerformanceSettings): Promise<void>;
   getMcpServerRunning(): Promise<boolean>;
   setMcpServerRunning(enabled: boolean): Promise<void>;
   /** The shared secret a client must send (as `Authorization: Bearer <token>`

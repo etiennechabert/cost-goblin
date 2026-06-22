@@ -6,6 +6,7 @@ import {
   asEntityRef,
   type AccountMappingStatus,
   type CostApi,
+  type PerformanceInfo,
   type CostResult,
   type DailyCostsResult,
   type DataInventoryResult,
@@ -389,6 +390,8 @@ export class MockCostApi implements CostApi {
   acceptSuggestion(): Promise<void> { return Promise.resolve(); }
   cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
   clearAllCaches(): Promise<void> { return Promise.resolve(); }
+  getPerformanceInfo(): Promise<PerformanceInfo> { return Promise.resolve({ defaultMemoryGB: 8, defaultThreads: 8, totalMemoryGB: 16, maxThreads: 8, minMemoryGB: 1, maxMemoryGB: 24, current: { memoryLimitGB: null, threads: null } }); }
+  setPerformanceSettings(): Promise<void> { return Promise.resolve(); }
   getMcpServerRunning(): Promise<boolean> { return Promise.resolve(true); }
   setMcpServerRunning(): Promise<void> { return Promise.resolve(); }
   getMcpToken(): Promise<string> { return Promise.resolve('mock-token-abc123'); }

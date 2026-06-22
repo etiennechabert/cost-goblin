@@ -21,6 +21,8 @@ import type {
   AccountMappingStatus,
   SavingsPreferences,
   UIPreferences,
+  PerformanceInfo,
+  PerformanceSettings,
   DimensionsConfig,
   NormalizationRule,
   OrgSyncResult,
@@ -352,6 +354,12 @@ const api: CostApi = {
   },
   clearAllCaches(): Promise<void> {
     return invoke<undefined>('cache:clear-all').then(() => undefined);
+  },
+  getPerformanceInfo(): Promise<PerformanceInfo> {
+    return invoke<PerformanceInfo>('perf:get-info');
+  },
+  setPerformanceSettings(perf: PerformanceSettings): Promise<void> {
+    return invoke<undefined>('perf:set', perf).then(() => undefined);
   },
   getMcpServerRunning(): Promise<boolean> {
     return invoke<boolean>('mcp:get-running');
