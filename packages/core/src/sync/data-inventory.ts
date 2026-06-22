@@ -73,6 +73,34 @@ async function getRawTierSize(rawDir: string, tierPrefix: string): Promise<numbe
   }
 }
 
+/** Build an inventory purely from what's on disk — no S3 listing. Used by a
+ *  consumer that pulled a shared snapshot and has no AWS credentials at all:
+ *  every local period is reported as present so the Sync view renders, and
+ *  there is no remote to compare against (auto-sync treats it as "imported").  */
+export async function getLocalDataInventory(dataDir: string, tier: DataTier = 'daily'): Promise<DataInventory> {
+  const rawDir = join(dataDir, 'aws', 'raw');
+  const tierPrefix = getRawDirPrefix(tier);
+  const localPeriodList = await listRawPeriods(rawDir, tierPrefix);
+  const diskBytes = await getRawTierSize(rawDir, tierPrefix);
+
+  const periods: BillingPeriod[] = [...localPeriodList]
+    .sort((a, b) => b.localeCompare(a))
+    .map(period => ({ period, files: [], totalSize: 0, localStatus: 'repartitioned' }));
+
+  return {
+    periods,
+    totalRemoteSize: 0,
+    totalLocalPeriods: localPeriodList.length,
+    totalRemotePeriods: 0,
+    local: {
+      periods: localPeriodList,
+      diskBytes,
+      oldestPeriod: localPeriodList[0] ?? null,
+      newestPeriod: localPeriodList.at(-1) ?? null,
+    },
+  };
+}
+
 export async function getDataInventory(
   bucketPath: string,
   profile: string,

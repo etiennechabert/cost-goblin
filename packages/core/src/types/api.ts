@@ -7,9 +7,16 @@ import type {
   ApplyConfigBundleResult,
   CheckConfigBeaconParams,
   CheckConfigBeaconResult,
+  DataSharingResult,
+  DataSharingStatus,
   ExportConfigBundleResult,
   PreviewConfigBundleResult,
+  PreviewSharedSourceResult,
   PublishConfigBundleResult,
+  PullSharedSourceResult,
+  SharedPullProgress,
+  SharedPullSelection,
+  SharedSourceInfo,
 } from './sharing.js';
 import type {
   ExplorerFilterValue,
@@ -229,6 +236,35 @@ export interface CostApi {
   /** Probe a bucket for a published team configuration. Used by the setup
    *  wizard right after bucket selection. */
   checkConfigBeacon(params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult>;
+  // --- Peer data sharing (LAN, TLS-PSK) ---
+  /** Publisher: current sharing state, including the sharing key while on. */
+  getDataSharingStatus(): Promise<DataSharingStatus>;
+  /** Publisher: start sharing this machine's data on the local network. */
+  enableDataSharing(): Promise<DataSharingResult>;
+  /** Publisher: stop sharing. */
+  disableDataSharing(): Promise<DataSharingResult>;
+  /** Publisher: rotate the access secret (revokes outstanding keys) and
+   *  return a fresh sharing key. */
+  rotateDataSharingKey(): Promise<DataSharingResult>;
+  /** Consumer: fetch + verify a teammate's manifest WITHOUT downloading data,
+   *  so the UI can show which tiers/months are on offer before committing. */
+  previewSharedSource(key: string): Promise<PreviewSharedSourceResult>;
+  /** Consumer: same preview, but for the already-saved source (the key stays
+   *  in the main process — used by the "reconnect" affordance). */
+  previewStoredSource(): Promise<PreviewSharedSourceResult>;
+  /** Consumer: connect with a pasted sharing key, pull the snapshot over the
+   *  encrypted channel, verify it, and import data + config locally. `selection`
+   *  limits which tiers/periods are pulled; omit to pull everything. */
+  addSharedSource(key: string, selection?: SharedPullSelection): Promise<PullSharedSourceResult>;
+  /** Consumer: the configured shared source, or null if none. */
+  getSharedSource(): Promise<SharedSourceInfo | null>;
+  /** Consumer: live progress of an in-flight pull (polled by the UI). */
+  getSharedPullProgress(): Promise<SharedPullProgress>;
+  /** Consumer: re-pull from the configured source. `selection` overrides the
+   *  stored choice; omit to reuse what was last pulled. */
+  refreshSharedSource(selection?: SharedPullSelection): Promise<PullSharedSourceResult>;
+  /** Consumer: forget the configured source (local data is left in place). */
+  removeSharedSource(): Promise<void>;
   cancelPendingQueries(): Promise<void>;
   /** Wipe every backend cache (LRU result cache, column probe cache,
    *  in-flight de-dup map, materialized base table, plus the in-memory

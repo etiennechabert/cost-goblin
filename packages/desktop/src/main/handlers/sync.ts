@@ -1,6 +1,7 @@
 import { ipcMain, shell } from 'electron';
 import {
   getDataInventory,
+  getLocalDataInventory,
   getEtagFileName,
   getRawDirPrefix,
   parseEtagsJson,
@@ -112,6 +113,13 @@ export function registerSyncHandlers(app: AppContext): void {
     try {
       return await getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, t);
     } catch (err: unknown) {
+      // A consumer that imported a shared snapshot has no S3 access — fall back
+      // to a disk-only inventory so the Sync view still renders the data it has.
+      const local = await getLocalDataInventory(ctx.dataDir, t);
+      if (local.totalLocalPeriods > 0) {
+        logger.info('S3 inventory unavailable — using local-only inventory', { tier: t });
+        return local;
+      }
       throw toUserFriendlyError(err, provider.credentials.profile);
     }
   });

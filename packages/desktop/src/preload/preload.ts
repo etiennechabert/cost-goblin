@@ -44,9 +44,16 @@ import type {
   ApplyConfigBundleResult,
   CheckConfigBeaconParams,
   CheckConfigBeaconResult,
+  DataSharingResult,
+  DataSharingStatus,
   ExportConfigBundleResult,
   PreviewConfigBundleResult,
+  PreviewSharedSourceResult,
   PublishConfigBundleResult,
+  PullSharedSourceResult,
+  SharedPullProgress,
+  SharedPullSelection,
+  SharedSourceInfo,
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
@@ -304,6 +311,39 @@ const api: CostApi = {
   },
   checkConfigBeacon(params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult> {
     return invoke<CheckConfigBeaconResult>('sharing:check-beacon', params);
+  },
+  getDataSharingStatus(): Promise<DataSharingStatus> {
+    return invoke<DataSharingStatus>('data-sharing:status');
+  },
+  enableDataSharing(): Promise<DataSharingResult> {
+    return invoke<DataSharingResult>('data-sharing:enable');
+  },
+  disableDataSharing(): Promise<DataSharingResult> {
+    return invoke<DataSharingResult>('data-sharing:disable');
+  },
+  rotateDataSharingKey(): Promise<DataSharingResult> {
+    return invoke<DataSharingResult>('data-sharing:rotate');
+  },
+  previewSharedSource(key: string): Promise<PreviewSharedSourceResult> {
+    return invoke<PreviewSharedSourceResult>('data-sharing:preview-source', key);
+  },
+  previewStoredSource(): Promise<PreviewSharedSourceResult> {
+    return invoke<PreviewSharedSourceResult>('data-sharing:preview-stored-source');
+  },
+  addSharedSource(key: string, selection?: SharedPullSelection): Promise<PullSharedSourceResult> {
+    return invoke<PullSharedSourceResult>('data-sharing:add-source', key, selection);
+  },
+  getSharedSource(): Promise<SharedSourceInfo | null> {
+    return invoke<SharedSourceInfo | null>('data-sharing:get-source');
+  },
+  getSharedPullProgress(): Promise<SharedPullProgress> {
+    return invoke<SharedPullProgress>('data-sharing:pull-progress');
+  },
+  refreshSharedSource(selection?: SharedPullSelection): Promise<PullSharedSourceResult> {
+    return invoke<PullSharedSourceResult>('data-sharing:refresh-source', selection);
+  },
+  removeSharedSource(): Promise<void> {
+    return invoke<undefined>('data-sharing:remove-source').then(() => undefined);
   },
   cancelPendingQueries(): Promise<void> {
     void invoke<undefined>('debug:clear-completed');

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, ImportConfigDialog, ShareConfigDialog } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, ImportConfigDialog, ShareConfigDialog, SharingActiveBanner } from '@costgoblin/ui';
 import type { NavItem } from '@costgoblin/ui';
-import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
+import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
 import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
@@ -350,6 +350,33 @@ function useSyncPolling(
   return { syncError, setSyncError, syncActivity, syncFilesRemaining };
 }
 
+/** Poll publisher-side sharing status app-wide so the activity banner can show
+ *  on every view while sharing is on. Polls faster when sharing is active (to
+ *  keep the live throughput fresh) and backs off when it's off. */
+function useDataSharingPolling(api: CostApi, setupCheck: SetupCheck): {
+  sharingStatus: DataSharingStatus | null;
+  setSharingStatus: React.Dispatch<React.SetStateAction<DataSharingStatus | null>>;
+} {
+  const [sharingStatus, setSharingStatus] = useState<DataSharingStatus | null>(null);
+  const enabled = sharingStatus?.enabled === true;
+
+  useEffect(() => {
+    if (setupCheck.status !== 'ready') return undefined;
+    let cancelled = false;
+    async function tick(): Promise<void> {
+      try {
+        const status = await api.getDataSharingStatus();
+        if (!cancelled) setSharingStatus(status);
+      } catch { /* transient */ }
+    }
+    tick().catch(() => undefined);
+    const timer = setInterval(() => { tick().catch(() => undefined); }, enabled ? 2_000 : 10_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [api, setupCheck, enabled]);
+
+  return { sharingStatus, setSharingStatus };
+}
+
 const SPLASH_IMAGES = ['splash-1.png', 'splash-2.png', 'splash-3.png', 'splash-4.png', 'splash-5.png', 'splash-6.png', 'splash-7.png', 'splash-8.png', 'splash-9.png', 'splash-10.png'];
 const SPLASH_INTERVAL = 500;
 
@@ -441,6 +468,8 @@ function AppShell(): React.JSX.Element {
   const [splashStep, setSplashStep] = useState('Connecting...');
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
   const { syncError, setSyncError, syncActivity, syncFilesRemaining } = useSyncPolling(api, setupCheck);
+  const { sharingStatus, setSharingStatus } = useDataSharingPolling(api, setupCheck);
+  const [stoppingSharing, setStoppingSharing] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [clearingCache, setClearingCache] = useState(false);
@@ -685,6 +714,14 @@ function AppShell(): React.JSX.Element {
     return views.views.find(v => v.id === id) ?? null;
   }
 
+  function handleStopSharing(): void {
+    setStoppingSharing(true);
+    api.disableDataSharing()
+      .then(result => { if (result.status === 'ok') setSharingStatus(result.sharing); })
+      .catch(() => undefined)
+      .finally(() => { setStoppingSharing(false); });
+  }
+
   return (
     <PaletteProvider palette={palette}>
       <CommandPalette items={paletteItems} onNavigate={handleNavClick} />
@@ -697,6 +734,9 @@ function AppShell(): React.JSX.Element {
         />
         {/* Title bar + nav */}
         <div ref={headerRef} className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
+        {sharingStatus?.enabled === true && (
+          <SharingActiveBanner status={sharingStatus} onStop={handleStopSharing} stopping={stoppingSharing} />
+        )}
         <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
           <nav className="flex items-center gap-1" aria-label="Dashboards and analysis">
             {(() => {

@@ -121,6 +121,25 @@ export function validateColumnName(columnName: string, dimensions: DimensionsCon
 }
 
 /**
+ * A bare, injection-safe SQL column identifier: a leading letter or underscore
+ * followed by letters, digits, or underscores.
+ *
+ * A built-in dimension's `field`/`displayField` is interpolated into SQL as a
+ * bare identifier — `${field} IN (...)`, `MAX(${field})`, `LOWER(${field})` —
+ * so quotes, parentheses, whitespace, or semicolons could break out of the
+ * identifier position. A config can arrive from another user (shared bundle /
+ * imported snapshot), so these strings are untrusted: anything not matching
+ * this shape is rejected. A character-shape check (rather than a fixed column
+ * allow-list) stays airtight without rejecting legitimately-named CUR columns.
+ */
+const SAFE_COLUMN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** True when `name` is a bare SQL column identifier safe to interpolate. */
+export function isSafeColumnIdentifier(name: string): boolean {
+  return SAFE_COLUMN_IDENTIFIER.test(name);
+}
+
+/**
  * Valid table path tiers (CUR data organization levels).
  */
 const ALLOWED_TIERS = new Set(['daily', 'hourly', 'cost-optimization']);
