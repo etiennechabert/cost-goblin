@@ -87,3 +87,17 @@ export class MaterializedBase {
 export function configHash(dimensions: unknown, costScope: unknown): string {
   return JSON.stringify({ d: dimensions, c: costScope });
 }
+
+/** Resolve when `p` settles or after `timeoutMs` ms, whichever comes first.
+ *  Never rejects — `p`'s rejection is swallowed; callers check readiness
+ *  separately (e.g. via `MaterializedBase.isReady()`). Used to bound how long
+ *  startup waits on the cost_base warmup before falling back. */
+export async function awaitWithTimeout(p: Promise<unknown>, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); });
+  try {
+    await Promise.race([p.then(() => undefined, () => undefined), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}

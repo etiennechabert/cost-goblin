@@ -9,6 +9,10 @@ export function registerQueryHandlers(app: AppContext): void {
   ipcMain.handle('query:cancel-pending', () => {
     app.ctx.db.cancelPendingQueries();
   });
+  ipcMain.handle('costs:await-base', (_event, timeoutMs: unknown): Promise<boolean> => {
+    const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 90_000;
+    return app.awaitWarmup(ms);
+  });
   ipcMain.handle('cache:clear-all', async () => {
     await app.clearAllCaches();
   });

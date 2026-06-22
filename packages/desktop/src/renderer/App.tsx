@@ -398,6 +398,14 @@ function dimId(dim: Dimension): string {
   return 'field' in dim ? dim.name : tagDimColumn(dim);
 }
 
+// Upper bound on how long the splash waits for the in-memory cost_base to
+// build before prewarming dimensions. Gating prewarm on the base keeps its ~8
+// filter probes (and the first dashboard queries) off the slow raw-parquet
+// path, so they don't pile concurrent full scans onto the materialize. If the
+// base isn't ready by then we proceed anyway (probes fall back to raw parquet,
+// the prior behavior) rather than hang the splash.
+const BASE_READY_TIMEOUT_MS = 90_000;
+
 function defaultDateRange(): { start: string; end: string } {
   const end = new Date(Date.now() - DEFAULT_LAG_DAYS * 86_400_000);
   const start = new Date(end.getTime() - 30 * 86_400_000);
@@ -530,8 +538,15 @@ function AppShell(): React.JSX.Element {
         return;
       }
 
-      await prewarmDimensions(api, setSplashStep);
+      setSplashStep('Preparing cost data...');
+      await api.awaitMaterializedBase(BASE_READY_TIMEOUT_MS);
+      // Reveal the app as soon as the in-memory base is ready. The dimension
+      // filter-value prewarm previously blocked the splash here for ~13s (~8
+      // concurrent probes). Run it in the background instead: with cost_base
+      // ready those probes hit the in-memory table, and filter dropdowns also
+      // load fast on demand — so there's no reason to hold the splash for them.
       setSetupCheck({ status: 'ready' });
+      void prewarmDimensions(api, () => undefined);
     }
     initialize().catch(() => undefined);
   }, [api]);

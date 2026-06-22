@@ -297,6 +297,12 @@ export interface CostApi {
   getPerformanceInfo(): Promise<PerformanceInfo>;
   /** Persist DuckDB tuning overrides (null = auto) and apply them live. */
   setPerformanceSettings(perf: PerformanceSettings): Promise<void>;
+  /** Resolve once the in-memory cost_base materialized table is ready (`true`)
+   *  or the wait times out / no base is being built (`false`). The renderer
+   *  awaits this before the startup dimension prewarm so those probes — and the
+   *  first dashboard queries that follow — hit the in-memory base instead of
+   *  racing the materialize with concurrent full raw-parquet scans. */
+  awaitMaterializedBase(timeoutMs: number): Promise<boolean>;
   getMcpServerRunning(): Promise<boolean>;
   setMcpServerRunning(enabled: boolean): Promise<void>;
   /** The shared secret a client must send (as `Authorization: Bearer <token>`
