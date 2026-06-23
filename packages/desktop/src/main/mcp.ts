@@ -19,7 +19,9 @@ function adaptAppContext(app: AppContext): McpContext {
     getAccountReverseMap: () => app.getAccountReverseMap(),
     getOrgAccountsPath: () => app.getOrgAccountsPath(),
     getAvailableColumns: (tier) => app.getAvailableColumns(tier),
-    materializedBase: app.materializedBase,
+    // The rollup is daily/dashboard-shaped; MCP queries are arbitrary SQL, so
+    // they always read raw. (McpContext wants a structural getSource provider.)
+    materializedBase: { getSource: () => undefined },
     warmup: () => Promise.resolve(),
   };
 }

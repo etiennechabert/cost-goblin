@@ -23,7 +23,7 @@ import {
 import { originStore } from '../query-log.js';
 
 export function registerRecommendationHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getConfig, getCostScope, getAvailableColumns, runQuery, runPreparedQuery, materializedBase } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getConfig, getCostScope, getAvailableColumns, runQuery, runPreparedQuery } = app;
 
   ipcMain.handle('query:missing-tags', (_event, params: MissingTagsParams): Promise<MissingTagsResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
@@ -51,14 +51,14 @@ export function registerRecommendationHandlers(app: AppContext): void {
         nonResourceRows: [],
       };
     }
-    const matSource = materializedBase.getSource(params.dateRange, 'daily');
-    const isMat = matSource !== undefined;
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
+    // missing-tags / non-resource-cost reference resource_id, line_item_type and
+    // raw tags — none in the rollup grain — so they always query raw.
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: undefined };
     const resourceQuery = buildMissingTagsQuery(params, qcOpts);
     const nonResourceQuery = buildNonResourceCostQuery(params, qcOpts);
     const [resourceRows, nonResourceRows] = await Promise.all([
-      runPreparedQuery(resourceQuery.sql, resourceQuery.params, isMat),
-      runPreparedQuery(nonResourceQuery.sql, nonResourceQuery.params, isMat),
+      runPreparedQuery(resourceQuery.sql, resourceQuery.params, false),
+      runPreparedQuery(nonResourceQuery.sql, nonResourceQuery.params, false),
     ]);
     const result = buildMissingTagsResult(resourceRows, nonResourceRows, Number(params.minCost));
     return {

@@ -1,7 +1,7 @@
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import { LRUCache } from '../lru-cache.js';
 import { QueryLog } from '../query-log.js';
-import { MaterializedBase, awaitWithTimeout } from '../materialized-base.js';
+import { awaitWithTimeout } from '../async-timeout.js';
 import { RollupStore, type BuildPartitionSql, type RollupShape } from '../rollup-store.js';
 import {
   asDimensionId,
@@ -154,7 +154,6 @@ export interface AppContext {
    *  explicit reset via invalidateColumnCache. */
   readonly getAvailableColumns: (tier: 'daily' | 'hourly') => Promise<ReadonlySet<string>>;
   readonly queryLog: QueryLog;
-  readonly materializedBase: MaterializedBase;
   /** Persistent per-period pre-aggregated rollup backing dashboard queries. */
   readonly rollupStore: RollupStore;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
@@ -438,9 +437,6 @@ export function createAppContext(ctx: IpcContext): AppContext {
   }
 
   const queryLog = new QueryLog();
-  // Legacy in-memory base — kept instantiated for the mcp/debug surfaces but no
-  // longer materialized; the persistent RollupStore now backs dashboard queries.
-  const materializedBase = new MaterializedBase();
   const rollupStore = new RollupStore({ dataDir: ctx.dataDir, runQuery: (sql) => ctx.db.runQuery(sql) });
   const resultCache = new LRUCache<string, RawRow[]>(50);
 
@@ -577,7 +573,6 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getOrgAccountsPath,
     getAvailableColumns,
     queryLog,
-    materializedBase,
     rollupStore,
     runQuery,
     runPreparedQuery,
