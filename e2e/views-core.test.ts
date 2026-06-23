@@ -11,7 +11,9 @@ import {
   navigateToText,
   selectDatePreset,
   clickNavButton,
-  openOptionsMenu,
+  openSettings,
+  ensureViewMode,
+  SETTINGS_NAV_LABEL,
   writeCoverage,
   LOAD_TIMEOUT,
 } from './helpers.js';
@@ -46,42 +48,44 @@ test.describe('App shell', () => {
   });
 
   test('shows all navigation buttons', async () => {
-    // Inline top-bar buttons.
-    for (const label of ['Dashboards', 'Trends', 'Tags', 'Findings', 'Explorer', 'Options']) {
+    // View-mode nav buttons + the Settings gear.
+    for (const label of ['Dashboards', 'Trends', 'Tags', 'Findings', 'Explorer']) {
       await expect(page.getByRole('button', { name: label, exact: false }).first()).toBeVisible();
     }
-    await expect(page.getByRole('button', { name: /Sync/ }).first()).toBeVisible();
-    // Items behind the Options popover.
-    await openOptionsMenu(page);
-    for (const label of ['Cost Scope', 'Dimensions', 'Views Editor']) {
-      await expect(page.getByRole('button', { name: label, exact: false })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
+    // Configuration pages live as tabs in the settings rail.
+    await openSettings(page);
+    const rail = page.getByRole('navigation', { name: SETTINGS_NAV_LABEL });
+    for (const label of ['Cost Scope', 'Dimensions', 'Dashboards', 'Data & Sync']) {
+      await expect(rail.getByRole('button', { name: label, exact: true })).toBeVisible();
     }
-    await page.keyboard.press('Escape');
+    await ensureViewMode(page);
   });
 
-  test('has theme toggle button', async () => {
-    await openOptionsMenu(page);
-    const themeBtn = page.getByRole('button', { name: /^(Light|Dark) mode$/ });
-    await expect(themeBtn).toBeVisible();
-    await page.keyboard.press('Escape');
+  test('has theme toggle in General settings', async () => {
+    await openSettings(page);
+    await page.getByRole('navigation', { name: SETTINGS_NAV_LABEL }).getByRole('button', { name: 'General', exact: true }).click();
+    // Theme is a segmented Dark / Light control.
+    await expect(page.getByRole('button', { name: 'Dark', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Light', exact: true })).toBeVisible();
+    await ensureViewMode(page);
   });
 
   test('theme toggle switches dark/light', async () => {
     const html = page.locator('html');
     const hadDark = await html.evaluate(el => el.classList.contains('dark'));
 
-    await openOptionsMenu(page);
-    // The Appearance items don't auto-close the menu (so users can toggle
-    // theme + palette in one open), so click both toggles back-to-back
-    // without reopening — the label flips between Light mode / Dark mode.
-    await page.getByRole('button', { name: /^(Light|Dark) mode$/ }).click();
+    await openSettings(page);
+    await page.getByRole('navigation', { name: SETTINGS_NAV_LABEL }).getByRole('button', { name: 'General', exact: true }).click();
+    // Clicking the inactive segment flips the theme.
+    await page.getByRole('button', { name: hadDark ? 'Light' : 'Dark', exact: true }).click();
     const hasToggled = await html.evaluate(el => el.classList.contains('dark'));
     expect(hasToggled).toBe(!hadDark);
 
-    await page.getByRole('button', { name: /^(Light|Dark) mode$/ }).click();
+    await page.getByRole('button', { name: hadDark ? 'Dark' : 'Light', exact: true }).click();
     const restored = await html.evaluate(el => el.classList.contains('dark'));
     expect(restored).toBe(hadDark);
-    await page.keyboard.press('Escape');
+    await ensureViewMode(page);
   });
 
   test('navigating between all views changes active content', async () => {

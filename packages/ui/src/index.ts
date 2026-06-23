@@ -22,7 +22,7 @@ export { BubbleChart } from './components/bubble-chart.js';
 export { CostTable } from './components/cost-table.js';
 export { EntityPopup } from './components/entity-popup.js';
 export { ConfirmModal } from './components/confirm-modal.js';
-export { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog } from './components/config-sharing.js';
+export { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog, ImportConfigPanel, ShareConfigPanel } from './components/config-sharing.js';
 export { SharingActiveBanner } from './components/sharing-active-banner.js';
 export { ProfilePicker, filterProfiles } from './components/profile-picker.js';
 export { CsvExport } from './components/csv-export.js';
@@ -69,6 +69,9 @@ export { PaletteProvider, usePalette } from './hooks/use-palette.js';
 
 export { CommandPalette } from './components/command-palette.js';
 export type { NavItem } from './components/command-palette.js';
+export { SettingsShell } from './components/settings-shell.js';
+export { SETTINGS_TABS, isSettingsTabId } from './settings/registry.js';
+export type { SettingsTabId, SettingsTabMeta } from './settings/registry.js';
 export { useKeyboardShortcuts, matchesShortcut, formatShortcutLabel } from './hooks/use-keyboard-shortcuts.js';
 export type { Shortcut } from './hooks/use-keyboard-shortcuts.js';
 

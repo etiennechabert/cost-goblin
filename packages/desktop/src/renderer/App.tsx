@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, ImportConfigDialog, ShareConfigDialog, SharingActiveBanner } from '@costgoblin/ui';
-import type { NavItem } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId } from '@costgoblin/ui';
+import type { NavItem, SettingsTabId } from '@costgoblin/ui';
 import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
-import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw } from 'lucide-react';
+import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw, Settings, ArrowLeft } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
-import { OptionsMenu } from './top-menu/options-menu.js';
+import { GeneralTab } from './settings/general-tab.js';
+import { PerformanceTab } from './settings/performance-tab.js';
+import { ShareTab } from './settings/share-tab.js';
+import { ImportTab } from './settings/import-tab.js';
 
 // ---------------------------------------------------------------------------
 // React Profiler — collects render timings when perf mode is active
@@ -54,18 +57,17 @@ function getApi(): CostApi {
   return globalThis.costgoblin;
 }
 
+// "View mode" — looking at cost data. Configuration pages deliberately do NOT
+// live here: they're "setting mode" (a SettingsTabId rendered in SettingsShell),
+// so the compiler makes it impossible to render a config editor in the analysis
+// canvas, and a reserved id like 'sync' can never hijack the custom-view path.
 type View =
   | { page: 'setup' }
   | { page: 'custom'; viewId: string; initialFilter?: FilterMap }
   | { page: 'trends' }
   | { page: 'missing-tags' }
   | { page: 'savings' }
-  | { page: 'mcp' }
-  | { page: 'explorer' }
-  | { page: 'dimensions' }
-  | { page: 'cost-scope' }
-  | { page: 'views-editor' }
-  | { page: 'sync' };
+  | { page: 'explorer' };
 
 interface AnalyticalNavItem {
   readonly id: string;
@@ -80,13 +82,9 @@ const ANALYTICAL_NAV: readonly AnalyticalNavItem[] = [
   { id: 'explorer', label: 'Explorer', Icon: Search },
 ];
 
-const SETTINGS_NAV: readonly { id: string; label: string }[] = [
-  { id: 'cost-scope', label: 'Cost Scope' },
-  { id: 'dimensions', label: 'Dimensions' },
-  { id: 'views-editor', label: 'Views' },
-  { id: 'sync', label: 'Sync' },
-  { id: 'mcp', label: 'AI Assistant' },
-];
+function hasUpdateIndicator(status: UpdateStatus): boolean {
+  return status.state === 'available' || status.state === 'downloading' || status.state === 'downloaded';
+}
 
 type SyncActivity = 'idle' | 'syncing' | 'downloading';
 
@@ -468,6 +466,10 @@ function AppShell(): React.JSX.Element {
   const api = useCostApi();
   const confirmLeave = useConfirmLeave();
   const [view, setView] = useState<View>({ page: 'custom', viewId: OVERVIEW_SEED_VIEW.id });
+  // `settingsTab === null` ⇒ view mode; a tab id ⇒ setting mode (the full-canvas
+  // SettingsShell). Entering settings never touches `view`, so exiting just
+  // clears this and the user lands back exactly where they were.
+  const [settingsTab, setSettingsTab] = useState<SettingsTabId | null>(null);
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [isDark, setIsDark] = useState(true);
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
@@ -485,7 +487,6 @@ function AppShell(): React.JSX.Element {
   const inFlightCount = useDebugBadge();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
-  const [sharingDialog, setSharingDialog] = useState<'share' | 'import' | null>(null);
   const [appVersion, setAppVersion] = useState('');
   const memoryMB = useMemoryMB();
   const autoOpenRef = useMemo(() => ({ current: false }), []);
@@ -653,34 +654,69 @@ function AppShell(): React.JSX.Element {
       const message = err instanceof Error ? err.message : String(err);
       setSyncError(message);
     });
-  }, [api, view, setupCheck, setSyncError]);
+    // Re-run when the settings tab changes too (not just `view`): leaving the
+    // Data & Sync tab after a download must refresh the gear's missing-periods
+    // badge, which `view` alone no longer captures now that Sync isn't a View.
+  }, [api, view, settingsTab, setupCheck, setSyncError]);
 
   function handleNavClick(id: string) {
-    const alreadyActive = view.page === 'custom' ? view.viewId === id : view.page === id;
+    const inSettings = settingsTab !== null;
+    const alreadyActive = !inSettings && (view.page === 'custom' ? view.viewId === id : view.page === id);
     if (alreadyActive) return;
     confirmLeave(() => {
       api.cancelPendingQueries().catch(() => undefined);
+      setSettingsTab(null);
       switch (id) {
         case 'trends': setView({ page: 'trends' }); break;
         case 'missing-tags': setView({ page: 'missing-tags' }); break;
         case 'savings': setView({ page: 'savings' }); break;
         case 'explorer': setView({ page: 'explorer' }); break;
-        case 'cost-scope': setView({ page: 'cost-scope' }); break;
-        case 'dimensions': setView({ page: 'dimensions' }); break;
-        case 'views-editor': setView({ page: 'views-editor' }); break;
-        case 'sync': setView({ page: 'sync' }); break;
-        case 'mcp': setView({ page: 'mcp' }); break;
         default:
           // Anything else is a custom view id (every left-nav entry that
-          // isn't one of the well-known static pages above).
+          // isn't one of the well-known static analysis pages above).
           setView({ page: 'custom', viewId: id });
       }
     });
   }
 
+  function enterSettings(tab: SettingsTabId) {
+    if (settingsTab === tab) return;
+    confirmLeave(() => {
+      api.cancelPendingQueries().catch(() => undefined);
+      setSettingsTab(tab);
+    });
+  }
+
+  function exitSettings() {
+    confirmLeave(() => {
+      api.cancelPendingQueries().catch(() => undefined);
+      setSettingsTab(null);
+    });
+  }
+
+  function toggleSettings() {
+    // The gear carries the app-wide sync/update badge, so opening it always
+    // lands on Data & Sync — the activity that badge is inviting a click for.
+    if (settingsTab !== null) exitSettings();
+    else enterSettings('data-sync');
+  }
+
+  // Single entry point for the command palette: routes settings tabs and
+  // global actions, falling through to ordinary view navigation.
+  function handleCommand(id: string) {
+    if (id === 'action:reload') { setReloadConfirmOpen(true); return; }
+    if (id.startsWith('settings:')) {
+      const tab = id.slice('settings:'.length);
+      if (isSettingsTabId(tab)) enterSettings(tab);
+      return;
+    }
+    handleNavClick(id);
+  }
+
   function handleEntityClick(entity: string, dimension: string) {
     confirmLeave(() => {
       api.cancelPendingQueries().catch(() => undefined);
+      setSettingsTab(null);
       const firstId = viewsConfig?.views[0]?.id ?? OVERVIEW_SEED_VIEW.id;
       const initialFilter: FilterMap = { [asDimensionId(dimension)]: [asTagValue(entity)] };
       setView({ page: 'custom', viewId: firstId, initialFilter });
@@ -689,7 +725,7 @@ function AppShell(): React.JSX.Element {
 
   function handleSetupComplete() {
     setSetupCheck({ status: 'ready' });
-    setView({ page: 'sync' });
+    setSettingsTab('data-sync');
   }
 
   const views = viewsConfig ?? FALLBACK_VIEWS;
@@ -699,7 +735,8 @@ function AppShell(): React.JSX.Element {
   const paletteItems: NavItem[] = useMemo(() => [
     ...customNav.map(n => ({ id: n.id, label: n.name, group: 'Dashboards' })),
     ...ANALYTICAL_NAV.map(n => ({ id: n.id, label: n.label, group: 'Analysis' })),
-    ...SETTINGS_NAV.map(n => ({ id: n.id, label: n.label, group: 'Settings' })),
+    ...SETTINGS_TABS.map(t => ({ id: `settings:${t.id}`, label: t.label, group: 'Settings', keywords: [...t.keywords] })),
+    { id: 'action:reload', label: 'Reload data', group: 'Actions', keywords: ['refresh', 'clear cache'] },
   ], [customNav]);
 
   if (setupCheck.status === 'checking') {
@@ -711,16 +748,12 @@ function AppShell(): React.JSX.Element {
   }
 
   function activeNavId(): string | null {
+    if (settingsTab !== null) return null;
     if (view.page === 'custom') return view.viewId;
     if (view.page === 'trends') return 'trends';
     if (view.page === 'missing-tags') return 'missing-tags';
     if (view.page === 'savings') return 'savings';
     if (view.page === 'explorer') return 'explorer';
-    if (view.page === 'cost-scope') return 'cost-scope';
-    if (view.page === 'dimensions') return 'dimensions';
-    if (view.page === 'views-editor') return 'views-editor';
-    if (view.page === 'sync') return 'sync';
-    if (view.page === 'mcp') return 'mcp';
     return null;
   }
   const active = activeNavId();
@@ -737,9 +770,60 @@ function AppShell(): React.JSX.Element {
       .finally(() => { setStoppingSharing(false); });
   }
 
+  // Render the active settings tab's content. Each config view is mounted lazily
+  // (only while its tab is active), so opening Settings doesn't fan out every
+  // page's self-fetch at once and view mode no longer pays for their polling.
+  function renderSettingsTab(): React.JSX.Element | null {
+    switch (settingsTab) {
+      case 'general':
+        return (
+          <GeneralTab
+            isDark={isDark}
+            onToggleTheme={handleToggleTheme}
+            palette={palette}
+            onTogglePalette={handleTogglePalette}
+            dashboards={customNav.map(c => ({ id: c.id, name: c.name }))}
+            defaultViewId={defaultViewId}
+            onSetDefaultView={handleSetDefaultView}
+            appVersion={appVersion}
+            updateStatus={updateStatus}
+            onCheckForUpdates={handleCheckForUpdates}
+            onShowReleaseNotes={() => { setReleaseNotesOpen(true); }}
+          />
+        );
+      case 'data-sync':
+        return <DataManagement />;
+      case 'cost-scope':
+        return <CostScopeView />;
+      case 'dimensions':
+        return <DimensionsView />;
+      case 'dashboards':
+        return <ViewsEditor onConfigPersisted={setViewsConfig} />;
+      case 'share':
+        return <ShareTab />;
+      case 'import':
+        return (
+          <ImportTab
+            onApplied={() => {
+              // The whole org config just changed under the renderer — a full
+              // reload re-runs the boot path (setup check, views, dimensions
+              // prewarm) so nothing serves stale state.
+              window.location.reload();
+            }}
+          />
+        );
+      case 'ai-assistant':
+        return <McpView />;
+      case 'performance':
+        return <PerformanceTab />;
+      case null:
+        return null;
+    }
+  }
+
   return (
     <PaletteProvider palette={palette}>
-      <CommandPalette items={paletteItems} onNavigate={handleNavClick} />
+      <CommandPalette items={paletteItems} onNavigate={handleCommand} />
       <div className="min-h-screen bg-bg-primary text-text-primary">
         <SyncAnnouncer
           syncError={syncError}
@@ -753,6 +837,7 @@ function AppShell(): React.JSX.Element {
           <SharingActiveBanner status={sharingStatus} onStop={handleStopSharing} stopping={stoppingSharing} />
         )}
         <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
+          {settingsTab === null ? (
           <nav className="flex items-center gap-1" aria-label="Dashboards and analysis">
             {(() => {
               const isActiveDefault = view.page === 'custom' && view.viewId === defaultViewId;
@@ -803,6 +888,19 @@ function AppShell(): React.JSX.Element {
               );
             })}
           </nav>
+          ) : (
+            <div className="flex items-center gap-2 [-webkit-app-region:no-drag]">
+              <button
+                type="button"
+                onClick={exitSettings}
+                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary"
+                aria-label="Done, return to dashboards"
+              >
+                <ArrowLeft size={16} />Done
+              </button>
+              <span className="text-sm font-medium text-text-primary">Settings</span>
+            </div>
+          )}
           <div className="flex flex-col items-center justify-center px-4">
             <span className="text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
             <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
@@ -847,75 +945,58 @@ function AppShell(): React.JSX.Element {
               <RotateCw size={16} className={clearingCache ? 'animate-spin' : undefined} />
             </button>
             {(() => {
+              // The gear is the single Settings entry point. It also carries the
+              // app-wide sync/update status that the standalone Sync button used
+              // to show, with a fixed precedence: error > active > missing > update.
               const showError = syncError !== null;
               const showActive = !showError && syncActivity !== 'idle';
-              const showMissing = !showError && syncActivity === 'idle' && missingPeriods > 0 && view.page !== 'sync';
+              const showMissing = !showError && syncActivity === 'idle' && missingPeriods > 0 && settingsTab !== 'data-sync';
+              const showUpdate = !showError && !showActive && !showMissing && hasUpdateIndicator(updateStatus);
+              const inSettings = settingsTab !== null;
+              const title = syncError !== null
+                ? `Sync error — ${syncError}`
+                : showActive
+                  ? 'Syncing…'
+                  : showMissing
+                    ? `${String(missingPeriods)} billing period${missingPeriods === 1 ? '' : 's'} not synced`
+                    : showUpdate
+                      ? 'Update available'
+                      : 'Settings';
               return (
                 <button
                   type="button"
-                  onClick={() => { handleNavClick('sync'); }}
+                  onClick={toggleSettings}
                   className={[
-                    'relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-2',
-                    active === 'sync'
+                    'relative rounded-md p-1.5 transition-colors',
+                    inSettings
                       ? 'bg-bg-tertiary text-text-primary'
-                      : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
+                      : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
                     showError ? 'ring-1 ring-negative/60' : '',
                     showActive ? 'animate-sync-blink' : '',
                   ].join(' ')}
-                  title={syncError === null ? undefined : `Sync error — ${syncError}`}
-                  aria-current={active === 'sync' ? 'page' : undefined}
-                  aria-label="Sync"
+                  aria-label="Settings"
+                  aria-expanded={inSettings}
+                  title={title}
                 >
+                  <Settings size={16} className={inSettings ? 'text-accent' : undefined} />
                   {showError && (
-                    <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-negative animate-pulse" aria-hidden="true" />
-                  )}
-                  {showActive && syncActivity === 'downloading' && (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="7 10 12 15 17 10" />
-                      <line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                  )}
-                  {showActive && syncActivity === 'syncing' && (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 animate-spin">
-                      <polyline points="23 4 23 10 17 10" />
-                      <polyline points="1 20 1 14 7 14" />
-                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
-                      <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14" />
-                    </svg>
-                  )}
-                  Sync
-                  {showError && (
-                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-negative px-1 text-[10px] font-bold text-white">
-                      !
-                    </span>
+                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-negative px-1 text-[10px] font-bold text-white">!</span>
                   )}
                   {showActive && syncFilesRemaining > 0 && (
-                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">
-                      {String(syncFilesRemaining)}
-                    </span>
+                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">{String(syncFilesRemaining)}</span>
+                  )}
+                  {showActive && syncFilesRemaining === 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent animate-pulse" aria-hidden="true" />
                   )}
                   {showMissing && (
-                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-bg-primary">
-                      {String(missingPeriods)}
-                    </span>
+                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-bg-primary">{String(missingPeriods)}</span>
+                  )}
+                  {showUpdate && (
+                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
                   )}
                 </button>
               );
             })()}
-            <OptionsMenu
-              isDark={isDark}
-              onToggleTheme={handleToggleTheme}
-              palette={palette}
-              onTogglePalette={handleTogglePalette}
-              activeNavId={active}
-              onNavigate={handleNavClick}
-              updateStatus={updateStatus}
-              onShowReleaseNotes={() => { setReleaseNotesOpen(true); }}
-              onCheckForUpdates={handleCheckForUpdates}
-              onShareConfig={() => { setSharingDialog('share'); }}
-              onImportConfig={() => { setSharingDialog('import'); }}
-            />
           </nav>
         </nav>
       </div>
@@ -923,73 +1004,51 @@ function AppShell(): React.JSX.Element {
       {/* View content — wrapped in a keyed container so "clear cache"
           forces every mounted view to remount and refetch. */}
       <div key={`refresh-${String(refreshNonce)}`}>
-        {view.page === 'custom' && viewsReady && (() => {
-          const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
-          return (
-            <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
-              <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} />
+        {settingsTab === null ? (
+          <>
+            {view.page === 'custom' && viewsReady && (() => {
+              const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
+              return (
+                <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
+                  <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} />
+                </Profiler>
+              );
+            })()}
+            {view.page === 'trends' && (
+              <Profiler id="trends" onRender={onPerfRender}>
+                <CostTrends onEntityClick={handleEntityClick} />
+              </Profiler>
+            )}
+            {view.page === 'missing-tags' && (
+              <Profiler id="missing-tags" onRender={onPerfRender}>
+                <MissingTags onEntityClick={handleEntityClick} />
+              </Profiler>
+            )}
+            {view.page === 'savings' && (
+              <Profiler id="savings" onRender={onPerfRender}>
+                <Savings />
+              </Profiler>
+            )}
+            {view.page === 'explorer' && (
+              <Profiler id="explorer" onRender={onPerfRender}>
+                <ExplorerView />
+              </Profiler>
+            )}
+          </>
+        ) : (
+          <SettingsShell
+            tabs={SETTINGS_TABS}
+            activeTab={settingsTab}
+            onTabChange={enterSettings}
+            topOffset={headerHeight}
+          >
+            <Profiler id={`settings:${settingsTab}`} onRender={onPerfRender}>
+              {renderSettingsTab()}
             </Profiler>
-          );
-        })()}
-        {view.page === 'trends' && (
-          <Profiler id="trends" onRender={onPerfRender}>
-            <CostTrends onEntityClick={handleEntityClick} />
-          </Profiler>
+          </SettingsShell>
         )}
-        {view.page === 'missing-tags' && (
-          <Profiler id="missing-tags" onRender={onPerfRender}>
-            <MissingTags onEntityClick={handleEntityClick} />
-          </Profiler>
-        )}
-        {view.page === 'savings' && (
-          <Profiler id="savings" onRender={onPerfRender}>
-            <Savings />
-          </Profiler>
-        )}
-        {view.page === 'explorer' && (
-          <Profiler id="explorer" onRender={onPerfRender}>
-            <ExplorerView />
-          </Profiler>
-        )}
-        {view.page === 'cost-scope' && (
-          <Profiler id="cost-scope" onRender={onPerfRender}>
-            <CostScopeView />
-          </Profiler>
-        )}
-        {view.page === 'dimensions' && (
-          <Profiler id="dimensions" onRender={onPerfRender}>
-            <DimensionsView />
-          </Profiler>
-        )}
-        {view.page === 'views-editor' && (
-          <Profiler id="views-editor" onRender={onPerfRender}>
-            <ViewsEditor onConfigPersisted={setViewsConfig} />
-          </Profiler>
-        )}
-        {view.page === 'mcp' && (
-          <McpView />
-        )}
-        <div className={view.page === 'sync' ? '' : 'hidden'}>
-          <Profiler id="sync" onRender={onPerfRender}>
-            <DataManagement />
-          </Profiler>
-        </div>
       </div>
       {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} topOffset={headerHeight} />}
-      {sharingDialog === 'share' && (
-        <ShareConfigDialog onClose={() => { setSharingDialog(null); }} />
-      )}
-      {sharingDialog === 'import' && (
-        <ImportConfigDialog
-          onClose={() => { setSharingDialog(null); }}
-          onApplied={() => {
-            // The whole org config just changed under the renderer —
-            // a full reload re-runs the boot path (setup check, views,
-            // dimensions prewarm) so nothing serves stale state.
-            window.location.reload();
-          }}
-        />
-      )}
       <ReleaseNotesModal open={releaseNotesOpen} onOpenChange={setReleaseNotesOpen} status={updateStatus} />
       <Dialog open={reloadConfirmOpen} onOpenChange={setReloadConfirmOpen}>
         <DialogContent>
