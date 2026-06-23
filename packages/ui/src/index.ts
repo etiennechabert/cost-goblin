@@ -39,6 +39,7 @@ export { TreemapChart } from './components/treemap-chart.js';
 export { HeatmapChart } from './components/heatmap-chart.js';
 export { FilterActiveBanner } from './components/filter-active-banner.js';
 export { CoinRainLoader } from './components/coin-rain-loader.js';
+export { SchedulerControls } from './components/scheduler-controls.js';
 export { useCostFocus, useCostFocusDispatch, useCostFocusReducer, CostFocusProvider, CostFocusDispatchProvider } from './hooks/use-cost-focus.js';
 
 export { WIDGET_REGISTRY, WIDGET_CATALOG } from './widgets/registry.js';

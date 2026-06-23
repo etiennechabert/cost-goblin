@@ -14,6 +14,7 @@ import {
   type EntityDetailResult,
   type MissingTagsResult,
   type OrgNode,
+  type PruneResult,
   type SavingsResult,
   type SyncStatus,
   type TrendResult,
@@ -284,6 +285,9 @@ export class MockCostApi implements CostApi {
   getAutoSyncIntervalMinutes(): Promise<number> { return Promise.resolve(24 * 60); }
   setAutoSyncIntervalMinutes(): Promise<void> { return Promise.resolve(); }
   getAutoSyncStatus(): Promise<{ state: 'disabled' }> { return Promise.resolve({ state: 'disabled' }); }
+  getAutoPruneEnabled(): Promise<boolean> { return Promise.resolve(false); }
+  setAutoPruneEnabled(): Promise<void> { return Promise.resolve(); }
+  pruneNow(): Promise<PruneResult> { return Promise.resolve({ deleted: [] }); }
   getViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
   saveViewsConfig(): Promise<void> { return Promise.resolve(); }
   resetViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }

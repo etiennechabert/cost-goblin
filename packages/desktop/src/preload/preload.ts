@@ -28,6 +28,7 @@ import type {
   OrgSyncResult,
   OrgSyncProgress,
   AutoSyncStatus,
+  PruneResult,
   ViewsConfig,
   CostScopeCapabilities,
   CostScopeConfig,
@@ -241,6 +242,15 @@ const api: CostApi = {
   },
   getAutoSyncStatus(): Promise<AutoSyncStatus> {
     return invoke<AutoSyncStatus>('auto-sync:get-status');
+  },
+  getAutoPruneEnabled(): Promise<boolean> {
+    return invoke<boolean>('auto-prune:get-enabled');
+  },
+  setAutoPruneEnabled(enabled: boolean): Promise<void> {
+    return invoke<undefined>('auto-prune:set-enabled', enabled).then(() => undefined);
+  },
+  pruneNow(): Promise<PruneResult> {
+    return invoke<PruneResult>('data:prune');
   },
   getViewsConfig(): Promise<ViewsConfig> {
     return invoke<ViewsConfig>('views:get-config');
