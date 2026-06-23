@@ -69,6 +69,9 @@ describe('RollupStore', () => {
 
     const src = store.resolveSource({ requiredPeriods: ['2026-01'], tier: 'daily', neededColumns: ['service', 'cost'] });
     expect(src).toContain('read_parquet');
+    // Reads only the requested month's partition, never a daily-* wildcard.
+    expect(src).toContain('daily-2026-01/rollup.parquet');
+    expect(src).not.toContain('daily-*');
   });
 
   it('resolveSource falls back to raw (undefined) on hour bounds, out-of-grain column, or an unbuilt period', async () => {

@@ -73,11 +73,18 @@ export class RollupStore {
   private partitionDir(period: string): string { return join(this.rollupDir(), `daily-${period}`); }
   private partitionPath(period: string): string { return join(this.partitionDir(period), 'rollup.parquet'); }
 
-  /** DuckDB read_parquet glob over all partitions; the caller's date WHERE
-   *  prunes to the requested range. Forward slashes for cross-platform globbing. */
-  private rollupGlob(): string {
-    const g = join(this.rollupDir(), 'daily-*', 'rollup.parquet').replaceAll('\\', '/').replaceAll("'", "''");
-    return `read_parquet('${g}')`;
+  /** DuckDB read_parquet over EXACTLY the partitions the query needs, listed
+   *  explicitly rather than a `daily-*` wildcard. Skipping the other months'
+   *  files avoids their Parquet footer reads — the single biggest cost for a
+   *  short window over a year of partitions — mirroring the raw path's
+   *  `buildParquetSource`. Every period is guaranteed to exist on disk because
+   *  `resolveSource` only routes here once all are valid. Forward slashes for
+   *  cross-platform globbing. */
+  private rollupGlob(periods: readonly string[]): string {
+    const paths = periods
+      .map(p => `'${this.partitionPath(p).replaceAll('\\', '/').replaceAll("'", "''")}'`)
+      .join(', ');
+    return `read_parquet([${paths}])`;
   }
 
   isReady(): boolean { return this.manifest !== null && this.validPeriods.size > 0; }
@@ -145,7 +152,7 @@ export class RollupStore {
     const grain = new Set<string>([...this.shape.grainDimensions, 'cost', 'line_items']);
     for (const c of args.neededColumns) if (!grain.has(c)) return undefined;
     for (const p of args.requiredPeriods) if (!this.validPeriods.has(p)) return undefined;
-    return this.rollupGlob();
+    return this.rollupGlob(args.requiredPeriods);
   }
 
   /** Build (or replace) the given periods, updating the manifest atomically

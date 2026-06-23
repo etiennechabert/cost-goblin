@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { getDataInventory, getLocalDataInventory } from '@costgoblin/core';
+import { getDataInventory, getLocalDataInventory, extractPeriod } from '@costgoblin/core';
 import type { AutoSyncStatus } from '@costgoblin/core';
 import {
   startAutoSync,
@@ -12,7 +12,7 @@ import {
   readAutoSyncIntervalMinutes,
   writeAutoSyncIntervalMinutes,
 } from '../auto-sync.js';
-import { deleteLocalPeriodFiles } from './sync.js';
+import { deleteLocalPeriodFiles, cascadeRollupForDeletedMonth, changedRollupMonths } from './sync.js';
 import { type AppContext, prefsPath } from './context.js';
 import type { SyncClient } from '../sync-client.js';
 
@@ -93,6 +93,12 @@ export function registerAutoSyncHandlers(app: AppContext): void {
             },
           });
           state.syncStatuses[syncId] = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
+          // Keep the rollup in step with the raw the auto-sync just pulled,
+          // mirroring the manual data:sync-periods path.
+          if (result.filesDownloaded > 0) {
+            if (syncId === 'daily') app.maintainRollup(changedRollupMonths(files.map(f => extractPeriod(f.key))));
+            else app.warmupBase();
+          }
           return result;
         } catch (err: unknown) {
           const error = err instanceof Error ? err : new Error(String(err));
@@ -107,6 +113,12 @@ export function registerAutoSyncHandlers(app: AppContext): void {
       deletePeriods: async (periods: readonly string[], tier: string) => {
         for (const period of periods) {
           await deleteLocalPeriodFiles(ctx.dataDir, period, asTier(tier));
+        }
+        // Cascade the auto-prune into the rollup, once per unique daily month.
+        if (asTier(tier) === 'daily') {
+          for (const month of changedRollupMonths(periods)) {
+            await cascadeRollupForDeletedMonth(app, month);
+          }
         }
       },
     };
