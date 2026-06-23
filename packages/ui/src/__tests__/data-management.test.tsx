@@ -93,4 +93,59 @@ describe('DataManagement', () => {
       expect(screen.getByText('Delete all local data')).toBeDefined();
     });
   });
+
+  it('auto-prune toggle persists the new state', async () => {
+    const api = new MockCostApi();
+    const spy = vi.spyOn(api, 'setAutoPruneEnabled');
+    const { user } = renderDataManagement(api);
+    const toggle = await screen.findByRole('button', { name: 'Toggle auto-prune' });
+    await user.click(toggle);
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledWith(true);
+    });
+  });
+
+  it('prune button is disabled when no local data is outside retention', async () => {
+    renderDataManagement();
+    const pruneBtn = await screen.findByRole('button', { name: /^Prune$/ });
+    expect(pruneBtn).toHaveProperty('disabled', true);
+  });
+
+  it('prune button shows confirmation when data is outside retention', async () => {
+    const api = new MockCostApi();
+    // Daily retention in the mock config is 90 days; a 2020 period is well
+    // outside it, so the Prune action should offer to remove it.
+    api.getDataInventory = () => Promise.resolve({
+      periods: [],
+      totalRemoteSize: 0,
+      totalLocalPeriods: 1,
+      totalRemotePeriods: 0,
+      local: { periods: ['2020-01'], diskBytes: 1024, oldestPeriod: '2020-01', newestPeriod: '2020-01' },
+    });
+    const { user } = renderDataManagement(api);
+    const pruneBtn = await screen.findByRole('button', { name: /Prune \(1\)/ });
+    await user.click(pruneBtn);
+    await waitFor(() => {
+      expect(screen.getByText('Prune old data')).toBeDefined();
+    });
+  });
+
+  it('confirming prune calls pruneNow and refreshes inventory', async () => {
+    const api = new MockCostApi();
+    api.getDataInventory = () => Promise.resolve({
+      periods: [],
+      totalRemoteSize: 0,
+      totalLocalPeriods: 1,
+      totalRemotePeriods: 0,
+      local: { periods: ['2020-01'], diskBytes: 1024, oldestPeriod: '2020-01', newestPeriod: '2020-01' },
+    });
+    const spy = vi.spyOn(api, 'pruneNow');
+    const { user } = renderDataManagement(api);
+    const pruneBtn = await screen.findByRole('button', { name: /Prune \(1\)/ });
+    await user.click(pruneBtn);
+    await user.click(await screen.findByRole('button', { name: /^Prune$/ }));
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+  });
 });

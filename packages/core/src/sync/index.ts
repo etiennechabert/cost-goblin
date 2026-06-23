@@ -29,6 +29,13 @@ export {
 } from './selective-sync.js';
 
 export {
+  type TierRetention,
+  retentionCutoffPeriod,
+  periodsOutsideRetention,
+  configuredTierRetentions,
+} from './retention.js';
+
+export {
   type ExpectedDataType,
   extractDate,
   extractPeriod,

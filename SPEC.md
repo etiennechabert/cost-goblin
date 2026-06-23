@@ -629,12 +629,14 @@ Background CUR sync while the app is open.
 - When enabled, periodically (default 60 minutes — configurable in `costgoblin.yaml`) checks the inventory for missing or stale periods within the retention window and downloads them.
 - Status surfaced in the title bar: `disabled`, `idle`, `checking`, `syncing` (with phase + progress), or `error`.
 - Single-instance gate: only one auto-sync run at a time; manual sync interlocks.
+- **Auto-prune** is a separate toggle (off by default; persisted as `autoPrune` in `preferences.json`). On each scheduler run it deletes local periods that have fallen outside each configured tier's retention window. It shares the auto-sync scheduler — the scheduler runs whenever auto-sync *or* auto-prune is on. Pruning is local-only, so it still reclaims disk even when S3 is unreachable, and it runs before the download pass.
 
 #### Feature: Sync View / Data Inventory (MVP)
 
 Replaces the spec's earlier "sync status indicator." A full view showing:
 - Per-tier table of months (daily, hourly, cost-optimization) with local status (`missing`, `repartitioned`, `stale`).
 - Per-month sync, delete, and inspect actions.
+- A **Prune** action (with confirmation) removes, in one click, every local period that has fallen outside its tier's retention window across all configured tiers. Retention is thus enforced as deletion of stale local data, not merely as a download cutoff. A guard ignores a non-positive `retentionDays` so a misconfiguration can never wipe everything.
 - Disk usage, oldest/newest period, total remote vs. local sizes.
 - A nav badge on "Sync" shows the count of missing periods within the retention window.
 - AWS Organizations panel (sync, view accounts, browse OU paths, inspect account tags).
