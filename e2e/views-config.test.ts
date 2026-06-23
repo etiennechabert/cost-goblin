@@ -45,14 +45,16 @@ test.describe('Data Management', () => {
     await expect(page.getByText('S3 sync and local data inventory')).toBeVisible();
   });
 
-  test('shows action buttons: Prune, Delete All, Open Folder, Refresh', async () => {
-    // Auto-sync / auto-prune / interval moved to the top-menu SchedulerControls
-    // (shown outside settings mode), so they're no longer Data Management
-    // actions. The view keeps the one-off Prune button and the rest.
+  test('shows action buttons and the automatic schedule controls', async () => {
+    // One-off actions plus the auto-sync / auto-prune schedule, which lives
+    // here (not the top toolbar) since it automates these very controls.
     await expect(page.getByRole('button', { name: /Prune/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Delete All Data' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Open Folder' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible();
+    await expect(page.getByText('Automatic schedule')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Toggle auto-sync' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Toggle auto-prune' })).toBeVisible();
   });
 
   test('org section is visible (either synced or prompt)', async () => {

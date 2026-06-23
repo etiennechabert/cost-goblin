@@ -257,8 +257,8 @@ test.describe('Cost Overview', () => {
   });
 
   test('pie chart dimension dropdown switches the dimension', async () => {
-    // Only target visible, enabled selects (pie chart dropdowns) — skip
-    // hidden/disabled selects from other views (e.g. auto-sync interval).
+    // Only target visible, enabled selects (pie chart dropdowns) — guard
+    // against any hidden/disabled selects other widgets might render.
     const selects = page.locator('select:not([disabled])');
     const visibleSelects: typeof selects[] = [];
     for (let i = 0; i < await selects.count(); i++) {
