@@ -326,7 +326,11 @@ test.describe('Views editor', () => {
 
   test('Export and Import buttons are present', async () => {
     await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Import', exact: true })).toBeVisible();
+    // The settings rail now has its own "Import" tab (a button carrying
+    // data-tab); scope to the editor toolbar's Import button, which has none.
+    await expect(
+      page.getByRole('button', { name: 'Import', exact: true }).and(page.locator('button:not([data-tab])')),
+    ).toBeVisible();
   });
 });
 
