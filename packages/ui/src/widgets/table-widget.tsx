@@ -98,7 +98,7 @@ export function TableWidget({
   const [enabledColumns, setEnabledColumns] = useState(specEnabled);
 
   const overviewQuery = useQuery(
-    () => api.queryExplorerOverview({ filters: explorerFilters, dateRange, granularity, origin: 'widget:table:overview' }),
+    () => api.queryExplorerOverview({ filters: explorerFilters, dateRange, granularity, applyCostScope: true, origin: 'widget:table:overview' }),
     [fk, dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, granularity, api],
   );
 
