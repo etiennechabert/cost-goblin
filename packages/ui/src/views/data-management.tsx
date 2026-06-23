@@ -73,12 +73,6 @@ export function DataManagement() {
   const [dailySyncState, setDailySyncState] = useState<SyncState>({ status: 'idle' });
   const [hourlySyncState, setHourlySyncState] = useState<SyncState>({ status: 'idle' });
   const [costOptSyncState, setCostOptSyncState] = useState<SyncState>({ status: 'idle' });
-  const autoSyncQuery = useQuery(() => api.getAutoSyncEnabled(), []);
-  const autoSyncIntervalQuery = useQuery(() => api.getAutoSyncIntervalMinutes(), []);
-  const [autoSync, setAutoSync] = useState(false);
-  const [autoSyncLoaded, setAutoSyncLoaded] = useState(false);
-  const [autoSyncInterval, setAutoSyncInterval] = useState(24 * 60);
-  const [autoSyncIntervalLoaded, setAutoSyncIntervalLoaded] = useState(false);
 
   // Track the previous server-side status per tier so the poller can detect a
   // syncing→completed/failed transition. Without it, a background auto-sync that
@@ -133,15 +127,9 @@ export function DataManagement() {
     return () => { cancelled = true; clearInterval(timer); };
   }, [api]);
 
-  if (!autoSyncLoaded && autoSyncQuery.status === 'success') {
-    setAutoSyncLoaded(true);
-    setAutoSync(autoSyncQuery.data);
-  }
-  if (!autoSyncIntervalLoaded && autoSyncIntervalQuery.status === 'success') {
-    setAutoSyncIntervalLoaded(true);
-    setAutoSyncInterval(autoSyncIntervalQuery.data);
-  }
   const [showDeleteAll, setShowDeleteAll] = useState(false);
+  const [showPrune, setShowPrune] = useState(false);
+  const [pruneNotice, setPruneNotice] = useState<string | null>(null);
   const [configureSource, setConfigureSource] = useState<'daily' | 'hourly' | 'costOptimization' | null>(null);
   // Lightweight profile-only swap: a tiny modal that lists ~/.aws profiles
   // and rewrites only credentials.profile in costgoblin.yaml. Useful when
@@ -268,6 +256,34 @@ export function DataManagement() {
   const costOptRetentionDays = provider?.sync.costOptimization?.retentionDays ?? 90;
   const costOptCutoffPeriod = retentionCutoffPeriod(costOptRetentionDays);
   const costOptMissing = missingWithinCutoff(costOptInventory, costOptCutoffPeriod);
+
+  // Local periods that have fallen outside their tier's retention window. Mirrors
+  // the backend's `periodsOutsideRetention` (period strictly older than the
+  // cutoff month) — including its guard against a non-positive retention, so a
+  // misconfigured `retentionDays: 0` is never treated as "everything expired".
+  const prunable = (localPeriods: readonly string[] | undefined, cutoff: string, days: number): string[] =>
+    Number.isFinite(days) && days > 0 ? (localPeriods ?? []).filter(p => p < cutoff) : [];
+  const dailyPrunable = prunable(inventory?.local.periods, dailyCutoffPeriod, retentionDays);
+  const hourlyPrunable = prunable(hourlyInventory?.local.periods, hourlyCutoffPeriod, hourlyRetentionDays);
+  const costOptPrunable = prunable(costOptInventory?.local.periods, costOptCutoffPeriod, costOptRetentionDays);
+  const prunableTotal = dailyPrunable.length + hourlyPrunable.length + costOptPrunable.length;
+
+  function handlePrune() {
+    setShowPrune(false);
+    api.pruneNow().then((result) => {
+      setPruneNotice(
+        result.deleted.length === 0
+          ? 'Nothing to prune — all local data is within retention.'
+          : `Pruned ${String(result.deleted.length)} period(s) outside retention.`,
+      );
+      setDailyRefreshKey(k => k + 1);
+      setHourlyRefreshKey(k => k + 1);
+      setCostOptRefreshKey(k => k + 1);
+      setTimeout(() => { setPruneNotice(null); }, 6000);
+    }).catch((err: unknown) => {
+      setPruneNotice(`Prune failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
 
   const [hourlyInitialized, setHourlyInitialized] = useState(false);
   useEffect(() => {
@@ -412,35 +428,15 @@ export function DataManagement() {
           <p className="text-sm text-text-secondary mt-0.5">S3 sync and local data inventory</p>
         </div>
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-text-secondary">Auto-sync</span>
-            <button
-              type="button"
-              onClick={() => { const next = !autoSync; setAutoSync(next); api.setAutoSyncEnabled(next).catch(() => undefined); }}
-              className={['relative h-5 w-9 rounded-full transition-colors', autoSync ? 'bg-accent' : 'bg-bg-tertiary'].join(' ')}
-            >
-              <span className={['absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', autoSync ? 'translate-x-4' : 'translate-x-0'].join(' ')} />
-            </button>
-            <select
-              value={String(autoSyncInterval)}
-              disabled={!autoSync}
-              onChange={e => {
-                const next = Number(e.target.value);
-                setAutoSyncInterval(next);
-                api.setAutoSyncIntervalMinutes(next).catch(() => undefined);
-              }}
-              title="How often auto-sync runs. Keep this at least a day unless you're debugging — each run hits S3."
-              className="rounded-md border border-border bg-bg-tertiary/50 px-2 py-1 text-xs text-text-secondary disabled:opacity-40"
-            >
-              <option value="60">Every hour</option>
-              <option value="180">Every 3 hours</option>
-              <option value="360">Every 6 hours</option>
-              <option value="720">Every 12 hours</option>
-              <option value="1440">Once a day</option>
-              <option value="4320">Every 3 days</option>
-              <option value="10080">Once a week</option>
-            </select>
-          </div>
+          <button
+            type="button"
+            onClick={() => { setShowPrune(true); }}
+            disabled={prunableTotal === 0}
+            title={prunableTotal === 0 ? 'No local data is outside the retention window' : `Delete ${String(prunableTotal)} period(s) outside the retention window`}
+            className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {prunableTotal === 0 ? 'Prune' : `Prune (${String(prunableTotal)})`}
+          </button>
           <button
             type="button"
             onClick={() => { setShowProfileSwap(true); }}
@@ -464,6 +460,12 @@ export function DataManagement() {
           </button>
         </div>
       </div>
+
+      {pruneNotice !== null && (
+        <div className="rounded-lg border border-accent/50 bg-positive-muted px-4 py-2 text-xs text-accent">
+          {pruneNotice}
+        </div>
+      )}
 
       {/* Account mapping */}
       <OrgAccountsSection profile={awsProfile} />
@@ -563,6 +565,17 @@ export function DataManagement() {
           destructive
           onConfirm={handleDeleteAll}
           onCancel={() => { setShowDeleteAll(false); }}
+        />
+      )}
+
+      {showPrune && (
+        <ConfirmModal
+          title="Prune old data"
+          message={`Remove ${String(prunableTotal)} local period(s) that fall outside each tier's retention window? This data can be re-downloaded from S3 anytime.`}
+          confirmLabel="Prune"
+          destructive
+          onConfirm={handlePrune}
+          onCancel={() => { setShowPrune(false); }}
         />
       )}
 

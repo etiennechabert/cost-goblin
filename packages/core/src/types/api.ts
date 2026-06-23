@@ -125,6 +125,10 @@ export interface DataInventoryResult {
   };
 }
 
+export interface PruneResult {
+  readonly deleted: readonly { readonly tier: DataTier; readonly period: string }[];
+}
+
 export interface CostApi {
   queryCosts(params: CostQueryParams): Promise<CostResult>;
   queryDailyCosts(params: DailyCostsParams): Promise<DailyCostsResult>;
@@ -194,6 +198,15 @@ export interface CostApi {
   getAutoSyncIntervalMinutes(): Promise<number>;
   setAutoSyncIntervalMinutes(minutes: number): Promise<void>;
   getAutoSyncStatus(): Promise<AutoSyncStatus>;
+  /** Whether the scheduler automatically prunes out-of-retention local data on
+   *  each run. Off by default. Shares the auto-sync scheduler — enabling it
+   *  starts the scheduler even when auto-download is off. */
+  getAutoPruneEnabled(): Promise<boolean>;
+  setAutoPruneEnabled(enabled: boolean): Promise<void>;
+  /** Delete every local billing period that has fallen outside its tier's
+   *  retention window, across all configured tiers. Returns what was removed.
+   *  Local-only — no S3 access required. */
+  pruneNow(): Promise<PruneResult>;
   syncOrgAccounts(profile: string): Promise<OrgSyncResult>;
   getOrgSyncResult(): Promise<OrgSyncResult | null>;
   getOrgSyncProgress(): Promise<OrgSyncProgress | null>;
