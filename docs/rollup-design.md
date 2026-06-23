@@ -5,13 +5,15 @@
 
 ## 1. Goal
 
-Dashboard widgets currently query raw Parquet directly. Measured cost: **8–12 s
-per widget** for a 60-day window (compute-bound, stable). That is unusable for a
-multi-widget dashboard.
+Dashboard widgets currently query raw Parquet directly, and raw query time
+**scales with the window** — measured ~0.65 s (30-day) up to ~12 s (365-day) for
+a *single* widget. That's too slow for a multi-widget dashboard, and it gets
+worse the further back you look.
 
 A **rollup** — a small, pre-aggregated, on-disk derivative of the raw data —
-serves those same queries in **~0.1–0.2 s for a full 12-month window** (40–100×
-faster). The split:
+serves those same queries in **~50–170 ms regardless of window** (13× faster at
+30 days, up to **72× at 365 days** — see the Appendix for the confirmed
+benchmark). The split:
 
 - **Dashboard widgets → the rollup.**
 - **Cost Explorer + the Table widget → raw.**
@@ -211,15 +213,40 @@ startup (retires the "Loading dimensions N/8" hang).
 
 **Phase 4 — estimator UI + raw-only flagging** (§8).
 
-## Appendix — Phase 0 measurements
+## Appendix — Confirmed benchmark
 
-| Measurement | Result |
+Measured on real data (16 threads, 69 GB RAM; `costMetric=list`, 5 exclusion
+rules; 12 daily months 2025-07…2026-06). **Reproducible** via
+`scripts/rollup-bench.mts`:
+
+```
+COSTGOBLIN_DATA_DIR=…/data/processed COSTGOBLIN_CONFIG_DIR=…/data/config \
+  npx tsx scripts/rollup-bench.mts
+```
+
+It builds the partitions to a temp dir (never touching your data), times raw vs
+rollup, and asserts rollup totals match raw.
+
+**Build & size**
+
+| | Result |
 |---|---|
-| Raw dashboard query (60-day) | **8–12 s / widget** |
-| Rollup query (12-month) | **0.1–0.2 s** |
-| Per-month rollup build | 2–11 s (no spill) |
-| 12-mo rollup build | ~83 s sequential (~20 s parallel) |
-| Rollup size, 12 mo, no `usage_type` | **~85 MB** (5.5M rows, 16× row compression) |
-| Rollup size, 12 mo, + `usage_type` | ~266 MB (19.6M rows, 4.4×) |
-| + `resource_id` | ≈ line-item (bomb) → raw-only |
-| Estimator latency / accuracy | 150–550 ms / −10% stable, +35% high-card (directional) |
+| Per-month build (cold) | median **7.7 s**, max 10.7 s |
+| Full 12-month build (sequential) | **83.7 s** (parallelizable — #383) |
+| Rollup size, 12 mo | **266 MB** / 19.6M rows — **4.4% of the 6.0 GB raw** |
+| Correctness | rollup total == raw total, **0.0000% diff** |
+
+**Query latency — raw Parquet vs rollup glob** (identical window + scope)
+
+| Window | Query | Raw | Rollup | Speedup |
+|---|---|---|---|---|
+| 30-day | cost by service | 0.65 s | 49 ms | **13×** |
+| 30-day | daily by service | 2.56 s | 49 ms | **52×** |
+| 365-day | cost by service | 3.54 s | 99 ms | **36×** |
+| 365-day | daily by service | 11.96 s | 166 ms | **72×** |
+
+The defining property: rollup query time is **~constant (~50–170 ms) across
+window size**, while raw scales with the months scanned. Sizes are with
+`usage_type` in the grain (the real config); dropping it (#380) cuts the rollup
+to ~85 MB. Estimator (deferred, #381): probe ~150–550 ms, directional accuracy
+(≈ −10% stable grains, ≈ +35% high-cardinality — present as bands).
