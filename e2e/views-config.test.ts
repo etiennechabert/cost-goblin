@@ -45,21 +45,14 @@ test.describe('Data Management', () => {
     await expect(page.getByText('S3 sync and local data inventory')).toBeVisible();
   });
 
-  test('shows action buttons: Auto-sync, Delete All, Open Folder, Refresh', async () => {
-    await expect(page.getByText('Auto-sync')).toBeVisible();
+  test('shows action buttons: Prune, Delete All, Open Folder, Refresh', async () => {
+    // Auto-sync / auto-prune / interval moved to the top-menu SchedulerControls
+    // (shown outside settings mode), so they're no longer Data Management
+    // actions. The view keeps the one-off Prune button and the rest.
+    await expect(page.getByRole('button', { name: /Prune/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Delete All Data' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Open Folder' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible();
-  });
-
-  test('auto-sync toggle clicks without crash', async () => {
-    // find the toggle — it's the rounded-full button near "Auto-sync" text
-    const toggle = page.locator('button.rounded-full').filter({ has: page.locator('span.rounded-full') });
-    const count = await toggle.count();
-    if (count > 0) {
-      await toggle.first().click();
-      await toggle.first().click();
-    }
   });
 
   test('org section is visible (either synced or prompt)', async () => {

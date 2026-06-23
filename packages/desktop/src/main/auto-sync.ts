@@ -25,10 +25,10 @@ let running = false;
 let currentIntervalMs = 24 * 60 * 60 * 1000;
 
 /** Minimum / maximum interval the UI can request. Anything sub-hour risks
- *  hammering S3 for a typical multi-tier sync and anything beyond a week
- *  stops feeling like "auto" to the user. */
+ *  hammering S3 for a typical multi-tier sync and the upper bound (one month)
+ *  is the slowest cadence the UI offers ("Monthly"). */
 export const MIN_AUTO_SYNC_INTERVAL_MINUTES = 60;
-export const MAX_AUTO_SYNC_INTERVAL_MINUTES = 7 * 24 * 60;
+export const MAX_AUTO_SYNC_INTERVAL_MINUTES = 31 * 24 * 60;
 export const DEFAULT_AUTO_SYNC_INTERVAL_MINUTES = 24 * 60;
 
 export function getAutoSyncStatus(): AutoSyncStatus {

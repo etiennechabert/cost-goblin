@@ -625,11 +625,11 @@ Pulls account/OU/tag metadata from the AWS Organizations API. Used for:
 Background CUR sync while the app is open.
 
 **Behavior:**
-- Toggleable from the Sync view; persisted in `preferences.json`.
-- When enabled, periodically (default 60 minutes — configurable in `costgoblin.yaml`) checks the inventory for missing or stale periods within the retention window and downloads them.
+- Toggleable from the top menu (left side), alongside auto-prune and the shared schedule interval; persisted in `preferences.json`.
+- When enabled, periodically checks the inventory for missing or stale periods within the retention window and downloads them. The interval is chosen in the top menu (Hourly / Daily / Weekly / Monthly; default Daily) and clamped server-side to [1 hour, 1 month].
 - Status surfaced in the title bar: `disabled`, `idle`, `checking`, `syncing` (with phase + progress), or `error`.
 - Single-instance gate: only one auto-sync run at a time; manual sync interlocks.
-- **Auto-prune** is a separate toggle (off by default; persisted as `autoPrune` in `preferences.json`). On each scheduler run it deletes local periods that have fallen outside each configured tier's retention window. It shares the auto-sync scheduler — the scheduler runs whenever auto-sync *or* auto-prune is on. Pruning is local-only, so it still reclaims disk even when S3 is unreachable, and it runs before the download pass.
+- **Auto-prune** is a separate toggle (off by default; persisted as `autoPrune` in `preferences.json`). On each scheduler run it deletes local periods that have fallen outside each configured tier's retention window. It shares the auto-sync scheduler and interval — the scheduler runs whenever auto-sync *or* auto-prune is on. Pruning is local-only, so it still reclaims disk even when S3 is unreachable, and it runs before the download pass.
 
 #### Feature: Sync View / Data Inventory (MVP)
 

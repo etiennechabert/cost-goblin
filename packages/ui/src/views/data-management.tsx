@@ -73,15 +73,6 @@ export function DataManagement() {
   const [dailySyncState, setDailySyncState] = useState<SyncState>({ status: 'idle' });
   const [hourlySyncState, setHourlySyncState] = useState<SyncState>({ status: 'idle' });
   const [costOptSyncState, setCostOptSyncState] = useState<SyncState>({ status: 'idle' });
-  const autoSyncQuery = useQuery(() => api.getAutoSyncEnabled(), []);
-  const autoSyncIntervalQuery = useQuery(() => api.getAutoSyncIntervalMinutes(), []);
-  const [autoSync, setAutoSync] = useState(false);
-  const [autoSyncLoaded, setAutoSyncLoaded] = useState(false);
-  const [autoSyncInterval, setAutoSyncInterval] = useState(24 * 60);
-  const [autoSyncIntervalLoaded, setAutoSyncIntervalLoaded] = useState(false);
-  const autoPruneQuery = useQuery(() => api.getAutoPruneEnabled(), []);
-  const [autoPrune, setAutoPrune] = useState(false);
-  const [autoPruneLoaded, setAutoPruneLoaded] = useState(false);
 
   // Track the previous server-side status per tier so the poller can detect a
   // syncing→completed/failed transition. Without it, a background auto-sync that
@@ -136,18 +127,6 @@ export function DataManagement() {
     return () => { cancelled = true; clearInterval(timer); };
   }, [api]);
 
-  if (!autoSyncLoaded && autoSyncQuery.status === 'success') {
-    setAutoSyncLoaded(true);
-    setAutoSync(autoSyncQuery.data);
-  }
-  if (!autoSyncIntervalLoaded && autoSyncIntervalQuery.status === 'success') {
-    setAutoSyncIntervalLoaded(true);
-    setAutoSyncInterval(autoSyncIntervalQuery.data);
-  }
-  if (!autoPruneLoaded && autoPruneQuery.status === 'success') {
-    setAutoPruneLoaded(true);
-    setAutoPrune(autoPruneQuery.data);
-  }
   const [showDeleteAll, setShowDeleteAll] = useState(false);
   const [showPrune, setShowPrune] = useState(false);
   const [pruneNotice, setPruneNotice] = useState<string | null>(null);
@@ -449,52 +428,6 @@ export function DataManagement() {
           <p className="text-sm text-text-secondary mt-0.5">S3 sync and local data inventory</p>
         </div>
         <div className="flex items-center gap-4">
-          {/* Scheduler block: auto-sync + its interval and auto-prune share the
-              same background to signal they run together on one schedule. */}
-          <div className="flex items-center gap-3 rounded-lg border border-border bg-bg-tertiary/30 px-3 py-1.5" title="These run together on one schedule: each run downloads missing data (auto-sync) and/or deletes data outside retention (auto-prune).">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-text-secondary">Auto-sync</span>
-              <button
-                type="button"
-                onClick={() => { const next = !autoSync; setAutoSync(next); api.setAutoSyncEnabled(next).catch(() => undefined); }}
-                className={['relative h-5 w-9 rounded-full transition-colors', autoSync ? 'bg-accent' : 'bg-bg-tertiary'].join(' ')}
-              >
-                <span className={['absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', autoSync ? 'translate-x-4' : 'translate-x-0'].join(' ')} />
-              </button>
-              <select
-                value={String(autoSyncInterval)}
-                disabled={!autoSync}
-                onChange={e => {
-                  const next = Number(e.target.value);
-                  setAutoSyncInterval(next);
-                  api.setAutoSyncIntervalMinutes(next).catch(() => undefined);
-                }}
-                title="How often the schedule runs (drives both auto-sync and auto-prune). Keep this at least a day unless you're debugging — each run hits S3."
-                className="rounded-md border border-border bg-bg-secondary px-2 py-1 text-xs text-text-secondary disabled:opacity-40"
-              >
-                <option value="60">Every hour</option>
-                <option value="180">Every 3 hours</option>
-                <option value="360">Every 6 hours</option>
-                <option value="720">Every 12 hours</option>
-                <option value="1440">Once a day</option>
-                <option value="4320">Every 3 days</option>
-                <option value="10080">Once a week</option>
-              </select>
-            </div>
-            <div className="h-5 w-px bg-border" aria-hidden="true" />
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-text-secondary">Auto-prune</span>
-              <button
-                type="button"
-                aria-label="Toggle auto-prune"
-                title="Automatically delete local data older than each tier's retention window whenever the schedule runs. Off by default."
-                onClick={() => { const next = !autoPrune; setAutoPrune(next); api.setAutoPruneEnabled(next).catch(() => undefined); }}
-                className={['relative h-5 w-9 rounded-full transition-colors', autoPrune ? 'bg-accent' : 'bg-bg-tertiary'].join(' ')}
-              >
-                <span className={['absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform', autoPrune ? 'translate-x-4' : 'translate-x-0'].join(' ')} />
-              </button>
-            </div>
-          </div>
           <button
             type="button"
             onClick={() => { setShowPrune(true); }}

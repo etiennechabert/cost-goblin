@@ -94,17 +94,6 @@ describe('DataManagement', () => {
     });
   });
 
-  it('auto-prune toggle persists the new state', async () => {
-    const api = new MockCostApi();
-    const spy = vi.spyOn(api, 'setAutoPruneEnabled');
-    const { user } = renderDataManagement(api);
-    const toggle = await screen.findByRole('button', { name: 'Toggle auto-prune' });
-    await user.click(toggle);
-    await waitFor(() => {
-      expect(spy).toHaveBeenCalledWith(true);
-    });
-  });
-
   it('prune button is disabled when no local data is outside retention', async () => {
     renderDataManagement();
     const pruneBtn = await screen.findByRole('button', { name: /^Prune$/ });
