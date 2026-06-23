@@ -5,6 +5,8 @@ import {
   getEtagFileName,
   getRawDirPrefix,
   parseEtagsJson,
+  extractPeriod,
+  listLocalMonths,
   logger,
 } from '@costgoblin/core';
 import type {
@@ -141,6 +143,15 @@ export function registerSyncHandlers(app: AppContext): void {
 
     await pruneEtagFile(path.join(ctx.dataDir, getEtagFileName(tier)), period, fs);
 
+    // Cascade to the rollup: re-roll the affected month from remaining raw, or
+    // drop its partition if the month is now fully gone. Daily tier only.
+    if (tier === 'daily') {
+      const month = period.slice(0, 7);
+      const monthsLeft = await listLocalMonths(ctx.dataDir, 'daily');
+      if (monthsLeft.includes(month)) app.maintainRollup([month]);
+      else await app.rollupStore.deletePeriod(month);
+    }
+
     if (!removedAny) {
       logger.info(`Delete (${tier}) for ${period}: nothing matched ${prefix}-${period}*`);
     }
@@ -163,7 +174,16 @@ export function registerSyncHandlers(app: AppContext): void {
       syncWorkerIds.delete(syncId);
 
       state.syncStatuses[syncId] = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
-      if (result.filesDownloaded > 0) app.warmupBase();
+      if (result.filesDownloaded > 0) {
+        if (tier === 'daily') {
+          // Re-roll only the daily partitions this sync touched (file replace).
+          const changed = [...new Set(fileEntries.map(e => extractPeriod(e.key)))].filter(p => /^\d{4}-\d{2}$/.test(p));
+          app.maintainRollup(changed);
+        } else {
+          // Hourly / cost-opt don't feed the daily rollup; just refresh caches.
+          app.warmupBase();
+        }
+      }
       return result;
     } catch (err: unknown) {
       syncWorkerIds.delete(syncId);

@@ -24,15 +24,17 @@ import {
   applyOrgTreeRollup,
   buildCostResult,
   buildEntityDetailResult,
+  columnForDimension,
   isOwnerGroupBy,
   mergeCostRowsByEntity,
   resolveAvailablePeriods,
   resolveEntityName,
+  resolveRollupSource,
 } from './query-utils.js';
 import { originStore } from '../query-log.js';
 
 export function registerCostHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getCostScope, getAvailableColumns, runPreparedQuery, materializedBase } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getCostScope, getAvailableColumns, runPreparedQuery, rollupStore } = app;
 
   ipcMain.handle('query:costs', (_event, params: CostQueryParams): Promise<CostResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
@@ -44,7 +46,7 @@ export function registerCostHandlers(app: AppContext): void {
     const availableColumns = await getAvailableColumns(tier);
     const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, tier, params.dateRange);
     if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
-    const matSource = materializedBase.getSource(params.dateRange, tier);
+    const matSource = resolveRollupSource(rollupStore, params.dateRange, tier, [columnForDimension(dimensions, params.groupBy), 'service', 'cost']);
     const isMat = matSource !== undefined;
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const { sql, params: queryParams } = buildCostQuery(params, qcOpts);
@@ -79,7 +81,7 @@ export function registerCostHandlers(app: AppContext): void {
     const availableColumns = await getAvailableColumns(tier);
     const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, tier, params.dateRange);
     if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
-    const matSource = materializedBase.getSource(params.dateRange, tier);
+    const matSource = resolveRollupSource(rollupStore, params.dateRange, tier, [columnForDimension(dimensions, params.groupBy), 'cost']);
     const isMat = matSource !== undefined;
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const { sql, params: queryParams } = buildDailyCostsQuery(params, qcOpts);
@@ -151,7 +153,7 @@ export function registerCostHandlers(app: AppContext): void {
         bySubEntity: [],
       };
     }
-    const matSource = materializedBase.getSource(params.dateRange, tier);
+    const matSource = resolveRollupSource(rollupStore, params.dateRange, tier, [columnForDimension(dimensions, params.dimension), 'service', 'account_id', 'account_name', 'cost']);
     const isMat = matSource !== undefined;
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
     const { sql, params: queryParams } = buildEntityDetailQuery(params, qcOpts);

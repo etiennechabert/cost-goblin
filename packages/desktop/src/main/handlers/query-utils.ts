@@ -25,8 +25,34 @@ import type {
   OrgNode,
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
+import type { RollupStore } from '../rollup-store.js';
 
 export type EffortLevel = 'VeryLow' | 'Low' | 'Medium' | 'High';
+
+/** The grain column a dimension id resolves to (built-in `field` or tag column),
+ *  mirroring builder.ts resolveField. Used to gate a query against the rollup
+ *  grain — an unknown/disabled dim returns its raw id, which won't be in-grain. */
+export function columnForDimension(dimensions: DimensionsConfig, dimId: string): string {
+  const builtIn = dimensions.builtIn.find(d => d.name === dimId);
+  if (builtIn !== undefined) return builtIn.field;
+  const tag = dimensions.tags.find(t => tagDimColumn(t) === dimId);
+  if (tag !== undefined) return tagDimColumn(tag);
+  return dimId;
+}
+
+/** Resolve the rollup source for a dashboard query, or undefined to use raw.
+ *  Gates on the RollupStore (daily tier, every touched period valid, every
+ *  needed column in-grain). The caller still applies its own date-range WHERE —
+ *  the rollup glob spans all months, so it is NOT pre-windowed like the old
+ *  in-memory base. */
+export function resolveRollupSource(
+  rollupStore: RollupStore,
+  dateRange: { readonly start: string; readonly end: string },
+  tier: 'daily' | 'hourly',
+  neededColumns: readonly string[],
+): string | undefined {
+  return rollupStore.resolveSource({ requiredPeriods: computePeriodsInRange(dateRange), tier, neededColumns });
+}
 
 const EFFORT_LEVELS = new Set<string>(['VeryLow', 'Low', 'Medium', 'High']);
 
