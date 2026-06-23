@@ -1,7 +1,8 @@
 import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import { LRUCache } from '../lru-cache.js';
 import { QueryLog } from '../query-log.js';
-import { MaterializedBase, configHash, awaitWithTimeout } from '../materialized-base.js';
+import { awaitWithTimeout } from '../async-timeout.js';
+import { RollupStore, type BuildPartitionSql, type RollupShape } from '../rollup-store.js';
 import {
   asDimensionId,
   applyNormalizationRule,
@@ -13,10 +14,13 @@ import {
   loadViews,
   loadCostScope,
   mergeBuiltInExclusionRules,
-  buildMaterializeBaseQuery,
+  buildRollupPartitionQuery,
+  computeShapeSignature,
+  computeOrgAccountsDigest,
+  rollupGrainColumns,
+  parseEtagsJson,
+  getEtagFileName,
   listLocalMonths,
-  computePeriodsInRange,
-  DEFAULT_LAG_DAYS,
   logger,
   isStringRecord,
 } from '@costgoblin/core';
@@ -150,7 +154,8 @@ export interface AppContext {
    *  explicit reset via invalidateColumnCache. */
   readonly getAvailableColumns: (tier: 'daily' | 'hourly') => Promise<ReadonlySet<string>>;
   readonly queryLog: QueryLog;
-  readonly materializedBase: MaterializedBase;
+  /** Persistent per-period pre-aggregated rollup backing dashboard queries. */
+  readonly rollupStore: RollupStore;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly runPreparedQuery: (sql: string, params: readonly unknown[], materialized?: boolean) => Promise<RawRow[]>;
   readonly invalidateConfig: () => void;
@@ -159,6 +164,8 @@ export interface AppContext {
   readonly invalidateCostScope: () => void;
   readonly invalidateColumnCache: () => void;
   readonly warmupBase: () => void;
+  /** Re-roll the rollup partitions for the periods a sync changed. */
+  readonly maintainRollup: (changedPeriods: readonly string[]) => void;
   /** Resolve once the latest cost_base warmup settles (true if the base is
    *  ready, false if it timed out or no base was built). Lets the renderer
    *  hold the startup prewarm until the in-memory base exists, so those probes
@@ -430,7 +437,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
   }
 
   const queryLog = new QueryLog();
-  const materializedBase = new MaterializedBase();
+  const rollupStore = new RollupStore({ dataDir: ctx.dataDir, runQuery: (sql) => ctx.db.runQuery(sql) });
   const resultCache = new LRUCache<string, RawRow[]>(50);
 
   const wrappedRunQuery = queryLog.wrapQuery((sql, onStarted) => ctx.db.runQuery(sql, onStarted));
@@ -473,48 +480,83 @@ export function createAppContext(ctx: IpcContext): AppContext {
     });
   };
 
-  async function warmupBase(): Promise<void> {
-    try {
-      const config = await getConfig();
-      const dimensions = await getQueryDimensions();
-      const costScope = await getCostScope().catch(() => undefined);
-      const accountReverseMap = await getAccountReverseMap();
-      const orgPath = await getOrgAccountsPath();
-      const availableColumns = await getAvailableColumns('daily');
-      const lagDays = costScope?.lagDays ?? DEFAULT_LAG_DAYS;
-      const dayMs = 86_400_000;
-      const end = new Date(Date.now() - lagDays * dayMs);
-      const retentionDays = config.providers[0]?.sync.daily.retentionDays ?? 30;
-      // Materialize 60 days (or retention limit) so the summary widget's
-      // previous-period comparison and the trends view can both hit the
-      // in-memory table instead of falling back to raw Parquet.
-      const windowDays = Math.min(retentionDays, 60);
-      const start = new Date(Date.now() - (windowDays + lagDays) * dayMs);
-      const dateRange = {
-        start: start.toISOString().slice(0, 10),
-        end: end.toISOString().slice(0, 10),
-      };
-      const available = await listLocalMonths(ctx.dataDir, 'daily');
-      const required = computePeriodsInRange(dateRange);
-      const periods = required.filter(p => available.includes(p));
-      if (periods.length === 0) return;
+  async function getRollupShape(): Promise<RollupShape> {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const dimensions = await getQueryDimensions();
+    const costScope = await getCostScope().catch(() => undefined);
+    const availableColumns = await getAvailableColumns('daily');
+    let orgRaw = '';
+    try { orgRaw = await fs.readFile(path.join(path.dirname(ctx.dataDir), 'org-accounts.json'), 'utf-8'); } catch { /* no org sync yet */ }
+    const signature = computeShapeSignature({
+      dimensions,
+      costMetric: costScope?.costMetric ?? 'unblended',
+      costPerspective: costScope?.costPerspective ?? 'gross',
+      rules: costScope?.rules ?? [],
+      orgAccountsDigest: computeOrgAccountsDigest(orgRaw),
+      availableColumns: [...availableColumns],
+    });
+    return { signature, grainDimensions: rollupGrainColumns(dimensions), availableColumns: [...availableColumns] };
+  }
 
-      const hash = configHash(dimensions, costScope);
-      const sql = buildMaterializeBaseQuery('daily', dateRange, {
-        dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath,
-        availablePeriods: periods, accountReverseMap, costScope, availableColumns,
-      });
-      await materializedBase.materialize(
-        (s) => ctx.db.runQuery(s),
-        sql, dateRange, 'daily', hash,
-      );
+  async function getEtagsByPeriod(): Promise<Record<string, Record<string, string>>> {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    try {
+      const raw = await fs.readFile(path.join(ctx.dataDir, getEtagFileName('daily')), 'utf-8');
+      return parseEtagsJson(raw);
+    } catch { return {}; }
+  }
+
+  async function buildRollupSqlFor(): Promise<BuildPartitionSql> {
+    const dimensions = await getQueryDimensions();
+    const orgPath = await getOrgAccountsPath();
+    const accountReverseMap = await getAccountReverseMap();
+    const costScope = await getCostScope().catch(() => undefined);
+    const availableColumns = await getAvailableColumns('daily');
+    return (period, outPath) => buildRollupPartitionQuery(period, 'daily', outPath, {
+      dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, accountReverseMap, costScope, availableColumns,
+    });
+  }
+
+  // Warm-load the persisted rollup: validate the manifest against the current
+  // shape + raw etags (fast, sets readiness), then BACKGROUND-build any missing
+  // or stale daily partitions (recent months first). Never blocks the app.
+  async function warmupRollup(): Promise<void> {
+    try {
+      const shape = await getRollupShape();
+      const etags = await getEtagsByPeriod();
+      const validation = await rollupStore.loadAndValidate(shape, etags);
+      const available = await listLocalMonths(ctx.dataDir, 'daily');
+      const toBuild = available.filter(p => !validation.validPeriods.has(p)).sort((a, b) => b.localeCompare(a));
+      if (toBuild.length === 0) return;
+      const buildSql = await buildRollupSqlFor();
+      void rollupStore.maintainPeriods(toBuild, buildSql, etags, shape).then(() => { resultCache.clear(); });
     } catch (err: unknown) {
-      logger.warn(`warmup-base: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(`rollup-warmup: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Re-roll only the periods a sync changed (file replace), then drop cached
+  // results so dashboards re-render from the fresh partitions.
+  async function maintainRollupForPeriods(changed: readonly string[]): Promise<void> {
+    try {
+      const available = await listLocalMonths(ctx.dataDir, 'daily');
+      const periods = changed.filter(p => available.includes(p));
+      if (periods.length === 0) return;
+      const shape = await getRollupShape();
+      const etags = await getEtagsByPeriod();
+      if (!rollupStore.isReady()) await rollupStore.loadAndValidate(shape, etags);
+      const buildSql = await buildRollupSqlFor();
+      await rollupStore.maintainPeriods(periods, buildSql, etags, shape, { force: true });
+      resultCache.clear();
+    } catch (err: unknown) {
+      logger.warn(`rollup-maintain: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   let warmupInFlight: Promise<void> = Promise.resolve();
-  function triggerWarmup(): void { warmupInFlight = warmupBase().catch(() => undefined); }
+  function triggerWarmup(): void { warmupInFlight = warmupRollup().catch(() => undefined); }
 
   return {
     ctx,
@@ -531,24 +573,27 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getOrgAccountsPath,
     getAvailableColumns,
     queryLog,
-    materializedBase,
+    rollupStore,
     runQuery,
     runPreparedQuery,
     invalidateConfig: () => { state.config = null; },
     invalidateDimensions: () => {
       state.dimensions = null; state.accountMap = null; state.accountReverseMap = null; state.regionMap = null; state.orgAccountsPath = null;
-      void materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); }).then(() => { triggerWarmup(); });
+      // A dimensions change can alter the rollup grain/projection → drop the
+      // persisted rollup and rebuild under the new shape-signature.
+      void rollupStore.invalidate().then(() => { resultCache.clear(); triggerWarmup(); });
     },
     invalidateViews: () => { state.views = null; },
     invalidateCostScope: () => {
       state.costScope = null;
-      void materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); }).then(() => { triggerWarmup(); });
+      void rollupStore.invalidate().then(() => { resultCache.clear(); triggerWarmup(); });
     },
     invalidateColumnCache: () => { columnCache.clear(); },
     warmupBase: () => { resultCache.clear(); triggerWarmup(); },
+    maintainRollup: (changedPeriods: readonly string[]) => { void maintainRollupForPeriods(changedPeriods); },
     awaitWarmup: async (timeoutMs: number): Promise<boolean> => {
       await awaitWithTimeout(warmupInFlight, timeoutMs);
-      return materializedBase.isReady();
+      return rollupStore.isReady();
     },
     clearAllCaches: async (): Promise<void> => {
       ctx.db.cancelPendingQueries();
@@ -562,7 +607,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
       state.costScope = null;
       columnCache.clear();
       inflightQueries.clear();
-      await materializedBase.drop((s) => ctx.db.runQuery(s), () => { resultCache.clear(); });
+      await rollupStore.invalidate();
+      resultCache.clear();
       triggerWarmup();
     },
   };

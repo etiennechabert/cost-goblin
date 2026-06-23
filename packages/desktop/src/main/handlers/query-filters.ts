@@ -9,6 +9,8 @@ import {
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 import {
+  columnForDimension,
+  resolveRollupSource,
   toNum,
   toStr,
 } from './query-utils.js';
@@ -115,7 +117,7 @@ function mergeAccountRows(
 }
 
 export function registerFilterHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery, materializedBase } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery, rollupStore } = app;
 
   ipcMain.handle('query:filter-values', (_event, dimensionId: string, filterEntries: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]> => originStore.run(origin ?? null, async () => {
     const dimensions = await getDimensions();
@@ -130,15 +132,18 @@ export function registerFilterHandlers(app: AppContext): void {
 
     const matSource = dateRange === undefined
       ? undefined
-      : materializedBase.getSource(dateRange, 'daily');
+      : resolveRollupSource(rollupStore, dateRange, 'daily', [columnForDimension(dimensions, dimensionId), 'cost']);
 
     const filterClauses = buildFilterWhereClauses(filterEntries, dimensions, accountReverseMap, qb);
+    // Exclusions are baked into the rollup; only apply them on the raw path.
     const exclusionClauses = matSource === undefined
       ? buildExclusionWhereClauses(costScope, dimensions, accountReverseMap, qb)
       : [];
     const whereClauses = [...filterClauses, ...exclusionClauses];
 
-    if (dateRange !== undefined && matSource === undefined) {
+    // The rollup glob spans all months (NOT pre-windowed like the old in-memory
+    // base), so the date filter must be applied on BOTH paths.
+    if (dateRange !== undefined) {
       const startParam = qb.addParam(dateRange.start);
       const endParam = qb.addParam(dateRange.end);
       whereClauses.push(`usage_date BETWEEN ${startParam} AND ${endParam}`);

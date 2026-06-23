@@ -16,8 +16,6 @@ import {
   tagDimColumn,
 } from '@costgoblin/core';
 import type {
-  CostMetric,
-  CostPerspective,
   ExclusionRule,
   ExplorerBaseParams,
   ExplorerFilterMap,
@@ -39,6 +37,7 @@ import type {
 } from '@costgoblin/core';
 import { type AppContext, prefsPath } from './context.js';
 import { buildAccountReverseMap, toNum, toStr } from './query-utils.js';
+import { resolveScopeMetric, resolveScopePerspective } from './explorer-scope.js';
 
 const DEFAULT_WINDOW_DAYS = 30;
 const MAX_ROW_LIMIT = 1000;
@@ -114,17 +113,6 @@ const SORTABLE_SCALAR_COLUMNS: ReadonlySet<string> = new Set([
 function clampRowLimit(n: number): number {
   if (!Number.isFinite(n) || n <= 0) return 500;
   return Math.min(Math.floor(n), MAX_ROW_LIMIT);
-}
-
-function pickMetric(metric: CostMetric | undefined, cols: ReadonlySet<string>): CostMetric {
-  if (metric === 'amortized' && cols.has('reservation_effective_cost') && cols.has('savings_plan_savings_plan_effective_cost')) return 'amortized';
-  if (metric === 'list' && cols.has('pricing_public_on_demand_cost')) return 'list';
-  return 'unblended';
-}
-
-function pickPerspective(p: CostPerspective | undefined, cols: ReadonlySet<string>): CostPerspective {
-  if (p === 'net' && cols.has('line_item_net_unblended_cost')) return 'net';
-  return 'gross';
 }
 
 function buildExplorerFilterPredicate(
@@ -257,8 +245,12 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
   const availableColumns = await getAvailableColumns(tier);
   const applyCostScope = params.applyCostScope === true;
   const costScope = applyCostScope ? await getCostScope().catch(() => undefined) : undefined;
-  const metric = pickMetric(params.costMetric, availableColumns);
-  const perspective = pickPerspective(params.costPerspective, availableColumns);
+  // When the caller applies the cost scope but doesn't override the metric /
+  // perspective (every dashboard widget — only the Explorer view sets them
+  // explicitly), inherit them from the global scope instead of silently
+  // defaulting to unblended/gross. Both stay capability-gated.
+  const metric = resolveScopeMetric(params.costMetric, applyCostScope, costScope, availableColumns);
+  const perspective = resolveScopePerspective(params.costPerspective, applyCostScope, costScope, availableColumns);
 
   const source = buildSource({ dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath, periods, costMetric: metric, availableColumns, costPerspective: perspective });
   const exclusions = buildExclusionClauses(costScope, dimensions, accountReverseMap);

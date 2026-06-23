@@ -5,6 +5,8 @@ import {
   getEtagFileName,
   getRawDirPrefix,
   parseEtagsJson,
+  extractPeriod,
+  listLocalMonths,
   configuredTierRetentions,
   periodsOutsideRetention,
   logger,
@@ -131,6 +133,22 @@ export async function deleteLocalPeriodFiles(
   return removedAny;
 }
 
+/** Cascade a deleted daily month into the rollup: re-roll it from the raw
+ *  that's left, or drop its partition if the month is now fully gone. Daily
+ *  tier only — hourly / cost-opt don't feed the daily rollup. Shared by the
+ *  manual delete/prune handlers and auto-prune. */
+export async function cascadeRollupForDeletedMonth(app: AppContext, month: string): Promise<void> {
+  const monthsLeft = await listLocalMonths(app.ctx.dataDir, 'daily');
+  if (monthsLeft.includes(month)) app.maintainRollup([month]);
+  else await app.rollupStore.deletePeriod(month);
+}
+
+/** Periods (etag keys / dir names) → the unique YYYY-MM rollup partitions they
+ *  touch, for re-rolling the daily rollup after a sync or delete. */
+export function changedRollupMonths(periods: readonly string[]): string[] {
+  return [...new Set(periods.map(p => p.slice(0, 7)))].filter(p => /^\d{4}-\d{2}$/.test(p));
+}
+
 export function registerSyncHandlers(app: AppContext): void {
   const { ctx, state, getConfig } = app;
   const syncWorkerIds = new Map<string, number>();
@@ -162,6 +180,7 @@ export function registerSyncHandlers(app: AppContext): void {
 
   ipcMain.handle('data:delete-period', async (_event, period: string, tier: ExpectedDataType = 'daily'): Promise<void> => {
     await deleteLocalPeriodFiles(ctx.dataDir, period, tier);
+    if (tier === 'daily') await cascadeRollupForDeletedMonth(app, period.slice(0, 7));
   });
 
   // Manual prune: drop every local period that has fallen outside its tier's
@@ -181,6 +200,10 @@ export function registerSyncHandlers(app: AppContext): void {
         const removed = await deleteLocalPeriodFiles(ctx.dataDir, period, tier);
         if (removed) deleted.push({ tier, period });
       }
+    }
+    // Cascade the prune into the rollup, once per unique daily month removed.
+    for (const month of changedRollupMonths(deleted.filter(d => d.tier === 'daily').map(d => d.period))) {
+      await cascadeRollupForDeletedMonth(app, month);
     }
     if (deleted.length > 0) {
       logger.info(`Prune: removed ${String(deleted.length)} period(s) outside retention`);
@@ -205,7 +228,15 @@ export function registerSyncHandlers(app: AppContext): void {
       syncWorkerIds.delete(syncId);
 
       state.syncStatuses[syncId] = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
-      if (result.filesDownloaded > 0) app.warmupBase();
+      if (result.filesDownloaded > 0) {
+        if (tier === 'daily') {
+          // Re-roll only the daily partitions this sync touched (file replace).
+          app.maintainRollup(changedRollupMonths(fileEntries.map(e => extractPeriod(e.key))));
+        } else {
+          // Hourly / cost-opt don't feed the daily rollup; just refresh caches.
+          app.warmupBase();
+        }
+      }
       return result;
     } catch (err: unknown) {
       syncWorkerIds.delete(syncId);

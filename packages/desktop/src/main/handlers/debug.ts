@@ -19,7 +19,8 @@ export function registerDebugHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('debug:materialized-status', () => {
-    return app.materializedBase.getCurrentState();
+    // The in-memory materialized base was replaced by the persistent RollupStore.
+    return { ready: app.rollupStore.isReady(), validPeriods: [...app.rollupStore.getValidPeriods()] };
   });
 
   ipcMain.handle('debug:clear-completed', () => {

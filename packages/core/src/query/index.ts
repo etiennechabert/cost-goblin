@@ -7,6 +7,7 @@ export {
   buildEntityDetailQuery,
   buildSource,
   buildMaterializeBaseQuery,
+  buildRollupPartitionQuery,
   buildRuleMatchExpr,
   computePeriodsInRange,
 } from './builder.js';

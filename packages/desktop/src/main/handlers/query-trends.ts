@@ -13,14 +13,16 @@ import type {
 import type { AppContext } from './context.js';
 import {
   buildTrendResult,
+  columnForDimension,
   mergeTrendRowsByEntity,
   resolveAvailablePeriods,
   resolveEntityName,
+  resolveRollupSource,
 } from './query-utils.js';
 import { originStore } from '../query-log.js';
 
 export function registerTrendHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery, materializedBase } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery, rollupStore } = app;
 
   ipcMain.handle('query:trends', (_event, params: TrendQueryParams): Promise<TrendResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
@@ -40,7 +42,9 @@ export function registerTrendHandlers(app: AppContext): void {
     const durationDays = Math.round((endMs - startMs) / dayMs) + 1;
     const prevStart = new Date(startMs - durationDays * dayMs).toISOString().slice(0, 10);
     const fullRange = { start: prevStart, end: params.dateRange.end };
-    const matSource = materializedBase.getSource(fullRange, 'daily');
+    // Coverage must include the previous-period span (fullRange), or trends
+    // under-reports previous_cost. resolveRollupSource checks every touched month.
+    const matSource = resolveRollupSource(rollupStore, fullRange, 'daily', [columnForDimension(dimensions, params.groupBy), 'cost']);
     const isMat = matSource !== undefined;
 
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };

@@ -9,6 +9,7 @@ import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize
 import { costExprFor, LIST_METRIC_LINE_ITEM_TYPES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
 import { assertDateString, assertHourString, SecurityError } from './identifier-validator.js';
+import { rollupGrainColumns } from '../rollup/grain.js';
 
 function assertFiniteNumber(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
@@ -952,4 +953,71 @@ export function buildMaterializeBaseQuery(
   ];
 
   return `CREATE OR REPLACE TABLE cost_base AS SELECT * FROM ${source} WHERE ${whereConditions.join(' AND ')}`;
+}
+
+/** First day of the month after `period` (YYYY-MM), as a YYYY-MM-DD upper bound
+ *  (exclusive) for that period's day range. */
+function periodUpperBound(period: string): string {
+  const y = Number(period.slice(0, 4));
+  const m = Number(period.slice(5, 7));
+  const year = m === 12 ? y + 1 : y;
+  const month = m === 12 ? 1 : m + 1;
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-01`;
+}
+
+/** Build the DDL that materializes ONE month's PRE-AGGREGATED rollup partition
+ *  to Parquet. Grain = usage_date + enabled dimension columns (see
+ *  `rollupGrainColumns`); measures = SUM(cost) + COUNT(*) AS line_items. The
+ *  active cost metric/perspective are baked into `cost`, exclusion rows are
+ *  dropped at build time, and ALL days are ingested (lagDays stays a query-time
+ *  filter). Dimension values are stored RAW — aliasing remains query-time.
+ *
+ *  `buildSource` runs over the FULL dimensions (so exclusion rules referencing
+ *  a disabled dim such as line_item_type still resolve); the GROUP BY is what
+ *  collapses non-grain columns away.
+ *
+ *  Like buildMaterializeBaseQuery this interpolates escaped literals (DuckDB
+ *  has no prepared DDL); `period` is validated and `outPath` is app-controlled
+ *  and quote-escaped. */
+export function buildRollupPartitionQuery(
+  period: string,
+  tier: string,
+  outPath: string,
+  opts: QueryContextOptions,
+): string {
+  if (!/^\d{4}-\d{2}$/.test(period)) {
+    throw new SecurityError(`Invalid rollup period "${period}" — expected YYYY-MM.`);
+  }
+  const { dataDir, dimensions, orgAccountsPath, accountReverseMap, costScope, availableColumns } = opts;
+  const grain = rollupGrainColumns(dimensions);
+  const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
+
+  const source = buildSource({
+    dataDir, tier, dimensions, orgAccountsPath, periods: [period],
+    costMetric, availableColumns, costPerspective, includeRawTags: false, slim: true,
+  });
+
+  const exclusionClauses: string[] = [];
+  if (costScope !== undefined) {
+    for (const rule of costScope.rules) {
+      if (!rule.enabled) continue;
+      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
+      if (matchExpr === null) continue;
+      exclusionClauses.push(`NOT (${matchExpr})`);
+    }
+  }
+
+  const start = `${period}-01`;
+  const end = periodUpperBound(period);
+  assertDateString(start);
+  assertDateString(end);
+
+  const whereConditions = [`usage_date >= '${start}'`, `usage_date < '${end}'`, ...exclusionClauses];
+  const groupBy = grain.join(', ');
+  const select =
+    `SELECT ${groupBy}, CAST(SUM(cost) AS DOUBLE) AS cost, CAST(COUNT(*) AS BIGINT) AS line_items ` +
+    `FROM ${source} WHERE ${whereConditions.join(' AND ')} GROUP BY ${groupBy}`;
+  const escapedPath = outPath.replaceAll("'", "''");
+  return `COPY (${select}) TO '${escapedPath}' (FORMAT PARQUET)`;
 }
