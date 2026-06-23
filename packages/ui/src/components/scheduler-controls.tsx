@@ -38,7 +38,8 @@ function Toggle({ on, label, ariaLabel, title, onToggle }: Readonly<ToggleProps>
 }
 
 /** Auto-sync + auto-prune toggles and the shared schedule interval. Lives in
- *  the top menu (not the Sync view) because the schedule runs app-wide. The
+ *  Settings → Data & Sync alongside the manual sync/prune controls it automates
+ *  (not the dashboard toolbar — the schedule isn't a per-view concern). The
  *  interval drives both auto-sync and auto-prune, so it stays enabled whenever
  *  either is on. */
 export function SchedulerControls() {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, SchedulerControls } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
 import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
@@ -889,7 +889,6 @@ function AppShell(): React.JSX.Element {
               );
             })}
           </nav>
-            <SchedulerControls />
           </div>
           ) : (
             <div className="flex items-center gap-2 [-webkit-app-region:no-drag]">

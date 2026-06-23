@@ -9,6 +9,7 @@ import { OrgAccountsSection } from './data-management-org.js';
 import { SsmParameterSection } from './data-management-ssm.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
 import { SsoLoginButton } from '../components/sso-login-button.js';
+import { SchedulerControls } from '../components/scheduler-controls.js';
 
 function syncStatusToState(s: SyncStatus): SyncState | null {
   if (s.status === 'syncing') {
@@ -466,6 +467,19 @@ export function DataManagement() {
           {pruneNotice}
         </div>
       )}
+
+      {/* Automatic schedule — drives the background auto-sync + auto-prune, so
+          it lives with the rest of the Data & Sync controls rather than the
+          top toolbar. */}
+      <div className="flex items-center justify-between rounded-xl border border-border bg-bg-secondary/50 px-4 py-3">
+        <div>
+          <h3 className="text-sm font-semibold text-text-primary">Automatic schedule</h3>
+          <p className="text-xs text-text-muted mt-0.5">
+            Run sync (and optionally prune) in the background on a fixed cadence. The interval drives both and is disabled while both are off.
+          </p>
+        </div>
+        <SchedulerControls />
+      </div>
 
       {/* Account mapping */}
       <OrgAccountsSection profile={awsProfile} />
