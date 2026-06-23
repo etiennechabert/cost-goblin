@@ -70,8 +70,16 @@ async function main() {
     await settle();
   }
 
-  async function openOptionsMenu() {
-    await page.getByRole('button', { name: 'Options', exact: true }).click();
+  async function openSettingsTab(label: string) {
+    const gear = page.getByRole('button', { name: 'Settings', exact: true });
+    if ((await gear.getAttribute('aria-expanded').catch(() => null)) !== 'true') await gear.click();
+    await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: label, exact: true }).click();
+    await page.waitForTimeout(150);
+  }
+
+  async function exitSettings() {
+    const gear = page.getByRole('button', { name: 'Settings', exact: true });
+    if ((await gear.getAttribute('aria-expanded').catch(() => null)) === 'true') await gear.click();
     await page.waitForTimeout(150);
   }
 
@@ -94,12 +102,12 @@ async function main() {
   console.log('✓ hero-final-service.png');
 
   // --- Views (dashboard builder) ---
-  await openOptionsMenu();
-  await page.getByRole('button', { name: 'Views Editor' }).click();
+  await openSettingsTab('Dashboards');
   await page.getByRole('heading', { name: 'Views', exact: true }).waitFor({ timeout: 5000 });
   await settle();
   await page.screenshot({ path: join(OUTPUT_DIR, 'views.png') });
   console.log('✓ views.png');
+  await exitSettings();
 
   // --- Trends ---
   await page.getByRole('button', { name: 'Trends', exact: true }).first().click();
@@ -142,8 +150,7 @@ async function main() {
   console.log('✓ explorer.png');
 
   // --- Dimensions ---
-  await openOptionsMenu();
-  await page.getByRole('button', { name: 'Dimensions', exact: true }).click();
+  await openSettingsTab('Dimensions');
   await page.getByRole('heading', { name: 'Dimensions', exact: true }).waitFor({ timeout: 5000 });
   await settle();
   await page.screenshot({ path: join(OUTPUT_DIR, 'dimensions.png') });

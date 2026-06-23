@@ -2,6 +2,10 @@ import { test, expect, _electron, type ElectronApplication, type Page } from '@p
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
+import { clickNavButton, ensureViewMode } from './helpers.js';
+
+// Page names that now live behind the Settings gear rather than the top nav.
+const SETTINGS_NAMES = new Set(['Cost Scope', 'Dimensions', 'Views', 'Sync', 'AI Assistant']);
 
 const ROOT = join(import.meta.dirname, '..');
 const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
@@ -238,7 +242,12 @@ async function navigateAndCollect(
   viewName: string,
 ): Promise<void> {
   await clearQueryLog(page);
-  await page.getByRole('button', { name: buttonName, exact: true }).first().click();
+  if (SETTINGS_NAMES.has(buttonName)) {
+    await clickNavButton(page, buttonName);
+  } else {
+    await ensureViewMode(page);
+    await page.getByRole('button', { name: buttonName, exact: true }).first().click();
+  }
   await expect(page.getByRole('heading', { name: headingName })).toBeVisible({ timeout: 10_000 });
   // Wait for loading to finish
   try {
@@ -449,7 +458,7 @@ test.describe('Query Performance Diagnostics', () => {
 
   test('Cost Scope', async () => {
     await clearQueryLog(page);
-    await page.getByRole('button', { name: 'Cost Scope', exact: true }).first().click();
+    await clickNavButton(page, 'Cost Scope');
     await expect(page.getByRole('heading', { name: 'Cost Scope' })).toBeVisible({ timeout: 10_000 });
     // Cost Scope has its own preview loading mechanism
     await page.waitForTimeout(400);

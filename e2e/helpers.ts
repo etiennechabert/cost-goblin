@@ -104,29 +104,37 @@ export async function hasVisibleData(page: Page): Promise<boolean> {
   return text !== null && text.includes('$') && !text.includes('$0.00');
 }
 
-// The top-menu rework moved a number of items behind popovers. Tests that
-// reach for a nav button by name no longer want to know whether that button
-// is inline or hidden in the Dashboards / Options popover — clickNavButton
-// dispatches based on where the item lives.
+// The settings rework split the app into "view mode" (looking at cost data) and
+// "setting mode" (a full-canvas SettingsShell behind a single gear). Tests reach
+// for a page by its historical name; clickNavButton hides where it now lives:
 //
-// - Inline top-bar items: kept in DIRECT_NAV. Icon-only when inactive, but
-//   their aria-label still matches their human name so getByRole('button',
-//   { name }) finds them either way.
-// - Items behind the Options (☰) popover: settings pages and the AI tool.
-// - Anything else is assumed to be a custom dashboard living inside the
-//   Dashboards popover (Cost Overview, plus whatever views.yaml defines).
-const OPTIONS_ITEMS = new Set(['Cost Scope', 'Dimensions', 'Views Editor', 'AI Assistant']);
-const DIRECT_NAV = new Set(['Trends', 'Findings', 'Tags', 'Explorer', 'Sync', 'Dashboards', 'Options', 'Home']);
+// - View-mode pages (Trends/Findings/Tags/Explorer + custom dashboards) live in
+//   the left nav / Dashboards popover, only visible while NOT in setting mode.
+// - Configuration pages are tabs in the settings rail, reached by opening the
+//   gear ("Settings") and clicking the tab by its registry label.
+const DIRECT_NAV = new Set(['Trends', 'Findings', 'Tags', 'Explorer', 'Dashboards', 'Home']);
+// Historical test name → settings rail tab label. (Views Editor is now the
+// "Dashboards" tab; Sync is the "Data & Sync" tab.)
+const SETTINGS_ITEMS: Record<string, string> = {
+  'Cost Scope': 'Cost Scope',
+  'Dimensions': 'Dimensions',
+  'Views Editor': 'Dashboards',
+  'AI Assistant': 'AI Assistant',
+  'Sync': 'Data & Sync',
+  'General': 'General',
+  'Sharing': 'Sharing',
+  'Performance': 'Performance',
+};
 const NAV_ALIASES: Record<string, string> = { Views: 'Views Editor' };
 // Both top-bar <nav> elements have aria-labels — scope direct-nav lookups
 // to them so we never pick up a same-named button living inside a view
 // (e.g. "Sync region names" in DataManagement, "Trends" in some chart).
 const LEFT_NAV_LABEL = 'Dashboards and analysis';
 const RIGHT_NAV_LABEL = 'Sync and settings';
+export const SETTINGS_NAV_LABEL = 'Settings sections';
 const NAV_SIDE: Record<string, 'left' | 'right'> = {
   Trends: 'left', Findings: 'left', Tags: 'left', Explorer: 'left',
   Dashboards: 'left', Home: 'left',
-  Sync: 'right', Options: 'right',
 };
 
 async function openIfClosed(trigger: ReturnType<Page['getByRole']>): Promise<void> {
@@ -143,6 +151,25 @@ function topNav(page: Page, side: 'left' | 'right'): ReturnType<Page['getByRole'
   return page.getByRole('navigation', { name: side === 'left' ? LEFT_NAV_LABEL : RIGHT_NAV_LABEL });
 }
 
+function settingsGear(page: Page): ReturnType<Page['getByRole']> {
+  return topNav(page, 'right').getByRole('button', { name: 'Settings', exact: true });
+}
+
+/** Enter setting mode (open the gear) if not already in it. Idempotent: the gear
+ *  reflects its state via aria-expanded, so we never accidentally toggle out. */
+export async function openSettings(page: Page): Promise<void> {
+  const gear = settingsGear(page);
+  const expanded = await gear.getAttribute('aria-expanded').catch(() => null);
+  if (expanded !== 'true') await gear.click();
+}
+
+/** Return to view mode if currently in setting mode. Idempotent. */
+export async function ensureViewMode(page: Page): Promise<void> {
+  const gear = settingsGear(page);
+  const expanded = await gear.getAttribute('aria-expanded').catch(() => null);
+  if (expanded === 'true') await gear.click();
+}
+
 export async function openDashboardsDropdown(page: Page): Promise<void> {
   const trigger = topNav(page, 'left').getByRole('button', { name: 'Dashboards', exact: false }).first();
   // The Dashboards trigger now doubles as a Home button: if the user isn't
@@ -154,22 +181,20 @@ export async function openDashboardsDropdown(page: Page): Promise<void> {
   if (expanded !== 'true') await trigger.click();
 }
 
-export async function openOptionsMenu(page: Page): Promise<void> {
-  await openIfClosed(topNav(page, 'right').getByRole('button', { name: 'Options', exact: true }));
-}
-
 export async function clickNavButton(page: Page, name: string): Promise<void> {
   const resolved = NAV_ALIASES[name] ?? name;
-  if (OPTIONS_ITEMS.has(resolved)) {
-    await openOptionsMenu(page);
-    await page.getByRole('button', { name: resolved, exact: false }).click();
+  const railLabel = SETTINGS_ITEMS[resolved];
+  if (railLabel !== undefined) {
+    await openSettings(page);
+    await page.getByRole('navigation', { name: SETTINGS_NAV_LABEL })
+      .getByRole('button', { name: railLabel, exact: true }).click();
     return;
   }
+  // View-mode target — leave setting mode first so the left nav / Dashboards
+  // popover is on screen.
+  await ensureViewMode(page);
   if (DIRECT_NAV.has(resolved)) {
     const side = NAV_SIDE[resolved] ?? 'left';
-    // Substring match (not start-anchored) — the Sync button's accessible
-    // name can be e.g. "sync error Sync !" once status badges decorate it,
-    // so anchoring on ^Sync would never match.
     await topNav(page, side).getByRole('button', { name: resolved, exact: false }).first().click();
     return;
   }
