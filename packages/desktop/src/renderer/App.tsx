@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, ImportConfigDialog, ShareConfigDialog, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
 import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
@@ -8,7 +8,8 @@ import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
 import { GeneralTab } from './settings/general-tab.js';
 import { PerformanceTab } from './settings/performance-tab.js';
-import { SharingTab } from './settings/sharing-tab.js';
+import { ShareTab } from './settings/share-tab.js';
+import { ImportTab } from './settings/import-tab.js';
 
 // ---------------------------------------------------------------------------
 // React Profiler — collects render timings when perf mode is active
@@ -469,7 +470,6 @@ function AppShell(): React.JSX.Element {
   // SettingsShell). Entering settings never touches `view`, so exiting just
   // clears this and the user lands back exactly where they were.
   const [settingsTab, setSettingsTab] = useState<SettingsTabId | null>(null);
-  const [lastSettingsTab, setLastSettingsTab] = useState<SettingsTabId>('general');
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [isDark, setIsDark] = useState(true);
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
@@ -487,7 +487,6 @@ function AppShell(): React.JSX.Element {
   const inFlightCount = useDebugBadge();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
-  const [sharingDialog, setSharingDialog] = useState<'share' | 'import' | null>(null);
   const [appVersion, setAppVersion] = useState('');
   const memoryMB = useMemoryMB();
   const autoOpenRef = useMemo(() => ({ current: false }), []);
@@ -685,7 +684,6 @@ function AppShell(): React.JSX.Element {
     confirmLeave(() => {
       api.cancelPendingQueries().catch(() => undefined);
       setSettingsTab(tab);
-      setLastSettingsTab(tab);
     });
   }
 
@@ -697,8 +695,10 @@ function AppShell(): React.JSX.Element {
   }
 
   function toggleSettings() {
+    // The gear carries the app-wide sync/update badge, so opening it always
+    // lands on Data & Sync — the activity that badge is inviting a click for.
     if (settingsTab !== null) exitSettings();
-    else enterSettings(lastSettingsTab);
+    else enterSettings('data-sync');
   }
 
   // Single entry point for the command palette: routes settings tabs and
@@ -726,7 +726,6 @@ function AppShell(): React.JSX.Element {
   function handleSetupComplete() {
     setSetupCheck({ status: 'ready' });
     setSettingsTab('data-sync');
-    setLastSettingsTab('data-sync');
   }
 
   const views = viewsConfig ?? FALLBACK_VIEWS;
@@ -800,8 +799,19 @@ function AppShell(): React.JSX.Element {
         return <DimensionsView />;
       case 'dashboards':
         return <ViewsEditor onConfigPersisted={setViewsConfig} />;
-      case 'sharing':
-        return <SharingTab onShare={() => { setSharingDialog('share'); }} onImport={() => { setSharingDialog('import'); }} />;
+      case 'share':
+        return <ShareTab />;
+      case 'import':
+        return (
+          <ImportTab
+            onApplied={() => {
+              // The whole org config just changed under the renderer — a full
+              // reload re-runs the boot path (setup check, views, dimensions
+              // prewarm) so nothing serves stale state.
+              window.location.reload();
+            }}
+          />
+        );
       case 'ai-assistant':
         return <McpView />;
       case 'performance':
@@ -1039,20 +1049,6 @@ function AppShell(): React.JSX.Element {
         )}
       </div>
       {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} topOffset={headerHeight} />}
-      {sharingDialog === 'share' && (
-        <ShareConfigDialog onClose={() => { setSharingDialog(null); }} />
-      )}
-      {sharingDialog === 'import' && (
-        <ImportConfigDialog
-          onClose={() => { setSharingDialog(null); }}
-          onApplied={() => {
-            // The whole org config just changed under the renderer —
-            // a full reload re-runs the boot path (setup check, views,
-            // dimensions prewarm) so nothing serves stale state.
-            window.location.reload();
-          }}
-        />
-      )}
       <ReleaseNotesModal open={releaseNotesOpen} onOpenChange={setReleaseNotesOpen} status={updateStatus} />
       <Dialog open={reloadConfirmOpen} onOpenChange={setReloadConfirmOpen}>
         <DialogContent>

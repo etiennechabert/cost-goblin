@@ -61,7 +61,7 @@ export function SettingsShell({
         aria-label="Settings sections"
         onKeyDown={handleRailKeyDown}
         className="sticky w-56 shrink-0 self-start border-r border-border bg-bg-secondary/40 p-3"
-        style={{ top: topOffset }}
+        style={{ top: topOffset, minHeight: `calc(100vh - ${String(topOffset)}px)` }}
       >
         <ul className="flex flex-col gap-0.5">
           {tabs.map((tab) => {

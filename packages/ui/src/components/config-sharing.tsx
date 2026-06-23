@@ -509,7 +509,7 @@ function AddSharedSourceSection({ onPulled, onBusyChange }: Readonly<{
 // Share dialog — export to file / publish to the S3 beacon.
 // ---------------------------------------------------------------------------
 
-export function ShareConfigDialog({ onClose }: Readonly<{ onClose: () => void }>): React.JSX.Element {
+export function ShareConfigPanel(): React.JSX.Element {
   const api = useCostApi();
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<ExportConfigBundleResult | null>(null);
@@ -562,7 +562,7 @@ export function ShareConfigDialog({ onClose }: Readonly<{ onClose: () => void }>
   }
 
   return (
-    <SharingModal title="Share configuration" onClose={onClose}>
+    <div className="flex flex-col gap-4">
       <p className="text-sm text-text-secondary">
         Bundles your dimensions, tags, cost scope, dashboards, org tree and S3 locations so a teammate can skip setup.
         {' '}<span className="text-text-primary">No credentials are included</span> — receivers pick their own AWS profile.
@@ -667,6 +667,14 @@ export function ShareConfigDialog({ onClose }: Readonly<{ onClose: () => void }>
       </div>
 
       <ShareDataSection />
+    </div>
+  );
+}
+
+export function ShareConfigDialog({ onClose }: Readonly<{ onClose: () => void }>): React.JSX.Element {
+  return (
+    <SharingModal title="Share configuration" onClose={onClose}>
+      <ShareConfigPanel />
     </SharingModal>
   );
 }
@@ -688,11 +696,18 @@ type ImportPhase =
     }
   | { phase: 'done'; backupDir: string | null };
 
-export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
-  onClose: () => void;
+export function ImportConfigPanel({ onApplied, onClose, onBusyChange, onDoneChange }: Readonly<{
   /** Called after a bundle has been written to disk and the user dismissed
    *  the success state. The host should reload config-dependent state. */
   onApplied: () => void;
+  /** Dismiss affordance for the preview-step "Cancel". When omitted (inline
+   *  settings use, no modal to close) Cancel returns to the picker instead. */
+  onClose?: () => void;
+  /** Reports whether a teammate pull is in flight, so a host modal can lock
+   *  itself shut. */
+  onBusyChange?: (busy: boolean) => void;
+  /** Reports whether the flow reached its success ('done') state. */
+  onDoneChange?: (done: boolean) => void;
 }>): React.JSX.Element {
   const api = useCostApi();
   const [state, setState] = useState<ImportPhase>({ phase: 'pick', error: null });
@@ -807,8 +822,15 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
       });
   }
 
+  function handleCancel(): void {
+    if (onClose !== undefined) { onClose(); return; }
+    setState({ phase: 'pick', error: null });
+  }
+
+  useEffect(() => { onDoneChange?.(state.phase === 'done'); }, [state.phase, onDoneChange]);
+
   return (
-    <SharingModal title="Import configuration" onClose={state.phase === 'done' ? onApplied : onClose} dismissable={!pullBusy}>
+    <div className="flex flex-col gap-4">
       {state.phase === 'pick' && (
         <>
           {!pullBusy && (
@@ -877,7 +899,7 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
           </div>
           </>
           )}
-          <AddSharedSourceSection onPulled={onApplied} onBusyChange={setPullBusy} />
+          <AddSharedSourceSection onPulled={onApplied} onBusyChange={(busy) => { setPullBusy(busy); onBusyChange?.(busy); }} />
         </>
       )}
 
@@ -912,7 +934,7 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
           <div className="flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleCancel}
               className="rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary hover:bg-bg-tertiary transition-colors"
             >
               Cancel
@@ -935,6 +957,23 @@ export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
           </Button>
         </>
       )}
+    </div>
+  );
+}
+
+export function ImportConfigDialog({ onClose, onApplied }: Readonly<{
+  onClose: () => void;
+  /** Called after a bundle has been written to disk and the user dismissed
+   *  the success state. The host should reload config-dependent state. */
+  onApplied: () => void;
+}>): React.JSX.Element {
+  // Mirror the panel's busy/done state so the modal can lock itself shut
+  // during a pull and route Escape/✕ to onApplied once the import succeeds.
+  const [pullBusy, setPullBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  return (
+    <SharingModal title="Import configuration" onClose={done ? onApplied : onClose} dismissable={!pullBusy}>
+      <ImportConfigPanel onApplied={onApplied} onClose={onClose} onBusyChange={setPullBusy} onDoneChange={setDone} />
     </SharingModal>
   );
 }

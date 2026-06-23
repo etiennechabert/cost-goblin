@@ -122,7 +122,8 @@ const SETTINGS_ITEMS: Record<string, string> = {
   'AI Assistant': 'AI Assistant',
   'Sync': 'Data & Sync',
   'General': 'General',
-  'Sharing': 'Sharing',
+  'Share': 'Share',
+  'Import': 'Import',
   'Performance': 'Performance',
 };
 const NAV_ALIASES: Record<string, string> = { Views: 'Views Editor' };

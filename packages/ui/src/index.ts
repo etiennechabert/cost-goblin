@@ -22,7 +22,7 @@ export { BubbleChart } from './components/bubble-chart.js';
 export { CostTable } from './components/cost-table.js';
 export { EntityPopup } from './components/entity-popup.js';
 export { ConfirmModal } from './components/confirm-modal.js';
-export { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog } from './components/config-sharing.js';
+export { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog, ImportConfigPanel, ShareConfigPanel } from './components/config-sharing.js';
 export { SharingActiveBanner } from './components/sharing-active-banner.js';
 export { ProfilePicker, filterProfiles } from './components/profile-picker.js';
 export { CsvExport } from './components/csv-export.js';

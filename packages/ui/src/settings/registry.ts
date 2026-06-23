@@ -1,4 +1,4 @@
-import { Settings2, Database, Target, Tags, LayoutDashboard, Share2, Sparkles, Gauge } from 'lucide-react';
+import { Settings2, Database, Target, Tags, LayoutDashboard, Share2, FileDown, Sparkles, Gauge } from 'lucide-react';
 
 /** The settings surface is "setting mode": a full-canvas, tabbed workspace that
  *  is deliberately separate from "view mode" (looking at cost data). Every
@@ -14,7 +14,8 @@ export type SettingsTabId =
   | 'cost-scope'
   | 'dimensions'
   | 'dashboards'
-  | 'sharing'
+  | 'share'
+  | 'import'
   | 'ai-assistant'
   | 'performance';
 
@@ -59,10 +60,16 @@ export const SETTINGS_TABS: readonly SettingsTabMeta[] = [
     keywords: ['views', 'widgets', 'dashboard editor', 'layout', 'charts'],
   },
   {
-    id: 'sharing',
-    label: 'Sharing',
+    id: 'share',
+    label: 'Share',
     Icon: Share2,
-    keywords: ['share', 'import', 'export', 'configuration', 'beacon', 'team'],
+    keywords: ['share', 'export', 'publish', 'beacon', 's3', 'network', 'peer', 'team', 'sharing key', 'configuration'],
+  },
+  {
+    id: 'import',
+    label: 'Import',
+    Icon: FileDown,
+    keywords: ['import', 'apply', 'bundle', 'restore', 'teammate', 'pull', 's3', 'configuration'],
   },
   {
     id: 'ai-assistant',
