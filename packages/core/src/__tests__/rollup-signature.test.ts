@@ -50,8 +50,13 @@ describe('computeShapeSignature', () => {
     expect(sig({ rules: twoVals(['a', 'b']) })).toBe(sig({ rules: twoVals(['b', 'a']) }));
   });
 
-  it('CHANGES when a disabled dim (usage_type) is enabled', () => {
+  it('does NOT change when usage_type is enabled — it is a raw-only field, never in the grain', () => {
     const d: DimensionsConfig = { ...baseDims(), builtIn: baseDims().builtIn.map(b => b.name === 'usage_type' ? { ...b, enabled: true } : b) };
+    expect(sig({ dimensions: d })).toBe(sig());
+  });
+
+  it('CHANGES when a normal disabled dim (region) is enabled', () => {
+    const d: DimensionsConfig = { ...baseDims(), builtIn: baseDims().builtIn.map(b => b.name === 'region' ? { ...b, enabled: true } : b) };
     expect(sig({ dimensions: d })).not.toBe(sig());
   });
 

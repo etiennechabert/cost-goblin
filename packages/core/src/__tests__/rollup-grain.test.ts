@@ -99,6 +99,35 @@ describe('buildRollupPartitionQuery', () => {
     }
   });
 
+  it('keeps raw-only fields (usage_type) out of the partition even when the dim is enabled', async () => {
+    const withUsageType: DimensionsConfig = {
+      builtIn: dimensions.builtIn.map(d => d.field === 'usage_type' ? { ...d, enabled: true } : d),
+      tags: dimensions.tags,
+    };
+    const out2 = join(tmpdir(), `cg-rollup-rawonly-${String(process.pid)}-${PERIOD}.parquet`);
+    try {
+      await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', out2, { dataDir: SYNTHETIC_DIR, dimensions: withUsageType, availablePeriods: [PERIOD], costScope: scope([]) }));
+      const desc = await queryAll(conn, `DESCRIBE SELECT * FROM read_parquet('${out2.replaceAll('\\', '/')}')`);
+      const cols = desc.map(r => String(r['column_name']));
+      expect(cols).not.toContain('usage_type');
+      expect(cols).toContain('service');
+    } finally {
+      await rm(out2, { force: true });
+    }
+  });
+
+  it('SUM(line_items) equals the raw line-item count — the overview total_rows invariant', async () => {
+    // The Table widget's overview routes through the rollup (SUM(cost) /
+    // SUM(line_items) per usage_date). For total_rows to match the raw path's
+    // COUNT(*), the per-grain line_items must sum back to the raw row count.
+    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, availablePeriods: [PERIOD], costScope: scope([]) }));
+    const rawWhere = `WHERE usage_date >= '${PERIOD}-01' AND usage_date < '2026-02-01'`;
+    const rawCount = Number((await queryAll(conn, `SELECT CAST(COUNT(*) AS BIGINT) n FROM ${rawSourceJan()} ${rawWhere}`))[0]?.['n']);
+    const rollCount = Number((await queryAll(conn, `SELECT CAST(SUM(line_items) AS BIGINT) n FROM ${glob}`))[0]?.['n']);
+    expect(rollCount).toBeGreaterThan(0);
+    expect(rollCount).toBe(rawCount);
+  });
+
   it('drops exclusion rows at build time', async () => {
     const rawWhere = `WHERE usage_date >= '${PERIOD}-01' AND usage_date < '2026-02-01'`;
     const top = (await queryAll(conn, `SELECT service, CAST(SUM(cost) AS DOUBLE) c FROM ${rawSourceJan()} ${rawWhere} GROUP BY service ORDER BY c DESC LIMIT 1`))[0];

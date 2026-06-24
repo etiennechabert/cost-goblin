@@ -2,6 +2,7 @@ import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/
 import type { CostMetric, CostPerspective, ExclusionRule } from '../types/cost-scope.js';
 import { tagDimColumn } from '../types/branded.js';
 import { normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
+import { ROLLUP_RAW_ONLY_FIELDS } from './grain.js';
 import { canonicalJson, sha256Hex } from './digest.js';
 
 /** Bump to invalidate every persisted rollup partition (e.g. when the stored
@@ -41,11 +42,12 @@ export interface ShapeSignatureInput {
 
 /** The set of enabled dimension columns that form the rollup grain, sorted.
  *  Built-in dims contribute their output column (`field`); tag dims their
- *  `tagDimColumn`. This is what downstream routing compares a query's needed
- *  columns against. */
+ *  `tagDimColumn`. Always-raw-only fields ({@link ROLLUP_RAW_ONLY_FIELDS}) are
+ *  excluded even when enabled — they are never in the grain. Kept in lockstep
+ *  with `rollupGrainColumns`. */
 export function enabledGrainColumns(dims: DimensionsConfig): string[] {
   const cols = new Set<string>();
-  for (const d of dims.builtIn) if (isEnabled(d)) cols.add(d.field);
+  for (const d of dims.builtIn) if (isEnabled(d) && !ROLLUP_RAW_ONLY_FIELDS.has(d.field)) cols.add(d.field);
   for (const t of dims.tags) if (isEnabled(t)) cols.add(tagDimColumn(t));
   return [...cols].sort((a, b) => a.localeCompare(b));
 }
@@ -57,8 +59,12 @@ export function enabledGrainColumns(dims: DimensionsConfig): string[] {
 export function computeShapeSignature(input: ShapeSignatureInput): string {
   const { dimensions, costMetric, costPerspective, rules, orgAccountsDigest, availableColumns } = input;
 
+  // Raw-only fields never reach the grain, so enabling/disabling them changes
+  // zero stored bytes — they must NOT be in the signature (else toggling
+  // usage_type would force a pointless re-roll). Kept in lockstep with
+  // rollupGrainColumns via ROLLUP_RAW_ONLY_FIELDS.
   const builtinDims = dimensions.builtIn
-    .filter(isEnabled)
+    .filter(d => isEnabled(d) && !ROLLUP_RAW_ONLY_FIELDS.has(d.field))
     .map(d => ({ kind: 'builtin', name: d.name, field: d.field }))
     .sort((a, b) => a.name.localeCompare(b.name));
 

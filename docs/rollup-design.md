@@ -40,19 +40,23 @@ it is **not** a single monolithic in-memory build (that was the source of the
 
 ### Grain
 
-`usage_date` + every **enabled** dimension column + measures (`SUM(cost)`,
-`COUNT(*) AS line_items`). Dimension values are stored **raw** (un-aliased) —
-aliasing stays query-time (§7).
+`usage_date` + every **enabled, grain-eligible** dimension column + measures
+(`SUM(cost)`, `COUNT(*) AS line_items`). Dimension values are stored **raw**
+(un-aliased) — aliasing stays query-time (§7).
 
 - Default-enabled dims: `account_id`, `account_name`, `service`,
   `service_family`, and the configured tag dims (`team`, `system`, `env`,
   `unit`).
-- `usage_type` is **off by default** (it ~4×'s the rollup and is hard to read),
-  but **user-enablable** — enabling it is a shape change (§4) that re-rolls and
-  restores the 3rd pie level.
-- `resource_id`-class ultra-high-cardinality dims are **raw-only** (§6): never in
-  the rollup; widgets grouping by them fall back to raw. Enforced by the
-  estimator threshold (§8), not a hardcoded list.
+- `usage_type`, `operation`, and `resource_id` are **always raw-only**: excluded
+  from the grain **regardless of enabled-state** (`ROLLUP_RAW_ONLY_FIELDS` in
+  [grain.ts](../packages/core/src/rollup/grain.ts)). `usage_type` alone has ~950
+  distinct values and ~3×'d a real rollup (~22 MB/mo vs the ~7 MB target) while
+  no dashboard chart groups or filters by it. Enabling one no longer re-rolls it
+  into the partition — it changes zero stored bytes (excluded from the shape
+  signature too), and widgets grouping/filtering by it **fall back to raw** via
+  `resolveSource`.
+- This is an **interim fixed list**. The §8 estimator will eventually flag
+  raw-only dims by measured cardinality instead of a hardcoded set.
 
 ## 3. Why per-period (the load-bearing decision)
 

@@ -36,7 +36,7 @@ import type {
   AggregatedTableResult,
 } from '@costgoblin/core';
 import { type AppContext, prefsPath } from './context.js';
-import { buildAccountReverseMap, toNum, toStr } from './query-utils.js';
+import { buildAccountReverseMap, columnForDimension, resolveRollupSource, toNum, toStr } from './query-utils.js';
 import { resolveScopeMetric, resolveScopePerspective } from './explorer-scope.js';
 
 const DEFAULT_WINDOW_DAYS = 30;
@@ -350,7 +350,7 @@ function resolveAggregatedSort(sort: ExplorerSort | undefined, groupByColumns: r
 }
 
 export function registerExplorerHandlers(app: AppContext): void {
-  const { ctx, runQuery } = app;
+  const { ctx, runQuery, rollupStore, getAccountReverseMap } = app;
 
   const explorerPrefsPath = () => prefsPath(ctx.dataDir, 'explorer-preferences');
 
@@ -419,28 +419,70 @@ export function registerExplorerHandlers(app: AppContext): void {
     };
     if (qc.empty) return zero;
 
+    // Route the heavy overview scan (total cost + line-item count + daily
+    // breakdown) through the pre-aggregated rollup when possible. The rollup
+    // stores cost + line_items per (usage_date × grain), so SUM(cost) /
+    // SUM(line_items) reproduce the raw totals without the ~900MB-1GB raw
+    // Parquet scan that is the single biggest source of dashboard contention.
+    // Only when this request uses the GLOBAL cost scope (the dashboard Table
+    // widget): the rollup bakes the global metric/perspective and drops
+    // exclusion rows at build time, so an Explorer-style request that overrides
+    // the metric/perspective or skips the scope must stay on raw. Detail/expand
+    // rows still hit raw — they need resource_id/description, not in the grain.
+    const rollupSource = (qc.tier === 'daily'
+      && params.applyCostScope === true
+      && params.costMetric === undefined
+      && params.costPerspective === undefined)
+      ? resolveRollupSource(rollupStore, { start: qc.startStr, end: qc.endStr }, 'daily', [
+          'cost',
+          ...Object.entries(params.filters)
+            .filter(([, values]) => values.length > 0)
+            .map(([dimId]) => columnForDimension(qc.dimensions, dimId)),
+        ])
+      : undefined;
+
+    let source: string;
+    let whereStr: string;
+    let rowsExpr: string;
+    let bucketExpr: string;
+    if (rollupSource !== undefined) {
+      // Exclusions are baked into the rollup, so only the date window + the
+      // user's dashboard filters apply. line_items is the per-grain COUNT(*),
+      // so SUM(line_items) equals the raw line-item count the raw path returns
+      // — the overview's totalRows stays consistent with the detailed table.
+      const filterPredicate = buildExplorerFilterPredicate(params.filters, qc.dimensions, await getAccountReverseMap());
+      source = rollupSource;
+      whereStr = `WHERE usage_date BETWEEN '${qc.startStr}' AND '${qc.endStr}'${filterPredicate === null ? '' : ` AND (${filterPredicate})`}`;
+      rowsExpr = 'COALESCE(SUM(line_items), 0)';
+      bucketExpr = 'usage_date';
+    } else {
+      source = qc.source;
+      whereStr = qc.whereStr;
+      rowsExpr = 'COUNT(*)';
+      // Bucket width matches the queried tier — daily rows group per day,
+      // hourly rows group per hour. CUR line items like SavingsPlanFee, RIFee,
+      // Refund and Tax carry a precise mid-hour timestamp; we shift by 30
+      // minutes before truncating so a fee at 11:56:32 lands in the 12:00
+      // bucket instead of either getting its own bar (no truncation) or being
+      // stuck in 11:00 (plain truncation).
+      bucketExpr = qc.tier === 'hourly' ? `date_trunc('hour', usage_hour + INTERVAL '30 minutes')` : 'usage_date';
+    }
+
     const totalsSql = `
       SELECT
         CAST(COALESCE(SUM(cost), 0) AS DOUBLE) AS total_cost,
-        CAST(COUNT(*) AS DOUBLE) AS total_rows
-      FROM ${qc.source}
-      ${qc.whereStr}
+        CAST(${rowsExpr} AS DOUBLE) AS total_rows
+      FROM ${source}
+      ${whereStr}
     `.trim();
 
-    // Bucket width matches the queried tier — daily rows group per day,
-    // hourly rows group per hour. CUR line items like SavingsPlanFee, RIFee,
-    // Refund and Tax carry a precise mid-hour timestamp; we shift by 30
-    // minutes before truncating so a fee at 11:56:32 lands in the 12:00
-    // bucket instead of either getting its own bar (no truncation) or being
-    // stuck in 11:00 (plain truncation).
-    const bucketExpr = qc.tier === 'hourly' ? `date_trunc('hour', usage_hour + INTERVAL '30 minutes')` : 'usage_date';
     const dailySql = `
       SELECT
         ${bucketExpr}::VARCHAR AS date,
         CAST(COALESCE(SUM(cost), 0) AS DOUBLE) AS daily_cost,
-        CAST(COUNT(*) AS DOUBLE) AS daily_rows
-      FROM ${qc.source}
-      ${qc.whereStr}
+        CAST(${rowsExpr} AS DOUBLE) AS daily_rows
+      FROM ${source}
+      ${whereStr}
       GROUP BY ${bucketExpr}
       ORDER BY ${bucketExpr}
     `.trim();
