@@ -61,6 +61,34 @@ export interface ExclusionRule {
   readonly conditions: readonly ExclusionCondition[];
 }
 
+/** One re-attribution rule for AWS Marketplace line items. AWS bills
+ *  third-party Marketplace usage (foundation models like Claude, partner AMIs,
+ *  etc.) with an EMPTY `product_servicecode` and a $0 `pricing_public_on_demand_cost`
+ *  — the real charge lands only in `line_item_unblended_cost`. A plain
+ *  service-code grouping therefore buckets this spend under a blank service,
+ *  and the `list` metric reports it as $0. This rule matches such rows by their
+ *  billing `operation` and re-attributes them to a real `service` code (and, for
+ *  the `list` metric, substitutes unblended cost for the missing list price).
+ *
+ *  The canonical case is Bedrock model inference (`InvokeModelInference`,
+ *  `InvokeModelStreamingInference`) → `AmazonBedrock`. */
+export interface MarketplaceAttributionRule {
+  /** Service code matched rows are re-attributed to, e.g. `AmazonBedrock`. */
+  readonly service: string;
+  /** `line_item_operation` values identifying this rule's Marketplace rows.
+   *  Only rows that ALSO have an empty `product_servicecode` are rewritten, so
+   *  first-party usage on the same operation is never touched. */
+  readonly operations: readonly string[];
+}
+
+/** Marketplace re-attribution settings. This deliberately rewrites the
+ *  as-billed product code for practical readability, so it is a toggle —
+ *  enabled by default, disable to see the raw CUR attribution. */
+export interface MarketplaceAttributionConfig {
+  readonly enabled: boolean;
+  readonly rules: readonly MarketplaceAttributionRule[];
+}
+
 /** Number of most-recent days to exclude from all date ranges. AWS CUR
  *  data is not consolidated immediately, so the latest day(s) are
  *  typically incomplete. `0` = include today, `1` = end at yesterday,
@@ -76,6 +104,10 @@ export interface CostScopeConfig {
    *  `DEFAULT_LAG_DAYS` (2) when omitted. */
   readonly lagDays?: number | undefined;
   readonly rules: readonly ExclusionRule[];
+  /** Re-attribution of AWS Marketplace line items. Optional on disk; absent
+   *  configs default to {@link DEFAULT_MARKETPLACE_ATTRIBUTION} (enabled) at
+   *  load time so existing installs pick up the fix. */
+  readonly marketplaceAttribution?: MarketplaceAttributionConfig | undefined;
 }
 
 export interface CostScopePreviewRow {
