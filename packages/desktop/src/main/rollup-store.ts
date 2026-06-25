@@ -90,6 +90,18 @@ export class RollupStore {
   isReady(): boolean { return this.manifest !== null && this.validPeriods.size > 0; }
   getValidPeriods(): ReadonlySet<string> { return this.validPeriods; }
 
+  /** Exact on-disk rollup totals (summed over every built partition) for the
+   *  grain estimator's "current grain" baseline. null when nothing is built. */
+  getStats(): { rows: number; bytes: number; months: number } | null {
+    if (this.manifest === null) return null;
+    const parts = Object.values(this.manifest.partitions);
+    if (parts.length === 0) return null;
+    let rows = 0;
+    let bytes = 0;
+    for (const p of parts) { rows += p.rows; bytes += p.bytes; }
+    return { rows, bytes, months: parts.length };
+  }
+
   /** Serialize a mutation; the callback receives the epoch captured at enqueue
    *  time so it can detect a concurrent invalidate() and abort its commit. */
   private enqueue<T>(fn: (epoch: number) => Promise<T>): Promise<T> {

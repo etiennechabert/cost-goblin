@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronUp, ChevronDown, GripVertical, Lock } from 'lucide-react';
-import type { BuiltInDimension, DimensionsConfig, TagDimension, ConceptType, NormalizationRule } from '@costgoblin/core/browser';
-import { asDimensionId, OU_PATH_SOURCE_KEY } from '@costgoblin/core/browser';
+import { ChevronUp, ChevronDown, GripVertical, Lock, Database, AlertTriangle } from 'lucide-react';
+import type { BuiltInDimension, DimensionsConfig, TagDimension, ConceptType, NormalizationRule, RollupGrainEstimate, RollupSizeBand } from '@costgoblin/core/browser';
+import { asDimensionId, OU_PATH_SOURCE_KEY, tagDimColumn } from '@costgoblin/core/browser';
+import { formatBytes } from '../components/format.js';
 
 const OU_PATH_LABEL = 'OU Path';
 function formatAccountSource(key: string): string {
@@ -1431,6 +1432,123 @@ function pillClass(enabled: boolean): string {
   ].join(' ');
 }
 
+/** The rollup grain column a built-in/tag dim contributes — mirrors
+ *  `rollupGrainColumns` so the UI can match an estimate's per-dim verdict to a
+ *  pill. */
+function builtInGrainColumn(d: BuiltInDimension): string { return d.field; }
+
+/** A digest of the ENABLED grain columns. Drives the estimate refetch: it
+ *  changes when a dim is toggled (the grain changes) but not when a dim is
+ *  reordered or relabelled (those never touch stored bytes). */
+function grainSignature(config: DimensionsConfig): string {
+  const cols: string[] = [];
+  for (const d of config.builtIn) {
+    if (d.enabled === false) continue;
+    cols.push(d.field);
+    if (d.displayField !== undefined && d.displayField.length > 0) cols.push(d.displayField);
+  }
+  for (const t of config.tags) if (t.enabled !== false) cols.push(tagDimColumn(t));
+  return [...new Set(cols)].sort((a, b) => a.localeCompare(b)).join(',');
+}
+
+const SIZE_BAND_LABEL: Record<RollupSizeBand, string> = {
+  tiny: 'tiny', small: 'small', moderate: 'moderate', large: 'large', huge: 'very large',
+};
+
+function formatRebuild(seconds: number): string {
+  if (seconds < 1) return '< 1s';
+  if (seconds < 90) return `~${String(Math.round(seconds))}s`;
+  return `~${String(Math.round(seconds / 60))} min`;
+}
+
+function formatCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
+  return String(Math.round(n));
+}
+
+/** Small "raw" chip on a pill whose dimension is too high-cardinality for the
+ *  rollup — its widgets fall back to raw Parquet. */
+function RawOnlyBadge(): React.JSX.Element {
+  return (
+    <span
+      title="Very high-cardinality — recommended raw-only. Widgets grouping by it query raw data instead of the rollup."
+      className="ml-1.5 inline-flex items-center gap-0.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wide text-amber-500"
+    >
+      <Database className="h-2.5 w-2.5" />raw
+    </span>
+  );
+}
+
+function ImpactStat({ label, value, hint }: Readonly<{ label: string; value: string; hint?: string }>): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] uppercase tracking-wider text-text-muted">{label}</span>
+      <span className="text-sm font-semibold text-text-primary">{value}</span>
+      {hint !== undefined && <span className="text-[10px] text-text-muted">{hint}</span>}
+    </div>
+  );
+}
+
+/** Cost/benefit summary for the current enabled grain (rollup design §8).
+ *  Updates as dims are toggled so the user can weigh the rebuild before it
+ *  happens. Numbers are directional (probed from one recent month). */
+function RollupImpactPanel({ estimate, loading }: Readonly<{ estimate: RollupGrainEstimate | null; loading: boolean }>): React.JSX.Element {
+  return (
+    <div className="rounded-xl border border-border bg-bg-secondary/40 px-5 py-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Database className="h-4 w-4 text-text-muted" />
+          <h3 className="text-sm font-medium text-text-secondary">Rollup impact</h3>
+        </div>
+        {estimate !== null && estimate.probePeriod.length > 0 && (
+          <span className="text-[10px] text-text-muted">estimated from {estimate.probePeriod} · directional</span>
+        )}
+      </div>
+
+      {loading && estimate === null ? (
+        <p className="mt-3 text-xs text-text-muted">Estimating…</p>
+      ) : estimate === null || estimate.probePeriod.length === 0 ? (
+        <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>
+      ) : (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <ImpactStat
+              label="Est. size"
+              value={formatBytes(estimate.candidate.bytes)}
+              hint={`${SIZE_BAND_LABEL[estimate.candidate.sizeBand]}${estimate.candidate.growthFactor !== null ? ` · ${estimate.candidate.growthFactor.toFixed(1)}× current` : ''}`}
+            />
+            <ImpactStat
+              label="Rollup rows"
+              value={formatCount(estimate.candidate.rows)}
+              hint={`across ${String(estimate.months)} month${estimate.months === 1 ? '' : 's'}`}
+            />
+            <ImpactStat
+              label="Compression"
+              value={`${estimate.compressionRate >= 1 ? estimate.compressionRate.toFixed(0) : estimate.compressionRate.toFixed(1)}×`}
+              hint="vs raw line items"
+            />
+            <ImpactStat
+              label="Rebuild"
+              value={formatRebuild(estimate.candidate.rebuildSeconds)}
+              hint="background re-roll"
+            />
+          </div>
+          {estimate.rawOnly.recommended && estimate.rawOnly.reason !== null && (
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+              <p className="text-[11px] leading-snug text-text-secondary">
+                This grain is heavy for the rollup — {estimate.rawOnly.reason}. Consider keeping the flagged
+                <span className="text-amber-500"> raw</span> dimension(s) out of the rollup so dashboards stay fast.
+              </p>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function GripHandle({ attrs }: Readonly<{ attrs: React.HTMLAttributes<HTMLButtonElement> }>): React.JSX.Element {
   return (
     <button
@@ -1517,6 +1635,19 @@ export function DimensionsView() {
     }
   }, [configQuery, api]);
   const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
+
+  // Live rollup cost/benefit estimate for the current enabled grain. Keyed on
+  // the grain signature so it refetches when a dim is toggled (the grain
+  // changes) but not on reorder/relabel. The probe hits DuckDB, so this is
+  // intentionally cheap and fire-and-forget.
+  const estimateSig = config === null ? '' : grainSignature(config);
+  const estimateQuery = useQuery(
+    () => config === null ? Promise.resolve(null) : api.estimateRollupGrain(config),
+    [estimateSig],
+  );
+  const estimate = estimateQuery.status === 'success' ? estimateQuery.data : null;
+  const estimateLoading = estimateQuery.status === 'loading';
+  const rawOnlyColumns = new Set((estimate?.dims ?? []).filter(d => d.rawOnly).map(d => d.column));
 
   // Account tag keys from org sync
   const accountTagKeys = orgData === null
@@ -1764,6 +1895,7 @@ export function DimensionsView() {
                 .map(([idx, d]) => {
                 const locked = LOCKED_DIMENSIONS.has(d.name);
                 const isOn = locked || d.enabled !== false;
+                const rawOnly = isOn && rawOnlyColumns.has(builtInGrainColumn(d));
                 let buttonTitle = 'Click to enable';
                 if (locked) buttonTitle = 'Always enabled — required for cost breakdown';
                 else if (isOn) buttonTitle = 'Click to disable';
@@ -1777,6 +1909,7 @@ export function DimensionsView() {
                   >
                     {locked && <Lock className="inline-block w-3 h-3 mr-1 -mt-0.5" />}
                     {d.label}
+                    {rawOnly && <RawOnlyBadge />}
                   </button>
                 );
               })}
@@ -1787,6 +1920,7 @@ export function DimensionsView() {
             <div className="flex flex-wrap gap-1.5">
               {config.tags.map((tag, idx) => {
                 const isOn = tag.enabled !== false;
+                const rawOnly = isOn && rawOnlyColumns.has(tagDimColumn(tag));
                 return (
                   <button
                     key={tagOrderKey(tag)}
@@ -1796,6 +1930,7 @@ export function DimensionsView() {
                     className={pillClass(isOn)}
                   >
                     {tag.label}
+                    {rawOnly && <RawOnlyBadge />}
                   </button>
                 );
               })}
@@ -1808,6 +1943,10 @@ export function DimensionsView() {
               </button>
             </div>
           </div>
+
+          {/* Rollup cost/benefit for the current grain — updates as pills are
+              toggled so the user can weigh the (background) re-roll first. */}
+          <RollupImpactPanel estimate={estimate} loading={estimateLoading} />
 
           {/* New-tag-dim form appears inline right after the pill rows so the
               user sees where the new pill will land. */}

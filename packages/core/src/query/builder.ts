@@ -1093,3 +1093,62 @@ export function buildRollupPartitionQuery(
   const escapedPath = outPath.replaceAll("'", "''");
   return `COPY (${select}) TO '${escapedPath}' (FORMAT PARQUET)`;
 }
+
+/** Build the cardinality probe behind the grain cost/benefit estimator (rollup
+ *  design §8). Over ONE recent month it returns, in a single scan:
+ *   - `line_items`  — COUNT(*) (the rollup's raw input for that month),
+ *   - `grain_rows`  — `approx_count_distinct` of the candidate grain tuple
+ *      (≈ the rollup row count for that month), and
+ *   - `card_<i>`    — `approx_count_distinct` of each non-date grain column,
+ *      so the estimator can flag individual raw-only dims (e.g. resource_id).
+ *
+ *  `grainColumns` come from `rollupGrainColumns` over the candidate dimensions
+ *  (usage_date first) and are projected by `buildSource` — the same trusted set
+ *  `buildRollupPartitionQuery` interpolates. Exclusion rows are dropped so the
+ *  counts match what the rollup would actually store. `chr(31)` (unit separator)
+ *  joins the tuple so distinct values never collide across columns. */
+export function buildGrainProbeQuery(
+  period: string,
+  grainColumns: readonly string[],
+  opts: QueryContextOptions,
+): string {
+  if (!/^\d{4}-\d{2}$/.test(period)) {
+    throw new SecurityError(`Invalid probe period "${period}" — expected YYYY-MM.`);
+  }
+  const { dataDir, dimensions, orgAccountsPath, accountReverseMap, costScope, availableColumns } = opts;
+  const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
+
+  const source = buildSource({
+    dataDir, tier: 'daily', dimensions, orgAccountsPath, periods: [period],
+    costMetric, availableColumns, costPerspective,
+    marketplaceAttribution: costScope?.marketplaceAttribution,
+    includeRawTags: false, slim: true,
+  });
+
+  const exclusionClauses: string[] = [];
+  if (costScope !== undefined) {
+    for (const rule of costScope.rules) {
+      if (!rule.enabled) continue;
+      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
+      if (matchExpr === null) continue;
+      exclusionClauses.push(`NOT (${matchExpr})`);
+    }
+  }
+
+  const start = `${period}-01`;
+  const end = periodUpperBound(period);
+  assertDateString(start);
+  assertDateString(end);
+  const whereConditions = [`usage_date >= '${start}'`, `usage_date < '${end}'`, ...exclusionClauses];
+
+  const grainConcat = `concat_ws(chr(31), ${grainColumns.join(', ')})`;
+  const cardCols = grainColumns.filter(c => c !== 'usage_date');
+  const cardSelects = cardCols.map((c, i) => `CAST(approx_count_distinct(${c}) AS BIGINT) AS card_${String(i)}`);
+  const selects = [
+    `CAST(COUNT(*) AS BIGINT) AS line_items`,
+    `CAST(approx_count_distinct(${grainConcat}) AS BIGINT) AS grain_rows`,
+    ...cardSelects,
+  ];
+  return `SELECT ${selects.join(', ')} FROM ${source} WHERE ${whereConditions.join(' AND ')}`;
+}

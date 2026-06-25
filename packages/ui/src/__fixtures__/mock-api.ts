@@ -43,6 +43,7 @@ import {
   type SharedPullSelection,
   type SharedSourcePreview,
   type SharedSourceInfo,
+  type RollupGrainEstimate,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE } from '@costgoblin/core/browser';
 
@@ -280,6 +281,43 @@ export class MockCostApi implements CostApi {
   discoverColumnValues(): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> { return Promise.resolve({ values: [{ value: 'Usage', cost: 12345 }, { value: 'Tax', cost: 234 }, { value: 'Credit', cost: -100 }], distinctCount: 3, period: '2026-04' }); }
   getDimensionsConfig(): Promise<DimensionsConfig> { return Promise.resolve({ builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name' }], tags: [{ tagName: 'team', label: 'Team', concept: 'owner' as const }] }); }
   saveDimensionsConfig(): Promise<void> { return Promise.resolve(); }
+  estimateRollupGrain(candidate: DimensionsConfig): Promise<RollupGrainEstimate> {
+    // Flag resource_id raw-only so the Dimensions view exercises the badge.
+    const enabled = (d: { enabled?: boolean | undefined }): boolean => d.enabled !== false;
+    const hasResourceId = candidate.builtIn.some(d => d.field === 'resource_id' && enabled(d));
+    const grainRows = hasResourceId ? 1_840_000 : 92_000;
+    const lineItems = 2_100_000;
+    const months = 12;
+    const bytesPerRow = 16;
+    const rows = grainRows * months;
+    const perPartitionBytes = grainRows * bytesPerRow;
+    const dims: RollupGrainEstimate['dims'] = [
+      { column: 'account_id', cardinality: 14, rawOnly: false },
+      { column: 'service', cardinality: 38, rawOnly: false },
+      { column: 'tag_team', cardinality: 22, rawOnly: false },
+      ...(hasResourceId ? [{ column: 'resource_id', cardinality: 1_820_000, rawOnly: true }] : []),
+    ];
+    return Promise.resolve({
+      probePeriod: '2026-04',
+      months,
+      lineItems,
+      current: { rows: 1_100_000, bytes: 17_600_000 },
+      candidate: {
+        rows,
+        bytes: rows * bytesPerRow,
+        perPartitionBytes,
+        sizeBand: hasResourceId ? 'large' : 'small',
+        rebuildSeconds: hasResourceId ? 130 : 24,
+        rebuildBand: hasResourceId ? 'slow' : 'fast',
+        growthFactor: rows / 1_100_000,
+      },
+      compressionRate: lineItems / grainRows,
+      rawOnly: hasResourceId
+        ? { recommended: true, reason: 'a monthly partition would be ~28 MB — over the 50 MB raw-only threshold' }
+        : { recommended: false, reason: null },
+      dims,
+    });
+  }
   getAutoSyncEnabled(): Promise<boolean> { return Promise.resolve(false); }
   setAutoSyncEnabled(): Promise<void> { return Promise.resolve(); }
   getAutoSyncIntervalMinutes(): Promise<number> { return Promise.resolve(24 * 60); }

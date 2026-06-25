@@ -6,3 +6,10 @@ export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './config/views-seri
 export { ConfigValidationError } from './config/validator.js';
 export { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from './config/sharing-location.js';
 export { DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, BUILTIN_EXCLUSION_RULES } from './config/cost-scope-seed.js';
+export type {
+  RollupGrainEstimate,
+  RollupDimEstimate,
+  RollupCurrentStats,
+  RollupSizeBand,
+  RollupRebuildBand,
+} from './rollup/estimator.js';
