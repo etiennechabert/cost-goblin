@@ -124,13 +124,16 @@ describe('buildSource narrowed paths', () => {
     expect(sql).toContain("'/data/aws/raw/daily-2026-03/*.parquet'");
     expect(sql).toContain("'/data/aws/raw/daily-2026-04/*.parquet'");
     expect(sql).not.toContain("daily-*/*.parquet");
+    // union_by_name tolerates CUR schema drift between months (older exports
+    // lack the effective-cost columns the amortized expression references).
+    expect(sql).toContain('union_by_name=true');
   });
 
   it('falls back to the wildcard when periods are empty or omitted', () => {
     const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions, periods: [] });
-    expect(sql).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet')");
+    expect(sql).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet', union_by_name=true)");
     const sql2 = buildSource({ dataDir: '/data', tier: 'daily', dimensions });
-    expect(sql2).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet')");
+    expect(sql2).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet', union_by_name=true)");
   });
 
   it('uses the hourly prefix when tier is hourly', () => {

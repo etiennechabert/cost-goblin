@@ -539,10 +539,11 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const validation = await rollupStore.loadAndValidate(shape, etags);
       const available = await listLocalMonths(ctx.dataDir, 'daily');
       const toBuild = available.filter(p => !validation.validPeriods.has(p)).sort((a, b) => b.localeCompare(a));
-      if (toBuild.length === 0) return;
+      if (toBuild.length === 0) { rollupStore.markSettled(); return; }
       const buildSql = await buildRollupSqlFor();
       void rollupStore.maintainPeriods(toBuild, buildSql, etags, shape).then(() => { resultCache.clear(); });
     } catch (err: unknown) {
+      rollupStore.markSettled();
       logger.warn(`rollup-warmup: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -568,6 +569,19 @@ export function createAppContext(ctx: IpcContext): AppContext {
   let warmupInFlight: Promise<void> = Promise.resolve();
   function triggerWarmup(): void { warmupInFlight = warmupRollup().catch(() => undefined); }
 
+  // A dimensions save always drops the rollup (so queries fall back to raw
+  // immediately — correct) but the full re-roll is expensive. The dimensions
+  // view autosaves on every toggle/reorder, so a burst of edits would otherwise
+  // kick one full rebuild each. Coalesce the rebuild: invalidate right away,
+  // debounce the warmup so a burst settles into a single re-roll.
+  const ROLLUP_REROLL_DEBOUNCE_MS = 800;
+  let rerollTimer: ReturnType<typeof setTimeout> | null = null;
+  function scheduleRollupReroll(): void {
+    void rollupStore.invalidate().then(() => { resultCache.clear(); });
+    if (rerollTimer !== null) clearTimeout(rerollTimer);
+    rerollTimer = setTimeout(() => { rerollTimer = null; triggerWarmup(); }, ROLLUP_REROLL_DEBOUNCE_MS);
+  }
+
   return {
     ctx,
     state,
@@ -590,8 +604,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
     invalidateDimensions: () => {
       state.dimensions = null; state.accountMap = null; state.accountReverseMap = null; state.regionMap = null; state.orgAccountsPath = null;
       // A dimensions change can alter the rollup grain/projection → drop the
-      // persisted rollup and rebuild under the new shape-signature.
-      void rollupStore.invalidate().then(() => { resultCache.clear(); triggerWarmup(); });
+      // persisted rollup and rebuild under the new shape-signature (debounced).
+      scheduleRollupReroll();
     },
     invalidateViews: () => { state.views = null; },
     invalidateCostScope: () => {

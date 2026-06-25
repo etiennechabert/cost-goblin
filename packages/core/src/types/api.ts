@@ -1,4 +1,5 @@
 import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, NormalizationRule, OrgNode, TagDimension } from './config.js';
+import type { RollupGrainEstimate } from '../rollup/estimator.js';
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { CostScopeCapabilities, CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
@@ -162,6 +163,11 @@ export interface CostApi {
   discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }>;
   getDimensionsConfig(): Promise<DimensionsConfig>;
   saveDimensionsConfig(config: DimensionsConfig): Promise<void>;
+  /** Estimate the rollup cost/benefit of a candidate dimensions config before
+   *  committing the (background) re-roll: directional size/compression/rebuild
+   *  bands plus per-dimension raw-only flags (rollup design §8). Probes a recent
+   *  month, so it needs data on disk — returns an empty estimate otherwise. */
+  estimateRollupGrain(candidate: DimensionsConfig): Promise<RollupGrainEstimate>;
   /** User-defined dashboard views. Read-modify-write through `saveViewsConfig`.
    *  `resetViewsConfig` overwrites the file with the seed (Cost Overview) view. */
   getViewsConfig(): Promise<ViewsConfig>;
@@ -371,4 +377,32 @@ export interface UpdateApi {
   quitAndInstall(): void;
   onStatusChanged(callback: (status: UpdateStatus) => void): () => void;
   getAppVersion(): Promise<string>;
+}
+
+/** Live state of the on-disk daily rollup. Pushed to the renderer so the header
+ *  can show whether dashboards are currently served from the pre-aggregated
+ *  rollup (`ready`) or transiently from the slower raw path while a re-roll runs
+ *  (`computing`) — e.g. after a dimensions save or a sync. `idle` = no rollup
+ *  built yet (no local data); `failed` = the last build batch hit an error
+ *  (otherwise swallowed to the log). */
+export type RollupStatus =
+  | { readonly state: 'idle' }
+  | { readonly state: 'computing'; readonly done: number; readonly total: number }
+  | { readonly state: 'ready'; readonly periods: number }
+  | { readonly state: 'failed'; readonly message: string; readonly periods: number };
+
+/** Size KPIs for the built rollup vs the raw daily Parquet it's derived from.
+ *  `rawBytes` is read from the local filesystem (no S3), so it's available even
+ *  without AWS credentials. Null when no rollup is built. */
+export interface RollupStats {
+  readonly months: number;
+  readonly rollupRows: number;
+  readonly rollupBytes: number;
+  readonly rawBytes: number;
+}
+
+export interface RollupApi {
+  getStatus(): Promise<RollupStatus>;
+  getStats(): Promise<RollupStats | null>;
+  onStatusChanged(callback: (status: RollupStatus) => void): () => void;
 }

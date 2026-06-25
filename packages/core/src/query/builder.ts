@@ -403,11 +403,19 @@ function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
 }
 
 function buildParquetSource(dataDir: string, tier: string, periods: readonly string[] | undefined): string {
+  // union_by_name unifies columns by name across files, filling absent columns
+  // with NULL. Required because CUR schema drifts between months: older exports
+  // lack reservation_effective_cost / savings_plan_savings_plan_effective_cost
+  // while newer ones carry them. getAvailableColumns probes only the latest
+  // month, so the amortized expression references those columns; without
+  // union_by_name DuckDB throws a Binder Error on any read spanning a month
+  // that omits them. The now-NULL column makes amortizedExpr's COALESCE fall
+  // through to unblended for the old rows — the correct degradation.
   if (periods !== undefined && periods.length > 0) {
     const paths = periods.map(p => `'${dataDir}/aws/raw/${tier}-${p}/*.parquet'`).join(', ');
-    return `read_parquet([${paths}])`;
+    return `read_parquet([${paths}], union_by_name=true)`;
   }
-  return `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`;
+  return `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet', union_by_name=true)`;
 }
 
 function buildFromClause(
@@ -1092,4 +1100,63 @@ export function buildRollupPartitionQuery(
     `FROM ${source} WHERE ${whereConditions.join(' AND ')} GROUP BY ${groupBy}`;
   const escapedPath = outPath.replaceAll("'", "''");
   return `COPY (${select}) TO '${escapedPath}' (FORMAT PARQUET)`;
+}
+
+/** Build the cardinality probe behind the grain cost/benefit estimator (rollup
+ *  design §8). Over ONE recent month it returns, in a single scan:
+ *   - `line_items`  — COUNT(*) (the rollup's raw input for that month),
+ *   - `grain_rows`  — `approx_count_distinct` of the candidate grain tuple
+ *      (≈ the rollup row count for that month), and
+ *   - `card_<i>`    — `approx_count_distinct` of each non-date grain column,
+ *      so the estimator can flag individual raw-only dims (e.g. resource_id).
+ *
+ *  `grainColumns` come from `rollupGrainColumns` over the candidate dimensions
+ *  (usage_date first) and are projected by `buildSource` — the same trusted set
+ *  `buildRollupPartitionQuery` interpolates. Exclusion rows are dropped so the
+ *  counts match what the rollup would actually store. `chr(31)` (unit separator)
+ *  joins the tuple so distinct values never collide across columns. */
+export function buildGrainProbeQuery(
+  period: string,
+  grainColumns: readonly string[],
+  opts: QueryContextOptions,
+): string {
+  if (!/^\d{4}-\d{2}$/.test(period)) {
+    throw new SecurityError(`Invalid probe period "${period}" — expected YYYY-MM.`);
+  }
+  const { dataDir, dimensions, orgAccountsPath, accountReverseMap, costScope, availableColumns } = opts;
+  const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
+
+  const source = buildSource({
+    dataDir, tier: 'daily', dimensions, orgAccountsPath, periods: [period],
+    costMetric, availableColumns, costPerspective,
+    marketplaceAttribution: costScope?.marketplaceAttribution,
+    includeRawTags: false, slim: true,
+  });
+
+  const exclusionClauses: string[] = [];
+  if (costScope !== undefined) {
+    for (const rule of costScope.rules) {
+      if (!rule.enabled) continue;
+      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
+      if (matchExpr === null) continue;
+      exclusionClauses.push(`NOT (${matchExpr})`);
+    }
+  }
+
+  const start = `${period}-01`;
+  const end = periodUpperBound(period);
+  assertDateString(start);
+  assertDateString(end);
+  const whereConditions = [`usage_date >= '${start}'`, `usage_date < '${end}'`, ...exclusionClauses];
+
+  const grainConcat = `concat_ws(chr(31), ${grainColumns.join(', ')})`;
+  const cardCols = grainColumns.filter(c => c !== 'usage_date');
+  const cardSelects = cardCols.map((c, i) => `CAST(approx_count_distinct(${c}) AS BIGINT) AS card_${String(i)}`);
+  const selects = [
+    `CAST(COUNT(*) AS BIGINT) AS line_items`,
+    `CAST(approx_count_distinct(${grainConcat}) AS BIGINT) AS grain_rows`,
+    ...cardSelects,
+  ];
+  return `SELECT ${selects.join(', ')} FROM ${source} WHERE ${whereConditions.join(' AND ')}`;
 }

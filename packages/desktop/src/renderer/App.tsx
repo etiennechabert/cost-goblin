@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
 import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
-import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
+import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
 import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw, Settings, ArrowLeft, GitBranch, GitPullRequest } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
+import { SyncStatusButton, type SyncActivity, type SyncTier } from './top-menu/sync-status-button.js';
+import { RollupStatusButton } from './top-menu/rollup-status-button.js';
 import { GeneralTab } from './settings/general-tab.js';
 import { PerformanceTab } from './settings/performance-tab.js';
 import { ShareTab } from './settings/share-tab.js';
@@ -85,8 +87,6 @@ const ANALYTICAL_NAV: readonly AnalyticalNavItem[] = [
 function hasUpdateIndicator(status: UpdateStatus): boolean {
   return status.state === 'available' || status.state === 'downloading' || status.state === 'downloaded';
 }
-
-type SyncActivity = 'idle' | 'syncing' | 'downloading';
 
 type SetupCheck =
   | { status: 'checking' }
@@ -301,6 +301,12 @@ function countFilesRemaining(statuses: readonly SyncStatus[]): number {
   return remaining;
 }
 
+const SYNC_TIER_LABELS: readonly { readonly id: string; readonly label: string }[] = [
+  { id: 'daily', label: 'Daily' },
+  { id: 'hourly', label: 'Hourly' },
+  { id: 'cost-optimization', label: 'Cost optimization' },
+];
+
 function useSyncPolling(
   api: CostApi,
   setupCheck: SetupCheck,
@@ -309,10 +315,12 @@ function useSyncPolling(
   setSyncError: React.Dispatch<React.SetStateAction<string | null>>;
   syncActivity: SyncActivity;
   syncFilesRemaining: number;
+  syncTiers: readonly SyncTier[];
 } {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncActivity, setSyncActivity] = useState<SyncActivity>('idle');
   const [syncFilesRemaining, setSyncFilesRemaining] = useState(0);
+  const [syncTiers, setSyncTiers] = useState<readonly SyncTier[]>([]);
 
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
@@ -326,6 +334,8 @@ function useSyncPolling(
           api.getSyncStatus('cost-optimization'),
         ]);
         if (cancelled) return;
+        const tiers: readonly SyncStatus[] = [daily, hourly, costOpt];
+        setSyncTiers(SYNC_TIER_LABELS.map((t, i) => ({ id: t.id, label: t.label, status: tiers[i] ?? daily })));
         const tuple: SyncStatusTuple = [autoStatus, daily, hourly, costOpt];
         const errorMsg = extractSyncError(tuple);
         if (errorMsg !== null) {
@@ -345,7 +355,7 @@ function useSyncPolling(
     return () => { cancelled = true; clearInterval(timer); };
   }, [api, setupCheck, syncActivity]);
 
-  return { syncError, setSyncError, syncActivity, syncFilesRemaining };
+  return { syncError, setSyncError, syncActivity, syncFilesRemaining, syncTiers };
 }
 
 /** Poll publisher-side sharing status app-wide so the activity banner can show
@@ -477,7 +487,7 @@ function AppShell(): React.JSX.Element {
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const [splashStep, setSplashStep] = useState('Connecting...');
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
-  const { syncError, setSyncError, syncActivity, syncFilesRemaining } = useSyncPolling(api, setupCheck);
+  const { syncError, setSyncError, syncActivity, syncFilesRemaining, syncTiers } = useSyncPolling(api, setupCheck);
   const { sharingStatus, setSharingStatus } = useDataSharingPolling(api, setupCheck);
   const [stoppingSharing, setStoppingSharing] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -486,6 +496,7 @@ function AppShell(): React.JSX.Element {
   const [reloadConfirmOpen, setReloadConfirmOpen] = useState(false);
   const inFlightCount = useDebugBadge();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
+  const [rollupStatus, setRollupStatus] = useState<RollupStatus>({ state: 'idle' });
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [devBranch, setDevBranch] = useState<string | null>(null);
@@ -522,6 +533,13 @@ function AppShell(): React.JSX.Element {
 
   useEffect(() => {
     return globalThis.costgoblinUpdate.onStatusChanged(setUpdateStatus);
+  }, []);
+
+  useEffect(() => {
+    // Pull the current state on mount (a re-roll may already be running before
+    // the renderer subscribes), then track transitions via the push channel.
+    globalThis.costgoblinRollup.getStatus().then(setRollupStatus).catch(() => undefined);
+    return globalThis.costgoblinRollup.onStatusChanged(setRollupStatus);
   }, []);
 
   useEffect(() => {
@@ -647,27 +665,28 @@ function AppShell(): React.JSX.Element {
       });
   }
 
-  useEffect(() => {
+  const checkMissingPeriods = useCallback(async (): Promise<void> => {
     if (setupCheck.status !== 'ready') return;
-    Promise.all([api.getDataInventory(), api.getConfig()]).then(([inv, config]) => {
+    try {
+      const [inv, config] = await Promise.all([api.getDataInventory(), api.getConfig()]);
       const retentionDays = config.providers[0]?.sync.daily.retentionDays ?? 365;
       const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
       const cutoffPeriod = `${String(cutoff.getFullYear())}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
       const missing = inv.periods.filter(p => p.localStatus === 'missing' && p.period >= cutoffPeriod).length;
       setMissingPeriods(missing);
       setSyncError(null);
-    }).catch((err: unknown) => {
-      // Most common cause is expired AWS credentials — surface the
-      // message on the Sync nav indicator. Swallowed silently before,
-      // which left the user on a screen that looked fine while sync
-      // was completely broken.
-      const message = err instanceof Error ? err.message : String(err);
-      setSyncError(message);
-    });
-    // Re-run when the settings tab changes too (not just `view`): leaving the
-    // Data & Sync tab after a download must refresh the gear's missing-periods
-    // badge, which `view` alone no longer captures now that Sync isn't a View.
-  }, [api, view, settingsTab, setupCheck, setSyncError]);
+    } catch (err: unknown) {
+      // Most common cause is expired AWS credentials — surface the message on
+      // the sync indicator. Swallowed silently before, which left the user on a
+      // screen that looked fine while sync was completely broken.
+      setSyncError(err instanceof Error ? err.message : String(err));
+    }
+  }, [api, setupCheck, setSyncError]);
+
+  // Re-check on view / settings-tab change (leaving the Data & Sync tab after a
+  // download must refresh the missing-periods badge) and on demand from the
+  // sync popover's recheck button.
+  useEffect(() => { void checkMissingPeriods(); }, [checkMissingPeriods, view, settingsTab]);
 
   function handleNavClick(id: string) {
     const inSettings = settingsTab !== null;
@@ -975,24 +994,23 @@ function AppShell(): React.JSX.Element {
             >
               <RotateCw size={16} className={clearingCache ? 'animate-spin' : undefined} />
             </button>
+            <SyncStatusButton
+              activity={syncActivity}
+              error={syncError}
+              filesRemaining={syncFilesRemaining}
+              missingPeriods={missingPeriods}
+              tiers={syncTiers}
+              inSettingsData={settingsTab === 'data-sync'}
+              onManageData={() => { enterSettings('data-sync'); }}
+              onRecheck={checkMissingPeriods}
+            />
+            <RollupStatusButton status={rollupStatus} />
             {(() => {
-              // The gear is the single Settings entry point. It also carries the
-              // app-wide sync/update status that the standalone Sync button used
-              // to show, with a fixed precedence: error > active > missing > update.
-              const showError = syncError !== null;
-              const showActive = !showError && syncActivity !== 'idle';
-              const showMissing = !showError && syncActivity === 'idle' && missingPeriods > 0 && settingsTab !== 'data-sync';
-              const showUpdate = !showError && !showActive && !showMissing && hasUpdateIndicator(updateStatus);
+              // Sync/missing/error now live on the dedicated sync icon; the gear is
+              // the Settings entry point and carries only the update dot.
+              const showUpdate = hasUpdateIndicator(updateStatus);
               const inSettings = settingsTab !== null;
-              const title = syncError !== null
-                ? `Sync error — ${syncError}`
-                : showActive
-                  ? 'Syncing…'
-                  : showMissing
-                    ? `${String(missingPeriods)} billing period${missingPeriods === 1 ? '' : 's'} not synced`
-                    : showUpdate
-                      ? 'Update available'
-                      : 'Settings';
+              const title = showUpdate ? 'Update available' : 'Settings';
               return (
                 <button
                   type="button"
@@ -1002,26 +1020,12 @@ function AppShell(): React.JSX.Element {
                     inSettings
                       ? 'bg-bg-tertiary text-text-primary'
                       : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
-                    showError ? 'ring-1 ring-negative/60' : '',
-                    showActive ? 'animate-sync-blink' : '',
                   ].join(' ')}
                   aria-label="Settings"
                   aria-expanded={inSettings}
                   title={title}
                 >
                   <Settings size={16} className={inSettings ? 'text-accent' : undefined} />
-                  {showError && (
-                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-negative px-1 text-[10px] font-bold text-white">!</span>
-                  )}
-                  {showActive && syncFilesRemaining > 0 && (
-                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">{String(syncFilesRemaining)}</span>
-                  )}
-                  {showActive && syncFilesRemaining === 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent animate-pulse" aria-hidden="true" />
-                  )}
-                  {showMissing && (
-                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-bg-primary">{String(missingPeriods)}</span>
-                  )}
                   {showUpdate && (
                     <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
                   )}
