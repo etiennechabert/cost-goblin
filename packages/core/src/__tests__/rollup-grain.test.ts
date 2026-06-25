@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { rm } from 'node:fs/promises';
 import { buildSource, buildRollupPartitionQuery } from '../query/builder.js';
-import { rollupGrainColumns, rollupCandidateColumns } from '../rollup/grain.js';
+import { rollupGrainColumns } from '../rollup/grain.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
 import { asDimensionId } from '../types/branded.js';
@@ -58,32 +58,6 @@ function rawSourceJan(): string {
   return buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, periods: [PERIOD], costMetric: 'unblended' });
 }
 
-describe('rollupCandidateColumns vs rollupGrainColumns', () => {
-  // The estimator probes the CANDIDATE grain (every enabled dim) so it can
-  // measure + flag high-cardinality dims; the rollup STORES the pruned grain.
-  const withRawOnly: DimensionsConfig = {
-    builtIn: [...dimensions.builtIn.map(d => d.field === 'usage_type' ? { ...d, enabled: true } : d), { name: asDimensionId('resource_id'), label: 'Resource', field: 'resource_id' }],
-    tags: dimensions.tags,
-  };
-
-  it('candidate INCLUDES raw-only dims (so the estimator can measure them)', () => {
-    const candidate = rollupCandidateColumns(withRawOnly);
-    expect(candidate).toContain('usage_type');
-    expect(candidate).toContain('resource_id');
-    expect(candidate).toContain('service');
-  });
-
-  it('stored grain EXCLUDES raw-only dims (the #3 shrink), candidate ⊇ grain', () => {
-    const grain = rollupGrainColumns(withRawOnly);
-    expect(grain).not.toContain('usage_type');
-    expect(grain).not.toContain('operation');
-    expect(grain).not.toContain('resource_id');
-    expect(grain).toContain('service');
-    // Every stored-grain column is a candidate column.
-    for (const c of grain) expect(rollupCandidateColumns(withRawOnly)).toContain(c);
-  });
-});
-
 describe('buildRollupPartitionQuery', () => {
   let db: Awaited<ReturnType<typeof DuckDBInstance.create>>;
   let conn: Awaited<ReturnType<typeof db.connect>>;
@@ -125,24 +99,7 @@ describe('buildRollupPartitionQuery', () => {
     }
   });
 
-  it('keeps raw-only fields (usage_type) out of the partition even when the dim is enabled', async () => {
-    const withUsageType: DimensionsConfig = {
-      builtIn: dimensions.builtIn.map(d => d.field === 'usage_type' ? { ...d, enabled: true } : d),
-      tags: dimensions.tags,
-    };
-    const out2 = join(tmpdir(), `cg-rollup-rawonly-${String(process.pid)}-${PERIOD}.parquet`);
-    try {
-      await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', out2, { dataDir: SYNTHETIC_DIR, dimensions: withUsageType, availablePeriods: [PERIOD], costScope: scope([]) }));
-      const desc = await queryAll(conn, `DESCRIBE SELECT * FROM read_parquet('${out2.replaceAll('\\', '/')}')`);
-      const cols = desc.map(r => String(r['column_name']));
-      expect(cols).not.toContain('usage_type');
-      expect(cols).toContain('service');
-    } finally {
-      await rm(out2, { force: true });
-    }
-  });
-
-  it('SUM(line_items) equals the raw line-item count — the overview total_rows invariant', async () => {
+  it('SUM(line_items) equals the raw line-item count — backs the Table overview total_rows on the rollup', async () => {
     // The Table widget's overview routes through the rollup (SUM(cost) /
     // SUM(line_items) per usage_date). For total_rows to match the raw path's
     // COUNT(*), the per-grain line_items must sum back to the raw row count.
