@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { CalendarIcon, ChevronDown } from 'lucide-react';
+import type { DateRange as DayPickerRange } from 'react-day-picker';
 import type { DateString, HourString } from '@costgoblin/core/browser';
 import { DEFAULT_LAG_DAYS, asDateString } from '@costgoblin/core/browser';
 import { daysAgo, getThisMonth, getLastMonth, getCurrentQuarter, getLastQuarter, getYTD, getLastYear } from '../lib/dates.js';
@@ -55,6 +56,19 @@ const PRESETS: readonly { section: string; items: readonly Preset[] }[] = [
 
 const ALL_PRESETS = PRESETS.flatMap(s => s.items);
 
+/** Parse a YYYY-MM-DD string to a local-midnight Date — matches the Date objects react-day-picker hands back. */
+function parseDay(s: DateString): Date {
+  return new Date(`${s}T00:00:00`);
+}
+
+/** Format a Date as YYYY-MM-DD from its local calendar fields (avoids the UTC shift of toISOString). */
+function formatDay(d: Date): DateString {
+  const year = String(d.getFullYear());
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return asDateString(`${year}-${month}-${day}`);
+}
+
 export interface DateRange {
   start: DateString;
   end: DateString;
@@ -81,6 +95,10 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
   const hourlyAvailable = hideHourly !== true && hourlyConfigured;
   const [open, setOpen] = useState(false);
   const [showCustom, setShowCustom] = useState(false);
+  // While the user is mid-selection (start picked, end not yet), the committed
+  // value still holds the old range — keep the in-progress range here so the
+  // calendar highlights it. Cleared once a full range commits or the popover closes.
+  const [draftRange, setDraftRange] = useState<DayPickerRange | undefined>(undefined);
   const latestDate = daysAgo(lagDays);
 
   function getPresetRange(preset: Preset): DateRange {
@@ -124,11 +142,18 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
     return compareEnabled === true ? `${base} vs prev` : base;
   }
 
+  function handleOpenChange(next: boolean) {
+    setOpen(next);
+    // Drop any half-finished selection so reopening reflects the committed value.
+    if (!next) setDraftRange(undefined);
+  }
+
   function handlePreset(preset: Preset) {
     const range = getPresetRange(preset);
     // Picking a preset is an explicit "back to whole-day mode" gesture —
     // don't carry a previous drag's hour bounds onto the new window.
     onChange(range, resolveGranularity(range, preset.granularity));
+    setDraftRange(undefined);
     setShowCustom(false);
     setOpen(false);
   }
@@ -137,6 +162,14 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
     // Same intent as a preset: editing the calendar picks whole days, so any
     // active hour bounds no longer apply.
     onChange(range, resolveGranularity(range, granularity));
+  }
+
+  function handleRangeSelect(range: DayPickerRange | undefined) {
+    setDraftRange(range);
+    // Only commit once both ends are chosen — a lone start shouldn't refire the query.
+    if (range?.from && range.to) {
+      handleCustomRange({ start: formatDay(range.from), end: formatDay(range.to) });
+    }
   }
 
   function handleGranularityToggle(next: Granularity) {
@@ -196,7 +229,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
           </button>
         </div>
       )}
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -207,7 +240,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
           <ChevronDown className="h-3 w-3 text-text-muted" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-64 p-0" align="end">
+      <PopoverContent className="w-72 p-0" align="end">
         <div className="flex flex-col">
           {sections.map(({ section, items }) => (
             <div key={section}>
@@ -253,61 +286,27 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
               Custom range…
             </button>
             {showCustom && (
-              <div className="px-3 pb-3 flex flex-col gap-2">
-                <div className="flex flex-col gap-1">
-                  <span className="text-[10px] text-text-muted">From</span>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        className="flex items-center gap-2 rounded border border-border bg-bg-primary px-2 py-1.5 text-xs text-text-primary hover:border-accent transition-colors"
-                      >
-                        <CalendarIcon className="h-3 w-3 text-text-muted" />
-                        {value.start}
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start" side="left">
-                      <Calendar
-                        mode="single"
-                        selected={new Date(value.start + 'T00:00:00')}
-                        onSelect={(date) => {
-                          if (date) {
-                            handleCustomRange({ start: asDateString(date.toISOString().slice(0, 10)), end: value.end });
-                          }
-                        }}
-                        disabled={(date) => date.toISOString().slice(0, 10) > latestDate}
-                        autoFocus
-                      />
-                    </PopoverContent>
-                  </Popover>
+              <div className="pb-2">
+                <div className="flex items-center justify-between px-3 pb-1.5 text-[10px]">
+                  <div className="flex items-center gap-1">
+                    <span className="text-text-muted">From</span>
+                    <span className="font-medium text-text-secondary">{value.start}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-text-muted">To</span>
+                    <span className="font-medium text-text-secondary">{value.end}</span>
+                  </div>
                 </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-[10px] text-text-muted">To</span>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        className="flex items-center gap-2 rounded border border-border bg-bg-primary px-2 py-1.5 text-xs text-text-primary hover:border-accent transition-colors"
-                      >
-                        <CalendarIcon className="h-3 w-3 text-text-muted" />
-                        {value.end}
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start" side="left">
-                      <Calendar
-                        mode="single"
-                        selected={new Date(value.end + 'T00:00:00')}
-                        onSelect={(date) => {
-                          if (date) {
-                            handleCustomRange({ start: value.start, end: asDateString(date.toISOString().slice(0, 10)) });
-                          }
-                        }}
-                        disabled={(date) => date.toISOString().slice(0, 10) > latestDate}
-                        autoFocus
-                      />
-                    </PopoverContent>
-                  </Popover>
-                </div>
+                <Calendar
+                  mode="range"
+                  required={false}
+                  resetOnSelect
+                  selected={draftRange ?? { from: parseDay(value.start), to: parseDay(value.end) }}
+                  onSelect={handleRangeSelect}
+                  defaultMonth={parseDay(value.end)}
+                  disabled={(date) => formatDay(date) > latestDate}
+                  autoFocus
+                />
               </div>
             )}
           </div>
