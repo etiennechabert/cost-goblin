@@ -37,9 +37,12 @@ export function Calendar({
         day_button: cn(
           buttonVariants({ variant: 'ghost' }),
           'h-9 w-9 p-0 font-normal aria-selected:opacity-100',
+          // Keep the subtle ghost hover on unpicked days, but don't let it paint a
+          // gray fill over already-picked days — that fought the range highlight.
+          '[[aria-selected]_&]:hover:bg-transparent [[aria-selected]_&]:hover:text-inherit',
         ),
         selected:
-          'bg-accent text-white rounded-md hover:bg-accent-hover hover:text-white focus:bg-accent-hover focus:text-white',
+          'bg-accent text-white rounded-md',
         range_start:
           'aria-selected:rounded-l-md aria-selected:rounded-r-none',
         range_end:
