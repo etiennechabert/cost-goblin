@@ -57,6 +57,7 @@ import type {
   SharedPullProgress,
   SharedPullSelection,
   SharedSourceInfo,
+  RollupGrainEstimate,
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
@@ -227,6 +228,9 @@ const api: CostApi = {
   },
   saveDimensionsConfig(config: DimensionsConfig): Promise<void> {
     return invoke<undefined>('dimensions:save-config', config).then(() => undefined);
+  },
+  estimateRollupGrain(candidate: DimensionsConfig): Promise<RollupGrainEstimate> {
+    return invoke<RollupGrainEstimate>('dimensions:estimate-rollup-grain', candidate);
   },
   getAutoSyncEnabled(): Promise<boolean> {
     return invoke<boolean>('auto-sync:get-enabled');
