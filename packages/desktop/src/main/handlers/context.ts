@@ -493,6 +493,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
       costMetric: costScope?.costMetric ?? 'unblended',
       costPerspective: costScope?.costPerspective ?? 'gross',
       rules: costScope?.rules ?? [],
+      marketplaceAttribution: costScope?.marketplaceAttribution,
       orgAccountsDigest: computeOrgAccountsDigest(orgRaw),
       availableColumns: [...availableColumns],
     });

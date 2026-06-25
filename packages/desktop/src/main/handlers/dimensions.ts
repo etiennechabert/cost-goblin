@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, applyStripPatterns, dimensionsConfigToYaml, generateAliasSuggestions, isStringRecord } from '@costgoblin/core';
+import { applyNormalizationRule, applyStripPatterns, buildSource, dimensionsConfigToYaml, generateAliasSuggestions, isStringRecord } from '@costgoblin/core';
 import type { AliasSuggestion, DimensionsConfig, NormalizationRule } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { toNum, toStr } from './query-utils.js';
@@ -77,7 +77,7 @@ function filterUncoveredSuggestions(
 }
 
 export function registerDimensionsHandlers(app: AppContext): void {
-  const { ctx, getConfig, getDimensions, getRegionMap, invalidateDimensions, runQuery } = app;
+  const { ctx, getConfig, getDimensions, getQueryDimensions, getCostScope, getAvailableColumns, getOrgAccountsPath, getRegionMap, invalidateDimensions, runQuery } = app;
 
   ipcMain.handle('dimensions:discover-tags', async (): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> => {
     const config = await getConfig();
@@ -177,27 +177,25 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const latest = dirs.at(-1);
     if (latest === undefined) return { values: [], distinctCount: 0, period: '' };
 
-    const source = `read_parquet('${ctx.dataDir}/aws/raw/${latest}/*.parquet')`;
-    // The raw CUR columns aren't aliased — we need to map the UI-facing field
-    // back to the underlying column.
-    const RAW_COL: Record<string, string> = {
-      account_id: 'line_item_usage_account_id',
-      account_name: 'line_item_usage_account_name',
-      region: 'product_region_code',
-      service: 'product_servicecode',
-      service_family: 'product_product_family',
-      line_item_type: 'line_item_line_item_type',
-      operation: 'line_item_operation',
-      usage_type: 'line_item_usage_type',
-    };
-    const col = RAW_COL[field];
-    if (col === undefined) return { values: [], distinctCount: 0, period: '' };
+    // Query through buildSource — the same projection the Explorer and rollup
+    // use — so the preview sees aliased columns AND the marketplace
+    // re-attribution (Bedrock etc.), instead of raw product_servicecode. `field`
+    // is already a buildSource output alias (validated against ALLOWED above).
+    const period = latest.replace(/^daily-/, '');
+    const costScope = await getCostScope().catch(() => undefined);
+    const availableColumns = await getAvailableColumns('daily');
+    const orgAccountsPath = await getOrgAccountsPath();
+    const source = buildSource({
+      dataDir: ctx.dataDir, tier: 'daily', dimensions: await getQueryDimensions(),
+      orgAccountsPath, periods: [period], costMetric: 'unblended', availableColumns,
+      marketplaceAttribution: costScope?.marketplaceAttribution,
+    });
 
-    const distinctSql = `SELECT COUNT(DISTINCT ${col}) AS n FROM ${source} WHERE ${col} IS NOT NULL AND ${col} != ''`;
+    const distinctSql = `SELECT COUNT(DISTINCT ${field}) AS n FROM ${source} WHERE ${field} IS NOT NULL AND ${field} != ''`;
     const valuesSql = `
-      SELECT ${col} AS val, SUM(line_item_unblended_cost) AS cost
+      SELECT ${field} AS val, SUM(cost) AS cost
       FROM ${source}
-      WHERE ${col} IS NOT NULL AND ${col} != ''
+      WHERE ${field} IS NOT NULL AND ${field} != ''
       GROUP BY val
       ORDER BY cost DESC
       LIMIT 200
