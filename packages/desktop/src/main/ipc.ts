@@ -15,6 +15,7 @@ import { registerDataSharingHandlers } from './handlers/data-sharing.js';
 import { registerExplorerHandlers } from './handlers/explorer.js';
 import { registerDebugHandlers } from './handlers/debug.js';
 import { registerMcpHandlers } from './handlers/mcp-handler.js';
+import { registerRollupHandlers } from './handlers/rollup.js';
 
 export type { AppContext, IpcContext } from './handlers/context.js';
 
@@ -36,6 +37,7 @@ export function registerIpcHandlers(ctx: IpcContext): AppContext {
   registerExplorerHandlers(app);
   registerDebugHandlers(app);
   registerMcpHandlers(app);
+  registerRollupHandlers(app);
 
   app.warmupBase();
 

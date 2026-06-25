@@ -43,8 +43,9 @@ import {
   type SharedPullSelection,
   type SharedSourcePreview,
   type SharedSourceInfo,
+  type RollupGrainEstimate,
 } from '@costgoblin/core/browser';
-import { DEFAULT_COST_SCOPE } from '@costgoblin/core/browser';
+import { DEFAULT_COST_SCOPE, computeRollupEstimate } from '@costgoblin/core/browser';
 
 const costResult: CostResult = {
   rows: [
@@ -280,6 +281,30 @@ export class MockCostApi implements CostApi {
   discoverColumnValues(): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> { return Promise.resolve({ values: [{ value: 'Usage', cost: 12345 }, { value: 'Tax', cost: 234 }, { value: 'Credit', cost: -100 }], distinctCount: 3, period: '2026-04' }); }
   getDimensionsConfig(): Promise<DimensionsConfig> { return Promise.resolve({ builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name' }], tags: [{ tagName: 'team', label: 'Team', concept: 'owner' as const }] }); }
   saveDimensionsConfig(): Promise<void> { return Promise.resolve(); }
+  estimateRollupGrain(candidate: DimensionsConfig): Promise<RollupGrainEstimate> {
+    // Feed the real estimator a probe-shaped fixture so the mock matches the
+    // shape and thresholds the desktop handler produces. resource_id (when
+    // enabled) is near-unique → flagged; the others stay navigational.
+    const enabled = (d: { enabled?: boolean | undefined }): boolean => d.enabled !== false;
+    const hasResourceId = candidate.builtIn.some(d => d.field === 'resource_id' && enabled(d));
+    const probeLineItems = 2_100_000;
+    const dimCardinalities = [
+      { column: 'account_id', cardinality: 14 },
+      { column: 'service', cardinality: 38 },
+      { column: 'tag_team', cardinality: 22 },
+      ...(hasResourceId ? [{ column: 'resource_id', cardinality: 1_820_000 }] : []),
+    ];
+    const probeGrainRows = hasResourceId ? 1_840_000 : 92_000;
+    return Promise.resolve(computeRollupEstimate({
+      probePeriod: '2026-04',
+      months: 12,
+      probeGrainRows,
+      probeLineItems,
+      rawBytes: 4_900_000_000,
+      current: { rows: 1_100_000, bytes: 17_600_000 },
+      dimCardinalities,
+    }));
+  }
   getAutoSyncEnabled(): Promise<boolean> { return Promise.resolve(false); }
   setAutoSyncEnabled(): Promise<void> { return Promise.resolve(); }
   getAutoSyncIntervalMinutes(): Promise<number> { return Promise.resolve(24 * 60); }

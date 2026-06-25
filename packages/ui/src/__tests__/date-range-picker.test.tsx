@@ -1,4 +1,4 @@
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
@@ -82,7 +82,7 @@ describe('DateRangePicker', () => {
     expect(granularity).toBe('daily');
   });
 
-  it('shows custom range inputs when Custom range is clicked', async () => {
+  it('shows custom range calendar when Custom range is clicked', async () => {
     renderPicker();
     const user = userEvent.setup();
 
@@ -91,5 +91,36 @@ describe('DateRangePicker', () => {
 
     expect(screen.getByText('From')).toBeDefined();
     expect(screen.getByText('To')).toBeDefined();
+    // A single range calendar grid is shown (not two separate date inputs).
+    expect(screen.getByRole('grid')).toBeDefined();
+  });
+
+  it('picking two days in the range calendar commits a full range', async () => {
+    const onChange = vi.fn();
+    renderPicker({ onChange });
+    const user = userEvent.setup();
+
+    await user.click(screen.getByText('Last 30 days'));
+    await user.click(screen.getByText('Custom range…'));
+
+    const grid = screen.getByRole('grid');
+    const enabledDays = within(grid)
+      .getAllByRole('button')
+      .filter(btn => !btn.hasAttribute('disabled'));
+
+    const first = enabledDays[0];
+    const last = enabledDays[enabledDays.length - 1];
+    expect(first).toBeDefined();
+    expect(last).toBeDefined();
+    if (first && last) {
+      // First click starts a fresh range (no commit yet); second click completes it.
+      await user.click(first);
+      await user.click(last);
+    }
+
+    expect(onChange).toHaveBeenCalled();
+    const calls = onChange.mock.calls;
+    const range = calls[calls.length - 1]?.[0] as DateRange;
+    expect(range.start <= range.end).toBe(true);
   });
 });

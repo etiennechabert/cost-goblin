@@ -57,6 +57,7 @@ import type {
   SharedPullProgress,
   SharedPullSelection,
   SharedSourceInfo,
+  RollupGrainEstimate,
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
@@ -227,6 +228,9 @@ const api: CostApi = {
   },
   saveDimensionsConfig(config: DimensionsConfig): Promise<void> {
     return invoke<undefined>('dimensions:save-config', config).then(() => undefined);
+  },
+  estimateRollupGrain(candidate: DimensionsConfig): Promise<RollupGrainEstimate> {
+    return invoke<RollupGrainEstimate>('dimensions:estimate-rollup-grain', candidate);
   },
   getAutoSyncEnabled(): Promise<boolean> {
     return invoke<boolean>('auto-sync:get-enabled');
@@ -407,6 +411,20 @@ contextBridge.exposeInMainWorld('costgoblinUpdate', {
   },
   getAppVersion(): Promise<string> {
     return invoke<string>('update:get-app-version');
+  },
+});
+
+contextBridge.exposeInMainWorld('costgoblinRollup', {
+  getStatus(): Promise<unknown> {
+    return invoke<unknown>('rollup:get-status');
+  },
+  getStats(): Promise<unknown> {
+    return invoke<unknown>('rollup:get-stats');
+  },
+  onStatusChanged(callback: (status: unknown) => void): () => void {
+    const handler = (_event: unknown, status: unknown): void => { callback(status); };
+    ipcRenderer.on('rollup:status-changed', handler);
+    return () => { ipcRenderer.removeListener('rollup:status-changed', handler); };
   },
 });
 
