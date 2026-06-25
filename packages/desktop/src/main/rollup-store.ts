@@ -217,10 +217,13 @@ export class RollupStore {
         ? this.manifest
         : { schemaVersion: ROLLUP_SCHEMA_VERSION, shapeSignature: shape.signature, builtAt: '', grainDimensions: shape.grainDimensions, availableColumns: shape.availableColumns, partitions: {} };
 
+      // Periods are processed in order, so the first `done` of them are
+      // finished and the rest are still pending — the renderer slices on `done`
+      // to show which months are built vs to-do.
       const total = periods.length;
       let done = 0;
       let failures = 0;
-      this.setStatus({ state: 'computing', done, total });
+      this.setStatus({ state: 'computing', done, total, periods });
 
       for (const period of periods) {
         if (this.epoch !== startEpoch) return; // superseded mid-build — the newer op owns the status
@@ -228,7 +231,7 @@ export class RollupStore {
         if (opts.force !== true && manifest.partitions[period]?.rawEtagHash === wantHash) {
           this.validPeriods.add(period);
           done += 1;
-          this.setStatus({ state: 'computing', done, total });
+          this.setStatus({ state: 'computing', done, total, periods });
           continue;
         }
         try {
@@ -246,7 +249,7 @@ export class RollupStore {
           logger.warn(`rollup: build failed for ${period} — ${err instanceof Error ? err.message : String(err)}`);
         }
         done += 1;
-        this.setStatus({ state: 'computing', done, total });
+        this.setStatus({ state: 'computing', done, total, periods });
       }
 
       this.setStatus(
@@ -286,9 +289,10 @@ export class RollupStore {
     this.manifest = null;
     this.validPeriods = new Set();
     // Signal "rebuilding" immediately — the caller re-warms right after, and the
-    // ensuing warmup either drives this through to `ready` (via maintainPeriods)
-    // or calls markSettled() when there's nothing to rebuild.
-    this.setStatus({ state: 'computing', done: 0, total: 0 });
+    // ensuing warmup either drives this through to `ready` (via maintainPeriods,
+    // which fills in the period list) or calls markSettled() when there's
+    // nothing to rebuild.
+    this.setStatus({ state: 'computing', done: 0, total: 0, periods: [] });
     return this.enqueue(async () => {
       await rm(this.rollupDir(), { recursive: true, force: true });
     });
