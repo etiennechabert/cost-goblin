@@ -22,3 +22,27 @@ export function rollupGrainColumns(dims: DimensionsConfig): string[] {
   const rest = [...cols].filter(c => c !== 'usage_date').sort((a, b) => a.localeCompare(b));
   return ['usage_date', ...rest];
 }
+
+/** The enabled dimensions as grain groups: each dimension's primary column (a
+ *  built-in's `field`, or a tag's column) paired with EVERY grain column it
+ *  contributes (a built-in also stores its `displayField`). Used by the grain
+ *  probe to attribute marginal rollup size PER DIMENSION — removing a built-in
+ *  drops both its id and its display column together, so a 1:1 display column
+ *  (e.g. account_name ↔ account_id) is never measured as a redundant
+ *  pseudo-dimension. Built-ins first, then tags (same enabled-set semantics as
+ *  rollupGrainColumns). */
+export function rollupGrainDimensions(dims: DimensionsConfig): { column: string; columns: string[] }[] {
+  const out: { column: string; columns: string[] }[] = [];
+  for (const d of dims.builtIn) {
+    if (!isEnabled(d)) continue;
+    const columns = [d.field];
+    if (d.displayField !== undefined && d.displayField.length > 0) columns.push(d.displayField);
+    out.push({ column: d.field, columns });
+  }
+  for (const t of dims.tags) {
+    if (!isEnabled(t)) continue;
+    const col = tagDimColumn(t);
+    out.push({ column: col, columns: [col] });
+  }
+  return out;
+}

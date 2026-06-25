@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, applyStripPatterns, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns } from '@costgoblin/core';
+import { applyNormalizationRule, applyStripPatterns, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions } from '@costgoblin/core';
 import type { AliasSuggestion, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { toNum, toStr } from './query-utils.js';
@@ -249,7 +249,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
 
     const period = latest.replace(/^daily-/, '');
     const grainColumns = rollupGrainColumns(candidate);
-    const cardCols = grainColumns.filter(c => c !== 'usage_date');
+    const grainDims = rollupGrainDimensions(candidate);
 
     const costScope = await getCostScope().catch(() => undefined);
     const availableColumns = await getAvailableColumns('daily');
@@ -266,8 +266,8 @@ export function registerDimensionsHandlers(app: AppContext): void {
     // baseline the UI shows the estimated rollup against.
     const rawBytes = await sumParquetBytes(fs, path, rawDir, dirs);
 
-    const dimCardinalities = cardCols.map((column, i) => ({
-      column,
+    const dimCardinalities = grainDims.map((dim, i) => ({
+      column: dim.column,
       cardinality: toNum(row[`card_${String(i)}`]),
       leaveOneOutGrainRows: toNum(row[`loo_${String(i)}`]),
     }));

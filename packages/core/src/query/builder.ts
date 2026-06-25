@@ -9,7 +9,7 @@ import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize
 import { costExprFor, LIST_METRIC_LINE_ITEM_TYPES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
 import { assertDateString, assertHourString, SecurityError } from './identifier-validator.js';
-import { rollupGrainColumns } from '../rollup/grain.js';
+import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 
 function assertFiniteNumber(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
@@ -1099,10 +1099,12 @@ export function buildRollupPartitionQuery(
  *   - `line_items`  — COUNT(*) (the rollup's raw input for that month),
  *   - `grain_rows`  — `approx_count_distinct` of the candidate grain tuple
  *      (≈ the rollup row count for that month), and
- *   - `card_<i>`    — `approx_count_distinct` of each non-date grain column,
- *      so the estimator can flag individual raw-only dims (e.g. resource_id), and
- *   - `loo_<i>`     — the grain row count with that one dim removed, so the
- *      estimator can attribute marginal rollup size per dimension.
+ *   - `card_<i>`    — `approx_count_distinct` of each enabled dimension's primary
+ *      column, so the estimator can flag individual raw-only dims (e.g. resource_id), and
+ *   - `loo_<i>`     — the grain row count with that whole dimension removed (a
+ *      built-in drops both its id and display column), so the estimator can
+ *      attribute marginal rollup size per dimension. Indexed by
+ *      `rollupGrainDimensions` order (built-ins first, then tags).
  *
  *  `grainColumns` come from `rollupGrainColumns` over the candidate dimensions
  *  (usage_date first) and are projected by `buildSource` — the same trusted set
@@ -1145,15 +1147,19 @@ export function buildGrainProbeQuery(
   const whereConditions = [`usage_date >= '${start}'`, `usage_date < '${end}'`, ...exclusionClauses];
 
   const grainConcat = `concat_ws(chr(31), ${grainColumns.join(', ')})`;
-  const cardCols = grainColumns.filter(c => c !== 'usage_date');
-  const cardSelects = cardCols.map((c, i) => `CAST(approx_count_distinct(${c}) AS BIGINT) AS card_${String(i)}`);
-  // Leave-one-out grain row count for each non-date dim: the candidate grain
-  // with only that dim removed (usage_date always kept). The estimator turns
-  // fullGrain ÷ loo_<i> into the marginal rollup size each dim drives — a
-  // correlation-aware impact, computed in this same single scan. Same trusted
-  // grainColumns interpolation as grainConcat above (no user values).
-  const looSelects = cardCols.map((c, i) => {
-    const cols = grainColumns.filter(g => g !== c);
+  // Per-dimension cardinality and leave-one-out grain. card_<i> is the
+  // dimension's own distinct count; loo_<i> is the grain with that whole
+  // dimension removed — a built-in drops both its id and its display column, so
+  // a 1:1 display column (account_name ↔ account_id) isn't split into two
+  // mutually-covering pseudo-dims. The estimator turns fullGrain ÷ loo_<i> into
+  // the marginal rollup size each dimension drives — a correlation-aware impact,
+  // computed in this same single scan. Same trusted grainColumns interpolation
+  // as grainConcat above (no user values).
+  const grainDims = rollupGrainDimensions(dimensions);
+  const cardSelects = grainDims.map((dim, i) => `CAST(approx_count_distinct(${dim.column}) AS BIGINT) AS card_${String(i)}`);
+  const looSelects = grainDims.map((dim, i) => {
+    const remove = new Set(dim.columns);
+    const cols = grainColumns.filter(g => !remove.has(g));
     return `CAST(approx_count_distinct(concat_ws(chr(31), ${cols.join(', ')})) AS BIGINT) AS loo_${String(i)}`;
   });
   const selects = [

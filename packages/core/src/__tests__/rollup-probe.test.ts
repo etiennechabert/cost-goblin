@@ -3,7 +3,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildGrainProbeQuery } from '../query/builder.js';
-import { rollupGrainColumns } from '../rollup/grain.js';
+import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 import { computeRollupEstimate } from '../rollup/estimator.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
@@ -70,14 +70,14 @@ async function probe(
   dimensions: DimensionsConfig,
 ): Promise<{ lineItems: number; grainRows: number; cards: Map<string, number>; loo: Map<string, number> }> {
   const grain = rollupGrainColumns(dimensions);
-  const cardCols = grain.filter(c => c !== 'usage_date');
+  const grainDims = rollupGrainDimensions(dimensions);
   const sql = buildGrainProbeQuery(PERIOD, grain, { dataDir: SYNTHETIC_DIR, dimensions, costScope: scope });
   const row = (await queryAll(conn, sql))[0];
   const cards = new Map<string, number>();
   const loo = new Map<string, number>();
-  cardCols.forEach((col, i) => {
-    cards.set(col, toNum(row?.[`card_${String(i)}`]));
-    loo.set(col, toNum(row?.[`loo_${String(i)}`]));
+  grainDims.forEach((dim, i) => {
+    cards.set(dim.column, toNum(row?.[`card_${String(i)}`]));
+    loo.set(dim.column, toNum(row?.[`loo_${String(i)}`]));
   });
   return { lineItems: toNum(row?.['line_items']), grainRows: toNum(row?.['grain_rows']), cards, loo };
 }
