@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronUp, ChevronDown, GripVertical, Lock } from 'lucide-react';
-import type { BuiltInDimension, DimensionsConfig, TagDimension, ConceptType, NormalizationRule } from '@costgoblin/core/browser';
-import { asDimensionId, OU_PATH_SOURCE_KEY } from '@costgoblin/core/browser';
+import { ChevronUp, ChevronDown, GripVertical, Lock, Database, AlertTriangle } from 'lucide-react';
+import type { BuiltInDimension, DimensionsConfig, TagDimension, ConceptType, NormalizationRule, RollupGrainEstimate, RollupSizeBand } from '@costgoblin/core/browser';
+import { asDimensionId, OU_PATH_SOURCE_KEY, tagDimColumn } from '@costgoblin/core/browser';
+import { formatBytes } from '../components/format.js';
 
 const OU_PATH_LABEL = 'OU Path';
 function formatAccountSource(key: string): string {
@@ -23,8 +24,11 @@ function tagOrderKey(t: { tagName?: string | undefined; accountTagFallback?: str
   return `tag:@${src}:${t.label}`;
 }
 
-// Core dimensions that cannot be disabled — they power the fallback chain and are always needed.
-const LOCKED_DIMENSIONS = new Set([asDimensionId('service'), asDimensionId('service_family'), asDimensionId('usage_type')]);
+// Core dimensions that cannot be disabled — service and service_family anchor
+// the widget fallback chain. usage_type stays a fallback candidate (queried
+// from the raw column regardless of enabled state) but is now toggleable, so a
+// heavy usage_type grain can be dropped from the rollup to keep dashboards fast.
+const LOCKED_DIMENSIONS = new Set([asDimensionId('service'), asDimensionId('service_family')]);
 
 function migrateLocked(cfg: DimensionsConfig): { config: DimensionsConfig; changed: boolean } {
   const needsFix = cfg.builtIn.some(d => LOCKED_DIMENSIONS.has(d.name) && d.enabled === false);
@@ -1422,13 +1426,160 @@ function AccountTagsContent({ orgData, accountTagKeys, hiddenAccountCols, setHid
   );
 }
 
-function pillClass(enabled: boolean): string {
-  return [
-    'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-    enabled
-      ? 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20'
-      : 'border-border bg-bg-tertiary/20 text-text-muted hover:border-text-muted hover:text-text-secondary',
-  ].join(' ');
+function pillClass(enabled: boolean, danger = false): string {
+  const state = !enabled
+    ? 'border-border bg-bg-tertiary/20 text-text-muted hover:border-text-muted hover:text-text-secondary'
+    : danger
+      ? 'border-amber-500/50 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20'
+      : 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20';
+  return ['rounded-full border px-3 py-1 text-xs font-medium transition-colors', state].join(' ');
+}
+
+/** The rollup grain column a built-in/tag dim contributes — mirrors
+ *  `rollupGrainColumns` so the UI can match an estimate's per-dim verdict to a
+ *  pill. */
+function builtInGrainColumn(d: BuiltInDimension): string { return d.field; }
+
+/** A digest of the ENABLED grain columns. Drives the estimate refetch: it
+ *  changes when a dim is toggled (the grain changes) but not when a dim is
+ *  reordered or relabelled (those never touch stored bytes). */
+function grainSignature(config: DimensionsConfig): string {
+  const cols: string[] = [];
+  for (const d of config.builtIn) {
+    if (d.enabled === false) continue;
+    cols.push(d.field);
+    if (d.displayField !== undefined && d.displayField.length > 0) cols.push(d.displayField);
+  }
+  for (const t of config.tags) if (t.enabled !== false) cols.push(tagDimColumn(t));
+  return [...new Set(cols)].sort((a, b) => a.localeCompare(b)).join(',');
+}
+
+const SIZE_BAND_LABEL: Record<RollupSizeBand, string> = {
+  tiny: 'tiny', small: 'small', moderate: 'moderate', large: 'large', huge: 'very large',
+};
+
+function formatRebuild(seconds: number): string {
+  if (seconds < 1) return '< 1s';
+  if (seconds < 90) return `~${String(Math.round(seconds))}s`;
+  return `~${String(Math.round(seconds / 60))} min`;
+}
+
+function formatCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
+  return String(Math.round(n));
+}
+
+/** Chip on a pill whose dimension is high-cardinality enough to drive rollup
+ *  size — shows its distinct-value count so the user can see WHY it's flagged.
+ *  Such dims are best kept raw-only (their widgets fall back to raw Parquet). */
+function RawOnlyBadge({ cardinality }: Readonly<{ cardinality: number | undefined }>): React.JSX.Element {
+  const count = cardinality !== undefined && cardinality > 0 ? formatCount(cardinality) : null;
+  return (
+    <span
+      title={`High-cardinality${count !== null ? ` (~${count} distinct values)` : ''} — a primary driver of rollup size. Best kept raw-only: widgets grouping by it query raw data instead of the rollup.`}
+      className="ml-1.5 inline-flex items-center gap-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wide text-amber-500"
+    >
+      <Database className="h-2.5 w-2.5" />{count ?? 'raw'}
+    </span>
+  );
+}
+
+/** Friendly label for a rollup grain column (for the heaviest-dimension list). */
+function columnLabel(config: DimensionsConfig, column: string): string {
+  const b = config.builtIn.find(d => d.field === column);
+  if (b !== undefined) return b.label;
+  const t = config.tags.find(tg => tagDimColumn(tg) === column);
+  if (t !== undefined) return t.label;
+  return column;
+}
+
+function ImpactStat({ label, value, hint }: Readonly<{ label: string; value: string; hint?: string }>): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] uppercase tracking-wider text-text-muted">{label}</span>
+      <span className="text-sm font-semibold text-text-primary">{value}</span>
+      {hint !== undefined && <span className="text-[10px] text-text-muted">{hint}</span>}
+    </div>
+  );
+}
+
+/** Cost/benefit summary for the current enabled grain (rollup design §8).
+ *  Updates as dims are toggled so the user can weigh the rebuild before it
+ *  happens. Numbers are directional (probed from one recent month). */
+function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: RollupGrainEstimate | null; loading: boolean; config: DimensionsConfig }>): React.JSX.Element {
+  const heaviest = estimate === null
+    ? []
+    : [...estimate.dims].filter(d => d.rawOnly).sort((a, b) => b.cardinality - a.cardinality);
+  const sizeReduction = estimate !== null && estimate.candidate.bytes > 0
+    ? estimate.raw.bytes / estimate.candidate.bytes
+    : 0;
+  return (
+    <div className="rounded-xl border border-border bg-bg-secondary/40 px-5 py-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Database className="h-4 w-4 text-text-muted" />
+          <h3 className="text-sm font-medium text-text-secondary">Rollup impact</h3>
+        </div>
+        {estimate !== null && estimate.probePeriod.length > 0 && (
+          <span className="text-[10px] text-text-muted">estimated from {estimate.probePeriod} · directional</span>
+        )}
+      </div>
+
+      {loading && estimate === null ? (
+        <p className="mt-3 text-xs text-text-muted">Estimating…</p>
+      ) : estimate === null || estimate.probePeriod.length === 0 ? (
+        <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>
+      ) : (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <ImpactStat
+              label="Raw data"
+              value={formatBytes(estimate.raw.bytes)}
+              hint={`${formatCount(estimate.raw.rows)} line items · ${String(estimate.months)} mo`}
+            />
+            <ImpactStat
+              label="Est. rollup"
+              value={formatBytes(estimate.candidate.bytes)}
+              hint={`${SIZE_BAND_LABEL[estimate.candidate.sizeBand]} · ${formatCount(estimate.candidate.rows)} rows`}
+            />
+            <ImpactStat
+              label="Compression"
+              value={sizeReduction >= 1.05 ? `${sizeReduction.toFixed(1)}×` : '~1×'}
+              hint={`smaller than raw · ${estimate.compressionRate >= 1 ? estimate.compressionRate.toFixed(0) : estimate.compressionRate.toFixed(1)}× fewer rows`}
+            />
+            <ImpactStat
+              label="Rebuild"
+              value={formatRebuild(estimate.candidate.rebuildSeconds)}
+              hint="background re-roll"
+            />
+          </div>
+          {estimate.rawOnly.recommended && (
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+              <p className="text-[11px] leading-snug text-text-secondary">
+                {heaviest.length > 0 ? (
+                  <>
+                    Heavy grain — most of the rollup size comes from{' '}
+                    {heaviest.slice(0, 4).map((d, i) => (
+                      <span key={d.column}>
+                        {i > 0 ? ', ' : ''}
+                        <span className="font-medium text-amber-500">{columnLabel(config, d.column)}</span>
+                        {' '}({formatCount(d.cardinality)})
+                      </span>
+                    ))}
+                    . Disabling the heaviest keeps it raw-only so dashboards stay fast.
+                  </>
+                ) : (
+                  <>This grain is heavy for the rollup — {estimate.rawOnly.reason ?? 'it exceeds the size budget'}. Consider a leaner grain so dashboards stay fast.</>
+                )}
+              </p>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 function GripHandle({ attrs }: Readonly<{ attrs: React.HTMLAttributes<HTMLButtonElement> }>): React.JSX.Element {
@@ -1507,6 +1658,7 @@ export function DimensionsView() {
   // resets to status=loading on every dep change, which would otherwise blank
   // the dimensions list for a frame after every reorder/toggle/save.
   const [config, setConfig] = useState<DimensionsConfig | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   useEffect(() => {
     if (configQuery.status !== 'success') return;
     const { config: migrated, changed } = migrateLocked(configQuery.data);
@@ -1517,6 +1669,20 @@ export function DimensionsView() {
     }
   }, [configQuery, api]);
   const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
+
+  // Live rollup cost/benefit estimate for the current enabled grain. Keyed on
+  // the grain signature so it refetches when a dim is toggled (the grain
+  // changes) but not on reorder/relabel. The probe hits DuckDB, so this is
+  // intentionally cheap and fire-and-forget.
+  const estimateSig = config === null ? '' : grainSignature(config);
+  const estimateQuery = useQuery(
+    () => config === null ? Promise.resolve(null) : api.estimateRollupGrain(config),
+    [estimateSig],
+  );
+  const estimate = estimateQuery.status === 'success' ? estimateQuery.data : null;
+  const estimateLoading = estimateQuery.status === 'loading';
+  const rawOnlyColumns = new Set((estimate?.dims ?? []).filter(d => d.rawOnly).map(d => d.column));
+  const cardinalityByColumn = new Map((estimate?.dims ?? []).map(d => [d.column, d.cardinality]));
 
   // Account tag keys from org sync
   const accountTagKeys = orgData === null
@@ -1629,7 +1795,12 @@ export function DimensionsView() {
   function applyOptimistic(next: DimensionsConfig): void {
     const reconciled = { ...next, order: reconcileOrder(next) };
     setConfig(reconciled);
-    api.saveDimensionsConfig(reconciled).catch(() => undefined);
+    setSaveError(null);
+    api.saveDimensionsConfig(reconciled).catch((err: unknown) => {
+      // The toggle/reorder autosave used to swallow this — a failed persist left
+      // the UI showing a change that never reached disk. Surface it instead.
+      setSaveError(err instanceof Error ? err.message : 'Failed to save dimensions');
+    });
   }
 
   function toggleBuiltInEnabled(idx: number): void {
@@ -1747,6 +1918,19 @@ export function DimensionsView() {
         <p className="text-sm text-text-secondary mt-1">Map tags to cost allocation dimensions</p>
       </div>
 
+      {saveError !== null && (
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-negative/50 bg-negative-muted px-4 py-2.5">
+          <p className="text-sm text-negative">Couldn’t save your change: {saveError}</p>
+          <button
+            type="button"
+            onClick={() => { setSaveError(null); }}
+            className="text-xs font-medium text-negative/80 hover:text-negative"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* SECTION 1 — Available dimensions as toggleable pills. Two rows: the
           fixed set of built-ins, then the user-defined tag dims with an
           inline + Add pill at the end. */}
@@ -1764,6 +1948,7 @@ export function DimensionsView() {
                 .map(([idx, d]) => {
                 const locked = LOCKED_DIMENSIONS.has(d.name);
                 const isOn = locked || d.enabled !== false;
+                const rawOnly = isOn && rawOnlyColumns.has(builtInGrainColumn(d));
                 let buttonTitle = 'Click to enable';
                 if (locked) buttonTitle = 'Always enabled — required for cost breakdown';
                 else if (isOn) buttonTitle = 'Click to disable';
@@ -1773,10 +1958,11 @@ export function DimensionsView() {
                     type="button"
                     onClick={locked ? undefined : () => { toggleBuiltInEnabled(idx); }}
                     title={buttonTitle}
-                    className={`${pillClass(isOn)}${locked ? ' cursor-default' : ''}`}
+                    className={`${pillClass(isOn, rawOnly)}${locked ? ' cursor-default' : ''}`}
                   >
                     {locked && <Lock className="inline-block w-3 h-3 mr-1 -mt-0.5" />}
                     {d.label}
+                    {rawOnly && <RawOnlyBadge cardinality={cardinalityByColumn.get(builtInGrainColumn(d))} />}
                   </button>
                 );
               })}
@@ -1787,15 +1973,17 @@ export function DimensionsView() {
             <div className="flex flex-wrap gap-1.5">
               {config.tags.map((tag, idx) => {
                 const isOn = tag.enabled !== false;
+                const rawOnly = isOn && rawOnlyColumns.has(tagDimColumn(tag));
                 return (
                   <button
                     key={tagOrderKey(tag)}
                     type="button"
                     onClick={() => { toggleTagEnabled(idx); }}
                     title={isOn ? 'Click to disable' : 'Click to enable'}
-                    className={pillClass(isOn)}
+                    className={pillClass(isOn, rawOnly)}
                   >
                     {tag.label}
+                    {rawOnly && <RawOnlyBadge cardinality={cardinalityByColumn.get(tagDimColumn(tag))} />}
                   </button>
                 );
               })}
@@ -1808,6 +1996,10 @@ export function DimensionsView() {
               </button>
             </div>
           </div>
+
+          {/* Rollup cost/benefit for the current grain — updates as pills are
+              toggled so the user can weigh the (background) re-roll first. */}
+          <RollupImpactPanel estimate={estimate} loading={estimateLoading} config={config} />
 
           {/* New-tag-dim form appears inline right after the pill rows so the
               user sees where the new pill will land. */}

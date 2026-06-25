@@ -3,6 +3,7 @@ import { asDateString, asHourString, asTagValue } from '@costgoblin/core/browser
 import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
+import { UpdatingBadge } from '../components/updating-badge.js';
 import { daysBetween } from '../lib/dates.js';
 import type {
   Dimension,
@@ -52,6 +53,10 @@ interface CustomViewProps {
   readonly spec: ViewSpec;
   readonly headerSubtitle?: string | undefined;
   readonly initialFilter?: FilterMap | undefined;
+  /** True while the rollup behind these widgets is re-rolling — overlays a
+   *  non-blocking "Updating…" badge on each widget so a briefly-stale figure
+   *  reads as recomputing rather than wrong. */
+  readonly reRolling?: boolean | undefined;
 }
 
 function priorityFor(d: Dimension): number {
@@ -96,7 +101,7 @@ function previousRangeFor(dr: DateRange): DateRange {
   };
 }
 
-function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProps) {
+function CustomViewInner({ spec, headerSubtitle, initialFilter, reRolling }: CustomViewProps) {
   const api = useCostApi();
   const lagDays = useLagDays();
   const hourlyConfigured = useHourlyConfigured();
@@ -309,9 +314,10 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
                     id={w.id}
                     priority={offset + colIdx}
                     minHeight={placeholderMinHeight(w.type)}
-                    className="min-w-0 flex flex-col"
+                    className="relative min-w-0 flex flex-col"
                     style={{ flexBasis: widgetFlexBasis(w.size), flexGrow: 1, flexShrink: 1 }}
                   >
+                    {reRolling === true && <UpdatingBadge />}
                     <Renderer
                       spec={w}
                       dateRange={dateRange}
