@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { rm } from 'node:fs/promises';
 import { buildSource, buildRollupPartitionQuery } from '../query/builder.js';
-import { rollupGrainColumns } from '../rollup/grain.js';
+import { rollupGrainColumns, rollupCandidateColumns } from '../rollup/grain.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
 import { asDimensionId } from '../types/branded.js';
@@ -57,6 +57,32 @@ function scope(rules: CostScopeConfig['rules']): CostScopeConfig {
 function rawSourceJan(): string {
   return buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, periods: [PERIOD], costMetric: 'unblended' });
 }
+
+describe('rollupCandidateColumns vs rollupGrainColumns', () => {
+  // The estimator probes the CANDIDATE grain (every enabled dim) so it can
+  // measure + flag high-cardinality dims; the rollup STORES the pruned grain.
+  const withRawOnly: DimensionsConfig = {
+    builtIn: [...dimensions.builtIn.map(d => d.field === 'usage_type' ? { ...d, enabled: true } : d), { name: asDimensionId('resource_id'), label: 'Resource', field: 'resource_id' }],
+    tags: dimensions.tags,
+  };
+
+  it('candidate INCLUDES raw-only dims (so the estimator can measure them)', () => {
+    const candidate = rollupCandidateColumns(withRawOnly);
+    expect(candidate).toContain('usage_type');
+    expect(candidate).toContain('resource_id');
+    expect(candidate).toContain('service');
+  });
+
+  it('stored grain EXCLUDES raw-only dims (the #3 shrink), candidate ⊇ grain', () => {
+    const grain = rollupGrainColumns(withRawOnly);
+    expect(grain).not.toContain('usage_type');
+    expect(grain).not.toContain('operation');
+    expect(grain).not.toContain('resource_id');
+    expect(grain).toContain('service');
+    // Every stored-grain column is a candidate column.
+    for (const c of grain) expect(rollupCandidateColumns(withRawOnly)).toContain(c);
+  });
+});
 
 describe('buildRollupPartitionQuery', () => {
   let db: Awaited<ReturnType<typeof DuckDBInstance.create>>;

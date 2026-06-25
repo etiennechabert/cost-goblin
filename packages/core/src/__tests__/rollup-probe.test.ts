@@ -3,7 +3,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildGrainProbeQuery } from '../query/builder.js';
-import { rollupGrainColumns } from '../rollup/grain.js';
+import { rollupCandidateColumns } from '../rollup/grain.js';
 import { computeRollupEstimate } from '../rollup/estimator.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
@@ -68,7 +68,7 @@ async function probe(
   conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>,
   dimensions: DimensionsConfig,
 ): Promise<{ lineItems: number; grainRows: number; cards: Map<string, number> }> {
-  const grain = rollupGrainColumns(dimensions);
+  const grain = rollupCandidateColumns(dimensions);
   const cardCols = grain.filter(c => c !== 'usage_date');
   const sql = buildGrainProbeQuery(PERIOD, grain, { dataDir: SYNTHETIC_DIR, dimensions, costScope: scope });
   const row = (await queryAll(conn, sql))[0];

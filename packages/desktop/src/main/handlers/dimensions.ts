@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, applyStripPatterns, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns } from '@costgoblin/core';
+import { applyNormalizationRule, applyStripPatterns, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupCandidateColumns } from '@costgoblin/core';
 import type { AliasSuggestion, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { toNum, toStr } from './query-utils.js';
@@ -248,7 +248,10 @@ export function registerDimensionsHandlers(app: AppContext): void {
     if (latest === undefined) return emptyRollupEstimate(current);
 
     const period = latest.replace(/^daily-/, '');
-    const grainColumns = rollupGrainColumns(candidate);
+    // Probe the full candidate grain (NOT the pruned stored grain) so the
+    // estimator measures every enabled dim — including the high-cardinality
+    // ones the rollup keeps raw-only — and can flag them for the user.
+    const grainColumns = rollupCandidateColumns(candidate);
     const cardCols = grainColumns.filter(c => c !== 'usage_date');
 
     const costScope = await getCostScope().catch(() => undefined);
