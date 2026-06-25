@@ -1,4 +1,5 @@
 import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, NormalizationRule, OrgNode, TagDimension } from './config.js';
+import type { RollupGrainEstimate } from '../rollup/estimator.js';
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { CostScopeCapabilities, CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
@@ -173,6 +174,11 @@ export interface CostApi {
   discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }>;
   getDimensionsConfig(): Promise<DimensionsConfig>;
   saveDimensionsConfig(config: DimensionsConfig): Promise<void>;
+  /** Estimate the rollup cost/benefit of a candidate dimensions config before
+   *  committing the (background) re-roll: directional size/compression/rebuild
+   *  bands plus per-dimension raw-only flags (rollup design §8). Probes a recent
+   *  month, so it needs data on disk — returns an empty estimate otherwise. */
+  estimateRollupGrain(candidate: DimensionsConfig): Promise<RollupGrainEstimate>;
   /** User-defined dashboard views. Read-modify-write through `saveViewsConfig`.
    *  `resetViewsConfig` overwrites the file with the seed (Cost Overview) view. */
   getViewsConfig(): Promise<ViewsConfig>;
