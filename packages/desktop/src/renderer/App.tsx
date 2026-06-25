@@ -665,27 +665,28 @@ function AppShell(): React.JSX.Element {
       });
   }
 
-  useEffect(() => {
+  const checkMissingPeriods = useCallback(async (): Promise<void> => {
     if (setupCheck.status !== 'ready') return;
-    Promise.all([api.getDataInventory(), api.getConfig()]).then(([inv, config]) => {
+    try {
+      const [inv, config] = await Promise.all([api.getDataInventory(), api.getConfig()]);
       const retentionDays = config.providers[0]?.sync.daily.retentionDays ?? 365;
       const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
       const cutoffPeriod = `${String(cutoff.getFullYear())}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
       const missing = inv.periods.filter(p => p.localStatus === 'missing' && p.period >= cutoffPeriod).length;
       setMissingPeriods(missing);
       setSyncError(null);
-    }).catch((err: unknown) => {
-      // Most common cause is expired AWS credentials — surface the
-      // message on the Sync nav indicator. Swallowed silently before,
-      // which left the user on a screen that looked fine while sync
-      // was completely broken.
-      const message = err instanceof Error ? err.message : String(err);
-      setSyncError(message);
-    });
-    // Re-run when the settings tab changes too (not just `view`): leaving the
-    // Data & Sync tab after a download must refresh the gear's missing-periods
-    // badge, which `view` alone no longer captures now that Sync isn't a View.
-  }, [api, view, settingsTab, setupCheck, setSyncError]);
+    } catch (err: unknown) {
+      // Most common cause is expired AWS credentials — surface the message on
+      // the sync indicator. Swallowed silently before, which left the user on a
+      // screen that looked fine while sync was completely broken.
+      setSyncError(err instanceof Error ? err.message : String(err));
+    }
+  }, [api, setupCheck, setSyncError]);
+
+  // Re-check on view / settings-tab change (leaving the Data & Sync tab after a
+  // download must refresh the missing-periods badge) and on demand from the
+  // sync popover's recheck button.
+  useEffect(() => { void checkMissingPeriods(); }, [checkMissingPeriods, view, settingsTab]);
 
   function handleNavClick(id: string) {
     const inSettings = settingsTab !== null;
@@ -1001,6 +1002,7 @@ function AppShell(): React.JSX.Element {
               tiers={syncTiers}
               inSettingsData={settingsTab === 'data-sync'}
               onManageData={() => { enterSettings('data-sync'); }}
+              onRecheck={checkMissingPeriods}
             />
             <RollupStatusButton status={rollupStatus} />
             {(() => {
