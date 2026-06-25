@@ -12,8 +12,9 @@ import type { RawRow } from './duckdb-client.js';
 
 /** Builds the `COPY (...) TO '<outPath>' (FORMAT PARQUET)` DDL for one period.
  *  Supplied by the caller (context.ts) so the store stays decoupled from the
- *  query builder. */
-export type BuildPartitionSql = (period: string, outPath: string) => string;
+ *  query builder. May be async: the caller probes each period's parquet schema
+ *  before emitting SQL (months drift in which optional cost columns they have). */
+export type BuildPartitionSql = (period: string, outPath: string) => string | Promise<string>;
 
 export interface RollupShape {
   readonly signature: string;
@@ -183,7 +184,7 @@ export class RollupStore {
         try {
           const outPath = this.partitionPath(period);
           await mkdir(this.partitionDir(period), { recursive: true });
-          await this.runQuery(buildSql(period, outPath));
+          await this.runQuery(await buildSql(period, outPath));
           const meta = await this.partitionMeta(outPath, wantHash);
           if (this.epoch !== startEpoch) return; // a drop landed during the build
           manifest = { ...manifest, builtAt: '', partitions: { ...manifest.partitions, [period]: meta } };
