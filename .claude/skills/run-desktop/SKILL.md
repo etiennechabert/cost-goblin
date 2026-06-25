@@ -1,6 +1,6 @@
 ---
 name: run-desktop
-description: Launch and drive the CostGoblin Electron desktop app in dev mode. Use when asked to run/start the app, open it, see a change working in the real app, or manually test the UI. Covers the git-worktree @costgoblin symlink fix that is required so the app runs the current branch's source.
+description: Launch and drive the CostGoblin Electron desktop app in dev mode. Use when asked to run/start the app, open it, see a change working in the real app, or manually test the UI. Syncs the branch first (pull --ff-only, then merge latest main) and covers the git-worktree @costgoblin symlink fix required so the app runs the current branch's source.
 ---
 
 # Running the CostGoblin desktop app
@@ -8,6 +8,43 @@ description: Launch and drive the CostGoblin Electron desktop app in dev mode. U
 CostGoblin is an Electron app (electron-vite + React renderer, DuckDB workers).
 "Running" means launching the real Electron window and interacting with it —
 not the test suite.
+
+## Before launch — sync the branch (always, first)
+
+Run this from the repo / worktree root **before** building or launching, so the
+app reflects the latest pushed work on this branch AND the latest `main`:
+
+```bash
+git fetch origin
+
+# 1. Fast-forward THIS branch from its own remote (skipped if it has no upstream)
+if git rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
+  git pull --ff-only
+fi
+
+# 2. Bring in the latest main by MERGING it into this branch
+git merge origin/main
+```
+
+Default branch is `main` here (detect if ever unsure:
+`git remote show origin | sed -n '/HEAD branch/s/.*: //p'` — may be `master`).
+
+Rules:
+
+- **Step 1 — diverged from origin → STOP.** If `git pull --ff-only` fails because
+  the branch has diverged from its own remote (not a fast-forward), do **not**
+  launch and do **not** force anything. Surface it and let the user decide how to
+  reconcile.
+- **Step 2 — merge, resolve best-effort.** Use `git merge origin/main` (a merge
+  commit, not a rebase — never rewrite this branch's history). If it conflicts,
+  read both sides and resolve them as best you can keeping both intents, then
+  `git commit` the merge and report what you resolved. Only if a conflict is
+  genuinely ambiguous/risky should you `git merge --abort` and ask the user.
+- **Dirty tree.** The merge needs a clean-enough tree — at the start of `/run`
+  it usually is. If there are uncommitted changes that block the merge, `git
+  stash` first and `git stash pop` after (or commit them).
+- Both `fetch` and `merge` are no-ops when already up to date — this is cheap to
+  run every launch.
 
 ## Launch (normal checkout)
 
