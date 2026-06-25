@@ -1,0 +1,89 @@
+---
+name: run-desktop
+description: Launch and drive the CostGoblin Electron desktop app in dev mode. Use when asked to run/start the app, open it, see a change working in the real app, or manually test the UI. Covers the git-worktree @costgoblin symlink fix that is required so the app runs the current branch's source.
+---
+
+# Running the CostGoblin desktop app
+
+CostGoblin is an Electron app (electron-vite + React renderer, DuckDB workers).
+"Running" means launching the real Electron window and interacting with it —
+not the test suite.
+
+## Launch (normal checkout)
+
+```bash
+cd packages/desktop && npm run dev
+```
+
+`npm run dev` runs `build:worker && build:preload && electron-vite dev`, so the
+DuckDB/sync worker bundles are rebuilt automatically — no separate build step.
+
+It is long-running. Launch it in the background and watch the log; don't block
+on it. Success looks like:
+
+```
+dev server running for the electron renderer process at:
+  ➜  Local:   http://localhost:5173/
+starting electron app...
+INFO DuckDB worker ready
+INFO Sync worker ready
+INFO Window created
+INFO query:costs ... materialized=true
+```
+
+When you see `Window created` and `materialized=true` query lines, the window
+is up and populated. The renderer is served at `http://localhost:5173/`, but it
+is an Electron renderer (depends on the main process for IPC) — drive the actual
+window, not a bare browser tab.
+
+### Data
+
+The app loads the user's real synced data from the Electron `userData` path
+(not `data/` in the repo) — no fixture flag needed to see a populated dashboard.
+A fixture dataset can be forced with the `--fixture-mode` flag (used by E2E).
+
+### Benign startup noise (not failures)
+
+- `Auto-sync: failed ... Token is expired ... aws sso login` — only sync needs
+  AWS creds; the UI works fine without them.
+- `Keychain lookup failed ... userCanceledErr (-128)` — a macOS keychain prompt
+  was dismissed; does not block the app.
+
+## Launch from a git worktree — REQUIRED symlink fix first
+
+Worktrees live under `.claude/worktrees/<name>/`. A worktree's `node_modules`
+has **no `@costgoblin/*` entries**, and there is no vite alias for them, so
+Node/vite resolves `@costgoblin/ui` / `@costgoblin/core` by walking up to the
+**main checkout's** `node_modules/@costgoblin/*` — i.e. it runs the *wrong
+branch's* source (or fails to resolve). The app would launch but NOT show your
+branch's changes.
+
+Fix it once per worktree, from the worktree root, before `npm run dev`:
+
+```bash
+mkdir -p node_modules/@costgoblin
+for p in core desktop mcp ui; do
+  ln -sfn "../../packages/$p" "node_modules/@costgoblin/$p"
+done
+```
+
+Verify the link points at the worktree (not the main checkout):
+
+```bash
+node -e "console.log(require('fs').realpathSync('node_modules/@costgoblin/ui'))"
+# → .../.claude/worktrees/<name>/packages/ui   ✅ (worktree)
+# → /Users/.../cost-goblin/packages/ui          ❌ (main checkout — fix not applied)
+```
+
+`node_modules/` is gitignored, so these symlinks are local-only and never
+committed.
+
+## Driving / verifying a change
+
+Open the relevant view and interact — e.g. the date-range picker lives in the
+dashboard header: click the date button → **Custom range…** → click a start day
+then an end day; the span between them should highlight (single range calendar).
+
+## Stopping
+
+Kill the background `npm run dev` process (Ctrl-C, or stop the background task).
