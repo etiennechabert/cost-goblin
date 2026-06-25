@@ -34,6 +34,19 @@ export function computeDefaultThreads(): number {
   return maxThreads();
 }
 
+/** Default size of the worker's DuckDB connection pool — also the cap on
+ *  concurrent rollup partition builds. min(max(4, cores), 16), overridable via
+ *  COSTGOBLIN_DUCKDB_POOL_SIZE (1..32). Shared so the pool and the rollup
+ *  builder agree on how many connections may run queries at once. */
+export function computeDefaultPoolSize(): number {
+  const raw = process.env['COSTGOBLIN_DUCKDB_POOL_SIZE'];
+  if (raw !== undefined) {
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n) && n >= 1 && n <= 32) return n;
+  }
+  return Math.min(Math.max(4, maxThreads()), 16);
+}
+
 /** Clamp a user-supplied memory override to a safe range. */
 export function clampMemoryGB(gb: number): number {
   const ceiling = Math.max(MIN_MEMORY_GB, Math.min(MAX_MEMORY_GB, totalMemoryGB()));
