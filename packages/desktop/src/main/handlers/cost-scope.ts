@@ -7,6 +7,8 @@ import {
   ConfigValidationError,
   costScopeToYaml,
   validateCostScope,
+  discountPerspective,
+  effectiveExclusionRules,
   buildSource,
   buildRuleMatchExpr,
   computePeriodsInRange,
@@ -155,7 +157,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
     const orgPath = await getOrgAccountsPath();
     const availableColumns = await getAvailableColumns('daily');
 
-    const source = buildSource({ dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath, periods, costMetric: config.costMetric, availableColumns, costPerspective: config.costPerspective });
+    const source = buildSource({ dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath, periods, costMetric: config.costMetric, availableColumns, costPerspective: discountPerspective(config) });
 
     // Pre-compute each rule's positive match expression once — used to
     // build the `excluded` predicate for the main aggregate query, each
@@ -164,7 +166,15 @@ export function registerCostScopeHandlers(app: AppContext): void {
     // no-ops and don't appear in the SQL at all.
     const ruleExprs: { readonly rule: typeof enabledRules[number]; readonly expr: string | null }[] =
       enabledRules.map(rule => ({ rule, expr: buildRuleMatchExpr(rule, dimensions) }));
-    const liveExprs = ruleExprs.filter(e => e.expr !== null).map(e => e.expr as string);
+    // The combined `excluded` predicate (scoped total, daily kept/excluded,
+    // sample flag) reflects the FULL effective scope — the visible rules PLUS
+    // the synthetic negotiated-discount exclusion when discountTreatment is
+    // 'excluded'. The per-rule tallies below stay limited to the visible rules
+    // (the discount treatment has no rule card of its own).
+    const liveExprs = effectiveExclusionRules(config)
+      .filter(r => r.enabled)
+      .map(r => buildRuleMatchExpr(r, dimensions))
+      .filter((e): e is string => e !== null);
     const excludedPredicate = liveExprs.length > 0
       ? liveExprs.map(e => `(${e})`).join(' OR ')
       : 'FALSE';

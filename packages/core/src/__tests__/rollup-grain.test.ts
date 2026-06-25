@@ -51,7 +51,7 @@ async function queryAll(conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckD
 }
 
 function scope(rules: CostScopeConfig['rules']): CostScopeConfig {
-  return { costMetric: 'unblended', costPerspective: 'gross', rules };
+  return { costMetric: 'unblended', rules };
 }
 
 function rawSourceJan(): string {

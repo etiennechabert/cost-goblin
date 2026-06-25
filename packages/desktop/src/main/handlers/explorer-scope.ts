@@ -1,4 +1,5 @@
-import type { CostMetric, CostPerspective } from '@costgoblin/core';
+import type { CostMetric, CostPerspective, DiscountTreatment } from '@costgoblin/core';
+import { discountPerspective } from '@costgoblin/core';
 
 /** Capability-gate a requested cost metric against the columns actually present
  *  in the user's Parquet. An unsupported (or absent) metric degrades to
@@ -20,7 +21,7 @@ export function pickPerspective(p: CostPerspective | undefined, cols: ReadonlySe
 /** The cost-scope fields a query can inherit when it doesn't override them. */
 interface InheritableScope {
   readonly costMetric?: CostMetric | undefined;
-  readonly costPerspective?: CostPerspective | undefined;
+  readonly discountTreatment?: DiscountTreatment | undefined;
 }
 
 /** Resolve the effective cost metric for an Explorer-endpoint query.
@@ -40,13 +41,16 @@ export function resolveScopeMetric(
   return pickMetric(inherited, cols);
 }
 
-/** Perspective counterpart of {@link resolveScopeMetric}. */
+/** Perspective counterpart of {@link resolveScopeMetric}. The Explorer's own
+ *  gross/net override (`requested`) still wins; when absent and the scope
+ *  applies, the perspective is DERIVED from the scope's discount treatment
+ *  (`spread` → net, otherwise gross). */
 export function resolveScopePerspective(
   requested: CostPerspective | undefined,
   applyCostScope: boolean,
   scope: InheritableScope | undefined,
   cols: ReadonlySet<string>,
 ): CostPerspective {
-  const inherited = requested ?? (applyCostScope ? scope?.costPerspective : undefined);
+  const inherited = requested ?? (applyCostScope && scope !== undefined ? discountPerspective(scope) : undefined);
   return pickPerspective(inherited, cols);
 }

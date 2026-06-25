@@ -2,6 +2,12 @@ export { loadConfig, loadDimensions, loadOrgTree, loadViews, loadCostScope } fro
 export { validateConfig, validateDimensions, validateOrgTree, ConfigValidationError, assertObject, assertArray, assertString, assertNumber } from './validator.js';
 export { validateViews } from './views-validator.js';
 export { validateCostScope } from './cost-scope-validator.js';
+export {
+  NEGOTIATED_DISCOUNT_LINE_ITEM_TYPES,
+  discountPerspective,
+  effectiveExclusionRules,
+  negotiatedDiscountExclusionRule,
+} from './discount-treatment.js';
 export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './views-serialize.js';
 export { costScopeToYaml } from './cost-scope-serialize.js';
 export { dimensionsConfigToYaml } from './dimensions-serialize.js';

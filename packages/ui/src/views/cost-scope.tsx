@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type {
   CostMetric,
-  CostPerspective,
+  DiscountTreatment,
   CostScopeCapabilities,
   CostScopeConfig,
   MarketplaceAttributionConfig,
@@ -13,7 +13,7 @@ import type {
   ExclusionRule,
   Dimension,
 } from '@costgoblin/core/browser';
-import { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, DEFAULT_LAG_DAYS, DEFAULT_MARKETPLACE_ATTRIBUTION, asDimensionId } from '@costgoblin/core/browser';
+import { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, DEFAULT_DISCOUNT_TREATMENT, DEFAULT_LAG_DAYS, DEFAULT_MARKETPLACE_ATTRIBUTION, asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId } from '../lib/dimensions.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
@@ -594,31 +594,73 @@ function describeDraftError(draft: CostScopeConfig): string | null {
   return null;
 }
 
-function PerspectiveToggle({ current, netDisabled, onChange }: Readonly<{
-  current: CostPerspective;
-  netDisabled: boolean;
-  onChange: (p: CostPerspective) => void;
+interface DiscountTreatmentMeta {
+  readonly label: string;
+  readonly tag?: { readonly text: string; readonly tone: MetricTone };
+  readonly description: string;
+}
+
+/** Copy for the single negotiated-discount control that replaced the old
+ *  gross/net "Perspective" toggle + the EDP/Bundled exclusion rules. */
+const DISCOUNT_TREATMENT_META: Record<DiscountTreatment, DiscountTreatmentMeta> = {
+  spread: {
+    label: 'Spread into services',
+    tag: { text: 'Recommended', tone: 'recommended' },
+    description:
+      'Fold each negotiated discount (EDP volume + automatic bundled discounts) into the service that earned it, via AWS net columns. Per-service cost is discount-accurate — the fair basis for chargeback, and what Cost Explorer shows.',
+  },
+  itemized: {
+    label: 'As separate line items',
+    description:
+      'Gross cost with negotiated discounts left as their own standalone negative rows. The bill total matches “Spread”, but the discount is unattributed — no individual service reflects its discounted rate.',
+  },
+  excluded: {
+    label: 'Exclude (pre-discount)',
+    tag: { text: 'Rack rate', tone: 'specific' },
+    description:
+      'Drop the EdpDiscount / BundledDiscount rows to show pre-negotiation list cost. NOT money you actually paid — useful only for sizing the discount’s value.',
+  },
+};
+
+/** Display order: lead with the recommended choice. */
+const DISCOUNT_TREATMENT_ORDER: readonly DiscountTreatment[] = ['spread', 'itemized', 'excluded'];
+
+function DiscountTreatmentControl({ current, spreadDisabled, onChange }: Readonly<{
+  current: DiscountTreatment;
+  spreadDisabled: boolean;
+  onChange: (t: DiscountTreatment) => void;
 }>): React.JSX.Element {
   return (
-    <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary/30 p-0.5 shrink-0">
-      {(['gross', 'net'] as const).map(perspective => {
-        const disabled = perspective === 'net' && netDisabled;
-        const active = current === perspective;
+    <div className="space-y-2">
+      {DISCOUNT_TREATMENT_ORDER.map(treatment => {
+        const meta = DISCOUNT_TREATMENT_META[treatment];
+        const disabled = treatment === 'spread' && spreadDisabled;
         return (
-          <button
-            key={perspective}
-            type="button"
-            disabled={disabled}
-            onClick={() => { onChange(perspective); }}
-            className={[
-              'px-3 py-1 text-xs rounded-md transition-colors capitalize',
-              active ? 'bg-accent text-bg-primary' : 'text-text-secondary hover:text-text-primary',
-              disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer',
-            ].join(' ')}
-            title={disabled ? 'Requires line_item_net_unblended_cost — enable "Include Net Columns" on the CUR report.' : undefined}
+          <label
+            key={treatment}
+            className={`flex items-start gap-3 group ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
           >
-            {perspective}
-          </button>
+            <input
+              type="radio"
+              name="discountTreatment"
+              value={treatment}
+              checked={current === treatment}
+              disabled={disabled}
+              onChange={() => { onChange(treatment); }}
+              className="mt-0.5 accent-accent"
+            />
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium text-text-primary">{meta.label}</span>
+                {meta.tag && (
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider ${TAG_TONE_CLASSES[meta.tag.tone]}`}>
+                    {meta.tag.text}
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 text-xs text-text-muted leading-relaxed">{meta.description}</p>
+            </div>
+          </label>
         );
       })}
     </div>
@@ -707,17 +749,18 @@ export function CostScopeView(): React.JSX.Element {
     updateDraft({ ...draft, costMetric: metric });
   }
 
-  function handlePerspectiveChange(perspective: CostPerspective) {
-    // Rebuild the config without `costPerspective` when the user picks
-    // the default ('gross') so the serializer writes clean YAML.
-    // exactOptionalPropertyTypes forbids writing `undefined`, so we
-    // enumerate the retained fields instead of spreading + overwriting.
+  function handleDiscountTreatmentChange(treatment: DiscountTreatment) {
+    // Omit `discountTreatment` when it's the default ('itemized') so the
+    // serializer writes clean YAML and `dirty` doesn't trip on a no-op.
+    // exactOptionalPropertyTypes forbids writing `undefined`, so enumerate
+    // the retained fields instead of spreading + overwriting.
     const base: CostScopeConfig = {
       costMetric: draft.costMetric,
+      ...(draft.lagDays === undefined ? {} : { lagDays: draft.lagDays }),
       rules: draft.rules,
       ...(draft.marketplaceAttribution === undefined ? {} : { marketplaceAttribution: draft.marketplaceAttribution }),
     };
-    updateDraft(perspective === 'gross' ? base : { ...base, costPerspective: perspective });
+    updateDraft(treatment === DEFAULT_DISCOUNT_TREATMENT ? base : { ...base, discountTreatment: treatment });
   }
 
   function handleLagDaysChange(value: number) {
@@ -727,7 +770,7 @@ export function CostScopeView(): React.JSX.Element {
     // writing `undefined`, so enumerate retained fields.
     const next: CostScopeConfig = {
       costMetric: draft.costMetric,
-      ...(draft.costPerspective === undefined ? {} : { costPerspective: draft.costPerspective }),
+      ...(draft.discountTreatment === undefined ? {} : { discountTreatment: draft.discountTreatment }),
       ...(clamped === DEFAULT_LAG_DAYS ? {} : { lagDays: clamped }),
       rules: draft.rules,
       ...(draft.marketplaceAttribution === undefined ? {} : { marketplaceAttribution: draft.marketplaceAttribution }),
@@ -911,29 +954,28 @@ export function CostScopeView(): React.JSX.Element {
                 </label>
               ))}
 
-              {/* Gross vs Net toggle — orthogonal to the metric axis.
-                  Disabled when the net columns aren't available, with a
-                  warning explaining the CUR-side fix. */}
-              <div className="pt-2 mt-2 border-t border-border">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-medium text-text-primary">Perspective</div>
-                    <div className="text-xs text-text-muted mt-0.5">
-                      Net subtracts account-level credits and refunds from the chosen metric. Negotiated
-                      EDP/bundled discounts are a separate axis — toggle the exclusion rule below.
-                    </div>
+              {/* Negotiated discounts — one axis that replaced the old
+                  gross/net "Perspective" toggle AND the separate EDP/Bundled
+                  exclusion rules. `spread` needs the net columns; disabled with
+                  a warning when they're absent. */}
+              <div className="pt-3 mt-2 border-t border-border">
+                <div className="mb-2">
+                  <div className="text-sm font-medium text-text-primary">Negotiated discounts</div>
+                  <div className="text-xs text-text-muted mt-0.5">
+                    How AWS volume (EDP) and bundled discounts are reflected. Spread and itemized give the
+                    same bill total — they differ only in whether the discount is attributed to each service.
                   </div>
-                  <PerspectiveToggle
-                    current={draft.costPerspective ?? 'gross'}
-                    netDisabled={capabilities !== null && !capabilities.hasNetColumns}
-                    onChange={handlePerspectiveChange}
-                  />
                 </div>
-                {(draft.costPerspective ?? 'gross') === 'net' && capabilities !== null && !capabilities.hasNetColumns && (
+                <DiscountTreatmentControl
+                  current={draft.discountTreatment ?? DEFAULT_DISCOUNT_TREATMENT}
+                  spreadDisabled={capabilities !== null && !capabilities.hasNetColumns}
+                  onChange={handleDiscountTreatmentChange}
+                />
+                {capabilities !== null && !capabilities.hasNetColumns && (
                   <div className="mt-2 text-xs text-warning">
-                    Degraded &mdash; falls back to Gross because your CUR export doesn&apos;t include{' '}
+                    “Spread into services” needs net columns &mdash; your CUR export doesn&apos;t include{' '}
                     <code className="mx-1 text-[11px]">line_item_net_unblended_cost</code>.{' '}
-                    Enable <em>Include Net Columns</em> on your CUR report in AWS Billing.
+                    Enable <em>Include Net Columns</em> on your CUR report in AWS Billing to use it.
                   </div>
                 )}
               </div>

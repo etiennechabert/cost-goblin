@@ -33,17 +33,6 @@ export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
       { dimensionId: asDimensionId('line_item_type'), values: ['Tax'] },
     ],
   },
-  {
-    id: 'builtin:negotiated-discounts',
-    name: 'Negotiated discounts',
-    description:
-      'Standalone negative discount line items — the AWS Enterprise Discount Program (EdpDiscount, contractual volume discount) and automatic bundle-pricing rules (BundledDiscount, e.g. support-tier bundle credits). Both are separate rows, not paired with a specific usage line. Leave off to see the effective bill after these discounts; toggle on to view gross / pre-negotiation cost. Distinct from the Net perspective, which applies account-level credits and refunds.',
-    enabled: false,
-    builtIn: true,
-    conditions: [
-      { dimensionId: asDimensionId('line_item_type'), values: ['EdpDiscount', 'BundledDiscount'] },
-    ],
-  },
 ];
 
 /** Built-in rule IDs that have been removed since older configs were written.
@@ -57,11 +46,22 @@ const RETIRED_BUILTIN_RULE_IDS: ReadonlySet<string> = new Set([
   // Removed entirely: this was a savings-sizing tool, not a coherent
   // cost-scope toggle. Belongs in a dedicated commitment-coverage view.
   'builtin:commitment-covered-usage',
-  // Merged into `builtin:negotiated-discounts` — both excluded a single
-  // standalone discount line-item type and only differed by which one.
-  // mergeBuiltInExclusionRules enables the merged rule if either was on.
+  // Folded into the `discountTreatment` axis ('excluded'). EDP and Bundled
+  // discounts (and the interim merged `builtin:negotiated-discounts` rule) are
+  // no longer exclusion rules; mergeBuiltInExclusionRules infers the treatment
+  // from whether any of these was enabled, then drops them.
   'builtin:edp-discount',
   'builtin:bundled-discount',
+  'builtin:negotiated-discounts',
+]);
+
+/** Legacy discount-exclusion rule ids whose "enabled" state, on an older
+ *  config that hasn't yet picked a `discountTreatment`, means "show
+ *  pre-negotiation cost" → maps to the `excluded` treatment. */
+const LEGACY_DISCOUNT_RULE_IDS: ReadonlySet<string> = new Set([
+  'builtin:edp-discount',
+  'builtin:bundled-discount',
+  'builtin:negotiated-discounts',
 ]);
 
 /** Shipped Marketplace re-attribution. Bedrock third-party model inference is
@@ -89,35 +89,41 @@ export const DEFAULT_COST_SCOPE: CostScopeConfig = {
  *  mergeDefaultBuiltIns for dimensions: preserve user edits on existing
  *  built-ins, add any that are missing. User rules are untouched.
  *
- *  Also drops retired built-in rules (RETIRED_BUILTIN_RULE_IDS) silently —
- *  these were superseded by the `list` cost metric. If the user had the
- *  retired `builtin:ri-sp-purchases` rule enabled, the metric is rewritten
- *  to `list` so the spirit of their choice (exclude RI/SP fee rows) is
- *  preserved with the new coherent model. */
+ *  Also drops retired built-in rules (RETIRED_BUILTIN_RULE_IDS) silently and
+ *  migrates the user's intent to the replacement model:
+ *   - retired `builtin:ri-sp-purchases` enabled → rewrite the metric to `list`
+ *     (which auto-filters the same RI/SP fee rows).
+ *   - retired discount rules (EDP / Bundled / interim merged) enabled, when the
+ *     config hasn't already picked a `discountTreatment` → set `excluded`
+ *     (show pre-negotiation cost), preserving the old toggle's meaning. */
 export function mergeBuiltInExclusionRules(loaded: CostScopeConfig): CostScopeConfig {
   const retiredRiSpPurchasesEnabled = loaded.rules.some(
     r => r.id === 'builtin:ri-sp-purchases' && r.enabled,
   );
-  // The EDP and Bundled discount rules were merged into a single
-  // `builtin:negotiated-discounts`. Carry the user's intent forward: if
-  // either legacy rule was enabled, enable the merged rule (added below as a
-  // missing built-in, since loaded configs predate it).
-  const retiredDiscountEnabled = loaded.rules.some(
-    r => (r.id === 'builtin:edp-discount' || r.id === 'builtin:bundled-discount') && r.enabled,
+  const legacyDiscountEnabled = loaded.rules.some(
+    r => LEGACY_DISCOUNT_RULE_IDS.has(r.id) && r.enabled,
   );
 
   const survivingRules = loaded.rules.filter(r => !RETIRED_BUILTIN_RULE_IDS.has(r.id));
   const survivingIds = new Set(survivingRules.map(r => r.id));
-  const missingBuiltins = BUILTIN_EXCLUSION_RULES.filter(b => !survivingIds.has(b.id)).map(b =>
-    b.id === 'builtin:negotiated-discounts' && retiredDiscountEnabled ? { ...b, enabled: true } : b,
-  );
+  const missingBuiltins = BUILTIN_EXCLUSION_RULES.filter(b => !survivingIds.has(b.id));
+
+  // An explicit treatment on disk always wins; only infer `excluded` for legacy
+  // configs that never had the axis but had a discount rule switched on.
+  const discountTreatment = loaded.discountTreatment ?? (legacyDiscountEnabled ? 'excluded' : undefined);
 
   const droppedAny = survivingRules.length !== loaded.rules.length;
-  if (!droppedAny && missingBuiltins.length === 0 && !retiredRiSpPurchasesEnabled) {
+  const treatmentChanged = discountTreatment !== loaded.discountTreatment;
+  if (!droppedAny && missingBuiltins.length === 0 && !retiredRiSpPurchasesEnabled && !treatmentChanged) {
     return loaded;
   }
 
   const rules = [...survivingRules, ...missingBuiltins];
   const costMetric = retiredRiSpPurchasesEnabled ? 'list' : loaded.costMetric;
-  return { ...loaded, costMetric, rules };
+  return {
+    ...loaded,
+    costMetric,
+    ...(discountTreatment === undefined ? {} : { discountTreatment }),
+    rules,
+  };
 }
