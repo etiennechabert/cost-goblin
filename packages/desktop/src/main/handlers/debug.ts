@@ -54,4 +54,21 @@ export function registerDebugHandlers(app: AppContext): void {
       return null;
     }
   });
+
+  // URL of the open PR for the current branch, via the gh CLI. Null when not a
+  // dev checkout, gh is missing/unauthenticated, or no PR exists yet. The
+  // renderer uses this to turn the branch label into a link; absence just
+  // leaves it as plain text.
+  ipcMain.handle('debug:get-branch-pr-url', async (): Promise<string | null> => {
+    if (electronApp.isPackaged) return null;
+    try {
+      const { stdout } = await execFileAsync('gh', ['pr', 'view', '--json', 'url', '-q', '.url'], {
+        cwd: electronApp.getAppPath(),
+      });
+      const url = stdout.trim();
+      return url.startsWith('https://') ? url : null;
+    } catch {
+      return null;
+    }
+  });
 }

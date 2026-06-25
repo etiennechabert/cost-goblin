@@ -489,6 +489,7 @@ function AppShell(): React.JSX.Element {
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [devBranch, setDevBranch] = useState<string | null>(null);
+  const [branchPrUrl, setBranchPrUrl] = useState<string | null>(null);
   const memoryMB = useMemoryMB();
   const autoOpenRef = useMemo(() => ({ current: false }), []);
   const initialViewSetRef = useRef(false);
@@ -513,6 +514,9 @@ function AppShell(): React.JSX.Element {
 
   useEffect(() => {
     globalThis.costgoblinDebug.getGitBranch().then(setDevBranch).catch(() => undefined);
+    // Resolved separately (a gh subprocess, ~0.5s) so the branch label never
+    // waits on the network — it upgrades to a link if/when a PR is found.
+    globalThis.costgoblinDebug.getBranchPrUrl().then(setBranchPrUrl).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -912,11 +916,23 @@ function AppShell(): React.JSX.Element {
             <span className="text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
             <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
               {devBranch !== null
-                ? (
-                  <span className="flex items-center gap-1 font-medium text-accent" title="Running from this git branch">
-                    <GitBranch size={10} />{devBranch}
-                  </span>
-                )
+                ? branchPrUrl !== null
+                  ? (
+                    <a
+                      href={branchPrUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-1 font-medium text-accent hover:underline [-webkit-app-region:no-drag]"
+                      title="Open this branch's pull request on GitHub"
+                    >
+                      <GitBranch size={10} />{devBranch}
+                    </a>
+                  )
+                  : (
+                    <span className="flex items-center gap-1 font-medium text-accent" title="Running from this git branch">
+                      <GitBranch size={10} />{devBranch}
+                    </span>
+                  )
                 : appVersion !== '' && <span>v{appVersion}</span>}
               {isDev && memoryMB > 0 && <span>{formatMemory(memoryMB)}</span>}
             </div>
