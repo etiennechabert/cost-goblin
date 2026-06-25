@@ -1,9 +1,8 @@
 import { parentPort } from 'node:worker_threads';
-import { cpus } from 'node:os';
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
-import { computeDefaultMemoryGB, computeDefaultThreads } from './duckdb-tuning.js';
+import { computeDefaultMemoryGB, computeDefaultThreads, computeQueryPoolSize } from './duckdb-tuning.js';
 
 interface DuckDBModule {
   DuckDBInstance: { create: () => Promise<DuckDBInstance> };
@@ -49,8 +48,9 @@ function hasProps(msg: unknown): msg is Record<string, unknown> {
   return typeof msg === 'object' && msg !== null;
 }
 
-function isQueryRequest(msg: unknown): msg is { kind: 'query'; id: number; sql: string } {
+function isQueryRequest(msg: unknown): msg is { kind: 'query'; id: number; sql: string; fresh?: boolean } {
   if (!hasProps(msg)) return false;
+  if (msg['fresh'] !== undefined && typeof msg['fresh'] !== 'boolean') return false;
   return msg['kind'] === 'query' && typeof msg['id'] === 'number' && typeof msg['sql'] === 'string';
 }
 
@@ -166,30 +166,6 @@ async function fetchAllRowsPrepared(
   }
 }
 
-/** Size of the connection pool — and therefore the cap on queries executing in
- *  DuckDB at once, since each query holds one connection for its duration.
- *
- *  This is deliberately FAR below the core count. `SET threads` is instance-
- *  global (we set it to all cores so a lone query gets the whole machine), so
- *  N concurrent queries time-slice the SAME cores. Measured on an 11-core box:
- *  a ~5 ms rollup chart query balloons to ~550 ms when fired alongside a burst
- *  of multi-second raw Table-widget scans — the small query's tasks queue
- *  behind the big ones in the shared scheduler. Capping concurrency to ~cores/4
- *  (min 2, max 4) gives each in-flight query a healthy thread share so the fast
- *  dashboard queries stay fast, while a solo Explorer scan still gets all cores.
- *  Gating concurrency (not lowering `threads`) is the right lever: it never
- *  slows the single-query case, and concurrent heavy queries don't benefit from
- *  oversubscription anyway (a 365-day 3-query burst was ~neutral, 8→2 gate).
- *  Override with COSTGOBLIN_DUCKDB_POOL_SIZE. */
-function parsePoolSize(): number {
-  const raw = process.env['COSTGOBLIN_DUCKDB_POOL_SIZE'];
-  if (raw !== undefined) {
-    const n = Number.parseInt(raw, 10);
-    if (Number.isFinite(n) && n >= 1 && n <= 32) return n;
-  }
-  return Math.max(2, Math.min(4, Math.ceil(cpus().length / 4)));
-}
-
 let poolPromise: Promise<ResourcePool<DuckDBConnection>> | null = null;
 let dbInstance: DuckDBInstance | null = null;
 
@@ -202,9 +178,18 @@ function getPool(): Promise<ResourcePool<DuckDBConnection>> {
     const initConn = await db.connect();
     await configureDuckDB(initConn, {});
     initConn.disconnectSync();
-    return createResourcePool(parsePoolSize(), () => db.connect());
+    return createResourcePool(computeQueryPoolSize(), () => db.connect());
   });
   return poolPromise;
+}
+
+/** The initialized DuckDB instance, for callers that need a connection outside
+ *  the pool (a `fresh` query). Awaits getPool() so the instance exists and its
+ *  memory/thread limits are applied before the first fresh connect. */
+async function getInstance(): Promise<DuckDBInstance> {
+  await getPool();
+  if (dbInstance === null) throw new Error('DuckDB instance not initialized');
+  return dbInstance;
 }
 
 function send(msg: WorkerResponse): void {
@@ -221,13 +206,19 @@ void (async () => {
   }
 })();
 
-async function handleRequest(req: { kind: 'query'; id: number; sql: string }): Promise<void> {
+async function handleRequest(req: { kind: 'query'; id: number; sql: string; fresh?: boolean }): Promise<void> {
   // Check before acquiring a pool connection
   if (cancelledIds.has(req.id)) {
     cancelledIds.delete(req.id);
     send({ kind: 'error', id: req.id, message: 'Query cancelled' });
     return;
   }
+
+  // A `fresh` query runs on a brand-new connection that is disconnected (never
+  // returned to the pool) afterward. Rollup partition builds use this: a
+  // long-lived connection's buffer/cache accumulates across builds and per-month
+  // time climbs (≈2s → 10s); a fresh connection per build keeps each ≈2s.
+  const fresh = req.fresh === true;
 
   // pool/conn are hoisted and the acquisition runs inside the try so that a
   // getPool() or pool.acquire() rejection is turned into an error response by
@@ -237,8 +228,12 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
   let conn: DuckDBConnection | undefined;
   try {
     queuedIds.add(req.id);
-    pool = await getPool();
-    conn = await pool.acquire();
+    if (fresh) {
+      conn = await (await getInstance()).connect();
+    } else {
+      pool = await getPool();
+      conn = await pool.acquire();
+    }
     queuedIds.delete(req.id);
     send({ kind: 'started', id: req.id });
 
@@ -269,7 +264,10 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
     queuedIds.delete(req.id);
     runningIds.delete(req.id);
     runningConns.delete(req.id);
-    if (pool !== undefined && conn !== undefined) pool.release(conn);
+    if (conn !== undefined) {
+      if (fresh) conn.disconnectSync();
+      else if (pool !== undefined) pool.release(conn);
+    }
   }
 }
 

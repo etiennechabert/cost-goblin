@@ -384,10 +384,12 @@ export interface UpdateApi {
  *  rollup (`ready`) or transiently from the slower raw path while a re-roll runs
  *  (`computing`) — e.g. after a dimensions save or a sync. `idle` = no rollup
  *  built yet (no local data); `failed` = the last build batch hit an error
- *  (otherwise swallowed to the log). */
+ *  (otherwise swallowed to the log). While `computing`, `periods` lists every
+ *  month completed-first (the first `done` are built) and `active` is the subset
+ *  whose build is in flight right now, so the popover can pulse those chips. */
 export type RollupStatus =
   | { readonly state: 'idle' }
-  | { readonly state: 'computing'; readonly done: number; readonly total: number; readonly periods: readonly string[] }
+  | { readonly state: 'computing'; readonly done: number; readonly total: number; readonly periods: readonly string[]; readonly active: readonly string[] }
   | { readonly state: 'ready'; readonly periods: number }
   | { readonly state: 'failed'; readonly message: string; readonly periods: number };
 
