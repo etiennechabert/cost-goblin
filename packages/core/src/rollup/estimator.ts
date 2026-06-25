@@ -40,6 +40,20 @@ export const HIGH_CARDINALITY_VALUES = 1000;
  *  against (≈ the measured 266 MB / 19.6M rows from the design appendix). */
 export const DEFAULT_BYTES_PER_ROW = 16;
 
+/** Outlier gates for the per-dimension impact list. A single dim is flagged as
+ *  THE dominant grain driver only when it clears all four, so a balanced grain
+ *  flags nothing and at most one dim is ever flagged. Informational only — these
+ *  do NOT feed `rawOnly.recommended` (that stays the whole-grain verdict). */
+export const OUTLIER_MIN_DIMS = 2;
+/** It must at least double the grain on its own. */
+export const OUTLIER_MIN_MULTIPLIER = 2;
+/** It alone must account for ≥ half of total grain inflation Σ(multiplier−1) —
+ *  i.e. more than every other dim combined. */
+export const OUTLIER_MIN_SHARE = 0.5;
+/** …and stand this far above the median peer dim, so it genuinely dwarfs the
+ *  rest rather than merely edging past a field of near-equal contributors. */
+export const OUTLIER_MEDIAN_MULTIPLE = 4;
+
 const REBUILD_BASE_SECONDS_PER_PARTITION = 2;
 const REBUILD_SECONDS_PER_ROW = 0.0000048;
 
@@ -65,6 +79,17 @@ export interface RollupDimEstimate {
   readonly column: string;
   readonly cardinality: number;
   readonly rawOnly: boolean;
+  /** fullGrain ÷ grainWithoutThisDim — how much this dim alone inflates the
+   *  rollup grain (1.0 = redundant given the others). From a leave-one-out
+   *  probe, so it reflects the joint distribution and accounts for correlation,
+   *  unlike raw cardinality. */
+  readonly marginalMultiplier: number;
+  /** Rollup rows this dim adds across the window (fullGrain − grainWithout, scaled by months). */
+  readonly marginalRows: number;
+  /** This dim's share of total grain inflation Σ(multiplier−1) — drives the bar. */
+  readonly impactShare: number;
+  /** True for the single dim that dominates the grain (see OUTLIER_* consts). */
+  readonly outlier: boolean;
 }
 
 export interface RollupGrainEstimate {
@@ -105,7 +130,7 @@ export interface RollupEstimateInput {
   /** Actual on-disk size of the raw daily Parquet across the whole window. */
   readonly rawBytes: number;
   readonly current: RollupCurrentStats | null;
-  readonly dimCardinalities: readonly { readonly column: string; readonly cardinality: number }[];
+  readonly dimCardinalities: readonly { readonly column: string; readonly cardinality: number; readonly leaveOneOutGrainRows: number }[];
 }
 
 export function estimateBytesPerRow(current: RollupCurrentStats | null): number {
@@ -141,6 +166,15 @@ export function classifyRebuildBand(seconds: number): RollupRebuildBand {
   return 'slow';
 }
 
+/** Median of a list of numbers; 0 for an empty list. */
+function median(values: readonly number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[mid] ?? 0;
+  return ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
+}
+
 export function computeRollupEstimate(input: RollupEstimateInput): RollupGrainEstimate {
   const months = Math.max(1, input.months);
   const bytesPerRow = estimateBytesPerRow(input.current);
@@ -152,10 +186,46 @@ export function computeRollupEstimate(input: RollupEstimateInput): RollupGrainEs
   const compressionRate = perPartitionRows > 0 ? input.probeLineItems / perPartitionRows : 0;
   const growthFactor = input.current !== null && input.current.rows > 0 ? rows / input.current.rows : null;
 
-  const dims = input.dimCardinalities.map(d => ({
-    column: d.column,
-    cardinality: d.cardinality,
-    rawOnly: isDimRawOnly(d.cardinality, input.probeLineItems, bytesPerRow),
+  // Per-dimension marginal impact from the leave-one-out grain counts: how much
+  // each dim alone inflates the rollup grain. Truthful where cardinality lies —
+  // a high-cardinality dim that's implied by another (correlated) drops out at
+  // ≈ ×1 because removing it barely shrinks the joint grain.
+  const marginals = input.dimCardinalities.map(d => {
+    const loo = d.leaveOneOutGrainRows;
+    const multiplier = loo > 0 ? Math.max(1, perPartitionRows / loo) : 1;
+    return {
+      column: d.column,
+      cardinality: d.cardinality,
+      multiplier,
+      inflation: multiplier - 1,
+      marginalRows: Math.max(0, perPartitionRows - loo) * months,
+    };
+  });
+  const totalInflation = marginals.reduce((sum, m) => sum + m.inflation, 0);
+
+  // Only the largest-inflation dim can exceed 50% share, so the dominant-driver
+  // test is applied to it alone — measured against the median of its peers.
+  const ranked = [...marginals].sort((a, b) => b.inflation - a.inflation);
+  const top = ranked[0];
+  const medianPeerInflation = median(ranked.slice(1).map(m => m.inflation));
+  const outlierColumn =
+    top !== undefined &&
+    marginals.length >= OUTLIER_MIN_DIMS &&
+    top.multiplier >= OUTLIER_MIN_MULTIPLIER &&
+    totalInflation > 0 &&
+    top.inflation / totalInflation >= OUTLIER_MIN_SHARE &&
+    (medianPeerInflation <= 0 || top.inflation >= OUTLIER_MEDIAN_MULTIPLE * medianPeerInflation)
+      ? top.column
+      : null;
+
+  const dims = marginals.map(m => ({
+    column: m.column,
+    cardinality: m.cardinality,
+    rawOnly: isDimRawOnly(m.cardinality, input.probeLineItems, bytesPerRow),
+    marginalMultiplier: m.multiplier,
+    marginalRows: m.marginalRows,
+    impactShare: totalInflation > 0 ? m.inflation / totalInflation : 0,
+    outlier: m.column === outlierColumn,
   }));
   const flaggedCount = dims.filter(d => d.rawOnly).length;
 

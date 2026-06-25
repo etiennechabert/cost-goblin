@@ -1100,7 +1100,9 @@ export function buildRollupPartitionQuery(
  *   - `grain_rows`  — `approx_count_distinct` of the candidate grain tuple
  *      (≈ the rollup row count for that month), and
  *   - `card_<i>`    — `approx_count_distinct` of each non-date grain column,
- *      so the estimator can flag individual raw-only dims (e.g. resource_id).
+ *      so the estimator can flag individual raw-only dims (e.g. resource_id), and
+ *   - `loo_<i>`     — the grain row count with that one dim removed, so the
+ *      estimator can attribute marginal rollup size per dimension.
  *
  *  `grainColumns` come from `rollupGrainColumns` over the candidate dimensions
  *  (usage_date first) and are projected by `buildSource` — the same trusted set
@@ -1145,10 +1147,20 @@ export function buildGrainProbeQuery(
   const grainConcat = `concat_ws(chr(31), ${grainColumns.join(', ')})`;
   const cardCols = grainColumns.filter(c => c !== 'usage_date');
   const cardSelects = cardCols.map((c, i) => `CAST(approx_count_distinct(${c}) AS BIGINT) AS card_${String(i)}`);
+  // Leave-one-out grain row count for each non-date dim: the candidate grain
+  // with only that dim removed (usage_date always kept). The estimator turns
+  // fullGrain ÷ loo_<i> into the marginal rollup size each dim drives — a
+  // correlation-aware impact, computed in this same single scan. Same trusted
+  // grainColumns interpolation as grainConcat above (no user values).
+  const looSelects = cardCols.map((c, i) => {
+    const cols = grainColumns.filter(g => g !== c);
+    return `CAST(approx_count_distinct(concat_ws(chr(31), ${cols.join(', ')})) AS BIGINT) AS loo_${String(i)}`;
+  });
   const selects = [
     `CAST(COUNT(*) AS BIGINT) AS line_items`,
     `CAST(approx_count_distinct(${grainConcat}) AS BIGINT) AS grain_rows`,
     ...cardSelects,
+    ...looSelects,
   ];
   return `SELECT ${selects.join(', ')} FROM ${source} WHERE ${whereConditions.join(' AND ')}`;
 }

@@ -266,7 +266,11 @@ export function registerDimensionsHandlers(app: AppContext): void {
     // baseline the UI shows the estimated rollup against.
     const rawBytes = await sumParquetBytes(fs, path, rawDir, dirs);
 
-    const dimCardinalities = cardCols.map((column, i) => ({ column, cardinality: toNum(row[`card_${String(i)}`]) }));
+    const dimCardinalities = cardCols.map((column, i) => ({
+      column,
+      cardinality: toNum(row[`card_${String(i)}`]),
+      leaveOneOutGrainRows: toNum(row[`loo_${String(i)}`]),
+    }));
     return computeRollupEstimate({
       probePeriod: period,
       months: dirs.length,

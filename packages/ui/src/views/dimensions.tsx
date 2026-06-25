@@ -1505,9 +1505,10 @@ function ImpactStat({ label, value, hint }: Readonly<{ label: string; value: str
  *  Updates as dims are toggled so the user can weigh the rebuild before it
  *  happens. Numbers are directional (probed from one recent month). */
 function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: RollupGrainEstimate | null; loading: boolean; config: DimensionsConfig }>): React.JSX.Element {
-  const heaviest = estimate === null
+  const rankedDims = estimate === null
     ? []
-    : [...estimate.dims].filter(d => d.rawOnly).sort((a, b) => b.cardinality - a.cardinality);
+    : [...estimate.dims].sort((a, b) => b.marginalMultiplier - a.marginalMultiplier);
+  const outlierDim = rankedDims.find(d => d.outlier);
   const sizeReduction = estimate !== null && estimate.candidate.bytes > 0
     ? estimate.raw.bytes / estimate.candidate.bytes
     : 0;
@@ -1551,26 +1552,46 @@ function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: R
               hint="background re-roll"
             />
           </div>
-          {estimate.rawOnly.recommended && (
-            <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-              <p className="text-[11px] leading-snug text-text-secondary">
-                {heaviest.length > 0 ? (
-                  <>
-                    Heavy grain — most of the rollup size comes from{' '}
-                    {heaviest.slice(0, 4).map((d, i) => (
-                      <span key={d.column}>
-                        {i > 0 ? ', ' : ''}
-                        <span className="font-medium text-amber-500">{columnLabel(config, d.column)}</span>
-                        {' '}({formatCount(d.cardinality)})
+          {rankedDims.length > 0 && (
+            <div className="mt-4">
+              <span className="text-[10px] uppercase tracking-wider text-text-muted">Per-dimension impact</span>
+              <ul className="mt-2 flex flex-col gap-1.5">
+                {rankedDims.map(d => {
+                  const readout = d.marginalMultiplier >= 1.05
+                    ? `×${d.marginalMultiplier.toFixed(1)}${d.marginalRows > 0 ? ` · +${formatCount(d.marginalRows)}` : ''}`
+                    : '~×1';
+                  return (
+                    <li key={d.column} className="flex items-center gap-2 text-[11px]">
+                      <span className={`flex w-28 shrink-0 items-center gap-1 truncate ${d.outlier ? 'font-medium text-amber-500' : 'text-text-secondary'}`}>
+                        {d.outlier && <AlertTriangle className="h-3 w-3 shrink-0" />}
+                        <span className="truncate">{columnLabel(config, d.column)}</span>
                       </span>
-                    ))}
-                    . Disabling the heaviest keeps it raw-only so dashboards stay fast.
-                  </>
-                ) : (
-                  <>This grain is heavy for the rollup — {estimate.rawOnly.reason ?? 'it exceeds the size budget'}. Consider a leaner grain so dashboards stay fast.</>
-                )}
-              </p>
+                      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-tertiary">
+                        <span
+                          className={`block h-full rounded-full ${d.outlier ? 'bg-amber-500/70' : 'bg-accent/60'}`}
+                          style={{ width: `${String(Math.round(Math.min(1, d.impactShare) * 100))}%` }}
+                        />
+                      </span>
+                      <span className={`w-24 shrink-0 text-right tabular-nums ${d.outlier ? 'text-amber-500' : 'text-text-muted'}`}>{readout}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+              {outlierDim !== undefined ? (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                  <p className="text-[11px] leading-snug text-text-secondary">
+                    <span className="font-medium text-amber-500">{columnLabel(config, outlierDim.column)}</span> alone multiplies the rollup ~×{outlierDim.marginalMultiplier.toFixed(1)} — most of the grain comes from this one dimension. Dimensions work best as filters with a handful of values; the detail table can still show every value when you need it, so keeping this one raw-only keeps dashboards fast.
+                  </p>
+                </div>
+              ) : estimate.rawOnly.recommended ? (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                  <p className="text-[11px] leading-snug text-text-secondary">
+                    This grain is heavy for the rollup — {estimate.rawOnly.reason ?? 'it exceeds the size budget'}. Consider a leaner grain so dashboards stay fast.
+                  </p>
+                </div>
+              ) : null}
             </div>
           )}
         </>
