@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Layers } from 'lucide-react';
 import { Popover, PopoverTrigger, PopoverContent } from '@costgoblin/ui';
-import type { RollupStatus } from '@costgoblin/core/browser';
+import type { RollupStatus, RollupStats } from '@costgoblin/core/browser';
 
 interface Props {
   status: RollupStatus;
@@ -9,6 +9,32 @@ interface Props {
 
 function months(n: number): string {
   return `${String(n)} month${n === 1 ? '' : 's'}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${String(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function formatCount(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}K`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+function formatRatio(ratio: number): string {
+  return ratio >= 10 ? ratio.toFixed(0) : ratio.toFixed(1);
+}
+
+function KpiRow({ label, value, accent }: Readonly<{ label: string; value: string; accent?: boolean }>): React.JSX.Element {
+  return (
+    <div className="flex items-center justify-between py-1">
+      <span className="text-text-muted">{label}</span>
+      <span className={accent === true ? 'font-medium tabular-nums text-accent' : 'tabular-nums text-text-secondary'}>{value}</span>
+    </div>
+  );
 }
 
 function tooltipFor(status: RollupStatus): string {
@@ -32,6 +58,18 @@ function tooltipFor(status: RollupStatus): string {
  *  click-through detail popover. */
 export function RollupStatusButton({ status }: Readonly<Props>): React.JSX.Element {
   const [open, setOpen] = useState(false);
+  const [stats, setStats] = useState<RollupStats | null>(null);
+
+  // Size KPIs are pulled on demand (popover open + ready) rather than pushed —
+  // they only matter when the user looks. Raw size is read server-side from the
+  // local filesystem, so it works without AWS credentials.
+  useEffect(() => {
+    if (!open || status.state !== 'ready') return undefined;
+    let cancelled = false;
+    globalThis.costgoblinRollup.getStats().then((s) => { if (!cancelled) setStats(s); }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [open, status.state]);
+
   const computing = status.state === 'computing';
   const failed = status.state === 'failed';
   const pct = status.state === 'computing' && status.total > 0
@@ -80,9 +118,21 @@ export function RollupStatusButton({ status }: Readonly<Props>): React.JSX.Eleme
           </div>
         )}
         {status.state === 'ready' && (
-          <p className="text-xs text-text-secondary">
-            Dashboards are served from the pre-aggregated rollup — <span className="font-medium tabular-nums text-text-primary">{months(status.periods)}</span> built.
-          </p>
+          <div className="space-y-2">
+            <p className="text-xs text-text-secondary">Dashboards are served from the pre-aggregated rollup.</p>
+            <div className="divide-y divide-border-subtle text-xs">
+              <KpiRow label="Months built" value={String(status.periods)} />
+              {stats !== null && (
+                <KpiRow label="Rollup size" value={`${formatBytes(stats.rollupBytes)} · ${formatCount(stats.rollupRows)} rows`} />
+              )}
+              {stats !== null && stats.rawBytes > 0 && (
+                <KpiRow label="Raw (daily)" value={formatBytes(stats.rawBytes)} />
+              )}
+              {stats !== null && stats.rawBytes > 0 && stats.rollupBytes > 0 && (
+                <KpiRow label="Compression" value={`${formatRatio(stats.rawBytes / stats.rollupBytes)}× smaller`} accent />
+              )}
+            </div>
+          </div>
         )}
         {status.state === 'idle' && (
           <p className="text-xs text-text-secondary">No rollup is built yet. Dashboards query the raw data directly.</p>

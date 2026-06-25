@@ -391,7 +391,18 @@ export type RollupStatus =
   | { readonly state: 'ready'; readonly periods: number }
   | { readonly state: 'failed'; readonly message: string; readonly periods: number };
 
+/** Size KPIs for the built rollup vs the raw daily Parquet it's derived from.
+ *  `rawBytes` is read from the local filesystem (no S3), so it's available even
+ *  without AWS credentials. Null when no rollup is built. */
+export interface RollupStats {
+  readonly months: number;
+  readonly rollupRows: number;
+  readonly rollupBytes: number;
+  readonly rawBytes: number;
+}
+
 export interface RollupApi {
   getStatus(): Promise<RollupStatus>;
+  getStats(): Promise<RollupStats | null>;
   onStatusChanged(callback: (status: RollupStatus) => void): () => void;
 }

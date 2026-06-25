@@ -418,6 +418,9 @@ contextBridge.exposeInMainWorld('costgoblinRollup', {
   getStatus(): Promise<unknown> {
     return invoke<unknown>('rollup:get-status');
   },
+  getStats(): Promise<unknown> {
+    return invoke<unknown>('rollup:get-stats');
+  },
   onStatusChanged(callback: (status: unknown) => void): () => void {
     const handler = (_event: unknown, status: unknown): void => { callback(status); };
     ipcRenderer.on('rollup:status-changed', handler);
