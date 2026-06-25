@@ -7,8 +7,11 @@ import {
   validateManifest,
   type RollupManifest,
   type RollupPartitionMeta,
+  type RollupStatus,
 } from '@costgoblin/core';
 import type { RawRow } from './duckdb-client.js';
+
+export type RollupStatusListener = (status: RollupStatus) => void;
 
 /** Builds the `COPY (...) TO '<outPath>' (FORMAT PARQUET)` DDL for one period.
  *  Supplied by the caller (context.ts) so the store stays decoupled from the
@@ -63,10 +66,39 @@ export class RollupStore {
   private epoch = 0;
   private queue: Promise<unknown> = Promise.resolve();
 
+  private status: RollupStatus = { state: 'idle' };
+  private readonly statusListeners = new Set<RollupStatusListener>();
+
   constructor(deps: RollupStoreDeps) {
     this.dataDir = deps.dataDir;
     this.runQuery = deps.runQuery;
   }
+
+  /** Subscribe to rollup compute-state transitions. Fires immediately with the
+   *  current status (matching the update-manager convention) so a late
+   *  subscriber doesn't miss the build that's already running. */
+  onStatusChanged(listener: RollupStatusListener): () => void {
+    this.statusListeners.add(listener);
+    listener(this.status);
+    return () => { this.statusListeners.delete(listener); };
+  }
+
+  getStatus(): RollupStatus { return this.status; }
+
+  private setStatus(status: RollupStatus): void {
+    this.status = status;
+    for (const listener of this.statusListeners) listener(status);
+  }
+
+  private settledStatus(): RollupStatus {
+    return this.isReady() ? { state: 'ready', periods: this.validPeriods.size } : { state: 'idle' };
+  }
+
+  /** Emit a terminal status from a path that decided there's nothing to build
+   *  (e.g. warmup after an invalidate found every partition already valid, or no
+   *  local data at all). A no-op while a build is mid-flight — that build owns
+   *  the transition to `ready`/`failed`. */
+  markSettled(): void { this.setStatus(this.settledStatus()); }
 
   private rollupDir(): string { return join(this.dataDir, 'aws', 'rollup'); }
   private manifestPath(): string { return join(this.rollupDir(), 'manifest.json'); }
@@ -185,11 +217,21 @@ export class RollupStore {
         ? this.manifest
         : { schemaVersion: ROLLUP_SCHEMA_VERSION, shapeSignature: shape.signature, builtAt: '', grainDimensions: shape.grainDimensions, availableColumns: shape.availableColumns, partitions: {} };
 
+      // Periods are processed in order, so the first `done` of them are
+      // finished and the rest are still pending — the renderer slices on `done`
+      // to show which months are built vs to-do.
+      const total = periods.length;
+      let done = 0;
+      let failures = 0;
+      this.setStatus({ state: 'computing', done, total, periods });
+
       for (const period of periods) {
-        if (this.epoch !== startEpoch) return; // superseded mid-build
+        if (this.epoch !== startEpoch) return; // superseded mid-build — the newer op owns the status
         const wantHash = computePartitionEtagHash(etagsByPeriod[period]);
         if (opts.force !== true && manifest.partitions[period]?.rawEtagHash === wantHash) {
           this.validPeriods.add(period);
+          done += 1;
+          this.setStatus({ state: 'computing', done, total, periods });
           continue;
         }
         try {
@@ -203,9 +245,18 @@ export class RollupStore {
           this.validPeriods.add(period);
           await this.writeManifestAtomic(manifest);
         } catch (err: unknown) {
+          failures += 1;
           logger.warn(`rollup: build failed for ${period} — ${err instanceof Error ? err.message : String(err)}`);
         }
+        done += 1;
+        this.setStatus({ state: 'computing', done, total, periods });
       }
+
+      this.setStatus(
+        failures > 0
+          ? { state: 'failed', message: `${String(failures)} of ${String(total)} rollup partition${total === 1 ? '' : 's'} failed to build`, periods: this.validPeriods.size }
+          : this.settledStatus(),
+      );
     });
   }
 
@@ -237,6 +288,11 @@ export class RollupStore {
     this.epoch += 1;
     this.manifest = null;
     this.validPeriods = new Set();
+    // Signal "rebuilding" immediately — the caller re-warms right after, and the
+    // ensuing warmup either drives this through to `ready` (via maintainPeriods,
+    // which fills in the period list) or calls markSettled() when there's
+    // nothing to rebuild.
+    this.setStatus({ state: 'computing', done: 0, total: 0, periods: [] });
     return this.enqueue(async () => {
       await rm(this.rollupDir(), { recursive: true, force: true });
     });

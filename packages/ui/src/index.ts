@@ -10,6 +10,7 @@ export { useQuery } from './hooks/use-query.js';
 export { UnsavedChangesProvider, useUnsavedChanges, useConfirmLeave } from './hooks/use-unsaved-changes.js';
 
 export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/card.js';
+export { UpdatingBadge } from './components/updating-badge.js';
 export { Button, buttonVariants } from './components/ui/button.js';
 export type { ButtonProps } from './components/ui/button.js';
 export { Calendar } from './components/ui/calendar.js';
