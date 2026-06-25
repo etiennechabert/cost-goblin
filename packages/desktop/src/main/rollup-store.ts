@@ -241,9 +241,13 @@ export class RollupStore {
       let failures = 0;
       const completed: string[] = [];
       const completedSet = new Set<string>();
+      // `active` = periods whose build is in flight right now. The popover pulses
+      // these chips, so a parallel batch — where `done` stays 0 until builds land
+      // in a cluster — still visibly shows which months are being worked on.
+      const active = new Set<string>();
       const reportProgress = (): void => {
         const pending = periods.filter(p => !completedSet.has(p));
-        this.setStatus({ state: 'computing', done: completed.length, total, periods: [...completed, ...pending] });
+        this.setStatus({ state: 'computing', done: completed.length, total, periods: [...completed, ...pending], active: [...active] });
       };
       const markDone = (period: string): void => {
         if (!completedSet.has(period)) { completedSet.add(period); completed.push(period); }
@@ -285,19 +289,23 @@ export class RollupStore {
 
         const buildOne = async (period: string): Promise<void> => {
           if (this.epoch !== startEpoch) return; // superseded before we started
+          active.add(period);
+          reportProgress(); // chip starts pulsing the moment this period's build begins
           const wantHash = computePartitionEtagHash(etagsByPeriod[period]);
           try {
             const outPath = this.partitionPath(period);
             await mkdir(this.partitionDir(period), { recursive: true });
             await this.runBuild(buildSql(period, outPath));
-            if (this.epoch !== startEpoch) return; // a drop landed during the build
+            if (this.epoch !== startEpoch) { active.delete(period); return; } // a drop landed during the build
             const meta = await this.partitionMeta(outPath, wantHash);
             await commit(period, meta);
           } catch (err: unknown) {
             failures += 1;
             logger.warn(`rollup: build failed for ${period} — ${err instanceof Error ? err.message : String(err)}`);
           }
-          // Each finished period (built or failed) advances progress.
+          // Each finished period (built or failed) leaves the active set and
+          // advances progress.
+          active.delete(period);
           markDone(period);
         };
 
@@ -359,7 +367,7 @@ export class RollupStore {
     // ensuing warmup either drives this through to `ready` (via maintainPeriods,
     // which fills in the period list) or calls markSettled() when there's
     // nothing to rebuild.
-    this.setStatus({ state: 'computing', done: 0, total: 0, periods: [] });
+    this.setStatus({ state: 'computing', done: 0, total: 0, periods: [], active: [] });
     return this.enqueue(async () => {
       await rm(this.rollupDir(), { recursive: true, force: true });
     });
