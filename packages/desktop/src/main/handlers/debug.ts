@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { app as electronApp, ipcMain } from 'electron';
+import { parseJsonObject } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 
 const execFileAsync = promisify(execFile);
@@ -55,18 +56,22 @@ export function registerDebugHandlers(app: AppContext): void {
     }
   });
 
-  // URL of the open PR for the current branch, via the gh CLI. Null when not a
-  // dev checkout, gh is missing/unauthenticated, or no PR exists yet. The
-  // renderer uses this to turn the branch label into a link; absence just
-  // leaves it as plain text.
-  ipcMain.handle('debug:get-branch-pr-url', async (): Promise<string | null> => {
+  // Open PR for the current branch, via the gh CLI. Null when not a dev
+  // checkout, gh is missing/unauthenticated, or no PR exists yet. The renderer
+  // uses the title to replace the cryptic branch label and the url to link it;
+  // absence just leaves the plain branch name.
+  ipcMain.handle('debug:get-branch-pr', async (): Promise<{ url: string; title: string; number: number } | null> => {
     if (electronApp.isPackaged) return null;
     try {
-      const { stdout } = await execFileAsync('gh', ['pr', 'view', '--json', 'url', '-q', '.url'], {
+      const { stdout } = await execFileAsync('gh', ['pr', 'view', '--json', 'url,title,number'], {
         cwd: electronApp.getAppPath(),
       });
-      const url = stdout.trim();
-      return url.startsWith('https://') ? url : null;
+      const pr = parseJsonObject(stdout);
+      if (pr === null) return null;
+      const { url, title, number } = pr;
+      if (typeof url !== 'string' || !url.startsWith('https://')) return null;
+      if (typeof title !== 'string' || typeof number !== 'number') return null;
+      return { url, title, number };
     } catch {
       return null;
     }

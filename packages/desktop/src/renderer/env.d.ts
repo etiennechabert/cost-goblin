@@ -15,12 +15,18 @@ declare global {
     readonly origin: string | null;
   }
 
+  interface BranchPrInfo {
+    readonly url: string;
+    readonly title: string;
+    readonly number: number;
+  }
+
   interface DebugApi {
     isDev(): boolean;
     isE2E(): boolean;
     getMemoryMB(): Promise<number>;
     getGitBranch(): Promise<string | null>;
-    getBranchPrUrl(): Promise<string | null>;
+    getBranchPr(): Promise<BranchPrInfo | null>;
     getInFlightCount(): number;
     getQueryLog(): Promise<DebugQueryLogEntry[]>;
     runExplain(queryId: number): Promise<string>;
