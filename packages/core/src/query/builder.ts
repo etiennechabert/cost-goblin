@@ -403,11 +403,19 @@ function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
 }
 
 function buildParquetSource(dataDir: string, tier: string, periods: readonly string[] | undefined): string {
+  // union_by_name unifies columns by name across files, filling absent columns
+  // with NULL. Required because CUR schema drifts between months: older exports
+  // lack reservation_effective_cost / savings_plan_savings_plan_effective_cost
+  // while newer ones carry them. getAvailableColumns probes only the latest
+  // month, so the amortized expression references those columns; without
+  // union_by_name DuckDB throws a Binder Error on any read spanning a month
+  // that omits them. The now-NULL column makes amortizedExpr's COALESCE fall
+  // through to unblended for the old rows — the correct degradation.
   if (periods !== undefined && periods.length > 0) {
     const paths = periods.map(p => `'${dataDir}/aws/raw/${tier}-${p}/*.parquet'`).join(', ');
-    return `read_parquet([${paths}])`;
+    return `read_parquet([${paths}], union_by_name=true)`;
   }
-  return `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`;
+  return `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet', union_by_name=true)`;
 }
 
 function buildFromClause(
