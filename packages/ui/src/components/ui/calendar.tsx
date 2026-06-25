@@ -33,20 +33,26 @@ export function Calendar({
         weekday:
           'text-text-secondary rounded-md w-9 font-normal text-[0.8rem]',
         week: 'flex w-full mt-2',
-        day: 'h-9 w-9 text-center text-sm p-0 relative [&:has([aria-selected].range_end)]:rounded-r-md [&:has([aria-selected].outside)]:bg-bg-tertiary/50 [&:has([aria-selected])]:bg-bg-tertiary first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20',
+        day: 'h-9 w-9 text-center text-sm p-0 relative focus-within:relative focus-within:z-20',
         day_button: cn(
           buttonVariants({ variant: 'ghost' }),
           'h-9 w-9 p-0 font-normal aria-selected:opacity-100',
+          // Keep the subtle ghost hover on unpicked days, but don't let it paint a
+          // gray fill over already-picked days — that fought the range highlight.
+          '[[aria-selected]_&]:hover:bg-transparent [[aria-selected]_&]:hover:text-inherit',
         ),
-        range_end: 'range_end',
         selected:
-          'bg-accent text-white hover:bg-accent-hover hover:text-white focus:bg-accent-hover focus:text-white',
-        today: 'bg-bg-tertiary text-text-primary',
+          'bg-accent text-white rounded-md',
+        range_start:
+          'aria-selected:rounded-l-md aria-selected:rounded-r-none',
+        range_end:
+          'aria-selected:rounded-r-md aria-selected:rounded-l-none',
+        range_middle:
+          'aria-selected:bg-bg-tertiary aria-selected:text-text-primary aria-selected:rounded-none',
+        today: 'bg-bg-tertiary text-text-primary rounded-md',
         outside:
           'outside text-text-secondary opacity-50 aria-selected:bg-bg-tertiary/50 aria-selected:text-text-secondary aria-selected:opacity-30',
         disabled: 'text-text-secondary opacity-50',
-        range_middle:
-          'aria-selected:bg-bg-tertiary aria-selected:text-text-primary',
         hidden: 'invisible',
         ...classNames,
       }}
