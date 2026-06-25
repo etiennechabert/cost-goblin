@@ -244,16 +244,21 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
   const orgPath = await getOrgAccountsPath();
   const availableColumns = await getAvailableColumns(tier);
   const applyCostScope = params.applyCostScope === true;
-  const costScope = applyCostScope ? await getCostScope().catch(() => undefined) : undefined;
+  // Marketplace re-attribution fixes which service a cost belongs to (a data
+  // quality fix, not an exclusion), so it follows its own toggle and applies
+  // regardless of the "Apply Cost Scope" checkbox — otherwise the Explorer and
+  // its filter dropdowns would disagree with the dashboard on Bedrock spend.
+  const fullScope = await getCostScope().catch(() => undefined);
+  const scopeForExclusions = applyCostScope ? fullScope : undefined;
   // When the caller applies the cost scope but doesn't override the metric /
   // perspective (every dashboard widget — only the Explorer view sets them
   // explicitly), inherit them from the global scope instead of silently
   // defaulting to unblended/gross. Both stay capability-gated.
-  const metric = resolveScopeMetric(params.costMetric, applyCostScope, costScope, availableColumns);
-  const perspective = resolveScopePerspective(params.costPerspective, applyCostScope, costScope, availableColumns);
+  const metric = resolveScopeMetric(params.costMetric, applyCostScope, scopeForExclusions, availableColumns);
+  const perspective = resolveScopePerspective(params.costPerspective, applyCostScope, scopeForExclusions, availableColumns);
 
-  const source = buildSource({ dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath, periods, costMetric: metric, availableColumns, costPerspective: perspective });
-  const exclusions = buildExclusionClauses(costScope, dimensions, accountReverseMap);
+  const source = buildSource({ dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath, periods, costMetric: metric, availableColumns, costPerspective: perspective, marketplaceAttribution: fullScope?.marketplaceAttribution });
+  const exclusions = buildExclusionClauses(scopeForExclusions, dimensions, accountReverseMap);
 
   // When the histogram drag-zoom emits hour bounds, swap the day-level
   // BETWEEN for an hour-level filter so the rest of the Explorer (overview,

@@ -1,5 +1,5 @@
 import { asDimensionId } from '../types/branded.js';
-import type { CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
+import type { CostScopeConfig, ExclusionRule, MarketplaceAttributionConfig } from '../types/cost-scope.js';
 
 export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
   {
@@ -70,9 +70,25 @@ const RETIRED_BUILTIN_RULE_IDS: ReadonlySet<string> = new Set([
   'builtin:commitment-covered-usage',
 ]);
 
+/** Shipped Marketplace re-attribution. Bedrock third-party model inference is
+ *  the one AWS "service" that consistently arrives as a blank-product_servicecode
+ *  Marketplace row with real cost only in unblended; Tax and RI/SP fees are the
+ *  other blank-servicecode populations and are intentionally NOT here (they're
+ *  not per-service usage and the `list` metric already filters fee rows out). */
+export const DEFAULT_MARKETPLACE_ATTRIBUTION: MarketplaceAttributionConfig = {
+  enabled: true,
+  rules: [
+    {
+      service: 'AmazonBedrock',
+      operations: ['InvokeModelInference', 'InvokeModelStreamingInference'],
+    },
+  ],
+};
+
 export const DEFAULT_COST_SCOPE: CostScopeConfig = {
   costMetric: 'unblended',
   rules: BUILTIN_EXCLUSION_RULES,
+  marketplaceAttribution: DEFAULT_MARKETPLACE_ATTRIBUTION,
 };
 
 /** Merge shipped built-in rules into a loaded config. Mirrors

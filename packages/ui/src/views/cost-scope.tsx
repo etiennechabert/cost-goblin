@@ -4,6 +4,7 @@ import type {
   CostPerspective,
   CostScopeCapabilities,
   CostScopeConfig,
+  MarketplaceAttributionConfig,
   CostScopeDailyRow,
   CostScopePreviewResult,
   CostScopePreviewRow,
@@ -12,7 +13,7 @@ import type {
   ExclusionRule,
   Dimension,
 } from '@costgoblin/core/browser';
-import { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, DEFAULT_LAG_DAYS, asDimensionId } from '@costgoblin/core/browser';
+import { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, DEFAULT_LAG_DAYS, DEFAULT_MARKETPLACE_ATTRIBUTION, asDimensionId } from '@costgoblin/core/browser';
 import { getDimensionId } from '../lib/dimensions.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
@@ -711,7 +712,11 @@ export function CostScopeView(): React.JSX.Element {
     // the default ('gross') so the serializer writes clean YAML.
     // exactOptionalPropertyTypes forbids writing `undefined`, so we
     // enumerate the retained fields instead of spreading + overwriting.
-    const base: CostScopeConfig = { costMetric: draft.costMetric, rules: draft.rules };
+    const base: CostScopeConfig = {
+      costMetric: draft.costMetric,
+      rules: draft.rules,
+      ...(draft.marketplaceAttribution === undefined ? {} : { marketplaceAttribution: draft.marketplaceAttribution }),
+    };
     updateDraft(perspective === 'gross' ? base : { ...base, costPerspective: perspective });
   }
 
@@ -725,8 +730,20 @@ export function CostScopeView(): React.JSX.Element {
       ...(draft.costPerspective === undefined ? {} : { costPerspective: draft.costPerspective }),
       ...(clamped === DEFAULT_LAG_DAYS ? {} : { lagDays: clamped }),
       rules: draft.rules,
+      ...(draft.marketplaceAttribution === undefined ? {} : { marketplaceAttribution: draft.marketplaceAttribution }),
     };
     updateDraft(next);
+  }
+
+  function handleMarketplaceToggle(enabled: boolean) {
+    // Preserve any custom rules already on disk; fall back to the shipped
+    // default ruleset the first time it's enabled on a config that lacks one.
+    const existing = draft.marketplaceAttribution;
+    const rules = existing === undefined || existing.rules.length === 0
+      ? DEFAULT_MARKETPLACE_ATTRIBUTION.rules
+      : existing.rules;
+    const marketplaceAttribution: MarketplaceAttributionConfig = { enabled, rules };
+    updateDraft({ ...draft, marketplaceAttribution });
   }
 
   function updateRule(index: number, next: ExclusionRule) {
@@ -942,6 +959,46 @@ export function CostScopeView(): React.JSX.Element {
                     <span className="text-xs text-text-muted">days</span>
                   </div>
                 </div>
+              </div>
+
+              {/* Marketplace attribution — re-attributes empty-product_servicecode
+                  AWS Marketplace rows (Bedrock third-party models, etc.) to a
+                  real service. Deliberately rewrites the as-billed product code,
+                  so it's a toggle. */}
+              <div className="pt-2 mt-2 border-t border-border">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-text-primary">Marketplace attribution</div>
+                    <div className="text-xs text-text-muted mt-0.5">
+                      AWS bills third-party Marketplace usage (e.g. Bedrock foundation models)
+                      with no service code and a $0 on-demand price &mdash; so it lands under a
+                      blank service and reads as free on the List metric. Re-attribute it to a
+                      real service using its billing operation.
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 shrink-0 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={draft.marketplaceAttribution?.enabled ?? false}
+                      onChange={e => { handleMarketplaceToggle(e.target.checked); }}
+                      className="accent-accent"
+                    />
+                    <span className="text-xs text-text-muted">
+                      {(draft.marketplaceAttribution?.enabled ?? false) ? 'On' : 'Off'}
+                    </span>
+                  </label>
+                </div>
+                {(draft.marketplaceAttribution?.enabled ?? false) && (draft.marketplaceAttribution?.rules.length ?? 0) > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {draft.marketplaceAttribution?.rules.map(rule => (
+                      <li key={rule.service} className="text-xs text-text-muted">
+                        <code className="text-[11px] text-text-primary">{rule.service}</code>
+                        {' ← '}
+                        {rule.operations.map(op => <code key={op} className="text-[11px] mr-1">{op}</code>)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </CardContent>
           </Card>

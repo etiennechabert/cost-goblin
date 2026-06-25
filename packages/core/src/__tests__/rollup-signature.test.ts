@@ -83,6 +83,29 @@ describe('computeShapeSignature', () => {
     // rules are on `service`, not the tag → the tag's aliases never enter the signature
     expect(sig({ dimensions: dimsWithTeamAliases({ architects: ['arch', 'foo'] }) })).toBe(sig());
   });
+
+  describe('marketplace attribution', () => {
+    const bedrock = { enabled: true, rules: [{ service: 'AmazonBedrock', operations: ['InvokeModelInference', 'InvokeModelStreamingInference'] }] };
+
+    it('CHANGES when enabled (rewrites service/cost bytes)', () => {
+      expect(sig({ marketplaceAttribution: bedrock })).not.toBe(sig());
+    });
+
+    it('disabled hashes identically to absent (no spurious re-roll)', () => {
+      expect(sig({ marketplaceAttribution: { enabled: false, rules: bedrock.rules } })).toBe(sig());
+      expect(sig({ marketplaceAttribution: { enabled: true, rules: [] } })).toBe(sig());
+    });
+
+    it('ignores operation order within a rule', () => {
+      const reversed = { enabled: true, rules: [{ service: 'AmazonBedrock', operations: ['InvokeModelStreamingInference', 'InvokeModelInference'] }] };
+      expect(sig({ marketplaceAttribution: bedrock })).toBe(sig({ marketplaceAttribution: reversed }));
+    });
+
+    it('CHANGES when the target service differs', () => {
+      const other = { enabled: true, rules: [{ service: 'AmazonSageMaker', operations: ['InvokeModelInference', 'InvokeModelStreamingInference'] }] };
+      expect(sig({ marketplaceAttribution: bedrock })).not.toBe(sig({ marketplaceAttribution: other }));
+    });
+  });
 });
 
 describe('computeOrgAccountsDigest', () => {

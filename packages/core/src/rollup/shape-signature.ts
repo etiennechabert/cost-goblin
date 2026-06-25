@@ -1,5 +1,5 @@
 import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
-import type { CostMetric, CostPerspective, ExclusionRule } from '../types/cost-scope.js';
+import type { CostMetric, CostPerspective, ExclusionRule, MarketplaceAttributionConfig } from '../types/cost-scope.js';
 import { tagDimColumn } from '../types/branded.js';
 import { normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { ROLLUP_RAW_ONLY_FIELDS } from './grain.js';
@@ -34,6 +34,10 @@ export interface ShapeSignatureInput {
   readonly costPerspective: CostPerspective;
   /** All exclusion rules; only enabled ones contribute to the signature. */
   readonly rules: readonly ExclusionRule[];
+  /** Marketplace re-attribution. Rewrites the `service` column (and `cost` on
+   *  the list metric) at BUILD time, so it changes stored bytes and must feed
+   *  the signature. Disabled/absent contributes nothing (matches pre-feature). */
+  readonly marketplaceAttribution?: MarketplaceAttributionConfig | undefined;
   /** Digest of org-accounts.json content — see {@link computeOrgAccountsDigest}. */
   readonly orgAccountsDigest: string;
   /** Columns the build probed in the user's Parquet. */
@@ -56,6 +60,20 @@ export function enabledGrainColumns(dims: DimensionsConfig): string[] {
  *  Excludes query-time concerns (value aliases, normalize, lagDays, labels,
  *  order, defaultFilterValues, display-name resolution) so editing those never
  *  forces a re-roll. */
+/** Canonical, order-independent shape of the marketplace config for the digest.
+ *  Null when it contributes no rewrite (disabled or no usable rules) so toggling
+ *  it off yields the same signature as a pre-feature build. */
+function marketplaceForSignature(
+  cfg: MarketplaceAttributionConfig | undefined,
+): { service: string; operations: string[] }[] | null {
+  if (cfg === undefined || !cfg.enabled) return null;
+  const rules = cfg.rules
+    .filter(r => r.service.length > 0 && r.operations.length > 0)
+    .map(r => ({ service: r.service, operations: [...r.operations].sort((a, b) => a.localeCompare(b)) }))
+    .sort((a, b) => a.service.localeCompare(b.service));
+  return rules.length === 0 ? null : rules;
+}
+
 export function computeShapeSignature(input: ShapeSignatureInput): string {
   const { dimensions, costMetric, costPerspective, rules, orgAccountsDigest, availableColumns } = input;
 
@@ -91,6 +109,11 @@ export function computeShapeSignature(input: ShapeSignatureInput): string {
   // Order-independent: rules are a set, not a sequence.
   exclusionRules.sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b)));
 
+  // Omit the key entirely when it contributes nothing, so a disabled/absent
+  // config hashes identically to a pre-feature build (no spurious re-roll);
+  // only an active config shifts the signature.
+  const marketplace = marketplaceForSignature(input.marketplaceAttribution);
+
   return sha256Hex(canonicalJson({
     schemaVersion: ROLLUP_SCHEMA_VERSION,
     builtinDims,
@@ -98,6 +121,7 @@ export function computeShapeSignature(input: ShapeSignatureInput): string {
     costMetric,
     costPerspective,
     exclusionRules,
+    ...(marketplace === null ? {} : { marketplaceAttribution: marketplace }),
     orgAccountsDigest,
     availableColumns: [...availableColumns].sort((a, b) => a.localeCompare(b)),
   }));
