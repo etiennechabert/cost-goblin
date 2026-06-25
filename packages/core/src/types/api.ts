@@ -378,3 +378,20 @@ export interface UpdateApi {
   onStatusChanged(callback: (status: UpdateStatus) => void): () => void;
   getAppVersion(): Promise<string>;
 }
+
+/** Live state of the on-disk daily rollup. Pushed to the renderer so the header
+ *  can show whether dashboards are currently served from the pre-aggregated
+ *  rollup (`ready`) or transiently from the slower raw path while a re-roll runs
+ *  (`computing`) — e.g. after a dimensions save or a sync. `idle` = no rollup
+ *  built yet (no local data); `failed` = the last build batch hit an error
+ *  (otherwise swallowed to the log). */
+export type RollupStatus =
+  | { readonly state: 'idle' }
+  | { readonly state: 'computing'; readonly done: number; readonly total: number }
+  | { readonly state: 'ready'; readonly periods: number }
+  | { readonly state: 'failed'; readonly message: string; readonly periods: number };
+
+export interface RollupApi {
+  getStatus(): Promise<RollupStatus>;
+  onStatusChanged(callback: (status: RollupStatus) => void): () => void;
+}
