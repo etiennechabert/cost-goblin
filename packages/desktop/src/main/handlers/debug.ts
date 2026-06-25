@@ -1,5 +1,9 @@
-import { ipcMain } from 'electron';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { app as electronApp, ipcMain } from 'electron';
 import type { AppContext } from './context.js';
+
+const execFileAsync = promisify(execFile);
 
 export function registerDebugHandlers(app: AppContext): void {
   ipcMain.handle('debug:get-query-log', () => {
@@ -33,5 +37,21 @@ export function registerDebugHandlers(app: AppContext): void {
 
   ipcMain.handle('debug:get-memory-mb', () => {
     return Math.round(process.memoryUsage().rss / 1024 / 1024);
+  });
+
+  // Current git branch — only meaningful in dev (a source checkout/worktree).
+  // Packaged builds aren't a repo, so return null and let the UI fall back to
+  // the version string. Detached HEAD also returns null.
+  ipcMain.handle('debug:get-git-branch', async (): Promise<string | null> => {
+    if (electronApp.isPackaged) return null;
+    try {
+      const { stdout } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+        cwd: electronApp.getAppPath(),
+      });
+      const branch = stdout.trim();
+      return branch === '' || branch === 'HEAD' ? null : branch;
+    } catch {
+      return null;
+    }
   });
 }

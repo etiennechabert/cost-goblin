@@ -19,6 +19,7 @@ declare global {
     isDev(): boolean;
     isE2E(): boolean;
     getMemoryMB(): Promise<number>;
+    getGitBranch(): Promise<string | null>;
     getInFlightCount(): number;
     getQueryLog(): Promise<DebugQueryLogEntry[]>;
     runExplain(queryId: number): Promise<string>;

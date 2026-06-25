@@ -3,7 +3,7 @@ import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostS
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
 import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
-import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw, Settings, ArrowLeft } from 'lucide-react';
+import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw, Settings, ArrowLeft, GitBranch } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
 import { GeneralTab } from './settings/general-tab.js';
@@ -488,6 +488,7 @@ function AppShell(): React.JSX.Element {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('');
+  const [devBranch, setDevBranch] = useState<string | null>(null);
   const memoryMB = useMemoryMB();
   const autoOpenRef = useMemo(() => ({ current: false }), []);
   const initialViewSetRef = useRef(false);
@@ -508,6 +509,10 @@ function AppShell(): React.JSX.Element {
 
   useEffect(() => {
     globalThis.costgoblinUpdate.getAppVersion().then(setAppVersion).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    globalThis.costgoblinDebug.getGitBranch().then(setDevBranch).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -906,7 +911,13 @@ function AppShell(): React.JSX.Element {
           <div className="flex flex-col items-center justify-center px-4">
             <span className="text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
             <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
-              {appVersion !== '' && <span>v{appVersion}</span>}
+              {devBranch !== null
+                ? (
+                  <span className="flex items-center gap-1 font-medium text-accent" title="Running from this git branch">
+                    <GitBranch size={10} />{devBranch}
+                  </span>
+                )
+                : appVersion !== '' && <span>v{appVersion}</span>}
               {isDev && memoryMB > 0 && <span>{formatMemory(memoryMB)}</span>}
             </div>
           </div>
