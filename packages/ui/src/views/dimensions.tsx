@@ -1523,6 +1523,9 @@ function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: R
           <span className="text-[10px] text-text-muted">estimated from {estimate.probePeriod} · directional</span>
         )}
       </div>
+      <p className="mt-1 text-[11px] leading-snug text-text-muted">
+        The rollup is a compact, pre-aggregated copy of your billing data grouped by these dimensions — dashboards query it instead of the raw line items, so a leaner grain keeps them fast.
+      </p>
 
       {loading && estimate === null ? (
         <p className="mt-3 text-xs text-text-muted">Estimating…</p>
