@@ -4,7 +4,7 @@ import { DEFAULT_PLACEHOLDER_PATTERNS } from '../types/query.js';
 import type { DimensionId } from '../types/branded.js';
 import { tagDimColumn } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
-import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
+import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule, MarketplaceAttributionConfig, MarketplaceAttributionRule } from '../types/cost-scope.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor, LIST_METRIC_LINE_ITEM_TYPES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
@@ -338,6 +338,55 @@ export interface BuildSourceOptions {
    *  description, usage_amount, list_cost. Used by the materialized base
    *  to keep the in-memory table small. */
   readonly slim?: boolean | undefined;
+  /** Re-attributes empty-product_servicecode AWS Marketplace rows to a real
+   *  service (and, on the `list` metric, swaps the $0 list price for unblended
+   *  cost). Omitted/disabled → raw CUR attribution. */
+  readonly marketplaceAttribution?: MarketplaceAttributionConfig | undefined;
+}
+
+/** Active marketplace rules: only when enabled, dropping malformed entries. */
+function activeMarketplaceRules(
+  cfg: MarketplaceAttributionConfig | undefined,
+): readonly MarketplaceAttributionRule[] {
+  if (cfg === undefined || !cfg.enabled) return [];
+  return cfg.rules.filter(r => r.service.length > 0 && r.operations.length > 0);
+}
+
+/** SQL predicate matching any active rule's Marketplace rows (empty
+ *  product_servicecode + matching operation). Null when nothing is active. */
+function marketplaceMatchPredicate(
+  prefix: string,
+  rules: readonly MarketplaceAttributionRule[],
+): string | null {
+  if (rules.length === 0) return null;
+  const ops = [...new Set(rules.flatMap(r => r.operations))]
+    .map(o => `'${sqlEscapeString(o)}'`)
+    .join(', ');
+  return `COALESCE(${prefix}product_servicecode, '') = '' AND ${prefix}line_item_operation IN (${ops})`;
+}
+
+/** Wraps the base service expression in a CASE that rewrites each rule's
+ *  empty-servicecode Marketplace rows to its target service code. */
+function marketplaceServiceExpr(
+  prefix: string,
+  base: string,
+  rules: readonly MarketplaceAttributionRule[],
+): string {
+  if (rules.length === 0) return base;
+  const branches = rules.map(r => {
+    const ops = r.operations.map(o => `'${sqlEscapeString(o)}'`).join(', ');
+    return `WHEN COALESCE(${prefix}product_servicecode, '') = '' AND ${prefix}line_item_operation IN (${ops}) THEN '${sqlEscapeString(r.service)}'`;
+  });
+  return `CASE ${branches.join(' ')} ELSE ${base} END`;
+}
+
+/** Marketplace rows have a $0 public-on-demand price, so any expression keyed
+ *  on it (the `list` metric, the `list_cost` column) reports them as free.
+ *  Substitute unblended cost — the only real figure AWS gives these rows —
+ *  for matched rows. No-op when the predicate is null. */
+function marketplaceListFallback(prefix: string, base: string, matchPredicate: string | null): string {
+  if (matchPredicate === null) return base;
+  return `CASE WHEN ${matchPredicate} THEN COALESCE(${prefix}line_item_unblended_cost, 0) ELSE ${base} END`;
 }
 
 function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
@@ -404,12 +453,33 @@ export function buildSource(opts: BuildSourceOptions): string {
     ? buildFromClause(parquetSource, dimensions, orgAccountsPath)
     : parquetSource;
   const tablePrefix = needsOrgJoin ? 'cur.' : '';
-  const costExpr = costExprFor(costMetric, tablePrefix, costPerspective, availableColumns);
 
+  // Marketplace re-attribution: matched rows get a real service code, and on
+  // the `list` metric their $0 public-on-demand price is replaced with
+  // unblended cost (see marketplaceListFallback).
+  const mktRules = activeMarketplaceRules(opts.marketplaceAttribution);
+  const mktMatch = marketplaceMatchPredicate(tablePrefix, mktRules);
+
+  const baseCostExpr = costExprFor(costMetric, tablePrefix, costPerspective, availableColumns);
+  const costExpr = costMetric === 'list'
+    ? marketplaceListFallback(tablePrefix, baseCostExpr, mktMatch)
+    : baseCostExpr;
+
+  const serviceExpr = marketplaceServiceExpr(
+    tablePrefix,
+    `COALESCE(${tablePrefix}product_servicecode, '')`,
+    mktRules,
+  );
+
+  const listCostExpr = marketplaceListFallback(
+    tablePrefix,
+    `COALESCE(${tablePrefix}pricing_public_on_demand_cost, 0)`,
+    mktMatch,
+  );
   const flexColumns = slim === true ? '' : `
       COALESCE(${tablePrefix}line_item_line_item_description, '') AS description,
       COALESCE(${tablePrefix}line_item_usage_amount, 0) AS usage_amount,
-      COALESCE(${tablePrefix}pricing_public_on_demand_cost, 0) AS list_cost,`;
+      ${listCostExpr} AS list_cost,`;
 
   // The `list` metric reports on-demand list price for usage that actually
   // happened. RI/SP fee rows (RIFee, SavingsPlanRecurringFee, etc.) have no
@@ -426,7 +496,7 @@ export function buildSource(opts: BuildSourceOptions): string {
       ${tablePrefix}line_item_usage_account_id AS account_id,
       COALESCE(${tablePrefix}line_item_usage_account_name, '') AS account_name,
       COALESCE(${tablePrefix}product_region_code, '') AS region,
-      COALESCE(${tablePrefix}product_servicecode, '') AS service,
+      ${serviceExpr} AS service,
       COALESCE(${tablePrefix}product_product_family, '') AS service_family,${flexColumns}
       COALESCE(${tablePrefix}line_item_resource_id, '') AS resource_id,
       ${costExpr} AS cost,
@@ -537,7 +607,7 @@ function setupQuery(
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const resolvedTier = effectiveTier(tier, params.dateRange);
-  const source = buildSource({ dataDir, tier: resolvedTier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, ...extraSourceOpts });
+  const source = buildSource({ dataDir, tier: resolvedTier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution, ...extraSourceOpts });
   return { qb, filterClauses, exclusionClauses, source, costMetric };
 }
 
@@ -634,7 +704,7 @@ export function buildTrendQuery(
     const previousPeriods = computePeriodsInRange({ start: prevStartIso, end: prevEndIso });
     const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
     const periods = availablePeriods === undefined ? required : required.filter(p => availablePeriods.includes(p));
-    source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective });
+    source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution });
   } else {
     source = materializedSource;
     exclusionClauses = [];
@@ -942,7 +1012,7 @@ export function buildMaterializeBaseQuery(
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(dateRange, availablePeriods);
-  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, includeRawTags: true, slim: true });
+  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution, includeRawTags: true, slim: true });
 
   assertDateString(dateRange.start);
   assertDateString(dateRange.end);
@@ -995,7 +1065,9 @@ export function buildRollupPartitionQuery(
 
   const source = buildSource({
     dataDir, tier, dimensions, orgAccountsPath, periods: [period],
-    costMetric, availableColumns, costPerspective, includeRawTags: false, slim: true,
+    costMetric, availableColumns, costPerspective,
+    marketplaceAttribution: costScope?.marketplaceAttribution,
+    includeRawTags: false, slim: true,
   });
 
   const exclusionClauses: string[] = [];

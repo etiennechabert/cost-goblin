@@ -5,8 +5,9 @@ import {
 } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
-import { DEFAULT_COST_SCOPE, BUILTIN_EXCLUSION_RULES, mergeBuiltInExclusionRules } from '../config/cost-scope-seed.js';
+import { DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, BUILTIN_EXCLUSION_RULES, mergeBuiltInExclusionRules } from '../config/cost-scope-seed.js';
 import { validateCostScope } from '../config/cost-scope-validator.js';
+import { costScopeToYaml } from '../config/cost-scope-serialize.js';
 import { asDimensionId, asDateString } from '../types/branded.js';
 
 const dimensions: DimensionsConfig = {
@@ -472,6 +473,70 @@ describe('validateCostScope: blended migration', () => {
 
   it('rejects truly unknown costMetric values', () => {
     expect(() => validateCostScope({ costMetric: 'nonsense', rules: [] })).toThrow(/costScope.costMetric must be one of/);
+  });
+});
+
+describe('marketplace attribution: SQL rewrite', () => {
+  const bedrock = DEFAULT_MARKETPLACE_ATTRIBUTION;
+  const matchPred = "COALESCE(product_servicecode, '') = '' AND line_item_operation IN ('InvokeModelInference', 'InvokeModelStreamingInference')";
+
+  it('re-attributes matched empty-servicecode rows to the target service', () => {
+    const sql = buildQuery({ costMetric: 'unblended', rules: [], marketplaceAttribution: bedrock });
+    expect(sql).toContain(`CASE WHEN ${matchPred} THEN 'AmazonBedrock' ELSE COALESCE(product_servicecode, '') END AS service`);
+  });
+
+  it('leaves service untouched when disabled', () => {
+    const sql = buildQuery({ costMetric: 'unblended', rules: [], marketplaceAttribution: { enabled: false, rules: bedrock.rules } });
+    expect(sql).toContain("COALESCE(product_servicecode, '') AS service");
+    expect(sql).not.toContain('AmazonBedrock');
+  });
+
+  it('leaves service untouched when no costScope is supplied', () => {
+    const sql = buildQuery();
+    expect(sql).toContain("COALESCE(product_servicecode, '') AS service");
+    expect(sql).not.toContain('AmazonBedrock');
+  });
+
+  it('substitutes unblended for the $0 list price on the list metric', () => {
+    const sql = buildQuery({ costMetric: 'list', rules: [], marketplaceAttribution: bedrock });
+    expect(sql).toContain(`CASE WHEN ${matchPred} THEN COALESCE(line_item_unblended_cost, 0) ELSE COALESCE(pricing_public_on_demand_cost, 0) END AS cost`);
+  });
+
+  it('does NOT rewrite cost on unblended (the real charge is already there)', () => {
+    const sql = buildQuery({ costMetric: 'unblended', rules: [], marketplaceAttribution: bedrock });
+    expect(sql).toContain('COALESCE(line_item_unblended_cost, 0) AS cost');
+    expect(sql).not.toContain('END AS cost');
+  });
+});
+
+describe('validateCostScope: marketplace attribution', () => {
+  it('defaults to the shipped enabled rule when the block is absent', () => {
+    const r = validateCostScope({ costMetric: 'unblended', rules: [] });
+    expect(r.marketplaceAttribution).toEqual(DEFAULT_MARKETPLACE_ATTRIBUTION);
+  });
+
+  it('honors an explicit disabled block (opt-out)', () => {
+    const r = validateCostScope({ costMetric: 'unblended', rules: [], marketplaceAttribution: { enabled: false, rules: [] } });
+    expect(r.marketplaceAttribution).toEqual({ enabled: false, rules: [] });
+  });
+
+  it('rejects a rule with no operations', () => {
+    expect(() => validateCostScope({
+      costMetric: 'unblended', rules: [],
+      marketplaceAttribution: { enabled: true, rules: [{ service: 'X', operations: [] }] },
+    })).toThrow(/operations must have at least one/);
+  });
+
+  it('rejects a rule with an empty service', () => {
+    expect(() => validateCostScope({
+      costMetric: 'unblended', rules: [],
+      marketplaceAttribution: { enabled: true, rules: [{ service: '', operations: ['Op'] }] },
+    })).toThrow(/service must be a non-empty/);
+  });
+
+  it('round-trips through YAML serialization', () => {
+    const cfg = validateCostScope({ costMetric: 'unblended', rules: [] });
+    expect(validateCostScope(costScopeToYaml(cfg))).toEqual(cfg);
   });
 });
 

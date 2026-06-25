@@ -83,6 +83,8 @@ export type {
   CostPerspective,
   CostScopeCapabilities,
   CostScopeConfig,
+  MarketplaceAttributionConfig,
+  MarketplaceAttributionRule,
   ExclusionRule,
   ExclusionCondition,
   CostScopeDailyRow,

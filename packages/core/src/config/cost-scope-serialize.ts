@@ -11,11 +11,15 @@ interface YamlRule {
   conditions: YamlCondition[];
 }
 
+interface YamlMarketplaceRule { service: string; operations: string[] }
+interface YamlMarketplaceAttribution { enabled: boolean; rules: YamlMarketplaceRule[] }
+
 export interface YamlCostScope {
   costMetric: string;
   costPerspective?: string;
   lagDays?: number;
   rules: YamlRule[];
+  marketplaceAttribution?: YamlMarketplaceAttribution;
 }
 
 function conditionToYaml(c: ExclusionCondition): YamlCondition {
@@ -44,5 +48,16 @@ export function costScopeToYaml(cfg: CostScopeConfig): YamlCostScope {
       : { costPerspective: cfg.costPerspective }),
     ...(lagDays === DEFAULT_LAG_DAYS ? {} : { lagDays }),
     rules: cfg.rules.map(ruleToYaml),
+    ...(cfg.marketplaceAttribution === undefined
+      ? {}
+      : {
+          marketplaceAttribution: {
+            enabled: cfg.marketplaceAttribution.enabled,
+            rules: cfg.marketplaceAttribution.rules.map(r => ({
+              service: r.service,
+              operations: [...r.operations],
+            })),
+          },
+        }),
   };
 }
