@@ -23,8 +23,10 @@ e2e/*.txt
 # Editor backups
 *~
 
-# Claude Code local state
-.claude/
+# Claude Code local state (ignore everything except shared skills)
+.claude/*
+!.claude/skills/
+!.claude/skills/**
 
 # Auto Claude data directory
 .auto-claude/
