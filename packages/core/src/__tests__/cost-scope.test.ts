@@ -334,10 +334,71 @@ describe('mergeBuiltInExclusionRules', () => {
     };
   }
 
+  function legacyEdpRule(enabled: boolean): ExclusionRule {
+    return {
+      id: 'builtin:edp-discount',
+      name: 'EDP discount',
+      enabled,
+      builtIn: true,
+      conditions: [{ dimensionId: asDimensionId('line_item_type'), values: ['EdpDiscount'] }],
+    };
+  }
+
+  function legacyBundledRule(enabled: boolean): ExclusionRule {
+    return {
+      id: 'builtin:bundled-discount',
+      name: 'Bundled discount',
+      enabled,
+      builtIn: true,
+      conditions: [{ dimensionId: asDimensionId('line_item_type'), values: ['BundledDiscount'] }],
+    };
+  }
+
   it('does not ship the retired RI/SP rules in the default seed', () => {
     const ids = BUILTIN_EXCLUSION_RULES.map(r => r.id);
     expect(ids).not.toContain('builtin:ri-sp-purchases');
     expect(ids).not.toContain('builtin:commitment-covered-usage');
+  });
+
+  it('ships a single merged negotiated-discounts rule covering both EDP and bundled', () => {
+    const ids = BUILTIN_EXCLUSION_RULES.map(r => r.id);
+    expect(ids).not.toContain('builtin:edp-discount');
+    expect(ids).not.toContain('builtin:bundled-discount');
+    const merged = BUILTIN_EXCLUSION_RULES.find(r => r.id === 'builtin:negotiated-discounts');
+    expect(merged?.conditions[0]?.values).toEqual(['EdpDiscount', 'BundledDiscount']);
+  });
+
+  it('drops the legacy discount rules and backfills the merged rule', () => {
+    const loaded: CostScopeConfig = {
+      costMetric: 'unblended',
+      rules: [legacyEdpRule(false), legacyBundledRule(false)],
+    };
+    const merged = mergeBuiltInExclusionRules(loaded);
+    const ids = merged.rules.map(r => r.id);
+    expect(ids).not.toContain('builtin:edp-discount');
+    expect(ids).not.toContain('builtin:bundled-discount');
+    expect(ids).toContain('builtin:negotiated-discounts');
+  });
+
+  it('enables the merged rule when either legacy discount rule was enabled', () => {
+    for (const loaded of [
+      { costMetric: 'unblended' as const, rules: [legacyEdpRule(true), legacyBundledRule(false)] },
+      { costMetric: 'unblended' as const, rules: [legacyEdpRule(false), legacyBundledRule(true)] },
+    ]) {
+      const merged = mergeBuiltInExclusionRules(loaded);
+      const rule = merged.rules.find(r => r.id === 'builtin:negotiated-discounts');
+      expect(rule?.enabled).toBe(true);
+    }
+  });
+
+  it('keeps the merged rule disabled when both legacy discount rules were disabled', () => {
+    const loaded: CostScopeConfig = {
+      costMetric: 'unblended',
+      rules: [legacyEdpRule(false), legacyBundledRule(false)],
+    };
+    const merged = mergeBuiltInExclusionRules(loaded);
+    const rule = merged.rules.find(r => r.id === 'builtin:negotiated-discounts');
+    expect(rule?.enabled).toBe(false);
   });
 
   it('drops retired rules from loaded configs silently', () => {

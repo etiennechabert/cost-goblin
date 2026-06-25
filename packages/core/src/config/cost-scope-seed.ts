@@ -34,25 +34,14 @@ export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
     ],
   },
   {
-    id: 'builtin:edp-discount',
-    name: 'EDP discount',
+    id: 'builtin:negotiated-discounts',
+    name: 'Negotiated discounts',
     description:
-      'Negative line items from the AWS Enterprise Discount Program (contractual volume discount). Toggle on to view gross / pre-negotiation cost; leave off to see the effective bill after the EDP credit.',
+      'Standalone negative discount line items — the AWS Enterprise Discount Program (EdpDiscount, contractual volume discount) and automatic bundle-pricing rules (BundledDiscount, e.g. support-tier bundle credits). Both are separate rows, not paired with a specific usage line. Leave off to see the effective bill after these discounts; toggle on to view gross / pre-negotiation cost. Distinct from the Net perspective, which applies account-level credits and refunds.',
     enabled: false,
     builtIn: true,
     conditions: [
-      { dimensionId: asDimensionId('line_item_type'), values: ['EdpDiscount'] },
-    ],
-  },
-  {
-    id: 'builtin:bundled-discount',
-    name: 'Bundled discount',
-    description:
-      'Negative discount line items applied automatically by AWS bundle pricing rules (e.g. support-tier bundle credits). Like EDP, standalone — not paired with a specific usage row. Toggle on to see pre-bundle cost.',
-    enabled: false,
-    builtIn: true,
-    conditions: [
-      { dimensionId: asDimensionId('line_item_type'), values: ['BundledDiscount'] },
+      { dimensionId: asDimensionId('line_item_type'), values: ['EdpDiscount', 'BundledDiscount'] },
     ],
   },
 ];
@@ -68,6 +57,11 @@ const RETIRED_BUILTIN_RULE_IDS: ReadonlySet<string> = new Set([
   // Removed entirely: this was a savings-sizing tool, not a coherent
   // cost-scope toggle. Belongs in a dedicated commitment-coverage view.
   'builtin:commitment-covered-usage',
+  // Merged into `builtin:negotiated-discounts` — both excluded a single
+  // standalone discount line-item type and only differed by which one.
+  // mergeBuiltInExclusionRules enables the merged rule if either was on.
+  'builtin:edp-discount',
+  'builtin:bundled-discount',
 ]);
 
 export const DEFAULT_COST_SCOPE: CostScopeConfig = {
@@ -88,10 +82,19 @@ export function mergeBuiltInExclusionRules(loaded: CostScopeConfig): CostScopeCo
   const retiredRiSpPurchasesEnabled = loaded.rules.some(
     r => r.id === 'builtin:ri-sp-purchases' && r.enabled,
   );
+  // The EDP and Bundled discount rules were merged into a single
+  // `builtin:negotiated-discounts`. Carry the user's intent forward: if
+  // either legacy rule was enabled, enable the merged rule (added below as a
+  // missing built-in, since loaded configs predate it).
+  const retiredDiscountEnabled = loaded.rules.some(
+    r => (r.id === 'builtin:edp-discount' || r.id === 'builtin:bundled-discount') && r.enabled,
+  );
 
   const survivingRules = loaded.rules.filter(r => !RETIRED_BUILTIN_RULE_IDS.has(r.id));
   const survivingIds = new Set(survivingRules.map(r => r.id));
-  const missingBuiltins = BUILTIN_EXCLUSION_RULES.filter(b => !survivingIds.has(b.id));
+  const missingBuiltins = BUILTIN_EXCLUSION_RULES.filter(b => !survivingIds.has(b.id)).map(b =>
+    b.id === 'builtin:negotiated-discounts' && retiredDiscountEnabled ? { ...b, enabled: true } : b,
+  );
 
   const droppedAny = survivingRules.length !== loaded.rules.length;
   if (!droppedAny && missingBuiltins.length === 0 && !retiredRiSpPurchasesEnabled) {

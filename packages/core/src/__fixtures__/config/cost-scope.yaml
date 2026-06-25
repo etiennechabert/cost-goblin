@@ -38,27 +38,18 @@ rules:
       - dimensionId: line_item_type
         values:
           - Tax
-  - id: builtin:edp-discount
-    name: EDP discount
-    description: Negative line items from the AWS Enterprise Discount Program
-      (contractual volume discount). Toggle on to view gross / pre-negotiation
-      cost; leave off to see the effective bill after the EDP credit.
+  - id: builtin:negotiated-discounts
+    name: Negotiated discounts
+    description: Standalone negative discount line items — the AWS Enterprise
+      Discount Program (EdpDiscount, contractual volume discount) and automatic
+      bundle-pricing rules (BundledDiscount). Leave off to see the effective bill
+      after these discounts; toggle on to view gross / pre-negotiation cost.
     enabled: false
     builtIn: true
     conditions:
       - dimensionId: line_item_type
         values:
           - EdpDiscount
-  - id: builtin:bundled-discount
-    name: Bundled discount
-    description: Negative discount line items applied automatically by AWS bundle
-      pricing rules (e.g. support-tier bundle credits). Like EDP, standalone —
-      not paired with a specific usage row. Toggle on to see pre-bundle cost.
-    enabled: false
-    builtIn: true
-    conditions:
-      - dimensionId: line_item_type
-        values:
           - BundledDiscount
   - id: builtin:commitment-covered-usage
     name: RI & SP covered usage

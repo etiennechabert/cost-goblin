@@ -902,7 +902,8 @@ export function CostScopeView(): React.JSX.Element {
                   <div>
                     <div className="text-sm font-medium text-text-primary">Perspective</div>
                     <div className="text-xs text-text-muted mt-0.5">
-                      Net applies credits, refunds, and promotional discounts on top of the chosen metric.
+                      Net subtracts account-level credits and refunds from the chosen metric. Negotiated
+                      EDP/bundled discounts are a separate axis — toggle the exclusion rule below.
                     </div>
                   </div>
                   <PerspectiveToggle
