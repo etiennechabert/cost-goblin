@@ -387,7 +387,7 @@ export interface UpdateApi {
  *  (otherwise swallowed to the log). */
 export type RollupStatus =
   | { readonly state: 'idle' }
-  | { readonly state: 'computing'; readonly done: number; readonly total: number }
+  | { readonly state: 'computing'; readonly done: number; readonly total: number; readonly periods: readonly string[] }
   | { readonly state: 'ready'; readonly periods: number }
   | { readonly state: 'failed'; readonly message: string; readonly periods: number };
 

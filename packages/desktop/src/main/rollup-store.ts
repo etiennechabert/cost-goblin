@@ -233,10 +233,23 @@ export class RollupStore {
         ? this.manifest
         : { schemaVersion: ROLLUP_SCHEMA_VERSION, shapeSignature: shape.signature, builtAt: '', grainDimensions: shape.grainDimensions, availableColumns: shape.availableColumns, partitions: {} };
 
+      // Progress is reported completed-first: the renderer's status popover
+      // labels chip `i` as built when `i < done`, so `periods[0..done)` must be
+      // the finished months. Parallel builds complete out of submission order,
+      // so we track completion order explicitly rather than assuming input order.
       const total = periods.length;
-      let done = 0;
       let failures = 0;
-      this.setStatus({ state: 'computing', done, total });
+      const completed: string[] = [];
+      const completedSet = new Set<string>();
+      const reportProgress = (): void => {
+        const pending = periods.filter(p => !completedSet.has(p));
+        this.setStatus({ state: 'computing', done: completed.length, total, periods: [...completed, ...pending] });
+      };
+      const markDone = (period: string): void => {
+        if (!completedSet.has(period)) { completedSet.add(period); completed.push(period); }
+        reportProgress();
+      };
+      reportProgress();
 
       // Split into already-valid (skip) and to-build. Reading manifest.partitions
       // here is safe — it happens before any build starts, so the concurrent
@@ -246,8 +259,7 @@ export class RollupStore {
         const wantHash = computePartitionEtagHash(etagsByPeriod[period]);
         if (opts.force !== true && manifest.partitions[period]?.rawEtagHash === wantHash) {
           this.validPeriods.add(period);
-          done += 1;
-          this.setStatus({ state: 'computing', done, total });
+          markDone(period);
         } else {
           toBuild.push(period);
         }
@@ -285,10 +297,8 @@ export class RollupStore {
             failures += 1;
             logger.warn(`rollup: build failed for ${period} — ${err instanceof Error ? err.message : String(err)}`);
           }
-          // Each finished period (built or failed) advances progress. Concurrent
-          // increments are safe — JS is single-threaded between awaits.
-          done += 1;
-          this.setStatus({ state: 'computing', done, total });
+          // Each finished period (built or failed) advances progress.
+          markDone(period);
         };
 
         await this.runBounded(toBuild, buildOne);
@@ -346,9 +356,10 @@ export class RollupStore {
     this.manifest = null;
     this.validPeriods = new Set();
     // Signal "rebuilding" immediately — the caller re-warms right after, and the
-    // ensuing warmup either drives this through to `ready` (via maintainPeriods)
-    // or calls markSettled() when there's nothing to rebuild.
-    this.setStatus({ state: 'computing', done: 0, total: 0 });
+    // ensuing warmup either drives this through to `ready` (via maintainPeriods,
+    // which fills in the period list) or calls markSettled() when there's
+    // nothing to rebuild.
+    this.setStatus({ state: 'computing', done: 0, total: 0, periods: [] });
     return this.enqueue(async () => {
       await rm(this.rollupDir(), { recursive: true, force: true });
     });
