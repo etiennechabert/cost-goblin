@@ -3,7 +3,7 @@ import { asDateString, asHourString, asTagValue } from '@costgoblin/core/browser
 import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
-import { daysBetween } from '../lib/dates.js';
+import { daysBetween, monthsInRange } from '../lib/dates.js';
 import type {
   Dimension,
   DimensionId,
@@ -12,8 +12,9 @@ import type {
   TagValue,
   ViewSpec,
 } from '@costgoblin/core/browser';
-import { useCostApi } from '../hooks/use-cost-api.js';
+import { useCostApi, CostApiProvider } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
+import { useRollupStatus } from '../hooks/use-rollup-status.js';
 import { useQuery } from '../hooks/use-query.js';
 import {
   CostFocusDispatchProvider,
@@ -135,6 +136,34 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
     () => previousRangeFor(dateRange),
     [dateRange],
   );
+
+  // While a sync re-rolls a rollup partition this view's range touches, badge
+  // the affected widgets "updating…" — their figure is briefly stale, not wrong.
+  // In compare mode the previous-period months are queried too, so fold them in.
+  const reRollingPeriods = useRollupStatus(api);
+  const rangeMonths = useMemo(() => {
+    const months = monthsInRange(dateRange.start, dateRange.end);
+    if (!compareEnabled) return months;
+    return [...new Set([...months, ...monthsInRange(previousDateRange.start, previousDateRange.end)])];
+  }, [dateRange.start, dateRange.end, compareEnabled, previousDateRange.start, previousDateRange.end]);
+  const rangeIsReRolling = useMemo(
+    () => reRollingPeriods.some(p => rangeMonths.includes(p)),
+    [reRollingPeriods, rangeMonths],
+  );
+
+  // When a re-roll affecting this range finishes, its partition is fresh and the
+  // main-process result cache has been cleared — but the mounted widgets won't
+  // re-query on their own (their deps are query-shaping inputs only). On the
+  // re-rolling→idle transition, hand the widget subtree a fresh CostApi identity:
+  // every widget keys its query on `api`, so this re-runs their fetch in place
+  // against the rebuilt partition (the badge clears in the same render).
+  const [dataEpoch, setDataEpoch] = useState(0);
+  const wasReRollingRef = useRef(false);
+  useEffect(() => {
+    if (wasReRollingRef.current && !rangeIsReRolling) setDataEpoch(e => e + 1);
+    wasReRollingRef.current = rangeIsReRolling;
+  }, [rangeIsReRolling]);
+  const widgetApi = useMemo(() => new Proxy(api, {}), [api, dataEpoch]);
 
   // Cancel in-flight DuckDB queries when query-affecting state changes so
   // stale queries don't hog pool connections while new ones queue behind them.
@@ -295,6 +324,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
         <div className="text-sm text-text-secondary">Loading...</div>
       )}
 
+      <CostApiProvider value={widgetApi}>
       <WidgetSchedulerProvider>
         {spec.rows.map((row, rowIdx) => {
           // Flat display order across rows = load priority (top-left first).
@@ -311,6 +341,9 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
                     minHeight={placeholderMinHeight(w.type)}
                     className="min-w-0 flex flex-col"
                     style={{ flexBasis: widgetFlexBasis(w.size), flexGrow: 1, flexShrink: 1 }}
+                    // The Table widget reads raw (not the rollup), so it isn't
+                    // stale during a re-roll — no badge for it.
+                    updating={rangeIsReRolling && w.type !== 'table'}
                   >
                     <Renderer
                       spec={w}
@@ -331,6 +364,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter }: CustomViewProp
           );
         })}
       </WidgetSchedulerProvider>
+      </CostApiProvider>
     </div>
   );
 }

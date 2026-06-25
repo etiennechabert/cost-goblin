@@ -15,6 +15,7 @@ import {
   type MissingTagsResult,
   type OrgNode,
   type PruneResult,
+  type RollupStatus,
   type SavingsResult,
   type SyncStatus,
   type TrendResult,
@@ -247,6 +248,7 @@ export class MockCostApi implements CostApi {
   }
   queryEntityDetail(): Promise<EntityDetailResult> { return Promise.resolve(entityDetailResult); }
   getSyncStatus(): Promise<SyncStatus> { return Promise.resolve(syncStatus); }
+  getRollupStatus(): Promise<RollupStatus> { return Promise.resolve({ reRollingPeriods: [] }); }
   getConfig(): Promise<CostGoblinConfig> { return Promise.resolve(config); }
   getDimensions(): Promise<Dimension[]> { return Promise.resolve(mockDimensions); }
   getOrgTree(): Promise<OrgNode[]> { return Promise.resolve(orgTree); }

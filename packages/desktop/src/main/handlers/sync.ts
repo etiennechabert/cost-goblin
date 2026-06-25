@@ -19,6 +19,7 @@ import type {
   AccountMappingStatus,
   AccountMappingEntry,
   PruneResult,
+  RollupStatus,
   SyncStatus,
 } from '@costgoblin/core';
 import {
@@ -157,6 +158,8 @@ export function registerSyncHandlers(app: AppContext): void {
   ipcMain.handle('sync:status', (_event, syncId: string = 'default'): SyncStatus => {
     return state.syncStatuses[syncId] ?? { status: 'idle', lastSync: null };
   });
+
+  ipcMain.handle('rollup:status', (): RollupStatus => app.getRollupStatus());
 
   ipcMain.handle('data:inventory', async (_event, tier?: ExpectedDataType): Promise<DataInventory> => {
     const config = await getConfig();

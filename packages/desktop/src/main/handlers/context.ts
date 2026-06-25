@@ -32,6 +32,7 @@ import type {
   DimensionsConfig,
   OrgNode,
   RegionEnrichment,
+  RollupStatus,
   SyncStatus,
   ViewsConfig,
 } from '@costgoblin/core';
@@ -166,6 +167,9 @@ export interface AppContext {
   readonly warmupBase: () => void;
   /** Re-roll the rollup partitions for the periods a sync changed. */
   readonly maintainRollup: (changedPeriods: readonly string[]) => void;
+  /** Which already-built partitions (YYYY-MM) are mid-re-roll right now. Polled
+   *  by the renderer to badge affected dashboard widgets "updating…". */
+  readonly getRollupStatus: () => RollupStatus;
   /** Resolve once the latest cost_base warmup settles (true if the base is
    *  ready, false if it timed out or no base was built). Lets the renderer
    *  hold the startup prewarm until the in-memory base exists, so those probes
@@ -440,6 +444,20 @@ export function createAppContext(ctx: IpcContext): AppContext {
   const rollupStore = new RollupStore({ dataDir: ctx.dataDir, runQuery: (sql) => ctx.db.runQuery(sql) });
   const resultCache = new LRUCache<string, RawRow[]>(50);
 
+  // YYYY-MM partitions currently being re-rolled after a sync, ref-counted so
+  // overlapping maintain calls don't clear a period's "updating" flag early.
+  // Only periods that ALREADY had a valid partition are tracked — a first-time
+  // build keeps the widget's normal loading state. Surfaced via getRollupStatus
+  // and polled by the dashboard to badge affected widgets.
+  const reRolling = new Map<string, number>();
+  function markReRolling(periods: readonly string[], delta: 1 | -1): void {
+    for (const p of periods) {
+      const next = (reRolling.get(p) ?? 0) + delta;
+      if (next <= 0) reRolling.delete(p);
+      else reRolling.set(p, next);
+    }
+  }
+
   const wrappedRunQuery = queryLog.wrapQuery((sql, onStarted) => ctx.db.runQuery(sql, onStarted));
   const wrappedRunPreparedQuery = queryLog.wrapPreparedQuery((sql, params, onStarted) => ctx.db.runPreparedQuery(sql, params, onStarted));
 
@@ -541,6 +559,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // Re-roll only the periods a sync changed (file replace), then drop cached
   // results so dashboards re-render from the fresh partitions.
   async function maintainRollupForPeriods(changed: readonly string[]): Promise<void> {
+    const reRolled: string[] = [];
     try {
       const available = await listLocalMonths(ctx.dataDir, 'daily');
       const periods = changed.filter(p => available.includes(p));
@@ -548,11 +567,19 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const shape = await getRollupShape();
       const etags = await getEtagsByPeriod();
       if (!rollupStore.isReady()) await rollupStore.loadAndValidate(shape, etags);
+      // A period with an existing valid partition is a re-roll: the old numbers
+      // stay served while we rebuild → flag it "updating". A brand-new month is
+      // a first build → no flag, so the widget shows its normal loading state.
+      const valid = rollupStore.getValidPeriods();
+      reRolled.push(...periods.filter(p => valid.has(p)));
+      markReRolling(reRolled, 1);
       const buildSql = await buildRollupSqlFor();
       await rollupStore.maintainPeriods(periods, buildSql, etags, shape, { force: true });
       resultCache.clear();
     } catch (err: unknown) {
       logger.warn(`rollup-maintain: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      markReRolling(reRolled, -1);
     }
   }
 
@@ -592,6 +619,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     invalidateColumnCache: () => { columnCache.clear(); },
     warmupBase: () => { resultCache.clear(); triggerWarmup(); },
     maintainRollup: (changedPeriods: readonly string[]) => { void maintainRollupForPeriods(changedPeriods); },
+    getRollupStatus: (): RollupStatus => ({ reRollingPeriods: [...reRolling.keys()] }),
     awaitWarmup: async (timeoutMs: number): Promise<boolean> => {
       await awaitWithTimeout(warmupInFlight, timeoutMs);
       return rollupStore.isReady();

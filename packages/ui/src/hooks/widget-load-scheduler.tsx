@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
+import { UpdatingBadge } from '../components/updating-badge.js';
 
 /**
  * Dashboard widget load coordination.
@@ -153,6 +154,7 @@ export function LazyWidgetSlot({
   minHeight,
   className,
   style,
+  updating = false,
   children,
 }: Readonly<{
   id: string;
@@ -160,6 +162,9 @@ export function LazyWidgetSlot({
   minHeight: number;
   className?: string;
   style?: CSSProperties;
+  /** Overlay an "updating…" badge — the widget's rollup partition is re-rolling
+   *  so its figure is briefly stale. Only shown once the widget is mounted. */
+  updating?: boolean;
   children: ReactNode;
 }>): React.JSX.Element {
   const scheduler = useContext(SchedulerContext);
@@ -189,7 +194,8 @@ export function LazyWidgetSlot({
   }, [isMounted, scheduler, id]);
 
   return (
-    <div ref={ref} className={className} style={style}>
+    <div ref={ref} className={`relative ${className ?? ''}`} style={style}>
+      {updating && isMounted && <UpdatingBadge />}
       {isMounted
         ? <WidgetSlotContext.Provider value={slotHandle}>{children}</WidgetSlotContext.Provider>
         : <div aria-hidden style={{ minHeight }} />}

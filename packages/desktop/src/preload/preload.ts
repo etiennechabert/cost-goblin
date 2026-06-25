@@ -28,6 +28,7 @@ import type {
   OrgSyncResult,
   OrgSyncProgress,
   AutoSyncStatus,
+  RollupStatus,
   PruneResult,
   ViewsConfig,
   CostScopeCapabilities,
@@ -128,6 +129,9 @@ const api: CostApi = {
   },
   getSyncStatus(syncId?: string): Promise<SyncStatus> {
     return invoke<SyncStatus>('sync:status', syncId);
+  },
+  getRollupStatus(): Promise<RollupStatus> {
+    return invoke<RollupStatus>('rollup:status');
   },
   getConfig(): Promise<CostGoblinConfig> {
     return invoke<CostGoblinConfig>('config:get');

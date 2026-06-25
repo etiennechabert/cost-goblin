@@ -97,6 +97,17 @@ export type AutoSyncStatus =
   | { readonly state: 'syncing'; readonly tier: string; readonly filesDone: number; readonly filesTotal: number }
   | { readonly state: 'error'; readonly message: string; readonly lastRun: string | null };
 
+/** Background rollup-maintenance state surfaced to the renderer so the dashboard
+ *  can badge affected widgets "updating…" while a partition re-rolls.
+ *  `reRollingPeriods` lists the YYYY-MM months whose ALREADY-BUILT partition is
+ *  currently being rebuilt after a sync changed that month — the old numbers are
+ *  still served meanwhile, so the figure is briefly stale, not wrong. A month
+ *  being built for the FIRST time is deliberately NOT listed: that case keeps the
+ *  widget's normal loading state. */
+export interface RollupStatus {
+  readonly reRollingPeriods: readonly string[];
+}
+
 export interface OrgSyncProgress {
   readonly phase: 'accounts' | 'ous' | 'tags' | 'regions';
   readonly done: number;
@@ -198,6 +209,11 @@ export interface CostApi {
   getAutoSyncIntervalMinutes(): Promise<number>;
   setAutoSyncIntervalMinutes(minutes: number): Promise<void>;
   getAutoSyncStatus(): Promise<AutoSyncStatus>;
+  /** Which already-built rollup partitions (YYYY-MM) are currently being
+   *  re-rolled in the background after a sync changed their month. Polled by the
+   *  dashboard to show an "updating…" badge on affected widgets; empty when no
+   *  re-roll is in flight. First-time builds are not reported here. */
+  getRollupStatus(): Promise<RollupStatus>;
   /** Whether the scheduler automatically prunes out-of-retention local data on
    *  each run. Off by default. Shares the auto-sync scheduler — enabling it
    *  starts the scheduler even when auto-download is off. */

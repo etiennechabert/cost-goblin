@@ -13,6 +13,24 @@ export function daysAgo(days: number): DateString {
   return asDateString(d.toISOString().slice(0, 10));
 }
 
+/** The YYYY-MM months an inclusive `start`..`end` date range touches, in order.
+ *  Used to test whether a date range overlaps a re-rolling rollup partition. */
+export function monthsInRange(start: string, end: string): string[] {
+  const months: string[] = [];
+  const s = new Date(`${start.slice(0, 10)}T00:00:00Z`);
+  const e = new Date(`${end.slice(0, 10)}T00:00:00Z`);
+  let year = s.getUTCFullYear();
+  let month = s.getUTCMonth();
+  const endYear = e.getUTCFullYear();
+  const endMonth = e.getUTCMonth();
+  while (year < endYear || (year === endYear && month <= endMonth)) {
+    months.push(`${String(year)}-${String(month + 1).padStart(2, '0')}`);
+    month += 1;
+    if (month > 11) { month = 0; year += 1; }
+  }
+  return months;
+}
+
 /** Format a date as YYYY-MM-DD in UTC. */
 function formatDateUTC(date: Date): DateString {
   const year = String(date.getUTCFullYear());
