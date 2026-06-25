@@ -414,6 +414,20 @@ contextBridge.exposeInMainWorld('costgoblinUpdate', {
   },
 });
 
+contextBridge.exposeInMainWorld('costgoblinRollup', {
+  getStatus(): Promise<unknown> {
+    return invoke<unknown>('rollup:get-status');
+  },
+  getStats(): Promise<unknown> {
+    return invoke<unknown>('rollup:get-stats');
+  },
+  onStatusChanged(callback: (status: unknown) => void): () => void {
+    const handler = (_event: unknown, status: unknown): void => { callback(status); };
+    ipcRenderer.on('rollup:status-changed', handler);
+    return () => { ipcRenderer.removeListener('rollup:status-changed', handler); };
+  },
+});
+
 contextBridge.exposeInMainWorld('costgoblinDebug', {
   isDev(): boolean { return process.env['NODE_ENV'] === 'development'; },
   isE2E(): boolean { return process.env['COSTGOBLIN_E2E'] === '1'; },

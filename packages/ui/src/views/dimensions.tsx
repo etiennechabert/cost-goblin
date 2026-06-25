@@ -1655,6 +1655,7 @@ export function DimensionsView() {
   // resets to status=loading on every dep change, which would otherwise blank
   // the dimensions list for a frame after every reorder/toggle/save.
   const [config, setConfig] = useState<DimensionsConfig | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   useEffect(() => {
     if (configQuery.status !== 'success') return;
     const { config: migrated, changed } = migrateLocked(configQuery.data);
@@ -1791,7 +1792,12 @@ export function DimensionsView() {
   function applyOptimistic(next: DimensionsConfig): void {
     const reconciled = { ...next, order: reconcileOrder(next) };
     setConfig(reconciled);
-    api.saveDimensionsConfig(reconciled).catch(() => undefined);
+    setSaveError(null);
+    api.saveDimensionsConfig(reconciled).catch((err: unknown) => {
+      // The toggle/reorder autosave used to swallow this — a failed persist left
+      // the UI showing a change that never reached disk. Surface it instead.
+      setSaveError(err instanceof Error ? err.message : 'Failed to save dimensions');
+    });
   }
 
   function toggleBuiltInEnabled(idx: number): void {
@@ -1908,6 +1914,19 @@ export function DimensionsView() {
         <h2 className="text-xl font-semibold text-text-primary">Dimensions</h2>
         <p className="text-sm text-text-secondary mt-1">Map tags to cost allocation dimensions</p>
       </div>
+
+      {saveError !== null && (
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-negative/50 bg-negative-muted px-4 py-2.5">
+          <p className="text-sm text-negative">Couldn’t save your change: {saveError}</p>
+          <button
+            type="button"
+            onClick={() => { setSaveError(null); }}
+            className="text-xs font-medium text-negative/80 hover:text-negative"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* SECTION 1 — Available dimensions as toggleable pills. Two rows: the
           fixed set of built-ins, then the user-defined tag dims with an
