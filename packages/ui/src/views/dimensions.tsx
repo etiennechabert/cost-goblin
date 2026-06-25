@@ -24,8 +24,11 @@ function tagOrderKey(t: { tagName?: string | undefined; accountTagFallback?: str
   return `tag:@${src}:${t.label}`;
 }
 
-// Core dimensions that cannot be disabled — they power the fallback chain and are always needed.
-const LOCKED_DIMENSIONS = new Set([asDimensionId('service'), asDimensionId('service_family'), asDimensionId('usage_type')]);
+// Core dimensions that cannot be disabled — service and service_family anchor
+// the widget fallback chain. usage_type stays a fallback candidate (queried
+// from the raw column regardless of enabled state) but is now toggleable, so a
+// heavy usage_type grain can be dropped from the rollup to keep dashboards fast.
+const LOCKED_DIMENSIONS = new Set([asDimensionId('service'), asDimensionId('service_family')]);
 
 function migrateLocked(cfg: DimensionsConfig): { config: DimensionsConfig; changed: boolean } {
   const needsFix = cfg.builtIn.some(d => LOCKED_DIMENSIONS.has(d.name) && d.enabled === false);

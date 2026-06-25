@@ -28,6 +28,21 @@ function formatRatio(ratio: number): string {
   return ratio >= 10 ? ratio.toFixed(0) : ratio.toFixed(1);
 }
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function formatMonth(period: string): string {
+  const [year, month] = period.split('-');
+  const name = MONTH_NAMES[Number(month) - 1] ?? month ?? period;
+  const yy = (year ?? '').slice(2);
+  return yy === '' ? name : `${name} '${yy}`;
+}
+
+function chipClass(isDone: boolean): string {
+  return isDone
+    ? 'rounded border border-accent/30 bg-accent/15 px-1.5 py-0.5 text-[10px] tabular-nums text-accent'
+    : 'rounded border border-border bg-bg-tertiary/40 px-1.5 py-0.5 text-[10px] tabular-nums text-text-muted';
+}
+
 function KpiRow({ label, value, accent }: Readonly<{ label: string; value: string; accent?: boolean }>): React.JSX.Element {
   return (
     <div className="flex items-center justify-between py-1">
@@ -114,6 +129,15 @@ export function RollupStatusButton({ status }: Readonly<Props>): React.JSX.Eleme
                 </div>
                 <p className="text-[11px] tabular-nums text-text-muted">{String(status.done)} / {String(status.total)} months</p>
               </>
+            )}
+            {status.periods.length > 0 && (
+              <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto">
+                {status.periods.map((p, i) => (
+                  <span key={p} className={chipClass(i < status.done)} title={i < status.done ? 'Rebuilt' : 'Pending'}>
+                    {formatMonth(p)}
+                  </span>
+                ))}
+              </div>
             )}
           </div>
         )}
