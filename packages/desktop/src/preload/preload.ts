@@ -418,6 +418,8 @@ contextBridge.exposeInMainWorld('costgoblinDebug', {
   isDev(): boolean { return process.env['NODE_ENV'] === 'development'; },
   isE2E(): boolean { return process.env['COSTGOBLIN_E2E'] === '1'; },
   getMemoryMB(): Promise<number> { return invoke<number>('debug:get-memory-mb'); },
+  getGitBranch(): Promise<string | null> { return invoke<string | null>('debug:get-git-branch'); },
+  getBranchPr(): Promise<BranchPrInfo | null> { return invoke<BranchPrInfo | null>('debug:get-branch-pr'); },
   isSandboxed(): boolean { return process.sandboxed; },
   getInFlightCount(): number { return inFlightCount; },
   getQueryLog(): Promise<DebugQueryLogEntry[]> {
