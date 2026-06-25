@@ -45,7 +45,7 @@ import {
   type SharedSourceInfo,
   type RollupGrainEstimate,
 } from '@costgoblin/core/browser';
-import { DEFAULT_COST_SCOPE } from '@costgoblin/core/browser';
+import { DEFAULT_COST_SCOPE, computeRollupEstimate } from '@costgoblin/core/browser';
 
 const costResult: CostResult = {
   rows: [
@@ -282,41 +282,28 @@ export class MockCostApi implements CostApi {
   getDimensionsConfig(): Promise<DimensionsConfig> { return Promise.resolve({ builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name' }], tags: [{ tagName: 'team', label: 'Team', concept: 'owner' as const }] }); }
   saveDimensionsConfig(): Promise<void> { return Promise.resolve(); }
   estimateRollupGrain(candidate: DimensionsConfig): Promise<RollupGrainEstimate> {
-    // Flag resource_id raw-only so the Dimensions view exercises the badge.
+    // Feed the real estimator a probe-shaped fixture so the mock matches the
+    // shape and thresholds the desktop handler produces. resource_id (when
+    // enabled) is near-unique → flagged; the others stay navigational.
     const enabled = (d: { enabled?: boolean | undefined }): boolean => d.enabled !== false;
     const hasResourceId = candidate.builtIn.some(d => d.field === 'resource_id' && enabled(d));
-    const grainRows = hasResourceId ? 1_840_000 : 92_000;
-    const lineItems = 2_100_000;
-    const months = 12;
-    const bytesPerRow = 16;
-    const rows = grainRows * months;
-    const perPartitionBytes = grainRows * bytesPerRow;
-    const dims: RollupGrainEstimate['dims'] = [
-      { column: 'account_id', cardinality: 14, rawOnly: false },
-      { column: 'service', cardinality: 38, rawOnly: false },
-      { column: 'tag_team', cardinality: 22, rawOnly: false },
-      ...(hasResourceId ? [{ column: 'resource_id', cardinality: 1_820_000, rawOnly: true }] : []),
+    const probeLineItems = 2_100_000;
+    const dimCardinalities = [
+      { column: 'account_id', cardinality: 14 },
+      { column: 'service', cardinality: 38 },
+      { column: 'tag_team', cardinality: 22 },
+      ...(hasResourceId ? [{ column: 'resource_id', cardinality: 1_820_000 }] : []),
     ];
-    return Promise.resolve({
+    const probeGrainRows = hasResourceId ? 1_840_000 : 92_000;
+    return Promise.resolve(computeRollupEstimate({
       probePeriod: '2026-04',
-      months,
-      lineItems,
+      months: 12,
+      probeGrainRows,
+      probeLineItems,
+      rawBytes: 4_900_000_000,
       current: { rows: 1_100_000, bytes: 17_600_000 },
-      candidate: {
-        rows,
-        bytes: rows * bytesPerRow,
-        perPartitionBytes,
-        sizeBand: hasResourceId ? 'large' : 'small',
-        rebuildSeconds: hasResourceId ? 130 : 24,
-        rebuildBand: hasResourceId ? 'slow' : 'fast',
-        growthFactor: rows / 1_100_000,
-      },
-      compressionRate: lineItems / grainRows,
-      rawOnly: hasResourceId
-        ? { recommended: true, reason: 'a monthly partition would be ~28 MB — over the 50 MB raw-only threshold' }
-        : { recommended: false, reason: null },
-      dims,
-    });
+      dimCardinalities,
+    }));
   }
   getAutoSyncEnabled(): Promise<boolean> { return Promise.resolve(false); }
   setAutoSyncEnabled(): Promise<void> { return Promise.resolve(); }

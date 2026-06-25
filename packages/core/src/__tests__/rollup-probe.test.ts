@@ -95,7 +95,7 @@ describe('buildGrainProbeQuery', () => {
     expect(grainRows).toBeLessThan(lineItems);
 
     const estimate = computeRollupEstimate({
-      probePeriod: PERIOD, months: 1, probeGrainRows: grainRows, probeLineItems: lineItems,
+      probePeriod: PERIOD, months: 1, probeGrainRows: grainRows, probeLineItems: lineItems, rawBytes: 0,
       current: null, dimCardinalities: [...cards].map(([column, cardinality]) => ({ column, cardinality })),
     });
     expect(estimate.compressionRate).toBeGreaterThan(1);
@@ -114,7 +114,7 @@ describe('buildGrainProbeQuery', () => {
     expect(resourceCard).toBeGreaterThan(serviceCard * 10);
 
     const estimate = computeRollupEstimate({
-      probePeriod: PERIOD, months: 1, probeGrainRows: withResource.grainRows, probeLineItems: withResource.lineItems,
+      probePeriod: PERIOD, months: 1, probeGrainRows: withResource.grainRows, probeLineItems: withResource.lineItems, rawBytes: 0,
       current: null,
       dimCardinalities: [...withResource.cards].map(([column, cardinality]) => ({ column, cardinality })),
     });

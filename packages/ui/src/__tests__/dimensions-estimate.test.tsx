@@ -33,31 +33,32 @@ function renderView() {
 afterEach(cleanup);
 
 describe('DimensionsView — rollup grain estimate', () => {
-  it('surfaces the rollup impact estimate for the current grain', async () => {
+  it('surfaces the rollup impact estimate with a raw-data baseline', async () => {
     renderView();
     await waitFor(() => { expect(screen.getByText('Rollup impact')).toBeDefined(); });
-    await waitFor(() => { expect(screen.getByText('Est. size')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Raw data')).toBeDefined(); });
+    expect(screen.getByText('Est. rollup')).toBeDefined();
     expect(screen.getByText('Compression')).toBeDefined();
     expect(screen.getByText('Rebuild')).toBeDefined();
     expect(screen.getByText(/directional/)).toBeDefined();
   });
 
-  it('flags resource_id raw-only with a badge and a panel warning', async () => {
+  it('flags resource_id high-cardinality with a count badge and a panel warning', async () => {
     renderView();
-    await waitFor(() => { expect(screen.getByText(/heavy for the rollup/i)).toBeDefined(); });
-    // The resource pill carries a "raw" badge.
-    expect(screen.getAllByText('raw').length).toBeGreaterThan(0);
+    await waitFor(() => { expect(screen.getByText(/Heavy grain/i)).toBeDefined(); });
+    // The resource pill carries a high-cardinality count badge (~1.8M distinct).
+    expect(screen.getAllByText('1.8M').length).toBeGreaterThan(0);
   });
 
-  it('re-estimates and clears the raw-only warning when the dim is toggled off', async () => {
+  it('re-estimates and clears the warning when the dim is toggled off', async () => {
     const { user } = renderView();
-    await waitFor(() => { expect(screen.getByText(/heavy for the rollup/i)).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText(/Heavy grain/i)).toBeDefined(); });
 
     // The SECTION 1 pill is the first button matching the dim label.
     const resourcePill = screen.getAllByRole('button', { name: /Resource/ })[0];
     expect(resourcePill).toBeDefined();
     await user.click(resourcePill as HTMLElement);
 
-    await waitFor(() => { expect(screen.queryByText(/heavy for the rollup/i)).toBeNull(); });
+    await waitFor(() => { expect(screen.queryByText(/Heavy grain/i)).toBeNull(); });
   });
 });

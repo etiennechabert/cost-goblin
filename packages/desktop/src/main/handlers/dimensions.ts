@@ -262,12 +262,17 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const row = rows[0];
     if (row === undefined) return { ...emptyRollupEstimate(current), probePeriod: period, months: dirs.length };
 
+    // Actual on-disk size of the raw daily Parquet across the window — the
+    // baseline the UI shows the estimated rollup against.
+    const rawBytes = await sumParquetBytes(fs, path, rawDir, dirs);
+
     const dimCardinalities = cardCols.map((column, i) => ({ column, cardinality: toNum(row[`card_${String(i)}`]) }));
     return computeRollupEstimate({
       probePeriod: period,
       months: dirs.length,
       probeGrainRows: toNum(row['grain_rows']),
       probeLineItems: toNum(row['line_items']),
+      rawBytes,
       current,
       dimCardinalities,
     });
@@ -345,6 +350,28 @@ export function registerDimensionsHandlers(app: AppContext): void {
     ];
     await saveDimensionsConfig({ ...config, tags: updatedTags });
   });
+}
+
+/** Sum the on-disk size of every `*.parquet` across the given daily raw dirs —
+ *  the raw dataset size the rollup estimate is compared against. Best-effort:
+ *  unreadable dirs/files are skipped. */
+async function sumParquetBytes(
+  fs: typeof import('node:fs/promises'),
+  path: typeof import('node:path'),
+  rawDir: string,
+  dirs: readonly string[],
+): Promise<number> {
+  let total = 0;
+  for (const dir of dirs) {
+    const full = path.join(rawDir, dir);
+    let files: string[] = [];
+    try { files = await fs.readdir(full); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.parquet')) continue;
+      try { total += (await fs.stat(path.join(full, f))).size; } catch { /* skip */ }
+    }
+  }
+  return total;
 }
 
 interface DismissedEntry {

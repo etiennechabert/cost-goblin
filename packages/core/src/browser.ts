@@ -10,6 +10,8 @@ export type {
   RollupGrainEstimate,
   RollupDimEstimate,
   RollupCurrentStats,
+  RollupRawStats,
   RollupSizeBand,
   RollupRebuildBand,
 } from './rollup/estimator.js';
+export { computeRollupEstimate, emptyRollupEstimate, classifySizeBand } from './rollup/estimator.js';
