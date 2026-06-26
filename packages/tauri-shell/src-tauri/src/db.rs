@@ -6,7 +6,9 @@ use duckdb::types::Value as DV;
 use duckdb::{params_from_iter, Connection, Row};
 
 pub fn open() -> Result<Connection, String> {
-    Connection::open_in_memory().map_err(|e| format!("duckdb open failed: {e}"))
+    let conn = Connection::open_in_memory().map_err(|e| format!("duckdb open failed: {e}"))?;
+    crate::perf::apply(&conn);
+    Ok(conn)
 }
 
 /// Accumulates `?` placeholders + bound values, mirroring core's QueryBuilder.

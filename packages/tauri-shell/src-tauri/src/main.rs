@@ -9,6 +9,7 @@ mod config;
 mod config_write;
 mod db;
 mod mcp;
+mod perf;
 mod query;
 mod querylog;
 mod rollup;
@@ -36,6 +37,15 @@ fn main() {
     let (data_dir, config_dir) = resolve_dirs();
     eprintln!("[costgoblin-tauri-spike] data_dir={data_dir}");
     eprintln!("[costgoblin-tauri-spike] config_dir={}", config_dir.display());
+
+    // Apply persisted DuckDB perf overrides (memory/threads) before any query.
+    if let Some(base) = std::path::Path::new(&data_dir).parent() {
+        if let Ok(s) = std::fs::read_to_string(base.join("app-preferences.json")) {
+            if let Ok(p) = serde_json::from_str::<serde_json::Value>(&s) {
+                perf::set(p.get("perfMemoryLimitGB").and_then(|v| v.as_i64()), p.get("perfThreads").and_then(|v| v.as_i64()));
+            }
+        }
+    }
 
     let state = AppState {
         data_dir,
@@ -110,6 +120,9 @@ fn main() {
             commands::get_rollup_stats,
             commands::estimate_rollup_grain,
             commands::build_rollup,
+            commands::get_performance_info,
+            commands::set_performance_settings,
+            commands::await_materialized_base,
             commands::get_mcp_server_running,
             commands::set_mcp_server_running,
             commands::get_mcp_token,

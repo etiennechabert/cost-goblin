@@ -1202,6 +1202,39 @@ pub async fn check_config_beacon(params: J, _state: tauri::State<'_, AppState>) 
     }
 }
 
+// --- performance (DuckDB memory/threads) ---
+
+#[tauri::command(async)]
+pub fn get_performance_info(state: tauri::State<AppState>) -> R {
+    // Reflect persisted overrides into the live cache + the returned `current`.
+    let prefs = read_json_or(&prefs_path(&state, "app-preferences"), json!({}));
+    let mem = prefs.get("perfMemoryLimitGB").and_then(|v| v.as_i64());
+    let threads = prefs.get("perfThreads").and_then(|v| v.as_i64());
+    crate::perf::set(mem, threads);
+    Ok(crate::perf::info())
+}
+
+#[tauri::command(async)]
+pub fn set_performance_settings(params: J, state: tauri::State<AppState>) -> Result<(), String> {
+    let mem = params.get("memoryLimitGB").and_then(|v| v.as_i64());
+    let threads = params.get("threads").and_then(|v| v.as_i64());
+    crate::perf::set(mem, threads);
+    let path = prefs_path(&state, "app-preferences");
+    let mut v = read_json_or(&path, json!({}));
+    if let Some(o) = v.as_object_mut() {
+        o.insert("perfMemoryLimitGB".into(), mem.map(|n| json!(n)).unwrap_or(J::Null));
+        o.insert("perfThreads".into(), threads.map(|n| json!(n)).unwrap_or(J::Null));
+    }
+    write_json(&path, &v)
+}
+
+/// The spike's fast path is the rollup (not a separate in-memory base), so the
+/// renderer can reveal immediately.
+#[tauri::command(async)]
+pub fn await_materialized_base(_params: J) -> Result<bool, String> {
+    Ok(true)
+}
+
 // --- rollup (pre-aggregated dashboard source) ---
 
 #[tauri::command(async)]

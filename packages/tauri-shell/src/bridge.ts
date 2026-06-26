@@ -212,16 +212,13 @@ const api: CostApi = {
   setAutoPruneEnabled: (enabled: boolean): Promise<void> => invoke<undefined>('set_auto_prune_enabled', { enabled }).then(() => undefined),
   pruneNow: (): Promise<PruneResult> => invoke('prune_now'),
 
-  // ---- Performance settings (stubbed — the spike doesn't tune DuckDB) ----
-  getPerformanceInfo: (): Promise<PerformanceInfo> => ok({
-    defaultMemoryGB: 4, defaultThreads: 4, totalMemoryGB: 16, maxThreads: 8,
-    minMemoryGB: 1, maxMemoryGB: 16, current: { memoryLimitGB: null, threads: null },
-  }),
-  setPerformanceSettings: (_perf: PerformanceSettings): Promise<void> => ok(undefined),
+  // ---- Performance settings (real: SET memory_limit / threads per connection) ----
+  getPerformanceInfo: (): Promise<PerformanceInfo> => invoke('get_performance_info'),
+  setPerformanceSettings: (perf: PerformanceSettings): Promise<void> => invoke<undefined>('set_performance_settings', perf).then(() => undefined),
 
-  // The spike has no async materialized base — queries hit DuckDB directly, so
-  // the renderer can reveal immediately.
-  awaitMaterializedBase: (_timeoutMs: number): Promise<boolean> => ok(true),
+  // The spike's fast path is the rollup, not a separate in-memory base — so the
+  // renderer can reveal immediately.
+  awaitMaterializedBase: (timeoutMs: number): Promise<boolean> => invoke('await_materialized_base', { timeoutMs }),
 
   // ---- Peer data sharing (not ported — the 549-line P2P feature is out of scope) ----
   getDataSharingStatus: (): Promise<DataSharingStatus> => ok({
