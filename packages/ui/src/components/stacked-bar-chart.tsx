@@ -57,6 +57,39 @@ export function bucketBars(bars: readonly BarDay[], maxBuckets: number): readonl
   return result;
 }
 
+interface TooltipSegmentRowProps {
+  readonly seg: { readonly key: string; readonly value: number; readonly colorIdx: number };
+  readonly palette: readonly string[];
+  readonly isHigh: boolean;
+  readonly pct: number;
+  readonly delta: number | undefined;
+  readonly highlightRef: React.RefObject<HTMLDivElement | null>;
+  readonly setHoveredSegment: (key: string | null) => void;
+}
+
+function TooltipSegmentRow({ seg, palette, isHigh, pct, delta, highlightRef, setHoveredSegment }: TooltipSegmentRowProps) {
+  const color = getColor(seg.colorIdx, palette);
+  return (
+    <div
+      ref={isHigh ? highlightRef : undefined}
+      onMouseEnter={() => { setHoveredSegment(seg.key); }}
+      onMouseLeave={() => { setHoveredSegment(null); }}
+      className={`pointer-events-auto flex items-center gap-2 rounded py-0.5 px-1 -mx-1 cursor-default ${isHigh ? 'bg-white/10' : ''}`}
+    >
+      <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+      <span className={`truncate flex-1 min-w-0 ${isHigh ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>{seg.key}</span>
+      <span className={`tabular-nums shrink-0 ${isHigh ? 'font-semibold' : ''}`}>
+        {formatDollars(seg.value)} <span className="text-text-muted">({pct.toFixed(1)}%)</span>
+      </span>
+      {delta !== undefined && (
+        <span className={`tabular-nums text-[10px] shrink-0 ${delta >= 0 ? 'text-negative' : 'text-positive'}`}>
+          {delta >= 0 ? '↑' : '↓'}{Math.abs(delta).toFixed(1)}%
+        </span>
+      )}
+    </div>
+  );
+}
+
 interface BarSegmentProps {
   readonly seg: { readonly key: string; readonly value: number; readonly colorIdx: number };
   readonly segTotal: number;
@@ -71,13 +104,16 @@ function BarSegment({ seg, segTotal, highlightedGroup, palette, onMouseEnter, on
   const color = getColor(seg.colorIdx, palette);
   const isHighlighted = highlightedGroup !== null && highlightedGroup !== undefined && highlightedGroup === seg.key;
   const isDimmed = highlightedGroup !== null && highlightedGroup !== undefined && !isHighlighted;
+  let opacity = 0.85;
+  if (isDimmed) opacity = 0.25;
+  else if (isHighlighted) opacity = 1;
   // Match the pie chart's emphasis: dimmed series fade to ~25%, the focused
   // one stays at full opacity with a subtle brightness boost and a thin white
   // outline inset so it reads as "selected" the way a pie slice does on hover.
   const baseStyle: React.CSSProperties = {
     height: `${String(pct)}%`,
     backgroundColor: color,
-    opacity: isDimmed ? 0.25 : isHighlighted ? 1 : 0.85,
+    opacity,
     filter: isHighlighted ? 'brightness(1.2)' : 'none',
     boxShadow: isHighlighted ? 'inset 0 0 0 1.5px rgba(255,255,255,0.85)' : 'none',
     transition: 'opacity 0.15s, filter 0.15s, box-shadow 0.15s',
@@ -313,7 +349,6 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                   </div>
                   <div className="flex flex-col gap-px">
                     {segs.slice(0, 12).map(seg => {
-                      const color = getColor(seg.colorIdx, palette);
                       const isHigh = highlightedGroup === seg.key || hoveredSegment === seg.key;
                       const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0;
                       const prevVal = prev?.breakdown[seg.key] ?? 0;
@@ -321,24 +356,16 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
                         ? ((seg.value - prevVal) / prevVal) * 100
                         : undefined;
                       return (
-                        <div
+                        <TooltipSegmentRow
                           key={seg.key}
-                          ref={isHigh ? highlightRef : undefined}
-                          onMouseEnter={() => { setHoveredSegment(seg.key); }}
-                          onMouseLeave={() => { setHoveredSegment(null); }}
-                          className={`pointer-events-auto flex items-center gap-2 rounded py-0.5 px-1 -mx-1 cursor-default ${isHigh ? 'bg-white/10' : ''}`}
-                        >
-                          <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                          <span className={`truncate flex-1 min-w-0 ${isHigh ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>{seg.key}</span>
-                          <span className={`tabular-nums shrink-0 ${isHigh ? 'font-semibold' : ''}`}>
-                            {formatDollars(seg.value)} <span className="text-text-muted">({pct.toFixed(1)}%)</span>
-                          </span>
-                          {delta !== undefined && (
-                            <span className={`tabular-nums text-[10px] shrink-0 ${delta >= 0 ? 'text-negative' : 'text-positive'}`}>
-                              {delta >= 0 ? '↑' : '↓'}{Math.abs(delta).toFixed(1)}%
-                            </span>
-                          )}
-                        </div>
+                          seg={seg}
+                          palette={palette}
+                          isHigh={isHigh}
+                          pct={pct}
+                          delta={delta}
+                          highlightRef={highlightRef}
+                          setHoveredSegment={setHoveredSegment}
+                        />
                       );
                     })}
                   </div>
@@ -349,12 +376,15 @@ export function StackedBarChart({ days, highlightedGroup, tab, onTabChange, expa
 
           <div
             ref={barsRef}
+            role={onRangeSelect === undefined ? undefined : 'button'}
+            tabIndex={onRangeSelect === undefined ? undefined : 0}
             className={[
-              'absolute left-12 right-0 top-0 bottom-7 flex items-end z-10',
-              onRangeSelect !== undefined ? 'cursor-crosshair select-none' : '',
+              'absolute left-12 right-0 top-0 bottom-7 flex items-end z-10 outline-none',
+              onRangeSelect === undefined ? '' : 'cursor-crosshair select-none',
             ].join(' ')}
             style={{ gap: days.length > 100 ? '1px' : '2px' }}
             onMouseDown={handleMouseDown}
+            onKeyDown={() => { /* pixel drag has no keyboard equivalent */ }}
           >
             {days.map((day) => {
               const barPct = maxCost > 0 ? (day.total / maxCost) * 100 : 0;

@@ -42,6 +42,12 @@ function chipClass(state: ChipState, highlighted: boolean): string {
 
 const CHIP_TITLE: Record<ChipState, string> = { done: 'Rebuilt', building: 'Building…', pending: 'Pending' };
 
+function chipState(period: string, index: number, done: number, active: readonly string[]): ChipState {
+  if (index < done) return 'done';
+  if (active.includes(period)) return 'building';
+  return 'pending';
+}
+
 function KpiRow({ label, value, accent }: Readonly<{ label: string; value: string; accent?: boolean }>): React.JSX.Element {
   return (
     <div className="flex items-center justify-between py-1">
@@ -86,7 +92,7 @@ export function RollupStatusDetail({ status, stats = null, highlight }: Props): 
         {status.periods.length > 0 && (
           <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto">
             {status.periods.map((p, i) => {
-              const state: ChipState = i < status.done ? 'done' : status.active.includes(p) ? 'building' : 'pending';
+              const state = chipState(p, i, status.done, status.active);
               return (
                 <span key={p} className={chipClass(state, highlightSet.has(p))} title={CHIP_TITLE[state]}>
                   {formatMonth(p)}

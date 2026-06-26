@@ -132,7 +132,7 @@ export function validateColumnName(columnName: string, dimensions: DimensionsCon
  * this shape is rejected. A character-shape check (rather than a fixed column
  * allow-list) stays airtight without rejecting legitimately-named CUR columns.
  */
-const SAFE_COLUMN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const SAFE_COLUMN_IDENTIFIER = /^[A-Za-z_]\w*$/;
 
 /** True when `name` is a bare SQL column identifier safe to interpolate. */
 export function isSafeColumnIdentifier(name: string): boolean {

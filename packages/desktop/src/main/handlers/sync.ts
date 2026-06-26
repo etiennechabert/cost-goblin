@@ -55,6 +55,16 @@ function matchesPeriodPrefix(entry: string, prefix: string, period: string): boo
   return entry === `${prefix}-${period}` || entry.startsWith(`${prefix}-${period}-`);
 }
 
+// Prefer byte-fraction for the headline progress number — it's smooth
+// mid-flight, where filesDone/filesTotal stays at 0 until each file fully
+// completes. Falls back to the file-count fraction before the first
+// "Completed" line lands.
+function computeSyncFraction(bytesDone: number, bytesTotal: number, filesDone: number, filesTotal: number): number {
+  if (bytesTotal > 0) return bytesDone / bytesTotal;
+  if (filesTotal > 0) return filesDone / filesTotal;
+  return 0;
+}
+
 async function removeMatchingDirs(
   dir: string,
   prefix: string,
@@ -352,13 +362,7 @@ async function runSync(
     onProgress: (progress) => {
       const bytesDone = progress.bytesDone ?? 0;
       const bytesTotal = progress.bytesTotal ?? 0;
-      // Prefer byte-fraction for the headline progress number — it's smooth
-      // mid-flight, where filesDone/filesTotal stays at 0 until each file
-      // fully completes. Falls back to the file-count fraction before the
-      // first "Completed" line lands.
-      const fraction = bytesTotal > 0
-        ? bytesDone / bytesTotal
-        : (progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0);
+      const fraction = computeSyncFraction(bytesDone, bytesTotal, progress.filesDone, progress.filesTotal);
       state.syncStatuses[syncId] = {
         status: 'syncing',
         phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',

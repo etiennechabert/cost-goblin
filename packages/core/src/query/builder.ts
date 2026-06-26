@@ -348,7 +348,7 @@ export interface BuildSourceOptions {
 function activeMarketplaceRules(
   cfg: MarketplaceAttributionConfig | undefined,
 ): readonly MarketplaceAttributionRule[] {
-  if (cfg === undefined || !cfg.enabled) return [];
+  if (!cfg?.enabled) return [];
   return cfg.rules.filter(r => r.service.length > 0 && r.operations.length > 0);
 }
 
@@ -494,8 +494,9 @@ export function buildSource(opts: BuildSourceOptions): string {
   // retail equivalent, and including them just adds zero-cost rows that bloat
   // group-by buckets. Restrict at the source level so every downstream query
   // (Explorer, custom views, MCP, materialized base) sees a consistent slice.
+  const listTypeLiterals = LIST_METRIC_LINE_ITEM_TYPES.map(t => `'${t}'`).join(', ');
   const metricWhere = costMetric === 'list'
-    ? `\n    WHERE COALESCE(${tablePrefix}line_item_line_item_type, '') IN (${LIST_METRIC_LINE_ITEM_TYPES.map(t => `'${t}'`).join(', ')})`
+    ? `\n    WHERE COALESCE(${tablePrefix}line_item_line_item_type, '') IN (${listTypeLiterals})`
     : '';
 
   return `(

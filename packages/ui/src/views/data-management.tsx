@@ -23,6 +23,10 @@ function syncStatusToState(s: SyncStatus): SyncState | null {
   return null;
 }
 
+function incrementKey(k: number): number {
+  return k + 1;
+}
+
 function retentionCutoffPeriod(retentionDays: number): string {
   const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
   return `${String(cutoff.getFullYear())}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
@@ -119,9 +123,9 @@ export function DataManagement() {
       }).catch(() => undefined);
     }
     function tick() {
-      applyStatus('daily', setDailySyncState, () => { setDailyRefreshKey(k => k + 1); });
-      applyStatus('hourly', setHourlySyncState, () => { setHourlyRefreshKey(k => k + 1); });
-      applyStatus('cost-optimization', setCostOptSyncState, () => { setCostOptRefreshKey(k => k + 1); });
+      applyStatus('daily', setDailySyncState, () => { setDailyRefreshKey(incrementKey); });
+      applyStatus('hourly', setHourlySyncState, () => { setHourlyRefreshKey(incrementKey); });
+      applyStatus('cost-optimization', setCostOptSyncState, () => { setCostOptRefreshKey(incrementKey); });
     }
     tick();
     const timer = setInterval(tick, 2_000);

@@ -35,6 +35,7 @@ import type {
   AggregatedTableRow,
   AggregatedTableResult,
 } from '@costgoblin/core';
+import type { RawRow } from '../duckdb-client.js';
 import { type AppContext, prefsPath } from './context.js';
 import { buildAccountReverseMap, columnForDimension, resolveRollupSource, toNum, toStr } from './query-utils.js';
 import { resolveScopeMetric, resolveScopePerspective } from './explorer-scope.js';
@@ -311,8 +312,8 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   // aggregated table and sample rows need.
   const { source, whereStr } = await buildFreshSource({
     app, params, startStr, endStr,
-    ...(startHour !== undefined ? { startHour } : {}),
-    ...(endHour !== undefined ? { endHour } : {}),
+    ...(startHour === undefined ? {} : { startHour }),
+    ...(endHour === undefined ? {} : { endHour }),
     tier, periods, dimensions, filterPredicate, accountReverseMap,
   });
   return { empty: false, source, whereStr, ...shared };
@@ -352,6 +353,45 @@ function resolveAggregatedSort(sort: ExplorerSort | undefined, groupByColumns: r
   if (fn !== undefined) return fn(dir);
   if (groupByColumns.includes(sort.column)) return `${sort.column} ${dir}`;
   return 'SUM(cost) DESC';
+}
+
+/** The dashboard Table widget hits the overview with the GLOBAL cost scope and
+ *  no metric/perspective override — only then does the pre-aggregated daily
+ *  rollup reproduce the raw totals, so gate the rollup route on exactly that. */
+function overviewUsesRollup(params: ExplorerOverviewParams, tier: 'daily' | 'hourly'): boolean {
+  return tier === 'daily'
+    && params.applyCostScope === true
+    && params.costMetric === undefined
+    && params.costPerspective === undefined;
+}
+
+function overviewFilterColumns(params: ExplorerOverviewParams, dimensions: DimensionsConfig): string[] {
+  return Object.entries(params.filters)
+    .filter(([, values]) => values.length > 0)
+    .map(([dimId]) => columnForDimension(dimensions, dimId));
+}
+
+function readOverviewTotals(result: PromiseSettledResult<RawRow[]>): { totalCost: number; totalRows: number } {
+  if (result.status !== 'fulfilled') {
+    logger.warn(`explorer: totals query failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
+    return { totalCost: 0, totalRows: 0 };
+  }
+  const row = result.value[0];
+  return { totalCost: toNum(row?.['total_cost']), totalRows: toNum(row?.['total_rows']) };
+}
+
+function parseDailyDate(raw: unknown): string {
+  if (typeof raw === 'string') return raw;
+  if (raw instanceof Date) return raw.toISOString().slice(0, 10);
+  return '';
+}
+
+function readOverviewDaily(result: PromiseSettledResult<RawRow[]>): readonly ExplorerDailyRow[] {
+  if (result.status !== 'fulfilled') {
+    logger.warn(`explorer: daily query failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
+    return [];
+  }
+  return result.value.map(r => ({ date: parseDailyDate(r['date']), cost: toNum(r['daily_cost']), rows: toNum(r['daily_rows']) }));
 }
 
 export function registerExplorerHandlers(app: AppContext): void {
@@ -434,15 +474,10 @@ export function registerExplorerHandlers(app: AppContext): void {
     // exclusion rows at build time, so an Explorer-style request that overrides
     // the metric/perspective or skips the scope must stay on raw. Detail/expand
     // rows still hit raw — they need resource_id/description, not in the grain.
-    const rollupSource = (qc.tier === 'daily'
-      && params.applyCostScope === true
-      && params.costMetric === undefined
-      && params.costPerspective === undefined)
+    const rollupSource = overviewUsesRollup(params, qc.tier)
       ? resolveRollupSource(rollupStore, { start: qc.startStr, end: qc.endStr }, 'daily', [
           'cost',
-          ...Object.entries(params.filters)
-            .filter(([, values]) => values.length > 0)
-            .map(([dimId]) => columnForDimension(qc.dimensions, dimId)),
+          ...overviewFilterColumns(params, qc.dimensions),
         ])
       : undefined;
 
@@ -450,17 +485,7 @@ export function registerExplorerHandlers(app: AppContext): void {
     let whereStr: string;
     let rowsExpr: string;
     let bucketExpr: string;
-    if (rollupSource !== undefined) {
-      // Exclusions are baked into the rollup, so only the date window + the
-      // user's dashboard filters apply. line_items is the per-grain COUNT(*),
-      // so SUM(line_items) equals the raw line-item count the raw path returns
-      // — the overview's totalRows stays consistent with the detailed table.
-      const filterPredicate = buildExplorerFilterPredicate(params.filters, qc.dimensions, await getAccountReverseMap());
-      source = rollupSource;
-      whereStr = `WHERE usage_date BETWEEN '${qc.startStr}' AND '${qc.endStr}'${filterPredicate === null ? '' : ` AND (${filterPredicate})`}`;
-      rowsExpr = 'COALESCE(SUM(line_items), 0)';
-      bucketExpr = 'usage_date';
-    } else {
+    if (rollupSource === undefined) {
       source = qc.source;
       whereStr = qc.whereStr;
       rowsExpr = 'COUNT(*)';
@@ -471,6 +496,17 @@ export function registerExplorerHandlers(app: AppContext): void {
       // bucket instead of either getting its own bar (no truncation) or being
       // stuck in 11:00 (plain truncation).
       bucketExpr = qc.tier === 'hourly' ? `date_trunc('hour', usage_hour + INTERVAL '30 minutes')` : 'usage_date';
+    } else {
+      // Exclusions are baked into the rollup, so only the date window + the
+      // user's dashboard filters apply. line_items is the per-grain COUNT(*),
+      // so SUM(line_items) equals the raw line-item count the raw path returns
+      // — the overview's totalRows stays consistent with the detailed table.
+      const filterPredicate = buildExplorerFilterPredicate(params.filters, qc.dimensions, await getAccountReverseMap());
+      const filterClause = filterPredicate === null ? '' : ` AND (${filterPredicate})`;
+      source = rollupSource;
+      whereStr = `WHERE usage_date BETWEEN '${qc.startStr}' AND '${qc.endStr}'${filterClause}`;
+      rowsExpr = 'COALESCE(SUM(line_items), 0)';
+      bucketExpr = 'usage_date';
     }
 
     const totalsSql = `
@@ -497,28 +533,8 @@ export function registerExplorerHandlers(app: AppContext): void {
       runQuery(dailySql),
     ]);
 
-    let totalCost = 0;
-    let totalRows = 0;
-    if (totalsResult.status === 'fulfilled') {
-      const row = totalsResult.value[0];
-      totalCost = toNum(row?.['total_cost']);
-      totalRows = toNum(row?.['total_rows']);
-    } else {
-      logger.warn(`explorer: totals query failed: ${totalsResult.reason instanceof Error ? totalsResult.reason.message : String(totalsResult.reason)}`);
-    }
-
-    let dailyTotals: readonly ExplorerDailyRow[] = [];
-    if (dailyResult.status === 'fulfilled') {
-      dailyTotals = dailyResult.value.map(r => {
-        const raw = r['date'];
-        let date = '';
-        if (typeof raw === 'string') date = raw;
-        else if (raw instanceof Date) date = raw.toISOString().slice(0, 10);
-        return { date, cost: toNum(r['daily_cost']), rows: toNum(r['daily_rows']) };
-      });
-    } else {
-      logger.warn(`explorer: daily query failed: ${dailyResult.reason instanceof Error ? dailyResult.reason.message : String(dailyResult.reason)}`);
-    }
+    const { totalCost, totalRows } = readOverviewTotals(totalsResult);
+    const dailyTotals = readOverviewDaily(dailyResult);
 
     return {
       windowDays: qc.windowDays,

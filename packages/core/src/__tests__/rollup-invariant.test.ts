@@ -73,7 +73,7 @@ describe('rollup multi-month glob == raw over the window', () => {
       const rawMap = new Map<string, number>();
       for (const r of await queryAll(conn, `SELECT ${dim} k, CAST(SUM(cost) AS DOUBLE) c FROM ${rawSrc()} WHERE ${window} GROUP BY ${dim}`)) rawMap.set(String(r['k']), Number(r['c']));
       const rollRows = await queryAll(conn, `SELECT ${dim} k, CAST(SUM(cost) AS DOUBLE) c FROM ${glob} WHERE ${window} GROUP BY ${dim}`);
-      expect(rollRows.length).toBe(rawMap.size);
+      expect(rollRows).toHaveLength(rawMap.size);
       for (const r of rollRows) expect(Number(r['c'])).toBeCloseTo(rawMap.get(String(r['k'])) ?? -1, 2);
     }
   });

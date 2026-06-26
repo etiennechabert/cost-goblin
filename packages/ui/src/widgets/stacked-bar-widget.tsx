@@ -43,6 +43,18 @@ function dailyToTotals(data: DailyCostsResult | null): readonly number[] {
   return data.days.map(d => d.total);
 }
 
+function bucketTotals(raw: readonly number[]): readonly number[] {
+  if (raw.length <= MAX_BARS) return raw;
+  const size = Math.ceil(raw.length / MAX_BARS);
+  const bucketed: number[] = [];
+  for (let i = 0; i < raw.length; i += size) {
+    let sum = 0;
+    for (let j = i; j < Math.min(i + size, raw.length); j++) sum += raw[j] ?? 0;
+    bucketed.push(sum);
+  }
+  return bucketed;
+}
+
 export function StackedBarWidget({
   spec,
   dateRange,
@@ -89,18 +101,7 @@ export function StackedBarWidget({
 
   const prevHasCoverage = prevQuery.status === 'success' && prevQuery.data !== null && hasSufficientDailyCoverage(prevQuery.data, previousDateRange);
   const previousTotals = useMemo(
-    () => {
-      const raw = dailyToTotals(prevHasCoverage ? prevQuery.data : null);
-      if (raw.length <= MAX_BARS) return raw;
-      const size = Math.ceil(raw.length / MAX_BARS);
-      const bucketed: number[] = [];
-      for (let i = 0; i < raw.length; i += size) {
-        let sum = 0;
-        for (let j = i; j < Math.min(i + size, raw.length); j++) sum += raw[j] ?? 0;
-        bucketed.push(sum);
-      }
-      return bucketed;
-    },
+    () => bucketTotals(dailyToTotals(prevHasCoverage ? prevQuery.data : null)),
     [prevHasCoverage, prevQuery],
   );
 

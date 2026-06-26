@@ -23,6 +23,15 @@ const SIZES: readonly { value: WidgetSize; label: string }[] = [
   { value: 'full', label: 'Full' },
 ];
 
+function stripBubbleTitle(w: Extract<WidgetSpec, { type: 'bubble' }>, common: { id: string; size: WidgetSize }): WidgetSpec {
+  return {
+    ...common, type: w.type, groupBy: w.groupBy,
+    ...(w.logScale === undefined ? {} : { logScale: w.logScale }),
+    ...(w.deltaThreshold === undefined ? {} : { deltaThreshold: w.deltaThreshold }),
+    ...(w.percentThreshold === undefined ? {} : { percentThreshold: w.percentThreshold }),
+  };
+}
+
 function stripTitle(w: WidgetSpec): WidgetSpec {
   const common = {
     id: w.id,
@@ -36,12 +45,7 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
     case 'stackedBar':
       return { ...common, type: w.type, groupBy: w.groupBy };
     case 'bubble':
-      return {
-        ...common, type: w.type, groupBy: w.groupBy,
-        ...(w.logScale === undefined ? {} : { logScale: w.logScale }),
-        ...(w.deltaThreshold === undefined ? {} : { deltaThreshold: w.deltaThreshold }),
-        ...(w.percentThreshold === undefined ? {} : { percentThreshold: w.percentThreshold }),
-      };
+      return stripBubbleTitle(w, common);
     case 'treemap':
       return { ...common, type: w.type, groupBy: w.groupBy, ...(w.drillTo === undefined ? {} : { drillTo: w.drillTo }) };
     case 'line':

@@ -33,6 +33,15 @@ import {
 } from './query-utils.js';
 import { originStore } from '../query-log.js';
 
+function toDailyCostDay([date, breakdown]: readonly [string, Record<string, number>]): DailyCostDay {
+  const total = Object.values(breakdown).reduce((s, v) => s + v, 0);
+  const typedBreakdown: Record<string, Dollars> = {};
+  for (const [k, v] of Object.entries(breakdown)) {
+    typedBreakdown[k] = asDollars(v);
+  }
+  return { date: asDateString(date), total: asDollars(total), breakdown: typedBreakdown };
+}
+
 export function registerCostHandlers(app: AppContext): void {
   const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getCostScope, getAvailableColumns, runPreparedQuery, rollupStore } = app;
 
@@ -120,14 +129,7 @@ export function registerCostHandlers(app: AppContext): void {
 
     const days: DailyCostDay[] = [...dayMap.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([date, breakdown]) => {
-        const total = Object.values(breakdown).reduce((s, v) => s + v, 0);
-        const typedBreakdown: Record<string, Dollars> = {};
-        for (const [k, v] of Object.entries(breakdown)) {
-          typedBreakdown[k] = asDollars(v);
-        }
-        return { date: asDateString(date), total: asDollars(total), breakdown: typedBreakdown };
-      });
+      .map(toDailyCostDay);
 
     return { days, groups: [...groupSet], totalCost: asDollars(totalCost) };
   }));

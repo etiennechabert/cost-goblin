@@ -171,9 +171,10 @@ function DefaultValuesPicker({ available, selected, onChange }: Readonly<{
     else onChange([...selected, value]);
   }
 
-  const summary = selected.length === 0
-    ? 'No defaults'
-    : selected.length <= 3 ? selected.join(', ') : `${String(selected.length)} selected`;
+  let summary: string;
+  if (selected.length === 0) summary = 'No defaults';
+  else if (selected.length <= 3) summary = selected.join(', ');
+  else summary = `${String(selected.length)} selected`;
 
   return (
     <div ref={containerRef} className="relative">
@@ -803,13 +804,29 @@ function sourceColor(source: TagSource, aliased: boolean): string {
   }
 }
 
+function camelStripSeparators(value: string): string {
+  let out = '';
+  let pending = '';
+  for (const ch of value) {
+    if (ch === '-' || ch === '_' || /\s/.test(ch)) {
+      pending += ch;
+    } else if (pending !== '') {
+      out += ch.toUpperCase();
+      pending = '';
+    } else {
+      out += ch;
+    }
+  }
+  return out + pending;
+}
+
 function applyPreviewNormalize(v: string, rule: string): string {
   switch (rule) {
     case 'lowercase': return v.toLowerCase();
     case 'uppercase': return v.toUpperCase();
     case 'lowercase-kebab': return v.replaceAll(/([a-z])([A-Z])/g, '$1-$2').replaceAll('_', '-').replaceAll(' ', '-').toLowerCase();
     case 'lowercase-underscore': return v.replaceAll(/([a-z])([A-Z])/g, '$1_$2').replaceAll('-', '_').replaceAll(' ', '_').toLowerCase();
-    case 'camelCase': return v.replaceAll(/[-_\s]+([^-_\s])/g, (_, c: string) => c.toUpperCase()).replace(/^(.)/, (_, c: string) => c.toLowerCase());
+    case 'camelCase': return camelStripSeparators(v).replace(/^(.)/, (_, c: string) => c.toLowerCase());
     default: return v;
   }
 }
@@ -960,7 +977,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   const fallbackValues = (() => {
     if (state.fallbackTag === undefined || state.fallbackTag.length === 0) return [];
     const usesOuPath = state.fallbackTag === OU_PATH_SOURCE_KEY;
-    const parsedSegIndex = parseInt(state.pathSegIndex, 10);
+    const parsedSegIndex = Number.parseInt(state.pathSegIndex, 10);
     const segActive = usesOuPath && Number.isInteger(parsedSegIndex) && parsedSegIndex !== 0;
     const counts = new Map<string, number>();
     for (const acct of orgAccounts) {
@@ -991,7 +1008,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
       const normalized = applyPreviewNormalize(raw, state.normalize);
       resolved.add(aliasMap.get(normalized) ?? normalized);
     }
-    return [...resolved].sort();
+    return [...resolved].sort((a, b) => a.localeCompare(b));
   })();
 
   return (
@@ -1427,11 +1444,14 @@ function AccountTagsContent({ orgData, accountTagKeys, hiddenAccountCols, setHid
 }
 
 function pillClass(enabled: boolean, danger = false): string {
-  const state = !enabled
-    ? 'border-border bg-bg-tertiary/20 text-text-muted hover:border-text-muted hover:text-text-secondary'
-    : danger
-      ? 'border-amber-500/50 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20'
-      : 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20';
+  let state: string;
+  if (enabled && danger) {
+    state = 'border-amber-500/50 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20';
+  } else if (enabled) {
+    state = 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20';
+  } else {
+    state = 'border-border bg-bg-tertiary/20 text-text-muted hover:border-text-muted hover:text-text-secondary';
+  }
   return ['rounded-full border px-3 py-1 text-xs font-medium transition-colors', state].join(' ');
 }
 
@@ -1475,9 +1495,10 @@ function formatCount(n: number): string {
  *  Such dims are best kept raw-only (their widgets fall back to raw Parquet). */
 function RawOnlyBadge({ cardinality }: Readonly<{ cardinality: number | undefined }>): React.JSX.Element {
   const count = cardinality !== undefined && cardinality > 0 ? formatCount(cardinality) : null;
+  const countSuffix = count === null ? '' : ` (~${count} distinct values)`;
   return (
     <span
-      title={`High-cardinality${count !== null ? ` (~${count} distinct values)` : ''} — a primary driver of rollup size. Best kept raw-only: widgets grouping by it query raw data instead of the rollup.`}
+      title={`High-cardinality${countSuffix} — a primary driver of rollup size. Best kept raw-only: widgets grouping by it query raw data instead of the rollup.`}
       className="ml-1.5 inline-flex items-center gap-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wide text-amber-500"
     >
       <Database className="h-2.5 w-2.5" />{count ?? 'raw'}
@@ -1527,6 +1548,125 @@ function EstimateProgress(): React.JSX.Element {
   );
 }
 
+type RollupDimEstimate = RollupGrainEstimate['dims'][number];
+
+function computeRowRatio(
+  estimate: RollupGrainEstimate | null,
+  matchedCurrent: RollupGrainEstimate['current'],
+): number {
+  if (estimate === null) return 0;
+  if (matchedCurrent !== null && matchedCurrent.rows > 0) return estimate.raw.rows / matchedCurrent.rows;
+  return estimate.compressionRate;
+}
+
+function ImpactWarning({ config, outlierDim, rawOnly }: Readonly<{
+  config: DimensionsConfig;
+  outlierDim: RollupDimEstimate | undefined;
+  rawOnly: RollupGrainEstimate['rawOnly'];
+}>): React.JSX.Element | null {
+  if (outlierDim !== undefined) {
+    return (
+      <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+        <p className="text-[11px] leading-snug text-text-secondary">
+          <span className="font-medium text-amber-500">{columnLabel(config, outlierDim.column)}</span> alone multiplies the rollup ~×{outlierDim.marginalMultiplier.toFixed(1)} — most of the grain comes from this one dimension. Dimensions work best as filters with a handful of values; the detail table can still show every value when you need it, so keeping this one raw-only keeps dashboards fast.
+        </p>
+      </div>
+    );
+  }
+  if (rawOnly.recommended) {
+    return (
+      <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+        <p className="text-[11px] leading-snug text-text-secondary">
+          This grain is heavy for the rollup — {rawOnly.reason ?? 'it exceeds the size budget'}. Consider a leaner grain so dashboards stay fast.
+        </p>
+      </div>
+    );
+  }
+  return null;
+}
+
+function impactReadout(d: RollupDimEstimate): string {
+  if (d.marginalMultiplier < 1.05) return '~×1';
+  const rows = d.marginalRows > 0 ? ` · +${formatCount(d.marginalRows)}` : '';
+  return `×${d.marginalMultiplier.toFixed(1)}${rows}`;
+}
+
+function ImpactDimRow({ d, config }: Readonly<{ d: RollupDimEstimate; config: DimensionsConfig }>): React.JSX.Element {
+  return (
+    <li className="flex items-center gap-2 text-[11px]">
+      <span className={`flex w-28 shrink-0 items-center gap-1 truncate ${d.outlier ? 'font-medium text-amber-500' : 'text-text-secondary'}`}>
+        {d.outlier && <AlertTriangle className="h-3 w-3 shrink-0" />}
+        <span className="truncate">{columnLabel(config, d.column)}</span>
+      </span>
+      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-tertiary">
+        <span
+          className={`block h-full rounded-full ${d.outlier ? 'bg-amber-500/70' : 'bg-accent/60'}`}
+          style={{ width: `${String(Math.round(Math.min(1, d.impactShare) * 100))}%` }}
+        />
+      </span>
+      <span className={`w-24 shrink-0 text-right tabular-nums ${d.outlier ? 'text-amber-500' : 'text-text-muted'}`}>{impactReadout(d)}</span>
+    </li>
+  );
+}
+
+function ImpactDetails({ estimate, matchedCurrent, sizeReduction, rowRatio, rankedDims, outlierDim, config }: Readonly<{
+  estimate: RollupGrainEstimate;
+  matchedCurrent: RollupGrainEstimate['current'];
+  sizeReduction: number;
+  rowRatio: number;
+  rankedDims: readonly RollupDimEstimate[];
+  outlierDim: RollupDimEstimate | undefined;
+  config: DimensionsConfig;
+}>): React.JSX.Element {
+  return (
+    <>
+      <div className={`mt-3 grid grid-cols-2 gap-4 ${matchedCurrent === null ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
+        <ImpactStat
+          label="Raw data"
+          value={formatBytes(estimate.raw.bytes)}
+          hint={`${formatCount(estimate.raw.rows)} line items · ${String(estimate.months)} mo`}
+        />
+        {matchedCurrent === null ? (
+          <ImpactStat
+            label="Est. rollup"
+            value={formatBytes(estimate.candidate.bytes)}
+            hint={`${SIZE_BAND_LABEL[estimate.candidate.sizeBand]} · ${formatCount(estimate.candidate.rows)} rows`}
+          />
+        ) : (
+          <ImpactStat
+            label="Rollup"
+            value={formatBytes(matchedCurrent.bytes)}
+            hint={`${formatCount(matchedCurrent.rows)} rows`}
+          />
+        )}
+        <ImpactStat
+          label="Compression"
+          value={sizeReduction >= 1.05 ? `${sizeReduction.toFixed(1)}×` : '~1×'}
+          hint={`smaller than raw · ${rowRatio >= 1 ? rowRatio.toFixed(0) : rowRatio.toFixed(1)}× fewer rows`}
+        />
+        {matchedCurrent === null && (
+          <ImpactStat
+            label="Rebuild"
+            value={formatRebuild(estimate.candidate.rebuildSeconds)}
+            hint="background re-roll"
+          />
+        )}
+      </div>
+      {rankedDims.length > 0 && (
+        <div className="mt-4">
+          <span className="text-[10px] uppercase tracking-wider text-text-muted">Per-dimension impact</span>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {rankedDims.map(d => <ImpactDimRow key={d.column} d={d} config={config} />)}
+          </ul>
+          <ImpactWarning config={config} outlierDim={outlierDim} rawOnly={estimate.rawOnly} />
+        </div>
+      )}
+    </>
+  );
+}
+
 /** Cost/benefit summary for the current enabled grain (rollup design §8).
  *  Updates as dims are toggled so the user can weigh the rebuild before it
  *  happens. Numbers are directional (probed from one recent month). */
@@ -1539,13 +1679,27 @@ function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: R
   // size/rows (the same numbers as the header Rollup popover) instead of the
   // directional estimate, and drop the Rebuild stat (nothing to rebuild).
   const matchedCurrent = estimate !== null && estimate.currentMatchesCandidate ? estimate.current : null;
-  const rollupBytes = matchedCurrent !== null ? matchedCurrent.bytes : (estimate?.candidate.bytes ?? 0);
+  const rollupBytes = matchedCurrent === null ? (estimate?.candidate.bytes ?? 0) : matchedCurrent.bytes;
   const sizeReduction = estimate !== null && rollupBytes > 0 ? estimate.raw.bytes / rollupBytes : 0;
-  const rowRatio = estimate === null
-    ? 0
-    : matchedCurrent !== null && matchedCurrent.rows > 0
-      ? estimate.raw.rows / matchedCurrent.rows
-      : estimate.compressionRate;
+  const rowRatio = computeRowRatio(estimate, matchedCurrent);
+  let body: React.JSX.Element;
+  if (loading && estimate === null) {
+    body = <EstimateProgress />;
+  } else if (estimate === null || estimate.probePeriod.length === 0) {
+    body = <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>;
+  } else {
+    body = (
+      <ImpactDetails
+        estimate={estimate}
+        matchedCurrent={matchedCurrent}
+        sizeReduction={sizeReduction}
+        rowRatio={rowRatio}
+        rankedDims={rankedDims}
+        outlierDim={outlierDim}
+        config={config}
+      />
+    );
+  }
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/40 px-5 py-4">
       <div className="flex items-center justify-between">
@@ -1554,19 +1708,19 @@ function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: R
           <h3 className="text-sm font-medium text-text-secondary">Rollup impact</h3>
         </div>
         {estimate !== null && estimate.probePeriod.length > 0 && (
-          matchedCurrent !== null ? (
-            <span
-              title="These are the real size and row counts of the rollup already built for this grain."
-              className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-accent" />Actual
-            </span>
-          ) : (
+          matchedCurrent === null ? (
             <span
               title={`Directional estimate, probed from ${estimate.probePeriod}. Rebuild this grain to get exact numbers.`}
               className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-500"
             >
               <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />Estimated
+            </span>
+          ) : (
+            <span
+              title="These are the real size and row counts of the rollup already built for this grain."
+              className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-accent" />Actual
             </span>
           )
         )}
@@ -1575,88 +1729,7 @@ function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: R
         The rollup is a compact, pre-aggregated copy of your billing data grouped by these dimensions — dashboards query it instead of the raw line items, so a leaner grain keeps them fast.
       </p>
 
-      {loading && estimate === null ? (
-        <EstimateProgress />
-      ) : estimate === null || estimate.probePeriod.length === 0 ? (
-        <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>
-      ) : (
-        <>
-          <div className={`mt-3 grid grid-cols-2 gap-4 ${matchedCurrent !== null ? 'sm:grid-cols-3' : 'sm:grid-cols-4'}`}>
-            <ImpactStat
-              label="Raw data"
-              value={formatBytes(estimate.raw.bytes)}
-              hint={`${formatCount(estimate.raw.rows)} line items · ${String(estimate.months)} mo`}
-            />
-            {matchedCurrent !== null ? (
-              <ImpactStat
-                label="Rollup"
-                value={formatBytes(matchedCurrent.bytes)}
-                hint={`${formatCount(matchedCurrent.rows)} rows`}
-              />
-            ) : (
-              <ImpactStat
-                label="Est. rollup"
-                value={formatBytes(estimate.candidate.bytes)}
-                hint={`${SIZE_BAND_LABEL[estimate.candidate.sizeBand]} · ${formatCount(estimate.candidate.rows)} rows`}
-              />
-            )}
-            <ImpactStat
-              label="Compression"
-              value={sizeReduction >= 1.05 ? `${sizeReduction.toFixed(1)}×` : '~1×'}
-              hint={`smaller than raw · ${rowRatio >= 1 ? rowRatio.toFixed(0) : rowRatio.toFixed(1)}× fewer rows`}
-            />
-            {matchedCurrent === null && (
-              <ImpactStat
-                label="Rebuild"
-                value={formatRebuild(estimate.candidate.rebuildSeconds)}
-                hint="background re-roll"
-              />
-            )}
-          </div>
-          {rankedDims.length > 0 && (
-            <div className="mt-4">
-              <span className="text-[10px] uppercase tracking-wider text-text-muted">Per-dimension impact</span>
-              <ul className="mt-2 flex flex-col gap-1.5">
-                {rankedDims.map(d => {
-                  const readout = d.marginalMultiplier >= 1.05
-                    ? `×${d.marginalMultiplier.toFixed(1)}${d.marginalRows > 0 ? ` · +${formatCount(d.marginalRows)}` : ''}`
-                    : '~×1';
-                  return (
-                    <li key={d.column} className="flex items-center gap-2 text-[11px]">
-                      <span className={`flex w-28 shrink-0 items-center gap-1 truncate ${d.outlier ? 'font-medium text-amber-500' : 'text-text-secondary'}`}>
-                        {d.outlier && <AlertTriangle className="h-3 w-3 shrink-0" />}
-                        <span className="truncate">{columnLabel(config, d.column)}</span>
-                      </span>
-                      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-tertiary">
-                        <span
-                          className={`block h-full rounded-full ${d.outlier ? 'bg-amber-500/70' : 'bg-accent/60'}`}
-                          style={{ width: `${String(Math.round(Math.min(1, d.impactShare) * 100))}%` }}
-                        />
-                      </span>
-                      <span className={`w-24 shrink-0 text-right tabular-nums ${d.outlier ? 'text-amber-500' : 'text-text-muted'}`}>{readout}</span>
-                    </li>
-                  );
-                })}
-              </ul>
-              {outlierDim !== undefined ? (
-                <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-                  <p className="text-[11px] leading-snug text-text-secondary">
-                    <span className="font-medium text-amber-500">{columnLabel(config, outlierDim.column)}</span> alone multiplies the rollup ~×{outlierDim.marginalMultiplier.toFixed(1)} — most of the grain comes from this one dimension. Dimensions work best as filters with a handful of values; the detail table can still show every value when you need it, so keeping this one raw-only keeps dashboards fast.
-                  </p>
-                </div>
-              ) : estimate.rawOnly.recommended ? (
-                <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-                  <p className="text-[11px] leading-snug text-text-secondary">
-                    This grain is heavy for the rollup — {estimate.rawOnly.reason ?? 'it exceeds the size budget'}. Consider a leaner grain so dashboards stay fast.
-                  </p>
-                </div>
-              ) : null}
-            </div>
-          )}
-        </>
-      )}
+      {body}
     </div>
   );
 }
@@ -1791,7 +1864,7 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
     const accountTagFallback = editing.fallbackTag !== undefined && editing.fallbackTag.length > 0 ? editing.fallbackTag : undefined;
     const missingValueTemplate = editing.missingValueTemplate.length > 0 ? editing.missingValueTemplate : undefined;
     const usesOuPath = editing.fallbackTag === OU_PATH_SOURCE_KEY;
-    const parsedIndex = parseInt(editing.pathSegIndex, 10);
+    const parsedIndex = Number.parseInt(editing.pathSegIndex, 10);
     const pathSegment = usesOuPath && Number.isInteger(parsedIndex) && parsedIndex !== 0
       ? { separator: OU_PATH_SEPARATOR, index: parsedIndex }
       : undefined;

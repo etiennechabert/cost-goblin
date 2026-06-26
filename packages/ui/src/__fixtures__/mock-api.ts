@@ -47,6 +47,8 @@ import {
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE, computeRollupEstimate } from '@costgoblin/core/browser';
 
+const MOCK_PEER_IP = '192.168.1.42';
+
 const costResult: CostResult = {
   rows: [
     {
@@ -464,13 +466,13 @@ export class MockCostApi implements CostApi {
     return Promise.resolve({ enabled: false, sharingKey: null, label: 'Mock · CostGoblin', port: null, hosts: [], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 });
   }
   enableDataSharing(): Promise<DataSharingResult> {
-    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-mock-sharing-key', label: 'Mock · CostGoblin', port: 53178, hosts: ['192.168.1.42'], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
+    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-mock-sharing-key', label: 'Mock · CostGoblin', port: 53178, hosts: [MOCK_PEER_IP], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
   }
   disableDataSharing(): Promise<DataSharingResult> {
     return Promise.resolve({ status: 'ok', sharing: { enabled: false, sharingKey: null, label: 'Mock · CostGoblin', port: null, hosts: [], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
   }
   rotateDataSharingKey(): Promise<DataSharingResult> {
-    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-rotated-key', label: 'Mock · CostGoblin', port: 53178, hosts: ['192.168.1.42'], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
+    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-rotated-key', label: 'Mock · CostGoblin', port: 53178, hosts: [MOCK_PEER_IP], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
   }
   getSharedPullProgress(): Promise<SharedPullProgress> {
     return Promise.resolve({ active: false, phase: 'idle', filesDone: 0, filesTotal: 0, currentPeriod: null, bytesDone: 0, bytesTotal: 0, error: null });
@@ -496,7 +498,7 @@ export class MockCostApi implements CostApi {
 export const MOCK_SHARED_SOURCE: SharedSourceInfo = {
   label: 'Etienne · CostGoblin',
   fingerprint: 'ABCD-EF01-2345-6789',
-  host: '192.168.1.42',
+  host: MOCK_PEER_IP,
   port: 53178,
   lastPulledAt: '2026-06-21T09:00:00.000Z',
   periods: ['2026-05', '2026-06'],

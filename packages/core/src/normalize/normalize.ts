@@ -2,6 +2,22 @@ import type { NormalizationRule, TagDimension } from '../types/config.js';
 import type { TagValue } from '../types/branded.js';
 import { asTagValue } from '../types/branded.js';
 
+function stripSeparatorRuns(value: string): string {
+  let out = '';
+  let pending = '';
+  for (const ch of value) {
+    if (ch === '-' || ch === '_' || ch === ' ') {
+      pending += ch;
+    } else if (pending !== '') {
+      out += ch.toUpperCase();
+      pending = '';
+    } else {
+      out += ch;
+    }
+  }
+  return out + pending;
+}
+
 export function applyNormalizationRule(value: string, rule: NormalizationRule): string {
   switch (rule) {
     case 'lowercase':
@@ -19,9 +35,7 @@ export function applyNormalizationRule(value: string, rule: NormalizationRule): 
         .replaceAll(/[-\s]+/g, '_')
         .toLowerCase();
     case 'camelCase':
-      return value
-        .replaceAll(/[-_ ]+([^-_ ])/g, (_, c: string) => c.toUpperCase())
-        .replace(/^(.)/, (_, c: string) => c.toLowerCase());
+      return stripSeparatorRuns(value).replace(/^(.)/, (_, c: string) => c.toLowerCase());
   }
 }
 

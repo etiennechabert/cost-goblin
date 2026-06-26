@@ -22,7 +22,7 @@ export function GroupByTitle({ dimensions, currentGroupBy, onGroupByChange, labe
           type="button"
           className="inline-flex items-center gap-1 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors"
         >
-          {label}{suffix !== undefined ? ` ${suffix}` : ''}
+          {label}{suffix === undefined ? '' : ` ${suffix}`}
           <ChevronDown className="size-3.5 opacity-50" />
         </button>
       </PopoverTrigger>

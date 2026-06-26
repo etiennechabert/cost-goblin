@@ -240,11 +240,13 @@ export function computeRollupEstimate(input: RollupEstimateInput): RollupGrainEs
   const byGrowth = growthFactor !== null && growthFactor > RAW_ONLY_GROWTH_FACTOR;
   // Fallback message for a grain that's heavy without any single high-card dim
   // to point at; when dims ARE flagged the UI names them instead.
-  const reason = byPartition
-    ? `a monthly partition would be ~${String(Math.round(perPartitionBytes / MB))} MB — over the ${String(Math.round(RAW_ONLY_PARTITION_BYTES / MB))} MB raw-only threshold`
-    : byGrowth
-      ? `this grain is ~${growthFactor.toFixed(1)}× the current rollup`
-      : null;
+  const reason = ((): string | null => {
+    if (byPartition) {
+      return `a monthly partition would be ~${String(Math.round(perPartitionBytes / MB))} MB — over the ${String(Math.round(RAW_ONLY_PARTITION_BYTES / MB))} MB raw-only threshold`;
+    }
+    if (byGrowth) return `this grain is ~${growthFactor.toFixed(1)}× the current rollup`;
+    return null;
+  })();
 
   return {
     probePeriod: input.probePeriod,

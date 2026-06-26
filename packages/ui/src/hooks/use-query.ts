@@ -9,7 +9,17 @@ function handleFetchSuccess<T>(
   cancelled: { current: boolean },
   setState: (s: QueryState<T>) => void,
 ): void {
-  if (!cancelled.current) setState({ status: 'success', data });
+  // Apply the result inside a transition so the (potentially heavy) render it
+  // triggers — visx charts, large tables — stays interruptible. When a view
+  // mounts many widgets, their results arrive in a burst; without this, React
+  // renders each one as an urgent, blocking commit and the renderer's main
+  // thread can't service input, so the top menu appears frozen until the burst
+  // drains. As a transition, React time-slices the work and lets a click (e.g.
+  // opening the menu) preempt it. The `loading` state stays urgent so spinners
+  // still appear instantly.
+  startTransition(() => {
+    if (!cancelled.current) setState({ status: 'success', data });
+  });
 }
 
 function handleFetchError<T>(
@@ -53,18 +63,7 @@ export function useQuery<T>(
     const delay = retryCount > 0 ? 150 : 0;
     const timer = setTimeout(() => {
       fetcher()
-        .then((data) => {
-          // Apply the result inside a transition so the (potentially heavy)
-          // render it triggers — visx charts, large tables — stays
-          // interruptible. When a view mounts many widgets, their results
-          // arrive in a burst; without this, React renders each one as an
-          // urgent, blocking commit and the renderer's main thread can't
-          // service input, so the top menu appears frozen until the burst
-          // drains. As a transition, React time-slices the work and lets a
-          // click (e.g. opening the menu) preempt it. The `loading` state
-          // above stays urgent so spinners still appear instantly.
-          startTransition(() => { handleFetchSuccess(data, cancelled, setState); });
-        })
+        .then((data) => { handleFetchSuccess(data, cancelled, setState); })
         .catch((err: unknown) => { handleFetchError(err, cancelled, retryCount, setState, setRetryCount); })
         .finally(() => { slotRef.current?.onSettled(); });
     }, delay);
