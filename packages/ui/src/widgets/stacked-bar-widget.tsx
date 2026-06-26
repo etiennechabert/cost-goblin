@@ -5,7 +5,7 @@ import { useQuery } from '../hooks/use-query.js';
 import { StackedBarChart, bucketBars, type BarDay } from '../components/stacked-bar-chart.js';
 import { asDateString, asHourString, asTagValue } from '@costgoblin/core/browser';
 import { useCostFocus, useCostFocusDispatch } from '../hooks/use-cost-focus.js';
-import type { DailyCostsResult, DimensionId } from '@costgoblin/core/browser';
+import type { DailyCostsResult, DateRange, DateString, DimensionId, Granularity } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
 import { dimensionLabelFor, filtersKey, hasSufficientDailyCoverage } from './widget.js';
 import { GroupByTitle } from '../components/group-by-title.js';
@@ -53,6 +53,29 @@ function bucketTotals(raw: readonly number[]): readonly number[] {
     bucketed.push(sum);
   }
   return bucketed;
+}
+
+function resolveRangeSelect(
+  barDays: readonly BarDay[],
+  startIdx: number,
+  endIdx: number,
+  granularity: Granularity,
+  rangeEnd: DateString,
+): DateRange | null {
+  if (granularity === 'hourly') {
+    const fallbackEndHour = `${String(rangeEnd)} 23:00:00`;
+    const hourRange = computeBucketedHourRange(barDays, startIdx, endIdx, fallbackEndHour);
+    if (hourRange === null) return null;
+    return {
+      start: asDateString(hourRange.startHour.slice(0, 10)),
+      end: asDateString(hourRange.endHour.slice(0, 10)),
+      startHour: asHourString(hourRange.startHour),
+      endHour: asHourString(hourRange.endHour),
+    };
+  }
+  const range = computeBucketedRange(barDays, startIdx, endIdx, rangeEnd);
+  if (range === null) return null;
+  return { start: asDateString(range.startDate), end: asDateString(range.endDate) };
 }
 
 export function StackedBarWidget({
@@ -107,24 +130,8 @@ export function StackedBarWidget({
 
   const handleRangeSelect = useCallback((startIdx: number, endIdx: number) => {
     if (onDateRangeChange === undefined) return;
-    if (granularity === 'hourly') {
-      const fallbackEndHour = `${String(dateRange.end)} 23:00:00`;
-      const hourRange = computeBucketedHourRange(barDays, startIdx, endIdx, fallbackEndHour);
-      if (hourRange === null) return;
-      onDateRangeChange({
-        start: asDateString(hourRange.startHour.slice(0, 10)),
-        end: asDateString(hourRange.endHour.slice(0, 10)),
-        startHour: asHourString(hourRange.startHour),
-        endHour: asHourString(hourRange.endHour),
-      });
-      return;
-    }
-    const range = computeBucketedRange(barDays, startIdx, endIdx, dateRange.end);
-    if (range === null) return;
-    onDateRangeChange({
-      start: asDateString(range.startDate),
-      end: asDateString(range.endDate),
-    });
+    const next = resolveRangeSelect(barDays, startIdx, endIdx, granularity, dateRange.end);
+    if (next !== null) onDateRangeChange(next);
   }, [barDays, dateRange.end, granularity, onDateRangeChange]);
 
   if (spec.type !== 'stackedBar') return null;

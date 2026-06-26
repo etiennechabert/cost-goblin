@@ -38,9 +38,9 @@ describe('ProfilePicker', () => {
     const user = userEvent.setup();
     render(<ProfilePicker profiles={SSO_PROFILES} selected="" onSelect={() => undefined} />);
 
-    expect(screen.getAllByRole('option')).toHaveLength(SSO_PROFILES.length);
+    expect(screen.getAllByRole('button')).toHaveLength(SSO_PROFILES.length);
     await user.type(screen.getByPlaceholderText('Type to filter profiles…'), 'SRE');
-    expect(screen.getAllByRole('option')).toHaveLength(2);
+    expect(screen.getAllByRole('button')).toHaveLength(2);
     expect(screen.getByText('sre-emea-admin')).toBeDefined();
   });
 
