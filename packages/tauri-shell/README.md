@@ -58,12 +58,15 @@ The Rust backend (`src-tauri/src`):
 | `config_write.rs` | YAML config **writes** — ports the core `*ConfigToYaml` transformers (dimensions / views / cost-scope) + the surgical `updateAwsProfile`. |
 | `aws_org.rs` | Real read-only AWS Organizations sync via `aws-sdk-organizations` (accounts + OU paths + tags), credentials/SSO via `aws-config`. |
 | `aws_ssm.rs` | Real read-only SSM region-name enrichment (`aws-sdk-ssm`) → `region-names.json`. |
-| `sync.rs` | S3 CUR download sync — bulk download via the `aws s3 sync` CLI; remote inventory via `aws-sdk-s3` ListObjectsV2; progress + cancel. |
+| `sync.rs` | S3 CUR download sync — bulk download via the `aws s3 sync` CLI; remote inventory via `aws-sdk-s3` ListObjectsV2; progress + cancel; retention **prune**. |
+| `rollup.rs` | Pre-aggregated **rollup**: read routing, **build** (`COPY` per period → manifest), `shapeSignature` + raw-etag **freshness validation**, status/stats/grain-estimate. |
 | `bundle.rs` | Config-bundle assembly + SHA-256 fingerprint + parse/summarize/materialize (config sharing). |
 | `sharing.rs` | Config-sharing S3 get/put + pre-import backup. |
+| `perf.rs` | DuckDB tuning — `SET memory_limit` / `threads` per connection from persisted overrides. |
+| `peer.rs` | Peer-sharing crypto/key/manifest layer (Ed25519 identity, `CGSHARE1-` key, signed manifest, path safety). Transport (TLS-PSK) is the one gap. |
 | `querylog.rs` | In-memory query log powering the Debug panel. |
 | `mcp.rs` | Token-authed JSON-RPC MCP server (`tiny_http`, loopback) over the query layer. |
-| `db.rs` | `duckdb` crate helpers (per-query in-memory connection, param binding, row → JSON), with query-log instrumentation. |
+| `db.rs` | `duckdb` crate helpers (per-query in-memory connection, param binding, row → JSON), with query-log instrumentation + perf tuning. |
 
 ## What's real vs. stubbed
 
@@ -99,14 +102,37 @@ The Rust backend (`src-tauri/src`):
 - **Config sharing** (`bundle.rs` + `sharing.rs`) — bundle export/import via
   native file dialogs, SHA-256 fingerprint (round-trips as valid), and S3
   publish / fetch / beacon discovery.
+- **Rollup** (`rollup.rs`) — the spike both **reads and builds** the
+  pre-aggregated per-period rollup: dashboard queries route to it when every
+  touched column is in-grain and every period is valid; `build_rollup` writes
+  `COPY`-materialized partitions + a manifest with a `shapeSignature` and
+  per-period raw-etag watermark; **freshness validation** rejects a stale rollup
+  (config edit or re-sync) → raw fallback, never wrong numbers; daily sync
+  auto-refreshes it. On the real dataset a fresh build is **~85× faster** than
+  raw for the cost-overview query (and 90× smaller on disk).
+- **Marketplace re-attribution** (`#388`) — empty-servicecode Marketplace rows
+  are re-attributed to the real service (+ unblended fallback on the list metric).
+- **Retention / prune** — `pruneNow` deletes local periods outside each tier's
+  retention window; the auto-prune flag persists.
+- **DuckDB perf tuning** (`perf.rs`) — `SET memory_limit` / `threads` per
+  connection from persisted, user-tunable overrides.
+- **Peer data-sharing crypto** (`peer.rs`) — Ed25519 identity, the `CGSHARE1-`
+  invite key, the signed pack manifest, and pack-path safety (all unit-tested).
 
-**Caveats / one genuine blocker:**
+**Caveats / two genuine blockers:**
+- **Peer data-sharing transport** — the crypto/key/manifest layer is ported, but
+  the **TLS-PSK transport** (`ECDHE-PSK-CHACHA20-POLY1305`) needs the heavy
+  `openssl` native crate for Electron interop (rustls lacks reliable ECDHE-PSK).
+  The sharing operations report unavailable; this is the one transport gap.
 - **Auto-updater** — the *interface* is ported (state machine + a working
   `onStatusChanged`, so the release-notes modal works), but a check honestly
   reports "idle": actually finding an update needs a **Tauri-format signed
   release feed**, and the project's GitHub releases are electron-builder format.
   Wiring `tauri-plugin-updater` is blocked on that feed + EdDSA signing, not on
   the Rust port.
+- **Materialized base** — Electron keeps an in-memory `cost_base` table; the
+  spike's fast path is the **rollup** instead (it *is* the materialization), so
+  `awaitMaterializedBase` returns immediately rather than building one.
 - **Live AWS** (org/SSM/S3 sync, config publish/fetch) needs a valid SSO session
   (`aws sso login --profile <profile>`); the S3 sync also needs the AWS CLI
   installed. The remote inventory falls back to a local-only scan when offline.
@@ -119,9 +145,10 @@ The Rust backend (`src-tauri/src`):
 Tauri runs **synchronous** commands on the main thread, so heavy DuckDB/AWS work
 would freeze the window. All commands are therefore `#[tauri::command(async)]`,
 which Tauri runs on worker threads — concurrent queries run in parallel and the
-UI stays responsive. (The spike has **no result cache or materialized base
-table** yet — both exist in Electron's `handlers/context.ts` — so repeat queries
-are slower than Electron though never blocking; that's Phase-2 work.)
+UI stays responsive. The dashboard fast path is the **rollup** (it replaces
+Electron's in-memory materialized base); `perf.rs` applies `SET memory_limit` /
+`threads` per connection. There's no separate result cache, so a non-rollup
+repeat query (e.g. Explorer) re-scans raw — never blocking, just not cached.
 
 ## Notes & deliberate deviations
 
