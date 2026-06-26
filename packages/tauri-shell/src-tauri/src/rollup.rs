@@ -157,7 +157,13 @@ pub fn estimate_grain(data_dir: &str, candidate: &Value) -> Value {
 
     let grain = candidate_grain(candidate);
     let high_card: Vec<&str> = ["resource_id", "usage_type", "operation"].into_iter().filter(|c| grain.iter().any(|g| g == c)).collect();
-    let dims: Vec<Value> = grain.iter().map(|c| json!({ "column": c, "cardinality": 0, "rawOnly": high_card.contains(&c.as_str()) })).collect();
+    // Without a leave-one-out probe we can't compute true marginal impact, so the
+    // per-dim figures are neutral (multiplier 1, no marginal rows). The amber
+    // high-cardinality flag is the actionable signal the panel still surfaces.
+    let dims: Vec<Value> = grain.iter().map(|c| {
+        let flagged = high_card.contains(&c.as_str());
+        json!({ "column": c, "cardinality": 0, "rawOnly": flagged, "marginalMultiplier": 1.0, "marginalRows": 0, "impactShare": 0.0, "outlier": flagged })
+    }).collect();
     let raw_only_reason = if high_card.is_empty() {
         Value::Null
     } else {
@@ -170,6 +176,7 @@ pub fn estimate_grain(data_dir: &str, candidate: &Value) -> Value {
         "lineItems": 0,
         "raw": { "rows": 0, "bytes": raw_bytes },
         "current": current,
+        "currentMatchesCandidate": true,
         "candidate": {
             "rows": cur_rows,
             "bytes": cur_bytes,
