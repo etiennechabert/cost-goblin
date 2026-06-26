@@ -40,25 +40,49 @@ describe('DimensionsView — rollup grain estimate', () => {
     expect(screen.getByText('Est. rollup')).toBeDefined();
     expect(screen.getByText('Compression')).toBeDefined();
     expect(screen.getByText('Rebuild')).toBeDefined();
-    expect(screen.getByText(/directional/)).toBeDefined();
+    expect(screen.getByText('Estimated')).toBeDefined();
   });
 
-  it('flags resource_id high-cardinality with a count badge and a panel warning', async () => {
+  it('flags resource_id as the dominant grain driver in the per-dimension list', async () => {
     renderView();
-    await waitFor(() => { expect(screen.getByText(/Heavy grain/i)).toBeDefined(); });
-    // The resource pill carries a high-cardinality count badge (~1.8M distinct).
+    await waitFor(() => { expect(screen.getByText('Per-dimension impact')).toBeDefined(); });
+    // The outlier sentence questions the single dominant dimension.
+    await waitFor(() => { expect(screen.getByText(/multiplies the rollup/i)).toBeDefined(); });
+    // The resource pill still carries a high-cardinality count badge (~1.8M distinct).
     expect(screen.getAllByText('1.8M').length).toBeGreaterThan(0);
   });
 
-  it('re-estimates and clears the warning when the dim is toggled off', async () => {
+  it('re-estimates and clears the outlier warning when the dim is toggled off', async () => {
     const { user } = renderView();
-    await waitFor(() => { expect(screen.getByText(/Heavy grain/i)).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText(/multiplies the rollup/i)).toBeDefined(); });
 
     // The SECTION 1 pill is the first button matching the dim label.
     const resourcePill = screen.getAllByRole('button', { name: /Resource/ })[0];
     expect(resourcePill).toBeDefined();
     await user.click(resourcePill as HTMLElement);
 
-    await waitFor(() => { expect(screen.queryByText(/Heavy grain/i)).toBeNull(); });
+    // Wait for the re-estimate to settle (it flashes the loading bar mid-probe):
+    // the outlier warning is gone AND the per-dimension list is back.
+    await waitFor(() => {
+      expect(screen.queryByText(/multiplies the rollup/i)).toBeNull();
+      expect(screen.getByText('Per-dimension impact')).toBeDefined();
+    });
+  });
+
+  it('shows actual rollup stats when the grain matches the built rollup, the estimate otherwise', async () => {
+    const { user } = renderView();
+    // resource_id is enabled in the render config → grain differs from the
+    // built rollup → directional estimate.
+    await waitFor(() => { expect(screen.getByText('Est. rollup')).toBeDefined(); });
+    expect(screen.getByText('Estimated')).toBeDefined();
+
+    // Toggle resource_id off → grain matches the built rollup → actual stats.
+    const resourcePill = screen.getAllByRole('button', { name: /Resource/ })[0];
+    await user.click(resourcePill as HTMLElement);
+    await waitFor(() => {
+      expect(screen.getByText('Rollup')).toBeDefined();
+      expect(screen.getByText('Actual')).toBeDefined();
+    });
+    expect(screen.queryByText('Est. rollup')).toBeNull();
   });
 });

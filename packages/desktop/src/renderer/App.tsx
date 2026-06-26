@@ -551,6 +551,15 @@ function AppShell(): React.JSX.Element {
   // change). Gating on "ever ready" keeps the first cold build — where widgets
   // already show their own loaders — from flashing the "Updating…" badge.
   const reRolling = rollupStatus.state === 'computing' && rollupEverReady;
+  // A stable key that flips when the built rollup changes (computing → ready),
+  // so the Dimensions estimate refetches and its actual/estimated badge stays
+  // correct without a remount. Deliberately ignores `computing` done/total
+  // progress ticks — those would thrash the exact-count probe mid-rebuild.
+  const rollupRevision = rollupStatus.state === 'ready'
+    ? `ready:${String(rollupStatus.periods)}`
+    : rollupStatus.state === 'failed'
+      ? `failed:${String(rollupStatus.periods)}`
+      : rollupStatus.state;
 
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
@@ -835,7 +844,7 @@ function AppShell(): React.JSX.Element {
       case 'cost-scope':
         return <CostScopeView />;
       case 'dimensions':
-        return <DimensionsView />;
+        return <DimensionsView rollupRevision={rollupRevision} />;
       case 'dashboards':
         return <ViewsEditor onConfigPersisted={setViewsConfig} />;
       case 'share':
