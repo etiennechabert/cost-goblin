@@ -8,6 +8,23 @@ export function daysBetween(start: string, end: string): number {
   return Math.round((new Date(end).getTime() - new Date(start).getTime()) / DAY_MS) + 1;
 }
 
+/** The YYYY-MM months a date range spans, inclusive — mirrors core's
+ *  `computePeriodsInRange` so the renderer can intersect a selected range
+ *  against the rollup's per-period readiness without importing query logic. */
+export function monthsInRange(range: { readonly start: string; readonly end: string }): string[] {
+  const start = new Date(`${range.start}T00:00:00Z`);
+  const end = new Date(`${range.end}T00:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return [];
+  const out: string[] = [];
+  const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+  const last = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1));
+  while (cursor.getTime() <= last.getTime()) {
+    out.push(`${String(cursor.getUTCFullYear())}-${String(cursor.getUTCMonth() + 1).padStart(2, '0')}`);
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return out;
+}
+
 export function daysAgo(days: number): DateString {
   const d = new Date(Date.now() - days * DAY_MS);
   return asDateString(d.toISOString().slice(0, 10));

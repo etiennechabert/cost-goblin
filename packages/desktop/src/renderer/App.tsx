@@ -497,7 +497,6 @@ function AppShell(): React.JSX.Element {
   const inFlightCount = useDebugBadge();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
   const [rollupStatus, setRollupStatus] = useState<RollupStatus>({ state: 'idle' });
-  const [rollupEverReady, setRollupEverReady] = useState(false);
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [devBranch, setDevBranch] = useState<string | null>(null);
@@ -541,16 +540,20 @@ function AppShell(): React.JSX.Element {
     // the renderer subscribes), then track transitions via the push channel.
     const apply = (status: RollupStatus): void => {
       setRollupStatus(status);
-      if (status.state === 'ready') setRollupEverReady(true);
     };
     globalThis.costgoblinRollup.getStatus().then(apply).catch(() => undefined);
     return globalThis.costgoblinRollup.onStatusChanged(apply);
   }, []);
 
-  // A re-roll = recomputing an existing rollup (after a sync or dimensions
-  // change). Gating on "ever ready" keeps the first cold build — where widgets
-  // already show their own loaders — from flashing the "Updating…" badge.
-  const reRolling = rollupStatus.state === 'computing' && rollupEverReady;
+  // A stable key that flips when the built rollup changes (computing → ready),
+  // so the Dimensions estimate refetches and its actual/estimated badge stays
+  // correct without a remount. Deliberately ignores `computing` done/total
+  // progress ticks — those would thrash the exact-count probe mid-rebuild.
+  const rollupRevision = rollupStatus.state === 'ready'
+    ? `ready:${String(rollupStatus.periods)}`
+    : rollupStatus.state === 'failed'
+      ? `failed:${String(rollupStatus.periods)}`
+      : rollupStatus.state;
 
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
@@ -835,7 +838,7 @@ function AppShell(): React.JSX.Element {
       case 'cost-scope':
         return <CostScopeView />;
       case 'dimensions':
-        return <DimensionsView />;
+        return <DimensionsView rollupRevision={rollupRevision} />;
       case 'dashboards':
         return <ViewsEditor onConfigPersisted={setViewsConfig} />;
       case 'share':
@@ -1055,13 +1058,13 @@ function AppShell(): React.JSX.Element {
               const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
               return (
                 <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
-                  <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} reRolling={reRolling} />
+                  <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} rollupStatus={rollupStatus} />
                 </Profiler>
               );
             })()}
             {view.page === 'trends' && (
               <Profiler id="trends" onRender={onPerfRender}>
-                <CostTrends onEntityClick={handleEntityClick} />
+                <CostTrends onEntityClick={handleEntityClick} rollupStatus={rollupStatus} />
               </Profiler>
             )}
             {view.page === 'missing-tags' && (

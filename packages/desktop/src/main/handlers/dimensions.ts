@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, applyStripPatterns, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns } from '@costgoblin/core';
+import { applyNormalizationRule, applyStripPatterns, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions } from '@costgoblin/core';
 import type { AliasSuggestion, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { toNum, toStr } from './query-utils.js';
@@ -77,7 +77,7 @@ function filterUncoveredSuggestions(
 }
 
 export function registerDimensionsHandlers(app: AppContext): void {
-  const { ctx, getConfig, getDimensions, getQueryDimensions, getCostScope, getAvailableColumns, getOrgAccountsPath, getAccountReverseMap, getRegionMap, invalidateDimensions, rollupStore, runQuery } = app;
+  const { ctx, getConfig, getDimensions, getQueryDimensions, getCostScope, getAvailableColumns, getOrgAccountsPath, getAccountReverseMap, getRegionMap, signatureForDimensions, invalidateDimensions, rollupStore, runQuery } = app;
 
   ipcMain.handle('dimensions:discover-tags', async (): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> => {
     const config = await getConfig();
@@ -249,7 +249,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
 
     const period = latest.replace(/^daily-/, '');
     const grainColumns = rollupGrainColumns(candidate);
-    const cardCols = grainColumns.filter(c => c !== 'usage_date');
+    const grainDims = rollupGrainDimensions(candidate);
 
     const costScope = await getCostScope().catch(() => undefined);
     const availableColumns = await getAvailableColumns('daily');
@@ -266,7 +266,20 @@ export function registerDimensionsHandlers(app: AppContext): void {
     // baseline the UI shows the estimated rollup against.
     const rawBytes = await sumParquetBytes(fs, path, rawDir, dirs);
 
-    const dimCardinalities = cardCols.map((column, i) => ({ column, cardinality: toNum(row[`card_${String(i)}`]) }));
+    const dimCardinalities = grainDims.map((dim, i) => ({
+      column: dim.column,
+      cardinality: toNum(row[`card_${String(i)}`]),
+      leaveOneOutGrainRows: toNum(row[`loo_${String(i)}`]),
+    }));
+
+    // Is the on-disk rollup actually built for THIS grain? Compare the
+    // candidate's full shape signature to what the partitions were built
+    // against (same signatureForDimensions path getRollupShape uses). When they
+    // match, `current` is the real size of this grain, not an estimate.
+    const builtSignature = rollupStore.getBuiltSignature();
+    const candidateSignature = await signatureForDimensions(candidate);
+    const currentMatchesCandidate = current !== null && builtSignature !== null && builtSignature === candidateSignature;
+
     return computeRollupEstimate({
       probePeriod: period,
       months: dirs.length,
@@ -274,6 +287,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
       probeLineItems: toNum(row['line_items']),
       rawBytes,
       current,
+      currentMatchesCandidate,
       dimCardinalities,
     });
   });

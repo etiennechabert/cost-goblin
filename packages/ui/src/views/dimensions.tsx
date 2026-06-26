@@ -1504,16 +1504,48 @@ function ImpactStat({ label, value, hint }: Readonly<{ label: string; value: str
   );
 }
 
+/** Eased progress feedback for the rollup estimate. The probe is an exact
+ *  DuckDB scan (a few seconds; longer when resource_id is on) with no real
+ *  per-query progress to read, so we ease asymptotically toward ~92% — slowing
+ *  as it goes rather than stalling at a hard cap — and let completion unmount
+ *  this (the panel only renders it while a probe is in flight). */
+function EstimateProgress(): React.JSX.Element {
+  const [pct, setPct] = useState(8);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setPct(p => (p >= 92 ? p : p + Math.max(0.6, (92 - p) * 0.1)));
+    }, 150);
+    return () => { clearInterval(id); };
+  }, []);
+  return (
+    <div className="mt-3">
+      <span className="text-xs text-text-muted">Estimating…</span>
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-bg-tertiary">
+        <div className="h-full rounded-full bg-accent transition-all duration-200 ease-out" style={{ width: `${String(Math.round(pct))}%` }} />
+      </div>
+    </div>
+  );
+}
+
 /** Cost/benefit summary for the current enabled grain (rollup design §8).
  *  Updates as dims are toggled so the user can weigh the rebuild before it
  *  happens. Numbers are directional (probed from one recent month). */
 function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: RollupGrainEstimate | null; loading: boolean; config: DimensionsConfig }>): React.JSX.Element {
-  const heaviest = estimate === null
+  const rankedDims = estimate === null
     ? []
-    : [...estimate.dims].filter(d => d.rawOnly).sort((a, b) => b.cardinality - a.cardinality);
-  const sizeReduction = estimate !== null && estimate.candidate.bytes > 0
-    ? estimate.raw.bytes / estimate.candidate.bytes
-    : 0;
+    : [...estimate.dims].sort((a, b) => b.marginalMultiplier - a.marginalMultiplier);
+  const outlierDim = rankedDims.find(d => d.outlier);
+  // When the built rollup already matches this exact grain, show its ACTUAL
+  // size/rows (the same numbers as the header Rollup popover) instead of the
+  // directional estimate, and drop the Rebuild stat (nothing to rebuild).
+  const matchedCurrent = estimate !== null && estimate.currentMatchesCandidate ? estimate.current : null;
+  const rollupBytes = matchedCurrent !== null ? matchedCurrent.bytes : (estimate?.candidate.bytes ?? 0);
+  const sizeReduction = estimate !== null && rollupBytes > 0 ? estimate.raw.bytes / rollupBytes : 0;
+  const rowRatio = estimate === null
+    ? 0
+    : matchedCurrent !== null && matchedCurrent.rows > 0
+      ? estimate.raw.rows / matchedCurrent.rows
+      : estimate.compressionRate;
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/40 px-5 py-4">
       <div className="flex items-center justify-between">
@@ -1522,58 +1554,105 @@ function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: R
           <h3 className="text-sm font-medium text-text-secondary">Rollup impact</h3>
         </div>
         {estimate !== null && estimate.probePeriod.length > 0 && (
-          <span className="text-[10px] text-text-muted">estimated from {estimate.probePeriod} · directional</span>
+          matchedCurrent !== null ? (
+            <span
+              title="These are the real size and row counts of the rollup already built for this grain."
+              className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-accent" />Actual
+            </span>
+          ) : (
+            <span
+              title={`Directional estimate, probed from ${estimate.probePeriod}. Rebuild this grain to get exact numbers.`}
+              className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-500"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />Estimated
+            </span>
+          )
         )}
       </div>
+      <p className="mt-1 text-[11px] leading-snug text-text-muted">
+        The rollup is a compact, pre-aggregated copy of your billing data grouped by these dimensions — dashboards query it instead of the raw line items, so a leaner grain keeps them fast.
+      </p>
 
       {loading && estimate === null ? (
-        <p className="mt-3 text-xs text-text-muted">Estimating…</p>
+        <EstimateProgress />
       ) : estimate === null || estimate.probePeriod.length === 0 ? (
         <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>
       ) : (
         <>
-          <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div className={`mt-3 grid grid-cols-2 gap-4 ${matchedCurrent !== null ? 'sm:grid-cols-3' : 'sm:grid-cols-4'}`}>
             <ImpactStat
               label="Raw data"
               value={formatBytes(estimate.raw.bytes)}
               hint={`${formatCount(estimate.raw.rows)} line items · ${String(estimate.months)} mo`}
             />
-            <ImpactStat
-              label="Est. rollup"
-              value={formatBytes(estimate.candidate.bytes)}
-              hint={`${SIZE_BAND_LABEL[estimate.candidate.sizeBand]} · ${formatCount(estimate.candidate.rows)} rows`}
-            />
+            {matchedCurrent !== null ? (
+              <ImpactStat
+                label="Rollup"
+                value={formatBytes(matchedCurrent.bytes)}
+                hint={`${formatCount(matchedCurrent.rows)} rows`}
+              />
+            ) : (
+              <ImpactStat
+                label="Est. rollup"
+                value={formatBytes(estimate.candidate.bytes)}
+                hint={`${SIZE_BAND_LABEL[estimate.candidate.sizeBand]} · ${formatCount(estimate.candidate.rows)} rows`}
+              />
+            )}
             <ImpactStat
               label="Compression"
               value={sizeReduction >= 1.05 ? `${sizeReduction.toFixed(1)}×` : '~1×'}
-              hint={`smaller than raw · ${estimate.compressionRate >= 1 ? estimate.compressionRate.toFixed(0) : estimate.compressionRate.toFixed(1)}× fewer rows`}
+              hint={`smaller than raw · ${rowRatio >= 1 ? rowRatio.toFixed(0) : rowRatio.toFixed(1)}× fewer rows`}
             />
-            <ImpactStat
-              label="Rebuild"
-              value={formatRebuild(estimate.candidate.rebuildSeconds)}
-              hint="background re-roll"
-            />
+            {matchedCurrent === null && (
+              <ImpactStat
+                label="Rebuild"
+                value={formatRebuild(estimate.candidate.rebuildSeconds)}
+                hint="background re-roll"
+              />
+            )}
           </div>
-          {estimate.rawOnly.recommended && (
-            <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-              <p className="text-[11px] leading-snug text-text-secondary">
-                {heaviest.length > 0 ? (
-                  <>
-                    Heavy grain — most of the rollup size comes from{' '}
-                    {heaviest.slice(0, 4).map((d, i) => (
-                      <span key={d.column}>
-                        {i > 0 ? ', ' : ''}
-                        <span className="font-medium text-amber-500">{columnLabel(config, d.column)}</span>
-                        {' '}({formatCount(d.cardinality)})
+          {rankedDims.length > 0 && (
+            <div className="mt-4">
+              <span className="text-[10px] uppercase tracking-wider text-text-muted">Per-dimension impact</span>
+              <ul className="mt-2 flex flex-col gap-1.5">
+                {rankedDims.map(d => {
+                  const readout = d.marginalMultiplier >= 1.05
+                    ? `×${d.marginalMultiplier.toFixed(1)}${d.marginalRows > 0 ? ` · +${formatCount(d.marginalRows)}` : ''}`
+                    : '~×1';
+                  return (
+                    <li key={d.column} className="flex items-center gap-2 text-[11px]">
+                      <span className={`flex w-28 shrink-0 items-center gap-1 truncate ${d.outlier ? 'font-medium text-amber-500' : 'text-text-secondary'}`}>
+                        {d.outlier && <AlertTriangle className="h-3 w-3 shrink-0" />}
+                        <span className="truncate">{columnLabel(config, d.column)}</span>
                       </span>
-                    ))}
-                    . Disabling the heaviest keeps it raw-only so dashboards stay fast.
-                  </>
-                ) : (
-                  <>This grain is heavy for the rollup — {estimate.rawOnly.reason ?? 'it exceeds the size budget'}. Consider a leaner grain so dashboards stay fast.</>
-                )}
-              </p>
+                      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-tertiary">
+                        <span
+                          className={`block h-full rounded-full ${d.outlier ? 'bg-amber-500/70' : 'bg-accent/60'}`}
+                          style={{ width: `${String(Math.round(Math.min(1, d.impactShare) * 100))}%` }}
+                        />
+                      </span>
+                      <span className={`w-24 shrink-0 text-right tabular-nums ${d.outlier ? 'text-amber-500' : 'text-text-muted'}`}>{readout}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+              {outlierDim !== undefined ? (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                  <p className="text-[11px] leading-snug text-text-secondary">
+                    <span className="font-medium text-amber-500">{columnLabel(config, outlierDim.column)}</span> alone multiplies the rollup ~×{outlierDim.marginalMultiplier.toFixed(1)} — most of the grain comes from this one dimension. Dimensions work best as filters with a handful of values; the detail table can still show every value when you need it, so keeping this one raw-only keeps dashboards fast.
+                  </p>
+                </div>
+              ) : estimate.rawOnly.recommended ? (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                  <p className="text-[11px] leading-snug text-text-secondary">
+                    This grain is heavy for the rollup — {estimate.rawOnly.reason ?? 'it exceeds the size budget'}. Consider a leaner grain so dashboards stay fast.
+                  </p>
+                </div>
+              ) : null}
             </div>
           )}
         </>
@@ -1622,7 +1701,7 @@ function resolveOrderedRows(config: DimensionsConfig): OrderedRow[] {
   return rows;
 }
 
-export function DimensionsView() {
+export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: string }>): React.JSX.Element {
   const api = useCostApi();
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editingBuiltInIdx, setEditingBuiltInIdx] = useState<number | null>(null);
@@ -1677,7 +1756,9 @@ export function DimensionsView() {
   const estimateSig = config === null ? '' : grainSignature(config);
   const estimateQuery = useQuery(
     () => config === null ? Promise.resolve(null) : api.estimateRollupGrain(config),
-    [estimateSig],
+    // Refetch when the grain changes OR when the built rollup changes (e.g. a
+    // re-roll finishes) so the actual/estimated badge updates without a remount.
+    [estimateSig, rollupRevision ?? ''],
   );
   const estimate = estimateQuery.status === 'success' ? estimateQuery.data : null;
   const estimateLoading = estimateQuery.status === 'loading';

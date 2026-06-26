@@ -4,12 +4,15 @@ import { shouldAutoSwitchToHourly } from '../lib/drag-select.js';
 import { useHourlyConfigured } from '../hooks/use-hourly-configured.js';
 import { HourlyHintBanner } from '../components/hourly-hint-banner.js';
 import { UpdatingBadge } from '../components/updating-badge.js';
+import { RollupBuildingOverlay } from '../components/rollup-building-overlay.js';
 import { daysBetween } from '../lib/dates.js';
+import { rollupGate } from '../lib/rollup-gate.js';
 import type {
   Dimension,
   DimensionId,
   EntityRef,
   FilterMap,
+  RollupStatus,
   TagValue,
   ViewSpec,
 } from '@costgoblin/core/browser';
@@ -53,10 +56,11 @@ interface CustomViewProps {
   readonly spec: ViewSpec;
   readonly headerSubtitle?: string | undefined;
   readonly initialFilter?: FilterMap | undefined;
-  /** True while the rollup behind these widgets is re-rolling — overlays a
-   *  non-blocking "Updating…" badge on each widget so a briefly-stale figure
-   *  reads as recomputing rather than wrong. */
-  readonly reRolling?: boolean | undefined;
+  /** Live rollup state. Drives two things: a blocking build overlay when the
+   *  rollup can't serve the viewed period and is building it (cold build or a
+   *  cleared rollup), and a non-blocking "Updating…" badge per widget when a
+   *  re-roll touches months the user isn't viewing (data stays visible). */
+  readonly rollupStatus?: RollupStatus | undefined;
 }
 
 function priorityFor(d: Dimension): number {
@@ -101,11 +105,24 @@ function previousRangeFor(dr: DateRange): DateRange {
   };
 }
 
-function CustomViewInner({ spec, headerSubtitle, initialFilter, reRolling }: CustomViewProps) {
+function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: CustomViewProps) {
   const api = useCostApi();
   const lagDays = useLagDays();
   const hourlyConfigured = useHourlyConfigured();
   const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
+
+  // Rollup can't serve the viewed months and is building them (cold build or a
+  // cleared rollup) → block with the build overlay; widgets don't mount, so
+  // they never fire slow raw queries. A re-roll that only touches months the
+  // user isn't viewing leaves their data served → not blocked, and the badge
+  // below covers it.
+  const gate = useMemo(
+    () => rollupStatus === undefined
+      ? { blocked: false, selectedMonths: [], pendingMonths: [] }
+      : rollupGate(rollupStatus, dateRange),
+    [rollupStatus, dateRange],
+  );
+  const reRolling = rollupStatus?.state === 'computing' && !gate.blocked;
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [compareEnabled, setCompareEnabled] = useState(false);
   const [filters, setFilters] = useState<FilterMap>(initialFilter ?? {});
@@ -296,10 +313,13 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, reRolling }: Cus
         <HourlyHintBanner onDismiss={() => { setHourlyHint(false); }} />
       )}
 
-      {dimensionsQuery.status === 'loading' && (
+      {dimensionsQuery.status === 'loading' && !gate.blocked && (
         <div className="text-sm text-text-secondary">Loading...</div>
       )}
 
+      {gate.blocked && rollupStatus !== undefined ? (
+        <RollupBuildingOverlay status={rollupStatus} pendingMonths={gate.pendingMonths} />
+      ) : (
       <WidgetSchedulerProvider>
         {spec.rows.map((row, rowIdx) => {
           // Flat display order across rows = load priority (top-left first).
@@ -317,7 +337,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, reRolling }: Cus
                     className="relative min-w-0 flex flex-col"
                     style={{ flexBasis: widgetFlexBasis(w.size), flexGrow: 1, flexShrink: 1 }}
                   >
-                    {reRolling === true && <UpdatingBadge />}
+                    {reRolling && <UpdatingBadge />}
                     <Renderer
                       spec={w}
                       dateRange={dateRange}
@@ -337,6 +357,7 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, reRolling }: Cus
           );
         })}
       </WidgetSchedulerProvider>
+      )}
     </div>
   );
 }

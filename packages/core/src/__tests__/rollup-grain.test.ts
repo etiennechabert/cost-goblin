@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { rm } from 'node:fs/promises';
 import { buildSource, buildRollupPartitionQuery } from '../query/builder.js';
-import { rollupGrainColumns } from '../rollup/grain.js';
+import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
 import { asDimensionId } from '../types/branded.js';
@@ -57,6 +57,37 @@ function scope(rules: CostScopeConfig['rules']): CostScopeConfig {
 function rawSourceJan(): string {
   return buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, periods: [PERIOD], costMetric: 'unblended' });
 }
+
+describe('rollupGrainDimensions', () => {
+  it('groups a built-in display column under its dimension and drops disabled dims', () => {
+    const dims = rollupGrainDimensions(dimensions);
+    // account_name rides with account_id — it is NOT a standalone dimension.
+    expect(dims.find(d => d.column === 'account_id')?.columns).toEqual(['account_id', 'account_name']);
+    expect(dims.some(d => d.column === 'account_name')).toBe(false);
+    // disabled usage_type is absent; single-column dims carry just themselves.
+    expect(dims.some(d => d.column === 'usage_type')).toBe(false);
+    expect(dims.find(d => d.column === 'service')?.columns).toEqual(['service']);
+    expect(dims.find(d => d.column === 'tag_team')?.columns).toEqual(['tag_team']);
+    // Built-ins first, then tags; one entry per enabled dimension.
+    expect(dims.map(d => d.column)).toEqual(['account_id', 'service', 'region', 'tag_team', 'tag_environment']);
+  });
+
+  it('collapses derived dimensions that share one physical column to a single entry', () => {
+    // Region / Country / Continent are query-time views of the same `region`
+    // column — they must not produce duplicate, identically-attributed rows.
+    const shared: DimensionsConfig = {
+      builtIn: [
+        { name: asDimensionId('region'), label: 'Region', field: 'region' },
+        { name: asDimensionId('region_country'), label: 'Country', field: 'region' },
+        { name: asDimensionId('region_continent'), label: 'Continent', field: 'region' },
+        { name: asDimensionId('service'), label: 'Service', field: 'service' },
+      ],
+      tags: [],
+    };
+    const dims = rollupGrainDimensions(shared);
+    expect(dims.map(d => d.column)).toEqual(['region', 'service']);
+  });
+});
 
 describe('buildRollupPartitionQuery', () => {
   let db: Awaited<ReturnType<typeof DuckDBInstance.create>>;
