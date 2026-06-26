@@ -31,6 +31,7 @@ export { ConfirmModal } from './components/confirm-modal.js';
 export { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog, ImportConfigPanel, ShareConfigPanel } from './components/config-sharing.js';
 export { SharingActiveBanner } from './components/sharing-active-banner.js';
 export { ProfilePicker, filterProfiles } from './components/profile-picker.js';
+export { SsoLoginButton } from './components/sso-login-button.js';
 export { CsvExport } from './components/csv-export.js';
 export { formatDollars, formatPercent, formatDate, formatRelativeTime } from './components/format.js';
 export { FilterBar } from './components/filter-bar.js';

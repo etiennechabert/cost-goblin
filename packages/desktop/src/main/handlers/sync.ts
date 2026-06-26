@@ -31,6 +31,7 @@ import {
   type IpcContext,
   toUserFriendlyError,
 } from './context.js';
+import { triggerAutoSyncNow } from '../auto-sync.js';
 
 type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
 
@@ -323,6 +324,14 @@ export function registerSyncHandlers(app: AppContext): void {
       child.on('spawn', () => {
         child.unref();
         resolve();
+      });
+      // The promise resolves on spawn (the browser is now opening), but the CLI
+      // keeps running until the user finishes authenticating. On a *successful*
+      // login (exit 0) kick an immediate sync so data refreshes right away
+      // instead of waiting up to a full auto-sync interval — and so the "Last
+      // sync" timestamp self-heals. No-op when auto-sync is disabled.
+      child.on('exit', (code) => {
+        if (code === 0) triggerAutoSyncNow();
       });
     });
   });

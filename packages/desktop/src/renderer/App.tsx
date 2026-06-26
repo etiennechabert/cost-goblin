@@ -484,6 +484,7 @@ function AppShell(): React.JSX.Element {
   // clears this and the user lands back exactly where they were.
   const [settingsTab, setSettingsTab] = useState<SettingsTabId | null>(null);
   const [missingPeriods, setMissingPeriods] = useState(0);
+  const [currentMonthUpdating, setCurrentMonthUpdating] = useState(false);
   const [isDark, setIsDark] = useState(true);
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
   const [defaultViewId, setDefaultViewId] = useState<string>(OVERVIEW_SEED_VIEW.id);
@@ -686,10 +687,20 @@ function AppShell(): React.JSX.Element {
     try {
       const [inv, config] = await Promise.all([api.getDataInventory(), api.getConfig()]);
       const retentionDays = config.providers[0]?.sync.daily.retentionDays ?? 365;
-      const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+      const now = new Date();
+      const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
       const cutoffPeriod = `${String(cutoff.getFullYear())}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
-      const missing = inv.periods.filter(p => p.localStatus === 'missing' && p.period >= cutoffPeriod).length;
+      const currentPeriod = `${String(now.getFullYear())}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      // "Behind" = no local data ('missing'), or a *closed* month whose remote
+      // files changed since we synced ('stale'). The current month is almost
+      // always 'stale' (CUR re-publishes all month), so it's surfaced as a soft
+      // "updating" note instead of nagging as un-synced — matching the Data &
+      // Sync view, which already lists stale periods under "Available".
+      const inWindow = inv.periods.filter(p => p.period >= cutoffPeriod);
+      const missing = inWindow.filter(p =>
+        p.localStatus === 'missing' || (p.localStatus === 'stale' && p.period < currentPeriod)).length;
       setMissingPeriods(missing);
+      setCurrentMonthUpdating(inWindow.some(p => p.localStatus === 'stale' && p.period === currentPeriod));
       setSyncError(null);
     } catch (err: unknown) {
       // Most common cause is expired AWS credentials — surface the message on
@@ -1023,6 +1034,7 @@ function AppShell(): React.JSX.Element {
               error={syncError}
               filesRemaining={syncFilesRemaining}
               missingPeriods={missingPeriods}
+              currentMonthUpdating={currentMonthUpdating}
               tiers={syncTiers}
               inSettingsData={settingsTab === 'data-sync'}
               onManageData={() => { enterSettings('data-sync'); }}

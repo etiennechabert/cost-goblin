@@ -19,6 +19,10 @@ export interface AutoSyncDeps {
 let status: AutoSyncStatus = { state: 'disabled' };
 let timer: ReturnType<typeof setTimeout> | null = null;
 let running = false;
+// Captured by startAutoSync so an out-of-band trigger (e.g. right after the
+// user restores credentials via SSO login) can run a pass immediately instead
+// of waiting up to a full interval for the next scheduled run.
+let lastDeps: AutoSyncDeps | null = null;
 // Captured so `runOnce` can report the correct nextRun without needing
 // to know the scheduler's interval — `startAutoSync` refreshes this on
 // every (re)start.
@@ -249,9 +253,21 @@ async function runOnce(deps: AutoSyncDeps): Promise<void> {
   running = false;
 }
 
+/** Run a sync/prune pass right now, out of band, reusing the scheduler's
+ *  captured deps — used to recover promptly after the user restores credentials
+ *  (SSO login) instead of waiting up to a full interval. No-op if the scheduler
+ *  was never started or a run is already in flight; runOnce still gates on the
+ *  auto-sync / auto-prune enabled flags, so a disabled scheduler does nothing. */
+export function triggerAutoSyncNow(): void {
+  if (lastDeps === null || running) return;
+  logger.info('Auto-sync: out-of-band run requested (credential recovery)');
+  void runOnce(lastDeps);
+}
+
 export function startAutoSync(deps: AutoSyncDeps, intervalMinutes: number): void {
   stopAutoSync();
 
+  lastDeps = deps;
   const clamped = clampInterval(intervalMinutes);
   currentIntervalMs = clamped * 60 * 1000;
 
