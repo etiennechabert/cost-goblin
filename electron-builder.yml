@@ -44,4 +44,10 @@ linux:
 publish:
   provider: github
   vPrefixedTagName: true
-  releaseType: release
+  # Upload artifacts to a DRAFT release so it never shows up as "latest"
+  # (and so electron-updater never sees it) until every platform job has
+  # uploaded its manifest + binaries. The `notes` job publishes the draft
+  # (gh release edit --draft=false) once all matrix builds finish. Without
+  # this, a fast platform publishes the release while mac is still
+  # notarizing, leaving latest-mac.yml 404ing for minutes.
+  releaseType: draft

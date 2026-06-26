@@ -32,6 +32,7 @@ const NEXT_INFO = { version: '0.2.2', releaseDate: '2026-05-20', releaseNotes: '
 
 async function freshManager(): Promise<{
   init: () => void;
+  downloadUpdate: () => Promise<void>;
   statuses: UpdateStatus[];
 }> {
   vi.resetModules();
@@ -43,7 +44,7 @@ async function freshManager(): Promise<{
   const mod = await import('../main/update-manager.js');
   const statuses: UpdateStatus[] = [];
   mod.onStatusChanged(s => statuses.push(s));
-  return { init: mod.initAutoUpdater, statuses };
+  return { init: mod.initAutoUpdater, downloadUpdate: mod.downloadUpdate, statuses };
 }
 
 function flushImmediate(): Promise<void> {
@@ -159,6 +160,71 @@ describe('update-manager differential download fallback', () => {
     expect(last?.state).toBe('error');
     if (last?.state === 'error') {
       expect(last.error).toBe('immediate failure');
+    }
+  });
+});
+
+describe('update-manager check-stage manifest 404', () => {
+  beforeEach(() => {
+    mockUpdater.removeAllListeners();
+  });
+
+  // electron-updater rethrows the manifest 404 as a fresh Error tagged with
+  // this code (the HttpError.statusCode is dropped) — match the real shape.
+  it('treats a manifest-not-found code during check as no update available', async () => {
+    const { init, statuses } = await freshManager();
+    init();
+
+    mockUpdater.emit('checking-for-update');
+    const err = Object.assign(new Error('something unrecognizable'), {
+      code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND',
+    });
+    mockUpdater.emit('error', err);
+
+    expect(statuses.at(-1)?.state).toBe('idle');
+  });
+
+  it('treats a manifest-not-found message during check as no update available', async () => {
+    const { init, statuses } = await freshManager();
+    init();
+
+    mockUpdater.emit('checking-for-update');
+    mockUpdater.emit('error', new Error('Cannot find latest-mac.yml in the latest release artifacts (https://...)'));
+
+    expect(statuses.at(-1)?.state).toBe('idle');
+  });
+
+  it('still surfaces non-404 check errors', async () => {
+    const { init, statuses } = await freshManager();
+    init();
+
+    mockUpdater.emit('checking-for-update');
+    mockUpdater.emit('error', new Error('network unreachable'));
+
+    const last = statuses.at(-1);
+    expect(last?.state).toBe('error');
+  });
+});
+
+describe('update-manager download feedback', () => {
+  beforeEach(() => {
+    mockUpdater.removeAllListeners();
+  });
+
+  it('flips to downloading at 0% immediately on download, before any progress event', async () => {
+    const { init, downloadUpdate, statuses } = await freshManager();
+    init();
+
+    mockUpdater.emit('update-available', AVAILABLE_INFO);
+    expect(statuses.at(-1)?.state).toBe('available');
+
+    await downloadUpdate();
+
+    expect(mockUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
+    const last = statuses.at(-1);
+    expect(last?.state).toBe('downloading');
+    if (last?.state === 'downloading') {
+      expect(last.percent).toBe(0);
     }
   });
 });

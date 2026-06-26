@@ -50,7 +50,7 @@ export function generateIdentityKeyPair(): IdentityKeyPair {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   return {
     publicKey: publicKeyToB64url(publicKey),
-    privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+    privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
   };
 }
 
