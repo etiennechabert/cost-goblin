@@ -118,9 +118,12 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           }
           return result;
         } catch (err: unknown) {
-          const error = err instanceof Error ? err : new Error(String(err));
+          // Surface credential expiry / opaque `aws s3 sync` download failures as
+          // the actionable "run aws sso login" message so the toolbar offers
+          // one-click re-auth instead of a raw CLI error (mirrors getInventory).
+          const error = toUserFriendlyError(err, provider.credentials.profile);
           state.syncStatuses[syncId] = { status: 'failed', error, lastSync: null };
-          throw err;
+          throw error;
         }
       },
       getLocalPeriods: async (tier: string) => {

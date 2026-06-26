@@ -34,18 +34,48 @@ async function getS3Module(): Promise<typeof import('@aws-sdk/client-s3')> {
   return import('@aws-sdk/client-s3');
 }
 
-/** Whether an error from the AWS SDK indicates missing or expired credentials
- *  (expired SSO token, no resolvable profile) rather than a genuine S3/network
- *  failure. Shared by the desktop sync handlers and the auto-sync scheduler so
- *  credential expiry is detected and surfaced consistently. */
+/** Whether an error indicates missing or expired credentials (expired SSO
+ *  token, no resolvable profile) rather than a genuine S3/network failure.
+ *  Covers both AWS SDK errors (the inventory listing) and the `aws s3 sync`
+ *  CLI's stderr signatures (the download path), so credential expiry is
+ *  surfaced consistently across both. Shared by the desktop sync handlers and
+ *  the auto-sync scheduler. */
 export function isCredentialError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const name = err.name;
   if (name === 'CredentialsProviderError' || name === 'TokenProviderError') return true;
+  const msg = err.message;
   return (
-    err.message.includes('Token is expired') ||
-    err.message.includes('SSO session') ||
-    err.message.includes('credentials')
+    // AWS SDK credential-resolution failures.
+    msg.includes('Token is expired') ||
+    msg.includes('SSO session') ||
+    msg.includes('credentials') ||
+    // `aws s3 sync` CLI credential/SSO failures arrive as stderr text rather
+    // than SDK error names, so the CLI download path classifies them too.
+    msg.includes('Error loading SSO Token') ||
+    msg.includes('Token has expired and refresh failed') ||
+    msg.includes('ExpiredToken') ||
+    msg.includes('InvalidGrantException') ||
+    msg.includes('Unable to locate credentials') ||
+    msg.includes('aws sso login')
+  );
+}
+
+/** An `aws s3 sync` download that failed by exhausting retries or losing the
+ *  connection, with no explicit credential/SSO text in stderr. For an
+ *  SSO-backed bucket this is almost always an expired session, but it can be a
+ *  network/VPN drop — so callers surface a "session may have expired, or check
+ *  your connection" hint with the sign-in action, distinct from a definite
+ *  `isCredentialError`. Scoped to the CLI failure (`aws s3 sync failed`) so it
+ *  never misclassifies SDK or other errors. */
+export function isS3SyncDownloadFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message;
+  if (!msg.includes('aws s3 sync failed')) return false;
+  return (
+    msg.includes('Max Retries Exceeded') ||
+    msg.includes('download failed') ||
+    msg.includes('Could not connect to the endpoint')
   );
 }
 
