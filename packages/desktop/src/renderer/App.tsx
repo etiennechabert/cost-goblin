@@ -1,12 +1,17 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, ImportConfigDialog, ShareConfigDialog } from '@costgoblin/ui';
-import type { NavItem } from '@costgoblin/ui';
-import type { CostApi, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus } from '@costgoblin/core/browser';
+import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId } from '@costgoblin/ui';
+import type { NavItem, SettingsTabId } from '@costgoblin/ui';
+import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
-import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw } from 'lucide-react';
+import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw, Settings, ArrowLeft, GitBranch, GitPullRequest } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
-import { OptionsMenu } from './top-menu/options-menu.js';
+import { SyncStatusButton, type SyncActivity, type SyncTier } from './top-menu/sync-status-button.js';
+import { RollupStatusButton } from './top-menu/rollup-status-button.js';
+import { GeneralTab } from './settings/general-tab.js';
+import { PerformanceTab } from './settings/performance-tab.js';
+import { ShareTab } from './settings/share-tab.js';
+import { ImportTab } from './settings/import-tab.js';
 
 // ---------------------------------------------------------------------------
 // React Profiler — collects render timings when perf mode is active
@@ -54,18 +59,17 @@ function getApi(): CostApi {
   return globalThis.costgoblin;
 }
 
+// "View mode" — looking at cost data. Configuration pages deliberately do NOT
+// live here: they're "setting mode" (a SettingsTabId rendered in SettingsShell),
+// so the compiler makes it impossible to render a config editor in the analysis
+// canvas, and a reserved id like 'sync' can never hijack the custom-view path.
 type View =
   | { page: 'setup' }
   | { page: 'custom'; viewId: string; initialFilter?: FilterMap }
   | { page: 'trends' }
   | { page: 'missing-tags' }
   | { page: 'savings' }
-  | { page: 'mcp' }
-  | { page: 'explorer' }
-  | { page: 'dimensions' }
-  | { page: 'cost-scope' }
-  | { page: 'views-editor' }
-  | { page: 'sync' };
+  | { page: 'explorer' };
 
 interface AnalyticalNavItem {
   readonly id: string;
@@ -80,15 +84,9 @@ const ANALYTICAL_NAV: readonly AnalyticalNavItem[] = [
   { id: 'explorer', label: 'Explorer', Icon: Search },
 ];
 
-const SETTINGS_NAV: readonly { id: string; label: string }[] = [
-  { id: 'cost-scope', label: 'Cost Scope' },
-  { id: 'dimensions', label: 'Dimensions' },
-  { id: 'views-editor', label: 'Views' },
-  { id: 'sync', label: 'Sync' },
-  { id: 'mcp', label: 'AI Assistant' },
-];
-
-type SyncActivity = 'idle' | 'syncing' | 'downloading';
+function hasUpdateIndicator(status: UpdateStatus): boolean {
+  return status.state === 'available' || status.state === 'downloading' || status.state === 'downloaded';
+}
 
 type SetupCheck =
   | { status: 'checking' }
@@ -303,6 +301,12 @@ function countFilesRemaining(statuses: readonly SyncStatus[]): number {
   return remaining;
 }
 
+const SYNC_TIER_LABELS: readonly { readonly id: string; readonly label: string }[] = [
+  { id: 'daily', label: 'Daily' },
+  { id: 'hourly', label: 'Hourly' },
+  { id: 'cost-optimization', label: 'Cost optimization' },
+];
+
 function useSyncPolling(
   api: CostApi,
   setupCheck: SetupCheck,
@@ -311,10 +315,12 @@ function useSyncPolling(
   setSyncError: React.Dispatch<React.SetStateAction<string | null>>;
   syncActivity: SyncActivity;
   syncFilesRemaining: number;
+  syncTiers: readonly SyncTier[];
 } {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncActivity, setSyncActivity] = useState<SyncActivity>('idle');
   const [syncFilesRemaining, setSyncFilesRemaining] = useState(0);
+  const [syncTiers, setSyncTiers] = useState<readonly SyncTier[]>([]);
 
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
@@ -328,6 +334,8 @@ function useSyncPolling(
           api.getSyncStatus('cost-optimization'),
         ]);
         if (cancelled) return;
+        const tiers: readonly SyncStatus[] = [daily, hourly, costOpt];
+        setSyncTiers(SYNC_TIER_LABELS.map((t, i) => ({ id: t.id, label: t.label, status: tiers[i] ?? daily })));
         const tuple: SyncStatusTuple = [autoStatus, daily, hourly, costOpt];
         const errorMsg = extractSyncError(tuple);
         if (errorMsg !== null) {
@@ -347,7 +355,34 @@ function useSyncPolling(
     return () => { cancelled = true; clearInterval(timer); };
   }, [api, setupCheck, syncActivity]);
 
-  return { syncError, setSyncError, syncActivity, syncFilesRemaining };
+  return { syncError, setSyncError, syncActivity, syncFilesRemaining, syncTiers };
+}
+
+/** Poll publisher-side sharing status app-wide so the activity banner can show
+ *  on every view while sharing is on. Polls faster when sharing is active (to
+ *  keep the live throughput fresh) and backs off when it's off. */
+function useDataSharingPolling(api: CostApi, setupCheck: SetupCheck): {
+  sharingStatus: DataSharingStatus | null;
+  setSharingStatus: React.Dispatch<React.SetStateAction<DataSharingStatus | null>>;
+} {
+  const [sharingStatus, setSharingStatus] = useState<DataSharingStatus | null>(null);
+  const enabled = sharingStatus?.enabled === true;
+
+  useEffect(() => {
+    if (setupCheck.status !== 'ready') return undefined;
+    let cancelled = false;
+    async function tick(): Promise<void> {
+      try {
+        const status = await api.getDataSharingStatus();
+        if (!cancelled) setSharingStatus(status);
+      } catch { /* transient */ }
+    }
+    tick().catch(() => undefined);
+    const timer = setInterval(() => { tick().catch(() => undefined); }, enabled ? 2_000 : 10_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [api, setupCheck, enabled]);
+
+  return { sharingStatus, setSharingStatus };
 }
 
 const SPLASH_IMAGES = ['splash-1.png', 'splash-2.png', 'splash-3.png', 'splash-4.png', 'splash-5.png', 'splash-6.png', 'splash-7.png', 'splash-8.png', 'splash-9.png', 'splash-10.png'];
@@ -370,6 +405,14 @@ function shuffled<T>(arr: readonly T[]): T[] {
 function dimId(dim: Dimension): string {
   return 'field' in dim ? dim.name : tagDimColumn(dim);
 }
+
+// Upper bound on how long the splash waits for the in-memory cost_base to
+// build before prewarming dimensions. Gating prewarm on the base keeps its ~8
+// filter probes (and the first dashboard queries) off the slow raw-parquet
+// path, so they don't pile concurrent full scans onto the materialize. If the
+// base isn't ready by then we proceed anyway (probes fall back to raw parquet,
+// the prior behavior) rather than hang the splash.
+const BASE_READY_TIMEOUT_MS = 90_000;
 
 function defaultDateRange(): { start: string; end: string } {
   const end = new Date(Date.now() - DEFAULT_LAG_DAYS * 86_400_000);
@@ -433,6 +476,10 @@ function AppShell(): React.JSX.Element {
   const api = useCostApi();
   const confirmLeave = useConfirmLeave();
   const [view, setView] = useState<View>({ page: 'custom', viewId: OVERVIEW_SEED_VIEW.id });
+  // `settingsTab === null` ⇒ view mode; a tab id ⇒ setting mode (the full-canvas
+  // SettingsShell). Entering settings never touches `view`, so exiting just
+  // clears this and the user lands back exactly where they were.
+  const [settingsTab, setSettingsTab] = useState<SettingsTabId | null>(null);
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [isDark, setIsDark] = useState(true);
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
@@ -440,16 +487,21 @@ function AppShell(): React.JSX.Element {
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const [splashStep, setSplashStep] = useState('Connecting...');
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
-  const { syncError, setSyncError, syncActivity, syncFilesRemaining } = useSyncPolling(api, setupCheck);
+  const { syncError, setSyncError, syncActivity, syncFilesRemaining, syncTiers } = useSyncPolling(api, setupCheck);
+  const { sharingStatus, setSharingStatus } = useDataSharingPolling(api, setupCheck);
+  const [stoppingSharing, setStoppingSharing] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [clearingCache, setClearingCache] = useState(false);
   const [reloadConfirmOpen, setReloadConfirmOpen] = useState(false);
   const inFlightCount = useDebugBadge();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
+  const [rollupStatus, setRollupStatus] = useState<RollupStatus>({ state: 'idle' });
+  const [rollupEverReady, setRollupEverReady] = useState(false);
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
-  const [sharingDialog, setSharingDialog] = useState<'share' | 'import' | null>(null);
   const [appVersion, setAppVersion] = useState('');
+  const [devBranch, setDevBranch] = useState<string | null>(null);
+  const [branchPr, setBranchPr] = useState<BranchPrInfo | null>(null);
   const memoryMB = useMemoryMB();
   const autoOpenRef = useMemo(() => ({ current: false }), []);
   const initialViewSetRef = useRef(false);
@@ -473,8 +525,32 @@ function AppShell(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
+    globalThis.costgoblinDebug.getGitBranch().then(setDevBranch).catch(() => undefined);
+    // Resolved separately (a gh subprocess, ~0.5s) so the branch label never
+    // waits on the network — it upgrades to the PR title + link if/when a PR
+    // is found.
+    globalThis.costgoblinDebug.getBranchPr().then(setBranchPr).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
     return globalThis.costgoblinUpdate.onStatusChanged(setUpdateStatus);
   }, []);
+
+  useEffect(() => {
+    // Pull the current state on mount (a re-roll may already be running before
+    // the renderer subscribes), then track transitions via the push channel.
+    const apply = (status: RollupStatus): void => {
+      setRollupStatus(status);
+      if (status.state === 'ready') setRollupEverReady(true);
+    };
+    globalThis.costgoblinRollup.getStatus().then(apply).catch(() => undefined);
+    return globalThis.costgoblinRollup.onStatusChanged(apply);
+  }, []);
+
+  // A re-roll = recomputing an existing rollup (after a sync or dimensions
+  // change). Gating on "ever ready" keeps the first cold build — where widgets
+  // already show their own loaders — from flashing the "Updating…" badge.
+  const reRolling = rollupStatus.state === 'computing' && rollupEverReady;
 
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
@@ -501,8 +577,15 @@ function AppShell(): React.JSX.Element {
         return;
       }
 
-      await prewarmDimensions(api, setSplashStep);
+      setSplashStep('Preparing cost data...');
+      await api.awaitMaterializedBase(BASE_READY_TIMEOUT_MS);
+      // Reveal the app as soon as the in-memory base is ready. The dimension
+      // filter-value prewarm previously blocked the splash here for ~13s (~8
+      // concurrent probes). Run it in the background instead: with cost_base
+      // ready those probes hit the in-memory table, and filter dropdowns also
+      // load fast on demand — so there's no reason to hold the splash for them.
       setSetupCheck({ status: 'ready' });
+      void prewarmDimensions(api, () => undefined);
     }
     initialize().catch(() => undefined);
   }, [api]);
@@ -592,51 +675,87 @@ function AppShell(): React.JSX.Element {
       });
   }
 
-  useEffect(() => {
+  const checkMissingPeriods = useCallback(async (): Promise<void> => {
     if (setupCheck.status !== 'ready') return;
-    Promise.all([api.getDataInventory(), api.getConfig()]).then(([inv, config]) => {
+    try {
+      const [inv, config] = await Promise.all([api.getDataInventory(), api.getConfig()]);
       const retentionDays = config.providers[0]?.sync.daily.retentionDays ?? 365;
       const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
       const cutoffPeriod = `${String(cutoff.getFullYear())}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
       const missing = inv.periods.filter(p => p.localStatus === 'missing' && p.period >= cutoffPeriod).length;
       setMissingPeriods(missing);
       setSyncError(null);
-    }).catch((err: unknown) => {
-      // Most common cause is expired AWS credentials — surface the
-      // message on the Sync nav indicator. Swallowed silently before,
-      // which left the user on a screen that looked fine while sync
-      // was completely broken.
-      const message = err instanceof Error ? err.message : String(err);
-      setSyncError(message);
-    });
-  }, [api, view, setupCheck, setSyncError]);
+    } catch (err: unknown) {
+      // Most common cause is expired AWS credentials — surface the message on
+      // the sync indicator. Swallowed silently before, which left the user on a
+      // screen that looked fine while sync was completely broken.
+      setSyncError(err instanceof Error ? err.message : String(err));
+    }
+  }, [api, setupCheck, setSyncError]);
+
+  // Re-check on view / settings-tab change (leaving the Data & Sync tab after a
+  // download must refresh the missing-periods badge) and on demand from the
+  // sync popover's recheck button.
+  useEffect(() => { void checkMissingPeriods(); }, [checkMissingPeriods, view, settingsTab]);
 
   function handleNavClick(id: string) {
-    const alreadyActive = view.page === 'custom' ? view.viewId === id : view.page === id;
+    const inSettings = settingsTab !== null;
+    const alreadyActive = !inSettings && (view.page === 'custom' ? view.viewId === id : view.page === id);
     if (alreadyActive) return;
     confirmLeave(() => {
       api.cancelPendingQueries().catch(() => undefined);
+      setSettingsTab(null);
       switch (id) {
         case 'trends': setView({ page: 'trends' }); break;
         case 'missing-tags': setView({ page: 'missing-tags' }); break;
         case 'savings': setView({ page: 'savings' }); break;
         case 'explorer': setView({ page: 'explorer' }); break;
-        case 'cost-scope': setView({ page: 'cost-scope' }); break;
-        case 'dimensions': setView({ page: 'dimensions' }); break;
-        case 'views-editor': setView({ page: 'views-editor' }); break;
-        case 'sync': setView({ page: 'sync' }); break;
-        case 'mcp': setView({ page: 'mcp' }); break;
         default:
           // Anything else is a custom view id (every left-nav entry that
-          // isn't one of the well-known static pages above).
+          // isn't one of the well-known static analysis pages above).
           setView({ page: 'custom', viewId: id });
       }
     });
   }
 
+  function enterSettings(tab: SettingsTabId) {
+    if (settingsTab === tab) return;
+    confirmLeave(() => {
+      api.cancelPendingQueries().catch(() => undefined);
+      setSettingsTab(tab);
+    });
+  }
+
+  function exitSettings() {
+    confirmLeave(() => {
+      api.cancelPendingQueries().catch(() => undefined);
+      setSettingsTab(null);
+    });
+  }
+
+  function toggleSettings() {
+    // The gear carries the app-wide sync/update badge, so opening it always
+    // lands on Data & Sync — the activity that badge is inviting a click for.
+    if (settingsTab !== null) exitSettings();
+    else enterSettings('data-sync');
+  }
+
+  // Single entry point for the command palette: routes settings tabs and
+  // global actions, falling through to ordinary view navigation.
+  function handleCommand(id: string) {
+    if (id === 'action:reload') { setReloadConfirmOpen(true); return; }
+    if (id.startsWith('settings:')) {
+      const tab = id.slice('settings:'.length);
+      if (isSettingsTabId(tab)) enterSettings(tab);
+      return;
+    }
+    handleNavClick(id);
+  }
+
   function handleEntityClick(entity: string, dimension: string) {
     confirmLeave(() => {
       api.cancelPendingQueries().catch(() => undefined);
+      setSettingsTab(null);
       const firstId = viewsConfig?.views[0]?.id ?? OVERVIEW_SEED_VIEW.id;
       const initialFilter: FilterMap = { [asDimensionId(dimension)]: [asTagValue(entity)] };
       setView({ page: 'custom', viewId: firstId, initialFilter });
@@ -645,7 +764,7 @@ function AppShell(): React.JSX.Element {
 
   function handleSetupComplete() {
     setSetupCheck({ status: 'ready' });
-    setView({ page: 'sync' });
+    setSettingsTab('data-sync');
   }
 
   const views = viewsConfig ?? FALLBACK_VIEWS;
@@ -655,7 +774,8 @@ function AppShell(): React.JSX.Element {
   const paletteItems: NavItem[] = useMemo(() => [
     ...customNav.map(n => ({ id: n.id, label: n.name, group: 'Dashboards' })),
     ...ANALYTICAL_NAV.map(n => ({ id: n.id, label: n.label, group: 'Analysis' })),
-    ...SETTINGS_NAV.map(n => ({ id: n.id, label: n.label, group: 'Settings' })),
+    ...SETTINGS_TABS.map(t => ({ id: `settings:${t.id}`, label: t.label, group: 'Settings', keywords: [...t.keywords] })),
+    { id: 'action:reload', label: 'Reload data', group: 'Actions', keywords: ['refresh', 'clear cache'] },
   ], [customNav]);
 
   if (setupCheck.status === 'checking') {
@@ -667,16 +787,12 @@ function AppShell(): React.JSX.Element {
   }
 
   function activeNavId(): string | null {
+    if (settingsTab !== null) return null;
     if (view.page === 'custom') return view.viewId;
     if (view.page === 'trends') return 'trends';
     if (view.page === 'missing-tags') return 'missing-tags';
     if (view.page === 'savings') return 'savings';
     if (view.page === 'explorer') return 'explorer';
-    if (view.page === 'cost-scope') return 'cost-scope';
-    if (view.page === 'dimensions') return 'dimensions';
-    if (view.page === 'views-editor') return 'views-editor';
-    if (view.page === 'sync') return 'sync';
-    if (view.page === 'mcp') return 'mcp';
     return null;
   }
   const active = activeNavId();
@@ -685,9 +801,68 @@ function AppShell(): React.JSX.Element {
     return views.views.find(v => v.id === id) ?? null;
   }
 
+  function handleStopSharing(): void {
+    setStoppingSharing(true);
+    api.disableDataSharing()
+      .then(result => { if (result.status === 'ok') setSharingStatus(result.sharing); })
+      .catch(() => undefined)
+      .finally(() => { setStoppingSharing(false); });
+  }
+
+  // Render the active settings tab's content. Each config view is mounted lazily
+  // (only while its tab is active), so opening Settings doesn't fan out every
+  // page's self-fetch at once and view mode no longer pays for their polling.
+  function renderSettingsTab(): React.JSX.Element | null {
+    switch (settingsTab) {
+      case 'general':
+        return (
+          <GeneralTab
+            isDark={isDark}
+            onToggleTheme={handleToggleTheme}
+            palette={palette}
+            onTogglePalette={handleTogglePalette}
+            dashboards={customNav.map(c => ({ id: c.id, name: c.name }))}
+            defaultViewId={defaultViewId}
+            onSetDefaultView={handleSetDefaultView}
+            appVersion={appVersion}
+            updateStatus={updateStatus}
+            onCheckForUpdates={handleCheckForUpdates}
+            onShowReleaseNotes={() => { setReleaseNotesOpen(true); }}
+          />
+        );
+      case 'data-sync':
+        return <DataManagement />;
+      case 'cost-scope':
+        return <CostScopeView />;
+      case 'dimensions':
+        return <DimensionsView />;
+      case 'dashboards':
+        return <ViewsEditor onConfigPersisted={setViewsConfig} />;
+      case 'share':
+        return <ShareTab />;
+      case 'import':
+        return (
+          <ImportTab
+            onApplied={() => {
+              // The whole org config just changed under the renderer — a full
+              // reload re-runs the boot path (setup check, views, dimensions
+              // prewarm) so nothing serves stale state.
+              window.location.reload();
+            }}
+          />
+        );
+      case 'ai-assistant':
+        return <McpView />;
+      case 'performance':
+        return <PerformanceTab />;
+      case null:
+        return null;
+    }
+  }
+
   return (
     <PaletteProvider palette={palette}>
-      <CommandPalette items={paletteItems} onNavigate={handleNavClick} />
+      <CommandPalette items={paletteItems} onNavigate={handleCommand} />
       <div className="min-h-screen bg-bg-primary text-text-primary">
         <SyncAnnouncer
           syncError={syncError}
@@ -697,7 +872,12 @@ function AppShell(): React.JSX.Element {
         />
         {/* Title bar + nav */}
         <div ref={headerRef} className="sticky top-0 z-50 bg-bg-primary/80 backdrop-blur-sm border-b border-border [-webkit-app-region:drag]">
+        {sharingStatus?.enabled === true && (
+          <SharingActiveBanner status={sharingStatus} onStop={handleStopSharing} stopping={stoppingSharing} />
+        )}
         <nav className="grid grid-cols-[1fr_auto_1fr] items-center px-4 pt-7 pb-2">
+          {settingsTab === null ? (
+          <div className="flex items-center gap-3 min-w-0">
           <nav className="flex items-center gap-1" aria-label="Dashboards and analysis">
             {(() => {
               const isActiveDefault = view.page === 'custom' && view.viewId === defaultViewId;
@@ -748,10 +928,43 @@ function AppShell(): React.JSX.Element {
               );
             })}
           </nav>
+          </div>
+          ) : (
+            <div className="flex items-center gap-2 [-webkit-app-region:no-drag]">
+              <button
+                type="button"
+                onClick={exitSettings}
+                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary"
+                aria-label="Done, return to dashboards"
+              >
+                <ArrowLeft size={16} />Done
+              </button>
+              <span className="text-sm font-medium text-text-primary">Settings</span>
+            </div>
+          )}
           <div className="flex flex-col items-center justify-center px-4">
             <span className="text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
             <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
-              {appVersion !== '' && <span>v{appVersion}</span>}
+              {branchPr !== null
+                ? (
+                  <a
+                    href={branchPr.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 max-w-[320px] font-medium text-accent hover:underline [-webkit-app-region:no-drag]"
+                    title={`#${String(branchPr.number)} ${branchPr.title} — open on GitHub`}
+                  >
+                    <GitPullRequest size={10} className="shrink-0" />
+                    <span className="truncate">#{branchPr.number} {branchPr.title}</span>
+                  </a>
+                )
+                : devBranch !== null
+                  ? (
+                    <span className="flex items-center gap-1 font-medium text-accent" title="Running from this git branch">
+                      <GitBranch size={10} />{devBranch}
+                    </span>
+                  )
+                  : appVersion !== '' && <span>v{appVersion}</span>}
               {isDev && memoryMB > 0 && <span>{formatMemory(memoryMB)}</span>}
             </div>
           </div>
@@ -791,76 +1004,44 @@ function AppShell(): React.JSX.Element {
             >
               <RotateCw size={16} className={clearingCache ? 'animate-spin' : undefined} />
             </button>
+            <SyncStatusButton
+              activity={syncActivity}
+              error={syncError}
+              filesRemaining={syncFilesRemaining}
+              missingPeriods={missingPeriods}
+              tiers={syncTiers}
+              inSettingsData={settingsTab === 'data-sync'}
+              onManageData={() => { enterSettings('data-sync'); }}
+              onRecheck={checkMissingPeriods}
+            />
+            <RollupStatusButton status={rollupStatus} />
             {(() => {
-              const showError = syncError !== null;
-              const showActive = !showError && syncActivity !== 'idle';
-              const showMissing = !showError && syncActivity === 'idle' && missingPeriods > 0 && view.page !== 'sync';
+              // Sync/missing/error now live on the dedicated sync icon; the gear is
+              // the Settings entry point and carries only the update dot.
+              const showUpdate = hasUpdateIndicator(updateStatus);
+              const inSettings = settingsTab !== null;
+              const title = showUpdate ? 'Update available' : 'Settings';
               return (
                 <button
                   type="button"
-                  onClick={() => { handleNavClick('sync'); }}
+                  onClick={toggleSettings}
                   className={[
-                    'relative px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-2',
-                    active === 'sync'
+                    'relative rounded-md p-1.5 transition-colors',
+                    inSettings
                       ? 'bg-bg-tertiary text-text-primary'
-                      : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50',
-                    showError ? 'ring-1 ring-negative/60' : '',
-                    showActive ? 'animate-sync-blink' : '',
+                      : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary',
                   ].join(' ')}
-                  title={syncError === null ? undefined : `Sync error — ${syncError}`}
-                  aria-current={active === 'sync' ? 'page' : undefined}
-                  aria-label="Sync"
+                  aria-label="Settings"
+                  aria-expanded={inSettings}
+                  title={title}
                 >
-                  {showError && (
-                    <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-negative animate-pulse" aria-hidden="true" />
-                  )}
-                  {showActive && syncActivity === 'downloading' && (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="7 10 12 15 17 10" />
-                      <line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                  )}
-                  {showActive && syncActivity === 'syncing' && (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 animate-spin">
-                      <polyline points="23 4 23 10 17 10" />
-                      <polyline points="1 20 1 14 7 14" />
-                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
-                      <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14" />
-                    </svg>
-                  )}
-                  Sync
-                  {showError && (
-                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-negative px-1 text-[10px] font-bold text-white">
-                      !
-                    </span>
-                  )}
-                  {showActive && syncFilesRemaining > 0 && (
-                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">
-                      {String(syncFilesRemaining)}
-                    </span>
-                  )}
-                  {showMissing && (
-                    <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-bold text-bg-primary">
-                      {String(missingPeriods)}
-                    </span>
+                  <Settings size={16} className={inSettings ? 'text-accent' : undefined} />
+                  {showUpdate && (
+                    <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
                   )}
                 </button>
               );
             })()}
-            <OptionsMenu
-              isDark={isDark}
-              onToggleTheme={handleToggleTheme}
-              palette={palette}
-              onTogglePalette={handleTogglePalette}
-              activeNavId={active}
-              onNavigate={handleNavClick}
-              updateStatus={updateStatus}
-              onShowReleaseNotes={() => { setReleaseNotesOpen(true); }}
-              onCheckForUpdates={handleCheckForUpdates}
-              onShareConfig={() => { setSharingDialog('share'); }}
-              onImportConfig={() => { setSharingDialog('import'); }}
-            />
           </nav>
         </nav>
       </div>
@@ -868,73 +1049,51 @@ function AppShell(): React.JSX.Element {
       {/* View content — wrapped in a keyed container so "clear cache"
           forces every mounted view to remount and refetch. */}
       <div key={`refresh-${String(refreshNonce)}`}>
-        {view.page === 'custom' && viewsReady && (() => {
-          const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
-          return (
-            <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
-              <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} />
+        {settingsTab === null ? (
+          <>
+            {view.page === 'custom' && viewsReady && (() => {
+              const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
+              return (
+                <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
+                  <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} reRolling={reRolling} />
+                </Profiler>
+              );
+            })()}
+            {view.page === 'trends' && (
+              <Profiler id="trends" onRender={onPerfRender}>
+                <CostTrends onEntityClick={handleEntityClick} />
+              </Profiler>
+            )}
+            {view.page === 'missing-tags' && (
+              <Profiler id="missing-tags" onRender={onPerfRender}>
+                <MissingTags onEntityClick={handleEntityClick} />
+              </Profiler>
+            )}
+            {view.page === 'savings' && (
+              <Profiler id="savings" onRender={onPerfRender}>
+                <Savings />
+              </Profiler>
+            )}
+            {view.page === 'explorer' && (
+              <Profiler id="explorer" onRender={onPerfRender}>
+                <ExplorerView />
+              </Profiler>
+            )}
+          </>
+        ) : (
+          <SettingsShell
+            tabs={SETTINGS_TABS}
+            activeTab={settingsTab}
+            onTabChange={enterSettings}
+            topOffset={headerHeight}
+          >
+            <Profiler id={`settings:${settingsTab}`} onRender={onPerfRender}>
+              {renderSettingsTab()}
             </Profiler>
-          );
-        })()}
-        {view.page === 'trends' && (
-          <Profiler id="trends" onRender={onPerfRender}>
-            <CostTrends onEntityClick={handleEntityClick} />
-          </Profiler>
+          </SettingsShell>
         )}
-        {view.page === 'missing-tags' && (
-          <Profiler id="missing-tags" onRender={onPerfRender}>
-            <MissingTags onEntityClick={handleEntityClick} />
-          </Profiler>
-        )}
-        {view.page === 'savings' && (
-          <Profiler id="savings" onRender={onPerfRender}>
-            <Savings />
-          </Profiler>
-        )}
-        {view.page === 'explorer' && (
-          <Profiler id="explorer" onRender={onPerfRender}>
-            <ExplorerView />
-          </Profiler>
-        )}
-        {view.page === 'cost-scope' && (
-          <Profiler id="cost-scope" onRender={onPerfRender}>
-            <CostScopeView />
-          </Profiler>
-        )}
-        {view.page === 'dimensions' && (
-          <Profiler id="dimensions" onRender={onPerfRender}>
-            <DimensionsView />
-          </Profiler>
-        )}
-        {view.page === 'views-editor' && (
-          <Profiler id="views-editor" onRender={onPerfRender}>
-            <ViewsEditor onConfigPersisted={setViewsConfig} />
-          </Profiler>
-        )}
-        {view.page === 'mcp' && (
-          <McpView />
-        )}
-        <div className={view.page === 'sync' ? '' : 'hidden'}>
-          <Profiler id="sync" onRender={onPerfRender}>
-            <DataManagement />
-          </Profiler>
-        </div>
       </div>
       {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} topOffset={headerHeight} />}
-      {sharingDialog === 'share' && (
-        <ShareConfigDialog onClose={() => { setSharingDialog(null); }} />
-      )}
-      {sharingDialog === 'import' && (
-        <ImportConfigDialog
-          onClose={() => { setSharingDialog(null); }}
-          onApplied={() => {
-            // The whole org config just changed under the renderer —
-            // a full reload re-runs the boot path (setup check, views,
-            // dimensions prewarm) so nothing serves stale state.
-            window.location.reload();
-          }}
-        />
-      )}
       <ReleaseNotesModal open={releaseNotesOpen} onOpenChange={setReleaseNotesOpen} status={updateStatus} />
       <Dialog open={reloadConfirmOpen} onOpenChange={setReloadConfirmOpen}>
         <DialogContent>

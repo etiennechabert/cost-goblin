@@ -21,11 +21,14 @@ import type {
   AccountMappingStatus,
   SavingsPreferences,
   UIPreferences,
+  PerformanceInfo,
+  PerformanceSettings,
   DimensionsConfig,
   NormalizationRule,
   OrgSyncResult,
   OrgSyncProgress,
   AutoSyncStatus,
+  PruneResult,
   ViewsConfig,
   CostScopeCapabilities,
   CostScopeConfig,
@@ -44,9 +47,17 @@ import type {
   ApplyConfigBundleResult,
   CheckConfigBeaconParams,
   CheckConfigBeaconResult,
+  DataSharingResult,
+  DataSharingStatus,
   ExportConfigBundleResult,
   PreviewConfigBundleResult,
+  PreviewSharedSourceResult,
   PublishConfigBundleResult,
+  PullSharedSourceResult,
+  SharedPullProgress,
+  SharedPullSelection,
+  SharedSourceInfo,
+  RollupGrainEstimate,
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
@@ -218,6 +229,9 @@ const api: CostApi = {
   saveDimensionsConfig(config: DimensionsConfig): Promise<void> {
     return invoke<undefined>('dimensions:save-config', config).then(() => undefined);
   },
+  estimateRollupGrain(candidate: DimensionsConfig): Promise<RollupGrainEstimate> {
+    return invoke<RollupGrainEstimate>('dimensions:estimate-rollup-grain', candidate);
+  },
   getAutoSyncEnabled(): Promise<boolean> {
     return invoke<boolean>('auto-sync:get-enabled');
   },
@@ -232,6 +246,15 @@ const api: CostApi = {
   },
   getAutoSyncStatus(): Promise<AutoSyncStatus> {
     return invoke<AutoSyncStatus>('auto-sync:get-status');
+  },
+  getAutoPruneEnabled(): Promise<boolean> {
+    return invoke<boolean>('auto-prune:get-enabled');
+  },
+  setAutoPruneEnabled(enabled: boolean): Promise<void> {
+    return invoke<undefined>('auto-prune:set-enabled', enabled).then(() => undefined);
+  },
+  pruneNow(): Promise<PruneResult> {
+    return invoke<PruneResult>('data:prune');
   },
   getViewsConfig(): Promise<ViewsConfig> {
     return invoke<ViewsConfig>('views:get-config');
@@ -305,6 +328,39 @@ const api: CostApi = {
   checkConfigBeacon(params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult> {
     return invoke<CheckConfigBeaconResult>('sharing:check-beacon', params);
   },
+  getDataSharingStatus(): Promise<DataSharingStatus> {
+    return invoke<DataSharingStatus>('data-sharing:status');
+  },
+  enableDataSharing(): Promise<DataSharingResult> {
+    return invoke<DataSharingResult>('data-sharing:enable');
+  },
+  disableDataSharing(): Promise<DataSharingResult> {
+    return invoke<DataSharingResult>('data-sharing:disable');
+  },
+  rotateDataSharingKey(): Promise<DataSharingResult> {
+    return invoke<DataSharingResult>('data-sharing:rotate');
+  },
+  previewSharedSource(key: string): Promise<PreviewSharedSourceResult> {
+    return invoke<PreviewSharedSourceResult>('data-sharing:preview-source', key);
+  },
+  previewStoredSource(): Promise<PreviewSharedSourceResult> {
+    return invoke<PreviewSharedSourceResult>('data-sharing:preview-stored-source');
+  },
+  addSharedSource(key: string, selection?: SharedPullSelection): Promise<PullSharedSourceResult> {
+    return invoke<PullSharedSourceResult>('data-sharing:add-source', key, selection);
+  },
+  getSharedSource(): Promise<SharedSourceInfo | null> {
+    return invoke<SharedSourceInfo | null>('data-sharing:get-source');
+  },
+  getSharedPullProgress(): Promise<SharedPullProgress> {
+    return invoke<SharedPullProgress>('data-sharing:pull-progress');
+  },
+  refreshSharedSource(selection?: SharedPullSelection): Promise<PullSharedSourceResult> {
+    return invoke<PullSharedSourceResult>('data-sharing:refresh-source', selection);
+  },
+  removeSharedSource(): Promise<void> {
+    return invoke<undefined>('data-sharing:remove-source').then(() => undefined);
+  },
   cancelPendingQueries(): Promise<void> {
     void invoke<undefined>('debug:clear-completed');
     // Use ipcRenderer directly — cancel calls shouldn't inflate the in-flight badge
@@ -312,6 +368,15 @@ const api: CostApi = {
   },
   clearAllCaches(): Promise<void> {
     return invoke<undefined>('cache:clear-all').then(() => undefined);
+  },
+  getPerformanceInfo(): Promise<PerformanceInfo> {
+    return invoke<PerformanceInfo>('perf:get-info');
+  },
+  setPerformanceSettings(perf: PerformanceSettings): Promise<void> {
+    return invoke<undefined>('perf:set', perf).then(() => undefined);
+  },
+  awaitMaterializedBase(timeoutMs: number): Promise<boolean> {
+    return invoke<boolean>('costs:await-base', timeoutMs);
   },
   getMcpServerRunning(): Promise<boolean> {
     return invoke<boolean>('mcp:get-running');
@@ -349,10 +414,26 @@ contextBridge.exposeInMainWorld('costgoblinUpdate', {
   },
 });
 
+contextBridge.exposeInMainWorld('costgoblinRollup', {
+  getStatus(): Promise<unknown> {
+    return invoke<unknown>('rollup:get-status');
+  },
+  getStats(): Promise<unknown> {
+    return invoke<unknown>('rollup:get-stats');
+  },
+  onStatusChanged(callback: (status: unknown) => void): () => void {
+    const handler = (_event: unknown, status: unknown): void => { callback(status); };
+    ipcRenderer.on('rollup:status-changed', handler);
+    return () => { ipcRenderer.removeListener('rollup:status-changed', handler); };
+  },
+});
+
 contextBridge.exposeInMainWorld('costgoblinDebug', {
   isDev(): boolean { return process.env['NODE_ENV'] === 'development'; },
   isE2E(): boolean { return process.env['COSTGOBLIN_E2E'] === '1'; },
   getMemoryMB(): Promise<number> { return invoke<number>('debug:get-memory-mb'); },
+  getGitBranch(): Promise<string | null> { return invoke<string | null>('debug:get-git-branch'); },
+  getBranchPr(): Promise<BranchPrInfo | null> { return invoke<BranchPrInfo | null>('debug:get-branch-pr'); },
   isSandboxed(): boolean { return process.sandboxed; },
   getInFlightCount(): number { return inFlightCount; },
   getQueryLog(): Promise<DebugQueryLogEntry[]> {

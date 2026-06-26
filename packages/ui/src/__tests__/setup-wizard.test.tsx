@@ -146,7 +146,20 @@ describe('SetupWizard', () => {
 
   it('opens the import dialog from the welcome step', async () => {
     const { user } = renderWizard();
-    await user.click(screen.getByText(/Have a configuration file from a teammate/));
+    await user.click(screen.getByText('Import from a teammate'));
     await waitFor(() => { expect(screen.getByText('Choose bundle file…')).toBeDefined(); });
+  });
+
+  it('returns to the welcome screen from a wizard step via the close button', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByText('Get Started'));
+    await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Back to welcome'));
+    await waitFor(() => { expect(screen.getByText('Import from a teammate')).toBeDefined(); });
+  });
+
+  it('does not show the close button on the welcome step', () => {
+    renderWizard();
+    expect(screen.queryByLabelText('Back to welcome')).toBeNull();
   });
 });

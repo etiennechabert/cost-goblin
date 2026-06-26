@@ -11,9 +11,11 @@ import { registerAutoSyncHandlers } from './handlers/auto-sync.js';
 import { registerViewsHandlers } from './handlers/views.js';
 import { registerCostScopeHandlers } from './handlers/cost-scope.js';
 import { registerSharingHandlers } from './handlers/sharing.js';
+import { registerDataSharingHandlers } from './handlers/data-sharing.js';
 import { registerExplorerHandlers } from './handlers/explorer.js';
 import { registerDebugHandlers } from './handlers/debug.js';
 import { registerMcpHandlers } from './handlers/mcp-handler.js';
+import { registerRollupHandlers } from './handlers/rollup.js';
 
 export type { AppContext, IpcContext } from './handlers/context.js';
 
@@ -31,9 +33,11 @@ export function registerIpcHandlers(ctx: IpcContext): AppContext {
   registerViewsHandlers(app);
   registerCostScopeHandlers(app);
   registerSharingHandlers(app);
+  registerDataSharingHandlers(app);
   registerExplorerHandlers(app);
   registerDebugHandlers(app);
   registerMcpHandlers(app);
+  registerRollupHandlers(app);
 
   app.warmupBase();
 

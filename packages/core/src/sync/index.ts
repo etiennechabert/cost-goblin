@@ -20,12 +20,20 @@ export {
   type BillingPeriod,
   type DataInventory,
   getDataInventory,
+  getLocalDataInventory,
 } from './data-inventory.js';
 
 export {
   type SelectiveSyncOptions,
   syncSelectedFiles,
 } from './selective-sync.js';
+
+export {
+  type TierRetention,
+  retentionCutoffPeriod,
+  periodsOutsideRetention,
+  configuredTierRetentions,
+} from './retention.js';
 
 export {
   type ExpectedDataType,

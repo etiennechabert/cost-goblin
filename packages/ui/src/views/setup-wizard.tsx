@@ -39,19 +39,25 @@ function WelcomeStep({ onNext, onImport }: Readonly<{ onNext: () => void; onImpo
       <p className="text-text-muted text-sm max-w-md">
         Connect your AWS billing data to get started. CostGoblin syncs CUR (Cost and Usage Report) data from S3, stores it locally, and lets you slice costs by any dimension.
       </p>
-      <Button
-        onClick={onNext}
-        className="bg-accent hover:bg-accent-hover text-white px-8"
-      >
-        Get Started
-      </Button>
-      <button
-        type="button"
-        onClick={onImport}
-        className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2"
-      >
-        Have a configuration file from a teammate? Import it
-      </button>
+      <div className="flex w-full max-w-xs flex-col gap-3">
+        <Button
+          onClick={onNext}
+          className="bg-accent hover:bg-accent-hover text-white"
+        >
+          Get Started
+        </Button>
+        <div className="flex items-center gap-3 text-xs text-text-muted">
+          <span className="h-px flex-1 bg-border" />
+          or
+          <span className="h-px flex-1 bg-border" />
+        </div>
+        <Button variant="outline" onClick={onImport}>
+          Import from a teammate
+        </Button>
+        <p className="text-text-muted text-xs">
+          Pull config and data from a teammate — a bundle file, from S3, or straight over your network. No AWS access needed.
+        </p>
+      </div>
       <p className="text-text-muted text-xs">
         {"Don't have a CUR yet? "}
         <a
@@ -517,6 +523,11 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     goToProfileStep();
   }
 
+  function handleReturnToWelcome() {
+    setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
+    setWizard({ step: 'welcome' });
+  }
+
   function handleProfileSelect(profile: string) {
     startBucketStep(profile, 'daily');
   }
@@ -645,7 +656,17 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
 
   return (
     <div className="min-h-screen bg-bg-primary flex items-center justify-center p-4">
-      <Card className="w-full max-w-lg border-border bg-bg-secondary">
+      <Card className="relative w-full max-w-lg border-border bg-bg-secondary">
+        {!isSourceMode && wizard.step !== 'welcome' && (
+          <button
+            type="button"
+            onClick={handleReturnToWelcome}
+            className="absolute right-3 top-3 z-10 rounded-md px-2 py-1 text-sm text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors"
+            aria-label="Back to welcome"
+          >
+            ✕
+          </button>
+        )}
         <CardContent className="p-8">
           <div className="flex justify-center mb-6">
             <img src="goblin.png" alt="CostGoblin" className="h-16 w-auto" />

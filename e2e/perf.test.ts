@@ -2,6 +2,7 @@ import { test, expect, _electron, type ElectronApplication, type Page } from '@p
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
+import { clickNavButton } from './helpers.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
@@ -695,7 +696,7 @@ test.describe('Performance Benchmarks', () => {
   test.describe('Views Editor', () => {
     test('baseline', async () => {
       await measure(page, 'Views Editor → baseline', async () => {
-        await page.getByRole('button', { name: 'Views' }).click();
+        await clickNavButton(page, 'Views');
         await expect(page.getByRole('heading', { name: 'Views', exact: true })).toBeVisible();
         await waitForQuerySettle(page);
       });
@@ -708,7 +709,7 @@ test.describe('Performance Benchmarks', () => {
   test.describe('Data Management', () => {
     test('baseline', async () => {
       await measure(page, 'Data Management → baseline', async () => {
-        await page.getByRole('button', { name: 'Sync' }).click();
+        await clickNavButton(page, 'Sync');
         await expect(page.getByRole('heading', { name: 'Data Management' })).toBeVisible();
         await waitForQuerySettle(page);
       });
@@ -845,9 +846,9 @@ test.describe('Performance Benchmarks', () => {
   test.describe('Navigation stress', () => {
     test('rapid switching', async () => {
       await measure(page, 'Rapid navigation (9 switches)', async () => {
-        const views = ['Cost Overview', 'Trends', 'Tags', 'Savings', 'Explorer', 'Cost Scope', 'Dimensions', 'Sync', 'Cost Overview'];
+        const views = ['Cost Overview', 'Trends', 'Tags', 'Findings', 'Explorer', 'Cost Scope', 'Dimensions', 'Sync', 'Cost Overview'];
         for (const v of views) {
-          await page.getByRole('button', { name: v, exact: true }).first().click();
+          await clickNavButton(page, v);
         }
         await waitForQuerySettle(page);
       });

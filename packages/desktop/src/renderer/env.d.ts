@@ -1,4 +1,4 @@
-import type { CostApi, UpdateApi } from '@costgoblin/core/browser';
+import type { CostApi, UpdateApi, RollupApi } from '@costgoblin/core/browser';
 
 declare global {
   interface DebugQueryLogEntry {
@@ -15,10 +15,18 @@ declare global {
     readonly origin: string | null;
   }
 
+  interface BranchPrInfo {
+    readonly url: string;
+    readonly title: string;
+    readonly number: number;
+  }
+
   interface DebugApi {
     isDev(): boolean;
     isE2E(): boolean;
     getMemoryMB(): Promise<number>;
+    getGitBranch(): Promise<string | null>;
+    getBranchPr(): Promise<BranchPrInfo | null>;
     getInFlightCount(): number;
     getQueryLog(): Promise<DebugQueryLogEntry[]>;
     runExplain(queryId: number): Promise<string>;
@@ -50,12 +58,14 @@ declare global {
   interface Window {
     costgoblin: CostApi;
     costgoblinUpdate: UpdateApi;
+    costgoblinRollup: RollupApi;
     costgoblinDebug: DebugApi;
     costgoblinPerf?: PerfApi;
     __PERF_REACT__?: RenderTiming[];
   }
   var costgoblin: CostApi;
   var costgoblinUpdate: UpdateApi;
+  var costgoblinRollup: RollupApi;
   var costgoblinDebug: DebugApi;
   var costgoblinPerf: PerfApi | undefined;
   var __PERF_REACT__: RenderTiming[] | undefined;

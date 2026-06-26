@@ -73,6 +73,27 @@ describe('validateDimensions', () => {
       tags: [{ tagName: 'x', label: 'X', normalize: 'invalid' }],
     })).toThrow(ConfigValidationError);
   });
+
+  it('accepts a legitimately-named built-in column', () => {
+    expect(() => validateDimensions({
+      builtIn: [{ name: 'svc', label: 'Service', field: 'product_service_name', displayField: 'account_name' }],
+      tags: [],
+    })).not.toThrow();
+  });
+
+  it('rejects a built-in field that smuggles SQL injection', () => {
+    expect(() => validateDimensions({
+      builtIn: [{ name: 'x', label: 'X', field: 'account_id) OR 1=1 --' }],
+      tags: [],
+    })).toThrow(ConfigValidationError);
+  });
+
+  it('rejects a built-in displayField that smuggles SQL injection', () => {
+    expect(() => validateDimensions({
+      builtIn: [{ name: 'x', label: 'X', field: 'account_id', displayField: 'name; DROP TABLE cost_base' }],
+      tags: [],
+    })).toThrow(ConfigValidationError);
+  });
 });
 
 describe('validateOrgTree', () => {

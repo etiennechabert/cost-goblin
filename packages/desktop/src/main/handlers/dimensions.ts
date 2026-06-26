@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, applyStripPatterns, dimensionsConfigToYaml, generateAliasSuggestions, isStringRecord } from '@costgoblin/core';
-import type { AliasSuggestion, DimensionsConfig, NormalizationRule } from '@costgoblin/core';
+import { applyNormalizationRule, applyStripPatterns, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns } from '@costgoblin/core';
+import type { AliasSuggestion, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { toNum, toStr } from './query-utils.js';
 
@@ -77,7 +77,7 @@ function filterUncoveredSuggestions(
 }
 
 export function registerDimensionsHandlers(app: AppContext): void {
-  const { ctx, getConfig, getDimensions, getRegionMap, invalidateDimensions, runQuery } = app;
+  const { ctx, getConfig, getDimensions, getQueryDimensions, getCostScope, getAvailableColumns, getOrgAccountsPath, getAccountReverseMap, getRegionMap, invalidateDimensions, rollupStore, runQuery } = app;
 
   ipcMain.handle('dimensions:discover-tags', async (): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> => {
     const config = await getConfig();
@@ -177,27 +177,25 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const latest = dirs.at(-1);
     if (latest === undefined) return { values: [], distinctCount: 0, period: '' };
 
-    const source = `read_parquet('${ctx.dataDir}/aws/raw/${latest}/*.parquet')`;
-    // The raw CUR columns aren't aliased — we need to map the UI-facing field
-    // back to the underlying column.
-    const RAW_COL: Record<string, string> = {
-      account_id: 'line_item_usage_account_id',
-      account_name: 'line_item_usage_account_name',
-      region: 'product_region_code',
-      service: 'product_servicecode',
-      service_family: 'product_product_family',
-      line_item_type: 'line_item_line_item_type',
-      operation: 'line_item_operation',
-      usage_type: 'line_item_usage_type',
-    };
-    const col = RAW_COL[field];
-    if (col === undefined) return { values: [], distinctCount: 0, period: '' };
+    // Query through buildSource — the same projection the Explorer and rollup
+    // use — so the preview sees aliased columns AND the marketplace
+    // re-attribution (Bedrock etc.), instead of raw product_servicecode. `field`
+    // is already a buildSource output alias (validated against ALLOWED above).
+    const period = latest.replace(/^daily-/, '');
+    const costScope = await getCostScope().catch(() => undefined);
+    const availableColumns = await getAvailableColumns('daily');
+    const orgAccountsPath = await getOrgAccountsPath();
+    const source = buildSource({
+      dataDir: ctx.dataDir, tier: 'daily', dimensions: await getQueryDimensions(),
+      orgAccountsPath, periods: [period], costMetric: 'unblended', availableColumns,
+      marketplaceAttribution: costScope?.marketplaceAttribution,
+    });
 
-    const distinctSql = `SELECT COUNT(DISTINCT ${col}) AS n FROM ${source} WHERE ${col} IS NOT NULL AND ${col} != ''`;
+    const distinctSql = `SELECT COUNT(DISTINCT ${field}) AS n FROM ${source} WHERE ${field} IS NOT NULL AND ${field} != ''`;
     const valuesSql = `
-      SELECT ${col} AS val, SUM(line_item_unblended_cost) AS cost
+      SELECT ${field} AS val, SUM(cost) AS cost
       FROM ${source}
-      WHERE ${col} IS NOT NULL AND ${col} != ''
+      WHERE ${field} IS NOT NULL AND ${field} != ''
       GROUP BY val
       ORDER BY cost DESC
       LIMIT 200
@@ -231,6 +229,53 @@ export function registerDimensionsHandlers(app: AppContext): void {
 
   ipcMain.handle('dimensions:save-config', async (_event, config: DimensionsConfig): Promise<void> => {
     await saveDimensionsConfig(config);
+  });
+
+  // Grain cost/benefit estimator (rollup design §8). Probes the most recent
+  // daily month for the candidate grain's cardinality and turns it into
+  // directional size/compression/rebuild bands + per-dim raw-only flags. Cheap
+  // (one scan, ~150–550 ms) so the UI can call it live as dims are toggled.
+  ipcMain.handle('dimensions:estimate-rollup-grain', async (_event, candidate: DimensionsConfig): Promise<RollupGrainEstimate> => {
+    const current = rollupStore.getStats();
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
+    let dirs: string[] = [];
+    try {
+      dirs = (await fs.readdir(rawDir)).filter(d => /^daily-\d{4}-(0[1-9]|1[0-2])$/.test(d)).sort((a, b) => a.localeCompare(b));
+    } catch { /* no data */ }
+    const latest = dirs.at(-1);
+    if (latest === undefined) return emptyRollupEstimate(current);
+
+    const period = latest.replace(/^daily-/, '');
+    const grainColumns = rollupGrainColumns(candidate);
+    const cardCols = grainColumns.filter(c => c !== 'usage_date');
+
+    const costScope = await getCostScope().catch(() => undefined);
+    const availableColumns = await getAvailableColumns('daily');
+    const orgAccountsPath = await getOrgAccountsPath();
+    const accountReverseMap = await getAccountReverseMap();
+    const sql = buildGrainProbeQuery(period, grainColumns, {
+      dataDir: ctx.dataDir, dimensions: candidate, orgAccountsPath, accountReverseMap, costScope, availableColumns,
+    });
+    const rows = await runQuery(sql);
+    const row = rows[0];
+    if (row === undefined) return { ...emptyRollupEstimate(current), probePeriod: period, months: dirs.length };
+
+    // Actual on-disk size of the raw daily Parquet across the window — the
+    // baseline the UI shows the estimated rollup against.
+    const rawBytes = await sumParquetBytes(fs, path, rawDir, dirs);
+
+    const dimCardinalities = cardCols.map((column, i) => ({ column, cardinality: toNum(row[`card_${String(i)}`]) }));
+    return computeRollupEstimate({
+      probePeriod: period,
+      months: dirs.length,
+      probeGrainRows: toNum(row['grain_rows']),
+      probeLineItems: toNum(row['line_items']),
+      rawBytes,
+      current,
+      dimCardinalities,
+    });
   });
 
   ipcMain.handle('dimensions:get-alias-suggestions', async (_event, tagName: string): Promise<AliasSuggestion[]> => {
@@ -305,6 +350,28 @@ export function registerDimensionsHandlers(app: AppContext): void {
     ];
     await saveDimensionsConfig({ ...config, tags: updatedTags });
   });
+}
+
+/** Sum the on-disk size of every `*.parquet` across the given daily raw dirs —
+ *  the raw dataset size the rollup estimate is compared against. Best-effort:
+ *  unreadable dirs/files are skipped. */
+async function sumParquetBytes(
+  fs: typeof import('node:fs/promises'),
+  path: typeof import('node:path'),
+  rawDir: string,
+  dirs: readonly string[],
+): Promise<number> {
+  let total = 0;
+  for (const dir of dirs) {
+    const full = path.join(rawDir, dir);
+    let files: string[] = [];
+    try { files = await fs.readdir(full); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.parquet')) continue;
+      try { total += (await fs.stat(path.join(full, f))).size; } catch { /* skip */ }
+    }
+  }
+  return total;
 }
 
 interface DismissedEntry {

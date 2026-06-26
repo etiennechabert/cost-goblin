@@ -1,8 +1,8 @@
 import { parentPort } from 'node:worker_threads';
-import { cpus, totalmem } from 'node:os';
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
+import { computeDefaultMemoryGB, computeDefaultThreads, computeQueryPoolSize } from './duckdb-tuning.js';
 
 interface DuckDBModule {
   DuckDBInstance: { create: () => Promise<DuckDBInstance> };
@@ -13,16 +13,23 @@ async function createDuckDB(): Promise<DuckDBInstance> {
   return duckdb.DuckDBInstance.create();
 }
 
-function computeMemoryLimitGB(): number {
-  const totalGB = totalmem() / (1024 * 1024 * 1024);
-  return Math.min(4, Math.max(1, Math.round(totalGB * 0.5)));
+interface DuckDBSettings {
+  readonly tempDir?: string | undefined;
+  readonly memoryGB?: number | undefined;
+  readonly threads?: number | undefined;
 }
 
-async function configureDuckDB(conn: DuckDBConnection, tempDir: string | undefined): Promise<void> {
-  const memGB = computeMemoryLimitGB();
+async function configureDuckDB(conn: DuckDBConnection, settings: DuckDBSettings): Promise<void> {
+  // memory_limit and threads are instance-global in DuckDB, so applying them on
+  // any connection affects the whole instance. Callers pass the resolved
+  // effective values (user override or computed default); absent fields fall
+  // back to the computed defaults so a partial message never under-provisions.
+  const memGB = settings.memoryGB ?? computeDefaultMemoryGB();
+  const threads = settings.threads ?? computeDefaultThreads();
   await conn.run(`SET memory_limit = '${String(memGB)}GB'`);
-  if (tempDir !== undefined) {
-    await conn.run(`SET temp_directory = '${tempDir.replaceAll("'", "''")}'`);
+  await conn.run(`SET threads = ${String(threads)}`);
+  if (settings.tempDir !== undefined) {
+    await conn.run(`SET temp_directory = '${settings.tempDir.replaceAll("'", "''")}'`);
   }
 }
 
@@ -41,8 +48,9 @@ function hasProps(msg: unknown): msg is Record<string, unknown> {
   return typeof msg === 'object' && msg !== null;
 }
 
-function isQueryRequest(msg: unknown): msg is { kind: 'query'; id: number; sql: string } {
+function isQueryRequest(msg: unknown): msg is { kind: 'query'; id: number; sql: string; fresh?: boolean } {
   if (!hasProps(msg)) return false;
+  if (msg['fresh'] !== undefined && typeof msg['fresh'] !== 'boolean') return false;
   return msg['kind'] === 'query' && typeof msg['id'] === 'number' && typeof msg['sql'] === 'string';
 }
 
@@ -56,9 +64,13 @@ function isCancelRequest(msg: unknown): msg is { kind: 'cancel-pending' } {
   return msg['kind'] === 'cancel-pending';
 }
 
-function isConfigureRequest(msg: unknown): msg is { kind: 'configure'; tempDir: string } {
+function isConfigureRequest(msg: unknown): msg is { kind: 'configure'; tempDir?: string; memoryGB?: number; threads?: number } {
   if (!hasProps(msg)) return false;
-  return msg['kind'] === 'configure' && typeof msg['tempDir'] === 'string';
+  if (msg['kind'] !== 'configure') return false;
+  if (msg['tempDir'] !== undefined && typeof msg['tempDir'] !== 'string') return false;
+  if (msg['memoryGB'] !== undefined && typeof msg['memoryGB'] !== 'number') return false;
+  if (msg['threads'] !== undefined && typeof msg['threads'] !== 'number') return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,15 +166,6 @@ async function fetchAllRowsPrepared(
   }
 }
 
-function parsePoolSize(): number {
-  const raw = process.env['COSTGOBLIN_DUCKDB_POOL_SIZE'];
-  if (raw !== undefined) {
-    const n = Number.parseInt(raw, 10);
-    if (Number.isFinite(n) && n >= 1 && n <= 32) return n;
-  }
-  return Math.min(Math.max(4, cpus().length), 16);
-}
-
 let poolPromise: Promise<ResourcePool<DuckDBConnection>> | null = null;
 let dbInstance: DuckDBInstance | null = null;
 
@@ -173,11 +176,20 @@ function getPool(): Promise<ResourcePool<DuckDBConnection>> {
     // connection. The temp_directory is set later via the 'configure'
     // message once the main thread knows the userData path.
     const initConn = await db.connect();
-    await configureDuckDB(initConn, undefined);
+    await configureDuckDB(initConn, {});
     initConn.disconnectSync();
-    return createResourcePool(parsePoolSize(), () => db.connect());
+    return createResourcePool(computeQueryPoolSize(), () => db.connect());
   });
   return poolPromise;
+}
+
+/** The initialized DuckDB instance, for callers that need a connection outside
+ *  the pool (a `fresh` query). Awaits getPool() so the instance exists and its
+ *  memory/thread limits are applied before the first fresh connect. */
+async function getInstance(): Promise<DuckDBInstance> {
+  await getPool();
+  if (dbInstance === null) throw new Error('DuckDB instance not initialized');
+  return dbInstance;
 }
 
 function send(msg: WorkerResponse): void {
@@ -194,13 +206,19 @@ void (async () => {
   }
 })();
 
-async function handleRequest(req: { kind: 'query'; id: number; sql: string }): Promise<void> {
+async function handleRequest(req: { kind: 'query'; id: number; sql: string; fresh?: boolean }): Promise<void> {
   // Check before acquiring a pool connection
   if (cancelledIds.has(req.id)) {
     cancelledIds.delete(req.id);
     send({ kind: 'error', id: req.id, message: 'Query cancelled' });
     return;
   }
+
+  // A `fresh` query runs on a brand-new connection that is disconnected (never
+  // returned to the pool) afterward. Rollup partition builds use this: a
+  // long-lived connection's buffer/cache accumulates across builds and per-month
+  // time climbs (≈2s → 10s); a fresh connection per build keeps each ≈2s.
+  const fresh = req.fresh === true;
 
   // pool/conn are hoisted and the acquisition runs inside the try so that a
   // getPool() or pool.acquire() rejection is turned into an error response by
@@ -210,8 +228,12 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
   let conn: DuckDBConnection | undefined;
   try {
     queuedIds.add(req.id);
-    pool = await getPool();
-    conn = await pool.acquire();
+    if (fresh) {
+      conn = await (await getInstance()).connect();
+    } else {
+      pool = await getPool();
+      conn = await pool.acquire();
+    }
     queuedIds.delete(req.id);
     send({ kind: 'started', id: req.id });
 
@@ -242,7 +264,10 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string }): P
     queuedIds.delete(req.id);
     runningIds.delete(req.id);
     runningConns.delete(req.id);
-    if (pool !== undefined && conn !== undefined) pool.release(conn);
+    if (conn !== undefined) {
+      if (fresh) conn.disconnectSync();
+      else if (pool !== undefined) pool.release(conn);
+    }
   }
 }
 
@@ -310,11 +335,11 @@ function handleCancelPending(): void {
   }
 }
 
-async function handleConfigure(req: { kind: 'configure'; tempDir: string }): Promise<void> {
+async function handleConfigure(req: { kind: 'configure'; tempDir?: string; memoryGB?: number; threads?: number }): Promise<void> {
   if (dbInstance === null) return;
   const conn = await dbInstance.connect();
   try {
-    await conn.run(`SET temp_directory = '${req.tempDir.replaceAll("'", "''")}'`);
+    await configureDuckDB(conn, { tempDir: req.tempDir, memoryGB: req.memoryGB, threads: req.threads });
   } finally {
     conn.disconnectSync();
   }

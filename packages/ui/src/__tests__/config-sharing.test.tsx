@@ -1,9 +1,11 @@
 import { asBucketPath } from '@costgoblin/core/browser';
+import type { DataSharingStatus } from '@costgoblin/core/browser';
 import { render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog } from '../components/config-sharing.js';
-import { MOCK_BUNDLE_SUMMARY, MockCostApi } from '../__fixtures__/mock-api.js';
+import { SharingActiveBanner } from '../components/sharing-active-banner.js';
+import { MOCK_BUNDLE_SUMMARY, MOCK_SHARED_SOURCE, MockCostApi } from '../__fixtures__/mock-api.js';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 
 /** Config whose sync profile differs from the alphabetical-first AWS
@@ -310,5 +312,101 @@ describe('ImportConfigDialog', () => {
       expect(screen.getByText('disk full')).toBeDefined();
     });
     expect(screen.getByText('Apply configuration')).toBeDefined();
+  });
+});
+
+describe('SharingActiveBanner', () => {
+  const activeStatus: DataSharingStatus = {
+    enabled: true,
+    sharingKey: 'CGSHARE1-active',
+    label: 'My Mac · CostGoblin',
+    port: 53178,
+    hosts: ['192.168.1.5'],
+    fingerprint: 'ABCD-1234',
+    lastServedAt: '2026-06-21T09:00:00.000Z',
+    filesServed: 12,
+    lastPeer: '192.168.1.9',
+    bytesServed: 5_000_000,
+    connectedClients: 2,
+    bytesPerSecond: 1_500_000,
+  };
+
+  it('shows connected peers, files + bytes served, and throughput', () => {
+    render(<SharingActiveBanner status={activeStatus} onStop={() => undefined} />);
+    expect(screen.getByText('2 connected')).toBeDefined();
+    expect(screen.getByText('12 files · 4.8 MB')).toBeDefined();
+    expect(screen.getByText('1.4 MB/s')).toBeDefined();
+  });
+
+  it('hides throughput when idle and fires onStop', async () => {
+    const onStop = vi.fn();
+    const user = userEvent.setup();
+    render(<SharingActiveBanner status={{ ...activeStatus, connectedClients: 0, bytesPerSecond: 0 }} onStop={onStop} />);
+    expect(screen.queryByText(/\/s$/)).toBeNull();
+    await user.click(screen.getByText('Stop sharing'));
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+});
+
+describe('ImportConfigDialog — pull from a teammate', () => {
+  it('reconnects to a saved teammate, lets you deselect a month, and refreshes with that selection', async () => {
+    const api = new MockCostApi();
+    api.getSharedSource = () => Promise.resolve(MOCK_SHARED_SOURCE);
+    const refreshSpy = vi.spyOn(api, 'refreshSharedSource');
+    const user = userEvent.setup();
+    renderWithApi(api, <ImportConfigDialog onClose={() => undefined} onApplied={() => undefined} />);
+
+    await user.click(await screen.findByText('Reconnect'));
+    // Preview resolves to the month picker.
+    await waitFor(() => { expect(screen.getByText('2026-04')).toBeDefined(); });
+    // Drop one month from the (all-selected-by-default) set, then pull.
+    await user.click(screen.getByText('2026-04'));
+    await user.click(screen.getByText('Pull'));
+
+    await waitFor(() => { expect(refreshSpy).toHaveBeenCalled(); });
+    const selection = refreshSpy.mock.calls[0]?.[0];
+    expect(selection?.periods).not.toContain('2026-04');
+    expect(selection?.periods).toContain('2026-05');
+    expect(selection?.sources).toContain('daily');
+  });
+
+  it('previews a pasted key and pulls the chosen sources', async () => {
+    const api = new MockCostApi();
+    const addSpy = vi.spyOn(api, 'addSharedSource');
+    const user = userEvent.setup();
+    renderWithApi(api, <ImportConfigDialog onClose={() => undefined} onApplied={() => undefined} />);
+
+    await user.type(screen.getByLabelText('Sharing key from a teammate'), 'CGSHARE1-teammate');
+    await user.click(screen.getByText('Continue'));
+    await waitFor(() => { expect(screen.getByText('Daily CUR')).toBeDefined(); });
+    // Drop the cost-optimization tier, keep the rest, and pull.
+    await user.click(screen.getByText('Cost optimization'));
+    await user.click(screen.getByText('Pull'));
+
+    await waitFor(() => { expect(addSpy).toHaveBeenCalled(); });
+    const [key, selection] = addSpy.mock.calls[0] ?? [];
+    expect(key).toBe('CGSHARE1-teammate');
+    expect(selection?.sources).toContain('daily');
+    expect(selection?.sources).not.toContain('cost-optimization');
+  });
+
+  it('locks the dialog shut while a pull is in flight', async () => {
+    const api = new MockCostApi();
+    // Hold the pull pending so the blocking state is observable.
+    api.addSharedSource = () => new Promise<never>(() => { /* never resolves */ });
+    const user = userEvent.setup();
+    renderWithApi(api, <ImportConfigDialog onClose={() => undefined} onApplied={() => undefined} />);
+
+    await user.type(screen.getByLabelText('Sharing key from a teammate'), 'CGSHARE1-teammate');
+    await user.click(screen.getByText('Continue'));
+    await waitFor(() => { expect(screen.getByText('Pull')).toBeDefined(); });
+    await user.click(screen.getByText('Pull'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Keep this window open until the transfer finishes.')).toBeDefined();
+    });
+    // No close affordance and the other import options are hidden.
+    expect(screen.queryByLabelText('Close')).toBeNull();
+    expect(screen.queryByText('Choose bundle file…')).toBeNull();
   });
 });

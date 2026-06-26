@@ -1,5 +1,6 @@
-import { startTransition, useEffect, useState } from 'react';
+import { startTransition, useEffect, useRef, useState } from 'react';
 import type { QueryState } from '@costgoblin/core/browser';
+import { useWidgetSlot } from './widget-load-scheduler.js';
 
 const MAX_CANCEL_RETRIES = 2;
 
@@ -37,6 +38,13 @@ export function useQuery<T>(
   const [state, setState] = useState<QueryState<T>>({ status: 'idle' });
   const [retryCount, setRetryCount] = useState(0);
 
+  // Report query completion to the surrounding dashboard widget slot (if any)
+  // so the load scheduler can free a concurrency slot for the next widget.
+  // Null outside a LazyWidgetSlot, so this is a no-op for non-widget queries.
+  const slot = useWidgetSlot();
+  const slotRef = useRef(slot);
+  slotRef.current = slot;
+
   useEffect(() => {
     const cancelled = { current: false };
 
@@ -57,7 +65,8 @@ export function useQuery<T>(
           // above stays urgent so spinners still appear instantly.
           startTransition(() => { handleFetchSuccess(data, cancelled, setState); });
         })
-        .catch((err: unknown) => { handleFetchError(err, cancelled, retryCount, setState, setRetryCount); });
+        .catch((err: unknown) => { handleFetchError(err, cancelled, retryCount, setState, setRetryCount); })
+        .finally(() => { slotRef.current?.onSettled(); });
     }, delay);
 
     return () => {

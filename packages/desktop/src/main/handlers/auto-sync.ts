@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { getDataInventory } from '@costgoblin/core';
+import { getDataInventory, getLocalDataInventory, extractPeriod } from '@costgoblin/core';
 import type { AutoSyncStatus } from '@costgoblin/core';
 import {
   startAutoSync,
@@ -7,9 +7,12 @@ import {
   getAutoSyncStatus,
   readAutoSyncEnabled,
   writeAutoSyncEnabled,
+  readAutoPruneEnabled,
+  writeAutoPruneEnabled,
   readAutoSyncIntervalMinutes,
   writeAutoSyncIntervalMinutes,
 } from '../auto-sync.js';
+import { deleteLocalPeriodFiles, cascadeRollupForDeletedMonth, changedRollupMonths } from './sync.js';
 import { type AppContext, prefsPath } from './context.js';
 import type { SyncClient } from '../sync-client.js';
 
@@ -90,6 +93,12 @@ export function registerAutoSyncHandlers(app: AppContext): void {
             },
           });
           state.syncStatuses[syncId] = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
+          // Keep the rollup in step with the raw the auto-sync just pulled,
+          // mirroring the manual data:sync-periods path.
+          if (result.filesDownloaded > 0) {
+            if (syncId === 'daily') app.maintainRollup(changedRollupMonths(files.map(f => extractPeriod(f.key))));
+            else app.warmupBase();
+          }
           return result;
         } catch (err: unknown) {
           const error = err instanceof Error ? err : new Error(String(err));
@@ -97,7 +106,36 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           throw err;
         }
       },
+      getLocalPeriods: async (tier: string) => {
+        const inv = await getLocalDataInventory(ctx.dataDir, asTier(tier));
+        return [...inv.local.periods];
+      },
+      deletePeriods: async (periods: readonly string[], tier: string) => {
+        for (const period of periods) {
+          await deleteLocalPeriodFiles(ctx.dataDir, period, asTier(tier));
+        }
+        // Cascade the auto-prune into the rollup, once per unique daily month.
+        if (asTier(tier) === 'daily') {
+          for (const month of changedRollupMonths(periods)) {
+            await cascadeRollupForDeletedMonth(app, month);
+          }
+        }
+      },
     };
+  }
+
+  // The scheduler is shared by auto-sync and auto-prune: it must run whenever
+  // EITHER is enabled, and stop only when both are off. Re-read both flags and
+  // (re)start or stop accordingly. Call after any toggle/interval change.
+  async function refreshScheduler(path: string): Promise<void> {
+    const syncOn = await readAutoSyncEnabled(path);
+    const pruneOn = await readAutoPruneEnabled(path);
+    if (syncOn || pruneOn) {
+      const minutes = await readAutoSyncIntervalMinutes(path);
+      startAutoSync(buildAutoSyncDeps(ctx.syncClient), minutes);
+    } else {
+      stopAutoSync();
+    }
   }
 
   ipcMain.handle('auto-sync:get-enabled', async (): Promise<boolean> => {
@@ -105,14 +143,19 @@ export function registerAutoSyncHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('auto-sync:set-enabled', async (_event, enabled: boolean): Promise<void> => {
-    const prefsPath = await autoSyncPrefsPath();
-    await writeAutoSyncEnabled(prefsPath, enabled);
-    if (enabled) {
-      const minutes = await readAutoSyncIntervalMinutes(prefsPath);
-      startAutoSync(buildAutoSyncDeps(ctx.syncClient), minutes);
-    } else {
-      stopAutoSync();
-    }
+    const path = await autoSyncPrefsPath();
+    await writeAutoSyncEnabled(path, enabled);
+    await refreshScheduler(path);
+  });
+
+  ipcMain.handle('auto-prune:get-enabled', async (): Promise<boolean> => {
+    return readAutoPruneEnabled(await autoSyncPrefsPath());
+  });
+
+  ipcMain.handle('auto-prune:set-enabled', async (_event, enabled: boolean): Promise<void> => {
+    const path = await autoSyncPrefsPath();
+    await writeAutoPruneEnabled(path, enabled);
+    await refreshScheduler(path);
   });
 
   ipcMain.handle('auto-sync:get-interval', async (): Promise<number> => {
@@ -120,28 +163,18 @@ export function registerAutoSyncHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('auto-sync:set-interval', async (_event, minutes: number): Promise<void> => {
-    const prefsPath = await autoSyncPrefsPath();
-    await writeAutoSyncIntervalMinutes(prefsPath, minutes);
-    // Only restart the scheduler if auto-sync is actually on — otherwise
-    // saving the preference is enough; the new interval will be picked up
-    // next time the user flips the toggle.
-    const enabled = await readAutoSyncEnabled(prefsPath);
-    if (enabled) {
-      const stored = await readAutoSyncIntervalMinutes(prefsPath);
-      startAutoSync(buildAutoSyncDeps(ctx.syncClient), stored);
-    }
+    const path = await autoSyncPrefsPath();
+    await writeAutoSyncIntervalMinutes(path, minutes);
+    // Restart only if the scheduler is actually running (auto-sync or
+    // auto-prune on) so the new interval takes effect; otherwise saving the
+    // preference is enough and it'll be picked up next time one is enabled.
+    await refreshScheduler(path);
   });
 
   ipcMain.handle('auto-sync:get-status', (): AutoSyncStatus => {
     return getAutoSyncStatus();
   });
 
-  // Start auto-sync on launch if previously enabled
-  void autoSyncPrefsPath().then(async (prefsPath) => {
-    const enabled = await readAutoSyncEnabled(prefsPath);
-    if (enabled) {
-      const minutes = await readAutoSyncIntervalMinutes(prefsPath);
-      startAutoSync(buildAutoSyncDeps(ctx.syncClient), minutes);
-    }
-  }).catch(() => { /* auto-sync startup failure is non-fatal */ });
+  // Start the scheduler on launch if auto-sync or auto-prune was left enabled
+  void autoSyncPrefsPath().then(refreshScheduler).catch(() => { /* auto-sync startup failure is non-fatal */ });
 }

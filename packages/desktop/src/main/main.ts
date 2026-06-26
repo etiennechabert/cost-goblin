@@ -1,16 +1,17 @@
 import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { Session } from 'node:inspector';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { logger } from '@costgoblin/core';
+import { logger, parseJsonObject, isStringRecord } from '@costgoblin/core';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import type { LogEntry } from '@costgoblin/core';
 import { createDuckDBClient } from './duckdb-client.js';
 import type { DuckDBClient } from './duckdb-client.js';
+import { resolveMemoryGB, resolveThreads } from './duckdb-tuning.js';
 import { createSyncClient } from './sync-client.js';
 import type { SyncClient } from './sync-client.js';
 import { registerIpcHandlers } from './ipc.js';
@@ -146,6 +147,27 @@ function installCSP(): void {
   });
 }
 
+/** Read the user's DuckDB performance overrides from ui-preferences.json (the
+ *  same file the UI writes). Returns nulls ("auto") when absent/unreadable so
+ *  the worker falls back to the computed defaults. */
+function readPerformanceOverrides(userDataPath: string): { memoryLimitGB: number | null; threads: number | null } {
+  try {
+    const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
+    const prefsFile = join(dirname(dataDir), 'ui-preferences.json');
+    const parsed = parseJsonObject(readFileSync(prefsFile, 'utf-8'));
+    const perf = parsed?.['performance'];
+    if (isStringRecord(perf)) {
+      return {
+        memoryLimitGB: typeof perf['memoryLimitGB'] === 'number' ? perf['memoryLimitGB'] : null,
+        threads: typeof perf['threads'] === 'number' ? perf['threads'] : null,
+      };
+    }
+  } catch {
+    // no prefs file yet, or unreadable — use computed defaults
+  }
+  return { memoryLimitGB: null, threads: null };
+}
+
 async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<void> {
   const userDataPath = app.getPath('userData');
   const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
@@ -230,7 +252,12 @@ async function main(): Promise<void> {
   const userDataPath = app.getPath('userData');
   const tempDir = join(userDataPath, 'temp');
   mkdirSync(tempDir, { recursive: true });
-  db.configure(tempDir);
+  const perf = readPerformanceOverrides(userDataPath);
+  db.configure({
+    tempDir,
+    memoryGB: resolveMemoryGB(perf.memoryLimitGB),
+    threads: resolveThreads(perf.threads),
+  });
 
   logger.info('DuckDB worker ready');
 

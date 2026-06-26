@@ -65,7 +65,7 @@ export type {
 } from './query.js';
 export { DEFAULT_PLACEHOLDER_PATTERNS } from './query.js';
 
-export type { Dimension, CostApi, DataInventoryResult, DataTier, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateLogEntry, UpdateStage, UpdateStatus, UpdateApi } from './api.js';
+export type { Dimension, CostApi, DataInventoryResult, DataTier, PruneResult, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, PerformanceSettings, PerformanceInfo, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateLogEntry, UpdateStage, UpdateStatus, UpdateApi, RollupStatus, RollupApi, RollupStats } from './api.js';
 
 export type {
   WidgetSize,
@@ -83,6 +83,8 @@ export type {
   CostPerspective,
   CostScopeCapabilities,
   CostScopeConfig,
+  MarketplaceAttributionConfig,
+  MarketplaceAttributionRule,
   ExclusionRule,
   ExclusionCondition,
   CostScopeDailyRow,
@@ -101,11 +103,23 @@ export type {
   ConfigBundle,
   ConfigBundleSections,
   ConfigBundleSummary,
+  DataSharingResult,
+  DataSharingStatus,
   ExportConfigBundleResult,
   PreviewConfigBundleResult,
+  PreviewSharedSourceResult,
   PublishConfigBundleResult,
+  PullSharedSourceResult,
   SharedCostGoblinConfig,
+  SharedDataTier,
   SharedProviderConfig,
+  SharedPullPhase,
+  SharedPullProgress,
+  SharedPullSelection,
+  SharedSourceInfo,
+  SharedSourcePreview,
+  SharedSourceTier,
+  SharedSourceTierAvailability,
 } from './sharing.js';
 export { CONFIG_BUNDLE_KIND, CONFIG_BUNDLE_SCHEMA_VERSION, CONFIG_BEACON_KEY } from './sharing.js';
 

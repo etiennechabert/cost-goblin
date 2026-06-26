@@ -45,21 +45,16 @@ test.describe('Data Management', () => {
     await expect(page.getByText('S3 sync and local data inventory')).toBeVisible();
   });
 
-  test('shows action buttons: Auto-sync, Delete All, Open Folder, Refresh', async () => {
-    await expect(page.getByText('Auto-sync')).toBeVisible();
+  test('shows action buttons and the automatic schedule controls', async () => {
+    // One-off actions plus the auto-sync / auto-prune schedule, which lives
+    // here (not the top toolbar) since it automates these very controls.
+    await expect(page.getByRole('button', { name: /Prune/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Delete All Data' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Open Folder' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Refresh' })).toBeVisible();
-  });
-
-  test('auto-sync toggle clicks without crash', async () => {
-    // find the toggle — it's the rounded-full button near "Auto-sync" text
-    const toggle = page.locator('button.rounded-full').filter({ has: page.locator('span.rounded-full') });
-    const count = await toggle.count();
-    if (count > 0) {
-      await toggle.first().click();
-      await toggle.first().click();
-    }
+    await expect(page.getByText('Automatic schedule')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Toggle auto-sync' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Toggle auto-prune' })).toBeVisible();
   });
 
   test('org section is visible (either synced or prompt)', async () => {
@@ -326,7 +321,11 @@ test.describe('Views editor', () => {
 
   test('Export and Import buttons are present', async () => {
     await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Import', exact: true })).toBeVisible();
+    // The settings rail now has its own "Import" tab (a button carrying
+    // data-tab); scope to the editor toolbar's Import button, which has none.
+    await expect(
+      page.getByRole('button', { name: 'Import', exact: true }).and(page.locator('button:not([data-tab])')),
+    ).toBeVisible();
   });
 });
 

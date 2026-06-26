@@ -4,11 +4,12 @@ import { DEFAULT_PLACEHOLDER_PATTERNS } from '../types/query.js';
 import type { DimensionId } from '../types/branded.js';
 import { tagDimColumn } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
-import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
+import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule, MarketplaceAttributionConfig, MarketplaceAttributionRule } from '../types/cost-scope.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor, LIST_METRIC_LINE_ITEM_TYPES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
 import { assertDateString, assertHourString, SecurityError } from './identifier-validator.js';
+import { rollupGrainColumns } from '../rollup/grain.js';
 
 function assertFiniteNumber(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
@@ -337,6 +338,55 @@ export interface BuildSourceOptions {
    *  description, usage_amount, list_cost. Used by the materialized base
    *  to keep the in-memory table small. */
   readonly slim?: boolean | undefined;
+  /** Re-attributes empty-product_servicecode AWS Marketplace rows to a real
+   *  service (and, on the `list` metric, swaps the $0 list price for unblended
+   *  cost). Omitted/disabled → raw CUR attribution. */
+  readonly marketplaceAttribution?: MarketplaceAttributionConfig | undefined;
+}
+
+/** Active marketplace rules: only when enabled, dropping malformed entries. */
+function activeMarketplaceRules(
+  cfg: MarketplaceAttributionConfig | undefined,
+): readonly MarketplaceAttributionRule[] {
+  if (cfg === undefined || !cfg.enabled) return [];
+  return cfg.rules.filter(r => r.service.length > 0 && r.operations.length > 0);
+}
+
+/** SQL predicate matching any active rule's Marketplace rows (empty
+ *  product_servicecode + matching operation). Null when nothing is active. */
+function marketplaceMatchPredicate(
+  prefix: string,
+  rules: readonly MarketplaceAttributionRule[],
+): string | null {
+  if (rules.length === 0) return null;
+  const ops = [...new Set(rules.flatMap(r => r.operations))]
+    .map(o => `'${sqlEscapeString(o)}'`)
+    .join(', ');
+  return `COALESCE(${prefix}product_servicecode, '') = '' AND ${prefix}line_item_operation IN (${ops})`;
+}
+
+/** Wraps the base service expression in a CASE that rewrites each rule's
+ *  empty-servicecode Marketplace rows to its target service code. */
+function marketplaceServiceExpr(
+  prefix: string,
+  base: string,
+  rules: readonly MarketplaceAttributionRule[],
+): string {
+  if (rules.length === 0) return base;
+  const branches = rules.map(r => {
+    const ops = r.operations.map(o => `'${sqlEscapeString(o)}'`).join(', ');
+    return `WHEN COALESCE(${prefix}product_servicecode, '') = '' AND ${prefix}line_item_operation IN (${ops}) THEN '${sqlEscapeString(r.service)}'`;
+  });
+  return `CASE ${branches.join(' ')} ELSE ${base} END`;
+}
+
+/** Marketplace rows have a $0 public-on-demand price, so any expression keyed
+ *  on it (the `list` metric, the `list_cost` column) reports them as free.
+ *  Substitute unblended cost — the only real figure AWS gives these rows —
+ *  for matched rows. No-op when the predicate is null. */
+function marketplaceListFallback(prefix: string, base: string, matchPredicate: string | null): string {
+  if (matchPredicate === null) return base;
+  return `CASE WHEN ${matchPredicate} THEN COALESCE(${prefix}line_item_unblended_cost, 0) ELSE ${base} END`;
 }
 
 function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
@@ -353,11 +403,19 @@ function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
 }
 
 function buildParquetSource(dataDir: string, tier: string, periods: readonly string[] | undefined): string {
+  // union_by_name unifies columns by name across files, filling absent columns
+  // with NULL. Required because CUR schema drifts between months: older exports
+  // lack reservation_effective_cost / savings_plan_savings_plan_effective_cost
+  // while newer ones carry them. getAvailableColumns probes only the latest
+  // month, so the amortized expression references those columns; without
+  // union_by_name DuckDB throws a Binder Error on any read spanning a month
+  // that omits them. The now-NULL column makes amortizedExpr's COALESCE fall
+  // through to unblended for the old rows — the correct degradation.
   if (periods !== undefined && periods.length > 0) {
     const paths = periods.map(p => `'${dataDir}/aws/raw/${tier}-${p}/*.parquet'`).join(', ');
-    return `read_parquet([${paths}])`;
+    return `read_parquet([${paths}], union_by_name=true)`;
   }
-  return `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet')`;
+  return `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet', union_by_name=true)`;
 }
 
 function buildFromClause(
@@ -403,12 +461,33 @@ export function buildSource(opts: BuildSourceOptions): string {
     ? buildFromClause(parquetSource, dimensions, orgAccountsPath)
     : parquetSource;
   const tablePrefix = needsOrgJoin ? 'cur.' : '';
-  const costExpr = costExprFor(costMetric, tablePrefix, costPerspective, availableColumns);
 
+  // Marketplace re-attribution: matched rows get a real service code, and on
+  // the `list` metric their $0 public-on-demand price is replaced with
+  // unblended cost (see marketplaceListFallback).
+  const mktRules = activeMarketplaceRules(opts.marketplaceAttribution);
+  const mktMatch = marketplaceMatchPredicate(tablePrefix, mktRules);
+
+  const baseCostExpr = costExprFor(costMetric, tablePrefix, costPerspective, availableColumns);
+  const costExpr = costMetric === 'list'
+    ? marketplaceListFallback(tablePrefix, baseCostExpr, mktMatch)
+    : baseCostExpr;
+
+  const serviceExpr = marketplaceServiceExpr(
+    tablePrefix,
+    `COALESCE(${tablePrefix}product_servicecode, '')`,
+    mktRules,
+  );
+
+  const listCostExpr = marketplaceListFallback(
+    tablePrefix,
+    `COALESCE(${tablePrefix}pricing_public_on_demand_cost, 0)`,
+    mktMatch,
+  );
   const flexColumns = slim === true ? '' : `
       COALESCE(${tablePrefix}line_item_line_item_description, '') AS description,
       COALESCE(${tablePrefix}line_item_usage_amount, 0) AS usage_amount,
-      COALESCE(${tablePrefix}pricing_public_on_demand_cost, 0) AS list_cost,`;
+      ${listCostExpr} AS list_cost,`;
 
   // The `list` metric reports on-demand list price for usage that actually
   // happened. RI/SP fee rows (RIFee, SavingsPlanRecurringFee, etc.) have no
@@ -425,7 +504,7 @@ export function buildSource(opts: BuildSourceOptions): string {
       ${tablePrefix}line_item_usage_account_id AS account_id,
       COALESCE(${tablePrefix}line_item_usage_account_name, '') AS account_name,
       COALESCE(${tablePrefix}product_region_code, '') AS region,
-      COALESCE(${tablePrefix}product_servicecode, '') AS service,
+      ${serviceExpr} AS service,
       COALESCE(${tablePrefix}product_product_family, '') AS service_family,${flexColumns}
       COALESCE(${tablePrefix}line_item_resource_id, '') AS resource_id,
       ${costExpr} AS cost,
@@ -536,7 +615,7 @@ function setupQuery(
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const resolvedTier = effectiveTier(tier, params.dateRange);
-  const source = buildSource({ dataDir, tier: resolvedTier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, ...extraSourceOpts });
+  const source = buildSource({ dataDir, tier: resolvedTier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution, ...extraSourceOpts });
   return { qb, filterClauses, exclusionClauses, source, costMetric };
 }
 
@@ -633,7 +712,7 @@ export function buildTrendQuery(
     const previousPeriods = computePeriodsInRange({ start: prevStartIso, end: prevEndIso });
     const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
     const periods = availablePeriods === undefined ? required : required.filter(p => availablePeriods.includes(p));
-    source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective });
+    source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution });
   } else {
     source = materializedSource;
     exclusionClauses = [];
@@ -941,7 +1020,7 @@ export function buildMaterializeBaseQuery(
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(dateRange, availablePeriods);
-  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, includeRawTags: true, slim: true });
+  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution, includeRawTags: true, slim: true });
 
   assertDateString(dateRange.start);
   assertDateString(dateRange.end);
@@ -952,4 +1031,132 @@ export function buildMaterializeBaseQuery(
   ];
 
   return `CREATE OR REPLACE TABLE cost_base AS SELECT * FROM ${source} WHERE ${whereConditions.join(' AND ')}`;
+}
+
+/** First day of the month after `period` (YYYY-MM), as a YYYY-MM-DD upper bound
+ *  (exclusive) for that period's day range. */
+function periodUpperBound(period: string): string {
+  const y = Number(period.slice(0, 4));
+  const m = Number(period.slice(5, 7));
+  const year = m === 12 ? y + 1 : y;
+  const month = m === 12 ? 1 : m + 1;
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-01`;
+}
+
+/** Build the DDL that materializes ONE month's PRE-AGGREGATED rollup partition
+ *  to Parquet. Grain = usage_date + enabled dimension columns (see
+ *  `rollupGrainColumns`); measures = SUM(cost) + COUNT(*) AS line_items. The
+ *  active cost metric/perspective are baked into `cost`, exclusion rows are
+ *  dropped at build time, and ALL days are ingested (lagDays stays a query-time
+ *  filter). Dimension values are stored RAW — aliasing remains query-time.
+ *
+ *  `buildSource` runs over the FULL dimensions (so exclusion rules referencing
+ *  a disabled dim such as line_item_type still resolve); the GROUP BY is what
+ *  collapses non-grain columns away.
+ *
+ *  Like buildMaterializeBaseQuery this interpolates escaped literals (DuckDB
+ *  has no prepared DDL); `period` is validated and `outPath` is app-controlled
+ *  and quote-escaped. */
+export function buildRollupPartitionQuery(
+  period: string,
+  tier: string,
+  outPath: string,
+  opts: QueryContextOptions,
+): string {
+  if (!/^\d{4}-\d{2}$/.test(period)) {
+    throw new SecurityError(`Invalid rollup period "${period}" — expected YYYY-MM.`);
+  }
+  const { dataDir, dimensions, orgAccountsPath, accountReverseMap, costScope, availableColumns } = opts;
+  const grain = rollupGrainColumns(dimensions);
+  const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
+
+  const source = buildSource({
+    dataDir, tier, dimensions, orgAccountsPath, periods: [period],
+    costMetric, availableColumns, costPerspective,
+    marketplaceAttribution: costScope?.marketplaceAttribution,
+    includeRawTags: false, slim: true,
+  });
+
+  const exclusionClauses: string[] = [];
+  if (costScope !== undefined) {
+    for (const rule of costScope.rules) {
+      if (!rule.enabled) continue;
+      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
+      if (matchExpr === null) continue;
+      exclusionClauses.push(`NOT (${matchExpr})`);
+    }
+  }
+
+  const start = `${period}-01`;
+  const end = periodUpperBound(period);
+  assertDateString(start);
+  assertDateString(end);
+
+  const whereConditions = [`usage_date >= '${start}'`, `usage_date < '${end}'`, ...exclusionClauses];
+  const groupBy = grain.join(', ');
+  const select =
+    `SELECT ${groupBy}, CAST(SUM(cost) AS DOUBLE) AS cost, CAST(COUNT(*) AS BIGINT) AS line_items ` +
+    `FROM ${source} WHERE ${whereConditions.join(' AND ')} GROUP BY ${groupBy}`;
+  const escapedPath = outPath.replaceAll("'", "''");
+  return `COPY (${select}) TO '${escapedPath}' (FORMAT PARQUET)`;
+}
+
+/** Build the cardinality probe behind the grain cost/benefit estimator (rollup
+ *  design §8). Over ONE recent month it returns, in a single scan:
+ *   - `line_items`  — COUNT(*) (the rollup's raw input for that month),
+ *   - `grain_rows`  — `approx_count_distinct` of the candidate grain tuple
+ *      (≈ the rollup row count for that month), and
+ *   - `card_<i>`    — `approx_count_distinct` of each non-date grain column,
+ *      so the estimator can flag individual raw-only dims (e.g. resource_id).
+ *
+ *  `grainColumns` come from `rollupGrainColumns` over the candidate dimensions
+ *  (usage_date first) and are projected by `buildSource` — the same trusted set
+ *  `buildRollupPartitionQuery` interpolates. Exclusion rows are dropped so the
+ *  counts match what the rollup would actually store. `chr(31)` (unit separator)
+ *  joins the tuple so distinct values never collide across columns. */
+export function buildGrainProbeQuery(
+  period: string,
+  grainColumns: readonly string[],
+  opts: QueryContextOptions,
+): string {
+  if (!/^\d{4}-\d{2}$/.test(period)) {
+    throw new SecurityError(`Invalid probe period "${period}" — expected YYYY-MM.`);
+  }
+  const { dataDir, dimensions, orgAccountsPath, accountReverseMap, costScope, availableColumns } = opts;
+  const costMetric = costScope?.costMetric ?? 'unblended';
+  const costPerspective = costScope?.costPerspective ?? 'gross';
+
+  const source = buildSource({
+    dataDir, tier: 'daily', dimensions, orgAccountsPath, periods: [period],
+    costMetric, availableColumns, costPerspective,
+    marketplaceAttribution: costScope?.marketplaceAttribution,
+    includeRawTags: false, slim: true,
+  });
+
+  const exclusionClauses: string[] = [];
+  if (costScope !== undefined) {
+    for (const rule of costScope.rules) {
+      if (!rule.enabled) continue;
+      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
+      if (matchExpr === null) continue;
+      exclusionClauses.push(`NOT (${matchExpr})`);
+    }
+  }
+
+  const start = `${period}-01`;
+  const end = periodUpperBound(period);
+  assertDateString(start);
+  assertDateString(end);
+  const whereConditions = [`usage_date >= '${start}'`, `usage_date < '${end}'`, ...exclusionClauses];
+
+  const grainConcat = `concat_ws(chr(31), ${grainColumns.join(', ')})`;
+  const cardCols = grainColumns.filter(c => c !== 'usage_date');
+  const cardSelects = cardCols.map((c, i) => `CAST(approx_count_distinct(${c}) AS BIGINT) AS card_${String(i)}`);
+  const selects = [
+    `CAST(COUNT(*) AS BIGINT) AS line_items`,
+    `CAST(approx_count_distinct(${grainConcat}) AS BIGINT) AS grain_rows`,
+    ...cardSelects,
+  ];
+  return `SELECT ${selects.join(', ')} FROM ${source} WHERE ${whereConditions.join(' AND ')}`;
 }

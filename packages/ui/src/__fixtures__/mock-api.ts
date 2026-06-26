@@ -6,6 +6,7 @@ import {
   asEntityRef,
   type AccountMappingStatus,
   type CostApi,
+  type PerformanceInfo,
   type CostResult,
   type DailyCostsResult,
   type DataInventoryResult,
@@ -13,6 +14,7 @@ import {
   type EntityDetailResult,
   type MissingTagsResult,
   type OrgNode,
+  type PruneResult,
   type SavingsResult,
   type SyncStatus,
   type TrendResult,
@@ -30,11 +32,20 @@ import {
   type CheckConfigBeaconParams,
   type CheckConfigBeaconResult,
   type ConfigBundleSummary,
+  type DataSharingResult,
+  type DataSharingStatus,
   type ExportConfigBundleResult,
   type PreviewConfigBundleResult,
+  type PreviewSharedSourceResult,
   type PublishConfigBundleResult,
+  type PullSharedSourceResult,
+  type SharedPullProgress,
+  type SharedPullSelection,
+  type SharedSourcePreview,
+  type SharedSourceInfo,
+  type RollupGrainEstimate,
 } from '@costgoblin/core/browser';
-import { DEFAULT_COST_SCOPE } from '@costgoblin/core/browser';
+import { DEFAULT_COST_SCOPE, computeRollupEstimate } from '@costgoblin/core/browser';
 
 const costResult: CostResult = {
   rows: [
@@ -270,11 +281,38 @@ export class MockCostApi implements CostApi {
   discoverColumnValues(): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }> { return Promise.resolve({ values: [{ value: 'Usage', cost: 12345 }, { value: 'Tax', cost: 234 }, { value: 'Credit', cost: -100 }], distinctCount: 3, period: '2026-04' }); }
   getDimensionsConfig(): Promise<DimensionsConfig> { return Promise.resolve({ builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name' }], tags: [{ tagName: 'team', label: 'Team', concept: 'owner' as const }] }); }
   saveDimensionsConfig(): Promise<void> { return Promise.resolve(); }
+  estimateRollupGrain(candidate: DimensionsConfig): Promise<RollupGrainEstimate> {
+    // Feed the real estimator a probe-shaped fixture so the mock matches the
+    // shape and thresholds the desktop handler produces. resource_id (when
+    // enabled) is near-unique → flagged; the others stay navigational.
+    const enabled = (d: { enabled?: boolean | undefined }): boolean => d.enabled !== false;
+    const hasResourceId = candidate.builtIn.some(d => d.field === 'resource_id' && enabled(d));
+    const probeLineItems = 2_100_000;
+    const dimCardinalities = [
+      { column: 'account_id', cardinality: 14 },
+      { column: 'service', cardinality: 38 },
+      { column: 'tag_team', cardinality: 22 },
+      ...(hasResourceId ? [{ column: 'resource_id', cardinality: 1_820_000 }] : []),
+    ];
+    const probeGrainRows = hasResourceId ? 1_840_000 : 92_000;
+    return Promise.resolve(computeRollupEstimate({
+      probePeriod: '2026-04',
+      months: 12,
+      probeGrainRows,
+      probeLineItems,
+      rawBytes: 4_900_000_000,
+      current: { rows: 1_100_000, bytes: 17_600_000 },
+      dimCardinalities,
+    }));
+  }
   getAutoSyncEnabled(): Promise<boolean> { return Promise.resolve(false); }
   setAutoSyncEnabled(): Promise<void> { return Promise.resolve(); }
   getAutoSyncIntervalMinutes(): Promise<number> { return Promise.resolve(24 * 60); }
   setAutoSyncIntervalMinutes(): Promise<void> { return Promise.resolve(); }
   getAutoSyncStatus(): Promise<{ state: 'disabled' }> { return Promise.resolve({ state: 'disabled' }); }
+  getAutoPruneEnabled(): Promise<boolean> { return Promise.resolve(false); }
+  setAutoPruneEnabled(): Promise<void> { return Promise.resolve(); }
+  pruneNow(): Promise<PruneResult> { return Promise.resolve({ deleted: [] }); }
   getViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
   saveViewsConfig(): Promise<void> { return Promise.resolve(); }
   resetViewsConfig(): Promise<ViewsConfig> { return Promise.resolve(MOCK_VIEWS_CONFIG); }
@@ -381,6 +419,9 @@ export class MockCostApi implements CostApi {
   acceptSuggestion(): Promise<void> { return Promise.resolve(); }
   cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
   clearAllCaches(): Promise<void> { return Promise.resolve(); }
+  getPerformanceInfo(): Promise<PerformanceInfo> { return Promise.resolve({ defaultMemoryGB: 8, defaultThreads: 8, totalMemoryGB: 16, maxThreads: 8, minMemoryGB: 1, maxMemoryGB: 24, current: { memoryLimitGB: null, threads: null } }); }
+  setPerformanceSettings(): Promise<void> { return Promise.resolve(); }
+  awaitMaterializedBase(): Promise<boolean> { return Promise.resolve(true); }
   getMcpServerRunning(): Promise<boolean> { return Promise.resolve(true); }
   setMcpServerRunning(): Promise<void> { return Promise.resolve(); }
   getMcpToken(): Promise<string> { return Promise.resolve('mock-token-abc123'); }
@@ -407,7 +448,59 @@ export class MockCostApi implements CostApi {
   // functions.
   checkConfigBeacon: (params: CheckConfigBeaconParams) => Promise<CheckConfigBeaconResult> =
     () => Promise.resolve({ status: 'none' });
+  getDataSharingStatus(): Promise<DataSharingStatus> {
+    return Promise.resolve({ enabled: false, sharingKey: null, label: 'Mock · CostGoblin', port: null, hosts: [], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 });
+  }
+  enableDataSharing(): Promise<DataSharingResult> {
+    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-mock-sharing-key', label: 'Mock · CostGoblin', port: 53178, hosts: ['192.168.1.42'], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
+  }
+  disableDataSharing(): Promise<DataSharingResult> {
+    return Promise.resolve({ status: 'ok', sharing: { enabled: false, sharingKey: null, label: 'Mock · CostGoblin', port: null, hosts: [], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
+  }
+  rotateDataSharingKey(): Promise<DataSharingResult> {
+    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-rotated-key', label: 'Mock · CostGoblin', port: 53178, hosts: ['192.168.1.42'], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
+  }
+  getSharedPullProgress(): Promise<SharedPullProgress> {
+    return Promise.resolve({ active: false, phase: 'idle', filesDone: 0, filesTotal: 0, currentPeriod: null, bytesDone: 0, bytesTotal: 0, error: null });
+  }
+  // Property-style so the declared type keeps the params (see checkConfigBeacon).
+  previewSharedSource: (key: string) => Promise<PreviewSharedSourceResult> =
+    () => Promise.resolve({ status: 'ok', preview: MOCK_SHARED_SOURCE_PREVIEW });
+  previewStoredSource(): Promise<PreviewSharedSourceResult> {
+    return Promise.resolve({ status: 'ok', preview: MOCK_SHARED_SOURCE_PREVIEW });
+  }
+  addSharedSource: (key: string, selection?: SharedPullSelection) => Promise<PullSharedSourceResult> =
+    () => Promise.resolve({ status: 'ok', source: MOCK_SHARED_SOURCE, filesDownloaded: 3 });
+  getSharedSource(): Promise<SharedSourceInfo | null> {
+    return Promise.resolve(null);
+  }
+  refreshSharedSource: (selection?: SharedPullSelection) => Promise<PullSharedSourceResult> =
+    () => Promise.resolve({ status: 'ok', source: MOCK_SHARED_SOURCE, filesDownloaded: 0 });
+  removeSharedSource(): Promise<void> {
+    return Promise.resolve();
+  }
 }
+
+export const MOCK_SHARED_SOURCE: SharedSourceInfo = {
+  label: 'Etienne · CostGoblin',
+  fingerprint: 'ABCD-EF01-2345-6789',
+  host: '192.168.1.42',
+  port: 53178,
+  lastPulledAt: '2026-06-21T09:00:00.000Z',
+  periods: ['2026-05', '2026-06'],
+};
+
+export const MOCK_SHARED_SOURCE_PREVIEW: SharedSourcePreview = {
+  label: 'Etienne · CostGoblin',
+  fingerprint: 'ABCD-EF01-2345-6789',
+  hasConfig: true,
+  configSummary: null,
+  tiers: [
+    { tier: 'daily', periods: ['2026-04', '2026-05', '2026-06'], fileCount: 6, bytes: 24_000_000 },
+    { tier: 'hourly', periods: ['2026-05', '2026-06'], fileCount: 4, bytes: 80_000_000 },
+    { tier: 'cost-optimization', periods: ['2026-06'], fileCount: 1, bytes: 1_200_000 },
+  ],
+};
 
 export const MOCK_BUNDLE_SUMMARY: ConfigBundleSummary = {
   schemaVersion: 1,

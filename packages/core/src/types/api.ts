@@ -1,4 +1,5 @@
 import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, NormalizationRule, OrgNode, TagDimension } from './config.js';
+import type { RollupGrainEstimate } from '../rollup/estimator.js';
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { CostScopeCapabilities, CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
@@ -7,9 +8,16 @@ import type {
   ApplyConfigBundleResult,
   CheckConfigBeaconParams,
   CheckConfigBeaconResult,
+  DataSharingResult,
+  DataSharingStatus,
   ExportConfigBundleResult,
   PreviewConfigBundleResult,
+  PreviewSharedSourceResult,
   PublishConfigBundleResult,
+  PullSharedSourceResult,
+  SharedPullProgress,
+  SharedPullSelection,
+  SharedSourceInfo,
 } from './sharing.js';
 import type {
   ExplorerFilterValue,
@@ -45,6 +53,26 @@ export interface UIPreferences {
   readonly theme: 'dark' | 'light';
   readonly palette: 'standard' | 'colorblind';
   readonly defaultViewId?: string | undefined;
+  readonly performance?: PerformanceSettings | undefined;
+}
+
+/** User overrides for DuckDB resource tuning. `null` means "auto" — use the
+ *  machine-derived default. */
+export interface PerformanceSettings {
+  readonly memoryLimitGB: number | null;
+  readonly threads: number | null;
+}
+
+/** Performance tuning context for the settings UI: the machine-derived defaults
+ *  and valid ranges, plus the user's current overrides. */
+export interface PerformanceInfo {
+  readonly defaultMemoryGB: number;
+  readonly defaultThreads: number;
+  readonly totalMemoryGB: number;
+  readonly maxThreads: number;
+  readonly minMemoryGB: number;
+  readonly maxMemoryGB: number;
+  readonly current: PerformanceSettings;
 }
 
 export interface OrgAccount {
@@ -98,6 +126,10 @@ export interface DataInventoryResult {
   };
 }
 
+export interface PruneResult {
+  readonly deleted: readonly { readonly tier: DataTier; readonly period: string }[];
+}
+
 export interface CostApi {
   queryCosts(params: CostQueryParams): Promise<CostResult>;
   queryDailyCosts(params: DailyCostsParams): Promise<DailyCostsResult>;
@@ -131,6 +163,11 @@ export interface CostApi {
   discoverColumnValues(field: string, opts?: { useOrgAccounts?: boolean; accountNameFromTag?: string; nameStripPatterns?: readonly string[]; normalize?: NormalizationRule; useRegionNames?: boolean; dimName?: string }): Promise<{ values: { value: string; cost: number }[]; distinctCount: number; period: string }>;
   getDimensionsConfig(): Promise<DimensionsConfig>;
   saveDimensionsConfig(config: DimensionsConfig): Promise<void>;
+  /** Estimate the rollup cost/benefit of a candidate dimensions config before
+   *  committing the (background) re-roll: directional size/compression/rebuild
+   *  bands plus per-dimension raw-only flags (rollup design §8). Probes a recent
+   *  month, so it needs data on disk — returns an empty estimate otherwise. */
+  estimateRollupGrain(candidate: DimensionsConfig): Promise<RollupGrainEstimate>;
   /** User-defined dashboard views. Read-modify-write through `saveViewsConfig`.
    *  `resetViewsConfig` overwrites the file with the seed (Cost Overview) view. */
   getViewsConfig(): Promise<ViewsConfig>;
@@ -167,6 +204,15 @@ export interface CostApi {
   getAutoSyncIntervalMinutes(): Promise<number>;
   setAutoSyncIntervalMinutes(minutes: number): Promise<void>;
   getAutoSyncStatus(): Promise<AutoSyncStatus>;
+  /** Whether the scheduler automatically prunes out-of-retention local data on
+   *  each run. Off by default. Shares the auto-sync scheduler — enabling it
+   *  starts the scheduler even when auto-download is off. */
+  getAutoPruneEnabled(): Promise<boolean>;
+  setAutoPruneEnabled(enabled: boolean): Promise<void>;
+  /** Delete every local billing period that has fallen outside its tier's
+   *  retention window, across all configured tiers. Returns what was removed.
+   *  Local-only — no S3 access required. */
+  pruneNow(): Promise<PruneResult>;
   syncOrgAccounts(profile: string): Promise<OrgSyncResult>;
   getOrgSyncResult(): Promise<OrgSyncResult | null>;
   getOrgSyncProgress(): Promise<OrgSyncProgress | null>;
@@ -229,6 +275,35 @@ export interface CostApi {
   /** Probe a bucket for a published team configuration. Used by the setup
    *  wizard right after bucket selection. */
   checkConfigBeacon(params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult>;
+  // --- Peer data sharing (LAN, TLS-PSK) ---
+  /** Publisher: current sharing state, including the sharing key while on. */
+  getDataSharingStatus(): Promise<DataSharingStatus>;
+  /** Publisher: start sharing this machine's data on the local network. */
+  enableDataSharing(): Promise<DataSharingResult>;
+  /** Publisher: stop sharing. */
+  disableDataSharing(): Promise<DataSharingResult>;
+  /** Publisher: rotate the access secret (revokes outstanding keys) and
+   *  return a fresh sharing key. */
+  rotateDataSharingKey(): Promise<DataSharingResult>;
+  /** Consumer: fetch + verify a teammate's manifest WITHOUT downloading data,
+   *  so the UI can show which tiers/months are on offer before committing. */
+  previewSharedSource(key: string): Promise<PreviewSharedSourceResult>;
+  /** Consumer: same preview, but for the already-saved source (the key stays
+   *  in the main process — used by the "reconnect" affordance). */
+  previewStoredSource(): Promise<PreviewSharedSourceResult>;
+  /** Consumer: connect with a pasted sharing key, pull the snapshot over the
+   *  encrypted channel, verify it, and import data + config locally. `selection`
+   *  limits which tiers/periods are pulled; omit to pull everything. */
+  addSharedSource(key: string, selection?: SharedPullSelection): Promise<PullSharedSourceResult>;
+  /** Consumer: the configured shared source, or null if none. */
+  getSharedSource(): Promise<SharedSourceInfo | null>;
+  /** Consumer: live progress of an in-flight pull (polled by the UI). */
+  getSharedPullProgress(): Promise<SharedPullProgress>;
+  /** Consumer: re-pull from the configured source. `selection` overrides the
+   *  stored choice; omit to reuse what was last pulled. */
+  refreshSharedSource(selection?: SharedPullSelection): Promise<PullSharedSourceResult>;
+  /** Consumer: forget the configured source (local data is left in place). */
+  removeSharedSource(): Promise<void>;
   cancelPendingQueries(): Promise<void>;
   /** Wipe every backend cache (LRU result cache, column probe cache,
    *  in-flight de-dup map, materialized base table, plus the in-memory
@@ -236,6 +311,17 @@ export interface CostApi {
    *  the background. The renderer should follow up with its own view
    *  refresh so the user sees fresh data. */
   clearAllCaches(): Promise<void>;
+  /** Machine-derived DuckDB tuning defaults + ranges + the user's current
+   *  overrides, for the performance settings UI. */
+  getPerformanceInfo(): Promise<PerformanceInfo>;
+  /** Persist DuckDB tuning overrides (null = auto) and apply them live. */
+  setPerformanceSettings(perf: PerformanceSettings): Promise<void>;
+  /** Resolve once the in-memory cost_base materialized table is ready (`true`)
+   *  or the wait times out / no base is being built (`false`). The renderer
+   *  awaits this before the startup dimension prewarm so those probes — and the
+   *  first dashboard queries that follow — hit the in-memory base instead of
+   *  racing the materialize with concurrent full raw-parquet scans. */
+  awaitMaterializedBase(timeoutMs: number): Promise<boolean>;
   getMcpServerRunning(): Promise<boolean>;
   setMcpServerRunning(enabled: boolean): Promise<void>;
   /** The shared secret a client must send (as `Authorization: Bearer <token>`
@@ -291,4 +377,34 @@ export interface UpdateApi {
   quitAndInstall(): void;
   onStatusChanged(callback: (status: UpdateStatus) => void): () => void;
   getAppVersion(): Promise<string>;
+}
+
+/** Live state of the on-disk daily rollup. Pushed to the renderer so the header
+ *  can show whether dashboards are currently served from the pre-aggregated
+ *  rollup (`ready`) or transiently from the slower raw path while a re-roll runs
+ *  (`computing`) — e.g. after a dimensions save or a sync. `idle` = no rollup
+ *  built yet (no local data); `failed` = the last build batch hit an error
+ *  (otherwise swallowed to the log). While `computing`, `periods` lists every
+ *  month completed-first (the first `done` are built) and `active` is the subset
+ *  whose build is in flight right now, so the popover can pulse those chips. */
+export type RollupStatus =
+  | { readonly state: 'idle' }
+  | { readonly state: 'computing'; readonly done: number; readonly total: number; readonly periods: readonly string[]; readonly active: readonly string[] }
+  | { readonly state: 'ready'; readonly periods: number }
+  | { readonly state: 'failed'; readonly message: string; readonly periods: number };
+
+/** Size KPIs for the built rollup vs the raw daily Parquet it's derived from.
+ *  `rawBytes` is read from the local filesystem (no S3), so it's available even
+ *  without AWS credentials. Null when no rollup is built. */
+export interface RollupStats {
+  readonly months: number;
+  readonly rollupRows: number;
+  readonly rollupBytes: number;
+  readonly rawBytes: number;
+}
+
+export interface RollupApi {
+  getStatus(): Promise<RollupStatus>;
+  getStats(): Promise<RollupStats | null>;
+  onStatusChanged(callback: (status: RollupStatus) => void): () => void;
 }

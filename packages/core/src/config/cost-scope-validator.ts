@@ -7,8 +7,11 @@ import type {
   CostScopeConfig,
   ExclusionCondition,
   ExclusionRule,
+  MarketplaceAttributionConfig,
+  MarketplaceAttributionRule,
 } from '../types/cost-scope.js';
 import { COST_METRICS, COST_PERSPECTIVES } from '../types/cost-scope.js';
+import { DEFAULT_MARKETPLACE_ATTRIBUTION } from './cost-scope-seed.js';
 
 function isCostMetric(v: string): v is CostMetric {
   return (COST_METRICS as readonly string[]).includes(v);
@@ -59,6 +62,37 @@ function validateRule(raw: unknown, ctx: string): ExclusionRule {
   };
 }
 
+function validateMarketplaceRule(raw: unknown, ctx: string): MarketplaceAttributionRule {
+  assertObject(raw, ctx);
+  assertString(raw['service'], `${ctx}.service`);
+  if (raw['service'].length === 0) {
+    throw new ConfigValidationError(`${ctx}.service must be a non-empty service code`);
+  }
+  assertArray(raw['operations'], `${ctx}.operations`);
+  const operations = raw['operations'].map((o, i) => {
+    assertString(o, `${ctx}.operations[${String(i)}]`);
+    return o;
+  });
+  if (operations.length === 0) {
+    throw new ConfigValidationError(`${ctx}.operations must have at least one entry`);
+  }
+  return { service: raw['service'], operations };
+}
+
+/** Parse the optional `marketplaceAttribution` block. Absent → the shipped
+ *  default (enabled), so existing on-disk configs adopt the fix automatically;
+ *  pass an explicit `{ enabled: false }` to opt out. */
+function validateMarketplaceAttribution(raw: unknown): MarketplaceAttributionConfig {
+  if (raw === undefined) return DEFAULT_MARKETPLACE_ATTRIBUTION;
+  assertObject(raw, 'costScope.marketplaceAttribution');
+  const enabled = raw['enabled'] === true;
+  assertArray(raw['rules'], 'costScope.marketplaceAttribution.rules');
+  const rules = raw['rules'].map((r, i) =>
+    validateMarketplaceRule(r, `costScope.marketplaceAttribution.rules[${String(i)}]`),
+  );
+  return { enabled, rules };
+}
+
 export function validateCostScope(raw: unknown): CostScopeConfig {
   assertObject(raw, 'costScope');
   assertString(raw['costMetric'], 'costScope.costMetric');
@@ -99,10 +133,12 @@ export function validateCostScope(raw: unknown): CostScopeConfig {
 
   assertArray(raw['rules'], 'costScope.rules');
   const rules = raw['rules'].map((r, i) => validateRule(r, `costScope.rules[${String(i)}]`));
+  const marketplaceAttribution = validateMarketplaceAttribution(raw['marketplaceAttribution']);
   return {
     costMetric: costMetricRaw,
     ...(costPerspective === undefined ? {} : { costPerspective }),
     ...(lagDays === undefined ? {} : { lagDays }),
     rules,
+    marketplaceAttribution,
   };
 }

@@ -10,6 +10,7 @@ export { useQuery } from './hooks/use-query.js';
 export { UnsavedChangesProvider, useUnsavedChanges, useConfirmLeave } from './hooks/use-unsaved-changes.js';
 
 export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/card.js';
+export { UpdatingBadge } from './components/updating-badge.js';
 export { Button, buttonVariants } from './components/ui/button.js';
 export type { ButtonProps } from './components/ui/button.js';
 export { Calendar } from './components/ui/calendar.js';
@@ -22,14 +23,13 @@ export { BubbleChart } from './components/bubble-chart.js';
 export { CostTable } from './components/cost-table.js';
 export { EntityPopup } from './components/entity-popup.js';
 export { ConfirmModal } from './components/confirm-modal.js';
-export { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog } from './components/config-sharing.js';
+export { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog, ImportConfigPanel, ShareConfigPanel } from './components/config-sharing.js';
+export { SharingActiveBanner } from './components/sharing-active-banner.js';
 export { ProfilePicker, filterProfiles } from './components/profile-picker.js';
 export { CsvExport } from './components/csv-export.js';
-export { SyncStatusIndicator } from './components/sync-status.js';
 export { formatDollars, formatPercent, formatDate } from './components/format.js';
 export { FilterBar } from './components/filter-bar.js';
 export { DateRangePicker, getDefaultDateRange } from './components/date-range-picker.js';
-export { EnvironmentBar } from './components/environment-bar.js';
 export { SummaryCard } from './components/summary-card.js';
 export { DimensionSelector } from './components/dimension-selector.js';
 export { PieChart } from './components/pie-chart.js';
@@ -40,6 +40,7 @@ export { TreemapChart } from './components/treemap-chart.js';
 export { HeatmapChart } from './components/heatmap-chart.js';
 export { FilterActiveBanner } from './components/filter-active-banner.js';
 export { CoinRainLoader } from './components/coin-rain-loader.js';
+export { SchedulerControls } from './components/scheduler-controls.js';
 export { useCostFocus, useCostFocusDispatch, useCostFocusReducer, CostFocusProvider, CostFocusDispatchProvider } from './hooks/use-cost-focus.js';
 
 export { WIDGET_REGISTRY, WIDGET_CATALOG } from './widgets/registry.js';
@@ -70,6 +71,9 @@ export { PaletteProvider, usePalette } from './hooks/use-palette.js';
 
 export { CommandPalette } from './components/command-palette.js';
 export type { NavItem } from './components/command-palette.js';
+export { SettingsShell } from './components/settings-shell.js';
+export { SETTINGS_TABS, isSettingsTabId } from './settings/registry.js';
+export type { SettingsTabId, SettingsTabMeta } from './settings/registry.js';
 export { useKeyboardShortcuts, matchesShortcut, formatShortcutLabel } from './hooks/use-keyboard-shortcuts.js';
 export type { Shortcut } from './hooks/use-keyboard-shortcuts.js';
 

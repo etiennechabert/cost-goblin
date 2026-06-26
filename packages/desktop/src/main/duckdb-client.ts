@@ -5,8 +5,12 @@ export type RawRow = Readonly<Record<string, unknown>>;
 export interface DuckDBClient {
   runQuery(sql: string, onStarted?: () => void): Promise<RawRow[]>;
   runPreparedQuery(sql: string, params: readonly unknown[], onStarted?: () => void): Promise<RawRow[]>;
+  /** Run on a brand-new connection that is disposed afterward (never pooled).
+   *  Used for rollup partition builds so per-build time stays flat — a reused
+   *  connection's buffer/cache accumulates and later builds slow down. */
+  runBuildQuery(sql: string, onStarted?: () => void): Promise<RawRow[]>;
   cancelPendingQueries(): void;
-  configure(tempDir: string): void;
+  configure(settings: { tempDir?: string; memoryGB?: number; threads?: number }): void;
   terminate(): Promise<void>;
 }
 
@@ -79,14 +83,17 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
     runQuery(sql: string, onStarted?: () => void): Promise<RawRow[]> {
       return submitQuery('query', sql, {}, onStarted);
     },
+    runBuildQuery(sql: string, onStarted?: () => void): Promise<RawRow[]> {
+      return submitQuery('query', sql, { fresh: true }, onStarted);
+    },
     runPreparedQuery(sql: string, params: readonly unknown[], onStarted?: () => void): Promise<RawRow[]> {
       return submitQuery('prepared-query', sql, { params }, onStarted);
     },
     cancelPendingQueries(): void {
       worker.postMessage({ kind: 'cancel-pending' });
     },
-    configure(tempDir: string): void {
-      worker.postMessage({ kind: 'configure', tempDir });
+    configure(settings: { tempDir?: string; memoryGB?: number; threads?: number }): void {
+      worker.postMessage({ kind: 'configure', ...settings });
     },
     async terminate(): Promise<void> {
       await worker.terminate();

@@ -8,6 +8,9 @@ export interface NavItem {
   readonly id: string;
   readonly label: string;
   readonly group?: string;
+  /** Extra fuzzy-match terms beyond the label (e.g. "dark mode" for the
+   *  General settings tab) so intent-based search resolves to the right item. */
+  readonly keywords?: readonly string[];
 }
 
 interface CommandPaletteProps {
@@ -76,7 +79,7 @@ export function CommandPalette({ items, onNavigate }: CommandPaletteProps) {
               <Command.Item
                 key={item.id}
                 value={item.id}
-                keywords={[item.label]}
+                keywords={[item.label, ...(item.keywords ?? [])]}
                 onSelect={handleSelect}
                 className="relative flex cursor-pointer items-center rounded-lg px-2 py-2 text-sm text-text-primary outline-none data-[selected=true]:bg-bg-tertiary"
               >

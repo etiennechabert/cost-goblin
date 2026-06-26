@@ -1,4 +1,5 @@
 import { asBucketPath, asDimensionId } from '../types/branded.js';
+import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
 import type {
   CostGoblinConfig,
   DefaultsConfig,
@@ -141,13 +142,26 @@ function validateStringArray(value: unknown, ctx: string): string[] {
   });
 }
 
+/** Like `assertString`, but also rejects anything that is not a bare SQL
+ *  column identifier — `field`/`displayField` are interpolated into SQL, so a
+ *  shared/imported config must not be able to smuggle injection through them. */
+function assertSafeColumn(value: unknown, context: string): asserts value is string {
+  assertString(value, context);
+  if (!isSafeColumnIdentifier(value)) {
+    throw new ConfigValidationError(
+      `${context} "${value}" is not a valid column identifier — only letters, digits, and underscores are allowed. ` +
+      `This prevents SQL injection via shared or imported configs.`,
+    );
+  }
+}
+
 function validateBuiltInDimension(dim: unknown, i: number) {
   const ctx = `builtIn[${String(i)}]`;
   assertObject(dim, ctx);
   assertString(dim['name'], `${ctx}.name`);
   assertString(dim['label'], `${ctx}.label`);
-  assertString(dim['field'], `${ctx}.field`);
-  const displayField = dim['displayField'] === undefined ? undefined : (assertString(dim['displayField'], `${ctx}.displayField`), dim['displayField']);
+  assertSafeColumn(dim['field'], `${ctx}.field`);
+  const displayField = dim['displayField'] === undefined ? undefined : (assertSafeColumn(dim['displayField'], `${ctx}.displayField`), dim['displayField']);
   const enabled = dim['enabled'] === false ? false : undefined;
   const description = dim['description'] === undefined ? undefined : (assertString(dim['description'], `${ctx}.description`), dim['description']);
   const useOrgAccounts = dim['useOrgAccounts'] === true ? true : undefined;

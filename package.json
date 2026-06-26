@@ -1,6 +1,6 @@
 {
   "name": "costgoblin",
-  "version": "0.3.2",
+  "version": "0.4.2",
   "description": "Desktop app for cloud cost visibility",
   "main": "packages/desktop/out/main/main.js",
   "private": true,
@@ -27,27 +27,27 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "@aws-sdk/client-organizations": "^3.1063.0",
-    "@aws-sdk/client-s3": "^3.1063.0",
-    "@aws-sdk/client-ssm": "^3.1063.0",
+    "@aws-sdk/client-organizations": "^3.1073.0",
+    "@aws-sdk/client-s3": "^3.1073.0",
+    "@aws-sdk/client-ssm": "^3.1073.0",
     "@duckdb/node-api": "^1.5.2-r.2",
-    "@smithy/shared-ini-file-loader": "^4.5.6",
+    "@smithy/shared-ini-file-loader": "^4.6.1",
     "electron-updater": "^6.8.9",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.16",
-    "@playwright/test": "^1.60.0",
-    "@tailwindcss/postcss": "^4.3.0",
+    "@biomejs/biome": "^2.5.0",
+    "@playwright/test": "^1.61.0",
+    "@tailwindcss/postcss": "^4.3.1",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/user-event": "^14.6.1",
-    "@types/node": "^25.9.2",
-    "@typescript-eslint/eslint-plugin": "^8.60.1",
+    "@types/node": "^26.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.61.1",
     "@typescript-eslint/parser": "^8.60.1",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/coverage-v8": "^4.1.9",
     "audit-ci": "^7.1.0",
-    "electron-builder": "^26.15.2",
-    "eslint": "^10.4.1",
+    "electron-builder": "^26.15.3",
+    "eslint": "^10.5.0",
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
     "postcss": "^8.5.15",
@@ -60,6 +60,9 @@
     "node": ">=20"
   },
   "overrides": {
-    "tmp": "^0.2.7"
+    "tmp": "^0.2.7",
+    "electron-vite": { "vite": "7.3.5" },
+    "@tailwindcss/vite": { "vite": "7.3.5" },
+    "vitest": { "vite": "7.3.5" }
   }
 }
