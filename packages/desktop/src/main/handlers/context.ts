@@ -2,6 +2,7 @@ import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import { LRUCache } from '../lru-cache.js';
 import { QueryLog } from '../query-log.js';
 import { awaitWithTimeout } from '../async-timeout.js';
+import { computeDefaultPoolSize } from '../duckdb-tuning.js';
 import { RollupStore, type BuildPartitionSql, type RollupShape } from '../rollup-store.js';
 import {
   asDimensionId,
@@ -403,44 +404,74 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // unblended.
   const columnCache = new Map<string, Promise<ReadonlySet<string>>>();
 
+  // DESCRIBE one month's parquet → its column set. Errors degrade to the empty
+  // set (downstream reads that as "no optional columns" and uses the unblended
+  // fallback) rather than blocking the probe.
+  async function probeColumns(tier: string, month: string): Promise<ReadonlySet<string>> {
+    try {
+      const glob = `${ctx.dataDir}/aws/raw/${tier}-${month}/*.parquet`;
+      const rows = await ctx.db.runQuery(`DESCRIBE SELECT * FROM read_parquet('${glob}') LIMIT 0`);
+      const cols = new Set<string>();
+      for (const r of rows) {
+        const name = r['column_name'];
+        if (typeof name === 'string') cols.add(name);
+      }
+      return cols;
+    } catch (err: unknown) {
+      logger.warn(`column-probe: failed — ${err instanceof Error ? err.message : String(err)}`, { tier, month });
+      return new Set<string>();
+    }
+  }
+
   async function getAvailableColumns(tier: 'daily' | 'hourly'): Promise<ReadonlySet<string>> {
     const cached = columnCache.get(tier);
     if (cached !== undefined) return cached;
     const fetch = (async (): Promise<ReadonlySet<string>> => {
-      try {
-        const months = await listLocalMonths(ctx.dataDir, tier);
-        if (months.length === 0) {
-          // No data on disk for this tier — log loudly because the silent
-          // fallback used to surface as misleading "Degraded" warnings in
-          // Cost Scope when capability checks interpreted the empty set as
-          // "all columns missing."
-          logger.warn('column-probe: no months on disk', { tier, dataDir: ctx.dataDir });
-          return new Set<string>();
-        }
-        // Latest month sample is enough — CUR schema is stable across months
-        // within a billing report (AWS bumps schema on version changes, rare
-        // and user-initiated). Recent months also reflect any newly enabled
-        // optional columns whereas older months won't.
-        const month = months.at(-1);
-        const glob = `${ctx.dataDir}/aws/raw/${tier}-${String(month)}/*.parquet`;
-        const rows = await ctx.db.runQuery(`DESCRIBE SELECT * FROM read_parquet('${glob}') LIMIT 0`);
-        const cols = new Set<string>();
-        for (const r of rows) {
-          const name = r['column_name'];
-          if (typeof name === 'string') cols.add(name);
-        }
-        return cols;
-      } catch (err: unknown) {
-        logger.warn(`column-probe: failed — ${err instanceof Error ? err.message : String(err)}`, { tier });
+      const months = await listLocalMonths(ctx.dataDir, tier);
+      if (months.length === 0) {
+        // No data on disk for this tier — log loudly because the silent
+        // fallback used to surface as misleading "Degraded" warnings in
+        // Cost Scope when capability checks interpreted the empty set as
+        // "all columns missing."
+        logger.warn('column-probe: no months on disk', { tier, dataDir: ctx.dataDir });
         return new Set<string>();
       }
+      // Latest month = current capability: newly enabled optional columns
+      // (reservation_effective_cost, the SP/net families) show up here first.
+      // Used for the shape signature and the Cost Scope capability checks. The
+      // rollup BUILD must instead probe per-period — see getColumnsForPeriod.
+      const month = months.at(-1);
+      return probeColumns(tier, String(month));
     })();
     columnCache.set(tier, fetch);
     return fetch;
   }
 
+  // Columns present in ONE specific month's parquet. Months drift: a CUR only
+  // carries the optional cost columns from the billing period the user enabled
+  // them, so an older month has fewer columns than the latest. The rollup
+  // builds one month at a time over a single-month read, so it must reference
+  // only that month's columns — otherwise DuckDB throws a Binder Error on the
+  // absent column and the partition never builds. Cached per (tier, period).
+  async function getColumnsForPeriod(tier: 'daily' | 'hourly', period: string): Promise<ReadonlySet<string>> {
+    const key = `${tier}:${period}`;
+    const cached = columnCache.get(key);
+    if (cached !== undefined) return cached;
+    const fetch = probeColumns(tier, period);
+    columnCache.set(key, fetch);
+    return fetch;
+  }
+
   const queryLog = new QueryLog();
-  const rollupStore = new RollupStore({ dataDir: ctx.dataDir, runQuery: (sql) => ctx.db.runQuery(sql) });
+  const rollupStore = new RollupStore({
+    dataDir: ctx.dataDir,
+    runQuery: (sql) => ctx.db.runQuery(sql),
+    // Partition builds run on a fresh, disposable connection (flat per-build
+    // time) and fan out across the DuckDB pool so a full-history rebuild is
+    // ~pool-size faster than the old sequential pass.
+    runBuild: (sql) => ctx.db.runBuildQuery(sql),
+    buildConcurrency: computeDefaultPoolSize(),
+  });
   const resultCache = new LRUCache<string, RawRow[]>(50);
 
   const wrappedRunQuery = queryLog.wrapQuery((sql, onStarted) => ctx.db.runQuery(sql, onStarted));
@@ -530,10 +561,16 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const orgPath = await getOrgAccountsPath();
     const accountReverseMap = await getAccountReverseMap();
     const costScope = await getCostScope().catch(() => undefined);
-    const availableColumns = await getAvailableColumns('daily');
-    return (period, outPath) => buildRollupPartitionQuery(period, 'daily', outPath, {
-      dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, accountReverseMap, costScope, availableColumns,
-    });
+    return async (period, outPath) => {
+      // Probe THIS period's columns, not the latest month's: an older month may
+      // lack optional cost columns the latest has, and a single-month build
+      // referencing an absent column throws a Binder Error (Issue: cold rebuild
+      // over mixed-schema months).
+      const availableColumns = await getColumnsForPeriod('daily', period);
+      return buildRollupPartitionQuery(period, 'daily', outPath, {
+        dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, accountReverseMap, costScope, availableColumns,
+      });
+    };
   }
 
   // Warm-load the persisted rollup: validate the manifest against the current

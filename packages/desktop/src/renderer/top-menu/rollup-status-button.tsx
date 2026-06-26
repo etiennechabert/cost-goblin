@@ -37,11 +37,21 @@ function formatMonth(period: string): string {
   return yy === '' ? name : `${name} '${yy}`;
 }
 
-function chipClass(isDone: boolean): string {
-  return isDone
-    ? 'rounded border border-accent/30 bg-accent/15 px-1.5 py-0.5 text-[10px] tabular-nums text-accent'
-    : 'rounded border border-border bg-bg-tertiary/40 px-1.5 py-0.5 text-[10px] tabular-nums text-text-muted';
+type ChipState = 'done' | 'building' | 'pending';
+
+function chipClass(state: ChipState): string {
+  const base = 'rounded border px-1.5 py-0.5 text-[10px] tabular-nums';
+  switch (state) {
+    // `building` is the brighter, pulsing variant — it's the only moving thing
+    // in the popover during a parallel batch, where `done` can sit at 0 for
+    // several seconds while builds run concurrently.
+    case 'building': return `${base} border-accent bg-accent/25 text-accent animate-pulse`;
+    case 'done': return `${base} border-accent/30 bg-accent/15 text-accent`;
+    case 'pending': return `${base} border-border bg-bg-tertiary/40 text-text-muted`;
+  }
 }
+
+const CHIP_TITLE: Record<ChipState, string> = { done: 'Rebuilt', building: 'Building…', pending: 'Pending' };
 
 function KpiRow({ label, value, accent }: Readonly<{ label: string; value: string; accent?: boolean }>): React.JSX.Element {
   return (
@@ -132,11 +142,14 @@ export function RollupStatusButton({ status }: Readonly<Props>): React.JSX.Eleme
             )}
             {status.periods.length > 0 && (
               <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto">
-                {status.periods.map((p, i) => (
-                  <span key={p} className={chipClass(i < status.done)} title={i < status.done ? 'Rebuilt' : 'Pending'}>
-                    {formatMonth(p)}
-                  </span>
-                ))}
+                {status.periods.map((p, i) => {
+                  const state: ChipState = i < status.done ? 'done' : status.active.includes(p) ? 'building' : 'pending';
+                  return (
+                    <span key={p} className={chipClass(state)} title={CHIP_TITLE[state]}>
+                      {formatMonth(p)}
+                    </span>
+                  );
+                })}
               </div>
             )}
           </div>

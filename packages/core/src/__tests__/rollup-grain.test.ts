@@ -130,6 +130,18 @@ describe('buildRollupPartitionQuery', () => {
     }
   });
 
+  it('SUM(line_items) equals the raw line-item count — backs the Table overview total_rows on the rollup', async () => {
+    // The Table widget's overview routes through the rollup (SUM(cost) /
+    // SUM(line_items) per usage_date). For total_rows to match the raw path's
+    // COUNT(*), the per-grain line_items must sum back to the raw row count.
+    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, availablePeriods: [PERIOD], costScope: scope([]) }));
+    const rawWhere = `WHERE usage_date >= '${PERIOD}-01' AND usage_date < '2026-02-01'`;
+    const rawCount = Number((await queryAll(conn, `SELECT CAST(COUNT(*) AS BIGINT) n FROM ${rawSourceJan()} ${rawWhere}`))[0]?.['n']);
+    const rollCount = Number((await queryAll(conn, `SELECT CAST(SUM(line_items) AS BIGINT) n FROM ${glob}`))[0]?.['n']);
+    expect(rollCount).toBeGreaterThan(0);
+    expect(rollCount).toBe(rawCount);
+  });
+
   it('drops exclusion rows at build time', async () => {
     const rawWhere = `WHERE usage_date >= '${PERIOD}-01' AND usage_date < '2026-02-01'`;
     const top = (await queryAll(conn, `SELECT service, CAST(SUM(cost) AS DOUBLE) c FROM ${rawSourceJan()} ${rawWhere} GROUP BY service ORDER BY c DESC LIMIT 1`))[0];
