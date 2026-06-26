@@ -220,7 +220,9 @@ const api: CostApi = {
   // renderer can reveal immediately.
   awaitMaterializedBase: (timeoutMs: number): Promise<boolean> => invoke('await_materialized_base', { timeoutMs }),
 
-  // ---- Peer data sharing (not ported — the 549-line P2P feature is out of scope) ----
+  // ---- Peer data sharing: crypto/key/manifest layer is ported (peer.rs, tested),
+  //      but the TLS-PSK transport needs the openssl native crate for Electron
+  //      interop — the one documented gap, so these report unavailable. ----
   getDataSharingStatus: (): Promise<DataSharingStatus> => ok({
     enabled: false, sharingKey: null, label: '', port: null, hosts: [], fingerprint: null,
     lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0,

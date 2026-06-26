@@ -26,6 +26,9 @@ aws-smithy-types = "1"
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tiny_http = "0.12"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+base64 = "0.22"
+rand = "0.8"
 
 [profile.dev]
 # DuckDB's bundled C++ is huge; without some opt the debug build is painfully

@@ -9,6 +9,10 @@ mod config;
 mod config_write;
 mod db;
 mod mcp;
+// The TLS-PSK transport that would consume this layer is the documented gap
+// (needs the openssl native crate), so its functions are unused in the build.
+#[allow(dead_code)]
+mod peer;
 mod perf;
 mod query;
 mod querylog;
