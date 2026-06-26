@@ -228,12 +228,11 @@ async function runOnce(deps: AutoSyncDeps): Promise<void> {
     }
 
     if (syncEnabled) {
-      const tiers: { name: string; retention: number }[] = [
-        { name: 'daily', retention: provider.sync.daily.retentionDays ?? 365 },
-      ];
-      if (provider.sync.hourly !== undefined) {
-        tiers.push({ name: 'hourly', retention: provider.sync.hourly.retentionDays ?? 30 });
-      }
+      // Same tier+retention set as the auto-prune pass so sync and prune stay in
+      // lockstep — this is what pulls cost-optimization too, which the old
+      // hand-rolled daily+hourly list silently skipped (leaving it "Never").
+      const tiers = configuredTierRetentions(provider.sync)
+        .map(t => ({ name: t.tier, retention: t.retentionDays }));
 
       for (const tier of tiers) {
         const tierResult = await syncTier(deps, tier);
