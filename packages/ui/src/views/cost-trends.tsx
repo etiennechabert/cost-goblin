@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Dimension,
   DimensionId,
+  RollupStatus,
   TrendResult,
   TrendRow,
   EntityRef,
@@ -11,7 +12,9 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
 import { getDimensionId } from '../lib/dimensions.js';
+import { rollupGate } from '../lib/rollup-gate.js';
 import { BubbleChart } from '../components/bubble-chart.js';
+import { RollupBuildingOverlay } from '../components/rollup-building-overlay.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
 import { DimensionSelector } from '../components/dimension-selector.js';
@@ -73,9 +76,13 @@ function TrendRowItem({ row, onClick }: Readonly<{ row: TrendRow; onClick: (e: E
 
 interface CostTrendsProps {
   onEntityClick?: (entity: string, dimension: string) => void;
+  /** Live rollup state — Cost Trends is rollup-backed, so a cold first build
+   *  blocks with the build overlay until the viewed period is aggregated. */
+  rollupStatus?: RollupStatus;
+  rollupEverReady?: boolean;
 }
 
-export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps = {}) {
+export function CostTrends({ onEntityClick: onEntityClickProp, rollupStatus, rollupEverReady }: CostTrendsProps = {}) {
   const api = useCostApi();
   const lagDays = useLagDays();
   const dimensionsQuery = useQuery(() => api.getDimensions(), []);
@@ -92,6 +99,13 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
 
   const dimensions: Dimension[] =
     dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
+
+  const gate = useMemo(
+    () => rollupStatus === undefined
+      ? { blocked: false, selectedMonths: [], pendingMonths: [] }
+      : rollupGate(rollupStatus, rollupEverReady ?? false, state.dateRange),
+    [rollupStatus, rollupEverReady, state.dateRange],
+  );
 
   const firstDimId = dimensions.length > 0 && dimensions[0] !== undefined
     ? getDimensionId(dimensions[0])
@@ -197,6 +211,10 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
         />
       </div>
 
+      {gate.blocked && rollupStatus !== undefined ? (
+        <RollupBuildingOverlay status={rollupStatus} pendingMonths={gate.pendingMonths} />
+      ) : (
+      <>
       {dimensions.length > 0 && (
         <div className="flex flex-wrap items-center gap-4">
           <DimensionSelector
@@ -310,6 +328,8 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
         <div className="rounded-xl border border-border bg-bg-secondary/50 p-12 text-center text-text-secondary">
           No {state.direction === 'all' ? 'changes' : state.direction} above thresholds
         </div>
+      )}
+      </>
       )}
     </div>
   );

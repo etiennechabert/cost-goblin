@@ -547,11 +547,6 @@ function AppShell(): React.JSX.Element {
     return globalThis.costgoblinRollup.onStatusChanged(apply);
   }, []);
 
-  // A re-roll = recomputing an existing rollup (after a sync or dimensions
-  // change). Gating on "ever ready" keeps the first cold build — where widgets
-  // already show their own loaders — from flashing the "Updating…" badge.
-  const reRolling = rollupStatus.state === 'computing' && rollupEverReady;
-
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
     // Always surface errors so the user can see what went wrong; for other
@@ -1055,13 +1050,13 @@ function AppShell(): React.JSX.Element {
               const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
               return (
                 <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
-                  <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} reRolling={reRolling} />
+                  <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} rollupStatus={rollupStatus} rollupEverReady={rollupEverReady} />
                 </Profiler>
               );
             })()}
             {view.page === 'trends' && (
               <Profiler id="trends" onRender={onPerfRender}>
-                <CostTrends onEntityClick={handleEntityClick} />
+                <CostTrends onEntityClick={handleEntityClick} rollupStatus={rollupStatus} rollupEverReady={rollupEverReady} />
               </Profiler>
             )}
             {view.page === 'missing-tags' && (
