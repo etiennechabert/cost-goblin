@@ -165,9 +165,13 @@ The project version lives in `package.json` and `packages/desktop/package.json` 
 What this means in practice:
 - **Don't bump on every PR.** Once `main` is one release ahead of the latest tag, that version is correct — further PRs inherit it and change nothing. Only the **first** PR of a new release cycle bumps the version.
 - **Don't over-increment.** If the latest tag is `v0.2.6`, the target is `0.2.7`. Setting `0.2.8` (skipping `0.2.7`) is rejected — pick `0.2.7`, or, for an intentional minor/major release, `0.3.0` / `1.0.0`.
-- A bump (when needed) updates **both** `package.json` files together.
+- A bump (when needed) updates **only the two `package.json` files** (root + `packages/desktop`) together — **leave `package-lock.json` alone.** Its version field intentionally drifts (it currently lags several releases behind) and the `version-bump` CI job reads *only* the two `package.json` files. A version-only bump needs no `npm install`.
 
 So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` → subsequent PRs stay at `0.2.7` → maintainer tags `v0.2.7` to release → next PR bumps to `0.2.8`.
+
+**A deliberate minor/major (`0.5.0`, `1.0.0`)** is just a first-PR bump that jumps the minor/major instead of the patch — allowed even when `main` already sits one patch ahead, because the CI check accepts any of `next_patch` / `next_minor` / `next_major` relative to the latest tag. E.g. latest tag `v0.4.1`, `main` at `0.4.2` → a release PR may set `0.5.0` (replacing the unreleased `0.4.2`).
+
+> ⚠️ The pre-commit hook runs `npm run check`, which needs the worker bundle built first — run `npm run build:worker --workspace=packages/desktop` once before committing, or the commit fails on 2 worker tests (unrelated to the version change).
 
 ## Key Architecture Decisions
 
