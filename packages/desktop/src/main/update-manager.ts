@@ -74,6 +74,21 @@ function formatError(err: unknown): { message: string; details: string | null } 
   return { message: String(err), details: null };
 }
 
+function isManifestNotReady(err: unknown): boolean {
+  // A freshly tagged release is published before its CI build finishes
+  // uploading the update manifest (latest-mac.yml / latest.yml). macOS
+  // notarization alone adds minutes, during which the manifest 404s. That's
+  // transient — the release is still building — not a real failure.
+  //
+  // electron-updater's GitHubProvider catches the underlying HttpError(404)
+  // and rethrows a fresh Error tagged with this code, so the original
+  // statusCode is gone by the time it reaches us — match the code (and fall
+  // back to the message for older/other electron-updater builds).
+  if (isStringRecord(err) && err['code'] === 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND') return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /Cannot find .+\.yml in the latest release/i.test(message);
+}
+
 let currentInfo: UpdateInfo | null = null;
 let hasTriedFullDownload = false;
 
@@ -151,6 +166,14 @@ export function initAutoUpdater(): void {
       return;
     }
     const stage = stageForCurrentStatus();
+    // While checking, a missing manifest means the latest release hasn't
+    // finished publishing its build. Report "no update yet" rather than
+    // alarming the user with a stack trace.
+    if (stage === 'check' && isManifestNotReady(err)) {
+      pushLog('info', 'Latest release is still publishing its build; no update yet');
+      setStatus({ state: 'idle' });
+      return;
+    }
     pushLog('error', `${stage} failed: ${message}`);
     if (details !== null) pushLog('error', details);
     setStatus({ state: 'error', error: message, stage, logs: snapshotLogs() });
@@ -164,6 +187,14 @@ export function checkForUpdates(): Promise<void> {
 }
 
 export function downloadUpdate(): Promise<void> {
+  // Flip to a visible "downloading" state immediately. electron-updater emits
+  // no progress events while it fetches the blockmap and computes the
+  // differential diff, so without this the modal sits on the static Download
+  // button for seconds after the click. percent 0 renders as "Preparing...".
+  if (currentInfo !== null) {
+    pushLog('info', 'Starting download');
+    setStatus({ state: 'downloading', percent: 0, info: currentInfo });
+  }
   return autoUpdater.downloadUpdate().then(() => undefined);
 }
 

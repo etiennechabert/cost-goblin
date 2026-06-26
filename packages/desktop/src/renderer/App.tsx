@@ -216,9 +216,9 @@ function ReleaseNotesModal({
             <div className="flex items-center justify-between text-xs text-text-secondary mb-1.5">
               <span className="flex items-center gap-1.5">
                 <RefreshCw size={12} className="animate-spin" />
-                Downloading...
+                {status.percent === 0 ? 'Preparing...' : 'Downloading...'}
               </span>
-              <span>{String(status.percent)}%</span>
+              {status.percent > 0 && <span>{String(status.percent)}%</span>}
             </div>
             <div className="h-2 rounded-full bg-bg-tertiary overflow-hidden">
               <div
