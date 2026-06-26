@@ -56,12 +56,11 @@ interface CustomViewProps {
   readonly spec: ViewSpec;
   readonly headerSubtitle?: string | undefined;
   readonly initialFilter?: FilterMap | undefined;
-  /** Live rollup state. Drives two things: a non-blocking "Updating…" badge per
-   *  widget during an incremental re-roll (data stays visible), and a blocking
-   *  build overlay when the selected period has no rollup yet on a cold first
-   *  build (widgets would otherwise grind on the slow raw path). */
+  /** Live rollup state. Drives two things: a blocking build overlay when the
+   *  rollup can't serve the viewed period and is building it (cold build or a
+   *  cleared rollup), and a non-blocking "Updating…" badge per widget when a
+   *  re-roll touches months the user isn't viewing (data stays visible). */
   readonly rollupStatus?: RollupStatus | undefined;
-  readonly rollupEverReady?: boolean | undefined;
 }
 
 function priorityFor(d: Dimension): number {
@@ -106,23 +105,24 @@ function previousRangeFor(dr: DateRange): DateRange {
   };
 }
 
-function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus, rollupEverReady }: CustomViewProps) {
+function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: CustomViewProps) {
   const api = useCostApi();
   const lagDays = useLagDays();
   const hourlyConfigured = useHourlyConfigured();
   const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
 
-  // Cold first build with no rollup for the viewed months yet → block with the
-  // build overlay (widgets don't mount, so they never fire slow raw queries).
-  // An incremental re-roll (the rollup was already ready) never blocks — it
-  // keeps data on screen under the non-blocking "Updating…" badge.
+  // Rollup can't serve the viewed months and is building them (cold build or a
+  // cleared rollup) → block with the build overlay; widgets don't mount, so
+  // they never fire slow raw queries. A re-roll that only touches months the
+  // user isn't viewing leaves their data served → not blocked, and the badge
+  // below covers it.
   const gate = useMemo(
     () => rollupStatus === undefined
       ? { blocked: false, selectedMonths: [], pendingMonths: [] }
-      : rollupGate(rollupStatus, rollupEverReady ?? false, dateRange),
-    [rollupStatus, rollupEverReady, dateRange],
+      : rollupGate(rollupStatus, dateRange),
+    [rollupStatus, dateRange],
   );
-  const reRolling = rollupStatus?.state === 'computing' && rollupEverReady === true;
+  const reRolling = rollupStatus?.state === 'computing' && !gate.blocked;
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [compareEnabled, setCompareEnabled] = useState(false);
   const [filters, setFilters] = useState<FilterMap>(initialFilter ?? {});

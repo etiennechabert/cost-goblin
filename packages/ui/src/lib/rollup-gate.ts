@@ -2,9 +2,9 @@ import type { RollupStatus } from '@costgoblin/core/browser';
 import { monthsInRange } from './dates.js';
 
 export interface RollupGateState {
-  /** True when the selected range can't yet be served from the rollup and no
-   *  prior rollup exists to fall back on — i.e. a cold first build. The view
-   *  should show the building overlay instead of mounting widgets. */
+  /** True when the rollup can't serve the selected period and a build is in
+   *  progress to make it so — the view should show the building overlay instead
+   *  of mounting widgets that would grind on the slow raw path. */
   readonly blocked: boolean;
   /** Every YYYY-MM the selected range spans. */
   readonly selectedMonths: readonly string[];
@@ -14,24 +14,24 @@ export interface RollupGateState {
 
 /** Decide whether a rollup-backed view should block on a not-yet-built period.
  *
- *  Only a *cold* build blocks: `everReady` is false (the rollup has never been
- *  ready this session), so there's no prior rollup serving these months — the
- *  widgets would grind on the slow raw path with no explanation. An incremental
- *  re-roll (`everReady` true) keeps data on screen and is surfaced by the
- *  non-blocking "Updating…" badge instead, so it never blocks.
- *
- *  During `computing`, `status.periods` is ordered completed-first: the first
+ *  Availability-driven, exception-style: the question is purely "is the rollup
+ *  present for the months I'm viewing?", never "was it ever ready this session".
+ *  During `computing`, `status.periods` is ordered completed-first — the first
  *  `done` entries are built, the tail (`periods.slice(done)`) is still pending
- *  or in flight. A month not in `periods` at all is already valid (a partial
- *  re-roll) — but on a cold build `periods` is the full set, so the tail is the
- *  authoritative "not yet available" list. */
+ *  or in flight, and any month NOT in `periods` at all is a partition left
+ *  untouched by this build (still valid, still served). So a viewed month is
+ *  unavailable iff it falls in that pending tail.
+ *
+ *  This blocks both a cold first build AND a cleared/rebuilt rollup (every month
+ *  is in the batch, so any viewed month is pending until rebuilt). A re-roll of
+ *  months the user isn't viewing leaves their partitions valid → not blocked,
+ *  and the non-blocking "Updating…" badge covers that case instead. */
 export function rollupGate(
   status: RollupStatus,
-  everReady: boolean,
   range: { readonly start: string; readonly end: string },
 ): RollupGateState {
   const selectedMonths = monthsInRange(range);
-  if (status.state !== 'computing' || everReady) {
+  if (status.state !== 'computing') {
     return { blocked: false, selectedMonths, pendingMonths: [] };
   }
   const notBuilt = new Set(status.periods.slice(status.done));

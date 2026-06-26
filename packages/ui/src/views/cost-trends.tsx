@@ -76,13 +76,13 @@ function TrendRowItem({ row, onClick }: Readonly<{ row: TrendRow; onClick: (e: E
 
 interface CostTrendsProps {
   onEntityClick?: (entity: string, dimension: string) => void;
-  /** Live rollup state — Cost Trends is rollup-backed, so a cold first build
-   *  blocks with the build overlay until the viewed period is aggregated. */
+  /** Live rollup state — Cost Trends is rollup-backed, so it blocks with the
+   *  build overlay whenever the rollup can't serve the viewed period and is
+   *  building it (cold build or a cleared rollup). */
   rollupStatus?: RollupStatus;
-  rollupEverReady?: boolean;
 }
 
-export function CostTrends({ onEntityClick: onEntityClickProp, rollupStatus, rollupEverReady }: CostTrendsProps = {}) {
+export function CostTrends({ onEntityClick: onEntityClickProp, rollupStatus }: CostTrendsProps = {}) {
   const api = useCostApi();
   const lagDays = useLagDays();
   const dimensionsQuery = useQuery(() => api.getDimensions(), []);
@@ -103,8 +103,8 @@ export function CostTrends({ onEntityClick: onEntityClickProp, rollupStatus, rol
   const gate = useMemo(
     () => rollupStatus === undefined
       ? { blocked: false, selectedMonths: [], pendingMonths: [] }
-      : rollupGate(rollupStatus, rollupEverReady ?? false, state.dateRange),
-    [rollupStatus, rollupEverReady, state.dateRange],
+      : rollupGate(rollupStatus, state.dateRange),
+    [rollupStatus, state.dateRange],
   );
 
   const firstDimId = dimensions.length > 0 && dimensions[0] !== undefined

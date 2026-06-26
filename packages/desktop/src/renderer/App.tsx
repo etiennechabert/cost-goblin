@@ -497,7 +497,6 @@ function AppShell(): React.JSX.Element {
   const inFlightCount = useDebugBadge();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
   const [rollupStatus, setRollupStatus] = useState<RollupStatus>({ state: 'idle' });
-  const [rollupEverReady, setRollupEverReady] = useState(false);
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [devBranch, setDevBranch] = useState<string | null>(null);
@@ -541,7 +540,6 @@ function AppShell(): React.JSX.Element {
     // the renderer subscribes), then track transitions via the push channel.
     const apply = (status: RollupStatus): void => {
       setRollupStatus(status);
-      if (status.state === 'ready') setRollupEverReady(true);
     };
     globalThis.costgoblinRollup.getStatus().then(apply).catch(() => undefined);
     return globalThis.costgoblinRollup.onStatusChanged(apply);
@@ -1060,13 +1058,13 @@ function AppShell(): React.JSX.Element {
               const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
               return (
                 <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
-                  <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} rollupStatus={rollupStatus} rollupEverReady={rollupEverReady} />
+                  <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} rollupStatus={rollupStatus} />
                 </Profiler>
               );
             })()}
             {view.page === 'trends' && (
               <Profiler id="trends" onRender={onPerfRender}>
-                <CostTrends onEntityClick={handleEntityClick} rollupStatus={rollupStatus} rollupEverReady={rollupEverReady} />
+                <CostTrends onEntityClick={handleEntityClick} rollupStatus={rollupStatus} />
               </Profiler>
             )}
             {view.page === 'missing-tags' && (
