@@ -19,8 +19,8 @@ function filterMapsEqual(a: FilterMap, b: FilterMap): boolean {
     const vb = b[k as DimensionId];
     if (va === undefined || vb === undefined) return false;
     if (va.length !== vb.length) return false;
-    const sortedA = [...va].sort();
-    const sortedB = [...vb].sort();
+    const sortedA = [...va].sort((x, y) => x.localeCompare(y));
+    const sortedB = [...vb].sort((x, y) => x.localeCompare(y));
     for (let i = 0; i < sortedA.length; i++) {
       if (sortedA[i] !== sortedB[i]) return false;
     }

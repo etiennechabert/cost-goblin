@@ -68,12 +68,16 @@ function amortizedExpr(prefix: string, net: boolean, has: (col: string) => boole
   const unblended = net && has('line_item_net_unblended_cost')
     ? `${prefix}line_item_net_unblended_cost`
     : `${prefix}line_item_unblended_cost`;
-  const riCol = net && has('reservation_net_effective_cost')
-    ? `${prefix}reservation_net_effective_cost`
-    : has('reservation_effective_cost') ? `${prefix}reservation_effective_cost` : null;
-  const spCol = net && has('savings_plan_net_savings_plan_effective_cost')
-    ? `${prefix}savings_plan_net_savings_plan_effective_cost`
-    : has('savings_plan_savings_plan_effective_cost') ? `${prefix}savings_plan_savings_plan_effective_cost` : null;
+  const riCol = ((): string | null => {
+    if (net && has('reservation_net_effective_cost')) return `${prefix}reservation_net_effective_cost`;
+    if (has('reservation_effective_cost')) return `${prefix}reservation_effective_cost`;
+    return null;
+  })();
+  const spCol = ((): string | null => {
+    if (net && has('savings_plan_net_savings_plan_effective_cost')) return `${prefix}savings_plan_net_savings_plan_effective_cost`;
+    if (has('savings_plan_savings_plan_effective_cost')) return `${prefix}savings_plan_savings_plan_effective_cost`;
+    return null;
+  })();
 
   // Without either effective-cost family, amortized has nothing to amortize
   // against — degrade to unblended, same as the old code.

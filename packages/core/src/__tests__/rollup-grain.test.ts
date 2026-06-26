@@ -155,6 +155,6 @@ describe('buildRollupPartitionQuery', () => {
     const rollTotal = Number((await queryAll(conn, `SELECT CAST(SUM(cost) AS DOUBLE) t FROM ${glob}`))[0]?.['t']);
     expect(rollTotal).toBeCloseTo(rawTotal - excludedCost, 2);
     const stillThere = await queryAll(conn, `SELECT 1 FROM ${glob} WHERE service = '${excludedService.replaceAll("'", "''")}' LIMIT 1`);
-    expect(stillThere.length).toBe(0);
+    expect(stillThere).toHaveLength(0);
   });
 });

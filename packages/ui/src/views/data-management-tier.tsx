@@ -125,9 +125,12 @@ export function TierPanel({
         // each file fully completes, so on a few large files the bar would
         // sit at 0% for minutes. Bytes from the "Completed" line move
         // smoothly. Fall back to file-count until the first bytes land.
-        const fraction = syncState.bytesTotal > 0
-          ? syncState.bytesDone / syncState.bytesTotal
-          : (syncState.filesTotal > 0 ? syncState.filesDone / syncState.filesTotal : 0);
+        let fraction = 0;
+        if (syncState.bytesTotal > 0) {
+          fraction = syncState.bytesDone / syncState.bytesTotal;
+        } else if (syncState.filesTotal > 0) {
+          fraction = syncState.filesDone / syncState.filesTotal;
+        }
         const percent = Math.min(100, Math.max(0, Math.round(fraction * 100)));
         return (
           <div className="rounded-lg border border-accent/50 bg-positive-muted px-3 py-2">

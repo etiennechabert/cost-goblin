@@ -22,6 +22,12 @@ interface Props {
   onRecheck: () => Promise<void>;
 }
 
+function syncBarFraction(status: Extract<SyncStatus, { status: 'syncing' }>): number {
+  if (status.bytesTotal > 0) return status.bytesDone / status.bytesTotal;
+  if (status.filesTotal > 0) return status.filesDone / status.filesTotal;
+  return 0;
+}
+
 function tierState(status: SyncStatus, synced: boolean): React.JSX.Element {
   switch (status.status) {
     case 'syncing':
@@ -40,12 +46,7 @@ function tierState(status: SyncStatus, synced: boolean): React.JSX.Element {
 
 function SyncTierRow({ label, status, synced }: Readonly<{ label: string; status: SyncStatus; synced: boolean }>): React.JSX.Element {
   const bar = status.status === 'syncing'
-    ? (() => {
-        const fraction = status.bytesTotal > 0
-          ? status.bytesDone / status.bytesTotal
-          : (status.filesTotal > 0 ? status.filesDone / status.filesTotal : 0);
-        return Math.min(100, Math.max(0, Math.round(fraction * 100)));
-      })()
+    ? Math.min(100, Math.max(0, Math.round(syncBarFraction(status) * 100)))
     : null;
   return (
     <div className="py-1.5">
@@ -60,6 +61,14 @@ function SyncTierRow({ label, status, synced }: Readonly<{ label: string; status
       )}
     </div>
   );
+}
+
+function buttonTitle(opts: Readonly<{ showError: boolean; error: string | null; showActive: boolean; showMissing: boolean; missingPeriods: number }>): string {
+  const { showError, error, showActive, showMissing, missingPeriods } = opts;
+  if (showError) return `Sync error — ${error ?? ''}`;
+  if (showActive) return 'Syncing…';
+  if (showMissing) return `${String(missingPeriods)} billing period${missingPeriods === 1 ? '' : 's'} not synced`;
+  return 'Data sync';
 }
 
 /** Dedicated data-sync indicator, split out of the Settings gear. Shows whether
@@ -83,13 +92,11 @@ export function SyncStatusButton({
   const showActive = !showError && activity !== 'idle';
   const showMissing = !showError && activity === 'idle' && missingPeriods > 0 && !inSettingsData;
 
-  const title = showError
-    ? `Sync error — ${error}`
-    : showActive
-      ? 'Syncing…'
-      : showMissing
-        ? `${String(missingPeriods)} billing period${missingPeriods === 1 ? '' : 's'} not synced`
-        : 'Data sync';
+  const title = buttonTitle({ showError, error, showActive, showMissing, missingPeriods });
+  const periodPlural = missingPeriods === 1 ? '' : 's';
+  const footerLabel = missingPeriods > 0
+    ? `${String(missingPeriods)} period${periodPlural} not synced`
+    : 'All periods synced';
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -147,9 +154,7 @@ export function SyncStatusButton({
         </div>
         <div className="mt-3 flex items-center justify-between border-t border-border pt-2">
           <span className="text-[11px] text-text-muted">
-            {missingPeriods > 0
-              ? `${String(missingPeriods)} period${missingPeriods === 1 ? '' : 's'} not synced`
-              : 'All periods synced'}
+            {footerLabel}
           </span>
           <button
             type="button"

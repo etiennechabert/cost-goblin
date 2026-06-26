@@ -64,7 +64,7 @@ export function enabledGrainColumns(dims: DimensionsConfig): string[] {
 function marketplaceForSignature(
   cfg: MarketplaceAttributionConfig | undefined,
 ): { service: string; operations: string[] }[] | null {
-  if (cfg === undefined || !cfg.enabled) return null;
+  if (!cfg?.enabled) return null;
   const rules = cfg.rules
     .filter(r => r.service.length > 0 && r.operations.length > 0)
     .map(r => ({ service: r.service, operations: [...r.operations].sort((a, b) => a.localeCompare(b)) }))

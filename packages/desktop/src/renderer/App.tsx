@@ -165,11 +165,16 @@ function ReleaseNotesModal({
             <div className="mt-3">
               <div className="text-xs text-text-secondary mb-1">Recent events</div>
               <pre className="max-h-60 overflow-y-auto rounded-md bg-bg-primary p-3 text-xs text-text-secondary whitespace-pre-wrap break-words">
-                {status.logs.map((entry, i) => (
-                  <div key={i} className={entry.level === 'error' ? 'text-negative' : entry.level === 'warn' ? 'text-warning' : undefined}>
-                    [{formatLogTimestamp(entry.timestamp)}] {entry.level.toUpperCase()}: {entry.message}
-                  </div>
-                ))}
+                {status.logs.map((entry, i) => {
+                  let levelClass: string | undefined;
+                  if (entry.level === 'error') levelClass = 'text-negative';
+                  else if (entry.level === 'warn') levelClass = 'text-warning';
+                  return (
+                    <div key={`${String(entry.timestamp)}-${String(i)}`} className={levelClass}>
+                      [{formatLogTimestamp(entry.timestamp)}] {entry.level.toUpperCase()}: {entry.message}
+                    </div>
+                  );
+                })}
               </pre>
             </div>
           )}
@@ -193,11 +198,9 @@ function ReleaseNotesModal({
   if (status.state !== 'available' && status.state !== 'downloading' && status.state !== 'downloaded') return null;
   const { info } = status;
 
-  const title = status.state === 'downloaded'
-    ? 'Ready to Install'
-    : status.state === 'downloading'
-      ? 'Downloading Update'
-      : 'Update Available';
+  let title = 'Update Available';
+  if (status.state === 'downloaded') title = 'Ready to Install';
+  else if (status.state === 'downloading') title = 'Downloading Update';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -483,7 +486,7 @@ function AppShell(): React.JSX.Element {
   const [missingPeriods, setMissingPeriods] = useState(0);
   const [isDark, setIsDark] = useState(true);
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
-  const [defaultViewId, setDefaultViewIdState] = useState<string>(OVERVIEW_SEED_VIEW.id);
+  const [defaultViewId, setDefaultViewId] = useState<string>(OVERVIEW_SEED_VIEW.id);
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const [splashStep, setSplashStep] = useState('Connecting...');
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
@@ -598,7 +601,7 @@ function AppShell(): React.JSX.Element {
       setIsDark(prefs.theme === 'dark');
       setPalette(prefs.palette);
       const defaultId = prefs.defaultViewId ?? OVERVIEW_SEED_VIEW.id;
-      setDefaultViewIdState(defaultId);
+      setDefaultViewId(defaultId);
       // Only redirect to the configured default once on startup, so that
       // navigating around (or starring a different default mid-session)
       // doesn't yank the user away from the page they're looking at.
@@ -648,7 +651,7 @@ function AppShell(): React.JSX.Element {
   }
 
   function handleSetDefaultView(id: string) {
-    setDefaultViewIdState(id);
+    setDefaultViewId(id);
     api.saveUIPreferences({
       theme: isDark ? 'dark' : 'light',
       palette,
@@ -699,7 +702,7 @@ function AppShell(): React.JSX.Element {
   // Re-check on view / settings-tab change (leaving the Data & Sync tab after a
   // download must refresh the missing-periods badge) and on demand from the
   // sync popover's recheck button.
-  useEffect(() => { void checkMissingPeriods(); }, [checkMissingPeriods, view, settingsTab]);
+  useEffect(() => { checkMissingPeriods().catch(() => undefined); }, [checkMissingPeriods, view, settingsTab]);
 
   function handleNavClick(id: string) {
     const inSettings = settingsTab !== null;
@@ -739,8 +742,8 @@ function AppShell(): React.JSX.Element {
   function toggleSettings() {
     // The gear carries the app-wide sync/update badge, so opening it always
     // lands on Data & Sync — the activity that badge is inviting a click for.
-    if (settingsTab !== null) exitSettings();
-    else enterSettings('data-sync');
+    if (settingsTab === null) enterSettings('data-sync');
+    else exitSettings();
   }
 
   // Single entry point for the command palette: routes settings tabs and
@@ -850,7 +853,7 @@ function AppShell(): React.JSX.Element {
               // The whole org config just changed under the renderer — a full
               // reload re-runs the boot path (setup check, views, dimensions
               // prewarm) so nothing serves stale state.
-              window.location.reload();
+              globalThis.location.reload();
             }}
           />
         );
@@ -861,6 +864,33 @@ function AppShell(): React.JSX.Element {
       case null:
         return null;
     }
+  }
+
+  // The build indicator prefers a PR link, falls back to the git branch, then to
+  // the app version — rendered as a flat sequence rather than a nested ternary.
+  function renderBuildIndicator(): React.JSX.Element | false {
+    if (branchPr !== null) {
+      return (
+        <a
+          href={branchPr.url}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-1 max-w-[320px] font-medium text-accent hover:underline [-webkit-app-region:no-drag]"
+          title={`#${String(branchPr.number)} ${branchPr.title} — open on GitHub`}
+        >
+          <GitPullRequest size={10} className="shrink-0" />
+          <span className="truncate">#{branchPr.number} {branchPr.title}</span>
+        </a>
+      );
+    }
+    if (devBranch !== null) {
+      return (
+        <span className="flex items-center gap-1 font-medium text-accent" title="Running from this git branch">
+          <GitBranch size={10} />{devBranch}
+        </span>
+      );
+    }
+    return appVersion !== '' && <span>v{appVersion}</span>;
   }
 
   return (
@@ -948,26 +978,7 @@ function AppShell(): React.JSX.Element {
           <div className="flex flex-col items-center justify-center px-4">
             <span className="text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
             <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
-              {branchPr !== null
-                ? (
-                  <a
-                    href={branchPr.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-1 max-w-[320px] font-medium text-accent hover:underline [-webkit-app-region:no-drag]"
-                    title={`#${String(branchPr.number)} ${branchPr.title} — open on GitHub`}
-                  >
-                    <GitPullRequest size={10} className="shrink-0" />
-                    <span className="truncate">#{branchPr.number} {branchPr.title}</span>
-                  </a>
-                )
-                : devBranch !== null
-                  ? (
-                    <span className="flex items-center gap-1 font-medium text-accent" title="Running from this git branch">
-                      <GitBranch size={10} />{devBranch}
-                    </span>
-                  )
-                  : appVersion !== '' && <span>v{appVersion}</span>}
+              {renderBuildIndicator()}
               {isDev && memoryMB > 0 && <span>{formatMemory(memoryMB)}</span>}
             </div>
           </div>

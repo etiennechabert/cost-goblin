@@ -101,12 +101,12 @@ export function computeBucketedRange(
   const startDate = bucketKeyToDate(startBar.date);
   const nextBar = bars[endIdx + 1];
   let endDate: string;
-  if (nextBar !== undefined) {
+  if (nextBar === undefined) {
+    endDate = fallbackEnd;
+  } else {
     const d = new Date(bucketKeyToDate(nextBar.date) + 'T00:00:00Z');
     d.setUTCDate(d.getUTCDate() - 1);
     endDate = d.toISOString().slice(0, 10);
-  } else {
-    endDate = fallbackEnd;
   }
   if (endDate < startDate) endDate = startDate;
   return { startDate, endDate };
@@ -144,15 +144,15 @@ export function computeBucketedHourRange(
   if (startHour === null) return null;
   const nextBar = bars[endIdx + 1];
   let endHour: string;
-  if (nextBar !== undefined) {
+  if (nextBar === undefined) {
+    const fallback = normalizeHourKey(fallbackEndHour);
+    endHour = fallback ?? startHour;
+  } else {
     const nextHour = normalizeHourKey(nextBar.date);
     if (nextHour === null) return null;
     const d = new Date(nextHour.replace(' ', 'T') + 'Z');
     d.setUTCHours(d.getUTCHours() - 1);
     endHour = `${d.toISOString().slice(0, 10)} ${String(d.getUTCHours()).padStart(2, '0')}:00:00`;
-  } else {
-    const fallback = normalizeHourKey(fallbackEndHour);
-    endHour = fallback ?? startHour;
   }
   if (endHour < startHour) endHour = startHour;
   return { startHour, endHour };

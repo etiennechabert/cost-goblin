@@ -88,6 +88,48 @@ const THROUGHPUT_WINDOW_MS = 5000;
  *  address is a stable, meaningful "currently pulling" gauge. */
 const ACTIVE_PEER_WINDOW_MS = 8000;
 
+/** Reach a host from the sharing key, fetch its manifest, and verify both
+ *  the signature and that the publisher matches the pinned key. Shared by
+ *  preview (no download) and pull (download). */
+async function connect(payload: SharingKeyPayload): Promise<{ endpoint: PeerEndpoint; signed: SignedPackManifest }> {
+  const psk = Buffer.from(payload.psk, 'base64url');
+  let endpoint: PeerEndpoint | null = null;
+  let signed: SignedPackManifest | null = null;
+  let lastError: unknown = null;
+  for (const host of payload.hosts) {
+    try {
+      const candidate: PeerEndpoint = { host, port: payload.port, psk };
+      signed = parseSignedManifest(await fetchManifest(candidate));
+      endpoint = candidate;
+      break;
+    } catch (err: unknown) {
+      lastError = err;
+    }
+  }
+  if (endpoint === null || signed === null) {
+    throw new Error(`Could not reach the shared source. ${errorMessage(lastError)}`);
+  }
+  if (!verifyManifestSignature(signed)) {
+    throw new Error('Snapshot signature is invalid — refusing to import.');
+  }
+  if (signed.manifest.publisher !== payload.pub) {
+    throw new Error('Snapshot publisher does not match the sharing key — refusing to import.');
+  }
+  return { endpoint, signed };
+}
+
+function toInfo(source: StoredSharedSource): SharedSourceInfo {
+  return {
+    label: source.label,
+    fingerprint: source.fingerprint,
+    host: source.host,
+    port: source.port,
+    lastPulledAt: source.lastPulledAt,
+    periods: source.periods,
+    ...(source.selection === undefined ? {} : { selection: source.selection }),
+  };
+}
+
 export function registerDataSharingHandlers(app: AppContext): void {
   const { ctx, clearAllCaches } = app;
   let server: SharingServer | null = null;
@@ -266,36 +308,6 @@ export function registerDataSharingHandlers(app: AppContext): void {
     return currentStatus();
   }
 
-  /** Reach a host from the sharing key, fetch its manifest, and verify both
-   *  the signature and that the publisher matches the pinned key. Shared by
-   *  preview (no download) and pull (download). */
-  async function connect(payload: SharingKeyPayload): Promise<{ endpoint: PeerEndpoint; signed: SignedPackManifest }> {
-    const psk = Buffer.from(payload.psk, 'base64url');
-    let endpoint: PeerEndpoint | null = null;
-    let signed: SignedPackManifest | null = null;
-    let lastError: unknown = null;
-    for (const host of payload.hosts) {
-      try {
-        const candidate: PeerEndpoint = { host, port: payload.port, psk };
-        signed = parseSignedManifest(await fetchManifest(candidate));
-        endpoint = candidate;
-        break;
-      } catch (err: unknown) {
-        lastError = err;
-      }
-    }
-    if (endpoint === null || signed === null) {
-      throw new Error(`Could not reach the shared source. ${errorMessage(lastError)}`);
-    }
-    if (!verifyManifestSignature(signed)) {
-      throw new Error('Snapshot signature is invalid — refusing to import.');
-    }
-    if (signed.manifest.publisher !== payload.pub) {
-      throw new Error('Snapshot publisher does not match the sharing key — refusing to import.');
-    }
-    return { endpoint, signed };
-  }
-
   /** Summarize what a verified manifest offers — per-tier months/counts/bytes
    *  plus the config digest — so the UI can show a month picker before pulling. */
   function buildPreview(signed: SignedPackManifest): SharedSourcePreview {
@@ -424,18 +436,6 @@ export function registerDataSharingHandlers(app: AppContext): void {
       pullProgress = { ...pullProgress, active: false, phase: 'error', error: errorMessage(err) };
       throw err;
     }
-  }
-
-  function toInfo(source: StoredSharedSource): SharedSourceInfo {
-    return {
-      label: source.label,
-      fingerprint: source.fingerprint,
-      host: source.host,
-      port: source.port,
-      lastPulledAt: source.lastPulledAt,
-      periods: source.periods,
-      ...(source.selection === undefined ? {} : { selection: source.selection }),
-    };
   }
 
   ipcMain.handle('data-sharing:status', (): DataSharingStatus => currentStatus());

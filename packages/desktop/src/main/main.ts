@@ -292,6 +292,8 @@ app.on('will-quit', () => {
   void stopMcpServer();
 });
 
+// Electron's ESM main entry does not support top-level await at launch, so the
+// bootstrap stays wrapped in a fire-and-forget async IIFE (SonarCloud S7785).
 void (async () => {
   try {
     await main();

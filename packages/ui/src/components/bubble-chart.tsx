@@ -95,9 +95,14 @@ function BubbleChartInner({
   const deltaMax = Math.max(...absDeltas);
   const costMax = Math.max(...costs);
 
-  const scaleKind: 'linear' | number = logScale === 'linear'
-    ? 'linear'
-    : (typeof logScale === 'number' ? logScale : DEFAULT_LOG_SCALE);
+  let scaleKind: 'linear' | number;
+  if (logScale === 'linear') {
+    scaleKind = 'linear';
+  } else if (typeof logScale === 'number') {
+    scaleKind = logScale;
+  } else {
+    scaleKind = DEFAULT_LOG_SCALE;
+  }
 
   const xScale = scaleKind === 'linear'
     ? scaleLinear<number>({

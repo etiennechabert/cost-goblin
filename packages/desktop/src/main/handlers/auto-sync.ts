@@ -23,6 +23,12 @@ function asTier(s: string): Tier {
   return 'daily';
 }
 
+function computeSyncFraction(bytesDone: number, bytesTotal: number, filesDone: number, filesTotal: number): number {
+  if (bytesTotal > 0) return bytesDone / bytesTotal;
+  if (filesTotal > 0) return filesDone / filesTotal;
+  return 0;
+}
+
 export function registerAutoSyncHandlers(app: AppContext): void {
   const { ctx, state, getConfig } = app;
 
@@ -77,9 +83,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
             onProgress: (progress) => {
               const bytesDone = progress.bytesDone ?? 0;
               const bytesTotal = progress.bytesTotal ?? 0;
-              const fraction = bytesTotal > 0
-                ? bytesDone / bytesTotal
-                : (progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0);
+              const fraction = computeSyncFraction(bytesDone, bytesTotal, progress.filesDone, progress.filesTotal);
               state.syncStatuses[syncId] = {
                 status: 'syncing',
                 phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',

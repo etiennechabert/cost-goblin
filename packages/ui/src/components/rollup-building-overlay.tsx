@@ -14,7 +14,7 @@ function formatMonth(period: string): string {
 function periodLabel(months: readonly string[]): string {
   if (months.length === 0) return 'the selected period';
   if (months.length === 1) return formatMonth(months[0] ?? '');
-  return `${formatMonth(months[0] ?? '')}–${formatMonth(months[months.length - 1] ?? '')}`;
+  return `${formatMonth(months[0] ?? '')}–${formatMonth(months.at(-1) ?? '')}`;
 }
 
 interface Props {

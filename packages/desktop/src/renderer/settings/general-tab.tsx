@@ -39,7 +39,7 @@ function Segmented({ options, value, onChange }: Readonly<{
   onChange: (next: string) => void;
 }>): React.JSX.Element {
   return (
-    <div className="inline-flex overflow-hidden rounded-md border border-border" role="group">
+    <fieldset className="m-0 inline-flex min-w-0 overflow-hidden rounded-md border border-border p-0">
       {options.map((opt) => {
         const active = opt.value === value;
         return (
@@ -58,7 +58,7 @@ function Segmented({ options, value, onChange }: Readonly<{
           </button>
         );
       })}
-    </div>
+    </fieldset>
   );
 }
 
@@ -120,6 +120,8 @@ export function GeneralTab({
   onShowReleaseNotes,
 }: Readonly<Props>): React.JSX.Element {
   const swatches = getActivePalette(palette).slice(0, 8);
+  const versionSuffix = appVersion === '' ? '' : ` · v${appVersion}`;
+  const updatesDescription = updateStatus.state === 'idle' ? `You're up to date${versionSuffix}` : undefined;
 
   return (
     <div className="flex max-w-3xl flex-col gap-6 p-6">
@@ -141,7 +143,7 @@ export function GeneralTab({
           <div className="flex items-center gap-3">
             <div className="flex gap-1" aria-hidden="true">
               {swatches.map((color, i) => (
-                <span key={i} className="h-4 w-4 rounded" style={{ backgroundColor: color }} />
+                <span key={`${color}-${String(i)}`} className="h-4 w-4 rounded" style={{ backgroundColor: color }} />
               ))}
             </div>
             <Segmented
@@ -167,7 +169,7 @@ export function GeneralTab({
       </div>
 
       <div className="divide-y divide-border rounded-lg border border-border">
-        <SettingRow label="Software updates" description={updateStatus.state === 'idle' ? `You're up to date${appVersion === '' ? '' : ` · v${appVersion}`}` : undefined}>
+        <SettingRow label="Software updates" description={updatesDescription}>
           <UpdateControl status={updateStatus} onCheckForUpdates={onCheckForUpdates} onShowReleaseNotes={onShowReleaseNotes} />
         </SettingRow>
         {updateStatus.state === 'idle' && appVersion !== '' && (
