@@ -2,6 +2,7 @@ import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import { LRUCache } from '../lru-cache.js';
 import { QueryLog } from '../query-log.js';
 import { awaitWithTimeout } from '../async-timeout.js';
+import { computeDefaultPoolSize } from '../duckdb-tuning.js';
 import { RollupStore, type BuildPartitionSql, type RollupShape } from '../rollup-store.js';
 import {
   asDimensionId,
@@ -459,7 +460,15 @@ export function createAppContext(ctx: IpcContext): AppContext {
   }
 
   const queryLog = new QueryLog();
-  const rollupStore = new RollupStore({ dataDir: ctx.dataDir, runQuery: (sql) => ctx.db.runQuery(sql) });
+  const rollupStore = new RollupStore({
+    dataDir: ctx.dataDir,
+    runQuery: (sql) => ctx.db.runQuery(sql),
+    // Partition builds run on a fresh, disposable connection (flat per-build
+    // time) and fan out across the DuckDB pool so a full-history rebuild is
+    // ~pool-size faster than the old sequential pass.
+    runBuild: (sql) => ctx.db.runBuildQuery(sql),
+    buildConcurrency: computeDefaultPoolSize(),
+  });
   const resultCache = new LRUCache<string, RawRow[]>(50);
 
   const wrappedRunQuery = queryLog.wrapQuery((sql, onStarted) => ctx.db.runQuery(sql, onStarted));
