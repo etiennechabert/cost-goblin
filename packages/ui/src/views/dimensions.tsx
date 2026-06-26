@@ -1554,7 +1554,21 @@ function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: R
           <h3 className="text-sm font-medium text-text-secondary">Rollup impact</h3>
         </div>
         {estimate !== null && estimate.probePeriod.length > 0 && (
-          <span className="text-[10px] text-text-muted">{matchedCurrent !== null ? 'actual · current rollup' : `estimated from ${estimate.probePeriod} · directional`}</span>
+          matchedCurrent !== null ? (
+            <span
+              title="These are the real size and row counts of the rollup already built for this grain."
+              className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-accent" />Actual
+            </span>
+          ) : (
+            <span
+              title={`Directional estimate, probed from ${estimate.probePeriod}. Rebuild this grain to get exact numbers.`}
+              className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-500"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />Estimated
+            </span>
+          )
         )}
       </div>
       <p className="mt-1 text-[11px] leading-snug text-text-muted">

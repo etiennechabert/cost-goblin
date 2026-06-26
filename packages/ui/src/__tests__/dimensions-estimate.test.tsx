@@ -40,7 +40,7 @@ describe('DimensionsView — rollup grain estimate', () => {
     expect(screen.getByText('Est. rollup')).toBeDefined();
     expect(screen.getByText('Compression')).toBeDefined();
     expect(screen.getByText('Rebuild')).toBeDefined();
-    expect(screen.getByText(/directional/)).toBeDefined();
+    expect(screen.getByText('Estimated')).toBeDefined();
   });
 
   it('flags resource_id as the dominant grain driver in the per-dimension list', async () => {
@@ -74,14 +74,14 @@ describe('DimensionsView — rollup grain estimate', () => {
     // resource_id is enabled in the render config → grain differs from the
     // built rollup → directional estimate.
     await waitFor(() => { expect(screen.getByText('Est. rollup')).toBeDefined(); });
-    expect(screen.getByText(/directional/)).toBeDefined();
+    expect(screen.getByText('Estimated')).toBeDefined();
 
     // Toggle resource_id off → grain matches the built rollup → actual stats.
     const resourcePill = screen.getAllByRole('button', { name: /Resource/ })[0];
     await user.click(resourcePill as HTMLElement);
     await waitFor(() => {
       expect(screen.getByText('Rollup')).toBeDefined();
-      expect(screen.getByText(/actual · current rollup/)).toBeDefined();
+      expect(screen.getByText('Actual')).toBeDefined();
     });
     expect(screen.queryByText('Est. rollup')).toBeNull();
   });
