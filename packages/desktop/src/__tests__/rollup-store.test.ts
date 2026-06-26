@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { mkdtemp, rm, stat, readdir } from 'node:fs/promises';
-import { buildRollupPartitionQuery, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, asDimensionId } from '@costgoblin/core';
+import { buildRollupPartitionQuery, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, type RollupStatus, asDimensionId } from '@costgoblin/core';
 import { RollupStore, type RollupShape } from '../main/rollup-store.js';
 import type { RawRow } from '../main/duckdb-client.js';
 
@@ -153,6 +153,23 @@ describe('RollupStore', () => {
     const reloaded = new RollupStore({ dataDir, runQuery });
     const v = await reloaded.loadAndValidate(shape, etags);
     expect(v.validPeriods.size).toBe(0);
+  });
+
+  it('surfaces the underlying error as the failed status reason', async () => {
+    const failDir = await mkdtemp(join(tmpdir(), 'cg-rollup-fail-'));
+    let captured: RollupStatus | undefined;
+    const runBuild = (): Promise<RawRow[]> => Promise.reject(new Error('Binder Error: column "service" not found'));
+    const store = new RollupStore({ dataDir: failDir, runQuery, runBuild });
+    store.onStatusChanged((s) => { captured = s; });
+    await store.maintainPeriods(['2026-01', '2026-02'], buildSql, etags, shape);
+
+    expect(captured?.state).toBe('failed');
+    if (captured?.state === 'failed') {
+      expect(captured.message).toBe('2 of 2 rollup partitions failed to build');
+      // Both periods fail with the same cause → one distinct reason, no "+N".
+      expect(captured.reason).toBe('Binder Error: column "service" not found');
+    }
+    await rm(failDir, { recursive: true, force: true });
   });
 
   it('invalidate() removes the on-disk rollup and resets state', async () => {

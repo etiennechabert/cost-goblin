@@ -386,15 +386,18 @@ export interface UpdateApi {
  *  can show whether dashboards are currently served from the pre-aggregated
  *  rollup (`ready`) or transiently from the slower raw path while a re-roll runs
  *  (`computing`) — e.g. after a dimensions save or a sync. `idle` = no rollup
- *  built yet (no local data); `failed` = the last build batch hit an error
- *  (otherwise swallowed to the log). While `computing`, `periods` lists every
- *  month completed-first (the first `done` are built) and `active` is the subset
- *  whose build is in flight right now, so the popover can pulse those chips. */
+ *  built yet (no local data); `failed` = the last build batch hit an error.
+ *  `message` is the count summary ("N of M partitions failed"); `reason` is the
+ *  underlying error (the DuckDB/IO message the build threw) so the user can tell
+ *  *why* it failed without digging through logs. While `computing`, `periods`
+ *  lists every month completed-first (the first `done` are built) and `active` is
+ *  the subset whose build is in flight right now, so the popover can pulse those
+ *  chips. */
 export type RollupStatus =
   | { readonly state: 'idle' }
   | { readonly state: 'computing'; readonly done: number; readonly total: number; readonly periods: readonly string[]; readonly active: readonly string[] }
   | { readonly state: 'ready'; readonly periods: number }
-  | { readonly state: 'failed'; readonly message: string; readonly periods: number };
+  | { readonly state: 'failed'; readonly message: string; readonly reason: string; readonly periods: number };
 
 /** Size KPIs for the built rollup vs the raw daily Parquet it's derived from.
  *  `rawBytes` is read from the local filesystem (no S3), so it's available even
