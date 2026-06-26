@@ -98,6 +98,24 @@ pub struct ExclusionRule {
 
 #[derive(Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct MarketplaceRule {
+    #[serde(default)]
+    pub service: String,
+    #[serde(default)]
+    pub operations: Vec<String>,
+}
+
+#[derive(Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketplaceAttribution {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub rules: Vec<MarketplaceRule>,
+}
+
+#[derive(Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct CostScope {
     #[serde(default)]
     pub cost_metric: Option<String>,
@@ -105,6 +123,24 @@ pub struct CostScope {
     pub cost_perspective: Option<String>,
     #[serde(default)]
     pub rules: Vec<ExclusionRule>,
+    #[serde(default)]
+    pub marketplace_attribution: Option<MarketplaceAttribution>,
+}
+
+impl CostScope {
+    /// Enabled rules with a non-empty service + operations (mirrors
+    /// `activeMarketplaceRules`).
+    pub fn active_marketplace_rules(&self) -> Vec<MarketplaceRule> {
+        match &self.marketplace_attribution {
+            Some(m) if m.enabled => m
+                .rules
+                .iter()
+                .filter(|r| !r.service.is_empty() && !r.operations.is_empty())
+                .cloned()
+                .collect(),
+            _ => vec![],
+        }
+    }
 }
 
 /// Normalize the YAML costMetric (which may be 'UnblendedCost' / 'list' / etc.)

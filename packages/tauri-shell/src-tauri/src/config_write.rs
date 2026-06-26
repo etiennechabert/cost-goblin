@@ -181,6 +181,13 @@ pub fn cost_scope_to_yaml(cfg: &J) -> J {
     }
     let rules: Vec<J> = cfg.get("rules").and_then(|r| r.as_array()).map(|a| a.iter().map(rule_to_yaml).collect()).unwrap_or_default();
     o.insert("rules".into(), json!(rules));
+    if let Some(m) = get(cfg, "marketplaceAttribution") {
+        let mrules: Vec<J> = m.get("rules").and_then(|r| r.as_array()).map(|a| a.iter().map(|r| json!({
+            "service": r.get("service").cloned().unwrap_or(J::Null),
+            "operations": r.get("operations").cloned().unwrap_or(json!([])),
+        })).collect()).unwrap_or_default();
+        o.insert("marketplaceAttribution".into(), json!({ "enabled": m.get("enabled").cloned().unwrap_or(json!(false)), "rules": mrules }));
+    }
     J::Object(o)
 }
 

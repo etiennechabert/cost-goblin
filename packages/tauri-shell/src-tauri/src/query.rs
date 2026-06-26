@@ -8,9 +8,9 @@
 //! (cost-scope values, fallback keys, paths) are escaped and interpolated, as in
 //! the TS `buildRuleMatchExpr`/`buildSource` non-qb paths.
 
-use crate::config::{Dimensions, PathSeg, Tag};
+use crate::config::{Dimensions, MarketplaceRule, PathSeg, Tag};
 use crate::db::Qb;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 pub const SOURCE_COLUMNS: &[&str] = &[
@@ -222,6 +222,48 @@ fn cost_expr(metric: &str, prefix: &str, net: bool) -> String {
     }
 }
 
+// --- marketplace re-attribution (#388) ---
+
+/// Predicate matching empty-servicecode Marketplace rows for the active rules.
+fn mkt_match_predicate(prefix: &str, rules: &[MarketplaceRule]) -> Option<String> {
+    if rules.is_empty() {
+        return None;
+    }
+    let mut ops: Vec<String> = vec![];
+    let mut seen = HashSet::new();
+    for r in rules {
+        for o in &r.operations {
+            if seen.insert(o.clone()) {
+                ops.push(format!("'{}'", sql_escape(o)));
+            }
+        }
+    }
+    Some(format!("COALESCE({prefix}product_servicecode, '') = '' AND {prefix}line_item_operation IN ({})", ops.join(", ")))
+}
+
+/// Wrap a base service expression in a CASE re-attributing each rule's rows.
+fn mkt_service_expr(prefix: &str, base: &str, rules: &[MarketplaceRule]) -> String {
+    if rules.is_empty() {
+        return base.to_string();
+    }
+    let branches: Vec<String> = rules
+        .iter()
+        .map(|r| {
+            let ops = r.operations.iter().map(|o| format!("'{}'", sql_escape(o))).collect::<Vec<_>>().join(", ");
+            format!("WHEN COALESCE({prefix}product_servicecode, '') = '' AND {prefix}line_item_operation IN ({ops}) THEN '{}'", sql_escape(&r.service))
+        })
+        .collect();
+    format!("CASE {} ELSE {base} END", branches.join(" "))
+}
+
+/// Substitute unblended cost for matched Marketplace rows ($0 public price).
+fn mkt_list_fallback(prefix: &str, base: &str, match_pred: &Option<String>) -> String {
+    match match_pred {
+        Some(p) => format!("CASE WHEN {p} THEN COALESCE({prefix}line_item_unblended_cost, 0) ELSE {base} END"),
+        None => base.to_string(),
+    }
+}
+
 fn build_tag_value_expr(t: &Tag, needs_org_join: bool, col_name: &str) -> String {
     let has_resource_tag = t.tag_name.as_deref().map_or(false, |n| !n.is_empty());
     let has_fallback = t.account_tag_fallback.is_some();
@@ -318,10 +360,12 @@ pub fn build_source(
     net: bool,
     dims: &Dimensions,
     org_path: Option<&str>,
+    marketplace: &[MarketplaceRule],
 ) -> String {
     let has_fallbacks = dims.tags.iter().any(|t| t.account_tag_fallback.is_some());
     let needs_org_join = has_fallbacks && org_path.is_some();
     let prefix = if needs_org_join { "cur." } else { "" };
+    let mkt_match = mkt_match_predicate(prefix, marketplace);
 
     let tag_selects: Vec<String> = dims.tags.iter().map(|t| build_tag_select(t, needs_org_join)).collect();
     let tag_clause = if tag_selects.is_empty() {
@@ -344,7 +388,11 @@ pub fn build_source(
     } else {
         parquet
     };
-    let ce = cost_expr(metric, prefix, net);
+    let base_ce = cost_expr(metric, prefix, net);
+    // On the list metric, matched Marketplace rows ($0 public price) fall back to unblended.
+    let ce = if metric == "list" { mkt_list_fallback(prefix, &base_ce, &mkt_match) } else { base_ce };
+    let service_expr = mkt_service_expr(prefix, &format!("COALESCE({prefix}product_servicecode, '')"), marketplace);
+    let list_cost_expr = mkt_list_fallback(prefix, &format!("COALESCE({prefix}pricing_public_on_demand_cost, 0)"), &mkt_match);
     let metric_where = if metric == "list" {
         format!("\n    WHERE COALESCE({prefix}line_item_line_item_type, '') IN ('Usage', 'SavingsPlanCoveredUsage', 'DiscountedUsage')")
     } else {
@@ -356,11 +404,11 @@ pub fn build_source(
          {prefix}line_item_usage_account_id AS account_id,\n      \
          COALESCE({prefix}line_item_usage_account_name, '') AS account_name,\n      \
          COALESCE({prefix}product_region_code, '') AS region,\n      \
-         COALESCE({prefix}product_servicecode, '') AS service,\n      \
+         {service_expr} AS service,\n      \
          COALESCE({prefix}product_product_family, '') AS service_family,\n      \
          COALESCE({prefix}line_item_line_item_description, '') AS description,\n      \
          COALESCE({prefix}line_item_usage_amount, 0) AS usage_amount,\n      \
-         COALESCE({prefix}pricing_public_on_demand_cost, 0) AS list_cost,\n      \
+         {list_cost_expr} AS list_cost,\n      \
          COALESCE({prefix}line_item_resource_id, '') AS resource_id,\n      \
          {ce} AS cost,\n      \
          COALESCE({prefix}line_item_line_item_type, '') AS line_item_type,\n      \

@@ -159,7 +159,7 @@ mod smoke {
         let start = format!("{}-01", months.last().unwrap());
         let periods = query::available_periods(&dd, "daily", &start, &end);
         assert!(!periods.is_empty());
-        let source = query::build_source(&dd, "daily", &periods, &metric, net, &dims, org_path.as_deref());
+        let source = query::build_source(&dd, "daily", &periods, &metric, net, &dims, org_path.as_deref(), &cs.active_marketplace_rules());
         let conn = db::open().unwrap();
         let nf = serde_json::Map::new();
         let args = query::QueryArgs { dims: &dims, source: &source, exclusions: &exclusions, account_reverse: Some(&reverse) };
@@ -225,7 +225,7 @@ mod smoke {
             eprintln!("BENCH: window not rollup-eligible — skipping");
             return;
         };
-        let raw_src = query::build_source(&dd, "daily", &periods, &metric, net, &dims, org_path.as_deref());
+        let raw_src = query::build_source(&dd, "daily", &periods, &metric, net, &dims, org_path.as_deref(), &cs.active_marketplace_rules());
 
         let conn = db::open().unwrap();
         let nf = serde_json::Map::new();

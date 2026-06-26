@@ -3,7 +3,7 @@
 //! cost-scope.yaml, and account-name resolution. Results are shaped exactly
 //! like the TS handlers.
 
-use crate::config::{self, Dimensions};
+use crate::config::{self, Dimensions, MarketplaceRule};
 use crate::db::{self, f64_at, str_at};
 use crate::query::{self, available_periods, build_source, list_local_months, QueryArgs};
 use chrono::{SecondsFormat, Utc};
@@ -28,6 +28,7 @@ pub struct ReqCtx {
     pub net: bool,
     pub exclusions: Vec<String>,
     pub org_path: Option<String>,
+    pub marketplace: Vec<MarketplaceRule>,
     pub account_name_map: HashMap<String, String>,
     pub account_reverse: HashMap<String, Vec<String>>,
 }
@@ -38,7 +39,7 @@ impl ReqCtx {
             || self.dims.account_built_in().map_or(false, |b| b.name == group_by)
     }
     pub fn source(&self, data_dir: &str, tier: &str, periods: &[String], metric: &str, net: bool) -> String {
-        build_source(data_dir, tier, periods, metric, net, &self.dims, self.org_path.as_deref())
+        build_source(data_dir, tier, periods, metric, net, &self.dims, self.org_path.as_deref(), &self.marketplace)
     }
     pub fn args<'a>(&'a self, source: &'a str, with_exclusions: bool) -> QueryArgs<'a> {
         QueryArgs {
@@ -61,6 +62,7 @@ pub fn req_ctx_from(data_dir: &str, config_dir: &Path) -> Result<ReqCtx, String>
     let metric = config::normalize_metric(&cs.cost_metric);
     let net = cs.cost_perspective.as_deref() == Some("net");
     let exclusions = query::build_exclusion_clauses(&cs, &dims);
+    let marketplace = cs.active_marketplace_rules();
     let org_path = config::org_tags_path(Path::new(data_dir));
     let name_from_tag = dims.account_built_in().and_then(|b| b.account_name_from_tag.clone());
     let account_name_map = config::load_account_name_map(Path::new(data_dir), name_from_tag.as_deref());
@@ -68,7 +70,7 @@ pub fn req_ctx_from(data_dir: &str, config_dir: &Path) -> Result<ReqCtx, String>
     for (id, name) in &account_name_map {
         account_reverse.entry(name.clone()).or_default().push(id.clone());
     }
-    Ok(ReqCtx { dims, metric, net, exclusions, org_path, account_name_map, account_reverse })
+    Ok(ReqCtx { dims, metric, net, exclusions, org_path, marketplace, account_name_map, account_reverse })
 }
 
 fn req_ctx(state: &AppState) -> Result<ReqCtx, String> {
@@ -736,7 +738,7 @@ fn explorer_ctx(o: &Map<String, J>, state: &AppState) -> Result<ExplorerCtx, Str
     if periods.is_empty() {
         return Ok(ExplorerCtx { empty: true, source: String::new(), where_sql: String::new(), params: vec![], tier, start, end, window_days, tag_columns, rc });
     }
-    let source = build_source(&state.data_dir, tier, &periods, metric, net, &rc.dims, rc.org_path.as_deref());
+    let source = build_source(&state.data_dir, tier, &periods, metric, net, &rc.dims, rc.org_path.as_deref(), &rc.marketplace);
     let mut qb = db::Qb::new();
     let mut wheres = vec![format!("usage_date BETWEEN '{start}' AND '{end}'")];
     wheres.extend(query::filter_clauses(&filters_map(o), &rc.dims, Some(&rc.account_reverse), &mut qb));
