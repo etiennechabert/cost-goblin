@@ -293,8 +293,8 @@ app.on('will-quit', () => {
 });
 
 // Electron's ESM main entry does not support top-level await at launch, so the
-// bootstrap stays wrapped in a fire-and-forget async IIFE (SonarCloud S7785).
-void (async () => {
+// bootstrap runs as a fire-and-forget async function instead of top-level await.
+async function bootstrap(): Promise<void> {
   try {
     await main();
   } catch (err: unknown) {
@@ -302,4 +302,5 @@ void (async () => {
     process.stderr.write(`Fatal error: ${message}\n`);
     process.exit(1);
   }
-})();
+}
+void bootstrap();
