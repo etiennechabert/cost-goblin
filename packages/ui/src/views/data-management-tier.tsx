@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { DataInventoryResult } from '@costgoblin/core/browser';
 import { ConfirmModal } from '../components/confirm-modal.js';
+import { formatRelativeTime } from '../components/format.js';
 
 export type SyncState =
   | { status: 'idle' }
@@ -33,6 +34,7 @@ interface TierPanelProps {
   diskBytes: number;
   oldestPeriod: string | null;
   newestPeriod: string | null;
+  lastSync: string | null;
   periods: DataInventoryResult['periods'];
   selected: Set<string>;
   onToggle: (period: string) => void;
@@ -47,7 +49,7 @@ interface TierPanelProps {
 
 export function TierPanel({
   title, configured, bucket, retentionDays,
-  localPeriods, diskBytes, oldestPeriod, newestPeriod,
+  localPeriods, diskBytes, oldestPeriod, newestPeriod, lastSync,
   periods, selected, onToggle, onSelectAll, onDeselectAll, onDownload, onDeletePeriod,
   syncState, onConfigure, onCancelSync,
 }: Readonly<TierPanelProps>) {
@@ -102,6 +104,15 @@ export function TierPanel({
         <div className="flex justify-between">
           <span className="text-text-muted">Retention</span>
           <span className="text-text-secondary tabular-nums">{retentionDays === null ? '—' : `${String(retentionDays)} days`}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-text-muted">Last sync</span>
+          <span
+            className="text-text-secondary tabular-nums"
+            title={lastSync === null ? undefined : new Date(lastSync).toLocaleString()}
+          >
+            {lastSync === null ? 'Never' : formatRelativeTime(lastSync)}
+          </span>
         </div>
       </div>
 

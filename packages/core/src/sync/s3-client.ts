@@ -34,6 +34,21 @@ async function getS3Module(): Promise<typeof import('@aws-sdk/client-s3')> {
   return import('@aws-sdk/client-s3');
 }
 
+/** Whether an error from the AWS SDK indicates missing or expired credentials
+ *  (expired SSO token, no resolvable profile) rather than a genuine S3/network
+ *  failure. Shared by the desktop sync handlers and the auto-sync scheduler so
+ *  credential expiry is detected and surfaced consistently. */
+export function isCredentialError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const name = err.name;
+  if (name === 'CredentialsProviderError' || name === 'TokenProviderError') return true;
+  return (
+    err.message.includes('Token is expired') ||
+    err.message.includes('SSO session') ||
+    err.message.includes('credentials')
+  );
+}
+
 export interface DownloadOptions {
   onBytes?: ((bytesReceived: number) => void) | undefined;
   signal?: AbortSignal | undefined;

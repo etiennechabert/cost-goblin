@@ -118,6 +118,9 @@ export interface DataInventoryResult {
   readonly totalRemoteSize: number;
   readonly totalLocalPeriods: number;
   readonly totalRemotePeriods: number;
+  /** ISO 8601 of the last successful sync for this tier, or null if never
+   *  synced (imported-only or fresh). Durable across app restarts. */
+  readonly lastSync: string | null;
   readonly local: {
     readonly periods: readonly string[];
     readonly diskBytes: number;

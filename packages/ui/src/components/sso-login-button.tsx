@@ -3,7 +3,9 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 
 const AWS_CLI_INSTALL_URL = 'https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html';
 
-export function SsoLoginButton({ profile }: Readonly<{ profile: string }>) {
+const DEFAULT_HINT = 'A browser window will open. Refresh this page after logging in.';
+
+export function SsoLoginButton({ profile, hint = DEFAULT_HINT }: Readonly<{ profile: string; hint?: string }>) {
   const api = useCostApi();
   const [cliMissing, setCliMissing] = useState(false);
 
@@ -20,7 +22,7 @@ export function SsoLoginButton({ profile }: Readonly<{ profile: string }>) {
   }
 
   return (
-    <div className="flex items-center gap-3 mt-2">
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
       <button
         type="button"
         onClick={() => {
@@ -34,7 +36,7 @@ export function SsoLoginButton({ profile }: Readonly<{ profile: string }>) {
       >
         Open SSO Login
       </button>
-      <span className="text-xs text-text-secondary">A browser window will open. Refresh this page after logging in.</span>
+      <span className="text-xs text-text-secondary">{hint}</span>
     </div>
   );
 }

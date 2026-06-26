@@ -1,4 +1,4 @@
-import { logger, parseJsonObject, configuredTierRetentions, periodsOutsideRetention, retentionCutoffPeriod } from '@costgoblin/core';
+import { logger, parseJsonObject, configuredTierRetentions, periodsOutsideRetention, retentionCutoffPeriod, isCredentialError } from '@costgoblin/core';
 import type { AutoSyncStatus } from '@costgoblin/core';
 
 export interface AutoSyncDeps {
@@ -19,6 +19,10 @@ export interface AutoSyncDeps {
 let status: AutoSyncStatus = { state: 'disabled' };
 let timer: ReturnType<typeof setTimeout> | null = null;
 let running = false;
+// Captured by startAutoSync so an out-of-band trigger (e.g. right after the
+// user restores credentials via SSO login) can run a pass immediately instead
+// of waiting up to a full interval for the next scheduled run.
+let lastDeps: AutoSyncDeps | null = null;
 // Captured so `runOnce` can report the correct nextRun without needing
 // to know the scheduler's interval — `startAutoSync` refreshes this on
 // every (re)start.
@@ -131,6 +135,14 @@ async function syncTier(
   try {
     inventory = await deps.getInventory(tier.name);
   } catch (err: unknown) {
+    // Credentials expired/invalid is a real failure worth surfacing — set the
+    // error status so the toolbar flags that background sync is blocked. Other
+    // (transient) inventory failures stay a silent skip as before.
+    if (isCredentialError(err)) {
+      logger.info(`Auto-sync: ${tier.name} inventory failed (credentials) — ${errorMessage(err)}`);
+      status = { state: 'error', message: errorMessage(err), lastRun: new Date().toISOString() };
+      return 'error';
+    }
     logger.info(`Auto-sync: failed to get ${tier.name} inventory — ${errorMessage(err)}`);
     return 'skip';
   }
@@ -216,12 +228,11 @@ async function runOnce(deps: AutoSyncDeps): Promise<void> {
     }
 
     if (syncEnabled) {
-      const tiers: { name: string; retention: number }[] = [
-        { name: 'daily', retention: provider.sync.daily.retentionDays ?? 365 },
-      ];
-      if (provider.sync.hourly !== undefined) {
-        tiers.push({ name: 'hourly', retention: provider.sync.hourly.retentionDays ?? 30 });
-      }
+      // Same tier+retention set as the auto-prune pass so sync and prune stay in
+      // lockstep — this is what pulls cost-optimization too, which the old
+      // hand-rolled daily+hourly list silently skipped (leaving it "Never").
+      const tiers = configuredTierRetentions(provider.sync)
+        .map(t => ({ name: t.tier, retention: t.retentionDays }));
 
       for (const tier of tiers) {
         const tierResult = await syncTier(deps, tier);
@@ -241,9 +252,21 @@ async function runOnce(deps: AutoSyncDeps): Promise<void> {
   running = false;
 }
 
+/** Run a sync/prune pass right now, out of band, reusing the scheduler's
+ *  captured deps — used to recover promptly after the user restores credentials
+ *  (SSO login) instead of waiting up to a full interval. No-op if the scheduler
+ *  was never started or a run is already in flight; runOnce still gates on the
+ *  auto-sync / auto-prune enabled flags, so a disabled scheduler does nothing. */
+export function triggerAutoSyncNow(): void {
+  if (lastDeps === null || running) return;
+  logger.info('Auto-sync: out-of-band run requested (credential recovery)');
+  void runOnce(lastDeps);
+}
+
 export function startAutoSync(deps: AutoSyncDeps, intervalMinutes: number): void {
   stopAutoSync();
 
+  lastDeps = deps;
   const clamped = clampInterval(intervalMinutes);
   currentIntervalMs = clamped * 60 * 1000;
 
