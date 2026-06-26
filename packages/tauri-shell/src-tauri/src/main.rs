@@ -106,6 +106,7 @@ fn main() {
             commands::get_rollup_status,
             commands::get_rollup_stats,
             commands::estimate_rollup_grain,
+            commands::build_rollup,
             commands::get_mcp_server_running,
             commands::set_mcp_server_running,
             commands::get_mcp_token,
@@ -159,7 +160,7 @@ mod smoke {
         let start = format!("{}-01", months.last().unwrap());
         let periods = query::available_periods(&dd, "daily", &start, &end);
         assert!(!periods.is_empty());
-        let source = query::build_source(&dd, "daily", &periods, &metric, net, &dims, org_path.as_deref(), &cs.active_marketplace_rules());
+        let source = query::build_source(&dd, "daily", &periods, &metric, net, &dims, org_path.as_deref(), &cs.active_marketplace_rules(), &[]);
         let conn = db::open().unwrap();
         let nf = serde_json::Map::new();
         let args = query::QueryArgs { dims: &dims, source: &source, exclusions: &exclusions, account_reverse: Some(&reverse) };
@@ -184,6 +185,65 @@ mod smoke {
             "SMOKE OK [{}]: metric={} exclusions={} org_join={} months={:?} services={} window_total={:.2} owner_rows={}",
             dd, metric, exclusions.len(), org_path.is_some(), months, svc_rows.len(), total, team_n,
         );
+    }
+
+    /// Builds the rollup from scratch, then asserts it (a) validates under the
+    /// live signature, (b) is routed to by rollup_source_validated, and (c)
+    /// yields the same cost-overview totals as the raw path. Runs on whatever
+    /// COSTGOBLIN_DATA_DIR points at (fixtures by default).
+    #[test]
+    fn rollup_build_roundtrip() {
+        let dd = data_dir();
+        let cfg = config_dir();
+        let months = query::list_local_months(&dd, "daily");
+        if months.is_empty() {
+            eprintln!("BUILD ROUNDTRIP: no daily data — skipping");
+            return;
+        }
+        // Build fresh (force so it doesn't carry a pre-existing partition).
+        let res = crate::rollup::build_rollup(&dd, &cfg, true).expect("build_rollup");
+        eprintln!("BUILD: {res}");
+
+        let dims = config::load_dimensions(&cfg).expect("dims");
+        let cs = config::load_cost_scope(&cfg);
+        let metric = config::normalize_metric(&cs.cost_metric);
+        let net = cs.cost_perspective.as_deref() == Some("net");
+        let org_path = config::org_tags_path(Path::new(&dd));
+        let name_from_tag = dims.account_built_in().and_then(|b| b.account_name_from_tag.clone());
+        let name_map = config::load_account_name_map(Path::new(&dd), name_from_tag.as_deref());
+        let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
+        for (id, n) in &name_map { reverse.entry(n.clone()).or_default().push(id.clone()); }
+
+        let start = format!("{}-01", months.first().unwrap());
+        let end = format!("{}-28", months.last().unwrap());
+        let periods = query::available_periods(&dd, "daily", &start, &end);
+        let needed = vec!["service".to_string(), "cost".to_string()];
+
+        // Freshly built → must validate + route to the rollup.
+        let rollup_src = crate::rollup::rollup_source_validated(&dd, &dims, &cs, "daily", &periods, &needed)
+            .expect("freshly-built rollup should validate + route");
+        let raw_src = query::build_source(&dd, "daily", &periods, &metric, net, &dims, org_path.as_deref(), &cs.active_marketplace_rules(), &[]);
+
+        let conn = db::open().unwrap();
+        let nf = serde_json::Map::new();
+        let total = |src: &str, excl: &[String]| -> f64 {
+            let args = query::QueryArgs { dims: &dims, source: src, exclusions: excl, account_reverse: Some(&reverse) };
+            let built = query::cost_query("service", &start, &end, &nf, &args).unwrap();
+            let rows = db::query_map(&conn, &built.sql, &built.params, |r| (db::str_at(r, 0), db::f64_at(r, 1))).unwrap();
+            let mut seen: HashMap<String, f64> = HashMap::new();
+            for (e, t) in &rows { seen.entry(e.clone()).or_insert(*t); }
+            seen.values().sum()
+        };
+        let raw_total = total(&raw_src, &cs_exclusions(&cs, &dims));
+        let roll_total = total(&rollup_src, &[]);
+        eprintln!("BUILD ROUNDTRIP: raw=${raw_total:.2} rollup=${roll_total:.2}");
+        let diff = (raw_total - roll_total).abs();
+        let tol = raw_total.abs() * 1e-4 + 0.01;
+        assert!(diff <= tol, "rollup total {roll_total} should match raw {raw_total} (diff {diff} > tol {tol})");
+    }
+
+    fn cs_exclusions(cs: &config::CostScope, dims: &config::Dimensions) -> Vec<String> {
+        query::build_exclusion_clauses(cs, dims)
     }
 
     /// Rollup-vs-raw latency benchmark for the cost-overview dashboard query
@@ -225,7 +285,7 @@ mod smoke {
             eprintln!("BENCH: window not rollup-eligible — skipping");
             return;
         };
-        let raw_src = query::build_source(&dd, "daily", &periods, &metric, net, &dims, org_path.as_deref(), &cs.active_marketplace_rules());
+        let raw_src = query::build_source(&dd, "daily", &periods, &metric, net, &dims, org_path.as_deref(), &cs.active_marketplace_rules(), &[]);
 
         let conn = db::open().unwrap();
         let nf = serde_json::Map::new();

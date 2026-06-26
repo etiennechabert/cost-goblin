@@ -29,6 +29,7 @@ pub struct ReqCtx {
     pub exclusions: Vec<String>,
     pub org_path: Option<String>,
     pub marketplace: Vec<MarketplaceRule>,
+    pub cost_scope: config::CostScope,
     pub account_name_map: HashMap<String, String>,
     pub account_reverse: HashMap<String, Vec<String>>,
 }
@@ -39,7 +40,7 @@ impl ReqCtx {
             || self.dims.account_built_in().map_or(false, |b| b.name == group_by)
     }
     pub fn source(&self, data_dir: &str, tier: &str, periods: &[String], metric: &str, net: bool) -> String {
-        build_source(data_dir, tier, periods, metric, net, &self.dims, self.org_path.as_deref(), &self.marketplace)
+        build_source(data_dir, tier, periods, metric, net, &self.dims, self.org_path.as_deref(), &self.marketplace, &[])
     }
     pub fn args<'a>(&'a self, source: &'a str, with_exclusions: bool) -> QueryArgs<'a> {
         QueryArgs {
@@ -70,7 +71,7 @@ pub fn req_ctx_from(data_dir: &str, config_dir: &Path) -> Result<ReqCtx, String>
     for (id, name) in &account_name_map {
         account_reverse.entry(name.clone()).or_default().push(id.clone());
     }
-    Ok(ReqCtx { dims, metric, net, exclusions, org_path, marketplace, account_name_map, account_reverse })
+    Ok(ReqCtx { dims, metric, net, exclusions, org_path, marketplace, cost_scope: cs, account_name_map, account_reverse })
 }
 
 fn req_ctx(state: &AppState) -> Result<ReqCtx, String> {
@@ -93,7 +94,7 @@ fn dashboard_fields(dims: &Dimensions, group_by: &str, filters: &Map<String, J>,
 /// up, else the raw org-joined source. Returns (source, apply_exclusions).
 fn pick_source(ctx: &ReqCtx, data_dir: &str, tier: &str, periods: &[String], group_by: &str, filters: &Map<String, J>, extra: &[&str]) -> (String, bool) {
     let rollup = dashboard_fields(&ctx.dims, group_by, filters, extra)
-        .and_then(|nf| crate::rollup::rollup_source(data_dir, tier, periods, &nf));
+        .and_then(|nf| crate::rollup::rollup_source_validated(data_dir, &ctx.dims, &ctx.cost_scope, tier, periods, &nf));
     match rollup {
         Some(rs) => (rs, false),
         None => (ctx.source(data_dir, tier, periods, &ctx.metric, ctx.net), true),
@@ -407,6 +408,11 @@ pub fn sync_periods(params: J, state: tauri::State<AppState>) -> R {
     let (profile, sync) = resolve_provider(state.inner())?;
     let bucket = bucket_for_tier(&sync, tier).ok_or("No bucket configured for this tier")?;
     let (downloaded, rows) = crate::sync::sync_periods(&files, tier, &profile, &bucket, &state.data_dir, &sync_id)?;
+    // Refresh the (daily-only) rollup for the newly-synced months so dashboards
+    // stay on the fast path. Non-fatal — a failure just means queries use raw.
+    if tier == "daily" && downloaded > 0 {
+        let _ = crate::rollup::build_rollup(&state.data_dir, &state.config_dir, false);
+    }
     Ok(json!({ "filesDownloaded": downloaded, "rowsProcessed": rows }))
 }
 
@@ -738,7 +744,7 @@ fn explorer_ctx(o: &Map<String, J>, state: &AppState) -> Result<ExplorerCtx, Str
     if periods.is_empty() {
         return Ok(ExplorerCtx { empty: true, source: String::new(), where_sql: String::new(), params: vec![], tier, start, end, window_days, tag_columns, rc });
     }
-    let source = build_source(&state.data_dir, tier, &periods, metric, net, &rc.dims, rc.org_path.as_deref(), &rc.marketplace);
+    let source = build_source(&state.data_dir, tier, &periods, metric, net, &rc.dims, rc.org_path.as_deref(), &rc.marketplace, &[]);
     let mut qb = db::Qb::new();
     let mut wheres = vec![format!("usage_date BETWEEN '{start}' AND '{end}'")];
     wheres.extend(query::filter_clauses(&filters_map(o), &rc.dims, Some(&rc.account_reverse), &mut qb));
@@ -1188,6 +1194,16 @@ pub fn get_rollup_stats(state: tauri::State<AppState>) -> R {
 pub fn estimate_rollup_grain(params: J, state: tauri::State<AppState>) -> R {
     // params IS the candidate DimensionsConfig.
     Ok(crate::rollup::estimate_grain(&state.data_dir, &params))
+}
+
+/// Build/refresh the rollup partitions for every local daily month against the
+/// live config. `{ force?: bool }` rebuilds even up-to-date partitions.
+#[tauri::command(async)]
+pub fn build_rollup(params: J, state: tauri::State<AppState>) -> R {
+    let force = params.get("params").and_then(|p| p.get("force")).and_then(|v| v.as_bool())
+        .or_else(|| params.get("force").and_then(|v| v.as_bool()))
+        .unwrap_or(false);
+    crate::rollup::build_rollup(&state.data_dir, &state.config_dir, force)
 }
 
 // --- MCP server (AI Assistant) ---

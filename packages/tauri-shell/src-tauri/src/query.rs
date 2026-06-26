@@ -191,24 +191,36 @@ pub fn resolve_field_or_column(dim_id: &str, dims: &Dimensions) -> Option<String
 
 // --- source construction (org-account join + cost metric) ---
 
-fn cost_expr(metric: &str, prefix: &str, net: bool) -> String {
-    let unblended = if net {
-        format!("{prefix}line_item_net_unblended_cost")
+/// Reference a CUR column, or `NULL` when it's absent from `available` (CUR
+/// schema drifts — older months lack reservation/savings-plan columns). Empty
+/// `available` means "assume present" (the normal multi-month path relies on
+/// union_by_name so the latest month's schema covers older rows).
+fn col_ref(col: &str, prefix: &str, available: &[String]) -> String {
+    if available.is_empty() || available.iter().any(|c| c == col) {
+        format!("{prefix}{col}")
     } else {
-        format!("{prefix}line_item_unblended_cost")
+        "NULL".to_string()
+    }
+}
+
+fn cost_expr(metric: &str, prefix: &str, net: bool, available: &[String]) -> String {
+    let unblended = if net {
+        col_ref("line_item_net_unblended_cost", prefix, available)
+    } else {
+        col_ref("line_item_unblended_cost", prefix, available)
     };
     match metric {
-        "list" => format!("COALESCE({prefix}pricing_public_on_demand_cost, 0)"),
+        "list" => format!("COALESCE({}, 0)", col_ref("pricing_public_on_demand_cost", prefix, available)),
         "amortized" => {
             let ri = if net {
-                format!("{prefix}reservation_net_effective_cost")
+                col_ref("reservation_net_effective_cost", prefix, available)
             } else {
-                format!("{prefix}reservation_effective_cost")
+                col_ref("reservation_effective_cost", prefix, available)
             };
             let sp = if net {
-                format!("{prefix}savings_plan_net_savings_plan_effective_cost")
+                col_ref("savings_plan_net_savings_plan_effective_cost", prefix, available)
             } else {
-                format!("{prefix}savings_plan_savings_plan_effective_cost")
+                col_ref("savings_plan_savings_plan_effective_cost", prefix, available)
             };
             let lit = format!("{prefix}line_item_line_item_type");
             format!(
@@ -361,6 +373,7 @@ pub fn build_source(
     dims: &Dimensions,
     org_path: Option<&str>,
     marketplace: &[MarketplaceRule],
+    available: &[String],
 ) -> String {
     let has_fallbacks = dims.tags.iter().any(|t| t.account_tag_fallback.is_some());
     let needs_org_join = has_fallbacks && org_path.is_some();
@@ -388,11 +401,11 @@ pub fn build_source(
     } else {
         parquet
     };
-    let base_ce = cost_expr(metric, prefix, net);
+    let base_ce = cost_expr(metric, prefix, net, available);
     // On the list metric, matched Marketplace rows ($0 public price) fall back to unblended.
     let ce = if metric == "list" { mkt_list_fallback(prefix, &base_ce, &mkt_match) } else { base_ce };
     let service_expr = mkt_service_expr(prefix, &format!("COALESCE({prefix}product_servicecode, '')"), marketplace);
-    let list_cost_expr = mkt_list_fallback(prefix, &format!("COALESCE({prefix}pricing_public_on_demand_cost, 0)"), &mkt_match);
+    let list_cost_expr = mkt_list_fallback(prefix, &format!("COALESCE({}, 0)", col_ref("pricing_public_on_demand_cost", prefix, available)), &mkt_match);
     let metric_where = if metric == "list" {
         format!("\n    WHERE COALESCE({prefix}line_item_line_item_type, '') IN ('Usage', 'SavingsPlanCoveredUsage', 'DiscountedUsage')")
     } else {
@@ -426,6 +439,12 @@ fn normalize_rule_value(value: &str, r: &Resolved) -> String {
         None => value.to_string(),
     };
     resolve_alias(&normalized, &r.aliases)
+}
+
+/// Public wrapper so the rollup shape-signature can normalize exclusion-rule
+/// values identically to the exclusion-clause builder.
+pub fn normalize_rule_value_pub(value: &str, r: &Resolved) -> String {
+    normalize_rule_value(value, r)
 }
 
 /// `NOT (...)` clauses for each enabled cost-scope rule. Values are escaped
