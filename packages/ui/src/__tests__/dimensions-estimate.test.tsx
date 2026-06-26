@@ -61,8 +61,11 @@ describe('DimensionsView — rollup grain estimate', () => {
     expect(resourcePill).toBeDefined();
     await user.click(resourcePill as HTMLElement);
 
-    await waitFor(() => { expect(screen.queryByText(/multiplies the rollup/i)).toBeNull(); });
-    // The per-dimension list itself remains for the leaner grain.
-    expect(screen.getByText('Per-dimension impact')).toBeDefined();
+    // Wait for the re-estimate to settle (it flashes the loading bar mid-probe):
+    // the outlier warning is gone AND the per-dimension list is back.
+    await waitFor(() => {
+      expect(screen.queryByText(/multiplies the rollup/i)).toBeNull();
+      expect(screen.getByText('Per-dimension impact')).toBeDefined();
+    });
   });
 });

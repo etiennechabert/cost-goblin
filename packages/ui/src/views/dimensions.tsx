@@ -1504,6 +1504,29 @@ function ImpactStat({ label, value, hint }: Readonly<{ label: string; value: str
   );
 }
 
+/** Eased progress feedback for the rollup estimate. The probe is an exact
+ *  DuckDB scan (a few seconds; longer when resource_id is on) with no real
+ *  per-query progress to read, so we ease asymptotically toward ~92% — slowing
+ *  as it goes rather than stalling at a hard cap — and let completion unmount
+ *  this (the panel only renders it while a probe is in flight). */
+function EstimateProgress(): React.JSX.Element {
+  const [pct, setPct] = useState(8);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setPct(p => (p >= 92 ? p : p + Math.max(0.6, (92 - p) * 0.1)));
+    }, 150);
+    return () => { clearInterval(id); };
+  }, []);
+  return (
+    <div className="mt-3">
+      <span className="text-xs text-text-muted">Estimating…</span>
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-bg-tertiary">
+        <div className="h-full rounded-full bg-accent transition-all duration-200 ease-out" style={{ width: `${String(Math.round(pct))}%` }} />
+      </div>
+    </div>
+  );
+}
+
 /** Cost/benefit summary for the current enabled grain (rollup design §8).
  *  Updates as dims are toggled so the user can weigh the rebuild before it
  *  happens. Numbers are directional (probed from one recent month). */
@@ -1531,7 +1554,7 @@ function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: R
       </p>
 
       {loading && estimate === null ? (
-        <p className="mt-3 text-xs text-text-muted">Estimating…</p>
+        <EstimateProgress />
       ) : estimate === null || estimate.probePeriod.length === 0 ? (
         <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>
       ) : (
