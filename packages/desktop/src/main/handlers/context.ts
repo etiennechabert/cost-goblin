@@ -24,6 +24,7 @@ import {
   listLocalMonths,
   logger,
   isStringRecord,
+  isCredentialError,
 } from '@costgoblin/core';
 import { buildAccountReverseMap } from './query-utils.js';
 import type {
@@ -724,12 +725,10 @@ export async function prefsPath(dataDir: string, name: string): Promise<string> 
   return path.join(path.dirname(dataDir), `${name}.json`);
 }
 
-export function isCredentialError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const name = err.name;
-  if (name === 'CredentialsProviderError' || name === 'TokenProviderError') return true;
-  return err.message.includes('Token is expired') || err.message.includes('SSO session') || err.message.includes('credentials');
-}
+// `isCredentialError` now lives in @costgoblin/core (next to the S3 client that
+// throws these errors) so the auto-sync scheduler can share it. Re-exported here
+// for the handlers that already import it from this module.
+export { isCredentialError };
 
 export function toUserFriendlyError(err: unknown, profile: string): Error {
   if (isCredentialError(err)) {

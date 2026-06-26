@@ -32,7 +32,7 @@ export { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog, ImportConfigP
 export { SharingActiveBanner } from './components/sharing-active-banner.js';
 export { ProfilePicker, filterProfiles } from './components/profile-picker.js';
 export { CsvExport } from './components/csv-export.js';
-export { formatDollars, formatPercent, formatDate } from './components/format.js';
+export { formatDollars, formatPercent, formatDate, formatRelativeTime } from './components/format.js';
 export { FilterBar } from './components/filter-bar.js';
 export { DateRangePicker, getDefaultDateRange } from './components/date-range-picker.js';
 export { SummaryCard } from './components/summary-card.js';

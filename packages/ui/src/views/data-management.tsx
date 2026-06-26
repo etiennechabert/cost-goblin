@@ -518,6 +518,7 @@ export function DataManagement() {
             diskBytes={inventory?.local.diskBytes ?? 0}
             oldestPeriod={inventory?.local.oldestPeriod ?? null}
             newestPeriod={inventory?.local.newestPeriod ?? null}
+            lastSync={inventory?.lastSync ?? null}
             periods={inventory === null ? [] : [...inventory.periods]}
             selected={selected}
             onToggle={togglePeriod}
@@ -539,6 +540,7 @@ export function DataManagement() {
             diskBytes={hourlyInventory?.local.diskBytes ?? 0}
             oldestPeriod={hourlyInventory?.local.oldestPeriod ?? null}
             newestPeriod={hourlyInventory?.local.newestPeriod ?? null}
+            lastSync={hourlyInventory?.lastSync ?? null}
             periods={hourlyInventory === null ? [] : [...hourlyInventory.periods]}
             selected={hourlySelected}
             onToggle={toggleHourlyPeriod}
@@ -560,6 +562,7 @@ export function DataManagement() {
             diskBytes={costOptInventory?.local.diskBytes ?? 0}
             oldestPeriod={costOptInventory?.local.oldestPeriod ?? null}
             newestPeriod={costOptInventory?.local.newestPeriod ?? null}
+            lastSync={costOptInventory?.lastSync ?? null}
             periods={costOptInventory === null ? [] : [...costOptInventory.periods]}
             selected={costOptSelected}
             onToggle={toggleCostOptPeriod}

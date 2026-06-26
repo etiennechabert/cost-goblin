@@ -1,4 +1,4 @@
-import { logger, parseJsonObject, configuredTierRetentions, periodsOutsideRetention, retentionCutoffPeriod } from '@costgoblin/core';
+import { logger, parseJsonObject, configuredTierRetentions, periodsOutsideRetention, retentionCutoffPeriod, isCredentialError } from '@costgoblin/core';
 import type { AutoSyncStatus } from '@costgoblin/core';
 
 export interface AutoSyncDeps {
@@ -131,6 +131,14 @@ async function syncTier(
   try {
     inventory = await deps.getInventory(tier.name);
   } catch (err: unknown) {
+    // Credentials expired/invalid is a real failure worth surfacing — set the
+    // error status so the toolbar flags that background sync is blocked. Other
+    // (transient) inventory failures stay a silent skip as before.
+    if (isCredentialError(err)) {
+      logger.info(`Auto-sync: ${tier.name} inventory failed (credentials) — ${errorMessage(err)}`);
+      status = { state: 'error', message: errorMessage(err), lastRun: new Date().toISOString() };
+      return 'error';
+    }
     logger.info(`Auto-sync: failed to get ${tier.name} inventory — ${errorMessage(err)}`);
     return 'skip';
   }

@@ -5,6 +5,7 @@ import type { S3Handle } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
 import type { DataTier } from '../types/api.js';
 import { extractPeriod, getEtagFileName, getRawDirPrefix, parseEtagsJson } from './sync-utils.js';
+import { readTierLastSync } from './sync-timestamps.js';
 
 export type PeriodStatus = 'missing' | 'repartitioned' | 'stale';
 
@@ -27,6 +28,9 @@ export interface DataInventory {
   readonly totalRemoteSize: number;
   readonly totalLocalPeriods: number;
   readonly totalRemotePeriods: number;
+  /** ISO 8601 of the last successful sync for this tier, or null if never
+   *  synced (or imported-only). Durable across restarts. */
+  readonly lastSync: string | null;
   readonly local: LocalDataInfo;
 }
 
@@ -73,6 +77,43 @@ async function getRawTierSize(rawDir: string, tierPrefix: string): Promise<numbe
   }
 }
 
+/** On-disk byte size per billing period (YYYY-MM), summing every raw tier dir
+ *  that maps to that period. Powers per-month sizes in the local-only inventory
+ *  — without it those rows show "0B" even when the data is on disk. */
+async function getRawPeriodSizes(rawDir: string, tierPrefix: string): Promise<Map<string, number>> {
+  try {
+    const entries = await readdir(rawDir);
+    const tierDirs = entries.filter(e => e.startsWith(`${tierPrefix}-`));
+    const sized = await Promise.all(
+      tierDirs.map(async (entry): Promise<readonly [string, number]> => {
+        const period = entry.slice(tierPrefix.length + 1).slice(0, 7);
+        const size = await getDirSize(join(rawDir, entry));
+        return [period, size];
+      }),
+    );
+    const sizes = new Map<string, number>();
+    for (const [period, size] of sized) {
+      sizes.set(period, (sizes.get(period) ?? 0) + size);
+    }
+    return sizes;
+  } catch {
+    return new Map();
+  }
+}
+
+/** Whether this tier has ever been synced from S3 (its etag file exists). An
+ *  imported snapshot has raw Parquet on disk but no etag file, so this cleanly
+ *  separates "AWS configured and synced before" from "imported, no AWS" — the
+ *  former should surface credential errors, the latter falls back silently. */
+export async function hasSyncedTier(dataDir: string, tier: DataTier = 'daily'): Promise<boolean> {
+  try {
+    await stat(join(dataDir, getEtagFileName(tier)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Build an inventory purely from what's on disk — no S3 listing. Used by a
  *  consumer that pulled a shared snapshot and has no AWS credentials at all:
  *  every local period is reported as present so the Sync view renders, and
@@ -80,18 +121,21 @@ async function getRawTierSize(rawDir: string, tierPrefix: string): Promise<numbe
 export async function getLocalDataInventory(dataDir: string, tier: DataTier = 'daily'): Promise<DataInventory> {
   const rawDir = join(dataDir, 'aws', 'raw');
   const tierPrefix = getRawDirPrefix(tier);
-  const localPeriodList = await listRawPeriods(rawDir, tierPrefix);
-  const diskBytes = await getRawTierSize(rawDir, tierPrefix);
+  const periodSizes = await getRawPeriodSizes(rawDir, tierPrefix);
+  const localPeriodList = [...periodSizes.keys()].sort((a, b) => a.localeCompare(b));
+  const diskBytes = [...periodSizes.values()].reduce((sum, size) => sum + size, 0);
+  const lastSync = await readTierLastSync(dataDir, tier);
 
   const periods: BillingPeriod[] = [...localPeriodList]
     .sort((a, b) => b.localeCompare(a))
-    .map(period => ({ period, files: [], totalSize: 0, localStatus: 'repartitioned' }));
+    .map(period => ({ period, files: [], totalSize: periodSizes.get(period) ?? 0, localStatus: 'repartitioned' }));
 
   return {
     periods,
     totalRemoteSize: 0,
     totalLocalPeriods: localPeriodList.length,
     totalRemotePeriods: 0,
+    lastSync,
     local: {
       periods: localPeriodList,
       diskBytes,
@@ -128,6 +172,7 @@ export async function getDataInventory(
   const tierPrefix = getRawDirPrefix(tier);
   const localPeriodList = await listRawPeriods(rawDir, tierPrefix);
   const diskBytes = await getRawTierSize(rawDir, tierPrefix);
+  const lastSync = await readTierLastSync(dataDir, tier);
   const localPeriods = new Set(localPeriodList);
 
   let savedEtags: Record<string, Record<string, string>> = {};
@@ -167,6 +212,7 @@ export async function getDataInventory(
     totalRemoteSize: remoteFiles.reduce((s, f) => s + f.size, 0),
     totalLocalPeriods: localPeriods.size,
     totalRemotePeriods: periods.length,
+    lastSync,
     local: {
       periods: localPeriodList,
       diskBytes,

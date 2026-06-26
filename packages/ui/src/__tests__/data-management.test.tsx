@@ -109,6 +109,7 @@ describe('DataManagement', () => {
       totalRemoteSize: 0,
       totalLocalPeriods: 1,
       totalRemotePeriods: 0,
+      lastSync: null,
       local: { periods: ['2020-01'], diskBytes: 1024, oldestPeriod: '2020-01', newestPeriod: '2020-01' },
     });
     const { user } = renderDataManagement(api);
@@ -126,6 +127,7 @@ describe('DataManagement', () => {
       totalRemoteSize: 0,
       totalLocalPeriods: 1,
       totalRemotePeriods: 0,
+      lastSync: null,
       local: { periods: ['2020-01'], diskBytes: 1024, oldestPeriod: '2020-01', newestPeriod: '2020-01' },
     });
     const spy = vi.spyOn(api, 'pruneNow');

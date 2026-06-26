@@ -74,6 +74,7 @@ describe('DataManagement error states', () => {
       totalRemoteSize: 100,
       totalLocalPeriods: 0,
       totalRemotePeriods: 1,
+      lastSync: null,
       local: { periods: [], diskBytes: 0, oldestPeriod: null, newestPeriod: null },
     });
     const { user } = renderDataManagement(api);

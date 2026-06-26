@@ -2,6 +2,7 @@ import { ipcMain, shell } from 'electron';
 import {
   getDataInventory,
   getLocalDataInventory,
+  hasSyncedTier,
   getEtagFileName,
   getRawDirPrefix,
   parseEtagsJson,
@@ -9,6 +10,9 @@ import {
   listLocalMonths,
   configuredTierRetentions,
   periodsOutsideRetention,
+  readTierLastSync,
+  writeTierLastSync,
+  isCredentialError,
   logger,
 } from '@costgoblin/core';
 import type {
@@ -25,7 +29,6 @@ import {
   type AppContext,
   type AppState,
   type IpcContext,
-  isCredentialError,
   toUserFriendlyError,
 } from './context.js';
 
@@ -164,8 +167,20 @@ export function registerSyncHandlers(app: AppContext): void {
   const syncWorkerIds = new Map<string, number>();
   let nextWorkerId = 0;
 
-  ipcMain.handle('sync:status', (_event, syncId: string = 'default'): SyncStatus => {
-    return state.syncStatuses[syncId] ?? { status: 'idle', lastSync: null };
+  ipcMain.handle('sync:status', async (_event, syncId: string = 'default'): Promise<SyncStatus> => {
+    const current = state.syncStatuses[syncId];
+    if (current === undefined) {
+      const iso = await readTierLastSync(ctx.dataDir, syncId);
+      return { status: 'idle', lastSync: iso === null ? null : new Date(iso) };
+    }
+    // The in-memory lastSync resets to null on every launch; backfill it from the
+    // durable timestamp file so the toolbar can show "Synced <time>" after a
+    // restart for tiers that aren't mid-sync.
+    if ((current.status === 'idle' || current.status === 'failed') && current.lastSync === null) {
+      const iso = await readTierLastSync(ctx.dataDir, syncId);
+      if (iso !== null) return { ...current, lastSync: new Date(iso) };
+    }
+    return current;
   });
 
   ipcMain.handle('data:inventory', async (_event, tier?: ExpectedDataType): Promise<DataInventory> => {
@@ -177,8 +192,15 @@ export function registerSyncHandlers(app: AppContext): void {
     try {
       return await getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, t);
     } catch (err: unknown) {
-      // A consumer that imported a shared snapshot has no S3 access — fall back
-      // to a disk-only inventory so the Sync view still renders the data it has.
+      // Expired/invalid credentials on an install that has synced this tier from
+      // S3 before (its etag file exists) is a real auth failure, not the
+      // imported-snapshot case — surface it so the user re-authenticates instead
+      // of silently showing stale local data as if everything were up to date.
+      if (isCredentialError(err) && await hasSyncedTier(ctx.dataDir, t)) {
+        throw toUserFriendlyError(err, provider.credentials.profile);
+      }
+      // Otherwise fall back to a disk-only inventory so a consumer that imported
+      // a shared snapshot (no S3 access) still sees the data it has.
       const local = await getLocalDataInventory(ctx.dataDir, t);
       if (local.totalLocalPeriods > 0) {
         logger.info('S3 inventory unavailable — using local-only inventory', { tier: t });
@@ -237,7 +259,11 @@ export function registerSyncHandlers(app: AppContext): void {
       const result = await runSync(ctx, provider.credentials.profile, bucketPath, tier, fileEntries, syncId, state);
       syncWorkerIds.delete(syncId);
 
-      state.syncStatuses[syncId] = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
+      const now = new Date();
+      state.syncStatuses[syncId] = { status: 'completed', lastSync: now, filesDownloaded: result.filesDownloaded };
+      // Best-effort: the persisted timestamp is cosmetic and self-heals on the
+      // next sync, so a write failure must never fail the (successful) sync.
+      await writeTierLastSync(ctx.dataDir, tier, now.toISOString()).catch(() => { /* cosmetic */ });
       if (result.filesDownloaded > 0) {
         if (tier === 'daily') {
           // Re-roll only the daily partitions this sync touched (file replace).

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { CloudDownload, RefreshCw } from 'lucide-react';
-import { Popover, PopoverTrigger, PopoverContent } from '@costgoblin/ui';
+import { Popover, PopoverTrigger, PopoverContent, formatRelativeTime } from '@costgoblin/ui';
 import type { SyncStatus } from '@costgoblin/core/browser';
 
 export type SyncActivity = 'idle' | 'syncing' | 'downloading';
@@ -44,15 +44,33 @@ function tierState(status: SyncStatus, synced: boolean): React.JSX.Element {
   }
 }
 
+/** The durable "last synced" time for a tier, or null while syncing / never
+ *  synced. The main process backfills this onto idle/failed statuses from disk
+ *  so it survives restarts. */
+function statusLastSync(status: SyncStatus): Date | null {
+  switch (status.status) {
+    case 'syncing': return null;
+    case 'completed': return status.lastSync;
+    case 'idle':
+    case 'failed': return status.lastSync;
+  }
+}
+
 function SyncTierRow({ label, status, synced }: Readonly<{ label: string; status: SyncStatus; synced: boolean }>): React.JSX.Element {
   const bar = status.status === 'syncing'
     ? Math.min(100, Math.max(0, Math.round(syncBarFraction(status) * 100)))
     : null;
+  const lastSync = statusLastSync(status);
   return (
     <div className="py-1.5">
       <div className="flex items-center justify-between text-xs">
         <span className="text-text-secondary">{label}</span>
-        {tierState(status, synced)}
+        <div className="flex items-center gap-1.5">
+          {tierState(status, synced)}
+          {lastSync !== null && (
+            <span className="text-[10px] text-text-muted" title={lastSync.toLocaleString()}>· {formatRelativeTime(lastSync)}</span>
+          )}
+        </div>
       </div>
       {bar !== null && (
         <div className="mt-1 h-1 overflow-hidden rounded-full bg-bg-tertiary">
