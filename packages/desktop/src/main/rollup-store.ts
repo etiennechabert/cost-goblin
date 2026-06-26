@@ -13,6 +13,19 @@ import type { RawRow } from './duckdb-client.js';
 
 export type RollupStatusListener = (status: RollupStatus) => void;
 
+/** Build the human-readable `reason` for a failed batch from the distinct
+ *  errors its partitions threw. Picks the most common message (the systematic
+ *  root cause behind an all-fail batch), trims it for the popover/IPC payload,
+ *  and notes when other, different errors also occurred. Only called when at
+ *  least one period failed, so the map is never empty. */
+function summarizeErrors(errorCounts: ReadonlyMap<string, number>): string {
+  const sorted = [...errorCounts.entries()].sort((a, b) => b[1] - a[1]);
+  const top = sorted[0]?.[0] ?? 'Unknown error';
+  const trimmed = top.length > 400 ? `${top.slice(0, 400)}…` : top;
+  const others = sorted.length - 1;
+  return others > 0 ? `${trimmed} (+${String(others)} other error${others === 1 ? '' : 's'})` : trimmed;
+}
+
 /** Builds the `COPY (...) TO '<outPath>' (FORMAT PARQUET)` DDL for one period.
  *  Supplied by the caller (context.ts) so the store stays decoupled from the
  *  query builder. May be async: the caller probes each period's parquet schema
@@ -249,6 +262,11 @@ export class RollupStore {
       // so we track completion order explicitly rather than assuming input order.
       const total = periods.length;
       let failures = 0;
+      // Distinct build-error messages → how many periods hit each. A "14 of 14
+      // failed" batch is almost always one systematic cause (bad SQL, missing
+      // column, disk full), so the most common message is the reason worth
+      // surfacing; we keep counts to note when failures are heterogeneous.
+      const errorCounts = new Map<string, number>();
       const completed: string[] = [];
       const completedSet = new Set<string>();
       // `active` = periods whose build is in flight right now. The popover pulses
@@ -313,7 +331,9 @@ export class RollupStore {
             await commit(period, meta);
           } catch (err: unknown) {
             failures += 1;
-            logger.warn(`rollup: build failed for ${period} — ${err instanceof Error ? err.message : String(err)}`);
+            const msg = err instanceof Error ? err.message : String(err);
+            errorCounts.set(msg, (errorCounts.get(msg) ?? 0) + 1);
+            logger.warn(`rollup: build failed for ${period} — ${msg}`);
           }
           // Each finished period (built or failed) leaves the active set and
           // advances progress.
@@ -328,7 +348,7 @@ export class RollupStore {
       if (this.epoch !== startEpoch) return;
       this.setStatus(
         failures > 0
-          ? { state: 'failed', message: `${String(failures)} of ${String(total)} rollup partition${total === 1 ? '' : 's'} failed to build`, periods: this.validPeriods.size }
+          ? { state: 'failed', message: `${String(failures)} of ${String(total)} rollup partition${total === 1 ? '' : 's'} failed to build`, reason: summarizeErrors(errorCounts), periods: this.validPeriods.size }
           : this.settledStatus(),
       );
     });

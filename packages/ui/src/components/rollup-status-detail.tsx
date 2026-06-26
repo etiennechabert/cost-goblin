@@ -127,8 +127,12 @@ export function RollupStatusDetail({ status, stats = null, highlight }: Props): 
 
   if (status.state === 'failed') {
     return (
-      <div className="space-y-1">
+      <div className="space-y-1.5">
         <p className="text-xs text-negative">{status.message}</p>
+        <div className="rounded border border-border bg-bg-tertiary/40 p-1.5">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-text-muted">Error</p>
+          <p className="mt-0.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-snug text-text-secondary">{status.reason}</p>
+        </div>
         <p className="text-[11px] text-text-muted">Dashboards fall back to raw data. Reload data or re-save dimensions to retry.</p>
       </div>
     );

@@ -18,7 +18,7 @@ function tooltipFor(status: RollupStatus): string {
         ? `Rebuilding rollup… ${String(status.done)}/${String(status.total)}`
         : 'Rebuilding rollup…';
     case 'failed':
-      return `Rollup build failed — ${status.message}`;
+      return `Rollup build failed — ${status.message}\n${status.reason}`;
     case 'ready':
       return `Rollup ready — ${months(status.periods)} pre-aggregated`;
     case 'idle':
