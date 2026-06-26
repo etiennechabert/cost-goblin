@@ -2,7 +2,7 @@ import { parentPort } from 'node:worker_threads';
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
-import { computeDefaultMemoryGB, computeDefaultPoolSize, computeDefaultThreads } from './duckdb-tuning.js';
+import { computeDefaultMemoryGB, computeDefaultThreads, computeQueryPoolSize } from './duckdb-tuning.js';
 
 interface DuckDBModule {
   DuckDBInstance: { create: () => Promise<DuckDBInstance> };
@@ -178,7 +178,7 @@ function getPool(): Promise<ResourcePool<DuckDBConnection>> {
     const initConn = await db.connect();
     await configureDuckDB(initConn, {});
     initConn.disconnectSync();
-    return createResourcePool(computeDefaultPoolSize(), () => db.connect());
+    return createResourcePool(computeQueryPoolSize(), () => db.connect());
   });
   return poolPromise;
 }

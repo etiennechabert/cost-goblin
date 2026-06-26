@@ -34,17 +34,35 @@ export function computeDefaultThreads(): number {
   return maxThreads();
 }
 
-/** Default size of the worker's DuckDB connection pool — also the cap on
- *  concurrent rollup partition builds. min(max(4, cores), 16), overridable via
- *  COSTGOBLIN_DUCKDB_POOL_SIZE (1..32). Shared so the pool and the rollup
- *  builder agree on how many connections may run queries at once. */
-export function computeDefaultPoolSize(): number {
+function poolSizeOverride(): number | null {
   const raw = process.env['COSTGOBLIN_DUCKDB_POOL_SIZE'];
   if (raw !== undefined) {
     const n = Number.parseInt(raw, 10);
     if (Number.isFinite(n) && n >= 1 && n <= 32) return n;
   }
-  return Math.min(Math.max(4, maxThreads()), 16);
+  return null;
+}
+
+/** Cap on concurrent rollup partition builds (each on a fresh connection).
+ *  min(max(4, cores), 16), overridable via COSTGOBLIN_DUCKDB_POOL_SIZE (1..32).
+ *  NOTE: this no longer sizes the query connection pool — that is
+ *  {@link computeQueryPoolSize}. Builds run on fresh connections, so their
+ *  parallelism is independent of the (smaller) query gate. */
+export function computeDefaultPoolSize(): number {
+  return poolSizeOverride() ?? Math.min(Math.max(4, maxThreads()), 16);
+}
+
+/** Size of the worker's DuckDB connection pool = the cap on concurrent REGULAR
+ *  (dashboard / Explorer) queries. Deliberately FAR below the core count:
+ *  `SET threads` is instance-global, so N concurrent queries time-slice the SAME
+ *  cores and a ~15 ms rollup query ends up queued behind multi-second raw scans
+ *  (measured ~5 ms → ~550 ms under a burst of raw Table-widget scans). ~cores/4,
+ *  clamped [2,4], gives each in-flight query a healthy thread share while a lone
+ *  scan still gets all cores. Rollup builds use fresh connections capped by
+ *  {@link computeDefaultPoolSize}, so this never throttles them. Override with
+ *  COSTGOBLIN_DUCKDB_POOL_SIZE. */
+export function computeQueryPoolSize(): number {
+  return poolSizeOverride() ?? Math.max(2, Math.min(4, Math.ceil(maxThreads() / 4)));
 }
 
 /** Clamp a user-supplied memory override to a safe range. */
