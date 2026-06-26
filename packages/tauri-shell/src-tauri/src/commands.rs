@@ -435,6 +435,28 @@ pub fn get_sync_status(params: J) -> R {
     Ok(crate::sync::status(pstr(&pobj(&params), "syncId").unwrap_or("default")))
 }
 
+/// Delete local periods outside each tier's retention window.
+#[tauri::command(async)]
+pub fn prune_now(state: tauri::State<AppState>) -> R {
+    crate::sync::prune_now(&state.data_dir, &state.config_dir)
+}
+
+#[tauri::command(async)]
+pub fn get_auto_prune_enabled(state: tauri::State<AppState>) -> Result<bool, String> {
+    Ok(read_json_or(&prefs_path(&state, "app-preferences"), json!({})).get("autoPruneEnabled").and_then(|v| v.as_bool()).unwrap_or(false))
+}
+
+#[tauri::command(async)]
+pub fn set_auto_prune_enabled(params: J, state: tauri::State<AppState>) -> Result<(), String> {
+    let enabled = params.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+    let path = prefs_path(&state, "app-preferences");
+    let mut v = read_json_or(&path, json!({}));
+    if let Some(o) = v.as_object_mut() {
+        o.insert("autoPruneEnabled".into(), json!(enabled));
+    }
+    write_json(&path, &v)
+}
+
 /// Kick off `aws sso login --profile <profile>` (detached) — the Data
 /// Management "Sign in" button.
 #[tauri::command(async)]

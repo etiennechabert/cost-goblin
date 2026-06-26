@@ -207,10 +207,10 @@ const api: CostApi = {
   // ---- Rollup grain estimate (real: reads the on-disk rollup manifest) ----
   estimateRollupGrain: (candidate: DimensionsConfig): Promise<RollupGrainEstimate> => invoke('estimate_rollup_grain', candidate),
 
-  // ---- Retention / prune (stubbed — auto-prune off; manual sync handles it) ----
-  getAutoPruneEnabled: (): Promise<boolean> => ok(false),
-  setAutoPruneEnabled: (_enabled: boolean): Promise<void> => ok(undefined),
-  pruneNow: (): Promise<PruneResult> => ok({ deleted: [] }),
+  // ---- Retention / prune (real: deletes local periods outside retention) ----
+  getAutoPruneEnabled: (): Promise<boolean> => invoke('get_auto_prune_enabled'),
+  setAutoPruneEnabled: (enabled: boolean): Promise<void> => invoke<undefined>('set_auto_prune_enabled', { enabled }).then(() => undefined),
+  pruneNow: (): Promise<PruneResult> => invoke('prune_now'),
 
   // ---- Performance settings (stubbed — the spike doesn't tune DuckDB) ----
   getPerformanceInfo: (): Promise<PerformanceInfo> => ok({

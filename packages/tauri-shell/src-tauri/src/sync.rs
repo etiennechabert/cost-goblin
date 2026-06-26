@@ -13,9 +13,9 @@
 //! `state.syncStatuses[syncId]` + `sync:status`).
 
 use aws_sdk_s3::config::Region;
-use chrono::{SecondsFormat, Utc};
+use chrono::{Duration, SecondsFormat, Utc};
 use serde_json::{json, Map, Value as J};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -425,6 +425,64 @@ pub fn delete_local_period(period: &str, tier: &str, data_dir: &str) -> Result<(
         }
     }
     Ok(())
+}
+
+// --- retention / prune (ported from core retention.ts) ---
+
+/// Local YYYY-MM periods present for a tier (deduped, sorted).
+fn list_local_periods(data_dir: &str, tier: &str) -> Vec<String> {
+    let prefix = raw_dir_prefix(tier);
+    let raw_dir = PathBuf::from(data_dir).join("aws").join("raw");
+    let mut set = BTreeSet::new();
+    if let Ok(entries) = std::fs::read_dir(&raw_dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if let Some(rest) = name.strip_prefix(&format!("{prefix}-")) {
+                let period: String = rest.chars().take(7).collect();
+                if period.len() == 7 {
+                    set.insert(period);
+                }
+            }
+        }
+    }
+    set.into_iter().collect()
+}
+
+/// Earliest month still inside the retention window — periods strictly older are
+/// pruned (matches the auto-sync download cutoff).
+fn retention_cutoff(retention_days: i64) -> String {
+    (Utc::now() - Duration::days(retention_days)).format("%Y-%m").to_string()
+}
+
+/// Delete every local period outside each configured tier's retention window.
+/// Returns `{ deleted: [{ tier, period }] }`.
+pub fn prune_now(data_dir: &str, config_dir: &Path) -> Result<J, String> {
+    let cfg = crate::config::load_yaml_json(&config_dir.join("costgoblin.yaml"))?;
+    let sync = cfg.get("providers").and_then(|p| p.as_array()).and_then(|a| a.first()).and_then(|p| p.get("sync")).cloned().unwrap_or_else(|| json!({}));
+    let mut deleted = vec![];
+    // (tier, config-key, default-days, configured)
+    let tiers = [
+        ("daily", "daily", 365i64, true),
+        ("hourly", "hourly", 30, sync.get("hourly").is_some()),
+        ("cost-optimization", "costOptimization", 90, sync.get("costOptimization").is_some()),
+    ];
+    for (tier, key, default_days, configured) in tiers {
+        if !configured {
+            continue;
+        }
+        let days = sync.get(key).and_then(|t| t.get("retentionDays")).and_then(|v| v.as_i64()).unwrap_or(default_days);
+        if days <= 0 {
+            continue; // guard: never treat 0/negative as "everything expired"
+        }
+        let cutoff = retention_cutoff(days);
+        for period in list_local_periods(data_dir, tier) {
+            if period < cutoff {
+                delete_local_period(&period, tier, data_dir)?;
+                deleted.push(json!({ "tier": tier, "period": period }));
+            }
+        }
+    }
+    Ok(json!({ "deleted": deleted }))
 }
 
 // --- remote inventory via S3 ListObjectsV2 (drives the sync UI) ---
