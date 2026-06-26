@@ -1,6 +1,6 @@
 {
   "name": "costgoblin",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Desktop app for cloud cost visibility",
   "main": "packages/desktop/out/main/main.js",
   "private": true,
