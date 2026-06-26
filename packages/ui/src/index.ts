@@ -11,6 +11,11 @@ export { UnsavedChangesProvider, useUnsavedChanges, useConfirmLeave } from './ho
 
 export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/card.js';
 export { UpdatingBadge } from './components/updating-badge.js';
+export { RollupStatusDetail } from './components/rollup-status-detail.js';
+export { RollupBuildingOverlay } from './components/rollup-building-overlay.js';
+export { rollupGate } from './lib/rollup-gate.js';
+export type { RollupGateState } from './lib/rollup-gate.js';
+export { monthsInRange } from './lib/dates.js';
 export { Button, buttonVariants } from './components/ui/button.js';
 export type { ButtonProps } from './components/ui/button.js';
 export { Calendar } from './components/ui/calendar.js';
