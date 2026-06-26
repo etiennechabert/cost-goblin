@@ -15,8 +15,9 @@ export type RollupStatusListener = (status: RollupStatus) => void;
 
 /** Builds the `COPY (...) TO '<outPath>' (FORMAT PARQUET)` DDL for one period.
  *  Supplied by the caller (context.ts) so the store stays decoupled from the
- *  query builder. */
-export type BuildPartitionSql = (period: string, outPath: string) => string;
+ *  query builder. May be async: the caller probes each period's parquet schema
+ *  before emitting SQL (months drift in which optional cost columns they have). */
+export type BuildPartitionSql = (period: string, outPath: string) => string | Promise<string>;
 
 export interface RollupShape {
   readonly signature: string;
@@ -295,7 +296,9 @@ export class RollupStore {
           try {
             const outPath = this.partitionPath(period);
             await mkdir(this.partitionDir(period), { recursive: true });
-            await this.runBuild(buildSql(period, outPath));
+            // buildSql may be async (it probes this period's parquet schema to
+            // emit column-correct SQL) — await before handing it to runBuild.
+            await this.runBuild(await buildSql(period, outPath));
             if (this.epoch !== startEpoch) { active.delete(period); return; } // a drop landed during the build
             const meta = await this.partitionMeta(outPath, wantHash);
             await commit(period, meta);
