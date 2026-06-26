@@ -10,6 +10,7 @@ import { SyncStatusButton, type SyncActivity, type SyncTier } from './top-menu/s
 import { RollupStatusButton } from './top-menu/rollup-status-button.js';
 import { GeneralTab } from './settings/general-tab.js';
 import { PerformanceTab } from './settings/performance-tab.js';
+import { TelemetryTab } from './settings/telemetry-tab.js';
 import { ShareTab } from './settings/share-tab.js';
 import { ImportTab } from './settings/import-tab.js';
 
@@ -870,6 +871,8 @@ function AppShell(): React.JSX.Element {
         return <McpView />;
       case 'performance':
         return <PerformanceTab />;
+      case 'telemetry':
+        return <TelemetryTab />;
       case null:
         return null;
     }

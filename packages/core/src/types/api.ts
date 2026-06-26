@@ -3,6 +3,7 @@ import type { RollupGrainEstimate } from '../rollup/estimator.js';
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { CostScopeCapabilities, CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
+import type { TelemetryPreferences, TelemetryStatus, TelemetryOutboxEntry } from '../telemetry/types.js';
 import type {
   ApplyConfigBundleParams,
   ApplyConfigBundleResult,
@@ -333,6 +334,19 @@ export interface CostApi {
   /** Rotate the MCP token, restarting the server if running. Returns the new
    *  token. Existing clients must update their config to keep working. */
   regenerateMcpToken(): Promise<string>;
+  /** Opt-in telemetry channel preferences (all default OFF). */
+  getTelemetryPreferences(): Promise<TelemetryPreferences>;
+  /** Persist telemetry channel preferences and apply them live — enabling a
+   *  channel lazily initialises the Sentry SDK, disabling all of them flushes
+   *  and shuts it down. */
+  setTelemetryPreferences(prefs: TelemetryPreferences): Promise<void>;
+  /** Whether a DSN is configured and whether the SDK is active this session,
+   *  so the UI can explain why nothing is (or is) being sent. */
+  getTelemetryStatus(): Promise<TelemetryStatus>;
+  /** The local telemetry audit log — one entry per event handed to the
+   *  transport — so the user can see exactly what left the machine. Most
+   *  recent first. */
+  getTelemetryOutbox(): Promise<readonly TelemetryOutboxEntry[]>;
 }
 
 export interface AccountMappingEntry {

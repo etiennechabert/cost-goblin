@@ -44,6 +44,9 @@ import {
   type SharedSourcePreview,
   type SharedSourceInfo,
   type RollupGrainEstimate,
+  type TelemetryPreferences,
+  type TelemetryStatus,
+  type TelemetryOutboxEntry,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE, computeRollupEstimate } from '@costgoblin/core/browser';
 
@@ -440,6 +443,10 @@ export class MockCostApi implements CostApi {
   setMcpServerRunning(): Promise<void> { return Promise.resolve(); }
   getMcpToken(): Promise<string> { return Promise.resolve('mock-token-abc123'); }
   regenerateMcpToken(): Promise<string> { return Promise.resolve('mock-token-regenerated'); }
+  getTelemetryPreferences(): Promise<TelemetryPreferences> { return Promise.resolve({ crashReports: false, performance: false, analytics: false }); }
+  setTelemetryPreferences(): Promise<void> { return Promise.resolve(); }
+  getTelemetryStatus(): Promise<TelemetryStatus> { return Promise.resolve({ dsnConfigured: false, active: false, preferences: { crashReports: false, performance: false, analytics: false } }); }
+  getTelemetryOutbox(): Promise<readonly TelemetryOutboxEntry[]> { return Promise.resolve([]); }
   exportConfigBundle(): Promise<ExportConfigBundleResult> {
     return Promise.resolve({ status: 'saved', path: '/mock/costgoblin-config-2026-06-11.yaml' });
   }

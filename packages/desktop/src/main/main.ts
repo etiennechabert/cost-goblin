@@ -4,7 +4,8 @@ import { Session } from 'node:inspector';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { logger, parseJsonObject, isStringRecord } from '@costgoblin/core';
+import { logger, parseJsonObject, isStringRecord, parseTelemetryPreferences } from '@costgoblin/core';
+import { telemetry } from './telemetry/controller.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -275,6 +276,21 @@ async function main(): Promise<void> {
     }
   }
   registerUpdateHandlers();
+
+  // Opt-in telemetry: the audit outbox + (when a channel is enabled and a DSN is
+  // configured) the Sentry SDK. Defaults OFF — applyPreferences is a no-op until
+  // the user turns a channel on in Settings.
+  const telemetryDataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
+  const telemetryDir = dirname(telemetryDataDir);
+  telemetry.initialize(telemetryDir);
+  try {
+    const prefsFile = join(telemetryDir, 'ui-preferences.json');
+    const parsed = parseJsonObject(readFileSync(prefsFile, 'utf-8'));
+    await telemetry.applyPreferences(parseTelemetryPreferences(parsed?.['telemetry']));
+  } catch {
+    await telemetry.applyPreferences(parseTelemetryPreferences(undefined));
+  }
+
   await createWindow(db, syncClient);
 
   app.on('activate', () => {

@@ -58,6 +58,9 @@ import type {
   SharedPullSelection,
   SharedSourceInfo,
   RollupGrainEstimate,
+  TelemetryPreferences,
+  TelemetryStatus,
+  TelemetryOutboxEntry,
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
@@ -389,6 +392,18 @@ const api: CostApi = {
   },
   regenerateMcpToken(): Promise<string> {
     return invoke<string>('mcp:regenerate-token');
+  },
+  getTelemetryPreferences(): Promise<TelemetryPreferences> {
+    return invoke<TelemetryPreferences>('telemetry:get-preferences');
+  },
+  setTelemetryPreferences(prefs: TelemetryPreferences): Promise<void> {
+    return invoke<undefined>('telemetry:set-preferences', prefs).then(() => undefined);
+  },
+  getTelemetryStatus(): Promise<TelemetryStatus> {
+    return invoke<TelemetryStatus>('telemetry:get-status');
+  },
+  getTelemetryOutbox(): Promise<readonly TelemetryOutboxEntry[]> {
+    return invoke<readonly TelemetryOutboxEntry[]>('telemetry:get-outbox');
   },
 };
 
