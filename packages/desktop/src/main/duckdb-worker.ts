@@ -196,7 +196,9 @@ function send(msg: WorkerResponse): void {
   port.postMessage(msg);
 }
 
-void (async () => {
+// Workers run under Electron's ESM loader too, so kick off init from a named
+// async function rather than top-level await.
+async function initWorker(): Promise<void> {
   try {
     await getPool();
     send({ kind: 'ready' });
@@ -204,7 +206,8 @@ void (async () => {
     const message = err instanceof Error ? err.message : String(err);
     send({ kind: 'error', id: -1, message: `DuckDB worker init failed: ${message}` });
   }
-})();
+}
+void initWorker();
 
 async function handleRequest(req: { kind: 'query'; id: number; sql: string; fresh?: boolean }): Promise<void> {
   // Check before acquiring a pool connection

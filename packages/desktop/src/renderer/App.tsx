@@ -552,11 +552,9 @@ function AppShell(): React.JSX.Element {
   // so the Dimensions estimate refetches and its actual/estimated badge stays
   // correct without a remount. Deliberately ignores `computing` done/total
   // progress ticks — those would thrash the exact-count probe mid-rebuild.
-  const rollupRevision = rollupStatus.state === 'ready'
-    ? `ready:${String(rollupStatus.periods)}`
-    : rollupStatus.state === 'failed'
-      ? `failed:${String(rollupStatus.periods)}`
-      : rollupStatus.state;
+  let rollupRevision: string = rollupStatus.state;
+  if (rollupStatus.state === 'ready') rollupRevision = `ready:${String(rollupStatus.periods)}`;
+  else if (rollupStatus.state === 'failed') rollupRevision = `failed:${String(rollupStatus.periods)}`;
 
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;

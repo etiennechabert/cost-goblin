@@ -810,11 +810,11 @@ function camelStripSeparators(value: string): string {
   for (const ch of value) {
     if (ch === '-' || ch === '_' || /\s/.test(ch)) {
       pending += ch;
-    } else if (pending !== '') {
+    } else if (pending === '') {
+      out += ch;
+    } else {
       out += ch.toUpperCase();
       pending = '';
-    } else {
-      out += ch;
     }
   }
   return out + pending;

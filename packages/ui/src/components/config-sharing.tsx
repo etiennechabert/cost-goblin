@@ -281,12 +281,10 @@ function ChoosingView({ preview, tiers, periods, onToggleTier, onTogglePeriod, o
       </p>
 
       {preview.hasConfig && (
-        <label htmlFor="cg-pull-config-tier" className="flex items-start gap-2 rounded-lg border border-border bg-bg-tertiary/20 px-3 py-2 cursor-pointer">
+        <label htmlFor="cg-pull-config-tier" className="grid grid-cols-[auto_1fr] items-start gap-x-2 rounded-lg border border-border bg-bg-tertiary/20 px-3 py-2 cursor-pointer">
           <input id="cg-pull-config-tier" type="checkbox" checked={tiers.has('config')} onChange={() => { onToggleTier('config'); }} className="mt-0.5 accent-accent" />
-          <span>
-            <span className="text-sm text-text-primary">Configuration</span>
-            <span className="block text-xs text-text-muted">Dimensions, dashboards, cost scope &amp; org tree — applied under your AWS profile.</span>
-          </span>
+          <span className="text-sm text-text-primary">Configuration</span>
+          <span className="col-start-2 block text-xs text-text-muted">Dimensions, dashboards, cost scope &amp; org tree — applied under your AWS profile.</span>
         </label>
       )}
 
@@ -347,6 +345,13 @@ function ChoosingView({ preview, tiers, periods, onToggleTier, onTogglePeriod, o
   );
 }
 
+function toggleInSet<T>(set: ReadonlySet<T>, value: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
+}
+
 function AddSharedSourceSection({ onPulled, onBusyChange }: Readonly<{
   onPulled: () => void;
   /** Notifies the parent dialog so it can lock itself while a pull runs. */
@@ -390,12 +395,8 @@ function AddSharedSourceSection({ onPulled, onBusyChange }: Readonly<{
     }).catch((e: unknown) => { setState({ kind: 'entry', error: e instanceof Error ? e.message : String(e) }); });
   }
 
-  function toggleTier(t: SharedSourceTier): void {
-    setTiers(prev => { const next = new Set(prev); if (next.has(t)) { next.delete(t); } else { next.add(t); } return next; });
-  }
-  function togglePeriod(p: string): void {
-    setPeriods(prev => { const next = new Set(prev); if (next.has(p)) { next.delete(p); } else { next.add(p); } return next; });
-  }
+  function toggleTier(t: SharedSourceTier): void { setTiers(prev => toggleInSet(prev, t)); }
+  function togglePeriod(p: string): void { setPeriods(prev => toggleInSet(prev, p)); }
 
   function startPull(): void {
     const selection: SharedPullSelection = { sources: [...tiers], periods: [...periods].sort((a, b) => a.localeCompare(b)) };
