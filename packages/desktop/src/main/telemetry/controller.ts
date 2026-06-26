@@ -29,6 +29,10 @@ class TelemetryController {
   private prefs: TelemetryPreferences = TELEMETRY_DEFAULTS;
   private sentry: SentryMain | null = null;
   private outbox: TelemetryOutbox | null = null;
+  // Serializes reconcile() so two quick toggles can't overlap a shutdown with a
+  // start (or two inits). Each call records the latest desired prefs, then the
+  // chain reconciles to whatever that is when it runs.
+  private reconcileChain: Promise<void> = Promise.resolve();
 
   /** Called once at startup with the directory that holds the audit log. */
   initialize(outboxDir: string): void {
@@ -54,11 +58,21 @@ class TelemetryController {
 
   /** Persist-then-apply is the handler's job; this just reconciles the running
    *  SDK with the desired preferences. Closing then re-initialising on every
-   *  change keeps sample rates and channel gating correct. */
-  async applyPreferences(prefs: TelemetryPreferences): Promise<void> {
+   *  change keeps sample rates and channel gating correct. Serialized so
+   *  concurrent toggles can't interleave shutdown/start. */
+  applyPreferences(prefs: TelemetryPreferences): Promise<void> {
     this.prefs = prefs;
-    const dsn = this.dsn();
+    const run = this.reconcileChain.then(() => this.reconcile());
+    this.reconcileChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
 
+  private async reconcile(): Promise<void> {
+    const prefs = this.prefs; // always reconcile to the latest desired state
+    const dsn = this.dsn();
     if (this.sentry !== null) await this.shutdown();
     if (!isTelemetryEnabled(prefs) || dsn === undefined) return;
     await this.start(dsn);

@@ -14,6 +14,11 @@ describe('redactSensitiveString', () => {
     expect(redactSensitiveString('order 1234567 and 1234567890123')).toBe('order 1234567 and 1234567890123');
   });
 
+  it('redacts a 12-digit account ID glued to letters or underscores', () => {
+    expect(redactSensitiveString('table acct123456789012 missing')).toBe('table acct[redacted-account] missing');
+    expect(redactSensitiveString('id_123456789012')).toBe('id_[redacted-account]');
+  });
+
   it('redacts s3 URIs and ARNs', () => {
     expect(redactSensitiveString('s3://acme-billing/cur/2026.parquet')).toBe('s3://[redacted]');
     expect(redactSensitiveString('arn:aws:iam::123456789012:role/Admin')).toBe('[redacted-arn]');

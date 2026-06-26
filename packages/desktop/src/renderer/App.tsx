@@ -11,6 +11,7 @@ import { RollupStatusButton } from './top-menu/rollup-status-button.js';
 import { GeneralTab } from './settings/general-tab.js';
 import { PerformanceTab } from './settings/performance-tab.js';
 import { TelemetryTab } from './settings/telemetry-tab.js';
+import { syncRendererTelemetry } from './telemetry/renderer-telemetry.js';
 import { ShareTab } from './settings/share-tab.js';
 import { ImportTab } from './settings/import-tab.js';
 
@@ -527,6 +528,13 @@ function AppShell(): React.JSX.Element {
   useEffect(() => {
     globalThis.costgoblinUpdate.getAppVersion().then(setAppVersion).catch(() => undefined);
   }, []);
+
+  // Start renderer-process crash capture when (and only when) crash reports are
+  // already opted-in and the main reporter is active. Renderer events forward to
+  // main, where they're scrubbed; this never sends anything on its own.
+  useEffect(() => {
+    api.getTelemetryStatus().then(syncRendererTelemetry).catch(() => undefined);
+  }, [api]);
 
   useEffect(() => {
     globalThis.costgoblinDebug.getGitBranch().then(setDevBranch).catch(() => undefined);

@@ -20,7 +20,10 @@ const REDACTED = '[redacted]';
 const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/g;
 const S3_URI_RE = /s3:\/\/[^\s'"]+/gi;
 const ARN_RE = /arn:aws:[^\s'"]+/gi;
-const ACCOUNT_RE = /\b\d{12}\b/g;
+// 12-digit AWS account IDs. Lookarounds (not \b) so an ID glued to letters or
+// underscores still matches — `acct123456789012`, `id_123456789012` — while a
+// longer digit run (a 15-digit number) is left alone rather than partly redacted.
+const ACCOUNT_RE = /(?<!\d)\d{12}(?!\d)/g;
 const AMOUNT_RE = /\$\s?\d[\d,]*(?:\.\d+)?/g;
 // Home directories leak the OS username. Keep the path shape (useful in stack
 // traces) but replace the user segment: /Users/jane/… → /Users/[user]/…

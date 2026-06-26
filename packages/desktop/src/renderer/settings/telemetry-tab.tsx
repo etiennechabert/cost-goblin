@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useCostApi } from '@costgoblin/ui';
 import type { TelemetryOutboxEntry, TelemetryPreferences, TelemetryStatus } from '@costgoblin/core/browser';
+import { syncRendererTelemetry } from '../telemetry/renderer-telemetry.js';
 
 type ChannelId = 'crashReports' | 'performance' | 'analytics';
 
@@ -17,7 +18,7 @@ const CHANNELS: readonly ChannelMeta[] = [
     id: 'crashReports',
     label: 'Crash & error reports',
     description:
-      'Native crashes and unhandled errors, via Sentry. Stack traces are scrubbed of file paths, account IDs, emails and any dollar amounts before they leave your machine.',
+      'Unhandled JS errors (via Sentry) are scrubbed of file paths, account IDs, emails and dollar amounts before they leave your machine. Native crash reports also include a raw snapshot of app memory and are sent unscrubbed — you’ll be asked to confirm before enabling.',
     available: true,
   },
   {
@@ -86,6 +87,9 @@ export function TelemetryTab(): React.JSX.Element {
   const [prefs, setPrefs] = useState<TelemetryPreferences | null>(null);
   const [status, setStatus] = useState<TelemetryStatus | null>(null);
   const [outbox, setOutbox] = useState<readonly TelemetryOutboxEntry[]>([]);
+  // Set while the user is confirming a channel that needs explicit consent
+  // (crash reports ship raw native minidumps).
+  const [confirming, setConfirming] = useState<ChannelId | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,8 +106,9 @@ export function TelemetryTab(): React.JSX.Element {
     };
   }, [api]);
 
-  function setChannel(channel: ChannelId, value: boolean): void {
+  function applyChannel(channel: ChannelId, value: boolean): void {
     if (prefs === null) return;
+    const prev = prefs;
     const next: TelemetryPreferences = {
       crashReports: channel === 'crashReports' ? value : prefs.crashReports,
       performance: channel === 'performance' ? value : prefs.performance,
@@ -113,8 +118,28 @@ export function TelemetryTab(): React.JSX.Element {
     api
       .setTelemetryPreferences(next)
       .then(() => api.getTelemetryStatus())
-      .then(setStatus)
-      .catch(() => undefined);
+      .then((s) => {
+        setStatus(s);
+        // Activate renderer capture the moment crash reports are turned on,
+        // without waiting for a restart.
+        void syncRendererTelemetry(s);
+      })
+      .catch(() => {
+        // Persisting failed — revert so a privacy switch never shows a state the
+        // backend didn't accept.
+        setPrefs(prev);
+      });
+  }
+
+  function setChannel(channel: ChannelId, value: boolean): void {
+    if (prefs === null) return;
+    // Enabling crash reports ships native minidumps (raw process memory) — gate
+    // it behind an explicit consent step rather than applying immediately.
+    if (channel === 'crashReports' && value && !prefs.crashReports) {
+      setConfirming('crashReports');
+      return;
+    }
+    applyChannel(channel, value);
   }
 
   function refreshOutbox(): void {
@@ -131,7 +156,8 @@ export function TelemetryTab(): React.JSX.Element {
         <h2 className="text-xl font-semibold text-text-primary">Telemetry</h2>
         <p className="mt-1 text-sm text-text-secondary">
           Help improve CostGoblin by sharing crash reports and performance data. Everything here is opt-in and off by
-          default — no cost data, tag values, account IDs or team names ever leave your machine.
+          default. Scrubbed error and performance payloads never include cost data, tag values, account IDs or team
+          names; native crash reports are raw memory snapshots — you’ll be asked to confirm before enabling them.
         </p>
       </div>
 
@@ -141,6 +167,38 @@ export function TelemetryTab(): React.JSX.Element {
           <code className="rounded bg-bg-tertiary px-1 py-0.5 text-xs">COSTGOBLIN_SENTRY_DSN</code> environment variable
           (or a self-hosted <code className="rounded bg-bg-tertiary px-1 py-0.5 text-xs">COSTGOBLIN_SENTRY_TUNNEL</code>)
           to enable delivery.
+        </div>
+      )}
+
+      {confirming === 'crashReports' && (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-text-secondary">
+          <p className="font-medium text-text-primary">Enable crash &amp; error reporting?</p>
+          <p className="mt-1">
+            Unhandled JS errors are scrubbed (file paths, account IDs, emails, dollar amounts) before they’re sent.{' '}
+            <strong className="text-text-primary">Native crash reports are different</strong>: they’re a binary snapshot
+            of the app’s memory at the moment it crashed — which can include cost figures, account IDs or query text —
+            and are sent <strong className="text-text-primary">unscrubbed</strong> so the crash can be diagnosed. They
+            only ever leave your machine if you turn this on.
+          </p>
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                applyChannel('crashReports', true);
+                setConfirming(null);
+              }}
+              className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors hover:opacity-90"
+            >
+              Enable crash reporting
+            </button>
+            <button
+              type="button"
+              onClick={() => { setConfirming(null); }}
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-text-secondary transition-colors hover:text-text-primary"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
@@ -179,7 +237,8 @@ export function TelemetryTab(): React.JSX.Element {
           <div>
             <h3 className="text-sm font-medium text-text-primary">Audit log</h3>
             <p className="mt-0.5 text-xs text-text-muted">
-              Every event handed to the reporter is recorded here (after scrubbing) so you can see exactly what was sent.
+              Every scrubbed error and performance payload handed to the reporter is recorded here so you can see what
+              was sent. Native crash dumps are binary memory snapshots and aren’t itemized.
             </p>
           </div>
           <button

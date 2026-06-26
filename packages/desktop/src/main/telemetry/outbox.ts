@@ -36,41 +36,55 @@ function parseEntry(line: string): TelemetryOutboxEntry | null {
 export class TelemetryOutbox {
   private readonly path: string;
   private buffer: TelemetryOutboxEntry[] = [];
-  private loaded = false;
+  // Cached so concurrent callers await ONE load (and the buffer is assigned
+  // exactly once) instead of racing each other's read-modify-write.
+  private loadPromise: Promise<void> | null = null;
+  // Tail promise that serializes record() — fire-and-forgotten records during a
+  // startup error burst would otherwise interleave load→push→write and drop or
+  // clobber entries.
+  private writeChain: Promise<void> = Promise.resolve();
 
   constructor(dir: string) {
     this.path = join(dir, OUTBOX_FILE);
   }
 
-  private async ensureLoaded(): Promise<void> {
-    if (this.loaded) return;
-    this.loaded = true;
-    try {
-      const fs = await import('node:fs/promises');
-      const raw = await fs.readFile(this.path, 'utf-8');
-      this.buffer = raw
-        .split('\n')
-        .filter((l) => l.trim().length > 0)
-        .map(parseEntry)
-        .filter((e): e is TelemetryOutboxEntry => e !== null)
-        .slice(-MAX_ENTRIES);
-    } catch {
-      this.buffer = [];
-    }
+  private ensureLoaded(): Promise<void> {
+    this.loadPromise ??= (async () => {
+      try {
+        const fs = await import('node:fs/promises');
+        const raw = await fs.readFile(this.path, 'utf-8');
+        this.buffer = raw
+          .split('\n')
+          .filter((l) => l.trim().length > 0)
+          .map(parseEntry)
+          .filter((e): e is TelemetryOutboxEntry => e !== null)
+          .slice(-MAX_ENTRIES);
+      } catch {
+        this.buffer = [];
+      }
+    })();
+    return this.loadPromise;
   }
 
-  /** Append one entry (most-recent kept) and persist. Never throws — auditing
-   *  must not be able to crash the reporter. */
-  async record(entry: TelemetryOutboxEntry): Promise<void> {
-    try {
+  /** Append one entry (most-recent kept) and persist. Serialized through a tail
+   *  promise so concurrent calls never interleave. Never throws — auditing must
+   *  not be able to crash the reporter. */
+  record(entry: TelemetryOutboxEntry): Promise<void> {
+    const run = this.writeChain.then(async () => {
       await this.ensureLoaded();
       this.buffer.push(entry);
       if (this.buffer.length > MAX_ENTRIES) this.buffer = this.buffer.slice(-MAX_ENTRIES);
       const fs = await import('node:fs/promises');
       await fs.writeFile(this.path, this.buffer.map((e) => JSON.stringify(e)).join('\n') + '\n');
-    } catch (err: unknown) {
+    });
+    // Keep the chain alive even if this write rejects; surface the error here.
+    this.writeChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run.catch((err: unknown) => {
       logger.warn(`telemetry-outbox: failed to record — ${err instanceof Error ? err.message : String(err)}`);
-    }
+    });
   }
 
   /** Most-recent-first snapshot for the settings UI. */
