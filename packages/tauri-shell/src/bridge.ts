@@ -297,7 +297,11 @@ const rollupApi = {
 const debugApi = {
   isDev: (): boolean => import.meta.env.DEV,
   isE2E: (): boolean => false,
+  isSandboxed: (): boolean => false,
   getMemoryMB: (): Promise<number> => ok(0),
+  // Header branch/PR indicators (dev/source builds) — not tracked in the spike.
+  getGitBranch: (): Promise<string | null> => ok(null),
+  getBranchPr: (): Promise<unknown | null> => ok(null),
   getInFlightCount: (): number => inFlightCount,
   getQueryLog: (): Promise<unknown[]> => invokeRaw('get_query_log'),
   runExplain: (queryId: number): Promise<string> => invokeRaw('run_explain', { queryId }),
