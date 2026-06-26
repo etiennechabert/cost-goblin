@@ -311,6 +311,9 @@ export class MockCostApi implements CostApi {
       probeLineItems,
       rawBytes: 4_900_000_000,
       current: { rows: 1_100_000, bytes: 17_600_000 },
+      // The built rollup (current) represents the navigational grain; toggling
+      // resource_id ON changes the grain → estimate, OFF → matches → actuals.
+      currentMatchesCandidate: !hasResourceId,
       dimCardinalities,
     }));
   }

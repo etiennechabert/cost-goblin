@@ -231,6 +231,19 @@ describe('computeRollupEstimate per-dimension marginal impact', () => {
   });
 });
 
+describe('currentMatchesCandidate', () => {
+  const base = {
+    probePeriod: '2026-04', months: 1, probeGrainRows: 1000, probeLineItems: 10_000,
+    rawBytes: 0, current: { rows: 500, bytes: 8000 }, dimCardinalities: [],
+  } as const;
+  it('defaults to false when the caller omits it', () => {
+    expect(computeRollupEstimate(base).currentMatchesCandidate).toBe(false);
+  });
+  it('passes through when the built rollup matches the grain', () => {
+    expect(computeRollupEstimate({ ...base, currentMatchesCandidate: true }).currentMatchesCandidate).toBe(true);
+  });
+});
+
 describe('emptyRollupEstimate', () => {
   it('carries the current stats but reports no probe', () => {
     const e = emptyRollupEstimate({ rows: 10, bytes: 160 });
@@ -238,6 +251,7 @@ describe('emptyRollupEstimate', () => {
     expect(e.current).toEqual({ rows: 10, bytes: 160 });
     expect(e.raw).toEqual({ rows: 0, bytes: 0 });
     expect(e.rawOnly.recommended).toBe(false);
+    expect(e.currentMatchesCandidate).toBe(false);
     expect(e.dims).toEqual([]);
   });
 });

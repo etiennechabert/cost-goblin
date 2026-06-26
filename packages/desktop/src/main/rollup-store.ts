@@ -134,6 +134,15 @@ export class RollupStore {
     return { rows, bytes, months: parts.length };
   }
 
+  /** Shape signature the on-disk partitions were actually built against (null
+   *  when nothing is built). Lets callers tell whether a candidate grain matches
+   *  what's already materialized. Keyed off the manifest — stays consistent with
+   *  getStats (both null together) — not the in-memory `shape`, which may hold a
+   *  not-yet-built candidate. */
+  getBuiltSignature(): string | null {
+    return this.manifest === null ? null : this.manifest.shapeSignature;
+  }
+
   /** Serialize a mutation; the callback receives the epoch captured at enqueue
    *  time so it can detect a concurrent invalidate() and abort its commit. */
   private enqueue<T>(fn: (epoch: number) => Promise<T>): Promise<T> {

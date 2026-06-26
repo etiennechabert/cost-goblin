@@ -104,6 +104,10 @@ export interface RollupGrainEstimate {
   readonly raw: RollupRawStats;
   /** Exact totals summed from the on-disk rollup manifest; null when none built. */
   readonly current: RollupCurrentStats | null;
+  /** True when the built rollup was materialized for THIS exact grain — i.e.
+   *  `current` is the real size of the candidate, not a directional estimate.
+   *  The UI shows actual rollup stats (and hides the rebuild) when set. */
+  readonly currentMatchesCandidate: boolean;
   readonly candidate: {
     readonly rows: number;
     readonly bytes: number;
@@ -130,6 +134,9 @@ export interface RollupEstimateInput {
   /** Actual on-disk size of the raw daily Parquet across the whole window. */
   readonly rawBytes: number;
   readonly current: RollupCurrentStats | null;
+  /** Whether `current` is the built rollup for THIS grain (vs any older grain).
+   *  Defaults to false when omitted (callers that don't track it get an estimate). */
+  readonly currentMatchesCandidate?: boolean;
   readonly dimCardinalities: readonly { readonly column: string; readonly cardinality: number; readonly leaveOneOutGrainRows: number }[];
 }
 
@@ -245,6 +252,7 @@ export function computeRollupEstimate(input: RollupEstimateInput): RollupGrainEs
     lineItems: input.probeLineItems,
     raw: { rows: input.probeLineItems * months, bytes: input.rawBytes },
     current: input.current,
+    currentMatchesCandidate: input.currentMatchesCandidate ?? false,
     candidate: {
       rows,
       bytes,
@@ -268,6 +276,7 @@ export function emptyRollupEstimate(current: RollupCurrentStats | null): RollupG
     lineItems: 0,
     raw: { rows: 0, bytes: 0 },
     current,
+    currentMatchesCandidate: false,
     candidate: {
       rows: 0,
       bytes: 0,

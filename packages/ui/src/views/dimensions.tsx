@@ -1535,9 +1535,17 @@ function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: R
     ? []
     : [...estimate.dims].sort((a, b) => b.marginalMultiplier - a.marginalMultiplier);
   const outlierDim = rankedDims.find(d => d.outlier);
-  const sizeReduction = estimate !== null && estimate.candidate.bytes > 0
-    ? estimate.raw.bytes / estimate.candidate.bytes
-    : 0;
+  // When the built rollup already matches this exact grain, show its ACTUAL
+  // size/rows (the same numbers as the header Rollup popover) instead of the
+  // directional estimate, and drop the Rebuild stat (nothing to rebuild).
+  const matchedCurrent = estimate !== null && estimate.currentMatchesCandidate ? estimate.current : null;
+  const rollupBytes = matchedCurrent !== null ? matchedCurrent.bytes : (estimate?.candidate.bytes ?? 0);
+  const sizeReduction = estimate !== null && rollupBytes > 0 ? estimate.raw.bytes / rollupBytes : 0;
+  const rowRatio = estimate === null
+    ? 0
+    : matchedCurrent !== null && matchedCurrent.rows > 0
+      ? estimate.raw.rows / matchedCurrent.rows
+      : estimate.compressionRate;
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/40 px-5 py-4">
       <div className="flex items-center justify-between">
@@ -1546,7 +1554,7 @@ function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: R
           <h3 className="text-sm font-medium text-text-secondary">Rollup impact</h3>
         </div>
         {estimate !== null && estimate.probePeriod.length > 0 && (
-          <span className="text-[10px] text-text-muted">estimated from {estimate.probePeriod} · directional</span>
+          <span className="text-[10px] text-text-muted">{matchedCurrent !== null ? 'actual · current rollup' : `estimated from ${estimate.probePeriod} · directional`}</span>
         )}
       </div>
       <p className="mt-1 text-[11px] leading-snug text-text-muted">
@@ -1559,27 +1567,37 @@ function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: R
         <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>
       ) : (
         <>
-          <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div className={`mt-3 grid grid-cols-2 gap-4 ${matchedCurrent !== null ? 'sm:grid-cols-3' : 'sm:grid-cols-4'}`}>
             <ImpactStat
               label="Raw data"
               value={formatBytes(estimate.raw.bytes)}
               hint={`${formatCount(estimate.raw.rows)} line items · ${String(estimate.months)} mo`}
             />
-            <ImpactStat
-              label="Est. rollup"
-              value={formatBytes(estimate.candidate.bytes)}
-              hint={`${SIZE_BAND_LABEL[estimate.candidate.sizeBand]} · ${formatCount(estimate.candidate.rows)} rows`}
-            />
+            {matchedCurrent !== null ? (
+              <ImpactStat
+                label="Rollup"
+                value={formatBytes(matchedCurrent.bytes)}
+                hint={`${formatCount(matchedCurrent.rows)} rows`}
+              />
+            ) : (
+              <ImpactStat
+                label="Est. rollup"
+                value={formatBytes(estimate.candidate.bytes)}
+                hint={`${SIZE_BAND_LABEL[estimate.candidate.sizeBand]} · ${formatCount(estimate.candidate.rows)} rows`}
+              />
+            )}
             <ImpactStat
               label="Compression"
               value={sizeReduction >= 1.05 ? `${sizeReduction.toFixed(1)}×` : '~1×'}
-              hint={`smaller than raw · ${estimate.compressionRate >= 1 ? estimate.compressionRate.toFixed(0) : estimate.compressionRate.toFixed(1)}× fewer rows`}
+              hint={`smaller than raw · ${rowRatio >= 1 ? rowRatio.toFixed(0) : rowRatio.toFixed(1)}× fewer rows`}
             />
-            <ImpactStat
-              label="Rebuild"
-              value={formatRebuild(estimate.candidate.rebuildSeconds)}
-              hint="background re-roll"
-            />
+            {matchedCurrent === null && (
+              <ImpactStat
+                label="Rebuild"
+                value={formatRebuild(estimate.candidate.rebuildSeconds)}
+                hint="background re-roll"
+              />
+            )}
           </div>
           {rankedDims.length > 0 && (
             <div className="mt-4">

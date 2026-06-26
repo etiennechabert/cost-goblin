@@ -153,6 +153,9 @@ export interface AppContext {
    *  or line_item_net_*. Cached per-tier for the session; invalidated on
    *  explicit reset via invalidateColumnCache. */
   readonly getAvailableColumns: (tier: 'daily' | 'hourly') => Promise<ReadonlySet<string>>;
+  /** Build-affecting shape signature for a dimensions config — compare against
+   *  rollupStore.getBuiltSignature() to tell if the built rollup matches a grain. */
+  readonly signatureForDimensions: (dims: DimensionsConfig) => Promise<string>;
   readonly queryLog: QueryLog;
   /** Persistent per-period pre-aggregated rollup backing dashboard queries. */
   readonly rollupStore: RollupStore;
@@ -480,15 +483,22 @@ export function createAppContext(ctx: IpcContext): AppContext {
     });
   };
 
-  async function getRollupShape(): Promise<RollupShape> {
+  // Full build-affecting shape signature for an arbitrary dimensions config.
+  // The single source of truth for both the built rollup's signature (via
+  // getRollupShape) and the what-if estimate's "does this grain match what's
+  // built" check — keeping them on one code path so they can never drift (a
+  // drift would silently make the estimate's matched-check always false).
+  // computeShapeSignature ignores aliases/labels/region-enrichment, so the raw
+  // editor `candidate` and the query-enriched dims hash identically for the same
+  // enabled grain.
+  async function signatureForDimensions(dimensions: DimensionsConfig): Promise<string> {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const dimensions = await getQueryDimensions();
     const costScope = await getCostScope().catch(() => undefined);
     const availableColumns = await getAvailableColumns('daily');
     let orgRaw = '';
     try { orgRaw = await fs.readFile(path.join(path.dirname(ctx.dataDir), 'org-accounts.json'), 'utf-8'); } catch { /* no org sync yet */ }
-    const signature = computeShapeSignature({
+    return computeShapeSignature({
       dimensions,
       costMetric: costScope?.costMetric ?? 'unblended',
       costPerspective: costScope?.costPerspective ?? 'gross',
@@ -497,6 +507,12 @@ export function createAppContext(ctx: IpcContext): AppContext {
       orgAccountsDigest: computeOrgAccountsDigest(orgRaw),
       availableColumns: [...availableColumns],
     });
+  }
+
+  async function getRollupShape(): Promise<RollupShape> {
+    const dimensions = await getQueryDimensions();
+    const signature = await signatureForDimensions(dimensions);
+    const availableColumns = await getAvailableColumns('daily');
     return { signature, grainDimensions: rollupGrainColumns(dimensions), availableColumns: [...availableColumns] };
   }
 
@@ -587,6 +603,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getRegionMap,
     getOrgAccountsPath,
     getAvailableColumns,
+    signatureForDimensions,
     queryLog,
     rollupStore,
     runQuery,

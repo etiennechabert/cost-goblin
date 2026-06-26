@@ -77,7 +77,7 @@ function filterUncoveredSuggestions(
 }
 
 export function registerDimensionsHandlers(app: AppContext): void {
-  const { ctx, getConfig, getDimensions, getQueryDimensions, getCostScope, getAvailableColumns, getOrgAccountsPath, getAccountReverseMap, getRegionMap, invalidateDimensions, rollupStore, runQuery } = app;
+  const { ctx, getConfig, getDimensions, getQueryDimensions, getCostScope, getAvailableColumns, getOrgAccountsPath, getAccountReverseMap, getRegionMap, signatureForDimensions, invalidateDimensions, rollupStore, runQuery } = app;
 
   ipcMain.handle('dimensions:discover-tags', async (): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> => {
     const config = await getConfig();
@@ -271,6 +271,15 @@ export function registerDimensionsHandlers(app: AppContext): void {
       cardinality: toNum(row[`card_${String(i)}`]),
       leaveOneOutGrainRows: toNum(row[`loo_${String(i)}`]),
     }));
+
+    // Is the on-disk rollup actually built for THIS grain? Compare the
+    // candidate's full shape signature to what the partitions were built
+    // against (same signatureForDimensions path getRollupShape uses). When they
+    // match, `current` is the real size of this grain, not an estimate.
+    const builtSignature = rollupStore.getBuiltSignature();
+    const candidateSignature = await signatureForDimensions(candidate);
+    const currentMatchesCandidate = current !== null && builtSignature !== null && builtSignature === candidateSignature;
+
     return computeRollupEstimate({
       probePeriod: period,
       months: dirs.length,
@@ -278,6 +287,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
       probeLineItems: toNum(row['line_items']),
       rawBytes,
       current,
+      currentMatchesCandidate,
       dimCardinalities,
     });
   });
