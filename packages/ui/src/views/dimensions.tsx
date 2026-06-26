@@ -1701,7 +1701,7 @@ function resolveOrderedRows(config: DimensionsConfig): OrderedRow[] {
   return rows;
 }
 
-export function DimensionsView() {
+export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: string }>): React.JSX.Element {
   const api = useCostApi();
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editingBuiltInIdx, setEditingBuiltInIdx] = useState<number | null>(null);
@@ -1756,7 +1756,9 @@ export function DimensionsView() {
   const estimateSig = config === null ? '' : grainSignature(config);
   const estimateQuery = useQuery(
     () => config === null ? Promise.resolve(null) : api.estimateRollupGrain(config),
-    [estimateSig],
+    // Refetch when the grain changes OR when the built rollup changes (e.g. a
+    // re-roll finishes) so the actual/estimated badge updates without a remount.
+    [estimateSig, rollupRevision ?? ''],
   );
   const estimate = estimateQuery.status === 'success' ? estimateQuery.data : null;
   const estimateLoading = estimateQuery.status === 'loading';
