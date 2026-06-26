@@ -296,14 +296,17 @@ fn build_from_clause(parquet_source: &str, dims: &Dimensions, org_path: &str) ->
 }
 
 fn build_parquet_source(data_dir: &str, tier: &str, periods: &[String]) -> String {
+    // union_by_name=true tolerates CUR schema drift across months (older exports
+    // lack columns like reservation_effective_cost) — matches core's #398 fix;
+    // without it a multi-month read errors on mismatched schemas.
     if !periods.is_empty() {
         let paths: Vec<String> = periods
             .iter()
             .map(|p| format!("'{}/aws/raw/{}-{}/*.parquet'", sql_escape(data_dir), tier, p))
             .collect();
-        format!("read_parquet([{}])", paths.join(", "))
+        format!("read_parquet([{}], union_by_name=true)", paths.join(", "))
     } else {
-        format!("read_parquet('{}/aws/raw/{}-*/*.parquet')", sql_escape(data_dir), tier)
+        format!("read_parquet('{}/aws/raw/{}-*/*.parquet', union_by_name=true)", sql_escape(data_dir), tier)
     }
 }
 

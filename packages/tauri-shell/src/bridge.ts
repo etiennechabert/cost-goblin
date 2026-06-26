@@ -48,6 +48,19 @@ import type {
   PreviewConfigBundleResult,
   PublishConfigBundleResult,
   UpdateStatus,
+  RollupStatus,
+  RollupStats,
+  RollupGrainEstimate,
+  PruneResult,
+  PerformanceInfo,
+  PerformanceSettings,
+  DataSharingStatus,
+  DataSharingResult,
+  SharedSourceInfo,
+  SharedPullProgress,
+  PreviewSharedSourceResult,
+  PullSharedSourceResult,
+  SharedPullSelection,
 } from '@costgoblin/core/browser';
 
 // ---------------------------------------------------------------------------
@@ -191,6 +204,41 @@ const api: CostApi = {
   publishConfigBundle: (params?: { location?: string; profile?: string }): Promise<PublishConfigBundleResult> => invoke('publish_config_bundle', params ?? {}),
   checkConfigBeacon: (params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult> => invoke('check_config_beacon', params),
 
+  // ---- Rollup grain estimate (real: reads the on-disk rollup manifest) ----
+  estimateRollupGrain: (candidate: DimensionsConfig): Promise<RollupGrainEstimate> => invoke('estimate_rollup_grain', candidate),
+
+  // ---- Retention / prune (stubbed — auto-prune off; manual sync handles it) ----
+  getAutoPruneEnabled: (): Promise<boolean> => ok(false),
+  setAutoPruneEnabled: (_enabled: boolean): Promise<void> => ok(undefined),
+  pruneNow: (): Promise<PruneResult> => ok({ deleted: [] }),
+
+  // ---- Performance settings (stubbed — the spike doesn't tune DuckDB) ----
+  getPerformanceInfo: (): Promise<PerformanceInfo> => ok({
+    defaultMemoryGB: 4, defaultThreads: 4, totalMemoryGB: 16, maxThreads: 8,
+    minMemoryGB: 1, maxMemoryGB: 16, current: { memoryLimitGB: null, threads: null },
+  }),
+  setPerformanceSettings: (_perf: PerformanceSettings): Promise<void> => ok(undefined),
+
+  // The spike has no async materialized base — queries hit DuckDB directly, so
+  // the renderer can reveal immediately.
+  awaitMaterializedBase: (_timeoutMs: number): Promise<boolean> => ok(true),
+
+  // ---- Peer data sharing (not ported — the 549-line P2P feature is out of scope) ----
+  getDataSharingStatus: (): Promise<DataSharingStatus> => ok({
+    enabled: false, sharingKey: null, label: '', port: null, hosts: [], fingerprint: null,
+    lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0,
+  }),
+  enableDataSharing: (): Promise<DataSharingResult> => ok({ status: 'error', message: 'Peer data sharing is not available in the Tauri spike' }),
+  disableDataSharing: (): Promise<DataSharingResult> => ok({ status: 'error', message: 'Peer data sharing is not available in the Tauri spike' }),
+  rotateDataSharingKey: (): Promise<DataSharingResult> => ok({ status: 'error', message: 'Peer data sharing is not available in the Tauri spike' }),
+  previewSharedSource: (_key: string): Promise<PreviewSharedSourceResult> => ok({ status: 'error', message: 'Peer data sharing is not available in the Tauri spike' }),
+  previewStoredSource: (): Promise<PreviewSharedSourceResult> => ok({ status: 'error', message: 'Peer data sharing is not available in the Tauri spike' }),
+  addSharedSource: (_key: string, _selection?: SharedPullSelection): Promise<PullSharedSourceResult> => ok({ status: 'error', message: 'Peer data sharing is not available in the Tauri spike' }),
+  getSharedSource: (): Promise<SharedSourceInfo | null> => ok(null),
+  getSharedPullProgress: (): Promise<SharedPullProgress> => ok({ active: false, phase: 'idle', filesDone: 0, filesTotal: 0, currentPeriod: null, bytesDone: 0, bytesTotal: 0, error: null }),
+  refreshSharedSource: (_selection?: SharedPullSelection): Promise<PullSharedSourceResult> => ok({ status: 'error', message: 'Peer data sharing is not available in the Tauri spike' }),
+  removeSharedSource: (): Promise<void> => ok(undefined),
+
   // ---- MCP server (real: tiny_http JSON-RPC over the query layer) ----
   getMcpServerRunning: (): Promise<boolean> => invoke('get_mcp_server_running'),
   setMcpServerRunning: (enabled: boolean): Promise<void> => invoke<undefined>('set_mcp_server_running', { enabled }).then(() => undefined),
@@ -229,6 +277,20 @@ const updateApi = {
 };
 
 // ---------------------------------------------------------------------------
+// costgoblinRollup — header rollup indicator. getStatus/getStats read the
+// on-disk rollup manifest via Rust; onStatusChanged fires once with the current
+// status (the spike doesn't build rollups at runtime, so there's nothing to push).
+// ---------------------------------------------------------------------------
+const rollupApi = {
+  getStatus: (): Promise<RollupStatus> => invoke('get_rollup_status'),
+  getStats: (): Promise<RollupStats | null> => invoke('get_rollup_stats'),
+  onStatusChanged: (callback: (status: RollupStatus) => void): (() => void) => {
+    void invoke<RollupStatus>('get_rollup_status').then(callback).catch(() => undefined);
+    return () => undefined;
+  },
+};
+
+// ---------------------------------------------------------------------------
 // costgoblinDebug — note isDev / isE2E / getInFlightCount are SYNCHRONOUS in
 // the Electron preload, so they must stay synchronous here (handled in JS,
 // not via invoke).
@@ -247,9 +309,11 @@ export function installBridge(): void {
   const g = globalThis as unknown as {
     costgoblin: unknown;
     costgoblinUpdate: unknown;
+    costgoblinRollup: unknown;
     costgoblinDebug: unknown;
   };
   g.costgoblin = api;
   g.costgoblinUpdate = updateApi;
+  g.costgoblinRollup = rollupApi;
   g.costgoblinDebug = debugApi;
 }

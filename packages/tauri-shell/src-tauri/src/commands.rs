@@ -75,6 +75,29 @@ fn req_ctx(state: &AppState) -> Result<ReqCtx, String> {
     req_ctx_from(&state.data_dir, &state.config_dir)
 }
 
+/// Raw fields a dashboard query touches (group_by + active filters + extras).
+/// None when any dim is unresolvable — then we don't risk routing to the rollup.
+fn dashboard_fields(dims: &Dimensions, group_by: &str, filters: &Map<String, J>, extra: &[&str]) -> Option<Vec<String>> {
+    let mut f = vec![query::resolve_field(group_by, dims)?.raw_field];
+    for k in filters.keys() {
+        f.push(query::resolve_field(k, dims)?.raw_field);
+    }
+    f.extend(extra.iter().map(|s| (*s).to_string()));
+    Some(f)
+}
+
+/// Pick the query source: the pre-aggregated rollup (exclusions baked in → no
+/// re-exclude) when every touched field is in-grain and every period is rolled
+/// up, else the raw org-joined source. Returns (source, apply_exclusions).
+fn pick_source(ctx: &ReqCtx, data_dir: &str, tier: &str, periods: &[String], group_by: &str, filters: &Map<String, J>, extra: &[&str]) -> (String, bool) {
+    let rollup = dashboard_fields(&ctx.dims, group_by, filters, extra)
+        .and_then(|nf| crate::rollup::rollup_source(data_dir, tier, periods, &nf));
+    match rollup {
+        Some(rs) => (rs, false),
+        None => (ctx.source(data_dir, tier, periods, &ctx.metric, ctx.net), true),
+    }
+}
+
 // --- param helpers ---
 
 fn pobj(params: &J) -> Map<String, J> {
@@ -429,8 +452,8 @@ pub fn query_costs(params: J, state: tauri::State<AppState>) -> R {
     if periods.is_empty() {
         return Ok(json!({ "rows": [], "totalCost": 0.0, "topServices": [], "dateRange": o.get("dateRange").cloned().unwrap_or(J::Null) }));
     }
-    let source = ctx.source(&state.data_dir, tier, &periods, &ctx.metric, ctx.net);
-    let args = ctx.args(&source, true);
+    let (source, apply_excl) = pick_source(&ctx, &state.data_dir, tier, &periods, group_by, &filters_map(&o), &["service"]);
+    let args = ctx.args(&source, apply_excl);
     let built = query::cost_query(group_by, &start, &end, &filters_map(&o), &args)?;
     let conn = db::open()?;
     let rows = db::query_map(&conn, &built.sql, &built.params, |row| {
@@ -498,8 +521,8 @@ pub fn query_daily_costs(params: J, state: tauri::State<AppState>) -> R {
     if periods.is_empty() {
         return Ok(json!({ "days": [], "groups": [], "totalCost": 0.0 }));
     }
-    let source = ctx.source(&state.data_dir, tier, &periods, &ctx.metric, ctx.net);
-    let args = ctx.args(&source, true);
+    let (source, apply_excl) = pick_source(&ctx, &state.data_dir, tier, &periods, group_by, &filters_map(&o), &[]);
+    let args = ctx.args(&source, apply_excl);
     let built = query::daily_costs_query(group_by, &start, &end, &filters_map(&o), &args)?;
     let conn = db::open()?;
     let rows = db::query_map(&conn, &built.sql, &built.params, |row| (str_at(row, 0), str_at(row, 1), f64_at(row, 2)))?;
@@ -547,8 +570,8 @@ pub fn query_trends(params: J, state: tauri::State<AppState>) -> R {
     if periods.is_empty() {
         return Ok(json!({ "increases": [], "savings": [], "totalIncrease": 0.0, "totalSavings": 0.0 }));
     }
-    let source = ctx.source(&state.data_dir, "daily", &periods, &ctx.metric, ctx.net);
-    let args = ctx.args(&source, true);
+    let (source, apply_excl) = pick_source(&ctx, &state.data_dir, "daily", &periods, group_by, &filters_map(&o), &[]);
+    let args = ctx.args(&source, apply_excl);
     let built = query::trend_query(group_by, &start, &end, delta_threshold, &filters_map(&o), &args)?;
     let conn = db::open()?;
     let rows = db::query_map(&conn, &built.sql, &built.params, |row| {
@@ -1147,6 +1170,22 @@ pub async fn check_config_beacon(params: J, _state: tauri::State<'_, AppState>) 
         // Absence OR network/credential hiccup → never block manual setup.
         Err(_) => Ok(json!({ "status": "none" })),
     }
+}
+
+// --- rollup (pre-aggregated dashboard source) ---
+
+#[tauri::command(async)]
+pub fn get_rollup_status(state: tauri::State<AppState>) -> R {
+    Ok(crate::rollup::status(&state.data_dir))
+}
+#[tauri::command(async)]
+pub fn get_rollup_stats(state: tauri::State<AppState>) -> R {
+    Ok(crate::rollup::stats(&state.data_dir))
+}
+#[tauri::command(async)]
+pub fn estimate_rollup_grain(params: J, state: tauri::State<AppState>) -> R {
+    // params IS the candidate DimensionsConfig.
+    Ok(crate::rollup::estimate_grain(&state.data_dir, &params))
 }
 
 // --- MCP server (AI Assistant) ---

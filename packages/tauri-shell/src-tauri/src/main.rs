@@ -11,6 +11,7 @@ mod db;
 mod mcp;
 mod query;
 mod querylog;
+mod rollup;
 mod sharing;
 mod sync;
 
@@ -102,6 +103,9 @@ fn main() {
             commands::apply_config_bundle,
             commands::publish_config_bundle,
             commands::check_config_beacon,
+            commands::get_rollup_status,
+            commands::get_rollup_stats,
+            commands::estimate_rollup_grain,
             commands::get_mcp_server_running,
             commands::set_mcp_server_running,
             commands::get_mcp_token,
@@ -180,6 +184,86 @@ mod smoke {
             "SMOKE OK [{}]: metric={} exclusions={} org_join={} months={:?} services={} window_total={:.2} owner_rows={}",
             dd, metric, exclusions.len(), org_path.is_some(), months, svc_rows.len(), total, team_n,
         );
+    }
+
+    /// Rollup-vs-raw latency benchmark for the cost-overview dashboard query
+    /// (group by service, full available window). Skips when no rollup is on
+    /// disk. Point COSTGOBLIN_DATA_DIR/CONFIG_DIR at a real dataset to measure.
+    #[test]
+    fn rollup_vs_raw_bench() {
+        let dd = data_dir();
+        let cfg = config_dir();
+        let dims = config::load_dimensions(&cfg).expect("dims");
+        let cs = config::load_cost_scope(&cfg);
+        let metric = config::normalize_metric(&cs.cost_metric);
+        let net = cs.cost_perspective.as_deref() == Some("net");
+        let exclusions = query::build_exclusion_clauses(&cs, &dims);
+        let org_path = config::org_tags_path(Path::new(&dd));
+        let name_from_tag = dims.account_built_in().and_then(|b| b.account_name_from_tag.clone());
+        let name_map = config::load_account_name_map(Path::new(&dd), name_from_tag.as_deref());
+        let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
+        for (id, n) in &name_map {
+            reverse.entry(n.clone()).or_default().push(id.clone());
+        }
+
+        // Window = the months that are actually rolled up (Electron builds the
+        // rollup lazily for the hot window), so the query is rollup-eligible.
+        let Some(m) = crate::rollup::load_manifest(&dd) else {
+            eprintln!("BENCH: no rollup manifest at {dd} — skipping (run Electron 0.4.x to build it)");
+            return;
+        };
+        let rolled: Vec<String> = m.partitions.iter().cloned().collect();
+        if rolled.is_empty() {
+            eprintln!("BENCH: rollup has no partitions — skipping");
+            return;
+        }
+        let start = format!("{}-01", rolled.first().unwrap());
+        let end = format!("{}-28", rolled.last().unwrap());
+        let periods = query::available_periods(&dd, "daily", &start, &end);
+        let needed = vec!["service".to_string(), "cost".to_string()];
+        let Some(rollup_src) = crate::rollup::rollup_source(&dd, "daily", &periods, &needed) else {
+            eprintln!("BENCH: window not rollup-eligible — skipping");
+            return;
+        };
+        let raw_src = query::build_source(&dd, "daily", &periods, &metric, net, &dims, org_path.as_deref());
+
+        let conn = db::open().unwrap();
+        let nf = serde_json::Map::new();
+        let run = |src: &str, excl: &[String]| -> (u128, usize, f64) {
+            let args = query::QueryArgs { dims: &dims, source: src, exclusions: excl, account_reverse: Some(&reverse) };
+            let built = query::cost_query("service", &start, &end, &nf, &args).unwrap();
+            let t = std::time::Instant::now();
+            let rows = db::query_map(&conn, &built.sql, &built.params, |r| (db::str_at(r, 0), db::f64_at(r, 1))).unwrap();
+            let ms = t.elapsed().as_millis();
+            let mut seen: HashMap<String, f64> = HashMap::new();
+            for (e, tot) in &rows {
+                seen.entry(e.clone()).or_insert(*tot);
+            }
+            let total: f64 = seen.values().sum();
+            (ms, seen.len(), total)
+        };
+        // warm OS page cache + DuckDB metadata, then take best-of-3.
+        let _ = run(&raw_src, &exclusions);
+        let _ = run(&rollup_src, &[]);
+        let (mut raw_ms, mut roll_ms) = (u128::MAX, u128::MAX);
+        let (mut raw_n, mut raw_t, mut roll_n, mut roll_t) = (0usize, 0.0, 0usize, 0.0);
+        for _ in 0..3 {
+            let (m, n, t) = run(&raw_src, &exclusions);
+            if m < raw_ms { raw_ms = m; }
+            raw_n = n; raw_t = t;
+            let (m, n, t) = run(&rollup_src, &[]);
+            if m < roll_ms { roll_ms = m; }
+            roll_n = n; roll_t = t;
+        }
+        let st = crate::rollup::stats(&dd);
+        eprintln!("BENCH cost-overview(service) over {} months [{start}..{end}]:", periods.len());
+        eprintln!("  RAW    : {raw_ms:>5} ms   ({raw_n} services, ${raw_t:.0})");
+        eprintln!("  ROLLUP : {roll_ms:>5} ms   ({roll_n} services, ${roll_t:.0})");
+        eprintln!("  speedup: {:.1}x", raw_ms as f64 / roll_ms.max(1) as f64);
+        eprintln!("  on-disk: rollup {} MB / raw {} MB ({} rollup rows)",
+            st.get("rollupBytes").and_then(|v| v.as_u64()).unwrap_or(0) / 1_048_576,
+            st.get("rawBytes").and_then(|v| v.as_u64()).unwrap_or(0) / 1_048_576,
+            st.get("rollupRows").and_then(|v| v.as_u64()).unwrap_or(0));
     }
 
     /// Live AWS Organizations sync — opt-in (set CG_LIVE_AWS=1 + CG_PROFILE).
