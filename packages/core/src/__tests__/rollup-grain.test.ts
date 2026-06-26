@@ -71,6 +71,22 @@ describe('rollupGrainDimensions', () => {
     // Built-ins first, then tags; one entry per enabled dimension.
     expect(dims.map(d => d.column)).toEqual(['account_id', 'service', 'region', 'tag_team', 'tag_environment']);
   });
+
+  it('collapses derived dimensions that share one physical column to a single entry', () => {
+    // Region / Country / Continent are query-time views of the same `region`
+    // column — they must not produce duplicate, identically-attributed rows.
+    const shared: DimensionsConfig = {
+      builtIn: [
+        { name: asDimensionId('region'), label: 'Region', field: 'region' },
+        { name: asDimensionId('region_country'), label: 'Country', field: 'region' },
+        { name: asDimensionId('region_continent'), label: 'Continent', field: 'region' },
+        { name: asDimensionId('service'), label: 'Service', field: 'service' },
+      ],
+      tags: [],
+    };
+    const dims = rollupGrainDimensions(shared);
+    expect(dims.map(d => d.column)).toEqual(['region', 'service']);
+  });
 });
 
 describe('buildRollupPartitionQuery', () => {

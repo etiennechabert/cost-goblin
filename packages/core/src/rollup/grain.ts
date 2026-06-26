@@ -30,19 +30,31 @@ export function rollupGrainColumns(dims: DimensionsConfig): string[] {
  *  drops both its id and its display column together, so a 1:1 display column
  *  (e.g. account_name ↔ account_id) is never measured as a redundant
  *  pseudo-dimension. Built-ins first, then tags (same enabled-set semantics as
- *  rollupGrainColumns). */
+ *  rollupGrainColumns).
+ *
+ *  DEDUPED BY PRIMARY COLUMN: several dimensions can map to the SAME physical
+ *  grain column — Region, Country and Continent are all query-time views of the
+ *  one `region` column. They are not independent grain groups (the rollup stores
+ *  the column once), so they collapse to a single entry; otherwise the probe
+ *  would emit identical, mis-attributed duplicate rows. */
 export function rollupGrainDimensions(dims: DimensionsConfig): { column: string; columns: string[] }[] {
   const out: { column: string; columns: string[] }[] = [];
+  const seen = new Set<string>();
+  const add = (column: string, columns: string[]): void => {
+    if (seen.has(column)) return;
+    seen.add(column);
+    out.push({ column, columns });
+  };
   for (const d of dims.builtIn) {
     if (!isEnabled(d)) continue;
     const columns = [d.field];
     if (d.displayField !== undefined && d.displayField.length > 0) columns.push(d.displayField);
-    out.push({ column: d.field, columns });
+    add(d.field, columns);
   }
   for (const t of dims.tags) {
     if (!isEnabled(t)) continue;
     const col = tagDimColumn(t);
-    out.push({ column: col, columns: [col] });
+    add(col, [col]);
   }
   return out;
 }

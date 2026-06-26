@@ -1105,14 +1105,18 @@ export function buildRollupPartitionQuery(
 /** Build the cardinality probe behind the grain cost/benefit estimator (rollup
  *  design §8). Over ONE recent month it returns, in a single scan:
  *   - `line_items`  — COUNT(*) (the rollup's raw input for that month),
- *   - `grain_rows`  — `approx_count_distinct` of the candidate grain tuple
- *      (≈ the rollup row count for that month), and
- *   - `card_<i>`    — `approx_count_distinct` of each enabled dimension's primary
+ *   - `grain_rows`  — exact `COUNT(DISTINCT)` of the candidate grain tuple
+ *      (the rollup row count for that month), and
+ *   - `card_<i>`    — exact distinct count of each enabled dimension's primary
  *      column, so the estimator can flag individual raw-only dims (e.g. resource_id), and
  *   - `loo_<i>`     — the grain row count with that whole dimension removed (a
  *      built-in drops both its id and display column), so the estimator can
  *      attribute marginal rollup size per dimension. Indexed by
  *      `rollupGrainDimensions` order (built-ins first, then tags).
+ *
+ *  Counts are EXACT (not HyperLogLog): the per-dimension multiplier is a ratio
+ *  of two distinct-counts, and approx error compounds across the ratio. Exact is
+ *  monotonic (a leave-one-out can only lower the count), so multipliers are ≥ 1.
  *
  *  `grainColumns` come from `rollupGrainColumns` over the candidate dimensions
  *  (usage_date first) and are projected by `buildSource` — the same trusted set
@@ -1163,16 +1167,22 @@ export function buildGrainProbeQuery(
   // the marginal rollup size each dimension drives — a correlation-aware impact,
   // computed in this same single scan. Same trusted grainColumns interpolation
   // as grainConcat above (no user values).
+  //
+  // EXACT COUNT(DISTINCT), not approx_count_distinct: the marginal multiplier is
+  // a ratio of two distinct-counts, and HyperLogLog error (measured 6–13% on
+  // real CUR data) compounds across the ratio, fabricating spurious ×1.1–×1.5
+  // impacts for near-redundant dims. Exact counts are monotonic (loo ≤ grain),
+  // so multipliers are naturally ≥ 1, and cost only a single extra month-scan.
   const grainDims = rollupGrainDimensions(dimensions);
-  const cardSelects = grainDims.map((dim, i) => `CAST(approx_count_distinct(${dim.column}) AS BIGINT) AS card_${String(i)}`);
+  const cardSelects = grainDims.map((dim, i) => `CAST(COUNT(DISTINCT ${dim.column}) AS BIGINT) AS card_${String(i)}`);
   const looSelects = grainDims.map((dim, i) => {
     const remove = new Set(dim.columns);
     const cols = grainColumns.filter(g => !remove.has(g));
-    return `CAST(approx_count_distinct(concat_ws(chr(31), ${cols.join(', ')})) AS BIGINT) AS loo_${String(i)}`;
+    return `CAST(COUNT(DISTINCT concat_ws(chr(31), ${cols.join(', ')})) AS BIGINT) AS loo_${String(i)}`;
   });
   const selects = [
     `CAST(COUNT(*) AS BIGINT) AS line_items`,
-    `CAST(approx_count_distinct(${grainConcat}) AS BIGINT) AS grain_rows`,
+    `CAST(COUNT(DISTINCT ${grainConcat}) AS BIGINT) AS grain_rows`,
     ...cardSelects,
     ...looSelects,
   ];
