@@ -29,7 +29,7 @@ describe('syncSelectedFiles', () => {
   let mockReadFile: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
   let mockWriteFile: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
   let mockReaddir: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
-  let mockCopyFile: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
+  let mockRm: ReturnType<typeof vi.fn<(...args: unknown[]) => Promise<unknown>>>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -44,13 +44,13 @@ describe('syncSelectedFiles', () => {
     mockReadFile = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockRejectedValue(new Error('ENOENT'));
     mockWriteFile = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined);
     mockReaddir = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue([]);
-    mockCopyFile = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined);
+    mockRm = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined);
 
     fsPromises.mkdir = mockMkdir as typeof fsPromises.mkdir;
     fsPromises.readFile = mockReadFile as typeof fsPromises.readFile;
     fsPromises.writeFile = mockWriteFile as typeof fsPromises.writeFile;
     fsPromises.readdir = mockReaddir as typeof fsPromises.readdir;
-    fsPromises.copyFile = mockCopyFile as typeof fsPromises.copyFile;
+    fsPromises.rm = mockRm as typeof fsPromises.rm;
   });
 
   afterEach(() => {
@@ -119,7 +119,6 @@ describe('syncSelectedFiles', () => {
 
     expect(result.filesDownloaded).toBe(2);
     expect(mockSpawn).toHaveBeenCalledTimes(2);
-    expect(mockCopyFile).toHaveBeenCalled();
   });
 
   it('handles multiple periods in sorted order', async () => {
@@ -598,8 +597,8 @@ describe('syncSelectedFiles', () => {
       });
 
       expect(mockSpawn).toHaveBeenCalledTimes(2);
-      expect(mockMkdir).toHaveBeenCalledWith(expect.stringContaining('usage_date=2026-03-15'), { recursive: true });
-      expect(mockMkdir).toHaveBeenCalledWith(expect.stringContaining('usage_date=2026-03-16'), { recursive: true });
+      expect(mockMkdir).toHaveBeenCalledWith(expect.stringContaining('cost-opt-2026-03-15'), { recursive: true });
+      expect(mockMkdir).toHaveBeenCalledWith(expect.stringContaining('cost-opt-2026-03-16'), { recursive: true });
     });
 
     it('emits repartitioning progress', async () => {
@@ -621,23 +620,6 @@ describe('syncSelectedFiles', () => {
       expect(progressEvents.some((p) => p.phase === 'repartitioning')).toBe(true);
     });
 
-    it('only copies parquet files from staging', async () => {
-      const proc = createSuccessfulSpawn();
-      mockSpawn.mockReturnValue(proc);
-      mockReaddir.mockResolvedValue(['data.parquet', 'metadata.json', 'other.txt']);
-
-      await syncSelectedFiles({
-        bucketPath: 's3://bucket/cost-opt/',
-        profile: 'test',
-        dataDir: '/tmp',
-        expectedDataType: 'cost-optimization',
-        files: [file('cost-opt/date=2026-03-15/file.parquet')],
-      });
-
-      expect(mockCopyFile).toHaveBeenCalledTimes(1);
-      expect(mockCopyFile).toHaveBeenCalledWith(expect.stringContaining('data.parquet'), expect.anything());
-    });
-
     it('invokes AWS CLI with correct S3 paths', async () => {
       mockSpawn.mockImplementation(() => createSuccessfulSpawn());
       mockReaddir.mockResolvedValue(['data.parquet']);
@@ -657,9 +639,8 @@ describe('syncSelectedFiles', () => {
       );
     });
 
-    it('creates correct output directory structure', async () => {
+    it('writes raw cost-opt dirs and removes the legacy hive copy', async () => {
       mockSpawn.mockImplementation(() => createSuccessfulSpawn());
-      mockReaddir.mockResolvedValue(['data.parquet']);
 
       const dataDir = '/data/test';
 
@@ -674,8 +655,11 @@ describe('syncSelectedFiles', () => {
         ],
       });
 
-      expect(mockMkdir).toHaveBeenCalledWith(join(dataDir, 'aws', 'cost-optimization', 'usage_date=2026-03-15'), { recursive: true });
-      expect(mockMkdir).toHaveBeenCalledWith(join(dataDir, 'aws', 'cost-optimization', 'usage_date=2026-04-20'), { recursive: true });
+      // Data lands in the raw dir the Savings query actually reads...
+      expect(mockMkdir).toHaveBeenCalledWith(join(dataDir, 'aws', 'raw', 'cost-opt-2026-03-15'), { recursive: true });
+      expect(mockMkdir).toHaveBeenCalledWith(join(dataDir, 'aws', 'raw', 'cost-opt-2026-04-20'), { recursive: true });
+      // ...and the legacy, never-read hive copy is removed rather than rewritten.
+      expect(mockRm).toHaveBeenCalledWith(join(dataDir, 'aws', 'cost-optimization'), { recursive: true, force: true });
     });
 
     it('skips files without valid date', async () => {
@@ -776,22 +760,6 @@ describe('syncSelectedFiles', () => {
           profile: 'test',
           dataDir: '/tmp',
           files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
-        })
-      ).rejects.toThrow('ENOSPC: no space left on device');
-    });
-
-    it('rejects when cost-optimization copy fails', async () => {
-      mockSpawn.mockReturnValue(createSuccessfulSpawn());
-      mockReaddir.mockResolvedValue(['data.parquet']);
-      mockCopyFile.mockRejectedValueOnce(new Error('ENOSPC: no space left on device'));
-
-      await expect(
-        syncSelectedFiles({
-          bucketPath: 's3://bucket/cost-opt/',
-          profile: 'test',
-          dataDir: '/tmp',
-          expectedDataType: 'cost-optimization',
-          files: [file('cost-opt/date=2026-03-15/file.parquet')],
         })
       ).rejects.toThrow('ENOSPC: no space left on device');
     });
