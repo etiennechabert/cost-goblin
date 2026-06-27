@@ -58,7 +58,9 @@ export function buildPareto(
     total,
     gini: gini(sorted.map(r => r.cost)),
     cutoff,
-    capped: distinctTotal > sorted.length,
+    // Compare against the rows the backend returned (the cap boundary), not the
+    // post-filter count — zero-cost rows being dropped is not truncation.
+    capped: distinctTotal > rows.length,
     distinctTotal,
   };
 }

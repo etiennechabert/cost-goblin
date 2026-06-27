@@ -100,6 +100,13 @@ describe('buildPareto', () => {
     expect(m.capped).toBe(true);
     expect(m.distinctTotal).toBe(500);
   });
+
+  it('does not flag capping when zero-cost rows are filtered but the backend returned every group', () => {
+    // 2 groups returned (one zero-cost, dropped by the cost>0 filter), 2 distinct
+    // total → not truncated. Comparing against the post-filter length would wrongly flag it.
+    const m = buildPareto([{ name: 'a', cost: 10 }, { name: 'b', cost: 0 }], 2);
+    expect(m.capped).toBe(false);
+  });
 });
 
 describe('day-series', () => {

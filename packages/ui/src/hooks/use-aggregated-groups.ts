@@ -116,8 +116,15 @@ export function useAggregatedGroups({
     return m;
   }, [comparePrev, prevQuery, columnKey]);
 
+  // Stay 'loading' until the previous period also resolves when comparing, so
+  // consumers don't briefly read a success state with prevByName still null
+  // (which a delta widget would render as a spurious "no change").
+  const status = comparePrev && query.status === 'success' && prevQuery.status === 'loading'
+    ? 'loading'
+    : query.status;
+
   return {
-    status: query.status,
+    status,
     error: query.status === 'error' ? query.error : null,
     columnKey,
     rows,
