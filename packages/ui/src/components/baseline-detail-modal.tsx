@@ -527,9 +527,10 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
       )}
       {triageMode && error !== null && <p className="text-xs text-negative">{error}</p>}
 
+      {!triageMode && (
       <div className="rounded-lg border border-border bg-bg-secondary/40 p-3 flex flex-col gap-2">
         <p className="text-xs font-medium text-text-secondary">
-          Triage status <span className="font-normal text-text-muted">— {triageMode ? 'press 1–6 to set · ← dismiss · → track · ↑ act · ↓ skip' : `press 1–6 to set${onNext !== undefined ? '; ← / → to move between baselines' : ''}`}</span>
+          Triage status <span className="font-normal text-text-muted">— press 1–6 to set{onNext !== undefined ? '; ← / → to move between baselines' : ''}</span>
         </p>
         <div className="flex flex-wrap gap-1.5">
           {BASELINE_TRIAGE_STATUSES.map((s, i) => (
@@ -541,6 +542,7 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
           ))}
         </div>
       </div>
+      )}
 
       {!triageMode && record.triage.notes.length > 0 && (
         <div className="rounded-lg border border-border bg-bg-secondary/40 p-3">
