@@ -19,6 +19,7 @@ interface Props {
   readonly updateStatus: UpdateStatus;
   readonly onCheckForUpdates: () => void;
   readonly onShowReleaseNotes: () => void;
+  readonly onRerunSetup: () => void;
 }
 
 function SettingRow({ label, description, children }: Readonly<{ label: string; description?: string | undefined; children: React.ReactNode }>): React.JSX.Element {
@@ -118,6 +119,7 @@ export function GeneralTab({
   updateStatus,
   onCheckForUpdates,
   onShowReleaseNotes,
+  onRerunSetup,
 }: Readonly<Props>): React.JSX.Element {
   const swatches = getActivePalette(palette).slice(0, 8);
   const versionSuffix = appVersion === '' ? '' : ` · v${appVersion}`;
@@ -179,6 +181,18 @@ export function GeneralTab({
             </span>
           </SettingRow>
         )}
+      </div>
+
+      <div className="divide-y divide-border rounded-lg border border-border">
+        <SettingRow label="Setup" description="Re-run the first-run wizard to reconfigure your data source. Existing configuration is preserved.">
+          <button
+            type="button"
+            onClick={onRerunSetup}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-text-secondary transition-colors hover:text-text-primary"
+          >
+            <RotateCw size={14} />Run setup again
+          </button>
+        </SettingRow>
       </div>
 
       <span className="sr-only" aria-live="polite">

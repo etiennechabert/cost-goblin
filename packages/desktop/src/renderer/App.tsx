@@ -11,6 +11,7 @@ import { RollupStatusButton } from './top-menu/rollup-status-button.js';
 import { GeneralTab } from './settings/general-tab.js';
 import { PerformanceTab } from './settings/performance-tab.js';
 import { TelemetryTab } from './settings/telemetry-tab.js';
+import { SetupTelemetryStep } from './setup-telemetry-step.js';
 import { syncRendererTelemetry } from './telemetry/renderer-telemetry.js';
 import { ShareTab } from './settings/share-tab.js';
 import { ImportTab } from './settings/import-tab.js';
@@ -93,6 +94,7 @@ function hasUpdateIndicator(status: UpdateStatus): boolean {
 type SetupCheck =
   | { status: 'checking' }
   | { status: 'needs-setup' }
+  | { status: 'telemetry' }
   | { status: 'ready' };
 
 const FALLBACK_VIEWS: ViewsConfig = { views: [OVERVIEW_SEED_VIEW] };
@@ -791,6 +793,14 @@ function AppShell(): React.JSX.Element {
     setSettingsTab('data-sync');
   }
 
+  // Re-run the first-run wizard on demand (Settings → General). The wizard
+  // funnels into the telemetry step and then back to the dashboard; existing
+  // config is preserved (setup:write-config merges).
+  function handleRerunSetup() {
+    setSettingsTab(null);
+    setSetupCheck({ status: 'needs-setup' });
+  }
+
   const views = viewsConfig ?? FALLBACK_VIEWS;
   const viewsReady = viewsConfig !== null;
   const customNav: { id: string; name: string }[] = views.views.map(v => ({ id: v.id, name: v.name }));
@@ -807,7 +817,11 @@ function AppShell(): React.JSX.Element {
   }
 
   if (setupCheck.status === 'needs-setup') {
-    return <SetupWizard onComplete={handleSetupComplete} />;
+    return <SetupWizard onComplete={() => { setSetupCheck({ status: 'telemetry' }); }} />;
+  }
+
+  if (setupCheck.status === 'telemetry') {
+    return <SetupTelemetryStep onDone={handleSetupComplete} />;
   }
 
   function activeNavId(): string | null {
@@ -852,6 +866,7 @@ function AppShell(): React.JSX.Element {
             updateStatus={updateStatus}
             onCheckForUpdates={handleCheckForUpdates}
             onShowReleaseNotes={() => { setReleaseNotesOpen(true); }}
+            onRerunSetup={handleRerunSetup}
           />
         );
       case 'data-sync':

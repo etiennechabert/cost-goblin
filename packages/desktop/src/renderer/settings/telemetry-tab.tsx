@@ -212,6 +212,12 @@ export function TelemetryTab(): React.JSX.Element {
             if you’re comfortable sending raw memory to diagnose hard crashes. It only ever leaves your machine if you
             turn this on.
           </p>
+          <p className="mt-2 text-xs text-text-muted">
+            How it’s handled at Sentry: reports are sent over an encrypted connection (TLS), stored encrypted at rest in
+            the <strong className="text-text-secondary">EU region</strong> (Frankfurt), and we don’t attach your IP,
+            cookies or identity. That controls <em>where and how</em> the dump is stored — not <em>what’s inside it</em>,
+            which is exactly why this is a separate, deliberate opt-in.
+          </p>
           <div className="mt-3 flex gap-2">
             <button
               type="button"
