@@ -1,21 +1,22 @@
 import { useEffect, useMemo, useState, type MouseEvent } from 'react';
-import type { BaselineDetail, BaselineDailyPoint, BaselineTriageStatus, BaselineUpdatePatch, ManualBand } from '@costgoblin/core/browser';
+import type { BaselineDetail, BaselineDailyPoint, BaselineSnapshot, BaselineTriageStatus, BaselineUpdatePatch, ManualBand } from '@costgoblin/core/browser';
 import { asDateString, asDollars, BASELINE_TRIAGE_STATUSES } from '@costgoblin/core/browser';
 
 const TRIAGE_LABEL: Readonly<Record<BaselineTriageStatus, string>> = {
-  'new': 'New', 'interesting': 'Interesting', 'confirmed': 'Confirmed',
-  'in-progress': 'In Progress', 'false-positive': 'False Positive', 'auto-ignored': 'Auto-Ignored',
+  'new': 'New', 'tracking': 'Tracking', 'acting': 'Acting',
+  'resolved': 'Resolved', 'dismissed': 'Dismissed', 'ignored': 'Ignored',
 };
 
-/** "Negative" outcomes — picking one auto-advances to the next case so you can
+/** "Closed" outcomes — picking one auto-advances to the next case so you can
  *  sweep a review list quickly. */
-const DISMISS_STATUSES = new Set<BaselineTriageStatus>(['false-positive', 'auto-ignored']);
+const DISMISS_STATUSES = new Set<BaselineTriageStatus>(['resolved', 'dismissed', 'ignored']);
 
 function triageChipClass(status: BaselineTriageStatus): string {
   switch (status) {
-    case 'interesting': return 'text-warning bg-warning/10 border-warning/30';
-    case 'confirmed': return 'text-positive bg-positive/10 border-positive/30';
-    case 'new': case 'in-progress': return 'text-accent bg-accent/10 border-accent/30';
+    case 'tracking': return 'text-accent bg-accent/10 border-accent/30';
+    case 'acting': return 'text-warning bg-warning/10 border-warning/30';
+    case 'resolved': return 'text-positive bg-positive/10 border-positive/30';
+    case 'new': return 'text-text-secondary bg-bg-tertiary/30 border-border';
     default: return 'text-text-muted bg-bg-tertiary/30 border-border';
   }
 }
@@ -184,6 +185,65 @@ function StatCard({ label, perDay, accent }: Readonly<{ label: string; perDay: n
   );
 }
 
+function SwipeButton({ arrow, label, tone, onClick, disabled }: Readonly<{ arrow: string; label: string; tone: string; onClick: () => void; disabled: boolean }>) {
+  return (
+    <button type="button" disabled={disabled} onClick={onClick}
+      className={`flex min-w-[88px] flex-col items-center gap-0.5 rounded-xl border px-4 py-2 transition-colors disabled:opacity-50 ${tone}`}>
+      <span className="text-lg leading-none">{arrow}</span>
+      <span className="text-xs font-medium">{label}</span>
+    </button>
+  );
+}
+
+function snapTrend(snaps: readonly BaselineSnapshot[]): { label: string; cls: string } | null {
+  const first = snaps[0];
+  const last = snaps[snaps.length - 1];
+  if (first === undefined || last === undefined) return null;
+  const d = last.current - first.current;
+  if (Math.abs(d) < 0.01) return { label: 'trend: flat', cls: 'text-text-muted' };
+  return d > 0
+    ? { label: `trend: ▲ worsening (+${formatDollars(d)}/day)`, cls: 'text-warning' }
+    : { label: `trend: ▼ improving (${formatDollars(d)}/day)`, cls: 'text-positive' };
+}
+
+/** "What changed" breakdown — the top child-dimension movers (trailing window vs
+ *  band window) plus the stored snapshot trend. Consumes baselines:drift and
+ *  baselines:snapshots. */
+function WhatChangedPanel({ id, childDimension }: Readonly<{ id: string; childDimension: string }>) {
+  const api = useCostApi();
+  const driftQuery = useQuery(() => api.getBaselineDrift(id, childDimension), [api, id, childDimension]);
+  const snapsQuery = useQuery(() => api.getBaselineSnapshots(id), [api, id]);
+  const movers = (driftQuery.status === 'success' ? driftQuery.data : [])
+    .filter((d) => Math.abs(d.delta) >= 0.01)
+    .slice(0, 5);
+  const snaps = snapsQuery.status === 'success' ? snapsQuery.data : [];
+  const trend = snaps.length >= 2 ? snapTrend(snaps) : null;
+  if (driftQuery.status === 'loading') {
+    return <div className="rounded-lg border border-border bg-bg-secondary/40 p-3 text-xs text-text-muted">Loading what changed…</div>;
+  }
+  if (movers.length === 0 && trend === null) return null;
+  return (
+    <div className="rounded-lg border border-border bg-bg-secondary/40 p-3 flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-text-secondary">What changed <span className="font-normal text-text-muted">— top movers by resource</span></p>
+        {trend !== null && <span className={`text-[11px] tabular-nums ${trend.cls}`}>{trend.label}</span>}
+      </div>
+      {movers.length > 0 ? (
+        <ul className="flex flex-col gap-1">
+          {movers.map((m) => (
+            <li key={m.child} className="flex items-center justify-between gap-3 text-xs">
+              <span className="truncate text-text-secondary" title={m.child}>{m.child || '—'}</span>
+              <span className={`shrink-0 tabular-nums ${m.delta > 0 ? 'text-warning' : 'text-positive'}`}>{m.delta > 0 ? '+' : ''}{formatDollars(m.delta)}/day</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-text-muted">No single driver — the change is spread evenly.</p>
+      )}
+    </div>
+  );
+}
+
 export interface BaselineDetailModalProps {
   readonly id: string;
   readonly onClose: () => void;
@@ -193,9 +253,12 @@ export interface BaselineDetailModalProps {
   readonly onPrev?: (() => void) | undefined;
   /** 1-based position in the current list, for the "n / total" indicator. */
   readonly position?: { readonly index: number; readonly total: number } | undefined;
+  /** Triage mode: arrow keys classify-and-advance (swipe) instead of navigate,
+   *  and the prominent Dismiss/Skip/Act/Track action row is shown. */
+  readonly triageMode?: boolean | undefined;
 }
 
-export function BaselineDetailModal({ id, onClose, onChanged, onNext, onPrev, position }: Readonly<BaselineDetailModalProps>) {
+export function BaselineDetailModal({ id, onClose, onChanged, onNext, onPrev, position, triageMode }: Readonly<BaselineDetailModalProps>) {
   const api = useCostApi();
   const [refresh, setRefresh] = useState(0);
   const detailQuery = useQuery(() => api.getBaseline(id), [api, id, refresh]);
@@ -210,17 +273,18 @@ export function BaselineDetailModal({ id, onClose, onChanged, onNext, onPrev, po
         )}
         {detail !== null && (
           <Body key={detail.record.spec.id} detail={detail} onChanged={() => { setRefresh((n) => n + 1); onChanged(); }}
-            onNext={onNext} onPrev={onPrev} position={position} />
+            onNext={onNext} onPrev={onPrev} position={position} triageMode={triageMode === true} />
         )}
       </DialogContent>
     </Dialog>
   );
 }
 
-function Body({ detail, onChanged, onNext, onPrev, position }: Readonly<{
+function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Readonly<{
   detail: BaselineDetail; onChanged: () => void;
   onNext?: (() => void) | undefined; onPrev?: (() => void) | undefined;
   position?: { readonly index: number; readonly total: number } | undefined;
+  triageMode: boolean;
 }>) {
   const api = useCostApi();
   const { record, dailyHistory } = detail;
@@ -293,7 +357,7 @@ function Body({ detail, onChanged, onNext, onPrev, position }: Readonly<{
   }
 
   // Quick triage: assign + persist a status immediately (no note needed). For a
-  // "negative" outcome, auto-advance to the next case so you can sweep a list.
+  // closed outcome (resolved/dismissed/ignored), auto-advance to the next case.
   async function assignStatus(status: BaselineTriageStatus): Promise<void> {
     const prev = triage;
     setTriage(status); // optimistic
@@ -311,13 +375,35 @@ function Body({ detail, onChanged, onNext, onPrev, position }: Readonly<{
     }
   }
 
+  // Triage swipe: classify (or skip) and ALWAYS advance to the next case — the
+  // rapid review loop. `skip` leaves the baseline as New.
+  const SWIPE_STATUS: Readonly<Record<'dismiss' | 'track' | 'act', BaselineTriageStatus>> = { dismiss: 'dismissed', track: 'tracking', act: 'acting' };
+  async function swipe(action: 'dismiss' | 'track' | 'act' | 'skip'): Promise<void> {
+    if (action === 'skip') { onNext?.(); return; }
+    const status = SWIPE_STATUS[action];
+    setTriage(status);
+    setSaving(true);
+    setError(null);
+    try {
+      await api.updateBaseline(record.spec.id, { triageStatus: status });
+      onChanged();
+      onNext?.();
+    } catch (err: unknown) {
+      setTriage(record.triageStatus);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   // Keep the highlighted status in sync if the record changes underneath us
   // (refetch after save, or a concurrent/external update).
   useEffect(() => { setTriage(record.triageStatus); }, [record.triageStatus]);
 
-  // Keyboard-driven review: 1–6 assign a status; ←/→ (or p/n) move between cases.
+  // Keyboard review. Browse: 1–6 set a status; ←/→ (or p/n) move between cases.
+  // Triage: ← dismiss · → track · ↑ act · ↓/space skip — each classify-and-advance.
   // No deps array is intentional — rebinding each render keeps onKey's closures
-  // (onNext/onPrev/assignStatus) fresh, so navigation never targets a stale list.
+  // (onNext/swipe/assignStatus) fresh, so navigation never targets a stale list.
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       const el = document.activeElement;
@@ -334,6 +420,13 @@ function Body({ detail, onChanged, onNext, onPrev, position }: Readonly<{
       if (Number.isInteger(n) && n >= 1 && n <= BASELINE_TRIAGE_STATUSES.length) {
         const status = BASELINE_TRIAGE_STATUSES[n - 1];
         if (status !== undefined) { e.preventDefault(); void assignStatus(status); }
+        return;
+      }
+      if (triageMode) {
+        if (e.key === 'ArrowLeft') { e.preventDefault(); void swipe('dismiss'); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); void swipe('track'); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); void swipe('act'); }
+        else if (e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); void swipe('skip'); }
         return;
       }
       if ((e.key === 'ArrowRight' || e.key === 'n') && onNext !== undefined) { e.preventDefault(); onNext(); }
@@ -372,6 +465,20 @@ function Body({ detail, onChanged, onNext, onPrev, position }: Readonly<{
         <StatCard label="Realized" perDay={realized} accent="green" />
       </div>
 
+      <WhatChangedPanel id={record.spec.id} childDimension="resource_id" />
+
+      {triageMode && (
+        <div className="rounded-lg border border-accent/30 bg-accent/5 p-3">
+          <p className="mb-2 text-center text-[11px] text-text-muted">Triage — each choice saves and advances to the next</p>
+          <div className="flex items-center justify-center gap-3">
+            <SwipeButton arrow="←" label="Dismiss" tone="border-negative/40 bg-negative-muted text-negative" onClick={() => { void swipe('dismiss'); }} disabled={saving} />
+            <SwipeButton arrow="↓" label="Skip" tone="border-border bg-bg-tertiary/30 text-text-secondary" onClick={() => { void swipe('skip'); }} disabled={saving} />
+            <SwipeButton arrow="↑" label="Act now" tone="border-warning/40 bg-warning/10 text-warning" onClick={() => { void swipe('act'); }} disabled={saving} />
+            <SwipeButton arrow="→" label="Track" tone="border-accent/40 bg-accent/10 text-accent" onClick={() => { void swipe('track'); }} disabled={saving} />
+          </div>
+        </div>
+      )}
+
       <div className="rounded-lg border border-border bg-bg-secondary/40 p-3 flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <p className="text-xs font-medium text-text-secondary">Band override</p>
@@ -408,7 +515,7 @@ function Body({ detail, onChanged, onNext, onPrev, position }: Readonly<{
 
       <div className="rounded-lg border border-border bg-bg-secondary/40 p-3 flex flex-col gap-2">
         <p className="text-xs font-medium text-text-secondary">
-          Triage status <span className="font-normal text-text-muted">— press 1–6 to set; ← / → to move between baselines{onNext !== undefined ? ' (False Positive / Auto-Ignored auto-advance)' : ''}</span>
+          Triage status <span className="font-normal text-text-muted">— {triageMode ? 'press 1–6 to set · ← dismiss · → track · ↑ act · ↓ skip' : `press 1–6 to set${onNext !== undefined ? '; ← / → to move between baselines' : ''}`}</span>
         </p>
         <div className="flex flex-wrap gap-1.5">
           {BASELINE_TRIAGE_STATUSES.map((s, i) => (

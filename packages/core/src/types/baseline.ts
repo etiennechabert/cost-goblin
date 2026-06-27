@@ -79,16 +79,19 @@ export type BaselineStatus = 'over' | 'under' | 'in-band' | 'insufficient-data';
 
 export const BASELINE_STATUSES: readonly BaselineStatus[] = ['over', 'under', 'in-band', 'insufficient-data'] as const;
 
-/** User-assignable triage status — the "ticketing" workflow state for tracking
- *  a baseline, independent of the auto-derived drift {@link BaselineStatus}.
- *  `auto-ignored` is the default for low-value discovered baselines (below the
- *  auto-ignore monthly threshold); the user can override it like any other. */
-export type BaselineTriageStatus = 'new' | 'interesting' | 'confirmed' | 'in-progress' | 'false-positive' | 'auto-ignored';
+/** User-assignable triage status — the "ticketing" lifecycle for a baseline,
+ *  independent of the auto-derived drift {@link BaselineStatus}. The funnel runs
+ *  `new` → `tracking` (watching) → `acting` (optimizing now) → `resolved` (done),
+ *  with two off-ramps: `dismissed` (not a worthwhile opportunity) and `ignored`
+ *  (the default for low-value discovered baselines below the auto-ignore monthly
+ *  threshold). The user can override any of these. */
+export type BaselineTriageStatus = 'new' | 'tracking' | 'acting' | 'resolved' | 'dismissed' | 'ignored';
 
-export const BASELINE_TRIAGE_STATUSES: readonly BaselineTriageStatus[] = ['new', 'interesting', 'confirmed', 'in-progress', 'false-positive', 'auto-ignored'] as const;
+export const BASELINE_TRIAGE_STATUSES: readonly BaselineTriageStatus[] = ['new', 'tracking', 'acting', 'resolved', 'dismissed', 'ignored'] as const;
 
-/** Triage states treated as still-open (the default "Open" list filter). */
-export const OPEN_TRIAGE_STATUSES: readonly BaselineTriageStatus[] = ['new', 'interesting', 'in-progress'] as const;
+/** Triage states treated as still-open / actionable (the default "Open" list
+ *  filter). `resolved`/`dismissed`/`ignored` are closed. */
+export const OPEN_TRIAGE_STATUSES: readonly BaselineTriageStatus[] = ['new', 'tracking', 'acting'] as const;
 
 export type BaselineSource = 'discovered' | 'manual';
 
@@ -186,8 +189,8 @@ export interface BaselinesDiscoveryConfig {
   readonly lowerPct: number;
   readonly upperPct: number;
   /** Discovered baselines whose average monthly cost is below this are
-   *  auto-assigned the `auto-ignored` triage status (still discovered, just
-   *  hidden from the default "Open" view) — not excluded from discovery. */
+   *  auto-assigned the `ignored` triage status (still discovered, just hidden
+   *  from the default "Open" view) — not excluded from discovery. */
   readonly minMonthlyCost: Dollars;
   readonly minSavings: Dollars;
   readonly reopenPct: number;
@@ -204,8 +207,8 @@ export interface BaselinesConfigState {
 export type BaselineSortKey = 'potential' | 'realized' | 'current' | 'scope';
 
 export interface BaselinesListParams {
-  /** Filter by triage status. `open` = the still-open states (new/interesting/
-   *  in-progress). Omit for all. */
+  /** Filter by triage status. `open` = the still-open states (new/tracking/
+   *  acting). Omit for all. */
   readonly triage?: BaselineTriageStatus | 'open' | undefined;
   readonly owner?: string | undefined;
   readonly dimension?: DimensionId | undefined;

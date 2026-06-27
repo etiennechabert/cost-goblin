@@ -638,7 +638,7 @@ export class BaselineStore {
       this.specs.set(spec.id, spec);
       this.histories.set(spec.id, clampHistory(dailyByTuple.get(key) ?? [], dateRange.end));
       if (!this.userTriaged.has(spec.id)) {
-        if (tuple.total / lookbackMonths < cfg.minMonthlyCost) this.triageStatuses.set(spec.id, 'auto-ignored');
+        if (tuple.total / lookbackMonths < cfg.minMonthlyCost) this.triageStatuses.set(spec.id, 'ignored');
         else this.triageStatuses.delete(spec.id); // un-ignore once it grows past the threshold
       }
       // finalizeFromHistory runs once for every spec in recompute()'s loop.
@@ -962,10 +962,16 @@ function parseTriage(raw: Record<string, unknown>): BaselineTriage {
   return { notes };
 }
 
+/** Migrate the pre-lifecycle status names persisted by earlier builds. */
+const LEGACY_TRIAGE: Readonly<Record<string, BaselineTriageStatus>> = {
+  interesting: 'tracking', confirmed: 'tracking', 'in-progress': 'acting',
+  'false-positive': 'dismissed', 'auto-ignored': 'ignored',
+};
+
 function parseTriageStatus(v: unknown): BaselineTriageStatus | null {
   const s = str(v);
   for (const t of BASELINE_TRIAGE_STATUSES) if (t === s) return t;
-  return null;
+  return LEGACY_TRIAGE[s] ?? null;
 }
 
 function parseStatusChange(raw: Record<string, unknown>): { from: BaselineTriageStatus; to: BaselineTriageStatus } {

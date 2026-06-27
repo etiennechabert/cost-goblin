@@ -18,24 +18,24 @@ const STATUS_FILTERS: readonly { id: TriageFilter; label: string }[] = [
   { id: 'open', label: 'Open' },
   { id: 'all', label: 'All' },
   { id: 'new', label: 'New' },
-  { id: 'interesting', label: 'Interesting' },
-  { id: 'confirmed', label: 'Confirmed' },
-  { id: 'in-progress', label: 'In Progress' },
-  { id: 'false-positive', label: 'False Positive' },
-  { id: 'auto-ignored', label: 'Auto-Ignored' },
+  { id: 'tracking', label: 'Tracking' },
+  { id: 'acting', label: 'Acting' },
+  { id: 'resolved', label: 'Resolved' },
+  { id: 'dismissed', label: 'Dismissed' },
+  { id: 'ignored', label: 'Ignored' },
 ];
 
 const TRIAGE_LABEL: Readonly<Record<BaselineTriageStatus, string>> = {
-  'new': 'New', 'interesting': 'Interesting', 'confirmed': 'Confirmed',
-  'in-progress': 'In Progress', 'false-positive': 'False Positive', 'auto-ignored': 'Auto-Ignored',
+  'new': 'New', 'tracking': 'Tracking', 'acting': 'Acting',
+  'resolved': 'Resolved', 'dismissed': 'Dismissed', 'ignored': 'Ignored',
 };
 
 function triageChip(status: BaselineTriageStatus): string {
   switch (status) {
-    case 'new': return 'text-accent bg-accent/10 border-accent/30';
-    case 'interesting': return 'text-warning bg-warning/10 border-warning/30';
-    case 'confirmed': return 'text-positive bg-positive/10 border-positive/30';
-    case 'in-progress': return 'text-accent bg-accent/10 border-accent/30';
+    case 'tracking': return 'text-accent bg-accent/10 border-accent/30';
+    case 'acting': return 'text-warning bg-warning/10 border-warning/30';
+    case 'resolved': return 'text-positive bg-positive/10 border-positive/30';
+    case 'new': return 'text-text-secondary bg-bg-tertiary/30 border-border';
     default: return 'text-text-muted bg-bg-tertiary/30 border-border';
   }
 }
@@ -56,6 +56,21 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
   const [sorting, setSorting] = useState<SortingState>([{ id: 'potential', desc: true }]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [triageQueue, setTriageQueue] = useState<readonly string[] | null>(null);
+  const [triageIdx, setTriageIdx] = useState(0);
+
+  async function startTriage(): Promise<void> {
+    const res = await api.listBaselines({ triage: 'new' });
+    const ids = res.items.map((r) => r.spec.id);
+    if (ids.length === 0) return;
+    setTriageQueue(ids);
+    setTriageIdx(0);
+  }
+  function endTriage(): void {
+    setTriageQueue(null);
+    setTriageIdx(0);
+    setRefreshKey((n) => n + 1);
+  }
 
   const running = baselineStatus?.state === 'running';
   const progressLabel = baselineStatus?.state === 'running'
@@ -125,6 +140,7 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
           {result !== null && <p className="text-xs text-text-muted mt-1 tabular-nums">{String(result.total)} baselines</p>}
         </div>
         <div className="flex items-center gap-2">
+          <button type="button" onClick={() => { void startTriage(); }} className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20">Triage new</button>
           <button type="button" onClick={() => { setShowNew(true); }} className="rounded-md border border-border px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary">New baseline</button>
           <button type="button" disabled={running} onClick={() => { api.recomputeBaselines().catch(() => undefined); }}
             className="rounded-md bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-60">
@@ -195,6 +211,19 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
         />
       )}
       {showNew && <NewBaselineDialog onClose={() => { setShowNew(false); }} onCreated={() => { setShowNew(false); setRefreshKey((n) => n + 1); }} />}
+
+      {triageQueue !== null && triageQueue[triageIdx] !== undefined && (
+        <BaselineDetailModal
+          key={triageQueue[triageIdx]}
+          id={triageQueue[triageIdx]}
+          triageMode
+          onClose={endTriage}
+          onChanged={() => { /* queue is a fixed snapshot — refresh the list when triage ends */ }}
+          onNext={() => { if (triageIdx + 1 < triageQueue.length) setTriageIdx(triageIdx + 1); else endTriage(); }}
+          onPrev={triageIdx > 0 ? () => { setTriageIdx(triageIdx - 1); } : undefined}
+          position={{ index: triageIdx, total: triageQueue.length }}
+        />
+      )}
     </div>
   );
 }
