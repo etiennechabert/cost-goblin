@@ -90,18 +90,27 @@ jobs:
           npx --yes @sentry/cli@^2 sourcemaps inject packages/desktop/out
           npx --yes @sentry/cli@^2 sourcemaps upload --release "$REL" packages/desktop/out
 
-      # Native crashes inside DuckDB (libduckdb.dylib / duckdb.node) land in
-      # Crashpad minidumps. Unlike Electron's own frames, Sentry has no symbols
-      # for third-party modules, so without these debug files it reports
-      # "A required debug information file was missing" and the native frames
-      # stay unresolved (COSTGOBLIN-4). The prebuilt binaries carry no DWARF but
-      # do ship a symbol table + unwind info — enough for function-level frames.
-      # Each matrix runner uploads the natives npm installed for its own platform;
-      # Sentry dedupes by debug ID. Debug files are project-global (matched by
-      # debug ID, not tied to a build), so no --release. Soft-fail like the
-      # source maps — never block a release.
+      # Native crashes inside DuckDB (the duckdb.node addon + the libduckdb
+      # engine) land in Crashpad minidumps. Sentry has no symbols for
+      # third-party native modules, so without their debug files it reports
+      # "A required debug information file was missing" and native frames stay
+      # unresolved (COSTGOBLIN-4). The prebuilt binaries carry no DWARF but ship
+      # a symbol table + unwind info — enough for function-level frames.
+      #
+      # We ship BOTH x64 and arm64 for every OS (electron-builder.yml), but each
+      # GitHub runner is single-arch, so `npm ci` installs only the @duckdb
+      # binding matching the runner's own os/cpu — uploading node_modules/@duckdb
+      # would silently miss every other arch. Instead fetch all eight
+      # @duckdb/node-bindings-<os>-<arch> tarballs (`npm pack` ignores the os/cpu
+      # install gate) at the version this build resolved and upload them
+      # together. Debug files are project-global (matched by debug ID, not tied
+      # to a build), so this runs once on Linux and needs no --release.
+      # sentry-cli uploads whatever is usable and skips the rest: macOS + Linux
+      # (every arch, incl. musl) symbolicate; Windows' duckdb.dll is stripped
+      # with no PDB shipped, so only its duckdb.node addon resolves. Soft-fail
+      # like the source maps — never block a release.
       - name: Upload native debug files to Sentry
-        if: vars.SENTRY_ORG != ''
+        if: matrix.platform == 'linux' && vars.SENTRY_ORG != ''
         continue-on-error: true
         shell: bash
         env:
@@ -111,7 +120,15 @@ jobs:
           SENTRY_URL: ${{ vars.SENTRY_URL || 'https://de.sentry.io' }}
         run: |
           set -euo pipefail
-          npx --yes @sentry/cli@^2 debug-files upload node_modules/@duckdb
+          dest="$RUNNER_TEMP/duckdb-dif"
+          mkdir -p "$dest"
+          # All eight per-arch packages are node-bindings' optionalDependencies
+          # and share its version — derive both so a DuckDB bump needs no edit.
+          specs=$(node -p "Object.entries(require('@duckdb/node-bindings/package.json').optionalDependencies||{}).map(([k,v])=>k+'@'+v).join(' ')")
+          ( cd "$dest"
+            for spec in $specs; do npm pack "$spec"; done
+            for tgz in *.tgz; do d="${tgz%.tgz}"; mkdir -p "$d"; tar -xzf "$tgz" -C "$d"; done )
+          npx --yes @sentry/cli@^2 debug-files upload "$dest"
 
       - name: Build installers
         run: npx --no-install electron-builder --${{ matrix.platform }} --publish always
