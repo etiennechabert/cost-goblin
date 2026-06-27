@@ -479,6 +479,7 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
         </div>
       )}
 
+      {!triageMode && (
       <div className="rounded-lg border border-border bg-bg-secondary/40 p-3 flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <p className="text-xs font-medium text-text-secondary">Band override</p>
@@ -512,6 +513,8 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
           )}
         </div>
       </div>
+      )}
+      {triageMode && error !== null && <p className="text-xs text-negative">{error}</p>}
 
       <div className="rounded-lg border border-border bg-bg-secondary/40 p-3 flex flex-col gap-2">
         <p className="text-xs font-medium text-text-secondary">
@@ -528,7 +531,7 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
         </div>
       </div>
 
-      {record.triage.notes.length > 0 && (
+      {!triageMode && record.triage.notes.length > 0 && (
         <div className="rounded-lg border border-border bg-bg-secondary/40 p-3">
           <p className="text-xs font-medium text-text-secondary mb-2">Activity</p>
           <ul className="flex flex-col gap-2">
