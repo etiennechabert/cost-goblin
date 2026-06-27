@@ -219,6 +219,14 @@ make lint       # run tsc + eslint
 make reset      # wipe app data, restart with wizard
 ```
 
+## Sponsors
+
+CostGoblin is proudly sponsored by **[Sentry](https://sentry.io)**, whose [open-source program](https://sentry.io/for/open-source/) provides free error monitoring that helps keep the app stable.
+
+<p align="center">
+  <a href="https://sentry.io"><img src="https://img.shields.io/badge/Sponsored%20by-Sentry-362D59?logo=sentry&logoColor=white" alt="Sponsored by Sentry"></a>
+</p>
+
 ## License
 
 CostGoblin is licensed under the **GNU Affero General Public License v3.0 only** (AGPL-3.0-only). See [`LICENSE`](./LICENSE) for the full text.
