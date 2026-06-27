@@ -1,4 +1,11 @@
 export * from './types/index.js';
+export type {
+  TelemetryPreferences,
+  TelemetryStatus,
+  TelemetryEventKind,
+  TelemetryOutboxEntry,
+} from './telemetry/types.js';
+export { TELEMETRY_DEFAULTS, isTelemetryEnabled } from './telemetry/types.js';
 export * from './normalize/index.js';
 export * from './models/index.js';
 export { validateViews } from './config/views-validator.js';

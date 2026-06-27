@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { parseJsonObject, isStringRecord } from '@costgoblin/core';
 import type { UIPreferences, PerformanceInfo, PerformanceSettings } from '@costgoblin/core';
 import { type AppContext, prefsPath } from './context.js';
+import { updatePrefsFile } from './prefs-file.js';
 import {
   MAX_MEMORY_GB,
   MIN_MEMORY_GB,
@@ -54,12 +55,9 @@ export function registerUIHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('ui:save-preferences', async (_event, prefs: UIPreferences): Promise<void> => {
-    const fs = await import('node:fs/promises');
-    // Merge into the existing file so saving (e.g.) theme never clobbers the
-    // separately-managed `performance` block, and vice versa.
-    const existing = (await readPrefs()) ?? {};
-    const merged = { ...existing, ...prefs };
-    await fs.writeFile(await uiPrefsPath(), JSON.stringify(merged, null, 2));
+    // Serialized merge so saving (e.g.) theme never clobbers the separately-managed
+    // `performance` / `telemetry` blocks written through the same file.
+    await updatePrefsFile(await uiPrefsPath(), (existing) => ({ ...existing, ...prefs }));
   });
 
   ipcMain.handle('perf:get-info', async (): Promise<PerformanceInfo> => {
@@ -76,12 +74,9 @@ export function registerUIHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('perf:set', async (_event, perf: PerformanceSettings): Promise<void> => {
-    const fs = await import('node:fs/promises');
     const memoryLimitGB = typeof perf.memoryLimitGB === 'number' ? clampMemoryGB(perf.memoryLimitGB) : null;
     const threads = typeof perf.threads === 'number' ? clampThreads(perf.threads) : null;
-    const existing = (await readPrefs()) ?? {};
-    const merged = { ...existing, performance: { memoryLimitGB, threads } };
-    await fs.writeFile(await uiPrefsPath(), JSON.stringify(merged, null, 2));
+    await updatePrefsFile(await uiPrefsPath(), (existing) => ({ ...existing, performance: { memoryLimitGB, threads } }));
     // Apply live — memory_limit and threads are instance-global in DuckDB, so a
     // configure on a fresh connection re-tunes the whole instance.
     ctx.db.configure({ memoryGB: resolveMemoryGB(memoryLimitGB), threads: resolveThreads(threads) });
