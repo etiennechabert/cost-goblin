@@ -493,10 +493,11 @@ export class BaselineStore {
           // `specs` was snapshotted before the awaits below; skip any baseline
           // the user deleted mid-recompute so we don't re-populate its history.
           if (!this.specs.has(spec.id)) continue;
-          // Discovered baselines already had their history set during discover();
-          // only manual/view baselines need a per-baseline query here.
-          if (spec.source === 'manual') await this.recomputeOne(deps, spec);
-          else this.finalizeFromHistory(spec);
+          // Only discovered FILTER baselines had their history set during
+          // discover(); everything else (manual, or any view-scoped spec) needs
+          // a per-baseline query here, or it would finalize on stale history.
+          if (spec.source === 'discovered' && spec.scope.kind === 'filter') this.finalizeFromHistory(spec);
+          else await this.recomputeOne(deps, spec);
           done += 1;
           if (done % step === 0 || done === total) this.setStatus({ state: 'running', phase: 'computing', done, total });
         }
