@@ -56,7 +56,13 @@ export interface TelemetryStatus {
   readonly dsnConfigured: boolean;
   /** The Sentry SDK has been loaded and initialised this session. */
   readonly active: boolean;
+  /** The desired (post-restart) channel state, as saved. */
   readonly preferences: TelemetryPreferences;
+  /** Which channels are actually capturing *right now*. Native crash capture and
+   *  performance tracing can only arm at boot, so a mid-session opt-in reads false
+   *  here until the app restarts — distinct from {@link preferences}, the desired
+   *  state. The settings "● Active" badge keys off this, not the saved pref. */
+  readonly armed: TelemetryPreferences;
 }
 
 export type TelemetryEventKind = 'error' | 'transaction' | 'session' | 'other';

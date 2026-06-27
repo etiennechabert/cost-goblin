@@ -56,6 +56,10 @@ export function SetupTelemetryStep({ onDone }: Readonly<{ onDone: () => void }>)
   const [errorReports, setErrorReports] = useState(false);
   const [performance, setPerformance] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Gate "Finish" until current prefs have loaded — otherwise a fast click writes
+  // the state defaults (all off) and clobbers a prior nativeCrashReports opt-in
+  // that this step never shows.
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,8 +70,11 @@ export function SetupTelemetryStep({ onDone }: Readonly<{ onDone: () => void }>)
         saved.current = p;
         setErrorReports(p.errorReports);
         setPerformance(p.performance);
+        setLoaded(true);
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) setLoaded(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -125,7 +132,7 @@ export function SetupTelemetryStep({ onDone }: Readonly<{ onDone: () => void }>)
           <p className="text-xs text-text-muted">CostGoblin will restart to apply your choices.</p>
           <button
             type="button"
-            disabled={busy}
+            disabled={busy || !loaded}
             onClick={finish}
             className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
           >

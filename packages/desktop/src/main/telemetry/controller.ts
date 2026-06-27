@@ -38,6 +38,11 @@ const TUNNEL_ENV = 'COSTGOBLIN_SENTRY_TUNNEL';
 class TelemetryController {
   private prefs: TelemetryPreferences = TELEMETRY_DEFAULTS;
   private active = false;
+  // The channel state the SDK actually armed with at init(). Native capture and
+  // tracing can only arm at boot, so this is the source of truth for "what's
+  // really live" — a later applyPreferences changes `prefs` (desired state) but
+  // not what Crashpad/tracing are doing until the next launch.
+  private initSnapshot: TelemetryPreferences | null = null;
   private outbox: TelemetryOutbox | null = null;
 
   /** Called once at startup with the directory that holds the audit log. */
@@ -60,6 +65,21 @@ class TelemetryController {
       dsnConfigured: this.dsn() !== undefined,
       active: this.active,
       preferences: this.prefs,
+      armed: this.armedChannels(),
+    };
+  }
+
+  /** What each channel is *actually* doing this session (vs. the desired state in
+   *  {@link prefs}). JS error capture is live whenever the SDK is active — its
+   *  per-event gate reads the current pref. Native capture and tracing only arm
+   *  at init(), so they're live only if armed at boot AND still wanted. */
+  private armedChannels(): TelemetryPreferences {
+    if (!this.active || this.initSnapshot === null) return TELEMETRY_DEFAULTS;
+    return {
+      errorReports: this.prefs.errorReports,
+      nativeCrashReports: this.initSnapshot.nativeCrashReports && this.prefs.nativeCrashReports,
+      performance: this.initSnapshot.performance && this.prefs.performance,
+      analytics: false,
     };
   }
 
@@ -120,6 +140,7 @@ class TelemetryController {
         beforeSendTransaction: (event) => this.scrubAndRecord(event),
       });
       this.active = true;
+      this.initSnapshot = this.prefs;
       logger.info('telemetry: Sentry initialised', {
         errorReports: this.prefs.errorReports,
         nativeCrashReports: this.prefs.nativeCrashReports,
@@ -134,6 +155,7 @@ class TelemetryController {
   private async shutdown(): Promise<void> {
     if (!this.active) return;
     this.active = false;
+    this.initSnapshot = null;
     try {
       await Sentry.flush(2000);
       await Sentry.close(2000);
@@ -147,9 +169,18 @@ class TelemetryController {
    *  mirror to the audit outbox. Returning null drops the event. Generic so the
    *  SDK's ErrorEvent / TransactionEvent return types are preserved. */
   private scrubAndRecord<T extends Event>(event: T): T | null {
-    const isTransaction = event.type === 'transaction';
-    if (isTransaction && !this.prefs.performance) return null;
-    if (!isTransaction && !this.prefs.errorReports) return null;
+    // Gate by channel. Native crash events (Crashpad minidumps, which
+    // @sentry/electron emits with platform: 'native' via captureEvent) belong to
+    // nativeCrashReports — independent of errorReports. So a native-only opt-in
+    // works, and disabling native mid-session drops the dump (and its attachment)
+    // here before the user restarts, even though Crashpad stays armed until then.
+    if (event.type === 'transaction') {
+      if (!this.prefs.performance) return null;
+    } else if (event.platform === 'native') {
+      if (!this.prefs.nativeCrashReports) return null;
+    } else if (!this.prefs.errorReports) {
+      return null;
+    }
 
     redactEventInPlace(event);
     if (this.outbox !== null) {

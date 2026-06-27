@@ -125,19 +125,19 @@ export function TelemetryTab(): React.JSX.Element {
       analytics: channel === 'analytics' ? value : prefs.analytics,
     };
     setPrefs(next);
-    api
-      .setTelemetryPreferences(next)
-      .then(() => api.getTelemetryStatus())
-      .then((s) => {
-        setStatus(s);
-        // The new state only takes effect once the app restarts.
+    api.setTelemetryPreferences(next).then(
+      () => {
+        // Persisted. The new state only takes effect once the app restarts. A
+        // failed status refresh must NOT revert — the pref is already on disk.
         setRestartPending(true);
-      })
-      .catch(() => {
-        // Persisting failed — revert so a privacy switch never shows a state the
-        // backend didn't accept.
+        api.getTelemetryStatus().then(setStatus, () => undefined);
+      },
+      () => {
+        // Persisting itself failed — revert so a privacy switch never shows a
+        // state the backend didn't accept.
         setPrefs(prev);
-      });
+      },
+    );
   }
 
   function setChannel(channel: ChannelId, value: boolean): void {
@@ -254,7 +254,7 @@ export function TelemetryTab(): React.JSX.Element {
                     Coming soon
                   </span>
                 )}
-                {channel.available && prefs[channel.id] && status.active && (
+                {channel.available && status.armed[channel.id] && (
                   <span className="text-xs text-positive">● Active</span>
                 )}
               </div>

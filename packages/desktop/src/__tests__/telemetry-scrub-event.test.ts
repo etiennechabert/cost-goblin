@@ -38,7 +38,12 @@ function sampleEvent(): Event {
     threads: { values: [{ stacktrace: { frames: [{ abs_path: '/Users/bob/x.ts', vars: { y: 1 } }] } }] },
     spans: [
       {
-        data: { 'db.statement': 's3://acme-billing/x', token: 'abc' },
+        data: {
+          'db.statement': 's3://acme-billing/x',
+          token: 'abc',
+          'http.request.header.x-account': ['123456789012'],
+          'http.status_code': 200,
+        },
         description: 'query /Users/jane/cur.parquet',
         span_id: 's1',
         start_timestamp: 0,
@@ -104,6 +109,11 @@ describe('redactEventInPlace', () => {
     expect(span?.description).toBe('query /Users/[user]/cur.parquet');
     expect(span?.data['db.statement']).toBe('s3://[redacted]');
     expect(span?.data['token']).toBe('[redacted]');
+    // Array/object span attributes can hide PII (an account ID in a header array)
+    // and can't be string-scrubbed, so they're dropped wholesale; plain numbers
+    // pass through untouched.
+    expect(span?.data['http.request.header.x-account']).toBe('[redacted]');
+    expect(span?.data['http.status_code']).toBe(200);
   });
 
   it('scrubs breadcrumb message and deep-redacts breadcrumb data', () => {

@@ -1,3 +1,8 @@
+// Installs the Sentry IPC bridge the renderer SDK uses to forward events to the
+// main process. REQUIRED with sandbox: true + contextIsolation (the renderer has
+// no Node/DSN of its own). Must run unconditionally and before any renderer init;
+// it's inert until the renderer SDK is actually initialised (i.e. after opt-in).
+import '@sentry/electron/preload';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   CostApi,

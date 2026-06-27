@@ -62,6 +62,13 @@ export function redactEventInPlace(event: Event): void {
     for (const [key, value] of Object.entries(span.data)) {
       if (isSensitiveKey(key)) span.data[key] = '[redacted]';
       else if (typeof value === 'string') span.data[key] = redactSensitiveString(value);
+      else if (typeof value === 'object') {
+        // Arrays and objects can hide PII (e.g. an account ID in ['123456789012'])
+        // and don't fit the string scrub or the homogeneous SpanAttributeValue
+        // array types, so fail closed and drop them. Plain numbers/booleans carry
+        // no PII and pass through.
+        span.data[key] = '[redacted]';
+      }
     }
   }
 

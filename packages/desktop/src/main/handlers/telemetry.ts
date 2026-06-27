@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { parseJsonObject, parseTelemetryPreferences } from '@costgoblin/core';
 import type { TelemetryPreferences, TelemetryStatus, TelemetryOutboxEntry } from '@costgoblin/core';
 import { type AppContext, prefsPath } from './context.js';
+import { updatePrefsFile } from './prefs-file.js';
 import { telemetry } from '../telemetry/controller.js';
 
 /**
@@ -32,10 +33,9 @@ export function registerTelemetryHandlers(app: AppContext): void {
     // Re-parse the incoming value defensively — never trust the renderer payload
     // shape, and fail closed on anything unexpected.
     const normalized = parseTelemetryPreferences(prefs);
-    const fs = await import('node:fs/promises');
-    const existing = (await readPrefs()) ?? {};
-    const merged = { ...existing, telemetry: normalized };
-    await fs.writeFile(await uiPrefsPath(), JSON.stringify(merged, null, 2));
+    // Serialized read-modify-write — this file is shared with ui:save-preferences
+    // and perf:set; a plain read-merge-write would race them and drop a slice.
+    await updatePrefsFile(await uiPrefsPath(), (existing) => ({ ...existing, telemetry: normalized }));
     await telemetry.applyPreferences(normalized);
   });
 
