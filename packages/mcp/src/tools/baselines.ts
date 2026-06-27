@@ -173,7 +173,12 @@ export async function getBaselineDrift(
   params: { id?: string | undefined; match?: string | undefined; format?: string | undefined },
 ): Promise<{ content: [{ type: 'text'; text: string }] }> {
   const loaded = await load(ctx);
-  const matchLower = (params.match ?? '').toLowerCase();
+  const matchLower = (params.match ?? '').trim().toLowerCase();
+  // Guard the empty-match wildcard: ''.includes('') is true, so without this an
+  // argument-less call would return drift for an arbitrary (first) baseline.
+  if (params.id === undefined && matchLower === '') {
+    return toolResult('Specify either `id` or a non-empty `match` to identify a baseline. Use list_baselines to see available scopes.');
+  }
   const spec = params.id !== undefined
     ? loaded.specs.find((s) => s.id === params.id)
     : loaded.specs.find((s) => (s.name ?? s.scopeLabel).toLowerCase().includes(matchLower) || s.scopeLabel.toLowerCase().includes(matchLower));

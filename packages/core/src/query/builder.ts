@@ -979,6 +979,11 @@ export function buildBaselineDiscoveryQuery(
   }
   const dimCols = resolved.map((r) => r.rawField);
   const dimSelects = resolved.map((r) => `${r.fieldExpr} AS ${r.rawField}`);
+  // Group on the normalize/alias expressions, not the raw columns — `AS service`
+  // shadows the base column, so `GROUP BY service` would bind to the un-normalized
+  // value and split aliased variants apart (and the projected normalized value
+  // would collide). Grouping by fieldExpr matches buildDailyCostsQuery's group_name.
+  const dimGroupExprs = resolved.map((r) => r.fieldExpr);
   const whereConditions = [
     buildDateRangeWhere(qb, params.dateRange),
     ...filterClauses,
@@ -995,7 +1000,7 @@ export function buildBaselineDiscoveryQuery(
         SUM(cost) AS cost
       FROM ${source}
       WHERE ${whereConditions.join(' AND ')}
-      GROUP BY date, ${dimCols.join(', ')}
+      GROUP BY date, ${dimGroupExprs.join(', ')}
     ),
     totals AS (
       SELECT ${dimCols.join(', ')}, SUM(cost) AS total
@@ -1058,8 +1063,10 @@ export function buildBaselineTotalsQuery(
       throw new SecurityError(`Unsafe grain column "${r.rawField}" in baseline discovery.`);
     }
   }
-  const dimCols = resolved.map((r) => r.rawField);
   const dimSelects = resolved.map((r) => `${r.fieldExpr} AS ${r.rawField}`);
+  // Group on the normalize/alias expressions, not the raw columns (see
+  // buildBaselineDiscoveryQuery) so aliased values collapse to one tuple.
+  const dimGroupExprs = resolved.map((r) => r.fieldExpr);
   const whereConditions = [
     buildDateRangeWhere(qb, params.dateRange),
     ...filterClauses,
@@ -1069,7 +1076,7 @@ export function buildBaselineTotalsQuery(
     SELECT ${dimSelects.join(', ')}, SUM(cost) AS total
     FROM ${source}
     WHERE ${whereConditions.join(' AND ')}
-    GROUP BY ${dimCols.join(', ')}
+    GROUP BY ${dimGroupExprs.join(', ')}
   `.trim();
   return { sql, params: qb.build().params };
 }

@@ -415,10 +415,20 @@ function EntityBaselinesPanel({ entity, dimension }: Readonly<{ entity: string; 
   const api = useCostApi();
   const query = useQuery(() => api.listBaselines({}), [api]);
   const items = query.status === 'success' ? query.data.items : [];
-  const matches = items.filter((r) =>
-    r.spec.scope.kind === 'filter' &&
-    (r.spec.scope.filters[asDimensionId(dimension)] ?? []).map(String).includes(entity),
-  );
+  const dimId = asDimensionId(dimension);
+  const matches = items.filter((r) => {
+    if (r.spec.scope.kind !== 'filter') return false;
+    const vals = (r.spec.scope.filters[dimId] ?? []).map(String);
+    if (vals.length === 0) return false;
+    if (vals.includes(entity)) return true;
+    // Account scopes store the raw account id in the filter, but entity-detail
+    // passes the resolved display name. describeScope put that name into the
+    // scopeLabel, so match it there as a token for the account dimension.
+    if (dimension === 'account' || dimension === 'account_id') {
+      return new Set(r.scopeLabel.split(/ · |, /)).has(entity);
+    }
+    return false;
+  });
   if (matches.length === 0) return null;
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/50 p-4">

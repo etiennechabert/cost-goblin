@@ -224,7 +224,10 @@ function Body({ detail, onChanged, onNext, onPrev, position }: Readonly<{
 
   const maxCost = Math.max(...costs, autoUpper, 1);
   const effLower = mode === 'percentile' ? percentile(costs, lower, true) : lower;
-  const effUpper = mode === 'percentile' ? percentile(costs, upper, false) : upper;
+  // Clamp upper ≥ lower to mirror the server (savings.ts). In percentile mode the
+  // lower edge excludes $0 days while the upper includes them, so for a mostly-idle
+  // scope the raw upper can fall below lower and invert the band preview.
+  const effUpper = Math.max(effLower, mode === 'percentile' ? percentile(costs, upper, false) : upper);
   const current = record.currentDaily;
   const potential = Math.max(0, current - effLower);
   const realized = Math.max(0, effUpper - current);
@@ -298,7 +301,14 @@ function Body({ detail, onChanged, onNext, onPrev, position }: Readonly<{
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       const el = document.activeElement;
-      if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement || el instanceof HTMLSelectElement) return;
+      if (
+        el instanceof HTMLTextAreaElement ||
+        el instanceof HTMLInputElement ||
+        el instanceof HTMLSelectElement ||
+        // The band-override slider thumb is a focusable <span role="slider"> that
+        // handles its own Arrow keys — don't hijack them to navigate baselines.
+        (el instanceof HTMLElement && (el.isContentEditable || el.getAttribute('role') === 'slider'))
+      ) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const n = Number(e.key);
       if (Number.isInteger(n) && n >= 1 && n <= BASELINE_TRIAGE_STATUSES.length) {

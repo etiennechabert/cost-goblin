@@ -55,7 +55,7 @@ import type {
   TagValue,
 } from '@costgoblin/core';
 import type { RawRow } from './duckdb-client.js';
-import { resolveAvailablePeriods } from './handlers/query-utils.js';
+import { columnForDimension, resolveAvailablePeriods } from './handlers/query-utils.js';
 
 /** The query/config capabilities the store needs to recompute. Mirrors the
  *  pieces the cost-query handlers pull off AppContext, kept structural so the
@@ -103,6 +103,9 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 function num(v: unknown): number {
+  // DuckDB COUNT/aggregate columns come back as bigint — coerce them, else every
+  // cardinality probe reads 0 and the high-cardinality grain guard is defeated.
+  if (typeof v === 'bigint') return Number(v);
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
@@ -148,6 +151,7 @@ export class BaselineStore {
   private readonly userTriaged = new Set<string>();
   private userConfig: BaselinesDiscoveryConfig | null = null;
   private status: BaselineRecomputeStatus = { state: 'idle', lastRun: null };
+  private lastSuccessfulRun: string | null = null;
   private readonly listeners = new Set<(s: BaselineRecomputeStatus) => void>();
   private loaded = false;
   private recomputing = false;
@@ -176,12 +180,17 @@ export class BaselineStore {
     if (isRecord(raw['config'])) this.userConfig = parseConfig(raw['config']);
     const dimensions = await deps.getQueryDimensions();
     if (Array.isArray(raw['baselines'])) {
-      try {
-        const specs = validateBaselines({ baselines: raw['baselines'] }, dimensions);
-        for (const s of specs) this.specs.set(s.id, s);
-      } catch (err: unknown) {
-        logger.warn('baselines: failed to load specs', { error: err instanceof Error ? err.message : String(err) });
+      // Validate per-spec, not atomically — one bad spec (e.g. its scope
+      // references a since-renamed dimension) must not discard every other
+      // baseline, including user-triaged ones with notes/manual bands.
+      let dropped = 0;
+      for (const entry of raw['baselines']) {
+        try {
+          const [spec] = validateBaselines({ baselines: [entry] }, dimensions);
+          if (spec !== undefined) this.specs.set(spec.id, spec);
+        } catch { dropped += 1; }
       }
+      if (dropped > 0) logger.warn('baselines: dropped invalid specs on load', { dropped });
     }
     if (isRecord(raw['meta'])) {
       for (const [id, m] of Object.entries(raw['meta'])) {
@@ -231,8 +240,10 @@ export class BaselineStore {
     };
     const history: Record<string, unknown> = {};
     const snaps: Record<string, unknown> = {};
-    for (const [id, pts] of this.histories) history[id] = pts;
-    for (const [id, s] of this.snapshots) snaps[id] = s;
+    // Only persist history/snapshots for live specs — drop any orphaned by a
+    // delete that raced a recompute, so they don't survive across restarts.
+    for (const [id, pts] of this.histories) if (this.specs.has(id)) history[id] = pts;
+    for (const [id, s] of this.snapshots) if (this.specs.has(id)) snaps[id] = s;
     const dataDoc = { version: 1, history, snapshots: snaps };
     await writeFile(this.specsPath(), JSON.stringify(specsDoc, null, 2));
     await writeFile(this.dataPath(), JSON.stringify(dataDoc, null, 2));
@@ -422,7 +433,9 @@ export class BaselineStore {
     this.specs.set(id, updated);
 
     const triageChanged = patch.triageStatus !== undefined && patch.triageStatus !== before.triageStatus;
-    if (patch.triageStatus !== undefined) { this.triageStatuses.set(id, patch.triageStatus); this.userTriaged.add(id); }
+    // Only pin against discovery's auto-ignore on a real change — re-confirming
+    // the current status (a perceived no-op) must not permanently pin it.
+    if (triageChanged) { this.triageStatuses.set(id, patch.triageStatus); this.userTriaged.add(id); }
 
     const after = this.deriveRecord(updated, accountMap, orgTree);
     const summary = changeSummary(before, after, bandChanged, patch);
@@ -477,6 +490,9 @@ export class BaselineStore {
         // message per item would flood the renderer.
         const step = Math.max(1, Math.floor(total / 100));
         for (const spec of specs) {
+          // `specs` was snapshotted before the awaits below; skip any baseline
+          // the user deleted mid-recompute so we don't re-populate its history.
+          if (!this.specs.has(spec.id)) continue;
           // Discovered baselines already had their history set during discover();
           // only manual/view baselines need a per-baseline query here.
           if (spec.source === 'manual') await this.recomputeOne(deps, spec);
@@ -486,11 +502,14 @@ export class BaselineStore {
         }
       }
       await this.save();
-      this.setStatus({ state: 'idle', lastRun: new Date().toISOString() });
+      this.lastSuccessfulRun = new Date().toISOString();
+      this.setStatus({ state: 'idle', lastRun: this.lastSuccessfulRun });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error('baselines: recompute failed', { error: message });
-      this.setStatus({ state: 'error', message, lastRun: this.status.state === 'idle' ? this.status.lastRun : null });
+      // Keep the last *successful* run time — `this.status` is already 'running'
+      // here (which carries no lastRun), so reading it would always drop it.
+      this.setStatus({ state: 'error', message, lastRun: this.lastSuccessfulRun });
     } finally {
       this.recomputing = false;
     }
@@ -592,12 +611,19 @@ export class BaselineStore {
     //    triage status — but never override a status the user set themselves.
     const basis = await snapshotBasis(deps);
     const existingByScope = new Map<string, BaselineSpec>();
-    for (const s of this.specs.values()) if (s.source === 'discovered') existingByScope.set(scopeKey(s.scope), s);
+    const manualScopes = new Set<string>();
+    for (const s of this.specs.values()) {
+      if (s.source === 'discovered') existingByScope.set(scopeKey(s.scope), s);
+      else manualScopes.add(scopeKey(s.scope));
+    }
 
     const seenScopes = new Set<string>();
     for (const [key, tuple] of tuples) {
       const scope = buildScope(grain, tuple.values);
       const scopeId = scopeKey(scope);
+      // The user already pinned this exact scope manually — don't mint a
+      // duplicate 'discovered' baseline for it.
+      if (manualScopes.has(scopeId)) continue;
       seenScopes.add(scopeId);
       const existing = existingByScope.get(scopeId);
       const now = new Date().toISOString();
@@ -631,7 +657,17 @@ export class BaselineStore {
     if (empty) { this.histories.set(spec.id, []); this.finalizeFromHistory(spec); return; }
     const basisScope = basisToCostScope(spec.basis);
     const groupBy = primaryGroupBy(spec.scope);
-    const mat = this.matSource(deps, basisScope, dimensions, availableColumns, dateRange, [columnFor(dimensions, String(groupBy)), 'cost']);
+    // The query filters on the FULL scope, so the rollup-fit check must require
+    // every filter column — not just the primary group-by — or a multi-dim scope
+    // can route to a rollup missing a secondary filter column and fail to bind.
+    const neededColumns = [
+      ...new Set([
+        ...Object.keys(scopeFilters(spec.scope)).map((k) => columnForDimension(dimensions, k)),
+        columnForDimension(dimensions, String(groupBy)),
+        'cost',
+      ]),
+    ];
+    const mat = this.matSource(deps, basisScope, dimensions, availableColumns, dateRange, neededColumns);
     const opts = {
       dataDir: deps.dataDir,
       dimensions,
@@ -705,7 +741,7 @@ export class BaselineStore {
       const range = { start: asDateString(winStart), end: asDateString(end) };
       const { available, empty } = await resolveAvailablePeriods(deps.dataDir, 'daily', range);
       if (empty) return new Map<string, number>();
-      const mat = this.matSource(deps, basisScope, dimensions, availableColumns, range, [columnFor(dimensions, childDimension), 'cost']);
+      const mat = this.matSource(deps, basisScope, dimensions, availableColumns, range, [columnForDimension(dimensions, childDimension), 'cost']);
       const q = buildDailyCostsQuery(
         { dateRange: range, filters: scopeFilters(spec.scope), groupBy: child },
         {
@@ -783,11 +819,6 @@ function periodsFor(dateRange: { start: string; end: string }): string[] {
     cursor.setUTCMonth(cursor.getUTCMonth() + 1);
   }
   return out;
-}
-
-function columnFor(dimensions: DimensionsConfig, dimId: string): string {
-  const found = dimensions.builtIn.find((d) => String(d.name) === dimId);
-  return found?.field ?? 'service';
 }
 
 function primaryGroupBy(scope: BaselineScope) {
@@ -875,8 +906,8 @@ function parseConfig(raw: Record<string, unknown>): BaselinesDiscoveryConfig {
     windowDays: num(raw['windowDays']) || base.windowDays,
     lowerPct: typeof raw['lowerPct'] === 'number' ? raw['lowerPct'] : base.lowerPct,
     upperPct: typeof raw['upperPct'] === 'number' ? raw['upperPct'] : base.upperPct,
-    minMonthlyCost: asDollars(num(raw['minMonthlyCost'])),
-    minSavings: asDollars(num(raw['minSavings'])),
+    minMonthlyCost: typeof raw['minMonthlyCost'] === 'number' ? asDollars(num(raw['minMonthlyCost'])) : base.minMonthlyCost,
+    minSavings: typeof raw['minSavings'] === 'number' ? asDollars(num(raw['minSavings'])) : base.minSavings,
     reopenPct: typeof raw['reopenPct'] === 'number' ? raw['reopenPct'] : base.reopenPct,
     grainDimensions: grain,
   };
