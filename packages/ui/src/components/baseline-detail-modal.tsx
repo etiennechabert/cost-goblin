@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type MouseEvent } from 'react';
 import type { BaselineDetail, BaselineDailyPoint, ManualBand } from '@costgoblin/core/browser';
+import { asDateString, asDollars } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog.js';
@@ -28,6 +29,113 @@ function movingAverage(points: readonly BaselineDailyPoint[], window: number): n
     const slice = points.slice(Math.max(0, i - window + 1), i + 1);
     return slice.reduce((s, p) => s + p.cost, 0) / Math.max(1, slice.length);
   });
+}
+
+/** Fill calendar gaps so the chart's X-axis is day-accurate. The stored series
+ *  is sparse (discovery emits no row for a $0 day); zero-fill every missing day
+ *  between the first and last point so month ticks land correctly. */
+function densifyDaily(history: readonly BaselineDailyPoint[]): readonly BaselineDailyPoint[] {
+  if (history.length === 0) return history;
+  const byDate = new Map<string, number>();
+  for (const p of history) byDate.set(String(p.date), p.cost);
+  const dates = [...byDate.keys()].sort();
+  const startStr = dates[0];
+  const endStr = dates[dates.length - 1];
+  if (startStr === undefined || endStr === undefined) return history;
+  const out: BaselineDailyPoint[] = [];
+  const cur = new Date(`${startStr}T00:00:00Z`);
+  const end = new Date(`${endStr}T00:00:00Z`);
+  for (let guard = 0; cur.getTime() <= end.getTime() && guard < 4000; guard++) {
+    const key = cur.toISOString().slice(0, 10);
+    out.push({ date: asDateString(key), cost: asDollars(byDate.get(key) ?? 0) });
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return out;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function monthAbbr(dateStr: string): string { return MONTHS[Number(dateStr.slice(5, 7)) - 1] ?? ''; }
+function fullDate(dateStr: string): string {
+  return `${monthAbbr(dateStr)} ${String(Number(dateStr.slice(8, 10)))}, ${dateStr.slice(0, 4)}`;
+}
+
+/** Daily-cost bars + 30-day moving-average line over a fixed window, with month
+ *  X-axis ticks, $ Y-axis gridlines, effective band reference lines, and a hover
+ *  tooltip showing the date, that day's cost, and the rolling average. */
+function HistoryChart({ history, ma, lower, upper, maxCost }: Readonly<{
+  history: readonly BaselineDailyPoint[]; ma: readonly number[]; lower: number; upper: number; maxCost: number;
+}>) {
+  const [hover, setHover] = useState<number | null>(null);
+  const innerW = CHART_W - PAD.left - PAD.right;
+  const innerH = CHART_H - PAD.top - PAD.bottom;
+  const n = history.length;
+  const x = (i: number): number => PAD.left + (n <= 1 ? 0 : (i / (n - 1)) * innerW);
+  const y = (v: number): number => PAD.top + innerH - (Math.min(Math.max(v, 0), maxCost) / maxCost) * innerH;
+  const barW = n > 0 ? Math.max(1, innerW / n - 0.5) : 1;
+
+  const monthTicks = useMemo(() => {
+    const ticks: { i: number; label: string }[] = [];
+    let prev = '';
+    history.forEach((p, i) => {
+      const mm = p.date.slice(0, 7);
+      if (mm !== prev) { ticks.push({ i, label: monthAbbr(p.date) }); prev = mm; }
+    });
+    return ticks;
+  }, [history]);
+
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * maxCost);
+
+  function onMove(e: MouseEvent<SVGSVGElement>): void {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width === 0 || n === 0) return;
+    const viewX = ((e.clientX - rect.left) / rect.width) * CHART_W;
+    const frac = Math.min(1, Math.max(0, (viewX - PAD.left) / innerW));
+    setHover(Math.min(n - 1, Math.max(0, Math.round(frac * (n - 1)))));
+  }
+
+  const hp = hover !== null ? history[hover] : undefined;
+  const leftPct = hover !== null ? (x(hover) / CHART_W) * 100 : 0;
+
+  return (
+    <div className="relative">
+      <svg viewBox={`0 0 ${String(CHART_W)} ${String(CHART_H)}`} className="w-full rounded-lg border border-border bg-bg-tertiary/20"
+        role="img" aria-label="Daily cost history" onMouseMove={onMove} onMouseLeave={() => { setHover(null); }}>
+        {yTicks.map((v) => (
+          <g key={String(v)}>
+            <line x1={PAD.left} x2={CHART_W - PAD.right} y1={y(v)} y2={y(v)} className="stroke-border/40" strokeWidth={0.5} />
+            <text x={PAD.left - 6} y={y(v) + 3} textAnchor="end" className="fill-text-muted text-[9px]">{formatDollars(v)}</text>
+          </g>
+        ))}
+        <rect x={PAD.left} y={y(upper)} width={innerW} height={Math.max(0, y(lower) - y(upper))} className="fill-accent/10" />
+        {history.map((p, i) => (
+          <rect key={String(p.date)} x={x(i) - barW / 2} y={y(p.cost)} width={barW} height={Math.max(0, PAD.top + innerH - y(p.cost))} className="fill-text-muted/40" />
+        ))}
+        <polyline fill="none" className="stroke-accent" strokeWidth={1.5} points={ma.map((v, i) => `${String(x(i))},${String(y(v))}`).join(' ')} />
+        <line x1={PAD.left} x2={CHART_W - PAD.right} y1={y(lower)} y2={y(lower)} className="stroke-positive" strokeWidth={1} strokeDasharray="4 3" />
+        <line x1={PAD.left} x2={CHART_W - PAD.right} y1={y(upper)} y2={y(upper)} className="stroke-negative" strokeWidth={1} strokeDasharray="4 3" />
+        <text x={CHART_W - PAD.right} y={y(upper) - 2} textAnchor="end" className="fill-negative text-[9px]">{formatDollars(upper)}</text>
+        <text x={CHART_W - PAD.right} y={y(lower) + 9} textAnchor="end" className="fill-positive text-[9px]">{formatDollars(lower)}</text>
+        {monthTicks.map((t) => (
+          <text key={t.i} x={x(t.i)} y={CHART_H - 6} textAnchor="middle" className="fill-text-muted text-[9px]">{t.label}</text>
+        ))}
+        {hover !== null && hp !== undefined && (
+          <g>
+            <line x1={x(hover)} x2={x(hover)} y1={PAD.top} y2={PAD.top + innerH} className="stroke-text-secondary/50" strokeWidth={0.75} />
+            <circle cx={x(hover)} cy={y(hp.cost)} r={2.5} className="fill-text-primary" />
+            <circle cx={x(hover)} cy={y(ma[hover] ?? 0)} r={2.5} className="fill-accent" />
+          </g>
+        )}
+      </svg>
+      {hover !== null && hp !== undefined && (
+        <div className="pointer-events-none absolute top-1 z-10 -translate-x-1/2 rounded-md border border-border bg-bg-primary/95 px-2 py-1 text-[10px] shadow-lg"
+          style={{ left: `${String(Math.min(88, Math.max(12, leftPct)))}%` }}>
+          <p className="font-medium text-text-primary">{fullDate(hp.date)}</p>
+          <p className="tabular-nums text-text-secondary">cost {formatDollars(hp.cost)}/day</p>
+          <p className="tabular-nums text-text-muted">30-day avg {formatDollars(ma[hover] ?? 0)}/day</p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function StatCard({ label, perDay, accent }: Readonly<{ label: string; perDay: number; accent?: 'amber' | 'green' | undefined }>) {
@@ -81,12 +189,10 @@ function Body({ detail, onChanged }: Readonly<{ detail: BaselineDetail; onChange
   const potential = Math.max(0, current - effLower);
   const realized = Math.max(0, effUpper - current);
 
-  const ma = useMemo(() => movingAverage(dailyHistory, 30), [dailyHistory]);
-  const innerW = CHART_W - PAD.left - PAD.right;
-  const innerH = CHART_H - PAD.top - PAD.bottom;
-  const x = (i: number): number => PAD.left + (dailyHistory.length <= 1 ? 0 : (i / (dailyHistory.length - 1)) * innerW);
-  const y = (v: number): number => PAD.top + innerH - (Math.min(v, maxCost) / maxCost) * innerH;
-  const barW = dailyHistory.length > 0 ? Math.max(1, innerW / dailyHistory.length - 0.5) : 1;
+  // Sparse series drives the band-percentile preview (matches the server's
+  // band math); the dense series drives the chart so the date axis is accurate.
+  const dense = useMemo(() => densifyDaily(dailyHistory), [dailyHistory]);
+  const ma = useMemo(() => movingAverage(dense, 30), [dense]);
 
   async function save(): Promise<void> {
     setSaving(true);
@@ -123,26 +229,8 @@ function Body({ detail, onChanged }: Readonly<{ detail: BaselineDetail; onChange
         <p className="text-xs text-text-muted">{record.scopeLabel} · {record.spec.source} · {record.status}</p>
       </div>
 
-      <svg viewBox={`0 0 ${String(CHART_W)} ${String(CHART_H)}`} className="w-full rounded-lg border border-border bg-bg-tertiary/20" role="img" aria-label="Daily cost history">
-        {/* shaded band */}
-        <rect x={PAD.left} y={y(effUpper)} width={innerW} height={Math.max(0, y(effLower) - y(effUpper))} className="fill-accent/10" />
-        {/* daily bars */}
-        {dailyHistory.map((p, i) => (
-          <rect key={String(p.date)} x={x(i) - barW / 2} y={y(p.cost)} width={barW} height={Math.max(0, PAD.top + innerH - y(p.cost))} className="fill-text-muted/40" />
-        ))}
-        {/* moving-average line */}
-        <polyline
-          fill="none"
-          className="stroke-accent"
-          strokeWidth={1.5}
-          points={ma.map((v, i) => `${String(x(i))},${String(y(v))}`).join(' ')}
-        />
-        {/* band reference lines */}
-        <line x1={PAD.left} x2={CHART_W - PAD.right} y1={y(effLower)} y2={y(effLower)} className="stroke-positive" strokeWidth={1} strokeDasharray="4 3" />
-        <line x1={PAD.left} x2={CHART_W - PAD.right} y1={y(effUpper)} y2={y(effUpper)} className="stroke-negative" strokeWidth={1} strokeDasharray="4 3" />
-        <text x={4} y={y(effUpper) + 3} className="fill-negative text-[9px]">{formatDollars(effUpper)}</text>
-        <text x={4} y={y(effLower) + 3} className="fill-positive text-[9px]">{formatDollars(effLower)}</text>
-      </svg>
+      <HistoryChart history={dense} ma={ma} lower={effLower} upper={effUpper} maxCost={maxCost} />
+      <p className="-mt-2 text-[10px] text-text-muted">Daily cost (bars) · 30-day average (line) · band low (green) / high (red). Hover for details.</p>
 
       <div className="grid grid-cols-4 gap-2">
         <StatCard label="Current" perDay={current} />
