@@ -145,6 +145,11 @@ export interface BaselineRecord {
   /** Lowest current daily ever seen since the baseline was confirmed; backs the
    *  trailing-stop reopen guard. `null` until first computed. */
   readonly bestAchieved: Dollars | null;
+  /** True when the scope is a fixed recurring charge billed on a few days (e.g.
+   *  a monthly subscription). A per-day band is meaningless for these, so their
+   *  potential/realized savings are forced to $0 and they are excluded from the
+   *  savings KPIs and the default "Open" list — viewable under the "Fixed" filter. */
+  readonly isPeriodic: boolean;
   /** Owning org-tree node path for account-scoped baselines, for owner grouping. */
   readonly ownerPath?: readonly EntityRef[] | undefined;
   /** Human-readable scope label (dimension values joined, or the View name). */
@@ -205,8 +210,9 @@ export type BaselineSortKey = 'potential' | 'realized' | 'current' | 'scope';
 
 export interface BaselinesListParams {
   /** Filter by triage status. `open` = the still-open states (new/interesting/
-   *  in-progress). Omit for all. */
-  readonly triage?: BaselineTriageStatus | 'open' | undefined;
+   *  in-progress) excluding fixed/periodic charges; `fixed` = only the periodic
+   *  charges. Omit for all. */
+  readonly triage?: BaselineTriageStatus | 'open' | 'fixed' | undefined;
   readonly owner?: string | undefined;
   readonly dimension?: DimensionId | undefined;
   readonly sortBy?: BaselineSortKey | undefined;

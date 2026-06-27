@@ -229,8 +229,10 @@ function Body({ detail, onChanged, onNext, onPrev, position }: Readonly<{
   // scope the raw upper can fall below lower and invert the band preview.
   const effUpper = Math.max(effLower, mode === 'percentile' ? percentile(costs, upper, false) : upper);
   const current = record.currentDaily;
-  const potential = Math.max(0, current - effLower);
-  const realized = Math.max(0, effUpper - current);
+  // Fixed/periodic charges (e.g. a monthly subscription billed on one day) have
+  // no daily savings lever — the server forces $0, so mirror that in the preview.
+  const potential = record.isPeriodic ? 0 : Math.max(0, current - effLower);
+  const realized = record.isPeriodic ? 0 : Math.max(0, effUpper - current);
 
   // Sparse series drives the band-percentile preview (matches the server's
   // band math); the dense series drives the chart so the date axis is accurate.
@@ -341,6 +343,12 @@ function Body({ detail, onChanged, onNext, onPrev, position }: Readonly<{
           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${triageChipClass(record.triageStatus)}`}>{TRIAGE_LABEL[record.triageStatus]}</span>
         </div>
       </div>
+
+      {record.isPeriodic && (
+        <div className="rounded-lg border border-border bg-bg-tertiary/30 px-3 py-2 text-[11px] text-text-secondary">
+          <span className="font-medium text-text-primary">Fixed recurring charge.</span> This scope bills on a few days at a near-constant amount (e.g. a monthly subscription), so a per-day band is meaningless and potential/realized savings are excluded.
+        </div>
+      )}
 
       <HistoryChart history={dense} ma={ma} lower={effLower} upper={effUpper} maxCost={maxCost} />
       <p className="-mt-2 text-[10px] text-text-muted">Daily cost (bars) · 30-day average (line) · band low (green) / high (red). Hover for details.</p>

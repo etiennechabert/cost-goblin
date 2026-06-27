@@ -8,6 +8,7 @@ import {
   computeSavings,
   deriveStatus,
   effectiveBands,
+  isPeriodicScope,
 } from '@costgoblin/core';
 import type { BaselineDailyPoint, BaselineStatus, ManualBand } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
@@ -123,7 +124,12 @@ function derive(spec: Spec, loaded: Loaded): Derived {
   const bands = computeBands(history, { lowerPct: loaded.lowerPct, upperPct: loaded.upperPct });
   const current = computeCurrent(history, loaded.windowDays);
   const eff = effectiveBands(bands, spec.manualBand, costs);
-  const savings = computeSavings(current, eff);
+  // Fixed/periodic charges have no daily savings lever — match the desktop store
+  // and force $0 rather than reporting a phantom "realized" from the amortized gap.
+  const periodic = isPeriodicScope(history, { maxActiveDayFraction: 0.5, maxActiveDayCoV: 0.25, minSpanDays: 35 });
+  const savings = periodic
+    ? { potentialMonthly: asDollars(0), realizedMonthly: asDollars(0), potentialDaily: asDollars(0), realizedDaily: asDollars(0) }
+    : computeSavings(current, eff);
   const status = deriveStatus(current, eff, history.length, { minDataPoints: 30, subCentFloor: 0.01, overPctOverLower: 0 });
   return {
     ...spec,
