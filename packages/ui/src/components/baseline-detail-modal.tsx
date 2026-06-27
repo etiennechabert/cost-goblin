@@ -185,12 +185,13 @@ function StatCard({ label, perDay, accent }: Readonly<{ label: string; perDay: n
   );
 }
 
-function SwipeButton({ arrow, label, tone, onClick, disabled }: Readonly<{ arrow: string; label: string; tone: string; onClick: () => void; disabled: boolean }>) {
+function SwipeButton({ arrow, label, hint, tone, onClick, disabled }: Readonly<{ arrow: string; label: string; hint: string; tone: string; onClick: () => void; disabled: boolean }>) {
   return (
     <button type="button" disabled={disabled} onClick={onClick}
-      className={`flex min-w-[88px] flex-col items-center gap-0.5 rounded-xl border px-4 py-2 transition-colors disabled:opacity-50 ${tone}`}>
+      className={`flex min-w-[96px] flex-col items-center gap-0.5 rounded-xl border px-4 py-2 transition-colors disabled:opacity-50 ${tone}`}>
       <span className="text-lg leading-none">{arrow}</span>
       <span className="text-xs font-medium">{label}</span>
+      <span className="text-[10px] leading-tight opacity-70">{hint}</span>
     </button>
   );
 }
@@ -300,6 +301,7 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
   const [error, setError] = useState<string | null>(null);
   const [triage, setTriage] = useState<BaselineTriageStatus>(record.triageStatus);
   const [bandDirty, setBandDirty] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   const dirty = bandDirty || note.length > 0;
 
@@ -469,12 +471,21 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
 
       {triageMode && (
         <div className="rounded-lg border border-accent/30 bg-accent/5 p-3">
-          <p className="mb-2 text-center text-[11px] text-text-muted">Triage — each choice saves and advances to the next</p>
+          <div className="mb-2 flex items-center justify-center gap-1.5">
+            <p className="text-center text-[11px] text-text-muted">Triage — each choice saves and advances to the next</p>
+            <button type="button" onClick={() => { setShowHelp((v) => !v); }} aria-label="What do these actions mean?"
+              className={`flex h-4 w-4 items-center justify-center rounded-full border text-[10px] leading-none ${showHelp ? 'border-accent text-accent' : 'border-border text-text-muted hover:text-text-secondary'}`}>?</button>
+          </div>
+          {showHelp && (
+            <div className="mx-auto mb-2 max-w-md rounded-md border border-border bg-bg-tertiary/30 px-3 py-2 text-[11px] text-text-secondary">
+              <span className="text-accent">Track</span> and <span className="text-warning">Act now</span> keep the baseline on your Open list (watching vs working on it now); <span className="text-negative">Dismiss</span> and <span className="text-text-muted">Skip</span> take it off (closed vs decide-later). Once optimized, mark it <span className="text-positive">Resolved</span> with key 4.
+            </div>
+          )}
           <div className="flex items-center justify-center gap-3">
-            <SwipeButton arrow="←" label="Dismiss" tone="border-negative/40 bg-negative-muted text-negative" onClick={() => { void swipe('dismiss'); }} disabled={saving} />
-            <SwipeButton arrow="↓" label="Skip" tone="border-border bg-bg-tertiary/30 text-text-secondary" onClick={() => { void swipe('skip'); }} disabled={saving} />
-            <SwipeButton arrow="↑" label="Act now" tone="border-warning/40 bg-warning/10 text-warning" onClick={() => { void swipe('act'); }} disabled={saving} />
-            <SwipeButton arrow="→" label="Track" tone="border-accent/40 bg-accent/10 text-accent" onClick={() => { void swipe('track'); }} disabled={saving} />
+            <SwipeButton arrow="←" label="Dismiss" hint="not worth it" tone="border-negative/40 bg-negative-muted text-negative" onClick={() => { void swipe('dismiss'); }} disabled={saving} />
+            <SwipeButton arrow="↓" label="Skip" hint="decide later" tone="border-border bg-bg-tertiary/30 text-text-secondary" onClick={() => { void swipe('skip'); }} disabled={saving} />
+            <SwipeButton arrow="↑" label="Act now" hint="optimize now" tone="border-warning/40 bg-warning/10 text-warning" onClick={() => { void swipe('act'); }} disabled={saving} />
+            <SwipeButton arrow="→" label="Track" hint="watch it" tone="border-accent/40 bg-accent/10 text-accent" onClick={() => { void swipe('track'); }} disabled={saving} />
           </div>
         </div>
       )}
