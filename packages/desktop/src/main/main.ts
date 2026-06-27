@@ -4,7 +4,8 @@ import { Session } from 'node:inspector';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { logger, parseJsonObject, isStringRecord } from '@costgoblin/core';
+import { logger, parseJsonObject, isStringRecord, parseTelemetryPreferences } from '@costgoblin/core';
+import { telemetry } from './telemetry/controller.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -241,6 +242,25 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
 }
 
 async function main(): Promise<void> {
+  // Telemetry is set up BEFORE app.whenReady(): @sentry/electron can only arm the
+  // native crash handler before the 'ready' event, so the opt-in is decided here
+  // from the saved preference. Toggling the channel in Settings saves the choice
+  // and restarts the app to re-arm with the new state.
+  const userDataPath = app.getPath('userData');
+  const telemetryDataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
+  const telemetryDir = dirname(telemetryDataDir);
+  telemetry.initialize(telemetryDir);
+  let telemetryPrefs = parseTelemetryPreferences(undefined);
+  try {
+    const parsed = parseJsonObject(readFileSync(join(telemetryDir, 'ui-preferences.json'), 'utf-8'));
+    telemetryPrefs = parseTelemetryPreferences(parsed?.['telemetry']);
+  } catch {
+    /* no or invalid prefs file → telemetry stays dark */
+  }
+  // Synchronous + before whenReady: Sentry must init before `ready` to arm
+  // native crash capture, so this must not yield to the event loop first.
+  telemetry.start(telemetryPrefs);
+
   await app.whenReady();
 
   // Worker bundles are built by `npm run build:worker` (esbuild) into out/worker/
@@ -248,8 +268,6 @@ async function main(): Promise<void> {
   // into out/worker/ to find them.
   const duckdbWorkerPath = join(__dirname, '..', 'worker', 'duckdb-worker.cjs');
   const db = await createDuckDBClient(duckdbWorkerPath);
-
-  const userDataPath = app.getPath('userData');
   const tempDir = join(userDataPath, 'temp');
   mkdirSync(tempDir, { recursive: true });
   const perf = readPerformanceOverrides(userDataPath);
@@ -275,6 +293,7 @@ async function main(): Promise<void> {
     }
   }
   registerUpdateHandlers();
+
   await createWindow(db, syncClient);
 
   app.on('activate', () => {

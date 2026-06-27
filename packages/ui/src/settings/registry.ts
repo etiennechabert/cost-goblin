@@ -1,4 +1,4 @@
-import { Settings2, Database, Target, Tags, LayoutDashboard, Share2, FileDown, Sparkles, Gauge } from 'lucide-react';
+import { Settings2, Database, Target, Tags, LayoutDashboard, Share2, FileDown, Sparkles, Gauge, ShieldCheck } from 'lucide-react';
 
 /** The settings surface is "setting mode": a full-canvas, tabbed workspace that
  *  is deliberately separate from "view mode" (looking at cost data). Every
@@ -17,7 +17,8 @@ export type SettingsTabId =
   | 'share'
   | 'import'
   | 'ai-assistant'
-  | 'performance';
+  | 'performance'
+  | 'telemetry';
 
 export interface SettingsTabMeta {
   readonly id: SettingsTabId;
@@ -82,6 +83,12 @@ export const SETTINGS_TABS: readonly SettingsTabMeta[] = [
     label: 'Performance',
     Icon: Gauge,
     keywords: ['memory', 'threads', 'duckdb', 'tuning', 'cpu', 'ram'],
+  },
+  {
+    id: 'telemetry',
+    label: 'Telemetry',
+    Icon: ShieldCheck,
+    keywords: ['telemetry', 'crash', 'error', 'sentry', 'privacy', 'analytics', 'reporting', 'diagnostics', 'opt-in', 'audit'],
   },
 ];
 

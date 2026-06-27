@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { getColor } from '../lib/palette.js';
 import { CollapsedChart } from './collapsed-chart.js';
 import { useContainerWidth } from '../lib/use-container-width.js';
-import { formatDollars } from './format.js';
+import { formatDollars, truncate } from './format.js';
 import type { Dimension } from '@costgoblin/core/browser';
 import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
 import { usePalette } from '../hooks/use-palette.js';
@@ -37,10 +37,6 @@ const LABEL_WIDTH = 140;
 const RIGHT_GUTTER = 90;
 const CHART_HEIGHT = 320;
 
-
-function truncate(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
-}
 
 function TopNBarChartInner({
   data,

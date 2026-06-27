@@ -1,3 +1,8 @@
+// Installs the Sentry IPC bridge the renderer SDK uses to forward events to the
+// main process. REQUIRED with sandbox: true + contextIsolation (the renderer has
+// no Node/DSN of its own). Must run unconditionally and before any renderer init;
+// it's inert until the renderer SDK is actually initialised (i.e. after opt-in).
+import '@sentry/electron/preload';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   CostApi,
@@ -58,6 +63,9 @@ import type {
   SharedPullSelection,
   SharedSourceInfo,
   RollupGrainEstimate,
+  TelemetryPreferences,
+  TelemetryStatus,
+  TelemetryOutboxEntry,
 } from '@costgoblin/core';
 
 // ---------------------------------------------------------------------------
@@ -163,8 +171,8 @@ const api: CostApi = {
   getAccountMapping(): Promise<AccountMappingStatus> {
     return invoke<AccountMappingStatus>('data:account-mapping');
   },
-  getSetupStatus(): Promise<{ configured: boolean }> {
-    return invoke<{ configured: boolean }>('setup:status');
+  getSetupStatus(): Promise<{ configured: boolean; postSetup: boolean }> {
+    return invoke<{ configured: boolean; postSetup: boolean }>('setup:status');
   },
   testConnection(params: { profile: string; bucket: string }): Promise<{ ok: boolean; error?: string | undefined }> {
     return invoke<{ ok: boolean; error?: string | undefined }>('setup:test-connection', params);
@@ -390,6 +398,18 @@ const api: CostApi = {
   regenerateMcpToken(): Promise<string> {
     return invoke<string>('mcp:regenerate-token');
   },
+  getTelemetryPreferences(): Promise<TelemetryPreferences> {
+    return invoke<TelemetryPreferences>('telemetry:get-preferences');
+  },
+  setTelemetryPreferences(prefs: TelemetryPreferences): Promise<void> {
+    return invoke<undefined>('telemetry:set-preferences', prefs).then(() => undefined);
+  },
+  getTelemetryStatus(): Promise<TelemetryStatus> {
+    return invoke<TelemetryStatus>('telemetry:get-status');
+  },
+  getTelemetryOutbox(): Promise<readonly TelemetryOutboxEntry[]> {
+    return invoke<readonly TelemetryOutboxEntry[]>('telemetry:get-outbox');
+  },
 };
 
 contextBridge.exposeInMainWorld('costgoblin', api);
@@ -403,6 +423,9 @@ contextBridge.exposeInMainWorld('costgoblinUpdate', {
   },
   quitAndInstall(): void {
     ipcRenderer.invoke('update:quit-and-install').catch(() => undefined);
+  },
+  relaunch(postSetup?: boolean): void {
+    ipcRenderer.invoke('app:relaunch', postSetup === true).catch(() => undefined);
   },
   onStatusChanged(callback: (status: unknown) => void): () => void {
     const handler = (_event: unknown, status: unknown): void => { callback(status); };
