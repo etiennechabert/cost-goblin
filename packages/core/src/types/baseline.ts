@@ -173,6 +173,9 @@ export interface BaselineDetail {
   readonly record: BaselineRecord;
   readonly dailyHistory: readonly BaselineDailyPoint[];
   readonly snapshots: readonly BaselineSnapshot[];
+  /** The run-rate window (days) the savings band was computed over, so the UI's
+   *  percentile-override preview windows the series exactly like the server. */
+  readonly windowDays: number;
 }
 
 /** One contributing child dimension in the "what changed" drift breakdown. */

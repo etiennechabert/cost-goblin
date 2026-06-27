@@ -369,6 +369,7 @@ export class BaselineStore {
       record: this.deriveRecord(spec, accountMap, orgTree),
       dailyHistory: this.histories.get(id) ?? [],
       snapshots: this.snapshots.get(id) ?? [],
+      windowDays: this.effectiveConfig().windowDays,
     };
   }
 
@@ -737,8 +738,11 @@ export class BaselineStore {
     const availableColumns = await deps.getAvailableColumns('daily');
     const basisScope = basisToCostScope(spec.basis);
     const end = dateNDaysAgo(todayUtc(), spec.basis.lagDays ?? 2);
-    const trailingStart = dateNDaysAgo(end, cfg.windowDays);
-    const bandStart = dateNDaysAgo(end, cfg.lookbackDays);
+    // `dateNDaysAgo(end, N)` then an inclusive BETWEEN spans N+1 calendar days;
+    // subtract one so the window is exactly windowDays/lookbackDays days — matching
+    // the divisors below and computeCurrent's window.
+    const trailingStart = dateNDaysAgo(end, Math.max(0, cfg.windowDays - 1));
+    const bandStart = dateNDaysAgo(end, Math.max(0, cfg.lookbackDays - 1));
     const child = asDimensionId(childDimension);
     const accountReverseMap = await deps.getAccountReverseMap();
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import type { BaselineDetail, BaselineDailyPoint, BaselineSnapshot, BaselineTriageStatus, BaselineUpdatePatch, ManualBand } from '@costgoblin/core/browser';
-import { asDateString, asDollars, BASELINE_TRIAGE_STATUSES } from '@costgoblin/core/browser';
+import { asDateString, asDollars, BASELINE_TRIAGE_STATUSES, runRateSeries } from '@costgoblin/core/browser';
 
 const TRIAGE_LABEL: Readonly<Record<BaselineTriageStatus, string>> = {
   'new': 'New', 'tracking': 'Tracking', 'acting': 'Acting',
@@ -68,23 +68,6 @@ function densifyDaily(history: readonly BaselineDailyPoint[]): readonly Baseline
     const key = cur.toISOString().slice(0, 10);
     out.push({ date: asDateString(key), cost: asDollars(byDate.get(key) ?? 0) });
     cur.setUTCDate(cur.getUTCDate() + 1);
-  }
-  return out;
-}
-
-/** Amortized daily run-rate: trailing `window`-day average over the densified
- *  series (missing days = $0), matching the server's savings band so a periodic
- *  spike can't distort a percentile-mode override. Warm-up days are dropped. */
-function runRateCosts(history: readonly BaselineDailyPoint[], window: number): number[] {
-  const dense = densifyDaily(history);
-  const w = Math.max(1, window);
-  if (dense.length < w) return dense.map((p) => p.cost);
-  const out: number[] = [];
-  let sum = 0;
-  for (let i = 0; i < dense.length; i++) {
-    sum += dense[i]?.cost ?? 0;
-    if (i >= w) sum -= dense[i - w]?.cost ?? 0;
-    if (i >= w - 1) out.push(sum / w);
   }
   return out;
 }
@@ -288,7 +271,7 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
   triageMode: boolean;
 }>) {
   const api = useCostApi();
-  const { record, dailyHistory } = detail;
+  const { record, dailyHistory, windowDays } = detail;
   const costs = useMemo(() => dailyHistory.map((p) => p.cost), [dailyHistory]);
   const autoLower = record.effectiveLower;
   const autoUpper = record.effectiveUpper;
@@ -306,9 +289,10 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
   const dirty = bandDirty || note.length > 0;
 
   const maxCost = Math.max(...costs, autoUpper, 1);
-  // Percentile-mode band edges resolve over the amortized run-rate (matching the
-  // server), so a periodic/spiky charge can't set a phantom ceiling.
-  const bandCosts = useMemo(() => runRateCosts(dailyHistory, record.current?.days ?? 30), [dailyHistory, record.current?.days]);
+  // Percentile-mode band edges resolve over the amortized run-rate, windowed by the
+  // SAME window the server used (detail.windowDays), so the preview matches the band
+  // that will be persisted — not a window re-derived from the clamped current.days.
+  const bandCosts = useMemo(() => runRateSeries(dailyHistory, windowDays).map((p) => p.cost), [dailyHistory, windowDays]);
   const effLower = mode === 'percentile' ? percentile(bandCosts, lower, true) : lower;
   // Clamp upper ≥ lower to mirror the server (savings.ts). In percentile mode the
   // lower edge excludes $0 days while the upper includes them, so for a mostly-idle
@@ -361,6 +345,7 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
   // Quick triage: assign + persist a status immediately (no note needed). For a
   // closed outcome (resolved/dismissed/ignored), auto-advance to the next case.
   async function assignStatus(status: BaselineTriageStatus): Promise<void> {
+    if (saving) return; // ignore rapid repeats while a write is in flight
     const prev = triage;
     setTriage(status); // optimistic
     setSaving(true);
@@ -368,7 +353,8 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
     try {
       await api.updateBaseline(record.spec.id, { triageStatus: status });
       onChanged();
-      if (DISMISS_STATUSES.has(status) && onNext) onNext();
+      // In triage every choice advances; in browse only a closed outcome does.
+      if ((triageMode || DISMISS_STATUSES.has(status)) && onNext) onNext();
     } catch (err: unknown) {
       setTriage(prev); // revert the optimistic highlight on failure
       setError(err instanceof Error ? err.message : String(err));
@@ -381,6 +367,7 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
   // rapid review loop. `skip` leaves the baseline as New.
   const SWIPE_STATUS: Readonly<Record<'dismiss' | 'track' | 'act', BaselineTriageStatus>> = { dismiss: 'dismissed', track: 'tracking', act: 'acting' };
   async function swipe(action: 'dismiss' | 'track' | 'act' | 'skip'): Promise<void> {
+    if (saving) return; // ignore rapid repeats while a write is in flight
     if (action === 'skip') { onNext?.(); return; }
     const status = SWIPE_STATUS[action];
     setTriage(status);
@@ -467,7 +454,7 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
         <StatCard label="Realized" perDay={realized} accent="green" />
       </div>
 
-      <WhatChangedPanel id={record.spec.id} childDimension="resource_id" />
+      {dailyHistory.length > 0 && <WhatChangedPanel id={record.spec.id} childDimension="resource_id" />}
 
       {triageMode && (
         <div className="rounded-lg border border-accent/30 bg-accent/5 p-3">
@@ -478,7 +465,7 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
           </div>
           {showHelp && (
             <div className="mx-auto mb-2 max-w-md rounded-md border border-border bg-bg-tertiary/30 px-3 py-2 text-[11px] text-text-secondary">
-              <span className="text-accent">Track</span> and <span className="text-warning">Act now</span> keep the baseline on your Open list (watching vs working on it now); <span className="text-negative">Dismiss</span> and <span className="text-text-muted">Skip</span> take it off (closed vs decide-later). Once optimized, mark it <span className="text-positive">Resolved</span> with key 4.
+              <span className="text-accent">Track</span> and <span className="text-warning">Act now</span> keep the baseline on your Open list (watching vs working on it now). <span className="text-negative">Dismiss</span> closes it; <span className="text-text-muted">Skip</span> leaves it New to revisit later. Once optimized, mark it <span className="text-positive">Resolved</span> with key 4.
             </div>
           )}
           <div className="flex items-center justify-center gap-3">

@@ -22,3 +22,4 @@ export type {
   RollupRebuildBand,
 } from './rollup/estimator.js';
 export { computeRollupEstimate, emptyRollupEstimate, classifySizeBand } from './rollup/estimator.js';
+export { runRateSeries } from './baseline/window.js';

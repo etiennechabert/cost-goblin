@@ -47,6 +47,12 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 function num(v: unknown): number { return typeof v === 'number' && Number.isFinite(v) ? v : 0; }
 function str(v: unknown): string { return typeof v === 'string' ? v : ''; }
+function envNum(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
 
 function scopeLabel(scope: unknown): string {
   if (!isRecord(scope)) return 'All';
@@ -78,7 +84,11 @@ async function load(ctx: McpContext): Promise<Loaded> {
   try { dataRaw = JSON.parse(await readFile(join(base, 'baselines-data.json'), 'utf-8')); } catch { dataRaw = {}; }
 
   const specs: Spec[] = [];
-  let lowerPct = 10, upperPct = 90, windowDays = 30;
+  // Default to the same env-configurable values the desktop store uses, so the
+  // run-rate band matches when no persisted user override exists.
+  let lowerPct = envNum('COSTGOBLIN_BASELINES_LOWER_PCT', 10);
+  let upperPct = envNum('COSTGOBLIN_BASELINES_UPPER_PCT', 90);
+  let windowDays = envNum('COSTGOBLIN_BASELINES_WINDOW_DAYS', 30);
   if (isRecord(specsRaw)) {
     if (isRecord(specsRaw['config'])) {
       const c = specsRaw['config'];

@@ -57,7 +57,15 @@ export function runRateSeries(history: readonly BaselineDailyPoint[], windowDays
   const dayMs = 86_400_000;
   const dense: number[] = [];
   for (let t = startMs; t <= endMs; t += dayMs) dense.push(byDate.get(formatDate(new Date(t))) ?? 0);
-  if (dense.length < w) return sorted;
+  // Span shorter than the window — no fully-warmed run-rate point exists. Return a
+  // single point: the cost amortized over the observed span (matching computeCurrent's
+  // clamped average), so a periodic spike stays amortized instead of banding the raw
+  // sparse series and resurrecting the phantom ceiling.
+  if (dense.length < w) {
+    let s = 0;
+    for (const c of dense) s += c;
+    return [{ date: last.date, cost: asDollars(s / dense.length) }];
+  }
   const out: BaselineDailyPoint[] = [];
   let sum = 0;
   for (let i = 0; i < dense.length; i++) {
