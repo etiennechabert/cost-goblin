@@ -6,11 +6,12 @@ import type { ColumnSpec } from '../components/data-table.js';
 import { formatDollars } from '../components/format.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { asDimensionId, asTagValue, OVERVIEW_SEED_VIEW } from '@costgoblin/core/browser';
-import type { AggregatedTableRow, ExplorerFilterMap, ExplorerSort } from '@costgoblin/core/browser';
+import type { AggregatedTableRow, ExplorerSort } from '@costgoblin/core/browser';
 import type { SortingState } from '@tanstack/react-table';
 import type { WidgetCommonProps } from './widget.js';
 import { filtersKey } from './widget.js';
 import { getDimensionId } from '../lib/dimensions.js';
+import { toExplorerFilters } from '../lib/agg-column.js';
 import type { TableColumn } from '../lib/table-types.js';
 
 const ROW_LIMIT = 500;
@@ -86,13 +87,7 @@ export function TableWidget({
 
   const fk = filtersKey(globalFilters);
 
-  const explorerFilters = useMemo<ExplorerFilterMap>(() => {
-    const map: Record<string, readonly string[]> = {};
-    for (const [k, v] of Object.entries(globalFilters)) {
-      if (v !== undefined) map[k] = v;
-    }
-    return map;
-  }, [globalFilters]);
+  const explorerFilters = useMemo(() => toExplorerFilters(globalFilters), [globalFilters]);
 
   const [sort, setSort] = useState<ExplorerSort | undefined>(undefined);
   const [enabledColumns, setEnabledColumns] = useState(specEnabled);

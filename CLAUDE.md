@@ -173,6 +173,24 @@ So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` �
 
 > ⚠️ The pre-commit hook runs `npm run check`, which needs the worker bundle built first — run `npm run build:worker --workspace=packages/desktop` once before committing, or the commit fails on 2 worker tests (unrelated to the version change).
 
+## PR Review — Sentry comments
+
+This repo has Sentry's AI reviewer (`sentry[bot]`) configured. **Every PR you open, always check for and address its review comments** before considering the PR done — don't leave them unanswered.
+
+For each `sentry[bot]` comment:
+1. **Verify it against the actual code** — trace the data/control flow end-to-end; Sentry raises real bugs *and* false positives, so don't fix on faith or dismiss on reflex.
+2. **If valid** — fix it, run `npm run check`, and reply to the comment noting the fix (reference the commit SHA).
+3. **If a false positive** — reply explaining precisely why, citing the code paths that disprove it.
+4. **Answer Sentry's "Did we get this right? 👍 / 👎 to inform future reviews." footer** by reacting on the comment: 👍 (`+1`) when the finding was valid, 👎 (`-1`) when it was a false positive. This feeds Sentry's model.
+
+Fetch comments and reply/react with `gh`:
+```bash
+gh api repos/<owner>/<repo>/pulls/<pr>/comments --jq '.[] | select(.user.login=="sentry[bot]") | {id, path, line, body}'
+gh api -X POST repos/<owner>/<repo>/pulls/<pr>/comments/<id>/replies -f body="…"
+gh api -X POST repos/<owner>/<repo>/pulls/comments/<id>/reactions -f content='+1'   # or -1
+```
+Keep replies professional and free of any AI attribution (see global git rules).
+
 ## Key Architecture Decisions
 
 - **Tag normalization at query time** — aliases applied via SQL, not during sync. Changing aliases takes effect immediately.

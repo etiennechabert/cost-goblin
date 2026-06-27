@@ -58,6 +58,28 @@ export type WidgetSpec =
   | (WidgetBase & {
       readonly type: 'table';
       readonly enabledColumns?: readonly string[] | undefined;
+    })
+  | (WidgetBase & {
+      readonly type: 'waterfall';
+      readonly groupBy: DimensionId;
+      /** Named drivers shown before the remainder is folded into "Other".
+       *  Defaults to 8. */
+      readonly topN?: number | undefined;
+    })
+  | (WidgetBase & {
+      readonly type: 'priceVolume';
+      readonly groupBy: DimensionId;
+      /** Groups (e.g. services) decomposed before folding the rest. Defaults to 6. */
+      readonly topN?: number | undefined;
+    })
+  | (WidgetBase & {
+      readonly type: 'burndown';
+      /** Optional spend ceiling drawn as a reference line ($ for the period). */
+      readonly budget?: number | undefined;
+    })
+  | (WidgetBase & {
+      readonly type: 'pareto';
+      readonly groupBy: DimensionId;
     });
 
 export type WidgetType = WidgetSpec['type'];
