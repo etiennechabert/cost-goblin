@@ -44,6 +44,8 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
       return { ...common, type: w.type, groupBy: w.groupBy, ...(w.showLegend === false ? { showLegend: false } : {}) };
     case 'stackedBar':
       return { ...common, type: w.type, groupBy: w.groupBy };
+    case 'pareto':
+      return { ...common, type: w.type, groupBy: w.groupBy };
     case 'bubble':
       return stripBubbleTitle(w, common);
     case 'treemap':
@@ -51,7 +53,11 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
     case 'line':
     case 'topNBar':
     case 'heatmap':
+    case 'waterfall':
+    case 'priceVolume':
       return { ...common, type: w.type, groupBy: w.groupBy, ...(w.topN === undefined ? {} : { topN: w.topN }) };
+    case 'burndown':
+      return { ...common, type: w.type, ...(w.budget === undefined ? {} : { budget: w.budget }) };
     case 'table':
       return {
         ...common,
@@ -71,6 +77,8 @@ function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: str
       return { ...base, type, groupBy: existingGroupBy };
     case 'stackedBar':
       return { ...base, type, groupBy: existingGroupBy };
+    case 'pareto':
+      return { ...base, type, groupBy: existingGroupBy };
     case 'bubble':
       return { ...base, type, groupBy: existingGroupBy, ...('logScale' in prev && prev.logScale !== undefined ? { logScale: prev.logScale } : {}) };
     case 'treemap':
@@ -78,7 +86,11 @@ function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: str
     case 'line':
     case 'topNBar':
     case 'heatmap':
+    case 'waterfall':
+    case 'priceVolume':
       return { ...base, type, groupBy: existingGroupBy, topN: 'topN' in prev && prev.topN !== undefined ? prev.topN : 10 };
+    case 'burndown':
+      return { ...base, type };
     case 'table':
       return {
         ...base,
@@ -123,7 +135,7 @@ export function WidgetInspector({
   }
 
   function setTopN(value: number) {
-    if (widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap') {
+    if (widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap' || widget.type === 'waterfall' || widget.type === 'priceVolume') {
       onChange({ ...widget, topN: value });
     }
   }
@@ -300,7 +312,7 @@ export function WidgetInspector({
         );
       })()}
 
-      {(widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap') && (
+      {(widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap' || widget.type === 'waterfall' || widget.type === 'priceVolume') && (
         <label className="flex items-center gap-2">
           <span className="text-text-muted shrink-0 w-14">Top N</span>
           <input
@@ -313,6 +325,23 @@ export function WidgetInspector({
               if (Number.isFinite(v) && v > 0) setTopN(v);
             }}
             className="w-20 bg-transparent border border-border rounded px-2 py-1 text-text-primary"
+          />
+        </label>
+      )}
+
+      {widget.type === 'burndown' && (
+        <label className="flex items-center gap-2">
+          <span className="text-text-muted shrink-0 w-14">Budget $</span>
+          <input
+            type="number"
+            min={0}
+            value={widget.budget ?? 0}
+            onChange={(e) => {
+              const v = Number.parseFloat(e.target.value);
+              if (Number.isFinite(v) && v >= 0) onChange({ ...widget, budget: v });
+            }}
+            placeholder="none"
+            className="w-24 bg-transparent border border-border rounded px-2 py-1 text-text-primary"
           />
         </label>
       )}
