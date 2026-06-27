@@ -9,8 +9,13 @@ import { isStringRecord } from '../utils/json.js';
  * local audit log, and all endpoints are configurable for self-hosted collectors.
  */
 export interface TelemetryPreferences {
-  /** Sentry crash + error reporting (native main-process crashes + JS errors). */
-  readonly crashReports: boolean;
+  /** Scrubbed JS error/exception reporting (main + renderer), via Sentry. Every
+   *  event passes the PII scrub before transport — low data-leak risk. */
+  readonly errorReports: boolean;
+  /** Native crash reports (Crashpad minidumps): a RAW, unscrubbed snapshot of
+   *  process memory. High data-leak risk, so it's a separate opt-in with its own
+   *  explicit consent, independent of {@link errorReports}. */
+  readonly nativeCrashReports: boolean;
   /** Sentry performance tracing (transaction / span sampling). */
   readonly performance: boolean;
   /** Product-usage analytics (PostHog) — reserved; not wired yet. */
@@ -18,14 +23,15 @@ export interface TelemetryPreferences {
 }
 
 export const TELEMETRY_DEFAULTS: TelemetryPreferences = {
-  crashReports: false,
+  errorReports: false,
+  nativeCrashReports: false,
   performance: false,
   analytics: false,
 };
 
 /** True when at least one channel is on — i.e. the SDK should be initialised. */
 export function isTelemetryEnabled(prefs: TelemetryPreferences): boolean {
-  return prefs.crashReports || prefs.performance || prefs.analytics;
+  return prefs.errorReports || prefs.nativeCrashReports || prefs.performance || prefs.analytics;
 }
 
 /**
@@ -37,7 +43,8 @@ export function isTelemetryEnabled(prefs: TelemetryPreferences): boolean {
 export function parseTelemetryPreferences(raw: unknown): TelemetryPreferences {
   if (!isStringRecord(raw)) return TELEMETRY_DEFAULTS;
   return {
-    crashReports: raw['crashReports'] === true,
+    errorReports: raw['errorReports'] === true,
+    nativeCrashReports: raw['nativeCrashReports'] === true,
     performance: raw['performance'] === true,
     analytics: raw['analytics'] === true,
   };

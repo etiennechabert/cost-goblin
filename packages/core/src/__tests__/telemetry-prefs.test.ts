@@ -14,15 +14,16 @@ describe('parseTelemetryPreferences', () => {
   });
 
   it('reads only strictly-true booleans (fails closed)', () => {
-    expect(parseTelemetryPreferences({ crashReports: true, performance: 'true', analytics: 1 })).toStrictEqual({
-      crashReports: true,
+    expect(parseTelemetryPreferences({ errorReports: true, nativeCrashReports: 'true', performance: 'true', analytics: 1 })).toStrictEqual({
+      errorReports: true,
+      nativeCrashReports: false,
       performance: false,
       analytics: false,
     });
   });
 
   it('round-trips a fully-enabled object', () => {
-    const prefs = { crashReports: true, performance: true, analytics: true };
+    const prefs = { errorReports: true, nativeCrashReports: true, performance: true, analytics: true };
     expect(parseTelemetryPreferences(prefs)).toStrictEqual(prefs);
   });
 });
@@ -30,8 +31,9 @@ describe('parseTelemetryPreferences', () => {
 describe('isTelemetryEnabled', () => {
   it('is false only when every channel is off', () => {
     expect(isTelemetryEnabled(TELEMETRY_DEFAULTS)).toBe(false);
-    expect(isTelemetryEnabled({ crashReports: true, performance: false, analytics: false })).toBe(true);
-    expect(isTelemetryEnabled({ crashReports: false, performance: false, analytics: true })).toBe(true);
+    expect(isTelemetryEnabled({ errorReports: true, nativeCrashReports: false, performance: false, analytics: false })).toBe(true);
+    expect(isTelemetryEnabled({ errorReports: false, nativeCrashReports: true, performance: false, analytics: false })).toBe(true);
+    expect(isTelemetryEnabled({ errorReports: false, nativeCrashReports: false, performance: false, analytics: true })).toBe(true);
   });
 });
 

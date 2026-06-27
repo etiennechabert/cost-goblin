@@ -105,6 +105,12 @@ class TelemetryController {
         environment: app.isPackaged ? 'production' : 'development',
         release: `costgoblin@${app.getVersion()}`,
         ...(Object.keys(devTags).length > 0 ? { initialScope: { tags: devTags } } : {}),
+        // Native crash capture (Crashpad minidumps = raw, unscrubbed memory) is a
+        // separate opt-in: keep every default integration only when the native
+        // channel is on; otherwise drop SentryMinidump — the first default, which
+        // arms the native crash handler. Scrubbed JS error capture flows either way.
+        integrations: (defaults) =>
+          this.prefs.nativeCrashReports ? defaults : defaults.filter((i) => i.name !== 'SentryMinidump'),
         // Tracing only when the performance channel is on.
         tracesSampleRate: this.prefs.performance ? 0.1 : 0,
         // Never let the SDK attach IP/user/cookies — our scrub is the backstop,
@@ -115,7 +121,8 @@ class TelemetryController {
       });
       this.active = true;
       logger.info('telemetry: Sentry initialised', {
-        crashReports: this.prefs.crashReports,
+        errorReports: this.prefs.errorReports,
+        nativeCrashReports: this.prefs.nativeCrashReports,
         performance: this.prefs.performance,
       });
     } catch (err: unknown) {
@@ -142,7 +149,7 @@ class TelemetryController {
   private scrubAndRecord<T extends Event>(event: T): T | null {
     const isTransaction = event.type === 'transaction';
     if (isTransaction && !this.prefs.performance) return null;
-    if (!isTransaction && !this.prefs.crashReports) return null;
+    if (!isTransaction && !this.prefs.errorReports) return null;
 
     redactEventInPlace(event);
     if (this.outbox !== null) {

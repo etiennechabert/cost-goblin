@@ -14,7 +14,7 @@ let initialized = false;
  * must never break the UI, so it is swallowed and a retry is allowed next sync.
  */
 export async function syncRendererTelemetry(status: TelemetryStatus): Promise<void> {
-  if (initialized || !status.active || !status.preferences.crashReports) return;
+  if (initialized || !status.active || !status.preferences.errorReports) return;
   initialized = true;
   try {
     const Sentry = await import('@sentry/electron/renderer');

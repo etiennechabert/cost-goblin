@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useCostApi } from '@costgoblin/ui';
 import type { TelemetryOutboxEntry, TelemetryPreferences, TelemetryStatus } from '@costgoblin/core/browser';
 
-type ChannelId = 'crashReports' | 'performance' | 'analytics';
+type ChannelId = 'errorReports' | 'nativeCrashReports' | 'performance' | 'analytics';
 
 interface ChannelMeta {
   readonly id: ChannelId;
@@ -14,10 +14,17 @@ interface ChannelMeta {
 
 const CHANNELS: readonly ChannelMeta[] = [
   {
-    id: 'crashReports',
-    label: 'Crash & error reports',
+    id: 'errorReports',
+    label: 'Error reports',
     description:
-      'Crashes and unhandled errors, reported via Sentry. You’ll see exactly what’s collected — and how it’s protected — before it’s enabled.',
+      'Unhandled JS errors (main + renderer), via Sentry — scrubbed of file paths, account IDs, emails and dollar amounts before they leave your machine.',
+    available: true,
+  },
+  {
+    id: 'nativeCrashReports',
+    label: 'Native crash reports',
+    description:
+      'When the app hard-crashes, a raw snapshot of its memory (a Crashpad minidump). Sent unscrubbed and not itemized in the audit log — a separate opt-in with its own confirmation.',
     available: true,
   },
   {
@@ -112,7 +119,8 @@ export function TelemetryTab(): React.JSX.Element {
     if (prefs === null) return;
     const prev = prefs;
     const next: TelemetryPreferences = {
-      crashReports: channel === 'crashReports' ? value : prefs.crashReports,
+      errorReports: channel === 'errorReports' ? value : prefs.errorReports,
+      nativeCrashReports: channel === 'nativeCrashReports' ? value : prefs.nativeCrashReports,
       performance: channel === 'performance' ? value : prefs.performance,
       analytics: channel === 'analytics' ? value : prefs.analytics,
     };
@@ -134,10 +142,11 @@ export function TelemetryTab(): React.JSX.Element {
 
   function setChannel(channel: ChannelId, value: boolean): void {
     if (prefs === null) return;
-    // Enabling crash reports ships native minidumps (raw process memory) — gate
-    // it behind an explicit consent step rather than applying immediately.
-    if (channel === 'crashReports' && value && !prefs.crashReports) {
-      setConfirming('crashReports');
+    // Enabling NATIVE crash reports ships raw, unscrubbed process memory — gate
+    // it behind an explicit consent step. Error reports (scrubbed JS) don't need
+    // it and apply immediately.
+    if (channel === 'nativeCrashReports' && value && !prefs.nativeCrashReports) {
+      setConfirming('nativeCrashReports');
       return;
     }
     applyChannel(channel, value);
@@ -192,26 +201,27 @@ export function TelemetryTab(): React.JSX.Element {
         </div>
       )}
 
-      {confirming === 'crashReports' && (
+      {confirming === 'nativeCrashReports' && (
         <div className="rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm text-text-secondary">
-          <p className="font-medium text-text-primary">Enable crash &amp; error reporting?</p>
+          <p className="font-medium text-text-primary">Enable native crash reports?</p>
           <p className="mt-1">
-            Unhandled JS errors are scrubbed (file paths, account IDs, emails, dollar amounts) before they’re sent.{' '}
-            <strong className="text-text-primary">Native crash reports are different</strong>: they’re a binary snapshot
-            of the app’s memory at the moment it crashed — which can include cost figures, account IDs or query text —
-            and are sent <strong className="text-text-primary">unscrubbed</strong> so the crash can be diagnosed. They
-            only ever leave your machine if you turn this on.
+            A native crash report is a <strong className="text-text-primary">raw binary snapshot of the app’s memory</strong> at
+            the moment it hard-crashes — which can include cost figures, account IDs or query text — and is sent{' '}
+            <strong className="text-text-primary">unscrubbed</strong>, because a memory dump can’t be redacted. It isn’t
+            itemized in the audit log. This is separate from <em>Error reports</em>, which are scrubbed; only enable this
+            if you’re comfortable sending raw memory to diagnose hard crashes. It only ever leaves your machine if you
+            turn this on.
           </p>
           <div className="mt-3 flex gap-2">
             <button
               type="button"
               onClick={() => {
-                applyChannel('crashReports', true);
+                applyChannel('nativeCrashReports', true);
                 setConfirming(null);
               }}
               className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors hover:opacity-90"
             >
-              Enable crash reporting
+              Enable native crash reports
             </button>
             <button
               type="button"
