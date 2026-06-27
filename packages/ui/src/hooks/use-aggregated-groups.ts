@@ -9,7 +9,7 @@ import type {
   Granularity,
 } from '@costgoblin/core/browser';
 import { filtersKey } from '../widgets/widget.js';
-import { dimToColumnKey } from '../lib/agg-column.js';
+import { dimToColumnKey, toExplorerFilters } from '../lib/agg-column.js';
 
 /** One group's aggregate over the period: post-scope cost, list cost, and usage
  *  quantity — everything the concentration / price-volume widgets need. */
@@ -40,14 +40,6 @@ interface UseAggregatedGroupsResult {
   readonly distinctTotal: number;
   /** Previous-period groups keyed by name, or null when compare is off. */
   readonly prevByName: ReadonlyMap<string, AggGroupRow> | null;
-}
-
-function toExplorerFilters(filters: FilterMap): Record<string, readonly string[]> {
-  const map: Record<string, readonly string[]> = {};
-  for (const [k, v] of Object.entries(filters)) {
-    if (v !== undefined) map[k] = v;
-  }
-  return map;
 }
 
 function normalize(result: AggregatedTableResult, columnKey: string): AggGroupRow[] {

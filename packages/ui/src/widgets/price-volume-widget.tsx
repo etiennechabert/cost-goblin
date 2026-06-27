@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { PriceVolumeChart } from '../components/price-volume-chart.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { GroupByTitle } from '../components/group-by-title.js';
-import { formatDollars } from '../components/format.js';
+import { signedDollars } from '../components/format.js';
 import { asEntityRef, asTagValue } from '@costgoblin/core/browser';
 import type { DimensionId } from '@costgoblin/core/browser';
 import type { WidgetCommonProps } from './widget.js';
@@ -11,11 +11,13 @@ import { useAggregatedGroups } from '../hooks/use-aggregated-groups.js';
 import { decomposePriceVolume } from '../lib/price-volume.js';
 import type { PriceVolumeDecomp } from '../lib/price-volume.js';
 
-const ROW_LIMIT = 200;
-
-function signed(n: number): string {
-  return `${n >= 0 ? '+' : ''}${formatDollars(n)}`;
-}
+// Current and previous periods are fetched as independent top-N-by-cost sets;
+// a group present in one cap but not the other is treated as zero on the
+// missing side, which can fabricate a spurious volume spike. Keep the cap well
+// above the distinct-group count of realistic price-volume dimensions
+// (service, usage_type, tags) so that boundary only ever falls on negligible
+// long-tail groups.
+const ROW_LIMIT = 500;
 
 export function PriceVolumeWidget({ spec, dateRange, previousDateRange, granularity, globalFilters, dimensions, onSetFilter }: WidgetCommonProps) {
   const [groupByOverride, setGroupByOverride] = useState<DimensionId | undefined>(undefined);
@@ -93,7 +95,7 @@ export function PriceVolumeWidget({ spec, dateRange, previousDateRange, granular
     </div>
   );
 
-  const subtitle = `Net ${signed(totals.net)} · Vol ${signed(totals.volume)} / Rate ${signed(totals.rate)}`;
+  const subtitle = `Net ${signedDollars(totals.net)} · Vol ${signedDollars(totals.volume)} / Rate ${signedDollars(totals.rate)}`;
 
   return (
     <PriceVolumeChart

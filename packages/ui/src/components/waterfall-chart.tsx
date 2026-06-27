@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useContainerWidth } from '../lib/use-container-width.js';
-import { formatDollars } from './format.js';
+import { formatDollars, truncate } from './format.js';
 import type { WaterfallModel, WaterfallStep, WaterfallStepKind } from '../lib/waterfall.js';
 
 const PLOT_H = 240;
@@ -21,10 +21,6 @@ function fillFor(kind: WaterfallStepKind): string {
     case 'other':
       return 'var(--color-text-muted)';
   }
-}
-
-function truncate(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
 function stepTooltip(s: WaterfallStep): string {

@@ -103,12 +103,12 @@ describe('buildPareto', () => {
 });
 
 describe('day-series', () => {
-  it('accumulates daily totals by position', () => {
+  it('accumulates daily totals indexed by calendar offset', () => {
     const c = toCumulative([
       { date: '2026-06-01', total: 10 },
       { date: '2026-06-02', total: 15 },
       { date: '2026-06-03', total: 5 },
-    ]);
+    ], '2026-06-01');
     expect(c.map(p => p.cumulative)).toEqual([10, 25, 30]);
     expect(c[1]?.dayIndex).toBe(1);
   });
@@ -117,13 +117,23 @@ describe('day-series', () => {
     const c = toCumulative([
       { date: '2026-06-01', total: 100 },
       { date: '2026-06-02', total: 100 },
-    ]);
+    ], '2026-06-01');
     // 200 over 2 days → 600 over 6 days
     expect(projectPeriodEnd(c, 6)).toBeCloseTo(600, 6);
   });
 
+  it('uses calendar days elapsed, not array length, when interior days are missing', () => {
+    const c = toCumulative([
+      { date: '2026-06-01', total: 100 },
+      { date: '2026-06-05', total: 100 }, // days 2-4 had zero spend and are absent
+    ], '2026-06-01');
+    expect(c.map(p => p.dayIndex)).toEqual([0, 4]);
+    // 200 over 5 elapsed calendar days → 400 over 10, not array-length 2 → 1000
+    expect(projectPeriodEnd(c, 10)).toBeCloseTo(400, 6);
+  });
+
   it('returns the actual total once the period is complete', () => {
-    const c = toCumulative([{ date: '2026-06-01', total: 100 }]);
+    const c = toCumulative([{ date: '2026-06-01', total: 100 }], '2026-06-01');
     expect(projectPeriodEnd(c, 1)).toBe(100);
     expect(projectPeriodEnd([], 30)).toBeNull();
   });

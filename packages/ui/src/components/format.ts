@@ -8,6 +8,16 @@ export function formatDollars(amount: number): string {
   return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+/** Currency with an explicit leading sign, e.g. "+$1.2k". */
+export function signedDollars(amount: number): string {
+  return `${amount >= 0 ? '+' : ''}${formatDollars(amount)}`;
+}
+
+/** Truncate with a trailing ellipsis when longer than `max`. */
+export function truncate(s: string, max: number): string {
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
 export function formatBytes(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let value = Math.max(bytes, 0);

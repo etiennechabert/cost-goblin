@@ -15,28 +15,31 @@ import { daysBetween } from '../lib/dates.js';
 // built-in column purely to obtain the per-day totals cheaply.
 const PACING_GROUP = asDimensionId('account');
 
-export function BurndownWidget({ spec, dateRange, previousDateRange, granularity, globalFilters }: WidgetCommonProps) {
+export function BurndownWidget({ spec, dateRange, previousDateRange, globalFilters }: WidgetCommonProps) {
   const api = useCostApi();
   const budget = spec.type === 'burndown' ? spec.budget : undefined;
   const fk = filtersKey(globalFilters);
 
+  // Pacing is a per-day concept; always query the daily tier so the hourly
+  // toggle (which constrains the range and emits sub-day buckets) can't distort
+  // the cumulative curve.
   const curQuery = useQuery<DailyCostsResult>(
-    () => api.queryDailyCosts({ groupBy: PACING_GROUP, dateRange, filters: globalFilters, granularity, origin: 'widget:burndown' }),
-    [dateRange.start, dateRange.end, dateRange.startHour, dateRange.endHour, fk, granularity, api],
+    () => api.queryDailyCosts({ groupBy: PACING_GROUP, dateRange, filters: globalFilters, granularity: 'daily', origin: 'widget:burndown' }),
+    [dateRange.start, dateRange.end, fk, api],
   );
 
   const prevQuery = useQuery<DailyCostsResult>(
-    () => api.queryDailyCosts({ groupBy: PACING_GROUP, dateRange: previousDateRange, filters: globalFilters, granularity, origin: 'widget:burndown/prev' }),
-    [previousDateRange.start, previousDateRange.end, previousDateRange.startHour, previousDateRange.endHour, fk, granularity, api],
+    () => api.queryDailyCosts({ groupBy: PACING_GROUP, dateRange: previousDateRange, filters: globalFilters, granularity: 'daily', origin: 'widget:burndown/prev' }),
+    [previousDateRange.start, previousDateRange.end, fk, api],
   );
 
   const current = useMemo(
-    () => (curQuery.status === 'success' ? toCumulative(curQuery.data.days.map(d => ({ date: d.date, total: d.total }))) : []),
-    [curQuery],
+    () => (curQuery.status === 'success' ? toCumulative(curQuery.data.days.map(d => ({ date: d.date, total: d.total })), dateRange.start) : []),
+    [curQuery, dateRange.start],
   );
   const previous = useMemo(
-    () => (prevQuery.status === 'success' ? toCumulative(prevQuery.data.days.map(d => ({ date: d.date, total: d.total }))) : null),
-    [prevQuery],
+    () => (prevQuery.status === 'success' ? toCumulative(prevQuery.data.days.map(d => ({ date: d.date, total: d.total })), previousDateRange.start) : null),
+    [prevQuery, previousDateRange.start],
   );
 
   const totalDays = daysBetween(dateRange.start, dateRange.end);
