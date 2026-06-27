@@ -381,6 +381,11 @@ process.on('message', (msg: unknown) => {
   }
 });
 
+// As a forked child we outlive the parent unless told otherwise: when the IPC
+// channel disconnects (parent quit, crashed, or was force-killed), exit so we
+// never linger as an orphaned DuckDB process holding temp/spill files.
+process.on('disconnect', () => { process.exit(0); });
+
 // ---------------------------------------------------------------------------
 // Graceful error handling — prevent worker crashes from taking down Electron
 // ---------------------------------------------------------------------------

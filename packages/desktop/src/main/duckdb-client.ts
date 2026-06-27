@@ -98,7 +98,11 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
       lifecycle.post({ kind: 'cancel-pending' });
     },
     configure(settings: { tempDir?: string; memoryGB?: number; threads?: number }): void {
-      const msg = { kind: 'configure', ...settings };
+      // Merge, don't overwrite: a later partial configure (e.g. the perf:set
+      // handler sends only memoryGB/threads) must not drop the tempDir set at
+      // startup, or a post-crash restart would replay a config without it and
+      // spill to the OS temp dir instead of the userData one.
+      const msg = { ...(lifecycle.lastConfig ?? {}), kind: 'configure', ...settings };
       lifecycle.lastConfig = msg;
       lifecycle.post(msg);
     },
