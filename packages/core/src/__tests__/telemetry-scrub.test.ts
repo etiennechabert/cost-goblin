@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { redactSensitiveString, isSensitiveKey, redactValueDeep } from '../telemetry/scrub.js';
+import { redactSensitiveString, isSensitiveKey, redactValueDeep, redactNumeric } from '../telemetry/scrub.js';
 
 describe('redactSensitiveString', () => {
   it('redacts email addresses', () => {
@@ -86,11 +86,19 @@ describe('redactValueDeep', () => {
     });
   });
 
-  it('preserves primitives and null/undefined', () => {
+  it('preserves benign primitives and null/undefined', () => {
     expect(redactValueDeep(42)).toBe(42);
     expect(redactValueDeep(true)).toBe(true);
     expect(redactValueDeep(null)).toBe(null);
     expect(redactValueDeep(undefined)).toBe(undefined);
+  });
+
+  it('redacts a 12-digit account ID that arrives as a number', () => {
+    expect(redactValueDeep(123456789012)).toBe('[redacted-account]');
+    expect(redactValueDeep({ accountNum: 123456789012, count: 7 })).toStrictEqual({
+      accountNum: '[redacted-account]',
+      count: 7,
+    });
   });
 
   it('fails closed past the depth limit', () => {
@@ -106,5 +114,23 @@ describe('redactValueDeep', () => {
 
   it('replaces exotic types (functions) rather than forwarding them', () => {
     expect(redactValueDeep({ fn: () => 1, ok: 'x' })).toStrictEqual({ fn: '[redacted]', ok: 'x' });
+  });
+});
+
+describe('redactNumeric', () => {
+  it('redacts account-ID-shaped numbers and keeps benign ones', () => {
+    expect(redactNumeric(123456789012)).toBe('[redacted-account]');
+    expect(redactNumeric(200)).toBe(200);
+    expect(redactNumeric(0)).toBe(0);
+    expect(redactNumeric(3.14)).toBe(3.14);
+  });
+
+  it('only redacts a clean 12-digit non-negative integer (no partial/float mangling)', () => {
+    // A 12-digit integer part with a fraction must NOT be partially redacted.
+    expect(redactNumeric(123456789012.5)).toBe(123456789012.5);
+    // Negatives and other lengths are left alone.
+    expect(redactNumeric(-123456789012)).toBe(-123456789012);
+    expect(redactNumeric(12345678901)).toBe(12345678901); // 11 digits
+    expect(redactNumeric(1234567890123)).toBe(1234567890123); // 13 digits
   });
 });

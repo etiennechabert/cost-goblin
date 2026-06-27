@@ -1,5 +1,5 @@
 import type { Event } from '@sentry/electron/main';
-import { isStringRecord, isSensitiveKey, redactSensitiveString, redactValueDeep } from '@costgoblin/core';
+import { isStringRecord, isSensitiveKey, redactNumeric, redactSensitiveString, redactValueDeep } from '@costgoblin/core';
 
 /**
  * Sentry `beforeSend` PII scrub, applied in place to the real Sentry `Event`.
@@ -62,11 +62,11 @@ export function redactEventInPlace(event: Event): void {
     for (const [key, value] of Object.entries(span.data)) {
       if (isSensitiveKey(key)) span.data[key] = '[redacted]';
       else if (typeof value === 'string') span.data[key] = redactSensitiveString(value);
+      else if (typeof value === 'number') span.data[key] = redactNumeric(value);
       else if (typeof value === 'object') {
         // Arrays and objects can hide PII (e.g. an account ID in ['123456789012'])
         // and don't fit the string scrub or the homogeneous SpanAttributeValue
-        // array types, so fail closed and drop them. Plain numbers/booleans carry
-        // no PII and pass through.
+        // array types, so fail closed and drop them. Booleans carry no PII.
         span.data[key] = '[redacted]';
       }
     }
@@ -77,7 +77,10 @@ export function redactEventInPlace(event: Event): void {
     if (typeof crumb.message === 'string') crumb.message = redactSensitiveString(crumb.message);
     if (crumb.data !== undefined) {
       const scrubbed = redactValueDeep(crumb.data);
-      if (isStringRecord(scrubbed)) crumb.data = { ...scrubbed };
+      // redactValueDeep returns a redacted record for a record. For any off-type
+      // runtime value (e.g. a top-level array) fail closed to {} rather than
+      // leave the ORIGINAL unredacted value in place.
+      crumb.data = isStringRecord(scrubbed) ? { ...scrubbed } : {};
     }
   }
 
@@ -86,6 +89,7 @@ export function redactEventInPlace(event: Event): void {
     for (const [key, value] of Object.entries(event.tags)) {
       if (isSensitiveKey(key)) event.tags[key] = '[redacted]';
       else if (typeof value === 'string') event.tags[key] = redactSensitiveString(value);
+      else if (typeof value === 'number') event.tags[key] = redactNumeric(value);
     }
   }
 

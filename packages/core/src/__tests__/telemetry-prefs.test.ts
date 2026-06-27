@@ -70,6 +70,20 @@ describe('summarizeEventForOutbox', () => {
     expect(entry.title).toBe('sync started');
   });
 
+  it('labels a native crash event distinctly', () => {
+    expect(summarizeEventForOutbox({ platform: 'native', level: 'fatal' }, at)).toMatchObject({
+      kind: 'crash',
+      title: 'Native crash report (raw minidump sent)',
+    });
+    // A native event that also carries a crash signal keeps it in the label.
+    expect(
+      summarizeEventForOutbox(
+        { platform: 'native', exception: { values: [{ type: 'EXC_BAD_ACCESS', value: 'SIGSEGV' }] } },
+        at,
+      ).title,
+    ).toBe('Native crash — EXC_BAD_ACCESS: SIGSEGV');
+  });
+
   it('re-redacts the title defensively', () => {
     const entry = summarizeEventForOutbox(
       { exception: { values: [{ type: 'Error', value: 'failed for 123456789012' }] } },

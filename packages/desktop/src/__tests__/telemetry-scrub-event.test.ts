@@ -43,6 +43,7 @@ function sampleEvent(): Event {
           token: 'abc',
           'http.request.header.x-account': ['123456789012'],
           'http.status_code': 200,
+          'aws.account': 123456789012,
         },
         description: 'query /Users/jane/cur.parquet',
         span_id: 's1',
@@ -51,7 +52,7 @@ function sampleEvent(): Event {
       },
     ],
     breadcrumbs: [{ message: 'charged $5.00', data: { token: 'sekret', path: '/Users/jane/x' } }],
-    tags: { account_id: '123456789012', region: 'path /Users/jane' },
+    tags: { account_id: '123456789012', region: 'path /Users/jane', shard: 123456789012, 'worker.pid': 4321 },
     contexts: {
       os: { name: 'macOS' },
       device: { name: 'janes-host' },
@@ -114,6 +115,8 @@ describe('redactEventInPlace', () => {
     // pass through untouched.
     expect(span?.data['http.request.header.x-account']).toBe('[redacted]');
     expect(span?.data['http.status_code']).toBe(200);
+    // A 12-digit account ID stored as a number is redacted; a benign number stays.
+    expect(span?.data['aws.account']).toBe('[redacted-account]');
   });
 
   it('scrubs breadcrumb message and deep-redacts breadcrumb data', () => {
@@ -130,6 +133,10 @@ describe('redactEventInPlace', () => {
     redactEventInPlace(ev);
     expect(ev.tags?.['account_id']).toBe('[redacted]');
     expect(ev.tags?.['region']).toBe('path /Users/[user]');
+    // A numeric tag can still be a 12-digit account ID — redact it; a benign
+    // numeric (a PID) keeps its value and type.
+    expect(ev.tags?.['shard']).toBe('[redacted-account]');
+    expect(ev.tags?.['worker.pid']).toBe(4321);
   });
 
   it('allowlists contexts and deep-redacts the kept trace context', () => {

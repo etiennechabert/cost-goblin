@@ -42,13 +42,20 @@ export function summarizeEventForOutbox(event: unknown, occurredAt: string): Tel
   let title = '(event)';
 
   const exceptionLabel = firstExceptionLabel(event);
-  if (exceptionLabel !== null) {
-    kind = 'error';
-    title = exceptionLabel;
-  } else if (event['type'] === 'transaction') {
+  if (event['type'] === 'transaction') {
+    // Checked first so a (hypothetical) transaction that also carries
+    // platform:'native' is still labeled by the channel that authorized it.
     kind = 'transaction';
     const tx = event['transaction'];
     title = typeof tx === 'string' && tx.length > 0 ? tx : 'Transaction';
+  } else if (event['platform'] === 'native') {
+    // Native crash (Crashpad minidump): the raw dump itself can't be itemized,
+    // but we log THAT one was sent so the audit trail is complete.
+    kind = 'crash';
+    title = exceptionLabel !== null ? `Native crash — ${exceptionLabel}` : 'Native crash report (raw minidump sent)';
+  } else if (exceptionLabel !== null) {
+    kind = 'error';
+    title = exceptionLabel;
   } else {
     const msg = messageLabel(event);
     if (msg !== null) title = msg;

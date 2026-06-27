@@ -10,8 +10,10 @@ let initialized = false;
  * anything on its own; turning the channel back off makes the main process drop
  * whatever the renderer forwards.
  *
- * Idempotent (one init per session) and fail-safe: a bundling or SDK failure
- * must never break the UI, so it is swallowed and a retry is allowed next sync.
+ * Idempotent (one init per session) and fail-safe: a bundling/SDK failure is
+ * swallowed so it can never break the UI. The sole caller runs once on mount, so
+ * a transient failure leaves renderer capture off until the next launch — the
+ * `initialized = false` reset only helps if a future caller retries.
  */
 export async function syncRendererTelemetry(status: TelemetryStatus): Promise<void> {
   if (initialized || !status.active || !status.preferences.errorReports) return;

@@ -184,6 +184,11 @@ class TelemetryController {
 
     redactEventInPlace(event);
     if (this.outbox !== null) {
+      // Best-effort audit mirror: the write is async and the event is returned to
+      // the transport regardless. Native crashes are replayed on the NEXT launch
+      // (process alive), so they always record; only an immediate fatal JS crash
+      // could exit before this flushes — an acceptable gap for the scrubbed
+      // channel, and not worth blocking beforeSend on synchronous disk I/O.
       void this.outbox.record(summarizeEventForOutbox(event, new Date().toISOString()));
     }
     return event;

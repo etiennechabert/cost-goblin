@@ -23,7 +23,7 @@ function parseEntry(line: string): TelemetryOutboxEntry | null {
     title,
     eventId: typeof rec['eventId'] === 'string' ? rec['eventId'] : null,
     level: typeof rec['level'] === 'string' ? rec['level'] : null,
-    kind: kind === 'error' || kind === 'transaction' || kind === 'session' ? kind : 'other',
+    kind: kind === 'error' || kind === 'transaction' || kind === 'session' || kind === 'crash' ? kind : 'other',
   };
 }
 

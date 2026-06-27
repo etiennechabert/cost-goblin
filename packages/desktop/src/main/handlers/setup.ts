@@ -2,6 +2,16 @@ import { ipcMain, shell } from 'electron';
 import { logger, parseS3Path, isStringRecord, parseJsonObject } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 
+/** One-shot CLI flag the setup wizard's relaunch adds (see update.ts) so the
+ *  next launch knows to resume on the data-sync screen rather than the dashboard.
+ *  It lives only for that process; a normal restart never carries it. */
+export const POST_SETUP_FLAG = '--post-setup';
+
+// Consumed on the FIRST setup:status of the process so an in-process renderer
+// reload (e.g. config import calls location.reload) can't re-fire the redirect —
+// the CLI flag stays in argv for the whole session, so argv alone isn't one-shot.
+let postSetupConsumed = false;
+
 const REQUIRED_CUR_COLUMNS = [
   'line_item_usage_start_date', 'line_item_usage_account_id',
   'line_item_unblended_cost', 'product_servicecode',
@@ -32,13 +42,15 @@ function parseManifestColumnNames(body: string): string[] {
 export function registerSetupHandlers(app: AppContext): void {
   const { ctx, invalidateConfig, invalidateDimensions } = app;
 
-  ipcMain.handle('setup:status', async (): Promise<{ configured: boolean }> => {
+  ipcMain.handle('setup:status', async (): Promise<{ configured: boolean; postSetup: boolean }> => {
     const fs = await import('node:fs/promises');
+    const postSetup = !postSetupConsumed && process.argv.includes(POST_SETUP_FLAG);
+    if (postSetup) postSetupConsumed = true;
     try {
       await fs.access(ctx.configPath);
-      return { configured: true };
+      return { configured: true, postSetup };
     } catch {
-      return { configured: false };
+      return { configured: false, postSetup };
     }
   });
 

@@ -65,7 +65,7 @@ export interface TelemetryStatus {
   readonly armed: TelemetryPreferences;
 }
 
-export type TelemetryEventKind = 'error' | 'transaction' | 'session' | 'other';
+export type TelemetryEventKind = 'error' | 'transaction' | 'session' | 'crash' | 'other';
 
 /**
  * A single line of the local telemetry audit log ("outbox"). One entry is

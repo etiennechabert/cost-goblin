@@ -43,6 +43,18 @@ export function redactSensitiveString(input: string): string {
     .replaceAll(WIN_HOME_RE, '$1[user]');
 }
 
+/** A numeric value can still be PII — most importantly a 12-digit AWS account
+ *  ID, which fits in a JS number and can arrive unquoted from numeric tag/
+ *  attribute APIs. Only a clean, non-negative 12-digit INTEGER has that exact
+ *  shape, so we redact that and leave every other number untouched. This avoids
+ *  mangling benign metrics (durations, byte counts, status codes) and avoids the
+ *  partial-match a substring scrub would produce on a float like 123456789012.5.
+ *  A benign integer that happens to be exactly 12 digits is redacted too — an
+ *  acceptable fail-closed cost for a privacy scrub. */
+export function redactNumeric(value: number): string | number {
+  return Number.isInteger(value) && value >= 0 && String(value).length === 12 ? '[redacted-account]' : value;
+}
+
 // Object keys whose VALUE must be dropped wholesale regardless of content —
 // secrets, credentials, and direct identifiers we never want to transmit.
 const SENSITIVE_KEY_RE =
@@ -66,7 +78,8 @@ export function redactValueDeep(value: unknown, depth = 0): unknown {
   if (depth > MAX_DEPTH) return REDACTED;
   if (typeof value === 'string') return redactSensitiveString(value);
   if (value === null || value === undefined) return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return redactNumeric(value);
+  if (typeof value === 'boolean') return value;
   if (Array.isArray(value)) return value.map((v) => redactValueDeep(v, depth + 1));
   if (isStringRecord(value)) {
     const out: Record<string, unknown> = {};

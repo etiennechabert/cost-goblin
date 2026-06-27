@@ -153,7 +153,10 @@ export interface CostApi {
   openDataFolder(): Promise<void>;
   ssoLogin(profile: string): Promise<void>;
   getAccountMapping(): Promise<AccountMappingStatus>;
-  getSetupStatus(): Promise<{ configured: boolean }>;
+  /** `postSetup` is true only on the launch immediately following the setup
+   *  wizard (carried across the wizard's relaunch), so the UI can land the user
+   *  on the data-sync screen instead of an empty dashboard. */
+  getSetupStatus(): Promise<{ configured: boolean; postSetup: boolean }>;
   testConnection(params: { profile: string; bucket: string }): Promise<{ ok: boolean; error?: string | undefined }>;
   listAwsProfiles(): Promise<string[]>;
   listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }>;
@@ -393,8 +396,10 @@ export interface UpdateApi {
   downloadUpdate(): Promise<void>;
   quitAndInstall(): void;
   /** Relaunch the app (not an update) — used to apply a telemetry consent
-   *  change, which can only take effect at startup. */
-  relaunch(): void;
+   *  change, which can only take effect at startup. Pass `postSetup` when
+   *  relaunching at the end of the setup wizard so the next launch can resume on
+   *  the data-sync screen. */
+  relaunch(postSetup?: boolean): void;
   onStatusChanged(callback: (status: UpdateStatus) => void): () => void;
   getAppVersion(): Promise<string>;
 }

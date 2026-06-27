@@ -171,8 +171,8 @@ const api: CostApi = {
   getAccountMapping(): Promise<AccountMappingStatus> {
     return invoke<AccountMappingStatus>('data:account-mapping');
   },
-  getSetupStatus(): Promise<{ configured: boolean }> {
-    return invoke<{ configured: boolean }>('setup:status');
+  getSetupStatus(): Promise<{ configured: boolean; postSetup: boolean }> {
+    return invoke<{ configured: boolean; postSetup: boolean }>('setup:status');
   },
   testConnection(params: { profile: string; bucket: string }): Promise<{ ok: boolean; error?: string | undefined }> {
     return invoke<{ ok: boolean; error?: string | undefined }>('setup:test-connection', params);
@@ -424,8 +424,8 @@ contextBridge.exposeInMainWorld('costgoblinUpdate', {
   quitAndInstall(): void {
     ipcRenderer.invoke('update:quit-and-install').catch(() => undefined);
   },
-  relaunch(): void {
-    ipcRenderer.invoke('app:relaunch').catch(() => undefined);
+  relaunch(postSetup?: boolean): void {
+    ipcRenderer.invoke('app:relaunch', postSetup === true).catch(() => undefined);
   },
   onStatusChanged(callback: (status: unknown) => void): () => void {
     const handler = (_event: unknown, status: unknown): void => { callback(status); };

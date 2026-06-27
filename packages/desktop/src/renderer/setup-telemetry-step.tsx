@@ -80,13 +80,18 @@ export function SetupTelemetryStep({ onDone }: Readonly<{ onDone: () => void }>)
     };
   }, [api]);
 
-  function finish(): void {
+  async function finish(): Promise<void> {
     setBusy(true);
-    const prev = saved.current;
+    // If the baseline never loaded (the initial read failed and only the catch
+    // ran), the on-screen toggles show the all-off default, NOT the user's real
+    // state — so we can't trust them either. Re-read and preserve every channel
+    // in that case; only when a real baseline loaded do the two visible toggles
+    // drive errorReports/performance. Native/analytics are never shown here.
+    const loadedBaseline = saved.current;
+    const prev = loadedBaseline ?? (await api.getTelemetryPreferences().catch(() => null));
     const next: TelemetryPreferences = {
-      errorReports,
-      performance,
-      // Never touched here — native crash reports keep their own deliberate opt-in.
+      errorReports: loadedBaseline !== null ? errorReports : (prev?.errorReports ?? false),
+      performance: loadedBaseline !== null ? performance : (prev?.performance ?? false),
       nativeCrashReports: prev?.nativeCrashReports ?? false,
       analytics: prev?.analytics ?? false,
     };
@@ -133,7 +138,7 @@ export function SetupTelemetryStep({ onDone }: Readonly<{ onDone: () => void }>)
           <button
             type="button"
             disabled={busy || !loaded}
-            onClick={finish}
+            onClick={() => { void finish(); }}
             className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
           >
             Finish

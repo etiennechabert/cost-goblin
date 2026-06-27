@@ -586,7 +586,7 @@ function AppShell(): React.JSX.Element {
   useEffect(() => {
     async function initialize(): Promise<void> {
       setSplashStep('Checking configuration...');
-      const { configured } = await api.getSetupStatus();
+      const { configured, postSetup } = await api.getSetupStatus();
 
       if (!configured) {
         setSetupCheck({ status: 'needs-setup' });
@@ -595,6 +595,10 @@ function AppShell(): React.JSX.Element {
 
       setSplashStep('Preparing cost data...');
       await api.awaitMaterializedBase(BASE_READY_TIMEOUT_MS);
+      // First launch right after the wizard (the relaunch carried a one-shot
+      // flag): land on data-sync so a freshly-configured user is guided to sync,
+      // rather than dropping them on an empty default dashboard.
+      if (postSetup) setSettingsTab('data-sync');
       // Reveal the app as soon as the in-memory base is ready. The dimension
       // filter-value prewarm previously blocked the splash here for ~13s (~8
       // concurrent probes). Run it in the background instead: with cost_base
@@ -794,7 +798,8 @@ function AppShell(): React.JSX.Element {
   // in-flight rollup rebuild and looks like a freeze). After relaunch, the normal
   // startup flow re-checks setup and materialises data.
   function handleSetupComplete() {
-    globalThis.costgoblinUpdate.relaunch();
+    // postSetup=true → the next launch resumes on the data-sync screen.
+    globalThis.costgoblinUpdate.relaunch(true);
   }
 
   // Re-run the first-run wizard on demand (Settings → General). The wizard

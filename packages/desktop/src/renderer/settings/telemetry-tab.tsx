@@ -24,7 +24,7 @@ const CHANNELS: readonly ChannelMeta[] = [
     id: 'nativeCrashReports',
     label: 'Native crash reports',
     description:
-      'When the app hard-crashes, a raw snapshot of its memory (a Crashpad minidump). Sent unscrubbed and not itemized in the audit log — a separate opt-in with its own confirmation.',
+      'When the app hard-crashes, a raw snapshot of its memory (a Crashpad minidump). Sent unscrubbed; the audit log records that a dump was sent but not its raw contents — a separate opt-in with its own confirmation.',
     available: true,
   },
   {
@@ -78,6 +78,8 @@ function kindLabel(kind: TelemetryOutboxEntry['kind']): string {
       return 'Trace';
     case 'session':
       return 'Session';
+    case 'crash':
+      return 'Crash';
     case 'other':
       return 'Event';
   }
@@ -99,6 +101,9 @@ export function TelemetryTab(): React.JSX.Element {
   // A telemetry change only takes effect at startup (native crash capture can
   // only arm before Electron is ready), so a toggle prompts a restart.
   const [restartPending, setRestartPending] = useState(false);
+  // One save in flight at a time — concurrent toggles would each capture `prefs`
+  // as their revert baseline and a rejected one could clobber a newer toggle.
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,7 +121,7 @@ export function TelemetryTab(): React.JSX.Element {
   }, [api]);
 
   function applyChannel(channel: ChannelId, value: boolean): void {
-    if (prefs === null) return;
+    if (prefs === null || saving) return;
     const prev = prefs;
     const next: TelemetryPreferences = {
       errorReports: channel === 'errorReports' ? value : prefs.errorReports,
@@ -124,17 +129,29 @@ export function TelemetryTab(): React.JSX.Element {
       performance: channel === 'performance' ? value : prefs.performance,
       analytics: channel === 'analytics' ? value : prefs.analytics,
     };
+    // A restart is only needed to ARM a channel that can't start mid-session:
+    // bringing the SDK up from fully dark, or enabling native/performance (whose
+    // capture is fixed at boot). Enabling errorReports while the SDK is already
+    // active applies live, and every disable applies live — none need a restart.
+    const needsRestart = value && (status?.active !== true || channel === 'nativeCrashReports' || channel === 'performance');
     setPrefs(next);
+    setSaving(true);
     api.setTelemetryPreferences(next).then(
       () => {
-        // Persisted. The new state only takes effect once the app restarts. A
-        // failed status refresh must NOT revert — the pref is already on disk.
-        setRestartPending(true);
-        api.getTelemetryStatus().then(setStatus, () => undefined);
+        // Persisted. A failed status refresh must NOT revert — it's already on disk.
+        if (needsRestart) setRestartPending(true);
+        // Keep the toggles locked until status is refreshed, so the NEXT toggle's
+        // needsRestart reads a fresh `active` (disabling the last channel shuts the
+        // SDK down) rather than the stale pre-save value.
+        api.getTelemetryStatus().then(
+          (s) => { setStatus(s); setSaving(false); },
+          () => { setSaving(false); },
+        );
       },
       () => {
         // Persisting itself failed — revert so a privacy switch never shows a
         // state the backend didn't accept.
+        setSaving(false);
         setPrefs(prev);
       },
     );
@@ -207,8 +224,9 @@ export function TelemetryTab(): React.JSX.Element {
           <p className="mt-1">
             A native crash report is a <strong className="text-text-primary">raw binary snapshot of the app’s memory</strong> at
             the moment it hard-crashes — which can include cost figures, account IDs or query text — and is sent{' '}
-            <strong className="text-text-primary">unscrubbed</strong>, because a memory dump can’t be redacted. It isn’t
-            itemized in the audit log. This is separate from <em>Error reports</em>, which are scrubbed; only enable this
+            <strong className="text-text-primary">unscrubbed</strong>, because a memory dump can’t be redacted. The audit
+            log records that a dump was sent, but its raw contents can’t be shown. This is separate from{' '}
+            <em>Error reports</em>, which are scrubbed; only enable this
             if you’re comfortable sending raw memory to diagnose hard crashes. It only ever leaves your machine if you
             turn this on.
           </p>
@@ -221,11 +239,12 @@ export function TelemetryTab(): React.JSX.Element {
           <div className="mt-3 flex gap-2">
             <button
               type="button"
+              disabled={saving}
               onClick={() => {
                 applyChannel('nativeCrashReports', true);
                 setConfirming(null);
               }}
-              className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors hover:opacity-90"
+              className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
             >
               Enable native crash reports
             </button>
@@ -262,7 +281,7 @@ export function TelemetryTab(): React.JSX.Element {
             </div>
             <Switch
               on={prefs[channel.id]}
-              disabled={!channel.available}
+              disabled={!channel.available || saving}
               ariaLabel={`Toggle ${channel.label}`}
               onToggle={() => { setChannel(channel.id, !prefs[channel.id]); }}
             />
@@ -276,7 +295,7 @@ export function TelemetryTab(): React.JSX.Element {
             <h3 className="text-sm font-medium text-text-primary">Audit log</h3>
             <p className="mt-0.5 text-xs text-text-muted">
               Every scrubbed error and performance payload handed to the reporter is recorded here so you can see what
-              was sent. Native crash dumps are binary memory snapshots and aren’t itemized.
+              was sent. Native crash dumps appear here too when sent, but their raw binary contents can’t be shown.
             </p>
           </div>
           <button

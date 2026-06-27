@@ -58,4 +58,21 @@ describe('TelemetryOutbox concurrency', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('preserves the crash kind across a reload (parseEntry round-trip)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cg-outbox-'));
+    try {
+      const crash: TelemetryOutboxEntry = {
+        timestamp: '2026-01-01T00:00:00.000Z', eventId: 'c1', level: 'fatal', kind: 'crash',
+        title: 'Native crash report (raw minidump sent)',
+      };
+      await new TelemetryOutbox(dir).record(crash);
+      // A fresh instance reloads from disk through parseEntry — the kind must
+      // survive rather than downgrade to 'other'.
+      const reloaded = await new TelemetryOutbox(dir).list();
+      expect(reloaded.find((e) => e.eventId === 'c1')?.kind).toBe('crash');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
