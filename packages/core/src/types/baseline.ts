@@ -1,0 +1,230 @@
+import type { DateString, DimensionId, Dollars, EntityRef } from './branded.js';
+import type { CostMetric, CostPerspective, ExclusionRule, MarketplaceAttributionConfig } from './cost-scope.js';
+import type { FilterMap } from './query.js';
+
+/** What a baseline measures. A scope is either a selection over CostGoblin's
+ *  stable built-in dimensions, or a reference to a saved View. User-tag
+ *  dimensions are deliberately disallowed (enforced by the validator): tag
+ *  values churn and are alias-normalized at query time, so a tag-scoped
+ *  baseline would report false drift every time tags change. */
+export type BaselineScope =
+  | { readonly kind: 'filter'; readonly filters: FilterMap }
+  | { readonly kind: 'view'; readonly viewId: string };
+
+/** The slice of the active Cost Scope captured when a baseline is created, so
+ *  recompute re-queries like-for-like even if the global Cost Scope later
+ *  flips Amortized↔Unblended. Mirrors the build-affecting fields of
+ *  {@link CostScopeConfig}. */
+export interface BaselineCostBasis {
+  readonly costMetric: CostMetric;
+  readonly costPerspective: CostPerspective;
+  readonly rules: readonly ExclusionRule[];
+  readonly marketplaceAttribution?: MarketplaceAttributionConfig | undefined;
+  readonly lagDays?: number | undefined;
+}
+
+/** Automated band + distribution stats over the historical daily series, all
+ *  in $/day. The lower band deliberately excludes zero-cost days (weekends /
+ *  data gaps) so the optimization floor stays achievable; every other figure
+ *  uses all days. */
+export interface BaselineBands {
+  readonly lower: Dollars;
+  readonly upper: Dollars;
+  readonly median: Dollars;
+  readonly mean: Dollars;
+  readonly std: Dollars;
+  readonly min: Dollars;
+  readonly max: Dollars;
+}
+
+export type ManualBandMode = 'absolute' | 'percentile';
+
+/** User override of either band edge. `absolute` values are $/day; `percentile`
+ *  values are 0..100 and resolve against the stored series at compute time.
+ *  Partial overrides are allowed — an unset edge falls back to the automated
+ *  band for that side. */
+export interface ManualBand {
+  readonly mode: ManualBandMode;
+  readonly lower?: number | undefined;
+  readonly upper?: number | undefined;
+}
+
+export interface BaselineStats {
+  /** ISO timestamp of the last recompute. */
+  readonly calculatedAt: string;
+  /** Count of daily points the bands were computed over. */
+  readonly dataPoints: number;
+  readonly bands: BaselineBands;
+}
+
+/** Rolling average of daily cost over a short trailing window. */
+export interface BaselineCurrent {
+  readonly avgDaily: Dollars;
+  readonly windowStart: DateString;
+  readonly windowEnd: DateString;
+  readonly days: number;
+}
+
+export interface BaselineSavings {
+  readonly potentialDaily: Dollars;
+  readonly realizedDaily: Dollars;
+  readonly potentialMonthly: Dollars;
+  readonly realizedMonthly: Dollars;
+}
+
+/** Drift status derived from current vs the effective (manual-else-automated)
+ *  band. `insufficient-data` when there are too few daily points or current is
+ *  under a sub-cent floor. */
+export type BaselineStatus = 'over' | 'under' | 'in-band' | 'insufficient-data';
+
+export const BASELINE_STATUSES: readonly BaselineStatus[] = ['over', 'under', 'in-band', 'insufficient-data'] as const;
+
+export type BaselineSource = 'discovered' | 'manual';
+
+export interface BaselineDailyPoint {
+  readonly date: DateString;
+  readonly cost: Dollars;
+}
+
+export interface BaselineNote {
+  /** ISO timestamp. */
+  readonly at: string;
+  readonly text: string;
+  readonly statusChange?: { readonly from: BaselineStatus; readonly to: BaselineStatus } | undefined;
+  readonly ticket?: string | undefined;
+}
+
+export interface BaselineTriage {
+  readonly notes: readonly BaselineNote[];
+}
+
+/** The persisted, user-authored definition of a baseline — the part that
+ *  travels with config sharing (minus volatile stats/history). */
+export interface BaselineSpec {
+  readonly id: string;
+  readonly name?: string | undefined;
+  readonly source: BaselineSource;
+  readonly scope: BaselineScope;
+  readonly basis: BaselineCostBasis;
+  /** ISO timestamp the basis snapshot was taken. */
+  readonly basisSnapshotAt: string;
+  readonly manualBand?: ManualBand | undefined;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/** A baseline as surfaced to the UI/list: the spec plus the latest computed
+ *  stats, current, savings, status, and denormalized scalars for cheap
+ *  sort/sum without parsing nested JSON in the hot path. */
+export interface BaselineRecord {
+  readonly spec: BaselineSpec;
+  readonly stats: BaselineStats | null;
+  readonly current: BaselineCurrent | null;
+  readonly savings: BaselineSavings;
+  readonly status: BaselineStatus;
+  /** The effective band edges (manual-else-automated), in $/day. */
+  readonly effectiveLower: Dollars;
+  readonly effectiveUpper: Dollars;
+  readonly currentDaily: Dollars;
+  readonly potentialDaily: Dollars;
+  readonly realizedDaily: Dollars;
+  /** Lowest current daily ever seen since the baseline was confirmed; backs the
+   *  trailing-stop reopen guard. `null` until first computed. */
+  readonly bestAchieved: Dollars | null;
+  /** Owning org-tree node path for account-scoped baselines, for owner grouping. */
+  readonly ownerPath?: readonly EntityRef[] | undefined;
+  /** Human-readable scope label (dimension values joined, or the View name). */
+  readonly scopeLabel: string;
+  readonly triage: BaselineTriage;
+}
+
+/** A point-in-time row written per recompute, for trend analysis. */
+export interface BaselineSnapshot {
+  readonly date: DateString;
+  readonly lower: Dollars;
+  readonly upper: Dollars;
+  readonly current: Dollars;
+  readonly potential: Dollars;
+  readonly realized: Dollars;
+  readonly status: BaselineStatus;
+}
+
+/** Full detail payload for one baseline: the record plus its stored history and
+ *  snapshots. The detail chart renders entirely from `dailyHistory` — no live
+ *  query. */
+export interface BaselineDetail {
+  readonly record: BaselineRecord;
+  readonly dailyHistory: readonly BaselineDailyPoint[];
+  readonly snapshots: readonly BaselineSnapshot[];
+}
+
+/** One contributing child dimension in the "what changed" drift breakdown. */
+export interface BaselineDriftRow {
+  readonly child: string;
+  readonly bandWindowCost: Dollars;
+  readonly currentCost: Dollars;
+  readonly delta: Dollars;
+}
+
+export interface BaselinesDiscoveryConfig {
+  readonly lookbackDays: number;
+  readonly windowDays: number;
+  readonly lowerPct: number;
+  readonly upperPct: number;
+  readonly minMonthlyCost: Dollars;
+  readonly minSavings: Dollars;
+  readonly reopenPct: number;
+  /** Built-in dimension ids discovery enumerates. Empty = auto: all enabled
+   *  built-ins minus high-cardinality ones. */
+  readonly grainDimensions: readonly DimensionId[];
+}
+
+export interface BaselinesConfigState {
+  readonly config: BaselinesDiscoveryConfig;
+  readonly isCustom: boolean;
+}
+
+export type BaselineSortKey = 'potential' | 'realized' | 'current' | 'scope';
+
+export interface BaselinesListParams {
+  readonly status?: BaselineStatus | 'actionable' | undefined;
+  readonly owner?: string | undefined;
+  readonly dimension?: DimensionId | undefined;
+  readonly sortBy?: BaselineSortKey | undefined;
+  readonly sortDir?: 'asc' | 'desc' | undefined;
+  readonly offset?: number | undefined;
+  readonly limit?: number | undefined;
+}
+
+export interface BaselinesListResult {
+  readonly items: readonly BaselineRecord[];
+  /** Summed over the filtered partition (discovered baselines only). */
+  readonly totalPotentialMonthly: Dollars;
+  readonly totalRealizedMonthly: Dollars;
+  /** Total matching records before paging. */
+  readonly total: number;
+}
+
+export interface BaselineCreateInput {
+  readonly scope: BaselineScope;
+  readonly name?: string | undefined;
+}
+
+/** Partial update applied atomically by `baselines:update`. `manualBand: null`
+ *  clears the override (revert to automated); a `note` is appended to the
+ *  activity log with an auto-summary of the band/status change. */
+export interface BaselineUpdatePatch {
+  readonly name?: string | undefined;
+  readonly manualBand?: ManualBand | null | undefined;
+  readonly status?: BaselineStatus | undefined;
+  readonly note?: { readonly text: string; readonly ticket?: string | undefined } | undefined;
+  /** Re-snapshot the cost basis to the current active Cost Scope. */
+  readonly resnapshotBasis?: boolean | undefined;
+}
+
+/** Live status of a recompute/discovery pass, pushed over the
+ *  `baselines:status-changed` channel so the list refreshes as values update. */
+export type BaselineRecomputeStatus =
+  | { readonly state: 'idle'; readonly lastRun: string | null }
+  | { readonly state: 'running'; readonly phase: 'discovering' | 'computing'; readonly done: number; readonly total: number }
+  | { readonly state: 'error'; readonly message: string; readonly lastRun: string | null };

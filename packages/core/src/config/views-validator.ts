@@ -161,6 +161,10 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
       return validateTopNWidget(raw, ctx, base, type);
     case 'table':
       return validateTableWidget(raw, ctx, base);
+    case 'baseline': {
+      const topN = raw['topN'] === undefined ? undefined : (assertNumber(raw['topN'], `${ctx}.topN`), raw['topN']);
+      return { type: 'baseline', ...base, ...(topN === undefined ? {} : { topN }) };
+    }
   }
 }
 

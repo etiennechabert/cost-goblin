@@ -9,6 +9,7 @@ import { TreemapWidget } from './treemap-widget.js';
 import { HeatmapWidget } from './heatmap-widget.js';
 import { BubbleWidget } from './bubble-widget.js';
 import { TableWidget } from './table-widget.js';
+import { BaselineWidget } from './baseline-widget.js';
 
 export const WIDGET_REGISTRY: Readonly<Record<WidgetType, WidgetComponent>> = {
   summary: SummaryWidget,
@@ -20,6 +21,7 @@ export const WIDGET_REGISTRY: Readonly<Record<WidgetType, WidgetComponent>> = {
   heatmap: HeatmapWidget,
   bubble: BubbleWidget,
   table: TableWidget,
+  baseline: BaselineWidget,
 };
 
 export interface WidgetCatalogEntry {
@@ -41,4 +43,5 @@ export const WIDGET_CATALOG: readonly WidgetCatalogEntry[] = [
   { type: 'heatmap',    label: 'Heatmap',          description: 'Dimension × date density.', needsGroupBy: true },
   { type: 'bubble',     label: 'Bubble (trends)',  description: 'Period-over-period scatter.', needsGroupBy: true },
   { type: 'table',      label: 'Table',            description: 'Raw line-item rows with dynamic columns.', needsGroupBy: false },
+  { type: 'baseline',   label: 'Baselines',        description: 'Top scopes by potential savings, with drift band.', needsGroupBy: false },
 ];

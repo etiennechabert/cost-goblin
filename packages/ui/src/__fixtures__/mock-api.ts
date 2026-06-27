@@ -43,6 +43,14 @@ import {
   type SharedPullSelection,
   type SharedSourcePreview,
   type SharedSourceInfo,
+  type BaselinesListResult,
+  type BaselineDetail,
+  type BaselineRecord,
+  type BaselineCreateInput,
+  type BaselineSnapshot,
+  type BaselineDriftRow,
+  type BaselinesConfigState,
+  type BaselinesDiscoveryConfig,
   type RollupGrainEstimate,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE, computeRollupEstimate } from '@costgoblin/core/browser';
@@ -440,6 +448,44 @@ export class MockCostApi implements CostApi {
   setMcpServerRunning(): Promise<void> { return Promise.resolve(); }
   getMcpToken(): Promise<string> { return Promise.resolve('mock-token-abc123'); }
   regenerateMcpToken(): Promise<string> { return Promise.resolve('mock-token-regenerated'); }
+  listBaselines(): Promise<BaselinesListResult> {
+    return Promise.resolve({ items: [], totalPotentialMonthly: asDollars(0), totalRealizedMonthly: asDollars(0), total: 0 });
+  }
+  getBaseline(): Promise<BaselineDetail | null> { return Promise.resolve(null); }
+  createBaseline(input: BaselineCreateInput): Promise<BaselineRecord> {
+    return Promise.resolve({
+      spec: { id: 'mock', source: 'manual', scope: input.scope, basis: { costMetric: 'amortized', costPerspective: 'gross', rules: [] }, basisSnapshotAt: '', createdAt: '', updatedAt: '' },
+      stats: null,
+      current: null,
+      savings: { potentialDaily: asDollars(0), realizedDaily: asDollars(0), potentialMonthly: asDollars(0), realizedMonthly: asDollars(0) },
+      status: 'insufficient-data',
+      effectiveLower: asDollars(0),
+      effectiveUpper: asDollars(0),
+      currentDaily: asDollars(0),
+      potentialDaily: asDollars(0),
+      realizedDaily: asDollars(0),
+      bestAchieved: null,
+      scopeLabel: 'mock',
+      triage: { notes: [] },
+    });
+  }
+  updateBaseline(): Promise<BaselineRecord | null> { return Promise.resolve(null); }
+  deleteBaseline(): Promise<void> { return Promise.resolve(); }
+  recomputeBaselines(): Promise<void> { return Promise.resolve(); }
+  getBaselineSnapshots(): Promise<readonly BaselineSnapshot[]> { return Promise.resolve([]); }
+  getBaselineDrift(): Promise<readonly BaselineDriftRow[]> { return Promise.resolve([]); }
+  getBaselinesConfig(): Promise<BaselinesConfigState> {
+    return Promise.resolve({ config: this.mockBaselinesConfig(), isCustom: false });
+  }
+  setBaselinesConfig(config: BaselinesDiscoveryConfig): Promise<BaselinesConfigState> {
+    return Promise.resolve({ config, isCustom: true });
+  }
+  resetBaselinesConfig(): Promise<BaselinesConfigState> {
+    return Promise.resolve({ config: this.mockBaselinesConfig(), isCustom: false });
+  }
+  private mockBaselinesConfig(): BaselinesDiscoveryConfig {
+    return { lookbackDays: 365, windowDays: 30, lowerPct: 10, upperPct: 90, minMonthlyCost: asDollars(100), minSavings: asDollars(0), reopenPct: 15, grainDimensions: [] };
+  }
   exportConfigBundle(): Promise<ExportConfigBundleResult> {
     return Promise.resolve({ status: 'saved', path: '/mock/costgoblin-config-2026-06-11.yaml' });
   }
@@ -529,6 +575,7 @@ export const MOCK_BUNDLE_SUMMARY: ConfigBundleSummary = {
   orgTreeNodeCount: 12,
   exclusionRuleCount: 6,
   viewCount: 2,
+  baselineCount: 0,
 };
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {

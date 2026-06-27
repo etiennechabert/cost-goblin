@@ -208,6 +208,15 @@ export interface DailyCostsResult {
   readonly totalCost: Dollars;
 }
 
+/** One row of the baseline-discovery query: a single day's cost for one tuple
+ *  over the discovery grain (a set of built-in dimension columns). `tuple` maps
+ *  each grain column to its raw value for this row. */
+export interface BaselineDiscoveryRow {
+  readonly date: DateString;
+  readonly tuple: Readonly<Record<string, string>>;
+  readonly cost: Dollars;
+}
+
 export type ImplementationEffort = 'VeryLow' | 'Low' | 'Medium' | 'High';
 
 export interface SavingsRecommendation {

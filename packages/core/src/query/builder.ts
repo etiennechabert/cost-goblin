@@ -1,5 +1,5 @@
 import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
-import type { CostQueryParams, DailyCostsParams, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
+import type { CostQueryParams, DailyCostsParams, DateRange, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import { DEFAULT_PLACEHOLDER_PATTERNS } from '../types/query.js';
 import type { DimensionId } from '../types/branded.js';
 import { tagDimColumn } from '../types/branded.js';
@@ -8,7 +8,7 @@ import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule, Marke
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor, LIST_METRIC_LINE_ITEM_TYPES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
-import { assertDateString, assertHourString, SecurityError } from './identifier-validator.js';
+import { assertDateString, assertHourString, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 
 function assertFiniteNumber(value: number, name: string): void {
@@ -941,6 +941,99 @@ export function buildDailyCostsQuery(
     ORDER BY date, cost DESC
   `.trim();
 
+  return { sql, params: qb.build().params };
+}
+
+export interface BaselineDiscoveryParams {
+  readonly dateRange: DateRange;
+  readonly filters: FilterMap;
+  /** Built-in dimension ids that form the discovery grain (the tuple key). */
+  readonly grainDimensionIds: readonly DimensionId[];
+  /** Keep only tuples whose total cost over the window is at least this much. */
+  readonly minTotalCost: number;
+}
+
+/** Enumerate per-day cost series for every distinct tuple over the discovery
+ *  grain, restricted to tuples whose window total clears `minTotalCost`. Each
+ *  grain dimension is projected under its physical column name so the caller
+ *  can rebuild the tuple. Uses the same source/exclusion machinery as the cost
+ *  queries, so it hits the rollup cache when the grain columns are in-grain. */
+export function buildBaselineDiscoveryQuery(
+  params: BaselineDiscoveryParams,
+  opts: QueryContextOptions,
+): ParameterizedQuery {
+  if (params.grainDimensionIds.length === 0) {
+    throw new SecurityError('Baseline discovery requires at least one grain dimension.');
+  }
+  assertFiniteNumber(params.minTotalCost, 'minTotalCost');
+  const { qb, filterClauses, exclusionClauses, source } = setupQuery(
+    { filters: params.filters, dateRange: params.dateRange },
+    'daily',
+    opts,
+  );
+  const resolved = params.grainDimensionIds.map((id) => resolveField(id, opts.dimensions));
+  for (const r of resolved) {
+    if (!isSafeColumnIdentifier(r.rawField)) {
+      throw new SecurityError(`Unsafe grain column "${r.rawField}" in baseline discovery.`);
+    }
+  }
+  const dimCols = resolved.map((r) => r.rawField);
+  const dimSelects = resolved.map((r) => `${r.fieldExpr} AS ${r.rawField}`);
+  const whereConditions = [
+    buildDateRangeWhere(qb, params.dateRange),
+    ...filterClauses,
+    ...exclusionClauses,
+  ];
+  const minLiteral = String(params.minTotalCost);
+  const joinOn = dimCols.map((c) => `pd.${c} IS NOT DISTINCT FROM t.${c}`).join(' AND ');
+
+  const sql = `
+    WITH per_day AS (
+      SELECT
+        usage_date::VARCHAR AS date,
+        ${dimSelects.join(',\n        ')},
+        SUM(cost) AS cost
+      FROM ${source}
+      WHERE ${whereConditions.join(' AND ')}
+      GROUP BY date, ${dimCols.join(', ')}
+    ),
+    totals AS (
+      SELECT ${dimCols.join(', ')}, SUM(cost) AS total
+      FROM per_day
+      GROUP BY ${dimCols.join(', ')}
+      HAVING SUM(cost) >= ${minLiteral}
+    )
+    SELECT pd.date AS date, ${dimCols.map((c) => `pd.${c} AS ${c}`).join(', ')}, pd.cost AS cost
+    FROM per_day pd
+    JOIN totals t ON ${joinOn}
+    ORDER BY ${dimCols.join(', ')}, pd.date
+  `.trim();
+
+  return { sql, params: qb.build().params };
+}
+
+/** Per-column distinct-value counts over the window, plus a row count. Used to
+ *  decide which enabled built-in dimensions are stable enough for the default
+ *  discovery grain (drops high-cardinality dims like resource_id). */
+export function buildDimCardinalityQuery(
+  fields: readonly string[],
+  dateRange: DateRange,
+  opts: QueryContextOptions,
+): ParameterizedQuery {
+  for (const f of fields) {
+    if (!isSafeColumnIdentifier(f)) {
+      throw new SecurityError(`Unsafe column "${f}" in cardinality probe.`);
+    }
+  }
+  const { qb, exclusionClauses, source } = setupQuery({ filters: {}, dateRange }, 'daily', opts);
+  const where = [buildDateRangeWhere(qb, dateRange), ...exclusionClauses];
+  const selects = fields.map((f) => `COUNT(DISTINCT ${f}) AS ${f}`);
+  selects.push('COUNT(*) AS row_count');
+  const sql = `
+    SELECT ${selects.join(', ')}
+    FROM ${source}
+    WHERE ${where.join(' AND ')}
+  `.trim();
   return { sql, params: qb.build().params };
 }
 

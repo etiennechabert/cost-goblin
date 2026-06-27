@@ -93,6 +93,7 @@ describe('SetupWizard', () => {
         orgTreeNodeCount: 0,
         exclusionRuleCount: 0,
         viewCount: 0,
+        baselineCount: 0,
       },
     });
     const applySpy = vi.spyOn(api, 'applyConfigBundle');
@@ -130,6 +131,7 @@ describe('SetupWizard', () => {
         orgTreeNodeCount: 0,
         exclusionRuleCount: 0,
         viewCount: 0,
+        baselineCount: 0,
       },
     });
 

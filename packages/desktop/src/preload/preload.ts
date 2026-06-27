@@ -390,9 +390,53 @@ const api: CostApi = {
   regenerateMcpToken(): Promise<string> {
     return invoke<string>('mcp:regenerate-token');
   },
+  listBaselines(params) {
+    return invoke('baselines:list', params);
+  },
+  getBaseline(id) {
+    return invoke('baselines:get', id);
+  },
+  createBaseline(input) {
+    return invoke('baselines:create', input);
+  },
+  updateBaseline(id, patch) {
+    return invoke('baselines:update', id, patch);
+  },
+  deleteBaseline(id) {
+    return invoke<undefined>('baselines:delete', id).then(() => undefined);
+  },
+  recomputeBaselines(id) {
+    return invoke<undefined>('baselines:recompute', id).then(() => undefined);
+  },
+  getBaselineSnapshots(id) {
+    return invoke('baselines:snapshots', id);
+  },
+  getBaselineDrift(id, childDimension) {
+    return invoke('baselines:drift', id, childDimension);
+  },
+  getBaselinesConfig() {
+    return invoke('baselines:get-config');
+  },
+  setBaselinesConfig(config) {
+    return invoke('baselines:set-config', config);
+  },
+  resetBaselinesConfig() {
+    return invoke('baselines:reset-config');
+  },
 };
 
 contextBridge.exposeInMainWorld('costgoblin', api);
+
+contextBridge.exposeInMainWorld('costgoblinBaselines', {
+  getStatus(): Promise<unknown> {
+    return invoke<unknown>('baselines:status');
+  },
+  onStatusChanged(callback: (status: unknown) => void): () => void {
+    const handler = (_event: unknown, status: unknown): void => { callback(status); };
+    ipcRenderer.on('baselines:status-changed', handler);
+    return () => { ipcRenderer.removeListener('baselines:status-changed', handler); };
+  },
+});
 
 contextBridge.exposeInMainWorld('costgoblinUpdate', {
   checkForUpdates(): Promise<void> {

@@ -58,6 +58,11 @@ export type WidgetSpec =
   | (WidgetBase & {
       readonly type: 'table';
       readonly enabledColumns?: readonly string[] | undefined;
+    })
+  | (WidgetBase & {
+      readonly type: 'baseline';
+      /** Max baselines to show, ranked by potential savings. Default 8. */
+      readonly topN?: number | undefined;
     });
 
 export type WidgetType = WidgetSpec['type'];
