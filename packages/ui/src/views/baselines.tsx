@@ -12,7 +12,7 @@ import { BaselineMicroBar } from '../components/baseline-micro-bar.js';
 import { BaselineDetailModal } from '../components/baseline-detail-modal.js';
 import { Dialog, DialogContent, DialogTitle, DialogClose } from '../components/ui/dialog.js';
 
-type TriageFilter = BaselineTriageStatus | 'open' | 'all' | 'fixed';
+type TriageFilter = BaselineTriageStatus | 'open' | 'all';
 
 const STATUS_FILTERS: readonly { id: TriageFilter; label: string }[] = [
   { id: 'open', label: 'Open' },
@@ -23,7 +23,6 @@ const STATUS_FILTERS: readonly { id: TriageFilter; label: string }[] = [
   { id: 'in-progress', label: 'In Progress' },
   { id: 'false-positive', label: 'False Positive' },
   { id: 'auto-ignored', label: 'Auto-Ignored' },
-  { id: 'fixed', label: 'Fixed' },
 ];
 
 const TRIAGE_LABEL: Readonly<Record<BaselineTriageStatus, string>> = {
@@ -88,7 +87,6 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
         <button type="button" onClick={() => { setSelectedId(r.spec.id); }} className="text-left">
           <span className="text-text-primary text-xs font-medium hover:text-accent">{r.spec.name ?? r.scopeLabel}</span>
           {r.spec.source === 'manual' && <span className="ml-1 text-[9px] text-text-muted">(manual)</span>}
-          {r.isPeriodic && <span className="ml-1 rounded border border-border px-1 text-[9px] text-text-muted" title="Fixed recurring charge billed on a few days — no daily savings lever">fixed</span>}
         </button>
       ),
     },

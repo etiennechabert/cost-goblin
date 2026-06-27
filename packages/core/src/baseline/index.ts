@@ -4,4 +4,3 @@ export * from './current.js';
 export * from './savings.js';
 export * from './window.js';
 export * from './grain.js';
-export * from './periodic.js';

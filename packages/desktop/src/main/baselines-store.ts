@@ -21,9 +21,9 @@ import {
   effectiveBands,
   estimateBytesPerRow,
   getAncestorPath,
-  isPeriodicScope,
   logger,
   resolveDiscoveryGrain,
+  runRateSeries,
   validateBaselines,
 } from '@costgoblin/core';
 import type {
@@ -35,7 +35,6 @@ import type {
   BaselineNote,
   BaselineRecomputeStatus,
   BaselineRecord,
-  BaselineSavings,
   BaselineScope,
   BaselineSnapshot,
   BaselineSpec,
@@ -79,18 +78,6 @@ export interface BaselineEngineDeps {
 
 const HISTORY_WINDOW_DAYS = 365;
 const MAX_SNAPSHOTS = 365;
-
-/** A fixed recurring charge (e.g. a monthly subscription billed on one day) has
- *  no daily savings lever — its cost lands on < half the observed days and those
- *  active-day amounts are near-constant. Such scopes get $0 savings and drop out
- *  of the savings KPIs. Intermittent-but-variable workloads fail the variance
- *  test and keep their savings. */
-const PERIODIC_OPTS = { maxActiveDayFraction: 0.5, maxActiveDayCoV: 0.25, minSpanDays: 35 };
-
-const ZERO_SAVINGS: BaselineSavings = {
-  potentialDaily: asDollars(0), realizedDaily: asDollars(0),
-  potentialMonthly: asDollars(0), realizedMonthly: asDollars(0),
-};
 
 function envNum(key: string, fallback: number): number {
   const raw = process.env[key];
@@ -303,12 +290,14 @@ export class BaselineStore {
   private deriveRecord(spec: BaselineSpec, accountMap: Map<string, string>, orgTree: readonly OrgNode[]): BaselineRecord {
     const cfg = this.effectiveConfig();
     const history = this.histories.get(spec.id) ?? [];
-    const costs = history.map((p) => p.cost);
-    const bands = computeBands(history, { lowerPct: cfg.lowerPct, upperPct: cfg.upperPct });
+    // Band the amortized run-rate, not raw daily costs, so a periodic/spiky
+    // charge can't set a phantom ceiling. current is on the same basis.
+    const runRate = runRateSeries(history, cfg.windowDays);
+    const runRateCosts = runRate.map((p) => p.cost);
+    const bands = computeBands(runRate, { lowerPct: cfg.lowerPct, upperPct: cfg.upperPct });
     const current = computeCurrent(history, cfg.windowDays);
-    const eff = effectiveBands(bands, spec.manualBand, costs);
-    const isPeriodic = isPeriodicScope(history, PERIODIC_OPTS);
-    const savings = isPeriodic ? ZERO_SAVINGS : computeSavings(current, eff);
+    const eff = effectiveBands(bands, spec.manualBand, runRateCosts);
+    const savings = computeSavings(current, eff);
     const status = deriveStatus(current, eff, history.length, { minDataPoints: 30, subCentFloor: 0.01, overPctOverLower: 0 });
     const currentDaily = current?.avgDaily ?? asDollars(0);
     const { ownerPath, scopeLabel } = describeScope(spec.scope, accountMap, orgTree);
@@ -324,7 +313,6 @@ export class BaselineStore {
       currentDaily,
       potentialDaily: savings.potentialDaily,
       realizedDaily: savings.realizedDaily,
-      isPeriodic,
       bestAchieved: this.bestAchieved.has(spec.id) ? asDollars(this.bestAchieved.get(spec.id) ?? 0) : null,
       ...(ownerPath === undefined ? {} : { ownerPath }),
       scopeLabel,
@@ -342,13 +330,9 @@ export class BaselineStore {
 
     if (params.triage !== undefined) {
       const open: ReadonlySet<BaselineTriageStatus> = new Set<BaselineTriageStatus>(OPEN_TRIAGE_STATUSES);
-      records = params.triage === 'fixed'
-        ? records.filter((r) => r.isPeriodic)
-        : params.triage === 'open'
-          // Fixed/periodic charges are excluded from the actionable Open list —
-          // they have no daily savings lever.
-          ? records.filter((r) => open.has(r.triageStatus) && !r.isPeriodic)
-          : records.filter((r) => r.triageStatus === params.triage);
+      records = params.triage === 'open'
+        ? records.filter((r) => open.has(r.triageStatus))
+        : records.filter((r) => r.triageStatus === params.triage);
     }
     if (params.owner !== undefined) {
       records = records.filter((r) => (r.ownerPath ?? []).some((n) => String(n) === params.owner));
@@ -366,9 +350,7 @@ export class BaselineStore {
       return dir === 'asc' ? cmp : -cmp;
     });
 
-    // Fixed/periodic charges carry no real daily savings, so keep them out of
-    // the headline KPI totals (their savings are already $0, but exclude for count clarity).
-    const partition = records.filter((r) => r.spec.source === 'discovered' && !r.isPeriodic);
+    const partition = records.filter((r) => r.spec.source === 'discovered');
     const totalPotentialMonthly = asDollars(partition.reduce((s, r) => s + r.savings.potentialMonthly, 0));
     const totalRealizedMonthly = asDollars(partition.reduce((s, r) => s + r.savings.realizedMonthly, 0));
     const total = records.length;
@@ -721,11 +703,11 @@ export class BaselineStore {
     // → nothing to snapshot, and drop any snapshots from when it had data so the
     // stored trend doesn't go stale. Stats derive as insufficient-data.
     if (history.length === 0) { this.snapshots.delete(spec.id); return; }
-    const costs = history.map((p) => p.cost);
-    const bands = computeBands(history, { lowerPct: cfg.lowerPct, upperPct: cfg.upperPct });
+    const runRate = runRateSeries(history, cfg.windowDays);
+    const bands = computeBands(runRate, { lowerPct: cfg.lowerPct, upperPct: cfg.upperPct });
     const current = computeCurrent(history, cfg.windowDays);
-    const eff = effectiveBands(bands, spec.manualBand, costs);
-    const savings = isPeriodicScope(history, PERIODIC_OPTS) ? ZERO_SAVINGS : computeSavings(current, eff);
+    const eff = effectiveBands(bands, spec.manualBand, runRate.map((p) => p.cost));
+    const savings = computeSavings(current, eff);
     const status = deriveStatus(current, eff, history.length, { minDataPoints: 30, subCentFloor: 0.01, overPctOverLower: 0 });
     const curDaily = current?.avgDaily ?? 0;
     if (current !== null) {

@@ -71,6 +71,23 @@ function densifyDaily(history: readonly BaselineDailyPoint[]): readonly Baseline
   return out;
 }
 
+/** Amortized daily run-rate: trailing `window`-day average over the densified
+ *  series (missing days = $0), matching the server's savings band so a periodic
+ *  spike can't distort a percentile-mode override. Warm-up days are dropped. */
+function runRateCosts(history: readonly BaselineDailyPoint[], window: number): number[] {
+  const dense = densifyDaily(history);
+  const w = Math.max(1, window);
+  if (dense.length < w) return dense.map((p) => p.cost);
+  const out: number[] = [];
+  let sum = 0;
+  for (let i = 0; i < dense.length; i++) {
+    sum += dense[i]?.cost ?? 0;
+    if (i >= w) sum -= dense[i - w]?.cost ?? 0;
+    if (i >= w - 1) out.push(sum / w);
+  }
+  return out;
+}
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function monthAbbr(dateStr: string): string { return MONTHS[Number(dateStr.slice(5, 7)) - 1] ?? ''; }
 function fullDate(dateStr: string): string {
@@ -223,16 +240,17 @@ function Body({ detail, onChanged, onNext, onPrev, position }: Readonly<{
   const dirty = bandDirty || note.length > 0;
 
   const maxCost = Math.max(...costs, autoUpper, 1);
-  const effLower = mode === 'percentile' ? percentile(costs, lower, true) : lower;
+  // Percentile-mode band edges resolve over the amortized run-rate (matching the
+  // server), so a periodic/spiky charge can't set a phantom ceiling.
+  const bandCosts = useMemo(() => runRateCosts(dailyHistory, record.current?.days ?? 30), [dailyHistory, record.current?.days]);
+  const effLower = mode === 'percentile' ? percentile(bandCosts, lower, true) : lower;
   // Clamp upper ≥ lower to mirror the server (savings.ts). In percentile mode the
   // lower edge excludes $0 days while the upper includes them, so for a mostly-idle
   // scope the raw upper can fall below lower and invert the band preview.
-  const effUpper = Math.max(effLower, mode === 'percentile' ? percentile(costs, upper, false) : upper);
+  const effUpper = Math.max(effLower, mode === 'percentile' ? percentile(bandCosts, upper, false) : upper);
   const current = record.currentDaily;
-  // Fixed/periodic charges (e.g. a monthly subscription billed on one day) have
-  // no daily savings lever — the server forces $0, so mirror that in the preview.
-  const potential = record.isPeriodic ? 0 : Math.max(0, current - effLower);
-  const realized = record.isPeriodic ? 0 : Math.max(0, effUpper - current);
+  const potential = Math.max(0, current - effLower);
+  const realized = Math.max(0, effUpper - current);
 
   // Sparse series drives the band-percentile preview (matches the server's
   // band math); the dense series drives the chart so the date axis is accurate.
@@ -343,12 +361,6 @@ function Body({ detail, onChanged, onNext, onPrev, position }: Readonly<{
           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${triageChipClass(record.triageStatus)}`}>{TRIAGE_LABEL[record.triageStatus]}</span>
         </div>
       </div>
-
-      {record.isPeriodic && (
-        <div className="rounded-lg border border-border bg-bg-tertiary/30 px-3 py-2 text-[11px] text-text-secondary">
-          <span className="font-medium text-text-primary">Fixed recurring charge.</span> This scope bills on a few days at a near-constant amount (e.g. a monthly subscription), so a per-day band is meaningless and potential/realized savings are excluded.
-        </div>
-      )}
 
       <HistoryChart history={dense} ma={ma} lower={effLower} upper={effUpper} maxCost={maxCost} />
       <p className="-mt-2 text-[10px] text-text-muted">Daily cost (bars) · 30-day average (line) · band low (green) / high (red). Hover for details.</p>

@@ -468,7 +468,6 @@ export class MockCostApi implements CostApi {
       currentDaily: asDollars(0),
       potentialDaily: asDollars(0),
       realizedDaily: asDollars(0),
-      isPeriodic: false,
       bestAchieved: null,
       scopeLabel: 'mock',
       triage: { notes: [] },

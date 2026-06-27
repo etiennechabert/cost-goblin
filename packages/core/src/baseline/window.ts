@@ -35,6 +35,39 @@ export function expandToWindow(
   return out;
 }
 
+/** Trailing `windowDays`-day average daily cost at each calendar day of the
+ *  observed span, counting missing days as $0 — i.e. the amortized daily
+ *  run-rate. A lumpy charge (a monthly fee billed on one day) is spread across
+ *  the window, so the series stays flat for periodic/spiky scopes and only moves
+ *  on *sustained* changes. This is the basis for the savings band, so a one-off
+ *  or periodic spike can't set a phantom ceiling that inflates realized savings.
+ *  The first `windowDays-1` warm-up days (whose window isn't yet full) are
+ *  dropped; a span shorter than the window falls back to the raw series. */
+export function runRateSeries(history: readonly BaselineDailyPoint[], windowDays: number): readonly BaselineDailyPoint[] {
+  if (history.length === 0) return [];
+  const sorted = [...history].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  if (first === undefined || last === undefined) return [];
+  const byDate = new Map<string, number>();
+  for (const p of sorted) byDate.set(p.date, p.cost);
+  const w = Math.max(1, windowDays);
+  const startMs = parseDate(first.date).getTime();
+  const endMs = parseDate(last.date).getTime();
+  const dayMs = 86_400_000;
+  const dense: number[] = [];
+  for (let t = startMs; t <= endMs; t += dayMs) dense.push(byDate.get(formatDate(new Date(t))) ?? 0);
+  if (dense.length < w) return sorted;
+  const out: BaselineDailyPoint[] = [];
+  let sum = 0;
+  for (let i = 0; i < dense.length; i++) {
+    sum += dense[i] ?? 0;
+    if (i >= w) sum -= dense[i - w] ?? 0;
+    if (i >= w - 1) out.push({ date: asDateString(formatDate(new Date(startMs + i * dayMs))), cost: asDollars(sum / w) });
+  }
+  return out;
+}
+
 /** Trailing (backward-looking) moving average of the cost series over `window`
  *  days, aligned to each point's date. Used for the 30-day trend line overlay. */
 export function movingAverage(series: readonly BaselineDailyPoint[], window: number): readonly BaselineDailyPoint[] {
