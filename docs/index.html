@@ -1600,6 +1600,9 @@
       font-family: var(--font-mono);
       font-size: 12px;
       color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
 
     footer .right { display: flex; gap: 20px; }
@@ -1614,33 +1617,28 @@
 
     footer a:hover { color: var(--emerald); }
 
-    footer .sponsor {
-      max-width: 980px;
-      margin: 22px auto 0;
-      padding-top: 22px;
-      border-top: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 7px;
-      font-family: var(--font-mono);
-      font-size: 12px;
-      color: var(--text-muted);
-    }
+    footer .footer-sep { color: var(--border); }
 
-    footer .sponsor a {
+    .footer-sponsor {
       display: inline-flex;
       align-items: center;
       gap: 6px;
       color: var(--text-dim);
+      text-decoration: none;
+      transition: color 0.2s;
     }
 
-    footer .sponsor a:hover { color: var(--emerald); }
+    .footer-sponsor:hover { color: var(--emerald); }
 
-    footer .sponsor svg {
-      width: 14px;
-      height: 14px;
+    .footer-sponsor svg {
+      width: 13px;
+      height: 13px;
       fill: currentColor;
+    }
+
+    @media (max-width: 600px) {
+      footer .inner { flex-direction: column; gap: 16px; }
+      footer .left { flex-wrap: wrap; justify-content: center; }
     }
 
     /* --- LIGHTBOX --- */
@@ -2297,20 +2295,21 @@ Format:   <span class="code-file">Parquet</span>
   <!-- FOOTER -->
   <footer>
     <div class="inner">
-      <div class="left">&copy; 2026 CostGoblin</div>
+      <div class="left">
+        <span>&copy; 2026 CostGoblin</span>
+        <span class="footer-sep">&middot;</span>
+        <a class="footer-sponsor" href="https://sentry.io" target="_blank" rel="noopener sponsored" title="Sentry sponsors CostGoblin's open-source error monitoring">
+          Sponsored by
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.91 2.505c-.873-1.448-2.972-1.448-3.844 0L6.904 7.92a15.478 15.478 0 0 1 8.53 12.811h-2.221A13.301 13.301 0 0 0 5.784 9.814l-2.926 5.06a7.65 7.65 0 0 1 4.435 5.848H2.194a.365.365 0 0 1-.298-.534l1.413-2.402a5.16 5.16 0 0 0-1.614-.913L.296 19.275a2.182 2.182 0 0 0 .812 2.999 2.24 2.24 0 0 0 1.086.288h6.983a9.322 9.322 0 0 0-3.845-8.318l1.11-1.922a11.47 11.47 0 0 1 4.95 10.24h5.915a17.242 17.242 0 0 0-7.885-15.28l2.244-3.845a.37.37 0 0 1 .504-.13c.255.14 9.75 16.708 9.928 16.9a.365.365 0 0 1-.327.543h-2.287c.029.612.029 1.223 0 1.831h2.297a2.206 2.206 0 0 0 1.922-3.31z"/></svg>
+          Sentry
+        </a>
+      </div>
       <div class="right">
         <a href="/imprint.html">Imprint</a>
         <a href="/privacy.html">Privacy</a>
         <a href="/code-signing.html">Code Signing</a>
         <a href="https://github.com/etiennechabert/cost-goblin" target="_blank" rel="noopener">GitHub</a>
       </div>
-    </div>
-    <div class="sponsor">
-      <span>Sponsored by</span>
-      <a href="https://sentry.io" target="_blank" rel="noopener sponsored" title="Sentry sponsors CostGoblin's open-source error monitoring">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.91 2.505c-.873-1.448-2.972-1.448-3.844 0L6.904 7.92a15.478 15.478 0 0 1 8.53 12.811h-2.221A13.301 13.301 0 0 0 5.784 9.814l-2.926 5.06a7.65 7.65 0 0 1 4.435 5.848H2.194a.365.365 0 0 1-.298-.534l1.413-2.402a5.16 5.16 0 0 0-1.614-.913L.296 19.275a2.182 2.182 0 0 0 .812 2.999 2.24 2.24 0 0 0 1.086.288h6.983a9.322 9.322 0 0 0-3.845-8.318l1.11-1.922a11.47 11.47 0 0 1 4.95 10.24h5.915a17.242 17.242 0 0 0-7.885-15.28l2.244-3.845a.37.37 0 0 1 .504-.13c.255.14 9.75 16.708 9.928 16.9a.365.365 0 0 1-.327.543h-2.287c.029.612.029 1.223 0 1.831h2.297a2.206 2.206 0 0 0 1.922-3.31z"/></svg>
-        Sentry
-      </a>
     </div>
   </footer>
 

@@ -16,6 +16,7 @@
   <img src="https://img.shields.io/badge/DuckDB-1.5-FFF000.svg?logo=duckdb&logoColor=black" alt="DuckDB">
   <a href="https://github.com/etiennechabert/cost-goblin/actions/workflows/ci.yml"><img src="https://github.com/etiennechabert/cost-goblin/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://buymeacoffee.com/etiennechak"><img src="https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buymeacoffee&logoColor=white" alt="Buy Me A Coffee"></a>
+  <a href="https://sentry.io"><img src="https://img.shields.io/badge/Sponsored%20by-Sentry-362D59?logo=sentry&logoColor=white" alt="Sponsored by Sentry"></a>
 </p>
 
 <p align="center">
@@ -222,10 +223,6 @@ make reset      # wipe app data, restart with wizard
 ## Sponsors
 
 CostGoblin is proudly sponsored by **[Sentry](https://sentry.io)**, whose [open-source program](https://sentry.io/for/open-source/) provides free error monitoring that helps keep the app stable.
-
-<p align="center">
-  <a href="https://sentry.io"><img src="https://img.shields.io/badge/Sponsored%20by-Sentry-362D59?logo=sentry&logoColor=white" alt="Sponsored by Sentry"></a>
-</p>
 
 ## License
 
