@@ -125,6 +125,11 @@ class TelemetryController {
         environment: app.isPackaged ? 'production' : 'development',
         release: `costgoblin@${app.getVersion()}`,
         ...(Object.keys(devTags).length > 0 ? { initialScope: { tags: devTags } } : {}),
+        // "Query cancelled" is an expected control-flow signal emitted by the
+        // DuckDB worker when the UI calls cancelPendingQueries() during
+        // navigation. The renderer already retries these (use-query.ts), so
+        // they are not actionable errors.
+        ignoreErrors: [/^Query cancelled$/],
         // Native crash capture (Crashpad minidumps = raw, unscrubbed memory) is a
         // separate opt-in: keep every default integration only when the native
         // channel is on; otherwise drop SentryMinidump — the first default, which
