@@ -69,8 +69,9 @@ jobs:
       # Inject debug IDs into the built JS (so shipped bundles match the maps)
       # and upload source maps, so renderer/main stack traces are readable in
       # Sentry. Runs before packaging so electron-builder ships the injected JS.
-      # Native Electron frames are symbolicated server-side by Sentry, so no
-      # dSYM upload is needed. Skipped entirely when Sentry isn't configured.
+      # Electron/Chromium's own native frames are symbolicated by Sentry's symbol
+      # server; third-party native modules are handled by the next step.
+      # Skipped entirely when Sentry isn't configured.
       - name: Upload source maps to Sentry
         if: vars.SENTRY_ORG != ''
         # Source maps are an observability nicety, not a release artifact — a
@@ -88,6 +89,29 @@ jobs:
           REL="costgoblin@${GITHUB_REF#refs/tags/v}"
           npx --yes @sentry/cli@^2 sourcemaps inject packages/desktop/out
           npx --yes @sentry/cli@^2 sourcemaps upload --release "$REL" packages/desktop/out
+
+      # Native crashes inside DuckDB (libduckdb.dylib / duckdb.node) land in
+      # Crashpad minidumps. Unlike Electron's own frames, Sentry has no symbols
+      # for third-party modules, so without these debug files it reports
+      # "A required debug information file was missing" and the native frames
+      # stay unresolved (COSTGOBLIN-4). The prebuilt binaries carry no DWARF but
+      # do ship a symbol table + unwind info — enough for function-level frames.
+      # Each matrix runner uploads the natives npm installed for its own platform;
+      # Sentry dedupes by debug ID. Debug files are project-global (matched by
+      # debug ID, not tied to a build), so no --release. Soft-fail like the
+      # source maps — never block a release.
+      - name: Upload native debug files to Sentry
+        if: vars.SENTRY_ORG != ''
+        continue-on-error: true
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_URL: ${{ vars.SENTRY_URL || 'https://de.sentry.io' }}
+        run: |
+          set -euo pipefail
+          npx --yes @sentry/cli@^2 debug-files upload node_modules/@duckdb
 
       - name: Build installers
         run: npx --no-install electron-builder --${{ matrix.platform }} --publish always
