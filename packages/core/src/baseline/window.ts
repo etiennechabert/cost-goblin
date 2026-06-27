@@ -42,7 +42,8 @@ export function expandToWindow(
  *  on *sustained* changes. This is the basis for the savings band, so a one-off
  *  or periodic spike can't set a phantom ceiling that inflates realized savings.
  *  The first `windowDays-1` warm-up days (whose window isn't yet full) are
- *  dropped; a span shorter than the window falls back to the raw series. */
+ *  dropped; a span shorter than the window returns a single point amortized over
+ *  the observed span (so a young periodic scope still amortizes its spike). */
 export function runRateSeries(history: readonly BaselineDailyPoint[], windowDays: number): readonly BaselineDailyPoint[] {
   if (history.length === 0) return [];
   const sorted = [...history].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));

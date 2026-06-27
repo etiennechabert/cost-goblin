@@ -298,7 +298,7 @@ export class BaselineStore {
     const current = computeCurrent(history, cfg.windowDays);
     const eff = effectiveBands(bands, spec.manualBand, runRateCosts);
     const savings = computeSavings(current, eff);
-    const status = deriveStatus(current, eff, history.length, { minDataPoints: 30, subCentFloor: 0.01, overPctOverLower: 0 });
+    const status = deriveStatus(current, eff, history.length, { minDataPoints: cfg.windowDays, subCentFloor: 0.01, overPctOverLower: 0 });
     const currentDaily = current?.avgDaily ?? asDollars(0);
     const { ownerPath, scopeLabel } = describeScope(spec.scope, accountMap, orgTree);
     return {
@@ -709,7 +709,7 @@ export class BaselineStore {
     const current = computeCurrent(history, cfg.windowDays);
     const eff = effectiveBands(bands, spec.manualBand, runRate.map((p) => p.cost));
     const savings = computeSavings(current, eff);
-    const status = deriveStatus(current, eff, history.length, { minDataPoints: 30, subCentFloor: 0.01, overPctOverLower: 0 });
+    const status = deriveStatus(current, eff, history.length, { minDataPoints: cfg.windowDays, subCentFloor: 0.01, overPctOverLower: 0 });
     const curDaily = current?.avgDaily ?? 0;
     if (current !== null) {
       const prevBest = this.bestAchieved.get(spec.id);
@@ -739,8 +739,8 @@ export class BaselineStore {
     const basisScope = basisToCostScope(spec.basis);
     const end = dateNDaysAgo(todayUtc(), spec.basis.lagDays ?? 2);
     // `dateNDaysAgo(end, N)` then an inclusive BETWEEN spans N+1 calendar days;
-    // subtract one so the window is exactly windowDays/lookbackDays days — matching
-    // the divisors below and computeCurrent's window.
+    // subtract one so each window is exactly windowDays/lookbackDays days — matching
+    // the divisors below.
     const trailingStart = dateNDaysAgo(end, Math.max(0, cfg.windowDays - 1));
     const bandStart = dateNDaysAgo(end, Math.max(0, cfg.lookbackDays - 1));
     const child = asDimensionId(childDimension);
@@ -766,7 +766,7 @@ export class BaselineStore {
     };
 
     const [trailing, band] = await Promise.all([windowByChild(trailingStart), windowByChild(bandStart)]);
-    const trailingDays = cfg.windowDays;
+    const trailingDays = Math.max(1, cfg.windowDays);
     const bandDays = Math.max(1, cfg.lookbackDays);
     const children = new Set<string>([...trailing.keys(), ...band.keys()]);
     const out: BaselineDriftRow[] = [];

@@ -302,8 +302,8 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
   const potential = Math.max(0, current - effLower);
   const realized = Math.max(0, effUpper - current);
 
-  // Sparse series drives the band-percentile preview (matches the server's
-  // band math); the dense series drives the chart so the date axis is accurate.
+  // The run-rate series (bandCosts, above) drives the band-percentile preview to
+  // match the server; the dense series drives the chart so the date axis is accurate.
   const dense = useMemo(() => densifyDaily(dailyHistory), [dailyHistory]);
   const ma = useMemo(() => movingAverage(dense, 30), [dense]);
 
