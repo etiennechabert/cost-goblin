@@ -1,5 +1,6 @@
 import { logger, parseJsonObject, configuredTierRetentions, periodsOutsideRetention, retentionCutoffPeriod, isCredentialError } from '@costgoblin/core';
 import type { AutoSyncStatus } from '@costgoblin/core';
+import { updatePrefsFile } from './handlers/prefs-file.js';
 
 export interface AutoSyncDeps {
   getPrefsPath: () => Promise<string>;
@@ -51,17 +52,7 @@ export async function readAutoSyncEnabled(prefsPath: string): Promise<boolean> {
 }
 
 export async function writeAutoSyncEnabled(prefsPath: string, enabled: boolean): Promise<void> {
-  const fs = await import('node:fs/promises');
-  let existing: Record<string, unknown> = {};
-  try {
-    const raw = await fs.readFile(prefsPath, 'utf-8');
-    const parsed = parseJsonObject(raw);
-    if (parsed !== null) {
-      existing = { ...parsed };
-    }
-  } catch { /* */ }
-  existing['autoSync'] = enabled;
-  await fs.writeFile(prefsPath, JSON.stringify(existing, null, 2));
+  await updatePrefsFile(prefsPath, (current) => ({ ...current, autoSync: enabled }));
 }
 
 export async function readAutoPruneEnabled(prefsPath: string): Promise<boolean> {
@@ -76,17 +67,7 @@ export async function readAutoPruneEnabled(prefsPath: string): Promise<boolean> 
 }
 
 export async function writeAutoPruneEnabled(prefsPath: string, enabled: boolean): Promise<void> {
-  const fs = await import('node:fs/promises');
-  let existing: Record<string, unknown> = {};
-  try {
-    const raw = await fs.readFile(prefsPath, 'utf-8');
-    const parsed = parseJsonObject(raw);
-    if (parsed !== null) {
-      existing = { ...parsed };
-    }
-  } catch { /* */ }
-  existing['autoPrune'] = enabled;
-  await fs.writeFile(prefsPath, JSON.stringify(existing, null, 2));
+  await updatePrefsFile(prefsPath, (current) => ({ ...current, autoPrune: enabled }));
 }
 
 export async function readAutoSyncIntervalMinutes(prefsPath: string): Promise<number> {
@@ -104,17 +85,7 @@ export async function readAutoSyncIntervalMinutes(prefsPath: string): Promise<nu
 }
 
 export async function writeAutoSyncIntervalMinutes(prefsPath: string, minutes: number): Promise<void> {
-  const fs = await import('node:fs/promises');
-  let existing: Record<string, unknown> = {};
-  try {
-    const raw = await fs.readFile(prefsPath, 'utf-8');
-    const parsed = parseJsonObject(raw);
-    if (parsed !== null) {
-      existing = { ...parsed };
-    }
-  } catch { /* */ }
-  existing['autoSyncIntervalMinutes'] = clampInterval(minutes);
-  await fs.writeFile(prefsPath, JSON.stringify(existing, null, 2));
+  await updatePrefsFile(prefsPath, (current) => ({ ...current, autoSyncIntervalMinutes: clampInterval(minutes) }));
 }
 
 function clampInterval(minutes: number): number {
