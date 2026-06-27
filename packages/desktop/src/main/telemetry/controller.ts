@@ -8,6 +8,7 @@ import {
 } from '@costgoblin/core';
 import type { TelemetryPreferences, TelemetryStatus } from '@costgoblin/core';
 import { redactEventInPlace } from './scrub-event.js';
+import { readDevTags } from './dev-tags.js';
 import { TelemetryOutbox } from './outbox.js';
 
 /** DSN for the Sentry project. Without it, no channel can actually send — the
@@ -81,12 +82,16 @@ class TelemetryController {
   private async start(dsn: string): Promise<void> {
     try {
       const tunnel = process.env[TUNNEL_ENV];
+      // Dev builds get { branch, commit } tags so locally-run sessions can be
+      // told apart; packaged builds get none (they're a release version).
+      const devTags = await readDevTags(app.isPackaged, app.getAppPath());
       const Sentry = await import('@sentry/electron/main');
       Sentry.init({
         dsn,
         ...(typeof tunnel === 'string' && tunnel.length > 0 ? { tunnel } : {}),
         environment: app.isPackaged ? 'production' : 'development',
         release: `costgoblin@${app.getVersion()}`,
+        ...(Object.keys(devTags).length > 0 ? { initialScope: { tags: devTags } } : {}),
         // Tracing only when the performance channel is on.
         tracesSampleRate: this.prefs.performance ? 0.1 : 0,
         // Never let the SDK attach IP/user/cookies — our scrub is the backstop,
