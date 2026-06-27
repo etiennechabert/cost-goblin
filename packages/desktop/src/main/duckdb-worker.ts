@@ -1,4 +1,8 @@
 import { tmpdir } from 'node:os';
+// Imported from the browser-safe entry so esbuild bundles only this constant's
+// (pure) module graph into the worker — never the node-only sync/aws code that
+// the full `@costgoblin/core` barrel would pull in (it isn't externalized here).
+import { QUERY_CANCELLED_MESSAGE } from '@costgoblin/core/browser';
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
@@ -216,7 +220,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string; fres
   // Check before acquiring a pool connection
   if (cancelledIds.has(req.id)) {
     cancelledIds.delete(req.id);
-    send({ kind: 'error', id: req.id, message: 'Query cancelled' });
+    send({ kind: 'error', id: req.id, message: QUERY_CANCELLED_MESSAGE });
     return;
   }
 
@@ -246,7 +250,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string; fres
     // Check after acquiring — cancel may have arrived while queued
     if (cancelledIds.has(req.id)) {
       cancelledIds.delete(req.id);
-      send({ kind: 'error', id: req.id, message: 'Query cancelled' });
+      send({ kind: 'error', id: req.id, message: QUERY_CANCELLED_MESSAGE });
       return;
     }
 
@@ -257,7 +261,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string; fres
     // Skip serialization if cancelled during execution
     if (cancelledIds.has(req.id)) {
       cancelledIds.delete(req.id);
-      send({ kind: 'error', id: req.id, message: 'Query cancelled' });
+      send({ kind: 'error', id: req.id, message: QUERY_CANCELLED_MESSAGE });
     } else {
       send({ kind: 'rows', id: req.id, rows });
     }
@@ -265,7 +269,7 @@ async function handleRequest(req: { kind: 'query'; id: number; sql: string; fres
     const message = err instanceof Error ? err.message : String(err);
     const isCancelled = cancelledIds.has(req.id) || message.includes('INTERRUPT');
     cancelledIds.delete(req.id);
-    send({ kind: 'error', id: req.id, message: isCancelled ? 'Query cancelled' : message });
+    send({ kind: 'error', id: req.id, message: isCancelled ? QUERY_CANCELLED_MESSAGE : message });
   } finally {
     queuedIds.delete(req.id);
     runningIds.delete(req.id);
@@ -281,7 +285,7 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
   // Check before acquiring a pool connection
   if (cancelledIds.has(req.id)) {
     cancelledIds.delete(req.id);
-    send({ kind: 'error', id: req.id, message: 'Query cancelled' });
+    send({ kind: 'error', id: req.id, message: QUERY_CANCELLED_MESSAGE });
     return;
   }
 
@@ -299,7 +303,7 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
     // Check after acquiring — cancel may have arrived while queued
     if (cancelledIds.has(req.id)) {
       cancelledIds.delete(req.id);
-      send({ kind: 'error', id: req.id, message: 'Query cancelled' });
+      send({ kind: 'error', id: req.id, message: QUERY_CANCELLED_MESSAGE });
       return;
     }
 
@@ -310,7 +314,7 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
     // Skip serialization if cancelled during execution
     if (cancelledIds.has(req.id)) {
       cancelledIds.delete(req.id);
-      send({ kind: 'error', id: req.id, message: 'Query cancelled' });
+      send({ kind: 'error', id: req.id, message: QUERY_CANCELLED_MESSAGE });
     } else {
       send({ kind: 'rows', id: req.id, rows });
     }
@@ -318,7 +322,7 @@ async function handlePreparedRequest(req: { kind: 'prepared-query'; id: number; 
     const message = err instanceof Error ? err.message : String(err);
     const isCancelled = cancelledIds.has(req.id) || message.includes('INTERRUPT');
     cancelledIds.delete(req.id);
-    send({ kind: 'error', id: req.id, message: isCancelled ? 'Query cancelled' : message });
+    send({ kind: 'error', id: req.id, message: isCancelled ? QUERY_CANCELLED_MESSAGE : message });
   } finally {
     queuedIds.delete(req.id);
     runningIds.delete(req.id);
