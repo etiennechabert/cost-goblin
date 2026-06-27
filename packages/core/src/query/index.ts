@@ -19,6 +19,8 @@ export type { QueryContextOptions, BuildSourceOptions, BaselineDiscoveryParams }
 
 export { costExprFor } from './cost-metric.js';
 
+export { QUERY_CANCELLED_MESSAGE } from './cancellation.js';
+
 export { assertDateString, assertHourString, validateColumnName, validateTablePath, SecurityError } from './identifier-validator.js';
 
 export type { ParameterizedQuery } from './parameterized.js';
