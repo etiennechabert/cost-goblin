@@ -8,7 +8,7 @@ import { cpus, totalmem } from 'node:os';
 export const MIN_MEMORY_GB = 1;
 /** Ceiling so we never starve the OS + Electron (main/renderer/GPU/workers) +
  *  the user's other apps on very large machines. */
-export const MAX_MEMORY_GB = 24;
+export const MAX_MEMORY_GB = 12;
 
 export function totalMemoryGB(): number {
   return Math.max(1, Math.round(totalmem() / (1024 * 1024 * 1024)));
@@ -18,14 +18,14 @@ export function maxThreads(): number {
   return Math.max(1, cpus().length);
 }
 
-/** Default DuckDB memory_limit: ~half of physical RAM, clamped to
- *  [MIN_MEMORY_GB, MAX_MEMORY_GB]. The previous hard 4GB cap throttled large
- *  machines (a multi-GB in-memory cost_base plus concurrent aggregations spill
- *  to disk at 4GB); this scales with RAM while staying conservative. No-op on
- *  <=8GB laptops. */
+/** Default DuckDB memory_limit: ~30% of physical RAM, clamped to
+ *  [MIN_MEMORY_GB, MAX_MEMORY_GB]. Uses 30% (down from 50%) to leave headroom
+ *  for Electron's renderer/GPU processes and the OS — DuckDB spills to disk
+ *  when the limit is reached, so lowering this trades some query speed for
+ *  crash safety (prevents native OOM in partition_alloc). */
 export function computeDefaultMemoryGB(): number {
   const totalGB = totalmem() / (1024 * 1024 * 1024);
-  return Math.round(Math.min(MAX_MEMORY_GB, Math.max(MIN_MEMORY_GB, totalGB * 0.5)));
+  return Math.round(Math.min(MAX_MEMORY_GB, Math.max(MIN_MEMORY_GB, totalGB * 0.3)));
 }
 
 /** Default DuckDB intra-query parallelism: all available logical cores (DuckDB's

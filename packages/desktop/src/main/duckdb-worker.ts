@@ -1,4 +1,3 @@
-import { parentPort } from 'node:worker_threads';
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
@@ -33,10 +32,9 @@ async function configureDuckDB(conn: DuckDBConnection, settings: DuckDBSettings)
   }
 }
 
-if (parentPort === null) {
-  throw new Error('duckdb-worker.ts must be run as a Node.js Worker thread');
-}
-const port = parentPort;
+// This module now runs as a child process (fork) instead of a worker thread,
+// so that a native OOM crash only kills this process — not the Electron app.
+// IPC uses process.send() / process.on('message') instead of parentPort.
 
 type WorkerResponse =
   | { kind: 'ready' }
@@ -193,7 +191,9 @@ async function getInstance(): Promise<DuckDBInstance> {
 }
 
 function send(msg: WorkerResponse): void {
-  port.postMessage(msg);
+  if (process.send !== undefined) {
+    process.send(msg);
+  }
 }
 
 // Workers run under Electron's ESM loader too, so kick off init from a named
@@ -358,7 +358,7 @@ function reportUnexpectedFailure(id: number, err: unknown): void {
   runningIds.delete(id);
   runningConns.delete(id);
   send({ kind: 'error', id, message: `DuckDB worker error: ${message}` });
-}
+process.on('message', (msg: unknown) => {
 
 port.on('message', (msg: unknown) => {
   if (isQueryRequest(msg)) {

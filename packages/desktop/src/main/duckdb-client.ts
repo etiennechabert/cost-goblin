@@ -48,22 +48,37 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
       return null;
     },
   );
-  const { worker, pending } = lifecycle;
+  const { pending } = lifecycle;
 
-  worker.on('message', (msg: unknown) => {
-    if (!isWorkerResponse(msg)) return;
-    if (msg.kind === 'ready') return;
-    if (msg.kind === 'started') {
+  // Attach the message handler. Because the child process may be replaced on
+  // crash/restart, we re-attach on each new child via a watcher.
+  function attachMessageHandler(): void {
+    lifecycle.worker.on('message', (msg: unknown) => {
+      if (!isWorkerResponse(msg)) return;
+      if (msg.kind === 'ready') return;
+      if (msg.kind === 'started') {
+        const entry = pending.get(msg.id);
+        if (entry?.onStarted !== undefined) entry.onStarted();
+        return;
+      }
       const entry = pending.get(msg.id);
-      if (entry?.onStarted !== undefined) entry.onStarted();
-      return;
+      if (entry === undefined) return;
+      pending.delete(msg.id);
+      if (msg.kind === 'rows') entry.resolve(msg.rows);
+      else entry.reject(new Error(msg.message));
+    });
+  }
+  attachMessageHandler();
+
+  // Re-attach the message handler when the child is replaced after a crash.
+  // We poll worker identity — lightweight and avoids coupling to lifecycle internals.
+  let lastWorker = lifecycle.worker;
+  setInterval(() => {
+    if (lifecycle.worker !== lastWorker) {
+      lastWorker = lifecycle.worker;
+      attachMessageHandler();
     }
-    const entry = pending.get(msg.id);
-    if (entry === undefined) return;
-    pending.delete(msg.id);
-    if (msg.kind === 'rows') entry.resolve(msg.rows);
-    else entry.reject(new Error(msg.message));
-  });
+  }, 200);
 
   function submitQuery(
     kind: string,
@@ -75,7 +90,7 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
     const id = lifecycle.nextId++;
     return new Promise<RawRow[]>((resolve, reject) => {
       pending.set(id, { onStarted, resolve, reject });
-      worker.postMessage({ kind, id, sql, ...extraPayload });
+      lifecycle.worker.send({ kind, id, sql, ...extraPayload });
     });
   }
 
@@ -90,13 +105,16 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
       return submitQuery('prepared-query', sql, { params }, onStarted);
     },
     cancelPendingQueries(): void {
-      worker.postMessage({ kind: 'cancel-pending' });
+      lifecycle.worker.send({ kind: 'cancel-pending' });
     },
     configure(settings: { tempDir?: string; memoryGB?: number; threads?: number }): void {
-      worker.postMessage({ kind: 'configure', ...settings });
+      const msg = { kind: 'configure' as const, ...settings };
+      lifecycle.lastConfig = msg;
+      lifecycle.worker.send(msg);
     },
     async terminate(): Promise<void> {
-      await worker.terminate();
+      lifecycle.terminated = true;
+      lifecycle.worker.kill();
     },
   };
 }
