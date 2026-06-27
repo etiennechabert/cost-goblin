@@ -788,9 +788,13 @@ function AppShell(): React.JSX.Element {
     });
   }
 
+  // Finishing the wizard restarts the app. Telemetry choices can only arm at
+  // boot (before Electron's `ready` event), and a clean restart also avoids the
+  // in-place data reload after a config rewrite (which otherwise cancels the
+  // in-flight rollup rebuild and looks like a freeze). After relaunch, the normal
+  // startup flow re-checks setup and materialises data.
   function handleSetupComplete() {
-    setSetupCheck({ status: 'ready' });
-    setSettingsTab('data-sync');
+    globalThis.costgoblinUpdate.relaunch();
   }
 
   // Re-run the first-run wizard on demand (Settings → General). The wizard

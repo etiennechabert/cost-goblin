@@ -121,14 +121,15 @@ export function SetupTelemetryStep({ onDone }: Readonly<{ onDone: () => void }>)
           separately in Settings → Telemetry.
         </p>
 
-        <div className="mt-6 flex justify-end">
+        <div className="mt-6 flex items-center justify-between gap-4">
+          <p className="text-xs text-text-muted">CostGoblin will restart to apply your choices.</p>
           <button
             type="button"
             disabled={busy}
             onClick={finish}
             className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
           >
-            Continue
+            Finish
           </button>
         </div>
       </div>
