@@ -1,4 +1,9 @@
 import { app } from 'electron';
+// Statically imported (not lazy) so init can run SYNCHRONOUSLY before Electron's
+// `ready` event — the only window in which @sentry/electron can arm the native
+// crash handler. Importing the module is side-effect-free; nothing is captured
+// or sent until `Sentry.init` runs, which only happens when the user opts in.
+import * as Sentry from '@sentry/electron/main';
 import type { Event } from '@sentry/electron/main';
 import {
   isTelemetryEnabled,
@@ -8,7 +13,7 @@ import {
 } from '@costgoblin/core';
 import type { TelemetryPreferences, TelemetryStatus } from '@costgoblin/core';
 import { redactEventInPlace } from './scrub-event.js';
-import { readDevTags } from './dev-tags.js';
+import { readDevTagsSync } from './dev-tags.js';
 import { TelemetryOutbox } from './outbox.js';
 
 /** DSN for the Sentry project. Without it, no channel can actually send — the
@@ -18,22 +23,22 @@ const DSN_ENV = 'COSTGOBLIN_SENTRY_DSN';
 /** Optional self-hosted tunnel/relay endpoint (Sentry `tunnel` option). */
 const TUNNEL_ENV = 'COSTGOBLIN_SENTRY_TUNNEL';
 
-type SentryMain = typeof import('@sentry/electron/main');
-
 /**
- * Owns the opt-in Sentry SDK lifecycle in the main process. The SDK is loaded
- * lazily — only when the user has enabled a channel AND a DSN is configured — so
- * a default install never pulls in or runs the reporter. Every event is scrubbed
- * and mirrored to a local audit outbox before it leaves.
+ * Owns the opt-in Sentry SDK lifecycle in the main process. `Sentry.init` only
+ * runs — and nothing is captured or sent — when the user has enabled a channel
+ * AND a DSN is configured. Every event is scrubbed and mirrored to a local audit
+ * outbox before it leaves.
+ *
+ * `@sentry/electron` can only arm the native crash handler (Crashpad) BEFORE
+ * Electron's `ready` event, so the opt-in is decided at startup from the saved
+ * preference and {@link start} inits SYNCHRONOUSLY on the boot path. A mid-session
+ * toggle saves the new choice and the renderer restarts the app to re-arm — see
+ * {@link applyPreferences}.
  */
 class TelemetryController {
   private prefs: TelemetryPreferences = TELEMETRY_DEFAULTS;
-  private sentry: SentryMain | null = null;
+  private active = false;
   private outbox: TelemetryOutbox | null = null;
-  // Serializes reconcile() so two quick toggles can't overlap a shutdown with a
-  // start (or two inits). Each call records the latest desired prefs, then the
-  // chain reconciles to whatever that is when it runs.
-  private reconcileChain: Promise<void> = Promise.resolve();
 
   /** Called once at startup with the directory that holds the audit log. */
   initialize(outboxDir: string): void {
@@ -53,7 +58,7 @@ class TelemetryController {
   getStatus(): TelemetryStatus {
     return {
       dsnConfigured: this.dsn() !== undefined,
-      active: this.sentry !== null,
+      active: this.active,
       preferences: this.prefs,
     };
   }
@@ -62,35 +67,38 @@ class TelemetryController {
     return this.outbox === null ? [] : this.outbox.list();
   }
 
-  /** Persist-then-apply is the handler's job; this just reconciles the running
-   *  SDK with the desired preferences. Closing then re-initialising on every
-   *  change keeps sample rates and channel gating correct. Serialized so
-   *  concurrent toggles can't interleave shutdown/start. */
-  applyPreferences(prefs: TelemetryPreferences): Promise<void> {
+  /**
+   * Boot-time init — MUST run synchronously before Electron's `ready` event so
+   * @sentry/electron can arm the native Crashpad handler. Inits when a channel
+   * is on and a DSN is configured; otherwise stays dark. Opt-in comes from the
+   * saved prefs. Synchronous: any `await` here would yield to the event loop and
+   * let `ready` fire first.
+   */
+  start(prefs: TelemetryPreferences): void {
     this.prefs = prefs;
-    const run = this.reconcileChain.then(() => this.reconcile());
-    this.reconcileChain = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
-  }
-
-  private async reconcile(): Promise<void> {
-    const prefs = this.prefs; // always reconcile to the latest desired state
     const dsn = this.dsn();
-    if (this.sentry !== null) await this.shutdown();
     if (!isTelemetryEnabled(prefs) || dsn === undefined) return;
-    await this.start(dsn);
+    this.init(dsn);
   }
 
-  private async start(dsn: string): Promise<void> {
+  /**
+   * Mid-session preference change from the Settings toggle. Native capture can
+   * only arm at boot ({@link start}), so the new state takes full effect on the
+   * next launch and the renderer prompts a restart. We still stop the running
+   * SDK immediately when telemetry is turned OFF, so nothing more leaves the
+   * machine before the user restarts.
+   */
+  async applyPreferences(prefs: TelemetryPreferences): Promise<void> {
+    this.prefs = prefs;
+    if (this.active && !isTelemetryEnabled(prefs)) await this.shutdown();
+  }
+
+  private init(dsn: string): void {
     try {
       const tunnel = process.env[TUNNEL_ENV];
       // Dev builds get { branch, commit } tags so locally-run sessions can be
       // told apart; packaged builds get none (they're a release version).
-      const devTags = await readDevTags(app.isPackaged, app.getAppPath());
-      const Sentry = await import('@sentry/electron/main');
+      const devTags = readDevTagsSync(app.isPackaged, app.getAppPath());
       Sentry.init({
         dsn,
         ...(typeof tunnel === 'string' && tunnel.length > 0 ? { tunnel } : {}),
@@ -105,24 +113,23 @@ class TelemetryController {
         beforeSend: (event) => this.scrubAndRecord(event),
         beforeSendTransaction: (event) => this.scrubAndRecord(event),
       });
-      this.sentry = Sentry;
+      this.active = true;
       logger.info('telemetry: Sentry initialised', {
         crashReports: this.prefs.crashReports,
         performance: this.prefs.performance,
       });
     } catch (err: unknown) {
-      this.sentry = null;
+      this.active = false;
       logger.warn(`telemetry: failed to initialise Sentry — ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   private async shutdown(): Promise<void> {
-    const sdk = this.sentry;
-    this.sentry = null;
-    if (sdk === null) return;
+    if (!this.active) return;
+    this.active = false;
     try {
-      await sdk.flush(2000);
-      await sdk.close(2000);
+      await Sentry.flush(2000);
+      await Sentry.close(2000);
       logger.info('telemetry: Sentry shut down');
     } catch (err: unknown) {
       logger.warn(`telemetry: error during shutdown — ${err instanceof Error ? err.message : String(err)}`);

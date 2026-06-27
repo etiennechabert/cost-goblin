@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useCostApi } from '@costgoblin/ui';
 import type { TelemetryOutboxEntry, TelemetryPreferences, TelemetryStatus } from '@costgoblin/core/browser';
-import { syncRendererTelemetry } from '../telemetry/renderer-telemetry.js';
 
 type ChannelId = 'crashReports' | 'performance' | 'analytics';
 
@@ -18,7 +17,7 @@ const CHANNELS: readonly ChannelMeta[] = [
     id: 'crashReports',
     label: 'Crash & error reports',
     description:
-      'Unhandled JS errors (via Sentry) are scrubbed of file paths, account IDs, emails and dollar amounts before they leave your machine. Native crash reports also include a raw snapshot of app memory and are sent unscrubbed — you’ll be asked to confirm before enabling.',
+      'Crashes and unhandled errors, reported via Sentry. You’ll see exactly what’s collected — and how it’s protected — before it’s enabled.',
     available: true,
   },
   {
@@ -90,6 +89,9 @@ export function TelemetryTab(): React.JSX.Element {
   // Set while the user is confirming a channel that needs explicit consent
   // (crash reports ship raw native minidumps).
   const [confirming, setConfirming] = useState<ChannelId | null>(null);
+  // A telemetry change only takes effect at startup (native crash capture can
+  // only arm before Electron is ready), so a toggle prompts a restart.
+  const [restartPending, setRestartPending] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,9 +122,8 @@ export function TelemetryTab(): React.JSX.Element {
       .then(() => api.getTelemetryStatus())
       .then((s) => {
         setStatus(s);
-        // Activate renderer capture the moment crash reports are turned on,
-        // without waiting for a restart.
-        void syncRendererTelemetry(s);
+        // The new state only takes effect once the app restarts.
+        setRestartPending(true);
       })
       .catch(() => {
         // Persisting failed — revert so a privacy switch never shows a state the
@@ -156,10 +157,31 @@ export function TelemetryTab(): React.JSX.Element {
         <h2 className="text-xl font-semibold text-text-primary">Telemetry</h2>
         <p className="mt-1 text-sm text-text-secondary">
           Help improve CostGoblin by sharing crash reports and performance data. Everything here is opt-in and off by
-          default. Scrubbed error and performance payloads never include cost data, tag values, account IDs or team
-          names; native crash reports are raw memory snapshots — you’ll be asked to confirm before enabling them.
+          default, and a change only takes effect after the app restarts.
         </p>
       </div>
+
+      {restartPending && (
+        <div className="flex items-center justify-between gap-4 rounded-lg border border-accent/40 bg-accent/10 p-3 text-sm text-text-secondary">
+          <span>Restart CostGoblin to apply your telemetry change.</span>
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={() => { globalThis.costgoblinUpdate.relaunch(); }}
+              className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors hover:opacity-90"
+            >
+              Restart now
+            </button>
+            <button
+              type="button"
+              onClick={() => { setRestartPending(false); }}
+              className="rounded-md border border-border px-3 py-1.5 text-xs text-text-secondary transition-colors hover:text-text-primary"
+            >
+              Later
+            </button>
+          </div>
+        </div>
+      )}
 
       {!status.dsnConfigured && (
         <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-text-secondary">

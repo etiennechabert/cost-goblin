@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildDevTags, readDevTags } from '../main/telemetry/dev-tags.js';
+import { buildDevTags, readDevTagsSync } from '../main/telemetry/dev-tags.js';
 
 describe('buildDevTags', () => {
   it('includes trimmed branch and commit when present', () => {
@@ -16,8 +16,8 @@ describe('buildDevTags', () => {
   });
 });
 
-describe('readDevTags', () => {
-  it('returns no tags for a packaged build (never shells out to git)', async () => {
-    expect(await readDevTags(true, '/does/not/exist')).toStrictEqual({});
+describe('readDevTagsSync', () => {
+  it('returns no tags for a packaged build (never shells out to git)', () => {
+    expect(readDevTagsSync(true, '/does/not/exist')).toStrictEqual({});
   });
 });

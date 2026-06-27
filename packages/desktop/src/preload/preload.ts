@@ -419,6 +419,9 @@ contextBridge.exposeInMainWorld('costgoblinUpdate', {
   quitAndInstall(): void {
     ipcRenderer.invoke('update:quit-and-install').catch(() => undefined);
   },
+  relaunch(): void {
+    ipcRenderer.invoke('app:relaunch').catch(() => undefined);
+  },
   onStatusChanged(callback: (status: unknown) => void): () => void {
     const handler = (_event: unknown, status: unknown): void => { callback(status); };
     ipcRenderer.on('update:status-changed', handler);

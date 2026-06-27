@@ -392,6 +392,9 @@ export interface UpdateApi {
   checkForUpdates(): Promise<void>;
   downloadUpdate(): Promise<void>;
   quitAndInstall(): void;
+  /** Relaunch the app (not an update) — used to apply a telemetry consent
+   *  change, which can only take effect at startup. */
+  relaunch(): void;
   onStatusChanged(callback: (status: UpdateStatus) => void): () => void;
   getAppVersion(): Promise<string>;
 }

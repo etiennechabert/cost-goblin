@@ -1,8 +1,13 @@
+import { execFileSync } from 'node:child_process';
+
 /**
  * Dev-only Sentry tags so locally-run builds can be told apart by git branch
  * and commit. Production (packaged) builds aren't a source checkout — they carry
  * a `release` version instead and get no branch/commit. Kept electron-free
  * (`isPackaged` / repo dir are passed in) so the parsing is unit-testable.
+ *
+ * Resolution is synchronous because telemetry initialises before Electron's
+ * `ready` event, which can only happen on the synchronous startup path.
  */
 
 /** Assemble the tag set from raw `git rev-parse` output. A detached HEAD
@@ -16,13 +21,9 @@ export function buildDevTags(branch: string | null, commit: string | null): Reco
   return tags;
 }
 
-async function gitOut(args: readonly string[], cwd: string): Promise<string | null> {
+function gitOut(args: readonly string[], cwd: string): string | null {
   try {
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const run = promisify(execFile);
-    const { stdout } = await run('git', [...args], { cwd, timeout: 2000 });
-    return stdout;
+    return execFileSync('git', [...args], { cwd, timeout: 2000, encoding: 'utf-8' });
   } catch {
     return null;
   }
@@ -30,11 +31,10 @@ async function gitOut(args: readonly string[], cwd: string): Promise<string | nu
 
 /** Resolve `{ branch, commit }` for a dev checkout. No-op (`{}`) for packaged
  *  builds, and fail-safe: any git error yields no tags rather than throwing. */
-export async function readDevTags(isPackaged: boolean, repoDir: string): Promise<Record<string, string>> {
+export function readDevTagsSync(isPackaged: boolean, repoDir: string): Record<string, string> {
   if (isPackaged) return {};
-  const [branch, commit] = await Promise.all([
+  return buildDevTags(
     gitOut(['rev-parse', '--abbrev-ref', 'HEAD'], repoDir),
     gitOut(['rev-parse', '--short', 'HEAD'], repoDir),
-  ]);
-  return buildDevTags(branch, commit);
+  );
 }
