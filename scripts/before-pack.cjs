@@ -38,6 +38,13 @@ function log(msg) {
   process.stdout.write(`  • [duckdb-binding] ${msg}\n`);
 }
 
+// A binding dir is usable only if it actually holds the native addon — the file
+// the loader requires and the whole point of the swap. Gate on it (not a sibling
+// like package.json) so a half-populated dir is never treated as good.
+function hasBinding(dir) {
+  return fs.existsSync(path.join(dir, "duckdb.node"));
+}
+
 function readLockEntry(appDir, bindingName) {
   const lock = JSON.parse(fs.readFileSync(path.join(appDir, "package-lock.json"), "utf8"));
   const entry = lock.packages?.[`node_modules/@duckdb/${bindingName}`];
@@ -75,11 +82,11 @@ async function downloadAndExtract(appDir, bindingName, destDir) {
 // one arch and needed for its own arch is restored without re-downloading.
 async function ensureInCache(appDir, cacheRoot, duckdbDir, bindingName) {
   const cacheDir = path.join(cacheRoot, bindingName);
-  if (fs.existsSync(path.join(cacheDir, "package.json"))) {
+  if (hasBinding(cacheDir)) {
     return cacheDir;
   }
   const installed = path.join(duckdbDir, bindingName);
-  if (fs.existsSync(path.join(installed, "package.json"))) {
+  if (hasBinding(installed)) {
     fs.cpSync(installed, cacheDir, { recursive: true });
     return cacheDir;
   }
@@ -114,7 +121,7 @@ exports.default = async function beforePack(context) {
   // Materialize each wanted binding (from cache, or download if absent).
   for (const name of wanted) {
     const dest = path.join(duckdbDir, name);
-    if (fs.existsSync(path.join(dest, "package.json"))) continue;
+    if (hasBinding(dest)) continue;
     const src = await ensureInCache(appDir, cacheRoot, duckdbDir, name);
     fs.cpSync(src, dest, { recursive: true });
   }
