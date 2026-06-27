@@ -1,5 +1,5 @@
 import { startTransition, useEffect, useRef, useState } from 'react';
-import type { QueryState } from '@costgoblin/core/browser';
+import { QUERY_CANCELLED_MESSAGE, type QueryState } from '@costgoblin/core/browser';
 import { useWidgetSlot } from './widget-load-scheduler.js';
 
 const MAX_CANCEL_RETRIES = 2;
@@ -31,7 +31,7 @@ function handleFetchError<T>(
 ): void {
   if (cancelled.current) return;
   const msg = err instanceof Error ? err.message : String(err);
-  if (msg === 'Query cancelled' && retryCount < MAX_CANCEL_RETRIES) {
+  if (msg === QUERY_CANCELLED_MESSAGE && retryCount < MAX_CANCEL_RETRIES) {
     setRetryCount(c => c + 1);
     return;
   }
