@@ -58,7 +58,32 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run build --workspaces --if-present
+      - name: Build app bundles
+        run: npm run build --workspaces --if-present
+        env:
+          # Bakes the default DSN into the main bundle (electron-vite inlines
+          # import.meta.env.MAIN_VITE_*). Empty when the var isn't set →
+          # telemetry stays dark. Not a secret, so a variable not a secret.
+          MAIN_VITE_SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+
+      # Inject debug IDs into the built JS (so shipped bundles match the maps)
+      # and upload source maps, so renderer/main stack traces are readable in
+      # Sentry. Runs before packaging so electron-builder ships the injected JS.
+      # Native Electron frames are symbolicated server-side by Sentry, so no
+      # dSYM upload is needed. Skipped entirely when Sentry isn't configured.
+      - name: Upload source maps to Sentry
+        if: vars.SENTRY_ORG != ''
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_URL: ${{ vars.SENTRY_URL || 'https://de.sentry.io' }}
+        run: |
+          set -euo pipefail
+          REL="costgoblin@${GITHUB_REF#refs/tags/v}"
+          npx --yes @sentry/cli@^2 sourcemaps inject packages/desktop/out
+          npx --yes @sentry/cli@^2 sourcemaps upload --release "$REL" packages/desktop/out
 
       - name: Build installers
         run: npx --no-install electron-builder --${{ matrix.platform }} --publish always

@@ -41,8 +41,13 @@ class TelemetryController {
   }
 
   private dsn(): string | undefined {
-    const dsn = process.env[DSN_ENV];
-    return typeof dsn === 'string' && dsn.length > 0 ? dsn : undefined;
+    const env = process.env[DSN_ENV];
+    if (typeof env === 'string' && env.length > 0) return env;
+    // Build-time default, inlined by electron-vite from MAIN_VITE_SENTRY_DSN.
+    // Undefined when none was baked in — lets packaged builds report without the
+    // user setting an env var, while dev/forks/tests stay dark.
+    const baked = import.meta.env.MAIN_VITE_SENTRY_DSN;
+    return typeof baked === 'string' && baked.length > 0 ? baked : undefined;
   }
 
   getStatus(): TelemetryStatus {
