@@ -576,7 +576,8 @@ export class BaselineStore {
         : { id: randomUUID(), source: 'discovered', scope, basis, basisSnapshotAt: now, createdAt: now, updatedAt: now };
       this.specs.set(spec.id, spec);
       this.histories.set(spec.id, clampHistory(tuple.points, dateRange.end));
-      this.finalizeFromHistory(spec);
+      // finalizeFromHistory runs once for every spec in recompute()'s loop —
+      // including these — so don't double-compute snapshots here.
     }
 
     // 5) Vanished discovered tuples: keep the spec but mark history empty so it

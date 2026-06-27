@@ -16,7 +16,7 @@ import {
 } from './validator.js';
 
 const WIDGET_TYPES: readonly WidgetType[] = [
-  'summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table',
+  'summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table', 'baseline',
 ];
 
 const WIDGET_SIZES: readonly WidgetSize[] = ['small', 'medium', 'large', 'full'];

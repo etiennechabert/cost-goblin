@@ -35,8 +35,8 @@ export function expandToWindow(
   return out;
 }
 
-/** Centered moving average of the cost series over `window` days, aligned to
- *  each point's date. Used for the 30-day trend line overlay on the chart. */
+/** Trailing (backward-looking) moving average of the cost series over `window`
+ *  days, aligned to each point's date. Used for the 30-day trend line overlay. */
 export function movingAverage(series: readonly BaselineDailyPoint[], window: number): readonly BaselineDailyPoint[] {
   const w = Math.max(1, window);
   return series.map((p, i) => {

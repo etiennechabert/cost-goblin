@@ -54,7 +54,7 @@ export function BaselineDetailModal({ id, onClose, onChanged }: Readonly<{ id: s
         {detail === null && detailQuery.status === 'success' && (
           <p className="text-sm text-text-muted">Baseline not found.</p>
         )}
-        {detail !== null && <Body detail={detail} onChanged={() => { setRefresh((n) => n + 1); onChanged(); }} />}
+        {detail !== null && <Body key={detail.record.spec.id} detail={detail} onChanged={() => { setRefresh((n) => n + 1); onChanged(); }} />}
       </DialogContent>
     </Dialog>
   );
@@ -72,6 +72,7 @@ function Body({ detail, onChanged }: Readonly<{ detail: BaselineDetail; onChange
   const [upper, setUpper] = useState<number>(record.spec.manualBand?.upper ?? (mode === 'percentile' ? 90 : autoUpper));
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const maxCost = Math.max(...costs, autoUpper, 1);
   const effLower = mode === 'percentile' ? percentile(costs, lower, true) : lower;
@@ -89,18 +90,30 @@ function Body({ detail, onChanged }: Readonly<{ detail: BaselineDetail; onChange
 
   async function save(): Promise<void> {
     setSaving(true);
+    setError(null);
     const manualBand: ManualBand = { mode, lower, upper };
-    await api.updateBaseline(record.spec.id, { manualBand, ...(note.length > 0 ? { note: { text: note } } : {}) }).catch(() => null);
-    setSaving(false);
-    setNote('');
-    onChanged();
+    try {
+      await api.updateBaseline(record.spec.id, { manualBand, ...(note.length > 0 ? { note: { text: note } } : {}) });
+      setNote('');
+      onChanged();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function resetAuto(): Promise<void> {
     setSaving(true);
-    await api.updateBaseline(record.spec.id, { manualBand: null, note: { text: 'Reset to automated band' } }).catch(() => null);
-    setSaving(false);
-    onChanged();
+    setError(null);
+    try {
+      await api.updateBaseline(record.spec.id, { manualBand: null, note: { text: 'Reset to automated band' } });
+      onChanged();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -143,7 +156,7 @@ function Body({ detail, onChanged }: Readonly<{ detail: BaselineDetail; onChange
           <p className="text-xs font-medium text-text-secondary">Band override</p>
           <div className="flex gap-1">
             {(['absolute', 'percentile'] as const).map((m) => (
-              <button key={m} type="button" onClick={() => { setMode(m); setLower(m === 'percentile' ? 10 : autoLower); setUpper(m === 'percentile' ? 90 : autoUpper); }}
+              <button key={m} type="button" onClick={() => { setMode(m); setLower(m === 'percentile' ? 10 : Math.min(autoLower, autoUpper)); setUpper(m === 'percentile' ? 90 : Math.max(autoLower, autoUpper)); }}
                 className={`rounded-md px-2 py-0.5 text-[11px] ${mode === m ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-text-primary'}`}>
                 {m === 'absolute' ? 'Absolute $' : 'Percentile'}
               </button>
@@ -163,6 +176,7 @@ function Body({ detail, onChanged }: Readonly<{ detail: BaselineDetail; onChange
         </div>
         <textarea value={note} onChange={(e) => { setNote(e.target.value); }} placeholder="Add a note (optional)…"
           className="w-full rounded-md border border-border bg-bg-primary px-2 py-1 text-xs text-text-primary placeholder:text-text-muted" rows={2} />
+        {error !== null && <p className="text-xs text-negative">{error}</p>}
         <div className="flex gap-2">
           <button type="button" disabled={saving} onClick={() => { void save(); }} className="rounded-md bg-accent/15 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-50">Save band + note</button>
           {record.spec.manualBand !== undefined && (
