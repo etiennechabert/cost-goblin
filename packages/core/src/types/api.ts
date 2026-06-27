@@ -16,6 +16,7 @@ import type { RollupGrainEstimate } from '../rollup/estimator.js';
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { CostScopeCapabilities, CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
+import type { TelemetryPreferences, TelemetryStatus, TelemetryOutboxEntry } from '../telemetry/types.js';
 import type {
   ApplyConfigBundleParams,
   ApplyConfigBundleResult,
@@ -165,7 +166,10 @@ export interface CostApi {
   openDataFolder(): Promise<void>;
   ssoLogin(profile: string): Promise<void>;
   getAccountMapping(): Promise<AccountMappingStatus>;
-  getSetupStatus(): Promise<{ configured: boolean }>;
+  /** `postSetup` is true only on the launch immediately following the setup
+   *  wizard (carried across the wizard's relaunch), so the UI can land the user
+   *  on the data-sync screen instead of an empty dashboard. */
+  getSetupStatus(): Promise<{ configured: boolean; postSetup: boolean }>;
   testConnection(params: { profile: string; bucket: string }): Promise<{ ok: boolean; error?: string | undefined }>;
   listAwsProfiles(): Promise<string[]>;
   listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }>;
@@ -367,6 +371,19 @@ export interface CostApi {
   /** Rotate the MCP token, restarting the server if running. Returns the new
    *  token. Existing clients must update their config to keep working. */
   regenerateMcpToken(): Promise<string>;
+  /** Opt-in telemetry channel preferences (all default OFF). */
+  getTelemetryPreferences(): Promise<TelemetryPreferences>;
+  /** Persist telemetry channel preferences and apply them live — enabling a
+   *  channel lazily initialises the Sentry SDK, disabling all of them flushes
+   *  and shuts it down. */
+  setTelemetryPreferences(prefs: TelemetryPreferences): Promise<void>;
+  /** Whether a DSN is configured and whether the SDK is active this session,
+   *  so the UI can explain why nothing is (or is) being sent. */
+  getTelemetryStatus(): Promise<TelemetryStatus>;
+  /** The local telemetry audit log — one entry per event handed to the
+   *  transport — so the user can see exactly what left the machine. Most
+   *  recent first. */
+  getTelemetryOutbox(): Promise<readonly TelemetryOutboxEntry[]>;
 }
 
 export interface AccountMappingEntry {
@@ -412,6 +429,11 @@ export interface UpdateApi {
   checkForUpdates(): Promise<void>;
   downloadUpdate(): Promise<void>;
   quitAndInstall(): void;
+  /** Relaunch the app (not an update) — used to apply a telemetry consent
+   *  change, which can only take effect at startup. Pass `postSetup` when
+   *  relaunching at the end of the setup wizard so the next launch can resume on
+   *  the data-sync screen. */
+  relaunch(postSetup?: boolean): void;
   onStatusChanged(callback: (status: UpdateStatus) => void): () => void;
   getAppVersion(): Promise<string>;
 }

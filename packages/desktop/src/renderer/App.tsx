@@ -10,6 +10,9 @@ import { SyncStatusButton, type SyncActivity, type SyncTier } from './top-menu/s
 import { RollupStatusButton } from './top-menu/rollup-status-button.js';
 import { GeneralTab } from './settings/general-tab.js';
 import { PerformanceTab } from './settings/performance-tab.js';
+import { TelemetryTab } from './settings/telemetry-tab.js';
+import { SetupTelemetryStep } from './setup-telemetry-step.js';
+import { syncRendererTelemetry } from './telemetry/renderer-telemetry.js';
 import { ShareTab } from './settings/share-tab.js';
 import { ImportTab } from './settings/import-tab.js';
 
@@ -93,6 +96,7 @@ function hasUpdateIndicator(status: UpdateStatus): boolean {
 type SetupCheck =
   | { status: 'checking' }
   | { status: 'needs-setup' }
+  | { status: 'telemetry' }
   | { status: 'ready' };
 
 const FALLBACK_VIEWS: ViewsConfig = { views: [OVERVIEW_SEED_VIEW] };
@@ -530,6 +534,13 @@ function AppShell(): React.JSX.Element {
     globalThis.costgoblinUpdate.getAppVersion().then(setAppVersion).catch(() => undefined);
   }, []);
 
+  // Start renderer-process crash capture when (and only when) crash reports are
+  // already opted-in and the main reporter is active. Renderer events forward to
+  // main, where they're scrubbed; this never sends anything on its own.
+  useEffect(() => {
+    api.getTelemetryStatus().then(syncRendererTelemetry).catch(() => undefined);
+  }, [api]);
+
   useEffect(() => {
     globalThis.costgoblinDebug.getGitBranch().then(setDevBranch).catch(() => undefined);
     // Resolved separately (a gh subprocess, ~0.5s) so the branch label never
@@ -584,7 +595,7 @@ function AppShell(): React.JSX.Element {
   useEffect(() => {
     async function initialize(): Promise<void> {
       setSplashStep('Checking configuration...');
-      const { configured } = await api.getSetupStatus();
+      const { configured, postSetup } = await api.getSetupStatus();
 
       if (!configured) {
         setSetupCheck({ status: 'needs-setup' });
@@ -593,6 +604,10 @@ function AppShell(): React.JSX.Element {
 
       setSplashStep('Preparing cost data...');
       await api.awaitMaterializedBase(BASE_READY_TIMEOUT_MS);
+      // First launch right after the wizard (the relaunch carried a one-shot
+      // flag): land on data-sync so a freshly-configured user is guided to sync,
+      // rather than dropping them on an empty default dashboard.
+      if (postSetup) setSettingsTab('data-sync');
       // Reveal the app as soon as the in-memory base is ready. The dimension
       // filter-value prewarm previously blocked the splash here for ~13s (~8
       // concurrent probes). Run it in the background instead: with cost_base
@@ -787,9 +802,22 @@ function AppShell(): React.JSX.Element {
     });
   }
 
+  // Finishing the wizard restarts the app. Telemetry choices can only arm at
+  // boot (before Electron's `ready` event), and a clean restart also avoids the
+  // in-place data reload after a config rewrite (which otherwise cancels the
+  // in-flight rollup rebuild and looks like a freeze). After relaunch, the normal
+  // startup flow re-checks setup and materialises data.
   function handleSetupComplete() {
-    setSetupCheck({ status: 'ready' });
-    setSettingsTab('data-sync');
+    // postSetup=true → the next launch resumes on the data-sync screen.
+    globalThis.costgoblinUpdate.relaunch(true);
+  }
+
+  // Re-run the first-run wizard on demand (Settings → General). The wizard
+  // funnels into the telemetry step and then back to the dashboard; existing
+  // config is preserved (setup:write-config merges).
+  function handleRerunSetup() {
+    setSettingsTab(null);
+    setSetupCheck({ status: 'needs-setup' });
   }
 
   const views = viewsConfig ?? FALLBACK_VIEWS;
@@ -808,7 +836,11 @@ function AppShell(): React.JSX.Element {
   }
 
   if (setupCheck.status === 'needs-setup') {
-    return <SetupWizard onComplete={handleSetupComplete} />;
+    return <SetupWizard onComplete={() => { setSetupCheck({ status: 'telemetry' }); }} />;
+  }
+
+  if (setupCheck.status === 'telemetry') {
+    return <SetupTelemetryStep onDone={handleSetupComplete} />;
   }
 
   function activeNavId(): string | null {
@@ -854,6 +886,7 @@ function AppShell(): React.JSX.Element {
             updateStatus={updateStatus}
             onCheckForUpdates={handleCheckForUpdates}
             onShowReleaseNotes={() => { setReleaseNotesOpen(true); }}
+            onRerunSetup={handleRerunSetup}
           />
         );
       case 'data-sync':
@@ -881,6 +914,8 @@ function AppShell(): React.JSX.Element {
         return <McpView />;
       case 'performance':
         return <PerformanceTab />;
+      case 'telemetry':
+        return <TelemetryTab />;
       case null:
         return null;
     }

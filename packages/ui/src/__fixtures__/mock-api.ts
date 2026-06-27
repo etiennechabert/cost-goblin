@@ -52,6 +52,9 @@ import {
   type BaselinesConfigState,
   type BaselinesDiscoveryConfig,
   type RollupGrainEstimate,
+  type TelemetryPreferences,
+  type TelemetryStatus,
+  type TelemetryOutboxEntry,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE, computeRollupEstimate } from '@costgoblin/core/browser';
 
@@ -269,7 +272,7 @@ export class MockCostApi implements CostApi {
   openDataFolder(): Promise<void> { return Promise.resolve(); }
   ssoLogin(): Promise<void> { return Promise.resolve(); }
   getAccountMapping(): Promise<AccountMappingStatus> { return Promise.resolve({ status: 'missing' }); }
-  getSetupStatus(): Promise<{ configured: boolean }> { return Promise.resolve({ configured: true }); }
+  getSetupStatus(): Promise<{ configured: boolean; postSetup: boolean }> { return Promise.resolve({ configured: true, postSetup: false }); }
   testConnection(): Promise<{ ok: boolean; error?: string | undefined }> { return Promise.resolve({ ok: true }); }
   listAwsProfiles(): Promise<string[]> { return Promise.resolve(['default', 'prod', 'staging']); }
   listS3Buckets(): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> { return Promise.resolve({ buckets: [{ name: 'my-cur-bucket', region: 'eu-central-1' }] }); }
@@ -487,6 +490,10 @@ export class MockCostApi implements CostApi {
   private mockBaselinesConfig(): BaselinesDiscoveryConfig {
     return { lookbackDays: 365, windowDays: 30, lowerPct: 10, upperPct: 90, minMonthlyCost: asDollars(100), minSavings: asDollars(0), reopenPct: 15, grainDimensions: [] };
   }
+  getTelemetryPreferences(): Promise<TelemetryPreferences> { return Promise.resolve({ errorReports: false, nativeCrashReports: false, performance: false, analytics: false }); }
+  setTelemetryPreferences(): Promise<void> { return Promise.resolve(); }
+  getTelemetryStatus(): Promise<TelemetryStatus> { return Promise.resolve({ dsnConfigured: false, active: false, preferences: { errorReports: false, nativeCrashReports: false, performance: false, analytics: false }, armed: { errorReports: false, nativeCrashReports: false, performance: false, analytics: false } }); }
+  getTelemetryOutbox(): Promise<readonly TelemetryOutboxEntry[]> { return Promise.resolve([]); }
   exportConfigBundle(): Promise<ExportConfigBundleResult> {
     return Promise.resolve({ status: 'saved', path: '/mock/costgoblin-config-2026-06-11.yaml' });
   }

@@ -39,8 +39,16 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
     case 'line':
     case 'topNBar':
     case 'heatmap':
+    case 'waterfall':
+    case 'priceVolume':
       addGroupByFields(base, w);
       if (w.topN !== undefined) base['topN'] = w.topN;
+      return base;
+    case 'pareto':
+      addGroupByFields(base, w);
+      return base;
+    case 'burndown':
+      if (w.budget !== undefined) base['budget'] = w.budget;
       return base;
     case 'table':
       if (w.enabledColumns !== undefined && w.enabledColumns.length > 0) base['enabledColumns'] = [...w.enabledColumns];
