@@ -25,6 +25,7 @@ import {
   logger,
   isStringRecord,
   isCredentialError,
+  isS3SyncDownloadFailure,
 } from '@costgoblin/core';
 import { buildAccountReverseMap } from './query-utils.js';
 import type {
@@ -733,6 +734,9 @@ export { isCredentialError };
 export function toUserFriendlyError(err: unknown, profile: string): Error {
   if (isCredentialError(err)) {
     return new Error(`AWS credentials expired for profile "${profile}". Run: aws sso login --profile ${profile}`);
+  }
+  if (isS3SyncDownloadFailure(err)) {
+    return new Error(`Download from S3 failed — your AWS session may have expired. Run: aws sso login --profile ${profile} and retry. If it persists, check your network/VPN connection.`);
   }
   return err instanceof Error ? err : new Error(String(err));
 }

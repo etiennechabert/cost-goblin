@@ -423,7 +423,7 @@ function handleSyncError(
     state.syncStatuses[syncId] = { status: 'idle', lastSync: null };
     return raw;
   }
-  const error = isCredentialError(err) ? toUserFriendlyError(err, profile) : raw;
+  const error = toUserFriendlyError(err, profile);
   logger.error(`Selective sync '${syncId}' failed: ${error.message}`);
   state.syncStatuses[syncId] = { status: 'failed', error, lastSync: null };
   return error;

@@ -15,6 +15,7 @@ export {
   createS3Handle,
   parseS3Path,
   isCredentialError,
+  isS3SyncDownloadFailure,
 } from './s3-client.js';
 
 export {
