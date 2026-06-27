@@ -39,6 +39,8 @@ interface PendingQuery {
 }
 
 export async function createDuckDBClient(workerPath: string): Promise<DuckDBClient> {
+  // The DuckDB engine runs in a forked child process so a native OOM kills only
+  // that process; the lifecycle auto-restarts it and replays the last config.
   const lifecycle = await initWorkerLifecycle<PendingQuery>(
     workerPath,
     (msg) => isWorkerResponse(msg) && msg.kind === 'ready',
@@ -47,38 +49,26 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
       if (msg.kind === 'error' && msg.id === -1) return msg.message;
       return null;
     },
+    { backend: 'process', autoRestart: true },
   );
   const { pending } = lifecycle;
 
-  // Attach the message handler. Because the child process may be replaced on
-  // crash/restart, we re-attach on each new child via a watcher.
-  function attachMessageHandler(): void {
-    lifecycle.worker.on('message', (msg: unknown) => {
-      if (!isWorkerResponse(msg)) return;
-      if (msg.kind === 'ready') return;
-      if (msg.kind === 'started') {
-        const entry = pending.get(msg.id);
-        if (entry?.onStarted !== undefined) entry.onStarted();
-        return;
-      }
+  // The lifecycle re-attaches this handler automatically after a restart, so we
+  // register it once and stay oblivious to which child process is current.
+  lifecycle.setMessageHandler((msg: unknown) => {
+    if (!isWorkerResponse(msg)) return;
+    if (msg.kind === 'ready') return;
+    if (msg.kind === 'started') {
       const entry = pending.get(msg.id);
-      if (entry === undefined) return;
-      pending.delete(msg.id);
-      if (msg.kind === 'rows') entry.resolve(msg.rows);
-      else entry.reject(new Error(msg.message));
-    });
-  }
-  attachMessageHandler();
-
-  // Re-attach the message handler when the child is replaced after a crash.
-  // We poll worker identity — lightweight and avoids coupling to lifecycle internals.
-  let lastWorker = lifecycle.worker;
-  setInterval(() => {
-    if (lifecycle.worker !== lastWorker) {
-      lastWorker = lifecycle.worker;
-      attachMessageHandler();
+      if (entry?.onStarted !== undefined) entry.onStarted();
+      return;
     }
-  }, 200);
+    const entry = pending.get(msg.id);
+    if (entry === undefined) return;
+    pending.delete(msg.id);
+    if (msg.kind === 'rows') entry.resolve(msg.rows);
+    else entry.reject(new Error(msg.message));
+  });
 
   function submitQuery(
     kind: string,
@@ -90,7 +80,7 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
     const id = lifecycle.nextId++;
     return new Promise<RawRow[]>((resolve, reject) => {
       pending.set(id, { onStarted, resolve, reject });
-      lifecycle.worker.send({ kind, id, sql, ...extraPayload });
+      lifecycle.post({ kind, id, sql, ...extraPayload });
     });
   }
 
@@ -105,16 +95,15 @@ export async function createDuckDBClient(workerPath: string): Promise<DuckDBClie
       return submitQuery('prepared-query', sql, { params }, onStarted);
     },
     cancelPendingQueries(): void {
-      lifecycle.worker.send({ kind: 'cancel-pending' });
+      lifecycle.post({ kind: 'cancel-pending' });
     },
     configure(settings: { tempDir?: string; memoryGB?: number; threads?: number }): void {
-      const msg = { kind: 'configure' as const, ...settings };
+      const msg = { kind: 'configure', ...settings };
       lifecycle.lastConfig = msg;
-      lifecycle.worker.send(msg);
+      lifecycle.post(msg);
     },
-    async terminate(): Promise<void> {
-      lifecycle.terminated = true;
-      lifecycle.worker.kill();
+    terminate(): Promise<void> {
+      return lifecycle.terminate();
     },
   };
 }

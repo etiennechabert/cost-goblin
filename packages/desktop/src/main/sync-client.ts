@@ -66,10 +66,11 @@ export async function createSyncClient(workerPath: string): Promise<SyncClient> 
       if (msg.kind === 'error' && msg.id === -1) return msg.message;
       return null;
     },
+    { backend: 'thread' },
   );
-  const { worker, pending } = lifecycle;
+  const { pending } = lifecycle;
 
-  worker.on('message', (msg: unknown) => {
+  lifecycle.setMessageHandler((msg: unknown) => {
     if (!isWorkerResponse(msg)) return;
     if (msg.kind === 'ready') return;
 
@@ -126,7 +127,7 @@ export async function createSyncClient(workerPath: string): Promise<SyncClient> 
           },
           onProgress: options.onProgress,
         });
-        worker.postMessage({
+        lifecycle.post({
           kind: 'sync',
           id,
           bucketPath: options.bucketPath,
@@ -138,10 +139,10 @@ export async function createSyncClient(workerPath: string): Promise<SyncClient> 
       });
     },
     cancelSync(id: number): void {
-      worker.postMessage({ kind: 'cancel', id });
+      lifecycle.post({ kind: 'cancel', id });
     },
-    async terminate(): Promise<void> {
-      await worker.terminate();
+    terminate(): Promise<void> {
+      return lifecycle.terminate();
     },
   };
 }

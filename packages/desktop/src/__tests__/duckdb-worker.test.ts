@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Worker } from 'node:worker_threads';
+import { type ChildProcess, fork } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -65,15 +65,15 @@ function expectRows(result: ResultMsg): RowsMsg {
 // ---------------------------------------------------------------------------
 
 describe('DuckDB Worker', () => {
-  let worker: Worker;
+  let worker: ChildProcess;
   let nextId = 1;
 
   function sendQuery(id: number, sql: string): void {
-    worker.postMessage({ kind: 'query', id, sql });
+    worker.send({ kind: 'query', id, sql });
   }
 
   function sendPreparedQuery(id: number, sql: string, params: unknown[]): void {
-    worker.postMessage({ kind: 'prepared-query', id, sql, params });
+    worker.send({ kind: 'prepared-query', id, sql, params });
   }
 
   function waitForResult(id: number): Promise<ResultMsg> {
@@ -101,7 +101,9 @@ describe('DuckDB Worker', () => {
   }
 
   beforeAll(async () => {
-    worker = new Worker(workerPath);
+    // 'advanced' serialization mirrors production (worker-lifecycle.ts) and lets
+    // BigInt/Date survive IPC, which the default JSON serialization can't.
+    worker = fork(workerPath, [], { serialization: 'advanced' });
     // The concurrency test attaches one transient listener per in-flight query,
     // which can exceed the default cap of 10. Raise it to avoid noisy warnings.
     worker.setMaxListeners(100);
@@ -119,8 +121,8 @@ describe('DuckDB Worker', () => {
     });
   });
 
-  afterAll(async () => {
-    await worker.terminate();
+  afterAll(() => {
+    worker.kill();
   });
 
   it('completes simple query', async () => {
@@ -193,12 +195,12 @@ describe('DuckDB Worker', () => {
   });
 
   it('ignores malformed messages without crashing', async () => {
-    worker.postMessage('invalid');
-    worker.postMessage(null);
-    worker.postMessage({ kind: 'query', id: 999 });
-    worker.postMessage({ kind: 'query' });
-    worker.postMessage({ kind: 'prepared-query', id: 998 });
-    worker.postMessage({ kind: 'unknown' });
+    worker.send('invalid');
+    worker.send(0);
+    worker.send({ kind: 'query', id: 999 });
+    worker.send({ kind: 'query' });
+    worker.send({ kind: 'prepared-query', id: 998 });
+    worker.send({ kind: 'unknown' });
 
     const id = nextId++;
     sendQuery(id, 'SELECT 1');
@@ -208,7 +210,7 @@ describe('DuckDB Worker', () => {
   it('handles cancel-pending without crashing', async () => {
     const id = nextId++;
     sendQuery(id, 'SELECT 1');
-    worker.postMessage({ kind: 'cancel-pending' });
+    worker.send({ kind: 'cancel-pending' });
     const result = await waitForResult(id);
     expect(['rows', 'error']).toContain(result.kind);
     expect(result.id).toBe(id);
@@ -217,7 +219,7 @@ describe('DuckDB Worker', () => {
   it('remains healthy after cancellation', async () => {
     const cancelId = nextId++;
     sendQuery(cancelId, 'SELECT 1');
-    worker.postMessage({ kind: 'cancel-pending' });
+    worker.send({ kind: 'cancel-pending' });
     await waitForResult(cancelId);
 
     const afterId = nextId++;

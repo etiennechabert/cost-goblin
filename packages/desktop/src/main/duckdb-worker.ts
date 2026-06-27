@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import type { DuckDBConnection, DuckDBInstance } from './duckdb-loader.js';
 import { createResourcePool } from './connection-pool.js';
 import type { ResourcePool } from './connection-pool.js';
@@ -170,11 +171,13 @@ let dbInstance: DuckDBInstance | null = null;
 function getPool(): Promise<ResourcePool<DuckDBConnection>> {
   poolPromise ??= createDuckDB().then(async (db) => {
     dbInstance = db;
-    // Apply memory limit and thread count immediately using a temporary
-    // connection. The temp_directory is set later via the 'configure'
-    // message once the main thread knows the userData path.
+    // Apply memory/threads AND a default temp_directory immediately, using a
+    // temporary connection, so DuckDB can spill to disk from the very first
+    // query — never leaving a window where an in-memory instance with a memory
+    // limit cannot spill (→ native OOM). The main process refines the temp dir
+    // to the userData path via the 'configure' message moments later.
     const initConn = await db.connect();
-    await configureDuckDB(initConn, {});
+    await configureDuckDB(initConn, { tempDir: tmpdir() });
     initConn.disconnectSync();
     return createResourcePool(computeQueryPoolSize(), () => db.connect());
   });
@@ -358,9 +361,9 @@ function reportUnexpectedFailure(id: number, err: unknown): void {
   runningIds.delete(id);
   runningConns.delete(id);
   send({ kind: 'error', id, message: `DuckDB worker error: ${message}` });
-process.on('message', (msg: unknown) => {
+}
 
-port.on('message', (msg: unknown) => {
+process.on('message', (msg: unknown) => {
   if (isQueryRequest(msg)) {
     const { id } = msg;
     handleRequest(msg).catch((err: unknown) => { reportUnexpectedFailure(id, err); });
