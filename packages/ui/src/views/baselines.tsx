@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SortingState } from '@tanstack/react-table';
-import type { BaselineRecord, BaselineRecomputeStatus, BaselineStatus, BaselinesListResult, DimensionsConfig } from '@costgoblin/core/browser';
+import type { BaselineRecord, BaselineRecomputeStatus, BaselineTriageStatus, BaselinesListResult, DimensionsConfig } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
@@ -12,20 +12,30 @@ import { BaselineMicroBar } from '../components/baseline-micro-bar.js';
 import { BaselineDetailModal } from '../components/baseline-detail-modal.js';
 import { Dialog, DialogContent, DialogTitle, DialogClose } from '../components/ui/dialog.js';
 
-const STATUS_FILTERS: readonly { id: BaselineStatus | 'actionable' | 'all'; label: string }[] = [
+type TriageFilter = BaselineTriageStatus | 'open' | 'all';
+
+const STATUS_FILTERS: readonly { id: TriageFilter; label: string }[] = [
+  { id: 'open', label: 'Open' },
   { id: 'all', label: 'All' },
-  { id: 'actionable', label: 'Actionable' },
-  { id: 'over', label: 'Over' },
-  { id: 'under', label: 'Under' },
-  { id: 'in-band', label: 'In band' },
-  { id: 'insufficient-data', label: 'Insufficient' },
+  { id: 'new', label: 'New' },
+  { id: 'interesting', label: 'Interesting' },
+  { id: 'confirmed', label: 'Confirmed' },
+  { id: 'in-progress', label: 'In Progress' },
+  { id: 'false-positive', label: 'False Positive' },
+  { id: 'auto-ignored', label: 'Auto-Ignored' },
 ];
 
-function statusChip(status: BaselineStatus): string {
+const TRIAGE_LABEL: Readonly<Record<BaselineTriageStatus, string>> = {
+  'new': 'New', 'interesting': 'Interesting', 'confirmed': 'Confirmed',
+  'in-progress': 'In Progress', 'false-positive': 'False Positive', 'auto-ignored': 'Auto-Ignored',
+};
+
+function triageChip(status: BaselineTriageStatus): string {
   switch (status) {
-    case 'over': return 'text-negative bg-negative/10 border-negative/30';
-    case 'under': return 'text-positive bg-positive/10 border-positive/30';
-    case 'in-band': return 'text-warning bg-warning/10 border-warning/30';
+    case 'new': return 'text-accent bg-accent/10 border-accent/30';
+    case 'interesting': return 'text-warning bg-warning/10 border-warning/30';
+    case 'confirmed': return 'text-positive bg-positive/10 border-positive/30';
+    case 'in-progress': return 'text-accent bg-accent/10 border-accent/30';
     default: return 'text-text-muted bg-bg-tertiary/30 border-border';
   }
 }
@@ -41,14 +51,19 @@ function Kpi({ label, value, accent }: Readonly<{ label: string; value: string; 
 
 export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: BaselineRecomputeStatus | undefined }>) {
   const api = useCostApi();
-  const [statusFilter, setStatusFilter] = useState<BaselineStatus | 'actionable' | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<TriageFilter>('open');
   const [refreshKey, setRefreshKey] = useState(0);
   const [sorting, setSorting] = useState<SortingState>([{ id: 'potential', desc: true }]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
   const running = baselineStatus?.state === 'running';
-  const progress = baselineStatus?.state === 'running' ? `${String(baselineStatus.done)}/${String(baselineStatus.total)}` : '';
+  const progressLabel = baselineStatus?.state === 'running'
+    ? (baselineStatus.phase === 'discovering' ? 'Discovering baselines…' : `Computing ${String(baselineStatus.done)} / ${String(baselineStatus.total)}`)
+    : '';
+  const progressPct = baselineStatus?.state === 'running' && baselineStatus.phase === 'computing' && baselineStatus.total > 0
+    ? Math.round((baselineStatus.done / baselineStatus.total) * 100)
+    : null;
   const prevState = useRef<string | undefined>(baselineStatus?.state);
   useEffect(() => {
     if (prevState.current === 'running' && baselineStatus?.state === 'idle') setRefreshKey((n) => n + 1);
@@ -56,11 +71,13 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
   }, [baselineStatus?.state]);
 
   const listQuery = useQuery(
-    () => api.listBaselines(statusFilter === 'all' ? {} : { status: statusFilter }),
+    () => api.listBaselines(statusFilter === 'all' ? {} : { triage: statusFilter }),
     [api, statusFilter, refreshKey],
   );
   const result: BaselinesListResult | null = listQuery.status === 'success' ? listQuery.data : null;
   const rows = result?.items ?? [];
+  const orderedIds = rows.map((r) => r.spec.id);
+  const selIdx = selectedId !== null ? orderedIds.indexOf(selectedId) : -1;
 
   const columns = useMemo<readonly TableColumn<BaselineRecord>[]>(() => [
     {
@@ -80,8 +97,8 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
     },
     {
       id: 'status', header: 'Status',
-      accessorFn: (r) => r.status,
-      cell: (_v, r) => <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusChip(r.status)}`}>{r.status}</span>,
+      accessorFn: (r) => r.triageStatus,
+      cell: (_v, r) => <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${triageChip(r.triageStatus)}`}>{TRIAGE_LABEL[r.triageStatus]}</span>,
     },
     {
       id: 'band', header: 'Average / band', sortable: false,
@@ -111,7 +128,7 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
           <button type="button" onClick={() => { setShowNew(true); }} className="rounded-md border border-border px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary">New baseline</button>
           <button type="button" disabled={running} onClick={() => { api.recomputeBaselines().catch(() => undefined); }}
             className="rounded-md bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-60">
-            {running ? `Recomputing… ${progress}` : 'Recompute'}
+            {running ? progressLabel : 'Recompute'}
           </button>
         </div>
       </div>
@@ -121,6 +138,19 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
           <Kpi label="Potential savings" value={`${formatDollars(result.totalPotentialMonthly)}/mo`} accent="text-warning" />
           <Kpi label="Realized savings" value={`${formatDollars(result.totalRealizedMonthly)}/mo`} accent="text-positive" />
           <Kpi label="Baselines" value={String(result.total)} />
+        </div>
+      )}
+
+      {running && (
+        <div className="rounded-lg border border-accent/30 bg-accent/5 px-4 py-2">
+          <div className="flex items-center justify-between text-xs text-accent">
+            <span>{progressLabel}</span>
+            {progressPct !== null && <span className="tabular-nums">{String(progressPct)}%</span>}
+          </div>
+          <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-bg-tertiary">
+            <div className={`h-full rounded-full bg-accent/60 ${progressPct === null ? 'w-1/3 animate-pulse' : 'transition-all'}`}
+              style={progressPct === null ? undefined : { width: `${String(progressPct)}%` }} />
+          </div>
         </div>
       )}
 
@@ -155,7 +185,14 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
       )}
 
       {selectedId !== null && (
-        <BaselineDetailModal id={selectedId} onClose={() => { setSelectedId(null); }} onChanged={() => { setRefreshKey((n) => n + 1); }} />
+        <BaselineDetailModal
+          id={selectedId}
+          onClose={() => { setSelectedId(null); }}
+          onChanged={() => { setRefreshKey((n) => n + 1); }}
+          onNext={selIdx >= 0 && selIdx < orderedIds.length - 1 ? () => { setSelectedId(orderedIds[selIdx + 1] ?? null); } : undefined}
+          onPrev={selIdx > 0 ? () => { setSelectedId(orderedIds[selIdx - 1] ?? null); } : undefined}
+          position={selIdx >= 0 ? { index: selIdx, total: orderedIds.length } : undefined}
+        />
       )}
       {showNew && <NewBaselineDialog onClose={() => { setShowNew(false); }} onCreated={() => { setShowNew(false); setRefreshKey((n) => n + 1); }} />}
     </div>

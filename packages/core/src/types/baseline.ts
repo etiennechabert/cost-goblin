@@ -79,6 +79,17 @@ export type BaselineStatus = 'over' | 'under' | 'in-band' | 'insufficient-data';
 
 export const BASELINE_STATUSES: readonly BaselineStatus[] = ['over', 'under', 'in-band', 'insufficient-data'] as const;
 
+/** User-assignable triage status — the "ticketing" workflow state for tracking
+ *  a baseline, independent of the auto-derived drift {@link BaselineStatus}.
+ *  `auto-ignored` is the default for low-value discovered baselines (below the
+ *  auto-ignore monthly threshold); the user can override it like any other. */
+export type BaselineTriageStatus = 'new' | 'interesting' | 'confirmed' | 'in-progress' | 'false-positive' | 'auto-ignored';
+
+export const BASELINE_TRIAGE_STATUSES: readonly BaselineTriageStatus[] = ['new', 'interesting', 'confirmed', 'in-progress', 'false-positive', 'auto-ignored'] as const;
+
+/** Triage states treated as still-open (the default "Open" list filter). */
+export const OPEN_TRIAGE_STATUSES: readonly BaselineTriageStatus[] = ['new', 'interesting', 'in-progress'] as const;
+
 export type BaselineSource = 'discovered' | 'manual';
 
 export interface BaselineDailyPoint {
@@ -90,7 +101,7 @@ export interface BaselineNote {
   /** ISO timestamp. */
   readonly at: string;
   readonly text: string;
-  readonly statusChange?: { readonly from: BaselineStatus; readonly to: BaselineStatus } | undefined;
+  readonly statusChange?: { readonly from: BaselineTriageStatus; readonly to: BaselineTriageStatus } | undefined;
   readonly ticket?: string | undefined;
 }
 
@@ -121,7 +132,10 @@ export interface BaselineRecord {
   readonly stats: BaselineStats | null;
   readonly current: BaselineCurrent | null;
   readonly savings: BaselineSavings;
+  /** Auto-derived drift status (drives the Average/Band marker color). */
   readonly status: BaselineStatus;
+  /** User-assignable triage/ticketing status (defaults to `new`). */
+  readonly triageStatus: BaselineTriageStatus;
   /** The effective band edges (manual-else-automated), in $/day. */
   readonly effectiveLower: Dollars;
   readonly effectiveUpper: Dollars;
@@ -171,6 +185,9 @@ export interface BaselinesDiscoveryConfig {
   readonly windowDays: number;
   readonly lowerPct: number;
   readonly upperPct: number;
+  /** Discovered baselines whose average monthly cost is below this are
+   *  auto-assigned the `auto-ignored` triage status (still discovered, just
+   *  hidden from the default "Open" view) — not excluded from discovery. */
   readonly minMonthlyCost: Dollars;
   readonly minSavings: Dollars;
   readonly reopenPct: number;
@@ -187,7 +204,9 @@ export interface BaselinesConfigState {
 export type BaselineSortKey = 'potential' | 'realized' | 'current' | 'scope';
 
 export interface BaselinesListParams {
-  readonly status?: BaselineStatus | 'actionable' | undefined;
+  /** Filter by triage status. `open` = the still-open states (new/interesting/
+   *  in-progress). Omit for all. */
+  readonly triage?: BaselineTriageStatus | 'open' | undefined;
   readonly owner?: string | undefined;
   readonly dimension?: DimensionId | undefined;
   readonly sortBy?: BaselineSortKey | undefined;
@@ -216,7 +235,8 @@ export interface BaselineCreateInput {
 export interface BaselineUpdatePatch {
   readonly name?: string | undefined;
   readonly manualBand?: ManualBand | null | undefined;
-  readonly status?: BaselineStatus | undefined;
+  /** Set the triage/ticketing status; logged to the activity feed. */
+  readonly triageStatus?: BaselineTriageStatus | undefined;
   readonly note?: { readonly text: string; readonly ticket?: string | undefined } | undefined;
   /** Re-snapshot the cost basis to the current active Cost Scope. */
   readonly resnapshotBasis?: boolean | undefined;

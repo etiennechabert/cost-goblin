@@ -122,8 +122,9 @@ export type {
   BaselineCreateInput,
   BaselineUpdatePatch,
   BaselineRecomputeStatus,
+  BaselineTriageStatus,
 } from './baseline.js';
-export { BASELINE_STATUSES } from './baseline.js';
+export { BASELINE_STATUSES, BASELINE_TRIAGE_STATUSES, OPEN_TRIAGE_STATUSES } from './baseline.js';
 
 export type {
   ApplyConfigBundleParams,

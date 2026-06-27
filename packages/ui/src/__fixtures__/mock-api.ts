@@ -459,6 +459,7 @@ export class MockCostApi implements CostApi {
       current: null,
       savings: { potentialDaily: asDollars(0), realizedDaily: asDollars(0), potentialMonthly: asDollars(0), realizedMonthly: asDollars(0) },
       status: 'insufficient-data',
+      triageStatus: 'new',
       effectiveLower: asDollars(0),
       effectiveUpper: asDollars(0),
       currentDaily: asDollars(0),

@@ -6,7 +6,10 @@ import {
   asDimensionId,
   asDollars,
   asTagValue,
+  BASELINE_TRIAGE_STATUSES,
+  OPEN_TRIAGE_STATUSES,
   buildBaselineDiscoveryQuery,
+  buildBaselineTotalsQuery,
   buildDailyCostsQuery,
   buildDimCardinalityQuery,
   computeBands,
@@ -36,6 +39,7 @@ import type {
   BaselineSpec,
   BaselineStatus,
   BaselineTriage,
+  BaselineTriageStatus,
   BaselineUpdatePatch,
   BaselinesConfigState,
   BaselinesDiscoveryConfig,
@@ -73,7 +77,6 @@ export interface BaselineEngineDeps {
 
 const HISTORY_WINDOW_DAYS = 365;
 const MAX_SNAPSHOTS = 365;
-const MAX_DISCOVERED = 500;
 
 function envNum(key: string, fallback: number): number {
   const raw = process.env[key];
@@ -139,7 +142,10 @@ export class BaselineStore {
   private readonly snapshots = new Map<string, readonly BaselineSnapshot[]>();
   private readonly triages = new Map<string, BaselineTriage>();
   private readonly bestAchieved = new Map<string, number>();
-  private readonly statusOverrides = new Map<string, BaselineStatus>();
+  private readonly triageStatuses = new Map<string, BaselineTriageStatus>();
+  /** Baselines whose triage status the user set explicitly — discovery's
+   *  auto-ignore must never overwrite these. */
+  private readonly userTriaged = new Set<string>();
   private userConfig: BaselinesDiscoveryConfig | null = null;
   private status: BaselineRecomputeStatus = { state: 'idle', lastRun: null };
   private readonly listeners = new Set<(s: BaselineRecomputeStatus) => void>();
@@ -182,10 +188,11 @@ export class BaselineStore {
         if (!isRecord(m)) continue;
         if (isRecord(m['triage'])) this.triages.set(id, parseTriage(m['triage']));
         if (typeof m['bestAchieved'] === 'number') this.bestAchieved.set(id, m['bestAchieved']);
-        if (typeof m['statusOverride'] === 'string') {
-          const s = m['statusOverride'];
-          if (s === 'over' || s === 'under' || s === 'in-band' || s === 'insufficient-data') this.statusOverrides.set(id, s);
+        if (typeof m['triageStatus'] === 'string') {
+          const t = parseTriageStatus(m['triageStatus']);
+          if (t !== null) this.triageStatuses.set(id, t);
         }
+        if (m['userTriaged'] === true) this.userTriaged.add(id);
       }
     }
   }
@@ -212,7 +219,8 @@ export class BaselineStore {
       meta[id] = {
         triage: this.triages.get(id) ?? { notes: [] },
         bestAchieved: this.bestAchieved.get(id) ?? null,
-        ...(this.statusOverrides.has(id) ? { statusOverride: this.statusOverrides.get(id) } : {}),
+        ...(this.triageStatuses.has(id) ? { triageStatus: this.triageStatuses.get(id) } : {}),
+        ...(this.userTriaged.has(id) ? { userTriaged: true } : {}),
       };
     }
     const specsDoc = {
@@ -275,8 +283,7 @@ export class BaselineStore {
     const current = computeCurrent(history, cfg.windowDays);
     const eff = effectiveBands(bands, spec.manualBand, costs);
     const savings = computeSavings(current, eff);
-    const derived = deriveStatus(current, eff, history.length, { minDataPoints: 30, subCentFloor: 0.01, overPctOverLower: 0 });
-    const status = this.statusOverrides.get(spec.id) ?? derived;
+    const status = deriveStatus(current, eff, history.length, { minDataPoints: 30, subCentFloor: 0.01, overPctOverLower: 0 });
     const currentDaily = current?.avgDaily ?? asDollars(0);
     const { ownerPath, scopeLabel } = describeScope(spec.scope, accountMap, orgTree);
     return {
@@ -285,6 +292,7 @@ export class BaselineStore {
       current,
       savings,
       status,
+      triageStatus: this.triageStatuses.get(spec.id) ?? 'new',
       effectiveLower: eff.lower,
       effectiveUpper: eff.upper,
       currentDaily,
@@ -305,11 +313,11 @@ export class BaselineStore {
     const orgTree = (await deps.getOrgTreeConfig()).tree;
     let records = [...this.specs.values()].map((s) => this.deriveRecord(s, accountMap, orgTree));
 
-    if (params.status !== undefined) {
-      const actionable: ReadonlySet<BaselineStatus> = new Set<BaselineStatus>(['over', 'under']);
-      records = params.status === 'actionable'
-        ? records.filter((r) => actionable.has(r.status))
-        : records.filter((r) => r.status === params.status);
+    if (params.triage !== undefined) {
+      const open: ReadonlySet<BaselineTriageStatus> = new Set<BaselineTriageStatus>(OPEN_TRIAGE_STATUSES);
+      records = params.triage === 'open'
+        ? records.filter((r) => open.has(r.triageStatus))
+        : records.filter((r) => r.triageStatus === params.triage);
     }
     if (params.owner !== undefined) {
       records = records.filter((r) => (r.ownerPath ?? []).some((n) => String(n) === params.owner));
@@ -413,7 +421,8 @@ export class BaselineStore {
     };
     this.specs.set(id, updated);
 
-    if (patch.status !== undefined) this.statusOverrides.set(id, patch.status);
+    const triageChanged = patch.triageStatus !== undefined && patch.triageStatus !== before.triageStatus;
+    if (patch.triageStatus !== undefined) { this.triageStatuses.set(id, patch.triageStatus); this.userTriaged.add(id); }
 
     const after = this.deriveRecord(updated, accountMap, orgTree);
     const summary = changeSummary(before, after, bandChanged, patch);
@@ -421,7 +430,7 @@ export class BaselineStore {
       const note: BaselineNote = {
         at: new Date().toISOString(),
         text: [summary, patch.note?.text].filter((t): t is string => t !== null && t !== undefined && t.length > 0).join(' — '),
-        ...(patch.status !== undefined ? { statusChange: { from: before.status, to: patch.status } } : {}),
+        ...(triageChanged ? { statusChange: { from: before.triageStatus, to: patch.triageStatus } } : {}),
         ...(patch.note?.ticket === undefined ? {} : { ticket: patch.note.ticket }),
       };
       const triage = this.triages.get(id) ?? { notes: [] };
@@ -439,7 +448,8 @@ export class BaselineStore {
     this.snapshots.delete(id);
     this.triages.delete(id);
     this.bestAchieved.delete(id);
-    this.statusOverrides.delete(id);
+    this.triageStatuses.delete(id);
+    this.userTriaged.delete(id);
     await this.save();
   }
 
@@ -460,15 +470,19 @@ export class BaselineStore {
         this.setStatus({ state: 'running', phase: 'discovering', done: 0, total: 0 });
         await this.discover(deps);
         const specs = [...this.specs.values()];
+        const total = specs.length;
         let done = 0;
-        this.setStatus({ state: 'running', phase: 'computing', done, total: specs.length });
+        this.setStatus({ state: 'running', phase: 'computing', done, total });
+        // Throttle progress broadcasts: with thousands of baselines, one IPC
+        // message per item would flood the renderer.
+        const step = Math.max(1, Math.floor(total / 100));
         for (const spec of specs) {
           // Discovered baselines already had their history set during discover();
           // only manual/view baselines need a per-baseline query here.
           if (spec.source === 'manual') await this.recomputeOne(deps, spec);
           else this.finalizeFromHistory(spec);
           done += 1;
-          this.setStatus({ state: 'running', phase: 'computing', done, total: specs.length });
+          if (done % step === 0 || done === total) this.setStatus({ state: 'running', phase: 'computing', done, total });
         }
       }
       await this.save();
@@ -530,54 +544,73 @@ export class BaselineStore {
       return;
     }
 
-    // 2) Enumerate per-day series for every tuple above the threshold.
-    const minTotalCost = cfg.minMonthlyCost * (cfg.lookbackDays / 30);
-    const neededCols = [...grain.map((d) => d.field), 'cost'];
-    const mat = this.matSource(deps, costScope, dimensions, availableColumns, dateRange, neededCols);
-    const discovery = buildBaselineDiscoveryQuery(
-      { dateRange, filters: {}, grainDimensionIds: grain.map((d) => d.name), minTotalCost },
+    const grainIds = grain.map((d) => d.name);
+    const grainCols = grain.map((d) => d.field);
+    const tupleKeyOf = (values: Record<string, string>): string => grain.map((d) => `${d.name}=${values[d.field] ?? ''}`).sort().join('&');
+    const lookbackMonths = Math.max(1, cfg.lookbackDays / 30);
+    const minTotal = cfg.minMonthlyCost * lookbackMonths;
+
+    // Both discovery queries hit the same source/columns — resolve the rollup
+    // once (computeShapeSignature isn't free).
+    const mat = this.matSource(deps, costScope, dimensions, availableColumns, dateRange, [...grainCols, 'cost']);
+
+    // 2) Cheap totals query — ONE row per tuple. Enumerates every scope without
+    //    the per-day fan-out, so "discover everything" stays fast even on a big
+    //    estate.
+    const totalsQ = buildBaselineTotalsQuery(
+      { dateRange, filters: {}, grainDimensionIds: grainIds },
       { ...opts, ...(mat === undefined ? {} : { materializedSource: mat }) },
     );
-    const rows = await deps.runPreparedQuery(discovery.sql, discovery.params, mat !== undefined);
-
-    // 3) Pivot into per-tuple histories.
-    const byTuple = new Map<string, { values: Record<string, string>; points: BaselineDailyPoint[] }>();
-    for (const r of rows) {
+    const totalsRows = await deps.runPreparedQuery(totalsQ.sql, totalsQ.params, mat !== undefined);
+    const tuples = new Map<string, { values: Record<string, string>; total: number }>();
+    for (const r of totalsRows) {
       const values: Record<string, string> = {};
       for (const d of grain) values[d.field] = str(r[d.field]);
-      const tupleKey = grain.map((d) => `${d.name}=${values[d.field] ?? ''}`).sort().join('&');
-      let entry = byTuple.get(tupleKey);
-      if (entry === undefined) { entry = { values, points: [] }; byTuple.set(tupleKey, entry); }
-      entry.points.push({ date: asDateString(str(r['date'])), cost: asDollars(num(r['cost'])) });
+      tuples.set(tupleKeyOf(values), { values, total: num(r['total']) });
+    }
+    logger.info('baselines: discovered tuples', { count: tuples.size });
+
+    // 3) Bounded per-day query — only for tuples worth tracking (>= the
+    //    auto-ignore threshold). These are the baselines a user will actually
+    //    look at; auto-ignored ones don't need stored history.
+    const dailyByTuple = new Map<string, BaselineDailyPoint[]>();
+    const dailyQ = buildBaselineDiscoveryQuery(
+      { dateRange, filters: {}, grainDimensionIds: grainIds, minTotalCost: Math.max(0, minTotal) },
+      { ...opts, ...(mat === undefined ? {} : { materializedSource: mat }) },
+    );
+    const dailyRows = await deps.runPreparedQuery(dailyQ.sql, dailyQ.params, mat !== undefined);
+    for (const r of dailyRows) {
+      const values: Record<string, string> = {};
+      for (const d of grain) values[d.field] = str(r[d.field]);
+      const key = tupleKeyOf(values);
+      let pts = dailyByTuple.get(key);
+      if (pts === undefined) { pts = []; dailyByTuple.set(key, pts); }
+      pts.push({ date: asDateString(str(r['date'])), cost: asDollars(num(r['cost'])) });
     }
 
-    // 4) Upsert discovered baselines; cap to the largest tuples.
+    // 4) Upsert a baseline for every tuple. Auto-ignore the low-value ones via
+    //    triage status — but never override a status the user set themselves.
     const basis = await snapshotBasis(deps);
     const existingByScope = new Map<string, BaselineSpec>();
     for (const s of this.specs.values()) if (s.source === 'discovered') existingByScope.set(scopeKey(s.scope), s);
 
-    const ranked = [...byTuple.values()]
-      .map((e) => ({ ...e, total: e.points.reduce((s, p) => s + p.cost, 0) }))
-      .sort((a, b) => b.total - a.total);
-    if (ranked.length > MAX_DISCOVERED) {
-      logger.warn('baselines: discovery capped', { found: ranked.length, kept: MAX_DISCOVERED });
-    }
-    const kept = ranked.slice(0, MAX_DISCOVERED);
-
     const seenScopes = new Set<string>();
-    for (const tuple of kept) {
+    for (const [key, tuple] of tuples) {
       const scope = buildScope(grain, tuple.values);
-      const key = scopeKey(scope);
-      seenScopes.add(key);
-      const existing = existingByScope.get(key);
+      const scopeId = scopeKey(scope);
+      seenScopes.add(scopeId);
+      const existing = existingByScope.get(scopeId);
       const now = new Date().toISOString();
       const spec: BaselineSpec = existing !== undefined
         ? { ...existing, basis, basisSnapshotAt: now, updatedAt: now }
         : { id: randomUUID(), source: 'discovered', scope, basis, basisSnapshotAt: now, createdAt: now, updatedAt: now };
       this.specs.set(spec.id, spec);
-      this.histories.set(spec.id, clampHistory(tuple.points, dateRange.end));
-      // finalizeFromHistory runs once for every spec in recompute()'s loop —
-      // including these — so don't double-compute snapshots here.
+      this.histories.set(spec.id, clampHistory(dailyByTuple.get(key) ?? [], dateRange.end));
+      if (!this.userTriaged.has(spec.id)) {
+        if (tuple.total / lookbackMonths < cfg.minMonthlyCost) this.triageStatuses.set(spec.id, 'auto-ignored');
+        else this.triageStatuses.delete(spec.id); // un-ignore once it grows past the threshold
+      }
+      // finalizeFromHistory runs once for every spec in recompute()'s loop.
     }
 
     // 5) Vanished discovered tuples: keep the spec but mark history empty so it
@@ -625,6 +658,10 @@ export class BaselineStore {
   private finalizeFromHistory(spec: BaselineSpec): void {
     const cfg = this.effectiveConfig();
     const history = this.histories.get(spec.id) ?? [];
+    // No stored history (e.g. a baseline that became auto-ignored or vanished)
+    // → nothing to snapshot, and drop any snapshots from when it had data so the
+    // stored trend doesn't go stale. Stats derive as insufficient-data.
+    if (history.length === 0) { this.snapshots.delete(spec.id); return; }
     const costs = history.map((p) => p.cost);
     const bands = computeBands(history, { lowerPct: cfg.lowerPct, upperPct: cfg.upperPct });
     const current = computeCurrent(history, cfg.windowDays);
@@ -823,7 +860,7 @@ function sortValue(r: BaselineRecord, key: BaselinesListParams['sortBy']): numbe
 function changeSummary(before: BaselineRecord, after: BaselineRecord, bandChanged: boolean, patch: BaselineUpdatePatch): string | null {
   const bits: string[] = [];
   if (bandChanged) bits.push(`band ${before.effectiveLower.toFixed(2)}–${before.effectiveUpper.toFixed(2)} → ${after.effectiveLower.toFixed(2)}–${after.effectiveUpper.toFixed(2)}`);
-  if (patch.status !== undefined && patch.status !== before.status) bits.push(`status ${before.status} → ${patch.status}`);
+  if (patch.triageStatus !== undefined && patch.triageStatus !== before.triageStatus) bits.push(`status ${before.triageStatus} → ${patch.triageStatus}`);
   if (patch.resnapshotBasis === true) bits.push('re-snapshotted cost basis');
   return bits.length > 0 ? bits.join('; ') : null;
 }
@@ -889,10 +926,13 @@ function parseTriage(raw: Record<string, unknown>): BaselineTriage {
   return { notes };
 }
 
-function parseStatusChange(raw: Record<string, unknown>): { from: BaselineStatus; to: BaselineStatus } {
-  const norm = (v: unknown): BaselineStatus => {
-    const s = str(v);
-    return s === 'over' || s === 'under' || s === 'in-band' ? s : 'insufficient-data';
-  };
+function parseTriageStatus(v: unknown): BaselineTriageStatus | null {
+  const s = str(v);
+  for (const t of BASELINE_TRIAGE_STATUSES) if (t === s) return t;
+  return null;
+}
+
+function parseStatusChange(raw: Record<string, unknown>): { from: BaselineTriageStatus; to: BaselineTriageStatus } {
+  const norm = (v: unknown): BaselineTriageStatus => parseTriageStatus(v) ?? 'new';
   return { from: norm(raw['from']), to: norm(raw['to']) };
 }

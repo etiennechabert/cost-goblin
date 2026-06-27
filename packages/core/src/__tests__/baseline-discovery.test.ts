@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildBaselineDiscoveryQuery, buildDimCardinalityQuery, buildSource } from '../query/builder.js';
+import { buildBaselineDiscoveryQuery, buildBaselineTotalsQuery, buildDimCardinalityQuery, buildSource } from '../query/builder.js';
 import type { QueryContextOptions } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
@@ -108,6 +108,24 @@ describe('baseline discovery query (DuckDB)', () => {
     const filteredTuples = new Set(filteredRows.map((r) => `${String(r['account_id'])}|${String(r['service'])}`));
 
     expect(filteredTuples.size).toBeLessThan(allTuples.size);
+  });
+
+  it('totals query returns one row per tuple with the correct total', async () => {
+    const q = buildBaselineTotalsQuery(
+      { dateRange, filters: {}, grainDimensionIds: [asDimensionId('account_id'), asDimensionId('service')] },
+      opts,
+    );
+    const rows = await queryAll(q.sql, q.params);
+    const src = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, periods: PERIODS, costMetric: 'unblended' });
+    const [ref] = await queryAll(
+      `SELECT COUNT(*) AS n, SUM(c) AS t FROM (SELECT account_id, service, SUM(cost) AS c FROM ${src} WHERE usage_date BETWEEN '2026-01-01' AND '2026-02-28' GROUP BY account_id, service)`,
+    );
+    expect(rows.length).toBe(Number(ref?.['n']));
+    const totalSum = rows.reduce((acc, r) => acc + Number(r['total']), 0);
+    expect(totalSum).toBeCloseTo(Number(ref?.['t']), 2);
+    // one row per tuple — not a per-day fan-out
+    const keys = new Set(rows.map((r) => `${String(r['account_id'])}|${String(r['service'])}`));
+    expect(keys.size).toBe(rows.length);
   });
 
   it('cardinality probe returns per-column distinct counts', async () => {

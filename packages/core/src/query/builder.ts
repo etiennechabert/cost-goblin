@@ -1037,6 +1037,43 @@ export function buildDimCardinalityQuery(
   return { sql, params: qb.build().params };
 }
 
+/** One row per distinct tuple over the discovery grain, with its total cost
+ *  over the window. Cheap (no per-day fan-out) — used to enumerate EVERY scope
+ *  for discovery, then classify each as worth tracking vs auto-ignore. */
+export function buildBaselineTotalsQuery(
+  params: { readonly dateRange: DateRange; readonly filters: FilterMap; readonly grainDimensionIds: readonly DimensionId[] },
+  opts: QueryContextOptions,
+): ParameterizedQuery {
+  if (params.grainDimensionIds.length === 0) {
+    throw new SecurityError('Baseline discovery requires at least one grain dimension.');
+  }
+  const { qb, filterClauses, exclusionClauses, source } = setupQuery(
+    { filters: params.filters, dateRange: params.dateRange },
+    'daily',
+    opts,
+  );
+  const resolved = params.grainDimensionIds.map((id) => resolveField(id, opts.dimensions));
+  for (const r of resolved) {
+    if (!isSafeColumnIdentifier(r.rawField)) {
+      throw new SecurityError(`Unsafe grain column "${r.rawField}" in baseline discovery.`);
+    }
+  }
+  const dimCols = resolved.map((r) => r.rawField);
+  const dimSelects = resolved.map((r) => `${r.fieldExpr} AS ${r.rawField}`);
+  const whereConditions = [
+    buildDateRangeWhere(qb, params.dateRange),
+    ...filterClauses,
+    ...exclusionClauses,
+  ];
+  const sql = `
+    SELECT ${dimSelects.join(', ')}, SUM(cost) AS total
+    FROM ${source}
+    WHERE ${whereConditions.join(' AND ')}
+    GROUP BY ${dimCols.join(', ')}
+  `.trim();
+  return { sql, params: qb.build().params };
+}
+
 export function buildEntityDetailQuery(
   params: EntityDetailParams,
   opts: QueryContextOptions,

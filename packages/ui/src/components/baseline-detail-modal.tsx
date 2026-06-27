@@ -1,6 +1,24 @@
-import { useMemo, useState, type MouseEvent } from 'react';
-import type { BaselineDetail, BaselineDailyPoint, ManualBand } from '@costgoblin/core/browser';
-import { asDateString, asDollars } from '@costgoblin/core/browser';
+import { useEffect, useMemo, useState, type MouseEvent } from 'react';
+import type { BaselineDetail, BaselineDailyPoint, BaselineTriageStatus, BaselineUpdatePatch, ManualBand } from '@costgoblin/core/browser';
+import { asDateString, asDollars, BASELINE_TRIAGE_STATUSES } from '@costgoblin/core/browser';
+
+const TRIAGE_LABEL: Readonly<Record<BaselineTriageStatus, string>> = {
+  'new': 'New', 'interesting': 'Interesting', 'confirmed': 'Confirmed',
+  'in-progress': 'In Progress', 'false-positive': 'False Positive', 'auto-ignored': 'Auto-Ignored',
+};
+
+/** "Negative" outcomes — picking one auto-advances to the next case so you can
+ *  sweep a review list quickly. */
+const DISMISS_STATUSES = new Set<BaselineTriageStatus>(['false-positive', 'auto-ignored']);
+
+function triageChipClass(status: BaselineTriageStatus): string {
+  switch (status) {
+    case 'interesting': return 'text-warning bg-warning/10 border-warning/30';
+    case 'confirmed': return 'text-positive bg-positive/10 border-positive/30';
+    case 'new': case 'in-progress': return 'text-accent bg-accent/10 border-accent/30';
+    default: return 'text-text-muted bg-bg-tertiary/30 border-border';
+  }
+}
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog.js';
@@ -149,7 +167,18 @@ function StatCard({ label, perDay, accent }: Readonly<{ label: string; perDay: n
   );
 }
 
-export function BaselineDetailModal({ id, onClose, onChanged }: Readonly<{ id: string; onClose: () => void; onChanged: () => void }>) {
+export interface BaselineDetailModalProps {
+  readonly id: string;
+  readonly onClose: () => void;
+  readonly onChanged: () => void;
+  /** Advance/retreat within a review session, if there's a next/prev baseline. */
+  readonly onNext?: (() => void) | undefined;
+  readonly onPrev?: (() => void) | undefined;
+  /** 1-based position in the current list, for the "n / total" indicator. */
+  readonly position?: { readonly index: number; readonly total: number } | undefined;
+}
+
+export function BaselineDetailModal({ id, onClose, onChanged, onNext, onPrev, position }: Readonly<BaselineDetailModalProps>) {
   const api = useCostApi();
   const [refresh, setRefresh] = useState(0);
   const detailQuery = useQuery(() => api.getBaseline(id), [api, id, refresh]);
@@ -162,13 +191,20 @@ export function BaselineDetailModal({ id, onClose, onChanged }: Readonly<{ id: s
         {detail === null && detailQuery.status === 'success' && (
           <p className="text-sm text-text-muted">Baseline not found.</p>
         )}
-        {detail !== null && <Body key={detail.record.spec.id} detail={detail} onChanged={() => { setRefresh((n) => n + 1); onChanged(); }} />}
+        {detail !== null && (
+          <Body key={detail.record.spec.id} detail={detail} onChanged={() => { setRefresh((n) => n + 1); onChanged(); }}
+            onNext={onNext} onPrev={onPrev} position={position} />
+        )}
       </DialogContent>
     </Dialog>
   );
 }
 
-function Body({ detail, onChanged }: Readonly<{ detail: BaselineDetail; onChanged: () => void }>) {
+function Body({ detail, onChanged, onNext, onPrev, position }: Readonly<{
+  detail: BaselineDetail; onChanged: () => void;
+  onNext?: (() => void) | undefined; onPrev?: (() => void) | undefined;
+  position?: { readonly index: number; readonly total: number } | undefined;
+}>) {
   const api = useCostApi();
   const { record, dailyHistory } = detail;
   const costs = useMemo(() => dailyHistory.map((p) => p.cost), [dailyHistory]);
@@ -181,6 +217,10 @@ function Body({ detail, onChanged }: Readonly<{ detail: BaselineDetail; onChange
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [triage, setTriage] = useState<BaselineTriageStatus>(record.triageStatus);
+  const [bandDirty, setBandDirty] = useState(false);
+
+  const dirty = bandDirty || note.length > 0;
 
   const maxCost = Math.max(...costs, autoUpper, 1);
   const effLower = mode === 'percentile' ? percentile(costs, lower, true) : lower;
@@ -197,10 +237,17 @@ function Body({ detail, onChanged }: Readonly<{ detail: BaselineDetail; onChange
   async function save(): Promise<void> {
     setSaving(true);
     setError(null);
+    // Only send what actually changed — so a status/note edit doesn't silently
+    // pin a manual band equal to the current automated one.
     const manualBand: ManualBand = { mode, lower, upper };
+    const patch: BaselineUpdatePatch = {
+      ...(bandDirty ? { manualBand } : {}),
+      ...(note.length > 0 ? { note: { text: note } } : {}),
+    };
     try {
-      await api.updateBaseline(record.spec.id, { manualBand, ...(note.length > 0 ? { note: { text: note } } : {}) });
+      await api.updateBaseline(record.spec.id, patch);
       setNote('');
+      setBandDirty(false);
       onChanged();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -222,11 +269,67 @@ function Body({ detail, onChanged }: Readonly<{ detail: BaselineDetail; onChange
     }
   }
 
+  // Quick triage: assign + persist a status immediately (no note needed). For a
+  // "negative" outcome, auto-advance to the next case so you can sweep a list.
+  async function assignStatus(status: BaselineTriageStatus): Promise<void> {
+    const prev = triage;
+    setTriage(status); // optimistic
+    setSaving(true);
+    setError(null);
+    try {
+      await api.updateBaseline(record.spec.id, { triageStatus: status });
+      onChanged();
+      if (DISMISS_STATUSES.has(status) && onNext) onNext();
+    } catch (err: unknown) {
+      setTriage(prev); // revert the optimistic highlight on failure
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Keep the highlighted status in sync if the record changes underneath us
+  // (refetch after save, or a concurrent/external update).
+  useEffect(() => { setTriage(record.triageStatus); }, [record.triageStatus]);
+
+  // Keyboard-driven review: 1–6 assign a status; ←/→ (or p/n) move between cases.
+  // No deps array is intentional — rebinding each render keeps onKey's closures
+  // (onNext/onPrev/assignStatus) fresh, so navigation never targets a stale list.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      const el = document.activeElement;
+      if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement || el instanceof HTMLSelectElement) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const n = Number(e.key);
+      if (Number.isInteger(n) && n >= 1 && n <= BASELINE_TRIAGE_STATUSES.length) {
+        const status = BASELINE_TRIAGE_STATUSES[n - 1];
+        if (status !== undefined) { e.preventDefault(); void assignStatus(status); }
+        return;
+      }
+      if ((e.key === 'ArrowRight' || e.key === 'n') && onNext !== undefined) { e.preventDefault(); onNext(); }
+      else if ((e.key === 'ArrowLeft' || e.key === 'p') && onPrev !== undefined) { e.preventDefault(); onPrev(); }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', onKey); };
+  });
+
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <DialogTitle className="text-base">{record.spec.name ?? record.scopeLabel}</DialogTitle>
-        <p className="text-xs text-text-muted">{record.scopeLabel} · {record.spec.source} · {record.status}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <DialogTitle className="text-base">{record.spec.name ?? record.scopeLabel}</DialogTitle>
+          <p className="text-xs text-text-muted">{record.scopeLabel} · {record.spec.source} · drift: {record.status}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {position !== undefined && (
+            <div className="flex items-center gap-1 text-xs text-text-muted">
+              <button type="button" disabled={onPrev === undefined} onClick={() => { onPrev?.(); }} className="rounded px-1.5 py-0.5 hover:bg-bg-tertiary disabled:opacity-30" aria-label="Previous baseline (←)">←</button>
+              <span className="tabular-nums">{String(position.index + 1)} / {String(position.total)}</span>
+              <button type="button" disabled={onNext === undefined} onClick={() => { onNext?.(); }} className="rounded px-1.5 py-0.5 hover:bg-bg-tertiary disabled:opacity-30" aria-label="Next baseline (→)">→</button>
+            </div>
+          )}
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${triageChipClass(record.triageStatus)}`}>{TRIAGE_LABEL[record.triageStatus]}</span>
+        </div>
       </div>
 
       <HistoryChart history={dense} ma={ma} lower={effLower} upper={effUpper} maxCost={maxCost} />
@@ -244,7 +347,7 @@ function Body({ detail, onChanged }: Readonly<{ detail: BaselineDetail; onChange
           <p className="text-xs font-medium text-text-secondary">Band override</p>
           <div className="flex gap-1">
             {(['absolute', 'percentile'] as const).map((m) => (
-              <button key={m} type="button" onClick={() => { setMode(m); setLower(m === 'percentile' ? 10 : Math.min(autoLower, autoUpper)); setUpper(m === 'percentile' ? 90 : Math.max(autoLower, autoUpper)); }}
+              <button key={m} type="button" onClick={() => { setMode(m); setLower(m === 'percentile' ? 10 : Math.min(autoLower, autoUpper)); setUpper(m === 'percentile' ? 90 : Math.max(autoLower, autoUpper)); setBandDirty(true); }}
                 className={`rounded-md px-2 py-0.5 text-[11px] ${mode === m ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-text-primary'}`}>
                 {m === 'absolute' ? 'Absolute $' : 'Percentile'}
               </button>
@@ -256,7 +359,7 @@ function Body({ detail, onChanged }: Readonly<{ detail: BaselineDetail; onChange
           max={mode === 'percentile' ? 100 : Math.ceil(maxCost)}
           step={mode === 'percentile' ? 1 : Math.max(0.01, maxCost / 200)}
           value={[lower, upper]}
-          onValueChange={(v) => { const [lo, hi] = v; if (lo !== undefined) setLower(lo); if (hi !== undefined) setUpper(hi); }}
+          onValueChange={(v) => { const [lo, hi] = v; if (lo !== undefined) setLower(lo); if (hi !== undefined) setUpper(hi); setBandDirty(true); }}
         />
         <div className="flex items-center justify-between text-xs tabular-nums text-text-muted">
           <span>lower {mode === 'percentile' ? `P${String(Math.round(lower))} (${formatDollars(effLower)})` : formatDollars(lower)}</span>
@@ -266,10 +369,25 @@ function Body({ detail, onChanged }: Readonly<{ detail: BaselineDetail; onChange
           className="w-full rounded-md border border-border bg-bg-primary px-2 py-1 text-xs text-text-primary placeholder:text-text-muted" rows={2} />
         {error !== null && <p className="text-xs text-negative">{error}</p>}
         <div className="flex gap-2">
-          <button type="button" disabled={saving} onClick={() => { void save(); }} className="rounded-md bg-accent/15 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-50">Save band + note</button>
+          <button type="button" disabled={saving || !dirty} onClick={() => { void save(); }} className="rounded-md bg-accent/15 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-50">Save changes</button>
           {record.spec.manualBand !== undefined && (
             <button type="button" disabled={saving} onClick={() => { void resetAuto(); }} className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary hover:text-text-primary disabled:opacity-50">Reset to automated</button>
           )}
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-border bg-bg-secondary/40 p-3 flex flex-col gap-2">
+        <p className="text-xs font-medium text-text-secondary">
+          Triage status <span className="font-normal text-text-muted">— press 1–6 to set; ← / → to move between baselines{onNext !== undefined ? ' (False Positive / Auto-Ignored auto-advance)' : ''}</span>
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {BASELINE_TRIAGE_STATUSES.map((s, i) => (
+            <button key={s} type="button" disabled={saving} onClick={() => { void assignStatus(s); }}
+              className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors disabled:opacity-50 ${triage === s ? `${triageChipClass(s)} ring-1 ring-inset ring-current` : 'border-border text-text-secondary hover:text-text-primary'}`}>
+              <kbd className="rounded bg-bg-tertiary px-1 text-[9px] font-medium text-text-muted">{String(i + 1)}</kbd>
+              {TRIAGE_LABEL[s]}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -280,7 +398,7 @@ function Body({ detail, onChanged }: Readonly<{ detail: BaselineDetail; onChange
             {record.triage.notes.slice().reverse().map((n, i) => (
               <li key={`${n.at}-${String(i)}`} className="text-xs text-text-secondary">
                 <span className="text-text-muted">{formatRelativeTime(n.at)} · </span>
-                {n.statusChange !== undefined && <span className="text-accent">[{n.statusChange.from}→{n.statusChange.to}] </span>}
+                {n.statusChange !== undefined && <span className="text-accent">[{TRIAGE_LABEL[n.statusChange.from]} → {TRIAGE_LABEL[n.statusChange.to]}] </span>}
                 {n.text}
                 {n.ticket !== undefined && <span className="text-text-muted"> ({n.ticket})</span>}
               </li>

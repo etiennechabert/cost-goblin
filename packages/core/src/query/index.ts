@@ -6,6 +6,7 @@ export {
   buildNonResourceCostQuery,
   buildEntityDetailQuery,
   buildBaselineDiscoveryQuery,
+  buildBaselineTotalsQuery,
   buildDimCardinalityQuery,
   buildSource,
   buildMaterializeBaseQuery,
