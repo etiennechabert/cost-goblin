@@ -1582,6 +1582,88 @@
 
     .hp { position: absolute; left: -9999px; }
 
+    /* --- SPONSORS --- */
+    .sponsors {
+      padding: 100px 24px;
+      border-top: 1px solid var(--border);
+    }
+
+    .sponsors-header {
+      max-width: 640px;
+      margin: 0 auto 56px;
+      text-align: center;
+      opacity: 0;
+      transform: translateY(12px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+    .sponsors-header.visible { opacity: 1; transform: translateY(0); }
+    .sponsors-header .section-label { margin-bottom: 12px; }
+    .sponsors-title { margin: 0 auto 18px; }
+    .sponsors-intro {
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+      max-width: 520px;
+      margin: 0 auto;
+    }
+
+    .sponsors-grid {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 20px;
+      max-width: 940px;
+      margin: 0 auto;
+      opacity: 0;
+      transform: translateY(16px);
+      transition: opacity 0.7s ease, transform 0.7s ease;
+    }
+    .sponsors-grid.visible { opacity: 1; transform: translateY(0); }
+
+    .sponsor-card {
+      flex: 1 1 150px;
+      max-width: 200px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 12px;
+      padding: 30px 18px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: linear-gradient(160deg, rgba(16, 185, 129, 0.03) 0%, var(--bg) 60%);
+      text-decoration: none;
+      transition: border-color 0.25s ease, transform 0.25s ease, background 0.25s ease;
+    }
+    .sponsor-card:hover {
+      border-color: rgba(16, 185, 129, 0.3);
+      transform: translateY(-2px);
+      background: linear-gradient(160deg, rgba(16, 185, 129, 0.07) 0%, var(--bg) 60%);
+    }
+    .sponsor-card svg {
+      width: 30px;
+      height: 30px;
+      fill: var(--text-dim);
+      transition: fill 0.25s ease;
+    }
+    .sponsor-card:hover svg { fill: var(--emerald); }
+    .sponsor-name {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: -0.01em;
+    }
+    .sponsor-role {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+    }
+
+    @media (max-width: 600px) {
+      .sponsor-card { flex-basis: 130px; }
+    }
+
     /* --- FOOTER --- */
     footer {
       padding: 40px 24px;
@@ -1600,9 +1682,6 @@
       font-family: var(--font-mono);
       font-size: 12px;
       color: var(--text-muted);
-      display: flex;
-      align-items: center;
-      gap: 10px;
     }
 
     footer .right { display: flex; gap: 20px; }
@@ -1616,30 +1695,6 @@
     }
 
     footer a:hover { color: var(--emerald); }
-
-    footer .footer-sep { color: var(--border); }
-
-    .footer-sponsor {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      color: var(--text-dim);
-      text-decoration: none;
-      transition: color 0.2s;
-    }
-
-    .footer-sponsor:hover { color: var(--emerald); }
-
-    .footer-sponsor svg {
-      width: 13px;
-      height: 13px;
-      fill: currentColor;
-    }
-
-    @media (max-width: 600px) {
-      footer .inner { flex-direction: column; gap: 16px; }
-      footer .left { flex-wrap: wrap; justify-content: center; }
-    }
 
     /* --- LIGHTBOX --- */
     .lightbox {
@@ -2292,18 +2347,48 @@ Format:   <span class="code-file">Parquet</span>
     </div>
   </section>
 
+  <!-- SPONSORS -->
+  <section class="sponsors" id="sponsors">
+    <div class="container">
+      <div class="sponsors-header" data-animate>
+        <div class="section-label">Backed by</div>
+        <h2 class="section-title sponsors-title">Free, open source &mdash; and supported</h2>
+        <p class="sponsors-intro">CostGoblin is built in the open. These companies back the project through their open-source programs, so it stays free for everyone.</p>
+      </div>
+      <div class="sponsors-grid" data-animate>
+        <a class="sponsor-card" href="https://sentry.io" target="_blank" rel="noopener sponsored" title="Sentry sponsors CostGoblin's open-source error monitoring">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.91 2.505c-.873-1.448-2.972-1.448-3.844 0L6.904 7.92a15.478 15.478 0 0 1 8.53 12.811h-2.221A13.301 13.301 0 0 0 5.784 9.814l-2.926 5.06a7.65 7.65 0 0 1 4.435 5.848H2.194a.365.365 0 0 1-.298-.534l1.413-2.402a5.16 5.16 0 0 0-1.614-.913L.296 19.275a2.182 2.182 0 0 0 .812 2.999 2.24 2.24 0 0 0 1.086.288h6.983a9.322 9.322 0 0 0-3.845-8.318l1.11-1.922a11.47 11.47 0 0 1 4.95 10.24h5.915a17.242 17.242 0 0 0-7.885-15.28l2.244-3.845a.37.37 0 0 1 .504-.13c.255.14 9.75 16.708 9.928 16.9a.365.365 0 0 1-.327.543h-2.287c.029.612.029 1.223 0 1.831h2.297a2.206 2.206 0 0 0 1.922-3.31z"/></svg>
+          <span class="sponsor-name">Sentry</span>
+          <span class="sponsor-role">Error monitoring</span>
+        </a>
+        <a class="sponsor-card" href="https://sonarcloud.io" target="_blank" rel="noopener sponsored" title="SonarQube Cloud provides free static analysis for open source">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.2656.168c-.4273 0-.7676.3551-.7676.7773 0 .4222.3513.7676.7735.7676.0268-.0144.062-.004.0918-.0059 3.9749 0 7.3782 2.9452 7.9394 6.879.0567.3861.3859.664.7618.664.4676 0 .8328-.4084.7636-.8809C21.1588 3.6786 17.0963.168 12.3594.168Zm-.3027 3.0566c-1.7538 0-3.5063.6678-4.8399 2.004-1.3747 1.3747-2.0765 3.2193-1.994 5.1347-1.1431.2935-2.2292.8795-3.125 1.7754-2.6723 2.6722-2.6723 7.0184 0 9.6855 1.3335 1.3336 3.0899 2.002 4.8456 2.002 1.7558 0 3.505-.6684 4.8438-2.002.108-.1081.2075-.2266.3105-.3398 1.2563 1.4365 3.094 2.3476 5.1484 2.3476 3.7793 0 6.8477-3.0735 6.8477-6.8476 0-3.1511-2.1943-5.9-5.2012-6.6465.0721-1.8433-.5865-3.7089-1.9922-5.1094-1.336-1.3361-3.0899-2.0039-4.8437-2.0039Zm3.752 3.1074c2.0698 2.0699 2.0698 5.4354 0 7.5-.3038.3038-.3038.7932 0 1.0918.2973.2974.7873.3045 1.0918 0 .8753-.8753 1.4572-1.925 1.7558-3.037 2.2552.628 3.8926 2.7183 3.8926 5.1073 0 2.9246-2.3782 5.3028-5.3027 5.3008-2.9245-.002-5.3027-2.382-5.3027-5.3066 0-.4274-.3461-.7715-.7735-.7715a.7699.7699 0 0 0-.7715.7715c0 1.1482.2877 2.231.7871 3.1836-.1493.2008-.308.39-.4882.5703-2.0699 2.0698-5.4373 2.0698-7.502 0-2.0698-2.0698-2.0698-5.4321 0-7.502 2.0698-2.0698 5.4321-2.0698 7.502 0 .3037.3038.7912.3038 1.0898 0 .2986-.3037.3038-.7931 0-1.0918-1.385-1.385-3.2177-2.0436-5.0352-1.9922-.0206-1.4313.525-2.7996 1.5547-3.8242 1.035-1.0349 2.394-1.5527 3.752-1.5527 1.358 0 2.715.5178 3.75 1.5527zm-3.5566.0508c-.4274 0-.7676.3552-.7676.7774 0 .4388.3555.7675.7988.7675 1.0452 0 1.9038.8494 1.914 1.8946 0 .4222.3513.7675.778.7675s.767-.3551.767-.7773c-.0103-.9216-.3761-1.792-1.0352-2.441-.659-.6492-1.5231-.999-2.455-.9887Z"/></svg>
+          <span class="sponsor-name">SonarCloud</span>
+          <span class="sponsor-role">Code quality</span>
+        </a>
+        <a class="sponsor-card" href="https://signpath.org" target="_blank" rel="noopener sponsored" title="SignPath Foundation donates code-signing certificates to open source">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M12.516 2.17a.75.75 0 0 0-1.032 0 11.209 11.209 0 0 1-7.877 3.08.75.75 0 0 0-.722.515A12.74 12.74 0 0 0 2.25 9.75c0 5.942 4.064 10.933 9.563 12.348a.749.749 0 0 0 .374 0c5.499-1.415 9.563-6.406 9.563-12.348 0-1.39-.223-2.73-.635-3.985a.75.75 0 0 0-.722-.516l-.143.001c-2.996 0-5.717-1.17-7.734-3.08Zm3.094 8.016a.75.75 0 1 0-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 0 0-1.06 1.06l2.25 2.25a.75.75 0 0 0 1.14-.094l3.75-5.25Z"/></svg>
+          <span class="sponsor-name">SignPath</span>
+          <span class="sponsor-role">Code signing</span>
+        </a>
+        <a class="sponsor-card" href="https://github.com" target="_blank" rel="noopener" title="GitHub hosts the repository and runs CI free for public projects">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+          <span class="sponsor-name">GitHub</span>
+          <span class="sponsor-role">Repo &amp; CI</span>
+        </a>
+        <a class="sponsor-card" href="https://www.cloudflare.com" target="_blank" rel="noopener" title="Cloudflare provides site hosting and bot protection (Turnstile)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5088 16.8447c.1475-.5068.0908-.9707-.1553-1.3154-.2246-.3164-.6045-.499-1.0615-.5205l-8.6592-.1123a.1559.1559 0 0 1-.1333-.0713c-.0283-.042-.0351-.0986-.021-.1553.0278-.084.1123-.1484.2036-.1562l8.7359-.1123c1.0351-.0489 2.1601-.8868 2.5537-1.9136l.499-1.3013c.0215-.0561.0293-.1128.0147-.168-.5625-2.5463-2.835-4.4453-5.5499-4.4453-2.5039 0-4.6284 1.6177-5.3876 3.8614-.4927-.3658-1.1187-.5625-1.794-.499-1.2026.119-2.1665 1.083-2.2861 2.2856-.0283.31-.0069.6128.0635.894C1.5683 13.171 0 14.7754 0 16.752c0 .1748.0142.3515.0352.5273.0141.083.0844.1475.1689.1475h15.9814c.0909 0 .1758-.0645.2032-.1553l.12-.4268zm2.7568-5.5634c-.0771 0-.1611 0-.2383.0112-.0566 0-.1054.0415-.127.0976l-.3378 1.1744c-.1475.5068-.0918.9707.1543 1.3164.2256.3164.6055.498 1.0625.5195l1.8437.1133c.0557 0 .1055.0263.1329.0703.0283.043.0351.1074.0214.1562-.0283.084-.1132.1485-.204.1553l-1.921.1123c-1.041.0488-2.1582.8867-2.5527 1.914l-.1406.3585c-.0283.0713.0215.1416.0986.1416h6.5977c.0771 0 .1474-.0489.169-.126.1122-.4082.1757-.837.1757-1.2803 0-2.6025-2.125-4.727-4.7344-4.727"/></svg>
+          <span class="sponsor-name">Cloudflare</span>
+          <span class="sponsor-role">Hosting &amp; CDN</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
   <!-- FOOTER -->
   <footer>
     <div class="inner">
-      <div class="left">
-        <span>&copy; 2026 CostGoblin</span>
-        <span class="footer-sep">&middot;</span>
-        <a class="footer-sponsor" href="https://sentry.io" target="_blank" rel="noopener sponsored" title="Sentry sponsors CostGoblin's open-source error monitoring">
-          Sponsored by
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.91 2.505c-.873-1.448-2.972-1.448-3.844 0L6.904 7.92a15.478 15.478 0 0 1 8.53 12.811h-2.221A13.301 13.301 0 0 0 5.784 9.814l-2.926 5.06a7.65 7.65 0 0 1 4.435 5.848H2.194a.365.365 0 0 1-.298-.534l1.413-2.402a5.16 5.16 0 0 0-1.614-.913L.296 19.275a2.182 2.182 0 0 0 .812 2.999 2.24 2.24 0 0 0 1.086.288h6.983a9.322 9.322 0 0 0-3.845-8.318l1.11-1.922a11.47 11.47 0 0 1 4.95 10.24h5.915a17.242 17.242 0 0 0-7.885-15.28l2.244-3.845a.37.37 0 0 1 .504-.13c.255.14 9.75 16.708 9.928 16.9a.365.365 0 0 1-.327.543h-2.287c.029.612.029 1.223 0 1.831h2.297a2.206 2.206 0 0 0 1.922-3.31z"/></svg>
-          Sentry
-        </a>
-      </div>
+      <div class="left">&copy; 2026 CostGoblin</div>
       <div class="right">
         <a href="/imprint.html">Imprint</a>
         <a href="/privacy.html">Privacy</a>
