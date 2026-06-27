@@ -459,8 +459,8 @@ export class BaselineStore {
     return this.deriveRecord(updated, accountMap, orgTree);
   }
 
-  async delete(deps: BaselineEngineDeps, id: string): Promise<void> {
-    await this.load(deps);
+  /** Drop a baseline from every in-memory map (no persist — callers save). */
+  private forget(id: string): void {
     this.specs.delete(id);
     this.histories.delete(id);
     this.snapshots.delete(id);
@@ -468,23 +468,40 @@ export class BaselineStore {
     this.bestAchieved.delete(id);
     this.triageStatuses.delete(id);
     this.userTriaged.delete(id);
+  }
+
+  /** Whether the user has invested in a discovered baseline (set a status or
+   *  added a note) — such baselines are preserved across re-discovery; untouched
+   *  ones are pruned when their tuple vanishes. */
+  private isUserEdited(id: string): boolean {
+    return this.userTriaged.has(id) || (this.triages.get(id)?.notes.length ?? 0) > 0;
+  }
+
+  async delete(deps: BaselineEngineDeps, id: string): Promise<void> {
+    await this.load(deps);
+    this.forget(id);
     await this.save();
   }
 
   // --- recompute / discovery --------------------------------------------------
 
-  async recompute(deps: BaselineEngineDeps, only?: string): Promise<void> {
+  async recompute(deps: BaselineEngineDeps, opts: { readonly only?: string; readonly startFresh?: boolean } = {}): Promise<void> {
     if (this.recomputing) return;
     this.recomputing = true;
     try {
       await this.load(deps);
-      if (only !== undefined) {
-        const spec = this.specs.get(only);
+      if (opts.only !== undefined) {
+        const spec = this.specs.get(opts.only);
         if (spec !== undefined) {
           this.setStatus({ state: 'running', phase: 'computing', done: 0, total: 1 });
           await this.recomputeOne(deps, spec);
         }
       } else {
+        // Start fresh: wipe ALL discovered baselines (incl. user-edited) so the
+        // new grain rediscovers from a clean slate. Manual baselines are kept.
+        if (opts.startFresh) {
+          for (const s of [...this.specs.values()]) if (s.source === 'discovered') this.forget(s.id);
+        }
         this.setStatus({ state: 'running', phase: 'discovering', done: 0, total: 0 });
         await this.discover(deps);
         const specs = [...this.specs.values()];
@@ -645,10 +662,14 @@ export class BaselineStore {
       // finalizeFromHistory runs once for every spec in recompute()'s loop.
     }
 
-    // 5) Vanished discovered tuples: keep the spec but mark history empty so it
-    //    shows insufficient-data rather than a stale band.
+    // 5) Vanished discovered tuples (e.g. after a grain change). Prune the
+    //    untouched ones so the list doesn't accumulate stale rows; keep the ones
+    //    the user invested in (status/notes) but blank their history so they show
+    //    insufficient-data rather than a stale band.
     for (const [key, spec] of existingByScope) {
-      if (!seenScopes.has(key)) this.histories.set(spec.id, []);
+      if (seenScopes.has(key)) continue;
+      if (this.isUserEdited(spec.id)) this.histories.set(spec.id, []);
+      else this.forget(spec.id);
     }
   }
 

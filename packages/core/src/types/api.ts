@@ -353,8 +353,10 @@ export interface CostApi {
   /** Atomic update: band edit + status change + note, with auto-summary. */
   updateBaseline(id: string, patch: BaselineUpdatePatch): Promise<BaselineRecord | null>;
   deleteBaseline(id: string): Promise<void>;
-  /** Re-discover + recompute all baselines, or just one when `id` is given. */
-  recomputeBaselines(id?: string): Promise<void>;
+  /** Re-discover + recompute all baselines. `startFresh` wipes every discovered
+   *  baseline (incl. user-edited) before re-discovering; otherwise untouched
+   *  orphans are pruned and edited ones preserved. */
+  recomputeBaselines(opts?: { readonly startFresh?: boolean }): Promise<void>;
   /** Point-in-time snapshot history for a baseline (for trend analysis). */
   getBaselineSnapshots(id: string): Promise<readonly BaselineSnapshot[]>;
   /** "What changed" breakdown: contribution by a child dimension, trailing vs

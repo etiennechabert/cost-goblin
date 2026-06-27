@@ -22,7 +22,7 @@ export function registerBaselinesHandlers(app: AppContext): void {
   ipcMain.handle('baselines:create', (_e, input: BaselineCreateInput) => store.create(deps, input));
   ipcMain.handle('baselines:update', (_e, id: string, patch: BaselineUpdatePatch) => store.update(deps, id, patch));
   ipcMain.handle('baselines:delete', (_e, id: string) => store.delete(deps, id));
-  ipcMain.handle('baselines:recompute', (_e, id?: string) => store.recompute(deps, id));
+  ipcMain.handle('baselines:recompute', (_e, opts?: { startFresh?: boolean }) => store.recompute(deps, opts ?? {}));
   ipcMain.handle('baselines:snapshots', (_e, id: string) => store.getSnapshots(deps, id));
   ipcMain.handle('baselines:drift', (_e, id: string, childDimension: string) => store.getDrift(deps, id, childDimension));
   ipcMain.handle('baselines:get-config', async () => { await store.load(deps); return store.getConfigState(); });

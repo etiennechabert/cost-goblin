@@ -413,8 +413,8 @@ const api: CostApi = {
   deleteBaseline(id) {
     return invoke<undefined>('baselines:delete', id).then(() => undefined);
   },
-  recomputeBaselines(id) {
-    return invoke<undefined>('baselines:recompute', id).then(() => undefined);
+  recomputeBaselines(opts) {
+    return invoke<undefined>('baselines:recompute', opts).then(() => undefined);
   },
   getBaselineSnapshots(id) {
     return invoke('baselines:snapshots', id);

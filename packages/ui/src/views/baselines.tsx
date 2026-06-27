@@ -58,6 +58,7 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
   const [showNew, setShowNew] = useState(false);
   const [triageQueue, setTriageQueue] = useState<readonly string[] | null>(null);
   const [triageIdx, setTriageIdx] = useState(0);
+  const [showRecompute, setShowRecompute] = useState(false);
 
   async function startTriage(): Promise<void> {
     const res = await api.listBaselines({ triage: 'new' });
@@ -142,9 +143,9 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => { void startTriage(); }} className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20">Triage new</button>
           <button type="button" onClick={() => { setShowNew(true); }} className="rounded-md border border-border px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary">New baseline</button>
-          <button type="button" disabled={running} onClick={() => { api.recomputeBaselines().catch(() => undefined); }}
+          <button type="button" disabled={running} onClick={() => { setShowRecompute(true); }}
             className="rounded-md bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-60">
-            {running ? progressLabel : 'Recompute'}
+            {running ? progressLabel : 'Recompute…'}
           </button>
         </div>
       </div>
@@ -211,6 +212,7 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
         />
       )}
       {showNew && <NewBaselineDialog onClose={() => { setShowNew(false); }} onCreated={() => { setShowNew(false); setRefreshKey((n) => n + 1); }} />}
+      {showRecompute && <RecomputeDialog onClose={() => { setShowRecompute(false); }} onStarted={() => { setShowRecompute(false); }} />}
 
       {triageQueue !== null && triageQueue[triageIdx] !== undefined && (
         <BaselineDetailModal
@@ -267,6 +269,100 @@ function NewBaselineDialog({ onClose, onCreated }: Readonly<{ onClose: () => voi
         <div className="mt-4 flex justify-end gap-2">
           <DialogClose><button type="button" className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary">Cancel</button></DialogClose>
           <button type="button" onClick={() => { void create(); }} className="rounded-md bg-accent/15 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/25">Create</button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RecomputeDialog({ onClose, onStarted }: Readonly<{ onClose: () => void; onStarted: () => void }>) {
+  const api = useCostApi();
+  const cfgQuery = useQuery(() => api.getBaselinesConfig(), [api]);
+  const dimsQuery = useQuery(() => api.getDimensionsConfig(), [api]);
+  const cfg = cfgQuery.status === 'success' ? cfgQuery.data : null;
+  const dims: DimensionsConfig | null = dimsQuery.status === 'success' ? dimsQuery.data : null;
+  const builtIns = (dims?.builtIn ?? []).filter((d) => d.enabled !== false);
+
+  const [picked, setPicked] = useState<ReadonlySet<string> | null>(null);
+  const [startFresh, setStartFresh] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const isHighCard = (description: string | undefined): boolean => /high.?cardinalit/i.test(description ?? '');
+
+  // Default the checklist to the current grain, or — when the grain is auto —
+  // the enabled built-ins MINUS high-cardinality ones (matching the auto-grain,
+  // so a one-click recompute doesn't explode the tuple count). Once the user
+  // toggles anything, `picked` drives it.
+  const effPicked = picked ?? new Set<string>(
+    cfg !== null && cfg.config.grainDimensions.length > 0
+      ? cfg.config.grainDimensions.map(String)
+      : builtIns.filter((d) => !isHighCard(d.description)).map((d) => String(d.name)),
+  );
+
+  function toggle(name: string): void {
+    const next = new Set(effPicked);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    setPicked(next);
+  }
+
+  async function run(): Promise<void> {
+    if (cfg === null) return;
+    if (effPicked.size === 0) { setError('Pick at least one dimension.'); return; }
+    setBusy(true);
+    setError(null);
+    try {
+      const grainDimensions = builtIns.filter((d) => effPicked.has(String(d.name))).map((d) => asDimensionId(String(d.name)));
+      await api.setBaselinesConfig({ ...cfg.config, grainDimensions });
+      await api.recomputeBaselines({ startFresh });
+      onStarted();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy(false);
+    }
+  }
+
+  const loading = cfgQuery.status === 'loading' || dimsQuery.status === 'loading';
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent>
+        <DialogTitle>Recompute baselines</DialogTitle>
+        <p className="mt-1 text-xs text-text-muted">Discovery enumerates every distinct combination of the dimensions you pick — more dimensions mean finer baselines but many more of them.</p>
+        {loading ? (
+          <p className="mt-4 text-xs text-text-muted">Loading dimensions…</p>
+        ) : (
+          <>
+            <div className="mt-4 flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+              {builtIns.map((d) => {
+                const name = String(d.name);
+                return (
+                  <label key={name} className="flex items-center gap-2 text-xs text-text-secondary" title={d.description}>
+                    <input type="checkbox" checked={effPicked.has(name)} onChange={() => { toggle(name); }} />
+                    <span className="text-text-primary">{d.label}</span>
+                    {isHighCard(d.description) && <span className="rounded border border-warning/40 px-1 text-[9px] text-warning">high cardinality</span>}
+                    <span className="truncate text-[10px] text-text-muted">{d.description}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <label className="mt-4 flex items-start gap-2 text-xs text-text-secondary">
+              <input type="checkbox" checked={startFresh} onChange={(e) => { setStartFresh(e.target.checked); }} className="mt-0.5" />
+              <span>
+                <span className="text-text-primary">Start fresh</span> — remove all discovered baselines, including ones you triaged, and rediscover from scratch.
+              </span>
+            </label>
+            {!startFresh && (
+              <p className="mt-1.5 text-[11px] text-text-muted">Untouched baselines that no longer match the new dimensions are removed; any you triaged or annotated are kept.</p>
+            )}
+          </>
+        )}
+        {error !== null && <p className="mt-3 text-xs text-negative">{error}</p>}
+        <div className="mt-4 flex justify-end gap-2">
+          <DialogClose><button type="button" className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary">Cancel</button></DialogClose>
+          <button type="button" disabled={busy || loading} onClick={() => { void run(); }} className="rounded-md bg-accent/15 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-50">
+            {busy ? 'Starting…' : startFresh ? 'Wipe & recompute' : 'Recompute'}
+          </button>
         </div>
       </DialogContent>
     </Dialog>
