@@ -39,10 +39,11 @@ export const OVERVIEW_SEED_VIEW: ViewSpec = {
 /** One ready-made dashboard per widget type, so every widget has a default home
  *  the user can open, study, and clone. All group-bys use built-in dimensions
  *  (service / account / region / service_family) so the dashboards populate on
- *  any dataset regardless of which tag dimensions are configured. These are
- *  deletable (no `builtIn`) — pruning or duplicating them is encouraged — and
- *  the whole set is restored by "Reset built-ins". */
-const WIDGET_SHOWCASE_VIEWS: readonly ViewSpec[] = [
+ *  any dataset regardless of which tag dimensions are configured. Marked
+ *  built-in (see SEED_VIEWS_CONFIG) so the editor's "Reset built-ins" restores
+ *  them — that reset only re-adds seed views flagged builtIn, leaving the
+ *  user's own dashboards untouched. */
+const WIDGET_SHOWCASE_VIEWS: readonly Omit<ViewSpec, 'builtIn'>[] = [
   {
     id: 'trend-lines',
     name: 'Trend lines',
@@ -254,5 +255,5 @@ const WIDGET_SHOWCASE_VIEWS: readonly ViewSpec[] = [
 ];
 
 export const SEED_VIEWS_CONFIG: ViewsConfig = {
-  views: [OVERVIEW_SEED_VIEW, ...WIDGET_SHOWCASE_VIEWS],
+  views: [OVERVIEW_SEED_VIEW, ...WIDGET_SHOWCASE_VIEWS.map(v => ({ ...v, builtIn: true }))],
 };
