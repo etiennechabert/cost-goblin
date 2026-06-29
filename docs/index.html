@@ -2131,10 +2131,11 @@
           <svg class="platform-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
           <h4>Windows</h4>
           <div class="platform-links">
-            <a class="dl-btn primary" data-asset="win-exe" href="#">
+            <a class="dl-btn primary" data-asset="win-x64-exe" href="#">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              64-bit Installer (.exe)
+              x64 Installer (.exe)
             </a>
+            <a class="dl-btn" data-asset="win-arm64-exe" href="#">Arm64 Installer (.exe)</a>
           </div>
         </div>
 
@@ -2570,30 +2571,79 @@ Format:   <span class="code-file">Parquet</span>
       return 'mac';
     }
 
+    // --- CPU architecture detection (best-effort) ---
+    // macOS: Safari masks Apple Silicon in the UA, so the WebGL renderer string
+    // ("Apple GPU"/"Apple M…") is the reliable hardware signal. Win/Linux are
+    // refined async via UA Client Hints below. Falls back to the dominant arch.
+    function detectArch(targetOs) {
+      if (targetOs === 'mac') {
+        try {
+          const gl = document.createElement('canvas').getContext('webgl');
+          const dbg = gl && gl.getExtension('WEBGL_debug_renderer_info');
+          const renderer = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '';
+          if (/apple/i.test(renderer)) return 'arm64';
+          if (renderer) return 'x64';
+        } catch (e) { /* ignore */ }
+        return 'arm64';
+      }
+      return 'x64';
+    }
+
+    // Chromium exposes the true arch via UA Client Hints — this is what catches
+    // Windows/Linux arm64. Absent in Safari/Firefox; mac already handled above.
+    async function refineArch(targetOs) {
+      if (targetOs === 'mac') return;
+      const uaData = navigator.userAgentData;
+      if (!uaData || !uaData.getHighEntropyValues) return;
+      try {
+        const hev = await uaData.getHighEntropyValues(['architecture']);
+        if (hev.architecture === 'arm') arch = 'arm64';
+        else if (hev.architecture === 'x86') arch = 'x64';
+      } catch (e) { /* ignore */ }
+    }
+
     const os = detectOS();
+    let arch = detectArch(os);
+    let urlMap = null;
 
     const HERO_LABELS = {
-      mac: { label: 'Download for macOS', platform: 'macOS Apple Silicon' },
-      win: { label: 'Download for Windows', platform: 'Windows 64-bit' },
-      linux: { label: 'Download for Linux', platform: 'Linux amd64' },
+      mac:   { label: 'Download for macOS',   platform: { arm64: 'macOS Apple Silicon', x64: 'macOS Intel' } },
+      win:   { label: 'Download for Windows', platform: { arm64: 'Windows Arm64',       x64: 'Windows x64' } },
+      linux: { label: 'Download for Linux',   platform: { arm64: 'Linux arm64',         x64: 'Linux amd64' } },
     };
-
-    // Set hero labels immediately (links populated after API fetch)
-    document.getElementById('hero-download-label').textContent = HERO_LABELS[os].label;
-    document.getElementById('hero-platform-label').textContent = HERO_LABELS[os].platform;
 
     // Asset matchers: data-asset → predicate on filename
     const ASSET_MATCHERS = {
       'mac-arm64-dmg':       (n) => n.endsWith('.dmg') && n.includes('arm64'),
       'mac-intel-dmg':       (n) => n.endsWith('.dmg') && !n.includes('arm64'),
-      'win-exe':             (n) => n.endsWith('.exe') && !n.endsWith('.blockmap'),
+      'win-x64-exe':         (n) => n.endsWith('.exe') && n.includes('x64'),
+      'win-arm64-exe':       (n) => n.endsWith('.exe') && n.includes('arm64'),
       'linux-amd64-deb':     (n) => n.endsWith('.deb') && n.includes('amd64'),
       'linux-arm64-deb':     (n) => n.endsWith('.deb') && n.includes('arm64'),
       'linux-x64-appimage':  (n) => n.endsWith('.AppImage') && !n.includes('arm64'),
       'linux-arm64-appimage':(n) => n.endsWith('.AppImage') && n.includes('arm64'),
     };
 
-    const HERO_ASSET = { mac: 'mac-arm64-dmg', win: 'win-exe', linux: 'linux-amd64-deb' };
+    const HERO_ASSET = {
+      mac:   { arm64: 'mac-arm64-dmg',   x64: 'mac-intel-dmg' },
+      win:   { arm64: 'win-arm64-exe',   x64: 'win-x64-exe' },
+      linux: { arm64: 'linux-arm64-deb', x64: 'linux-amd64-deb' },
+    };
+
+    // Apply the hero button's label + (once the API fetch resolves) its URL for
+    // the detected os/arch, falling back to x64 if the arm64 asset is absent.
+    function applyHero() {
+      const labels = HERO_LABELS[os];
+      document.getElementById('hero-download-label').textContent = labels.label;
+      document.getElementById('hero-platform-label').textContent = labels.platform[arch];
+      if (urlMap) {
+        const heroUrl = urlMap[HERO_ASSET[os][arch]] || urlMap[HERO_ASSET[os].x64];
+        if (heroUrl) document.getElementById('hero-download').href = heroUrl;
+      }
+    }
+
+    applyHero();                       // labels now; href once the fetch resolves
+    refineArch(os).then(applyHero);    // re-apply if UA-CH refines the arch
 
     // Fetch latest release from GitHub API
     fetch('https://api.github.com/repos/etiennechabert/cost-goblin/releases/latest')
@@ -2603,7 +2653,6 @@ Format:   <span class="code-file">Parquet</span>
         const assets = release.assets || [];
 
         // Update version labels
-
         var metaEl = document.getElementById('version-meta');
         var dlEl = document.getElementById('version-download');
         metaEl.textContent = ' · ' + version;
@@ -2615,21 +2664,22 @@ Format:   <span class="code-file">Parquet</span>
         document.getElementById('releases-link').href = release.html_url;
 
         // Build asset URL map
-        const urlMap = {};
+        urlMap = {};
         for (const [key, matcher] of Object.entries(ASSET_MATCHERS)) {
           const asset = assets.find(a => matcher(a.name));
           if (asset) urlMap[key] = asset.browser_download_url;
         }
 
-        // Update all download links
+        // Wire up every download link; hide buttons with no matching asset so
+        // users never click a dead link (e.g. an arch a release hasn't shipped).
         document.querySelectorAll('[data-asset]').forEach(el => {
           const url = urlMap[el.dataset.asset];
-          if (url) el.href = url;
+          if (url) { el.href = url; el.style.display = ''; }
+          else { el.style.display = 'none'; }
         });
 
         // Update hero download button
-        const heroUrl = urlMap[HERO_ASSET[os]];
-        if (heroUrl) document.getElementById('hero-download').href = heroUrl;
+        applyHero();
       })
       .catch(() => {
         // Fallback: link to releases page
