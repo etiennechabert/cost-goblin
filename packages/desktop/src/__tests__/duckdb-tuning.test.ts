@@ -1,13 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import {
+  DEFAULT_ROLLUP_CONCURRENCY,
   MAX_MEMORY_GB,
   MIN_MEMORY_GB,
   clampMemoryGB,
+  clampRollupConcurrency,
   clampThreads,
   computeDefaultMemoryGB,
   computeDefaultThreads,
+  maxRollupConcurrency,
   maxThreads,
   resolveMemoryGB,
+  resolveRollupConcurrency,
   resolveThreads,
   totalMemoryGB,
 } from '../main/duckdb-tuning.js';
@@ -51,6 +55,18 @@ describe('clampThreads', () => {
   });
 });
 
+describe('clampRollupConcurrency', () => {
+  it('floors at 1 and caps at maxRollupConcurrency', () => {
+    expect(clampRollupConcurrency(0)).toBe(1);
+    expect(clampRollupConcurrency(-5)).toBe(1);
+    expect(clampRollupConcurrency(10_000)).toBe(maxRollupConcurrency());
+  });
+  it('rounds and passes through in-range values', () => {
+    expect(clampRollupConcurrency(2.4)).toBe(2);
+    if (maxRollupConcurrency() >= 3) expect(clampRollupConcurrency(3)).toBe(3);
+  });
+});
+
 describe('resolve* (override ?? default)', () => {
   it('uses the computed default when override is null/undefined', () => {
     expect(resolveMemoryGB(null)).toBe(computeDefaultMemoryGB());
@@ -61,5 +77,12 @@ describe('resolve* (override ?? default)', () => {
   it('uses the clamped override when provided', () => {
     expect(resolveMemoryGB(10_000)).toBe(clampMemoryGB(10_000));
     expect(resolveThreads(10_000)).toBe(clampThreads(10_000));
+  });
+  it('rollup concurrency defaults to 2 and clamps overrides', () => {
+    expect(DEFAULT_ROLLUP_CONCURRENCY).toBe(2);
+    expect(resolveRollupConcurrency(null)).toBe(2);
+    expect(resolveRollupConcurrency(undefined)).toBe(2);
+    expect(resolveRollupConcurrency(1)).toBe(1);
+    expect(resolveRollupConcurrency(10_000)).toBe(maxRollupConcurrency());
   });
 });

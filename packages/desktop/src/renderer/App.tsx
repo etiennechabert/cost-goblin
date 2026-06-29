@@ -560,14 +560,6 @@ function AppShell(): React.JSX.Element {
     return globalThis.costgoblinRollup.onStatusChanged(apply);
   }, []);
 
-  // A stable key that flips when the built rollup changes (computing → ready),
-  // so the Dimensions estimate refetches and its actual/estimated badge stays
-  // correct without a remount. Deliberately ignores `computing` done/total
-  // progress ticks — those would thrash the exact-count probe mid-rebuild.
-  let rollupRevision: string = rollupStatus.state;
-  if (rollupStatus.state === 'ready') rollupRevision = `ready:${String(rollupStatus.periods)}`;
-  else if (rollupStatus.state === 'failed') rollupRevision = `failed:${String(rollupStatus.periods)}`;
-
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
     // Always surface errors so the user can see what went wrong; for other
@@ -883,7 +875,7 @@ function AppShell(): React.JSX.Element {
       case 'cost-scope':
         return <CostScopeView />;
       case 'dimensions':
-        return <DimensionsView rollupRevision={rollupRevision} />;
+        return <DimensionsView />;
       case 'dashboards':
         return <ViewsEditor onConfigPersisted={setViewsConfig} />;
       case 'share':
