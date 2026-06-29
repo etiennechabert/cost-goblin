@@ -4,14 +4,18 @@ import type { UIPreferences, PerformanceInfo, PerformanceSettings } from '@costg
 import { type AppContext, prefsPath } from './context.js';
 import { updatePrefsFile } from './prefs-file.js';
 import {
+  DEFAULT_ROLLUP_CONCURRENCY,
   MAX_MEMORY_GB,
   MIN_MEMORY_GB,
   clampMemoryGB,
+  clampRollupConcurrency,
   clampThreads,
   computeDefaultMemoryGB,
   computeDefaultThreads,
+  maxRollupConcurrency,
   maxThreads,
   resolveMemoryGB,
+  resolveRollupConcurrency,
   resolveThreads,
   totalMemoryGB,
 } from '../duckdb-tuning.js';
@@ -21,9 +25,11 @@ function parsePerformance(parsed: Record<string, unknown> | null): PerformanceSe
   if (!isStringRecord(perf)) return undefined;
   const mem = perf['memoryLimitGB'];
   const threads = perf['threads'];
+  const rollupConcurrency = perf['rollupConcurrency'];
   return {
     memoryLimitGB: typeof mem === 'number' ? mem : null,
     threads: typeof threads === 'number' ? threads : null,
+    rollupConcurrency: typeof rollupConcurrency === 'number' ? rollupConcurrency : null,
   };
 }
 
@@ -61,12 +67,14 @@ export function registerUIHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('perf:get-info', async (): Promise<PerformanceInfo> => {
-    const current = parsePerformance(await readPrefs()) ?? { memoryLimitGB: null, threads: null };
+    const current = parsePerformance(await readPrefs()) ?? { memoryLimitGB: null, threads: null, rollupConcurrency: null };
     return {
       defaultMemoryGB: computeDefaultMemoryGB(),
       defaultThreads: computeDefaultThreads(),
+      defaultRollupConcurrency: DEFAULT_ROLLUP_CONCURRENCY,
       totalMemoryGB: totalMemoryGB(),
       maxThreads: maxThreads(),
+      maxRollupConcurrency: maxRollupConcurrency(),
       minMemoryGB: MIN_MEMORY_GB,
       maxMemoryGB: MAX_MEMORY_GB,
       current,
@@ -76,9 +84,12 @@ export function registerUIHandlers(app: AppContext): void {
   ipcMain.handle('perf:set', async (_event, perf: PerformanceSettings): Promise<void> => {
     const memoryLimitGB = typeof perf.memoryLimitGB === 'number' ? clampMemoryGB(perf.memoryLimitGB) : null;
     const threads = typeof perf.threads === 'number' ? clampThreads(perf.threads) : null;
-    await updatePrefsFile(await uiPrefsPath(), (existing) => ({ ...existing, performance: { memoryLimitGB, threads } }));
+    const rollupConcurrency = typeof perf.rollupConcurrency === 'number' ? clampRollupConcurrency(perf.rollupConcurrency) : null;
+    await updatePrefsFile(await uiPrefsPath(), (existing) => ({ ...existing, performance: { memoryLimitGB, threads, rollupConcurrency } }));
     // Apply live — memory_limit and threads are instance-global in DuckDB, so a
-    // configure on a fresh connection re-tunes the whole instance.
+    // configure on a fresh connection re-tunes the whole instance. Rollup build
+    // parallelism takes effect on the next partition-build batch.
     ctx.db.configure({ memoryGB: resolveMemoryGB(memoryLimitGB), threads: resolveThreads(threads) });
+    app.rollupStore.setBuildConcurrency(resolveRollupConcurrency(rollupConcurrency));
   });
 }

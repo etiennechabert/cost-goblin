@@ -12,7 +12,7 @@ const __dirname = dirname(__filename);
 import type { LogEntry } from '@costgoblin/core';
 import { createDuckDBClient } from './duckdb-client.js';
 import type { DuckDBClient } from './duckdb-client.js';
-import { resolveMemoryGB, resolveThreads } from './duckdb-tuning.js';
+import { resolveMemoryGB, resolveRollupConcurrency, resolveThreads } from './duckdb-tuning.js';
 import { createSyncClient } from './sync-client.js';
 import type { SyncClient } from './sync-client.js';
 import { registerIpcHandlers } from './ipc.js';
@@ -151,7 +151,7 @@ function installCSP(): void {
 /** Read the user's DuckDB performance overrides from ui-preferences.json (the
  *  same file the UI writes). Returns nulls ("auto") when absent/unreadable so
  *  the worker falls back to the computed defaults. */
-function readPerformanceOverrides(userDataPath: string): { memoryLimitGB: number | null; threads: number | null } {
+function readPerformanceOverrides(userDataPath: string): { memoryLimitGB: number | null; threads: number | null; rollupConcurrency: number | null } {
   try {
     const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
     const prefsFile = join(dirname(dataDir), 'ui-preferences.json');
@@ -161,12 +161,13 @@ function readPerformanceOverrides(userDataPath: string): { memoryLimitGB: number
       return {
         memoryLimitGB: typeof perf['memoryLimitGB'] === 'number' ? perf['memoryLimitGB'] : null,
         threads: typeof perf['threads'] === 'number' ? perf['threads'] : null,
+        rollupConcurrency: typeof perf['rollupConcurrency'] === 'number' ? perf['rollupConcurrency'] : null,
       };
     }
   } catch {
     // no prefs file yet, or unreadable — use computed defaults
   }
-  return { memoryLimitGB: null, threads: null };
+  return { memoryLimitGB: null, threads: null, rollupConcurrency: null };
 }
 
 async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<void> {
@@ -184,6 +185,13 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
     costScopePath: resolveConfigPath(configBase, 'cost-scope'),
     dataDir,
   });
+
+  // Apply the persisted rollup-build-parallelism override (perf:set updates it
+  // live thereafter). The store is constructed at the default (2); this honours
+  // a saved override before the first warmup builds anything.
+  appContext.rollupStore.setBuildConcurrency(
+    resolveRollupConcurrency(readPerformanceOverrides(userDataPath).rollupConcurrency),
+  );
 
   startMcpServer(appContext).catch((err: unknown) => {
     logger.warn(`mcp: failed to start — ${err instanceof Error ? err.message : String(err)}`);

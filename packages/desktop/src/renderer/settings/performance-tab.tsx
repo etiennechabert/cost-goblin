@@ -23,6 +23,7 @@ export function PerformanceTab(): React.JSX.Element {
   const [info, setInfo] = useState<PerformanceInfo | null>(null);
   const [mem, setMem] = useState('');
   const [threads, setThreads] = useState('');
+  const [rollupConc, setRollupConc] = useState('');
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(false);
 
@@ -33,11 +34,16 @@ export function PerformanceTab(): React.JSX.Element {
       setInfo(i);
       setMem(fieldString(i.current.memoryLimitGB));
       setThreads(fieldString(i.current.threads));
+      setRollupConc(fieldString(i.current.rollupConcurrency));
     }).catch(() => undefined);
     return () => { cancelled = true; };
   }, [api]);
 
-  const dirty = info !== null && (parseField(mem) !== info.current.memoryLimitGB || parseField(threads) !== info.current.threads);
+  const dirty = info !== null && (
+    parseField(mem) !== info.current.memoryLimitGB ||
+    parseField(threads) !== info.current.threads ||
+    parseField(rollupConc) !== info.current.rollupConcurrency
+  );
   useUnsavedChanges(dirty, 'Performance');
 
   if (info === null) {
@@ -49,7 +55,7 @@ export function PerformanceTab(): React.JSX.Element {
 
   function save(): void {
     if (info === null || saving) return;
-    const next = { memoryLimitGB: parseField(mem), threads: parseField(threads) };
+    const next = { memoryLimitGB: parseField(mem), threads: parseField(threads), rollupConcurrency: parseField(rollupConc) };
     setSaving(true);
     setSavedAt(false);
     api.setPerformanceSettings(next)
@@ -64,6 +70,7 @@ export function PerformanceTab(): React.JSX.Element {
   function resetToAuto(): void {
     setMem('');
     setThreads('');
+    setRollupConc('');
     setSavedAt(false);
   }
 
@@ -114,6 +121,27 @@ export function PerformanceTab(): React.JSX.Element {
             onChange={(e) => { setThreads(e.target.value); setSavedAt(false); }}
           />
         </div>
+
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <label htmlFor="perf-rollup-conc" className="text-sm text-text-primary">Parallel rollup builds</label>
+            <p className="mt-0.5 text-xs text-text-muted">
+              How many monthly rollup partitions build at once. Lower keeps the app snappier while a rebuild runs.
+              Auto: {info.defaultRollupConcurrency} · range 1–{info.maxRollupConcurrency}
+            </p>
+          </div>
+          <input
+            id="perf-rollup-conc"
+            type="number"
+            min={1}
+            max={info.maxRollupConcurrency}
+            inputMode="numeric"
+            className={inputCls}
+            placeholder={`Auto (${String(info.defaultRollupConcurrency)})`}
+            value={rollupConc}
+            onChange={(e) => { setRollupConc(e.target.value); setSavedAt(false); }}
+          />
+        </div>
       </div>
 
       <div className="flex items-center gap-3">
@@ -133,7 +161,7 @@ export function PerformanceTab(): React.JSX.Element {
         <button
           type="button"
           onClick={resetToAuto}
-          disabled={mem === '' && threads === ''}
+          disabled={mem === '' && threads === '' && rollupConc === ''}
           className="rounded-md border border-border px-4 py-1.5 text-sm text-text-secondary transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
         >
           Reset to Auto
