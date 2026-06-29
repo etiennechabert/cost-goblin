@@ -1,5 +1,11 @@
 appId: com.costgoblin.app
 productName: CostGoblin
+# Makes node_modules/@duckdb arch-correct before packing each arch. The release
+# matrix builds both x64 and arm64 on a single-arch runner, where npm only
+# installs the host-arch DuckDB binding; this swaps in the right one per arch so
+# secondary-arch installers don't crash on launch. Relies on sequential per-arch
+# packing — do NOT set concurrency.jobs >= 2 (it would race the shared node_modules).
+beforePack: ./scripts/before-pack.cjs
 directories:
   buildResources: build
   output: dist

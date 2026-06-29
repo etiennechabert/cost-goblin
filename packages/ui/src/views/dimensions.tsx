@@ -44,6 +44,7 @@ function migrateLocked(cfg: DimensionsConfig): { config: DimensionsConfig; chang
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { useQuery } from '../hooks/use-query.js';
+import { useDebouncedValue } from '../hooks/use-debounced-value.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { AliasSuggestions } from '../components/alias-suggestions.js';
@@ -1670,7 +1671,7 @@ function ImpactDetails({ estimate, matchedCurrent, sizeReduction, rowRatio, rank
 /** Cost/benefit summary for the current enabled grain (rollup design §8).
  *  Updates as dims are toggled so the user can weigh the rebuild before it
  *  happens. Numbers are directional (probed from one recent month). */
-function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: RollupGrainEstimate | null; loading: boolean; config: DimensionsConfig }>): React.JSX.Element {
+function RollupImpactPanel({ estimate, loading, stale, config }: Readonly<{ estimate: RollupGrainEstimate | null; loading: boolean; stale: boolean; config: DimensionsConfig }>): React.JSX.Element {
   const rankedDims = estimate === null
     ? []
     : [...estimate.dims].sort((a, b) => b.marginalMultiplier - a.marginalMultiplier);
@@ -1682,11 +1683,18 @@ function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: R
   const rollupBytes = matchedCurrent === null ? (estimate?.candidate.bytes ?? 0) : matchedCurrent.bytes;
   const sizeReduction = estimate !== null && rollupBytes > 0 ? estimate.raw.bytes / rollupBytes : 0;
   const rowRatio = computeRowRatio(estimate, matchedCurrent);
+  // When the probe has run and found no data on disk (probePeriod === ''), show
+  // the sync hint even while stale/loading — toggling a dim on an un-synced
+  // install must not flash the "Estimating…" spinner over the real "no data" state.
+  const noData = estimate !== null && estimate.probePeriod.length === 0;
+  const syncHint = <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>;
   let body: React.JSX.Element;
-  if (loading && estimate === null) {
+  if (noData) {
+    body = syncHint;
+  } else if (stale || (loading && estimate === null)) {
     body = <EstimateProgress />;
-  } else if (estimate === null || estimate.probePeriod.length === 0) {
-    body = <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>;
+  } else if (estimate === null) {
+    body = syncHint;
   } else {
     body = (
       <ImpactDetails
@@ -1707,7 +1715,7 @@ function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: R
           <Database className="h-4 w-4 text-text-muted" />
           <h3 className="text-sm font-medium text-text-secondary">Rollup impact</h3>
         </div>
-        {estimate !== null && estimate.probePeriod.length > 0 && (
+        {!stale && estimate !== null && estimate.probePeriod.length > 0 && (
           matchedCurrent === null ? (
             <span
               title={`Directional estimate, probed from ${estimate.probePeriod}. Rebuild this grain to get exact numbers.`}
@@ -1826,15 +1834,29 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
   // the grain signature so it refetches when a dim is toggled (the grain
   // changes) but not on reorder/relabel. The probe hits DuckDB, so this is
   // intentionally cheap and fire-and-forget.
+  // Debounce the grain signature before probing: each dim toggle changes the
+  // grain, and the probe is a heavy DuckDB scan (multi-second, multi-GB on real
+  // data). Without this, dragging through several toggles fires a probe per
+  // intermediate grain, stacking heavy queries against the worker pool. Wait for
+  // the grain to settle (350 ms) so only the final grain is probed.
   const estimateSig = config === null ? '' : grainSignature(config);
+  const debouncedEstimateSig = useDebouncedValue(estimateSig, 350);
   const estimateQuery = useQuery(
     () => config === null ? Promise.resolve(null) : api.estimateRollupGrain(config),
-    // Refetch when the grain changes OR when the built rollup changes (e.g. a
-    // re-roll finishes) so the actual/estimated badge updates without a remount.
-    [estimateSig, rollupRevision ?? ''],
+    // Refetch when the (settled) grain changes OR when the built rollup changes
+    // (e.g. a re-roll finishes) so the actual/estimated badge updates without a
+    // remount.
+    [debouncedEstimateSig, rollupRevision ?? ''],
   );
   const estimate = estimateQuery.status === 'success' ? estimateQuery.data : null;
   const estimateLoading = estimateQuery.status === 'loading';
+  // The grain changed but the (debounced) probe hasn't refired yet — the shown
+  // estimate is for the previous grain. Surface the "Estimating…" cue instantly
+  // (as it did before the debounce) for the 350 ms settle window so the panel
+  // doesn't sit on the previous grain's numbers without a hint. (useQuery flips
+  // to its own loading state one passive-effect tick after the window closes, so
+  // a single handoff frame can still paint the prior estimate — acceptable.)
+  const estimateStale = estimateSig !== debouncedEstimateSig;
   const rawOnlyColumns = new Set((estimate?.dims ?? []).filter(d => d.rawOnly).map(d => d.column));
   const cardinalityByColumn = new Map((estimate?.dims ?? []).map(d => [d.column, d.cardinality]));
 
@@ -2153,7 +2175,7 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
 
           {/* Rollup cost/benefit for the current grain — updates as pills are
               toggled so the user can weigh the (background) re-roll first. */}
-          <RollupImpactPanel estimate={estimate} loading={estimateLoading} config={config} />
+          <RollupImpactPanel estimate={estimate} loading={estimateLoading} stale={estimateStale} config={config} />
 
           {/* New-tag-dim form appears inline right after the pill rows so the
               user sees where the new pill will land. */}
