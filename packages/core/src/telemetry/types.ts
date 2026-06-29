@@ -29,6 +29,14 @@ export const TELEMETRY_DEFAULTS: TelemetryPreferences = {
   analytics: false,
 };
 
+/**
+ * Sentry `tracesSampleRate` when the performance channel is on. The sampling
+ * decision is made independently in each process (main + renderer), so both
+ * inits must use this same value — keep it here as the single source of truth so
+ * the two can't drift.
+ */
+export const TELEMETRY_TRACES_SAMPLE_RATE = 0.1;
+
 /** True when at least one channel is on — i.e. the SDK should be initialised. */
 export function isTelemetryEnabled(prefs: TelemetryPreferences): boolean {
   return prefs.errorReports || prefs.nativeCrashReports || prefs.performance || prefs.analytics;

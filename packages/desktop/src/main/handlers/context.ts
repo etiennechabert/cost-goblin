@@ -4,6 +4,7 @@ import { QueryLog } from '../query-log.js';
 import { awaitWithTimeout } from '../async-timeout.js';
 import { computeDefaultPoolSize } from '../duckdb-tuning.js';
 import { RollupStore, type BuildPartitionSql, type RollupShape } from '../rollup-store.js';
+import { traceSpan, SPAN_OP } from '../telemetry/tracing.js';
 import {
   asDimensionId,
   applyNormalizationRule,
@@ -494,7 +495,10 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const cached = resultCache.get(sql);
     if (cached !== undefined) return Promise.resolve(cached);
     return dedup(sql, async () => {
-      const result = await wrappedRunQuery(sql);
+      const result = await traceSpan(
+        { name: 'duckdb.query', op: SPAN_OP.dbQuery, attributes: { 'db.system': 'duckdb' } },
+        () => wrappedRunQuery(sql),
+      );
       if (result.length > 0) resultCache.set(sql, result);
       return result;
     });
@@ -510,7 +514,10 @@ export function createAppContext(ctx: IpcContext): AppContext {
       return Promise.resolve(cached);
     }
     return dedup(key, async () => {
-      const result = await wrappedRunPreparedQuery(sql, params, materialized);
+      const result = await traceSpan(
+        { name: 'duckdb.query', op: SPAN_OP.dbQuery, attributes: { 'db.system': 'duckdb', 'db.prepared': true } },
+        () => wrappedRunPreparedQuery(sql, params, materialized),
+      );
       if (result.length > 0) resultCache.set(key, result);
       return result;
     });

@@ -11,6 +11,7 @@ import {
   QUERY_CANCELLED_MESSAGE,
   summarizeEventForOutbox,
   TELEMETRY_DEFAULTS,
+  TELEMETRY_TRACES_SAMPLE_RATE,
 } from '@costgoblin/core';
 import type { TelemetryPreferences, TelemetryStatus } from '@costgoblin/core';
 import { redactEventInPlace } from './scrub-event.js';
@@ -84,6 +85,15 @@ class TelemetryController {
     };
   }
 
+  /** True when performance tracing is actually armed this session — the gate the
+   *  span helpers ({@link ./tracing}) consult before creating any Sentry span.
+   *  Mirrors {@link armedChannels}'s performance value (SDK active, armed at boot,
+   *  still wanted); when false the helpers are pure pass-throughs that create no
+   *  SDK objects, so the hot query path pays nothing for non-opted-in users. */
+  isTracingActive(): boolean {
+    return this.armedChannels().performance;
+  }
+
   async getOutbox(): ReturnType<TelemetryOutbox['list']> {
     return this.outbox === null ? [] : this.outbox.list();
   }
@@ -142,7 +152,7 @@ class TelemetryController {
         integrations: (defaults) =>
           this.prefs.nativeCrashReports ? defaults : defaults.filter((i) => i.name !== 'SentryMinidump'),
         // Tracing only when the performance channel is on.
-        tracesSampleRate: this.prefs.performance ? 0.1 : 0,
+        tracesSampleRate: this.prefs.performance ? TELEMETRY_TRACES_SAMPLE_RATE : 0,
         // Never let the SDK attach IP/user/cookies — our scrub is the backstop,
         // but default-off is the first line of defence.
         sendDefaultPii: false,
