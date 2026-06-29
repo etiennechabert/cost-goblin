@@ -470,11 +470,15 @@ export class BaselineStore {
     this.userTriaged.delete(id);
   }
 
-  /** Whether the user has invested in a discovered baseline (set a status or
-   *  added a note) — such baselines are preserved across re-discovery; untouched
-   *  ones are pruned when their tuple vanishes. */
+  /** Whether the user has invested in a discovered baseline (set a status, added
+   *  a note, renamed it, or set a manual band) — such baselines are preserved
+   *  across re-discovery; untouched ones are pruned when their tuple vanishes. */
   private isUserEdited(id: string): boolean {
-    return this.userTriaged.has(id) || (this.triages.get(id)?.notes.length ?? 0) > 0;
+    const spec = this.specs.get(id);
+    return this.userTriaged.has(id)
+      || (this.triages.get(id)?.notes.length ?? 0) > 0
+      || spec?.name !== undefined
+      || spec?.manualBand !== undefined;
   }
 
   async delete(deps: BaselineEngineDeps, id: string): Promise<void> {
@@ -662,10 +666,11 @@ export class BaselineStore {
       // finalizeFromHistory runs once for every spec in recompute()'s loop.
     }
 
-    // 5) Vanished discovered tuples (e.g. after a grain change). Prune the
-    //    untouched ones so the list doesn't accumulate stale rows; keep the ones
-    //    the user invested in (status/notes) but blank their history so they show
-    //    insufficient-data rather than a stale band.
+    // 5) Vanished discovered tuples — a grain change, or a scope that dropped to
+    //    zero spend over the lookback (this runs on every recompute, not just
+    //    grain changes). Prune the untouched ones so the list doesn't accumulate
+    //    stale rows; keep the ones the user invested in but blank their history so
+    //    they show insufficient-data rather than a stale band.
     for (const [key, spec] of existingByScope) {
       if (seenScopes.has(key)) continue;
       if (this.isUserEdited(spec.id)) this.histories.set(spec.id, []);

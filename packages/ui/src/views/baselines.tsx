@@ -288,12 +288,15 @@ function RecomputeDialog({ onClose, onStarted }: Readonly<{ onClose: () => void;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Best-effort hint only (the real cardinality guard lives in the backend
+  // auto-grain). Default-unchecking high-card dims keeps the initial display in
+  // step with what the auto-grain does.
   const isHighCard = (description: string | undefined): boolean => /high.?cardinalit/i.test(description ?? '');
 
-  // Default the checklist to the current grain, or — when the grain is auto —
-  // the enabled built-ins MINUS high-cardinality ones (matching the auto-grain,
-  // so a one-click recompute doesn't explode the tuple count). Once the user
-  // toggles anything, `picked` drives it.
+  // Initial checklist: the current custom grain, or — when the grain is auto —
+  // the enabled built-ins minus high-cardinality ones. `picked` is null until the
+  // user toggles something; while null we DON'T persist a grain on recompute, so
+  // the backend's cardinality-guarded auto-grain stays in effect.
   const effPicked = picked ?? new Set<string>(
     cfg !== null && cfg.config.grainDimensions.length > 0
       ? cfg.config.grainDimensions.map(String)
@@ -307,14 +310,20 @@ function RecomputeDialog({ onClose, onStarted }: Readonly<{ onClose: () => void;
   }
 
   async function run(): Promise<void> {
-    if (cfg === null) return;
-    if (effPicked.size === 0) { setError('Pick at least one dimension.'); return; }
     setBusy(true);
     setError(null);
     try {
-      const grainDimensions = builtIns.filter((d) => effPicked.has(String(d.name))).map((d) => asDimensionId(String(d.name)));
-      await api.setBaselinesConfig({ ...cfg.config, grainDimensions });
-      await api.recomputeBaselines({ startFresh });
+      // Only persist a grain when the user actually edited the checklist; an
+      // untouched dialog leaves the (auto-guarded) grain alone.
+      if (picked !== null) {
+        if (cfg === null) { setError('Could not read the current baseline config.'); setBusy(false); return; }
+        const grainDimensions = builtIns.filter((d) => picked.has(String(d.name))).map((d) => asDimensionId(String(d.name)));
+        if (grainDimensions.length === 0) { setError('Pick at least one dimension.'); setBusy(false); return; }
+        await api.setBaselinesConfig({ ...cfg.config, grainDimensions });
+      }
+      // recomputeBaselines resolves only when the whole job finishes; the page
+      // shows live progress, so kick it off and close the dialog immediately.
+      void api.recomputeBaselines({ startFresh }).catch(() => undefined);
       onStarted();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -322,7 +331,10 @@ function RecomputeDialog({ onClose, onStarted }: Readonly<{ onClose: () => void;
     }
   }
 
-  const loading = cfgQuery.status === 'loading' || dimsQuery.status === 'loading';
+  const pending = (s: typeof cfgQuery.status): boolean => s !== 'success' && s !== 'error';
+  const loading = pending(cfgQuery.status) || pending(dimsQuery.status);
+  const loadError = cfgQuery.status === 'error' ? cfgQuery.error.message
+    : dimsQuery.status === 'error' ? dimsQuery.error.message : null;
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -333,6 +345,10 @@ function RecomputeDialog({ onClose, onStarted }: Readonly<{ onClose: () => void;
           <p className="mt-4 text-xs text-text-muted">Loading dimensions…</p>
         ) : (
           <>
+            {loadError !== null && (
+              <p className="mt-3 rounded-md border border-warning/40 bg-warning/10 px-2 py-1.5 text-[11px] text-warning">Couldn't load dimensions ({loadError}). Recompute will use the current settings.</p>
+            )}
+            {loadError === null && (
             <div className="mt-4 flex flex-col gap-1.5 max-h-64 overflow-y-auto">
               {builtIns.map((d) => {
                 const name = String(d.name);
@@ -346,6 +362,7 @@ function RecomputeDialog({ onClose, onStarted }: Readonly<{ onClose: () => void;
                 );
               })}
             </div>
+            )}
             <label className="mt-4 flex items-start gap-2 text-xs text-text-secondary">
               <input type="checkbox" checked={startFresh} onChange={(e) => { setStartFresh(e.target.checked); }} className="mt-0.5" />
               <span>
