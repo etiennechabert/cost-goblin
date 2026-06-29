@@ -78,7 +78,13 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<Timed<T>
     timer = setTimeout(() => { resolve({ value: undefined, timedOut: true }); }, ms);
   });
   try {
-    return await Promise.race([promise.then(value => ({ value, timedOut: false })), timeout]);
+    // Handle both settle paths so withTimeout never rejects: a rejection from
+    // the raced promise is surfaced the same as a timeout (no result).
+    const settled = promise.then(
+      value => ({ value, timedOut: false }),
+      () => ({ value: undefined, timedOut: false }),
+    );
+    return await Promise.race([settled, timeout]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -92,8 +98,14 @@ export class FuzzHarness {
 
   static async open(): Promise<FuzzHarness> {
     const instance = await DuckDBInstance.create();
-    const conn = await instance.connect();
-    return new FuzzHarness(instance, conn);
+    try {
+      const conn = await instance.connect();
+      return new FuzzHarness(instance, conn);
+    } catch (error) {
+      // connect() failed after the instance was created — don't leak it.
+      instance.closeSync();
+      throw error;
+    }
   }
 
   /** Build, execute, classify, and apply the injection oracle to one case. */
@@ -148,7 +160,10 @@ export class FuzzHarness {
     } catch (error) {
       return { kind: 'error', message: messageOf(error) };
     } finally {
-      stmt.destroySync();
+      // A case abandoned by withTimeout may finish after close() has already
+      // disconnected the connection; tearing down the stale statement must
+      // never throw into an unhandled rejection.
+      try { stmt.destroySync(); } catch { /* connection already closed */ }
     }
   }
 

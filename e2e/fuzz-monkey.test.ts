@@ -66,8 +66,18 @@ const CANDIDATE_SELECTOR = [
 const SAFE_NAV = ['Trends', 'Tags', 'Findings', 'Explorer', 'Dashboards'];
 const DATE_PRESETS = ['Last 7 days', 'Last 30 days', 'Last 90 days', 'This month', 'Last month'];
 
-const ACTIONS = Number.parseInt(process.env['FUZZ_ACTIONS'] ?? '150', 10);
-const SEED = Number.parseInt(process.env['FUZZ_SEED'] ?? String(Date.now() & 0xffffffff), 10);
+// Guard against a non-numeric / empty env var: parseInt('abc') is NaN, which
+// would make the action loop run zero iterations and seed the PRNG with 0,
+// silently defeating both the fuzzing and its reproducibility.
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+const ACTIONS = envInt('FUZZ_ACTIONS', 150);
+const SEED = envInt('FUZZ_SEED', Date.now() & 0xffffffff);
 
 function pickIndex(rng: () => number, length: number): number {
   return Math.floor(rng() * length);

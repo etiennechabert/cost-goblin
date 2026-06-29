@@ -47,6 +47,9 @@ const VALID_DATES: readonly string[] = [
   '2026-02-01', '2026-02-14', '2026-02-28',
 ];
 
+/** Valid + hostile dates, precomputed once (the hostile path samples from it). */
+const ALL_DATES: readonly string[] = [...VALID_DATES, ...HOSTILE_DATES];
+
 interface GenDim {
   readonly id: DimensionId;
   readonly valid: boolean;
@@ -84,19 +87,34 @@ function genDateRange(rng: Rng): GenRange {
   if (useValid) {
     // Order the two valid endpoints so the range spans real on-disk months and
     // reliably executes — reversed/empty ranges are covered by the hostile path.
-    const [a, b] = [pick(rng, VALID_DATES), pick(rng, VALID_DATES)].sort();
-    const range: DateRange = { start: asDateString(a ?? '2026-01-01'), end: asDateString(b ?? '2026-02-28') };
+    const p = pick(rng, VALID_DATES);
+    const q = pick(rng, VALID_DATES);
+    const [a, b] = p <= q ? [p, q] : [q, p];
+    const range: DateRange = { start: asDateString(a), end: asDateString(b) };
     return { range, valid: true, forcesHourly: false };
   }
-  const startStr = pick(rng, [...VALID_DATES, ...HOSTILE_DATES]);
-  const endStr = pick(rng, [...VALID_DATES, ...HOSTILE_DATES]);
+  const startStr = pick(rng, ALL_DATES);
+  const endStr = pick(rng, ALL_DATES);
   const range: DateRange = { start: asDateString(startStr), end: asDateString(endStr) };
   return { range, valid: isValidDate(startStr) && isValidDate(endStr), forcesHourly: false };
 }
 
 const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 const HOUR_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]) ([01]\d|2[0-3]):00:00$/;
-function isValidDate(value: string): boolean { return DATE_RE.test(value); }
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28;
+  return month === 4 || month === 6 || month === 9 || month === 11 ? 30 : 31;
+}
+
+/** Format AND calendar valid — rejects impossible days (Feb 30, Apr 31) so an
+ *  intendedValid case isn't mislabelled when DuckDB would reject the date. */
+function isValidDate(value: string): boolean {
+  if (!DATE_RE.test(value)) return false;
+  const [y, m, d] = value.split('-').map(Number);
+  if (y === undefined || m === undefined || d === undefined) return false;
+  return d >= 1 && d <= daysInMonth(y, m);
+}
 function isValidHour(value: string): boolean { return HOUR_RE.test(value); }
 
 interface GenFilters {

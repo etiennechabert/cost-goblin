@@ -8,7 +8,7 @@ import { readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { asDimensionId } from '../types/branded.js';
+import { asDimensionId, tagDimColumn } from '../types/branded.js';
 import type { DimensionId } from '../types/branded.js';
 import type { DimensionsConfig } from '../types/config.js';
 
@@ -29,21 +29,28 @@ export const DIMENSIONS: DimensionsConfig = {
   ],
 };
 
-/** Dimension ids that `resolveField` accepts for the config above. */
+/** Dimension ids `resolveField` accepts — derived from DIMENSIONS so adding a
+ *  built-in or tag dimension automatically extends fuzz coverage (no manual
+ *  list to drift out of sync). */
 export const VALID_DIMENSION_IDS: readonly DimensionId[] = [
-  asDimensionId('account_id'),
-  asDimensionId('service'),
-  asDimensionId('region'),
-  asDimensionId('tag_team'),
-  asDimensionId('tag_environment'),
+  ...DIMENSIONS.builtIn.map(d => d.name),
+  ...DIMENSIONS.tags.map(t => asDimensionId(tagDimColumn(t))),
 ];
 
-/** Periods present on disk for a tier, e.g. ['2026-01', '2026-02'] for daily. */
+const periodsCache = new Map<string, readonly string[]>();
+
+/** Periods present on disk for a tier, e.g. ['2026-01', '2026-02'] for daily.
+ *  Memoized — the committed fixtures are immutable within a run, so a soak of
+ *  N cases shouldn't do N readdir syscalls. */
 export function periodsOnDisk(tier: 'daily' | 'hourly'): readonly string[] {
+  const cached = periodsCache.get(tier);
+  if (cached !== undefined) return cached;
   const root = join(SYNTHETIC_DIR, 'aws', 'raw');
   const prefix = `${tier}-`;
-  return readdirSync(root, { withFileTypes: true })
+  const periods = readdirSync(root, { withFileTypes: true })
     .filter(e => e.isDirectory() && e.name.startsWith(prefix))
     .map(e => e.name.slice(prefix.length))
     .sort();
+  periodsCache.set(tier, periods);
+  return periods;
 }
