@@ -44,6 +44,7 @@ function migrateLocked(cfg: DimensionsConfig): { config: DimensionsConfig; chang
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { useQuery } from '../hooks/use-query.js';
+import { useDebouncedValue } from '../hooks/use-debounced-value.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { AliasSuggestions } from '../components/alias-suggestions.js';
@@ -1474,17 +1475,6 @@ function grainSignature(config: DimensionsConfig): string {
   return [...new Set(cols)].sort((a, b) => a.localeCompare(b)).join(',');
 }
 
-/** Trailing-edge debounce of a value. Returns the input only after it has held
- *  steady for `ms`, so a burst of changes collapses into a single settled value. */
-function useDebouncedValue<T>(value: T, ms: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const id = setTimeout(() => { setDebounced(value); }, ms);
-    return () => { clearTimeout(id); };
-  }, [value, ms]);
-  return debounced;
-}
-
 const SIZE_BAND_LABEL: Record<RollupSizeBand, string> = {
   tiny: 'tiny', small: 'small', moderate: 'moderate', large: 'large', huge: 'very large',
 };
@@ -1693,11 +1683,18 @@ function RollupImpactPanel({ estimate, loading, stale, config }: Readonly<{ esti
   const rollupBytes = matchedCurrent === null ? (estimate?.candidate.bytes ?? 0) : matchedCurrent.bytes;
   const sizeReduction = estimate !== null && rollupBytes > 0 ? estimate.raw.bytes / rollupBytes : 0;
   const rowRatio = computeRowRatio(estimate, matchedCurrent);
+  // When the probe has run and found no data on disk (probePeriod === ''), show
+  // the sync hint even while stale/loading — toggling a dim on an un-synced
+  // install must not flash the "Estimating…" spinner over the real "no data" state.
+  const noData = estimate !== null && estimate.probePeriod.length === 0;
+  const syncHint = <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>;
   let body: React.JSX.Element;
-  if (stale || (loading && estimate === null)) {
+  if (noData) {
+    body = syncHint;
+  } else if (stale || (loading && estimate === null)) {
     body = <EstimateProgress />;
-  } else if (estimate === null || estimate.probePeriod.length === 0) {
-    body = <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>;
+  } else if (estimate === null) {
+    body = syncHint;
   } else {
     body = (
       <ImpactDetails
@@ -1855,8 +1852,10 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
   const estimateLoading = estimateQuery.status === 'loading';
   // The grain changed but the (debounced) probe hasn't refired yet — the shown
   // estimate is for the previous grain. Surface the "Estimating…" cue instantly
-  // (as it did before the debounce) so the panel never silently shows stale
-  // numbers during the 350 ms settle window.
+  // (as it did before the debounce) for the 350 ms settle window so the panel
+  // doesn't sit on the previous grain's numbers without a hint. (useQuery flips
+  // to its own loading state one passive-effect tick after the window closes, so
+  // a single handoff frame can still paint the prior estimate — acceptable.)
   const estimateStale = estimateSig !== debouncedEstimateSig;
   const rawOnlyColumns = new Set((estimate?.dims ?? []).filter(d => d.rawOnly).map(d => d.column));
   const cardinalityByColumn = new Map((estimate?.dims ?? []).map(d => [d.column, d.cardinality]));
