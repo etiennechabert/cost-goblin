@@ -53,6 +53,19 @@ function missingWithinCutoff(
     .filter(p => p.period >= cutoffPeriod);
 }
 
+// Periods that an on-demand sync should pull: not yet local ('missing') or
+// out of date vs. S3 ('stale'), within the tier's retention window. Mirrors the
+// background auto-sync's selection so the manual "Sync" button does the same work.
+function syncableWithinCutoff(
+  inventory: DataInventoryResult | null,
+  cutoffPeriod: string,
+): DataInventoryResult['periods'] {
+  if (inventory === null) return [];
+  return inventory.periods
+    .filter(p => p.localStatus === 'missing' || p.localStatus === 'stale')
+    .filter(p => p.period >= cutoffPeriod);
+}
+
 function isSyncActive(state: SyncState): boolean {
   return state.status === 'downloading' || state.status === 'repartitioning';
 }
@@ -273,6 +286,11 @@ export function DataManagement() {
   const costOptPrunable = prunable(costOptInventory?.local.periods, costOptCutoffPeriod, costOptRetentionDays);
   const prunableTotal = dailyPrunable.length + hourlyPrunable.length + costOptPrunable.length;
 
+  const syncableTotal =
+    syncableWithinCutoff(inventory, dailyCutoffPeriod).length +
+    syncableWithinCutoff(hourlyInventory, hourlyCutoffPeriod).length +
+    syncableWithinCutoff(costOptInventory, costOptCutoffPeriod).length;
+
   function handlePrune() {
     setShowPrune(false);
     api.pruneNow().then((result) => {
@@ -288,6 +306,36 @@ export function DataManagement() {
     }).catch((err: unknown) => {
       setPruneNotice(`Prune failed: ${err instanceof Error ? err.message : String(err)}`);
     });
+  }
+
+  // On-demand counterpart to the auto-sync schedule: pull every tier's missing /
+  // stale periods now. Runs tiers sequentially (like the scheduler) so concurrent
+  // `aws s3 sync` processes don't contend; the 2s status poller above drives each
+  // tier card's progress while a sync is in flight.
+  async function handleSyncAll() {
+    const tiers: {
+      id: string;
+      inventory: DataInventoryResult | null;
+      cutoff: string;
+      setState: (s: SyncState) => void;
+      bump: () => void;
+    }[] = [
+      { id: 'daily', inventory, cutoff: dailyCutoffPeriod, setState: setDailySyncState, bump: () => { setDailyRefreshKey(k => k + 1); } },
+      { id: 'hourly', inventory: hourlyInventory, cutoff: hourlyCutoffPeriod, setState: setHourlySyncState, bump: () => { setHourlyRefreshKey(k => k + 1); } },
+      { id: 'cost-optimization', inventory: costOptInventory, cutoff: costOptCutoffPeriod, setState: setCostOptSyncState, bump: () => { setCostOptRefreshKey(k => k + 1); } },
+    ];
+    for (const tier of tiers) {
+      const files = syncableWithinCutoff(tier.inventory, tier.cutoff).flatMap(p => [...p.files]);
+      if (files.length === 0) continue;
+      tier.setState({ status: 'downloading', filesDone: 0, filesTotal: files.length, bytesDone: 0, bytesTotal: 0, message: '' });
+      try {
+        const result = await api.syncPeriods(files, tier.id);
+        tier.setState({ status: 'done', filesDownloaded: result.filesDownloaded });
+        tier.bump();
+      } catch (err: unknown) {
+        tier.setState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+      }
+    }
   }
 
   const [hourlyInitialized, setHourlyInitialized] = useState(false);
@@ -433,6 +481,15 @@ export function DataManagement() {
           <p className="text-sm text-text-secondary mt-0.5">S3 sync and local data inventory</p>
         </div>
         <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => { handleSyncAll().catch(() => undefined); }}
+            disabled={syncableTotal === 0 || anySyncing}
+            title={syncableTotal === 0 ? 'All tiers are up to date' : `Sync ${String(syncableTotal)} period(s) that are missing or out of date`}
+            className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {syncableTotal === 0 ? 'Sync' : `Sync (${String(syncableTotal)})`}
+          </button>
           <button
             type="button"
             onClick={() => { setShowPrune(true); }}
