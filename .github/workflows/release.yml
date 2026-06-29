@@ -5,30 +5,58 @@ on:
     tags:
       - 'v*'
 
+# Serialize runs for a given tag so a re-tag/re-run can never race the in-flight
+# release's manifest upload. Never cancel a release mid-flight.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     environment: release
     strategy:
-      # Exactly ONE job per platform. electron-builder.yml pins the arch list
-      # per target, so a single invocation builds every arch for the platform
-      # (CLI --x64/--arm64 flags do NOT narrow it). Splitting mac into per-arch
-      # jobs made both jobs build BOTH archs and race on publishing: each
-      # "overwrite published file" replaced the other's binaries, leaving a
-      # latest-mac.yml whose sha512/size didn't match the surviving zips —
-      # which made every macOS auto-update fail checksum validation (v0.2.6).
+      # ONE job per (os, arch) on a MATCHING-arch runner. The 8 @duckdb
+      # node-bindings packages are os/cpu-gated, so `npm ci` installs only the
+      # runner's host-arch binding; with npmRebuild:false electron-builder ships
+      # node_modules as-is. Building each arch on its own native runner is what
+      # guarantees the right DuckDB binary ends up in each installer — the old
+      # single-runner-builds-both-archs setup shipped the wrong-arch binding to
+      # every secondary arch (Intel-Mac dmg, arm64 Win/Linux) and crashed there.
+      #
+      # Each job builds EXACTLY its one arch (electron-builder.yml no longer pins
+      # arch per target, so the --x64/--arm64 flag now narrows it) and publishes
+      # NOTHING (`--publish never`) — it uploads its dist/ as an artifact. The
+      # `publish` job then merges the per-arch update manifests and uploads
+      # everything to one draft release. That is what keeps the two arch jobs of a
+      # platform from clobbering each other's latest*.yml — the race that left a
+      # manifest whose sha512/size didn't match the surviving binaries and broke
+      # every macOS auto-update (v0.2.6).
+      fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-15-intel    # Intel (x64)
             platform: mac
-          - os: windows-latest
+            arch: x64
+          - os: macos-14          # Apple Silicon (arm64)
+            platform: mac
+            arch: arm64
+          - os: windows-latest    # x64
             platform: win
-          - os: ubuntu-latest
+            arch: x64
+          - os: windows-11-arm    # arm64
+            platform: win
+            arch: arm64
+          - os: ubuntu-latest     # x64
             platform: linux
+            arch: x64
+          - os: ubuntu-24.04-arm  # arm64
+            platform: linux
+            arch: arm64
 
     runs-on: ${{ matrix.os }}
 
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -58,6 +86,33 @@ jobs:
 
       - run: npm ci
 
+      # The entire fix rests on "npm ci on a matching-arch runner installs only
+      # this arch's @duckdb binding." Assert it before doing any expensive build
+      # work, so a runner whose Node reports the wrong process.arch (e.g. an
+      # emulated x64 Node on windows-11-arm) fails LOUDLY here instead of silently
+      # shipping a wrong-arch binary that only crashes on a user's machine.
+      - name: Verify host-arch DuckDB binding was installed
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.platform }}" in
+            mac)   os=darwin ;;
+            win)   os=win32 ;;
+            linux) os=linux ;;
+          esac
+          want="node_modules/@duckdb/node-bindings-${os}-${{ matrix.arch }}"
+          other_arch=$([ "${{ matrix.arch }}" = x64 ] && echo arm64 || echo x64)
+          echo "runner node process.arch=$(node -p process.arch); target=${{ matrix.arch }}"
+          test -f "$want/duckdb.node" || {
+            echo "::error::Missing $want/duckdb.node — npm ci installed the wrong-arch DuckDB binding (runner process.arch != ${{ matrix.arch }}?). Refusing to ship a broken installer.";
+            exit 1;
+          }
+          if [ -d "node_modules/@duckdb/node-bindings-${os}-${other_arch}" ]; then
+            echo "::error::Foreign-arch binding node-bindings-${os}-${other_arch} is present — this installer would ship two archs. Aborting.";
+            exit 1;
+          fi
+          echo "OK: only ${os}-${{ matrix.arch }} binding present"
+
       - name: Build app bundles
         run: npm run build --workspaces --if-present
         env:
@@ -69,9 +124,11 @@ jobs:
       # Inject debug IDs into the built JS (so shipped bundles match the maps)
       # and upload source maps, so renderer/main stack traces are readable in
       # Sentry. Runs before packaging so electron-builder ships the injected JS.
-      # Electron/Chromium's own native frames are symbolicated by Sentry's symbol
-      # server; third-party native modules are handled by the next step.
-      # Skipped entirely when Sentry isn't configured.
+      # `sourcemaps inject` rewrites packages/desktop/out in place, so every arch
+      # job runs it (the renderer/main JS is arch-independent; Sentry dedupes the
+      # maps by debug ID). Electron/Chromium's own native frames are symbolicated
+      # by Sentry's symbol server; third-party native modules are handled by the
+      # next step. Skipped entirely when Sentry isn't configured.
       - name: Upload source maps to Sentry
         if: vars.SENTRY_ORG != ''
         # Source maps are an observability nicety, not a release artifact — a
@@ -91,26 +148,20 @@ jobs:
           npx --yes @sentry/cli@^2 sourcemaps upload --release "$REL" packages/desktop/out
 
       # Native crashes inside DuckDB (the duckdb.node addon + the libduckdb
-      # engine) land in Crashpad minidumps. Sentry has no symbols for
-      # third-party native modules, so without their debug files it reports
-      # "A required debug information file was missing" and native frames stay
-      # unresolved (COSTGOBLIN-4). The prebuilt binaries carry no DWARF but ship
-      # a symbol table + unwind info — enough for function-level frames.
+      # engine) land in Crashpad minidumps. Sentry has no symbols for third-party
+      # native modules, so without their debug files it reports "A required debug
+      # information file was missing" and native frames stay unresolved
+      # (COSTGOBLIN-4). The prebuilt binaries carry no DWARF but ship a symbol
+      # table + unwind info — enough for function-level frames.
       #
-      # We ship BOTH x64 and arm64 for every OS (electron-builder.yml), but each
-      # GitHub runner is single-arch, so `npm ci` installs only the @duckdb
-      # binding matching the runner's own os/cpu — uploading node_modules/@duckdb
-      # would silently miss every other arch. Instead fetch all eight
-      # @duckdb/node-bindings-<os>-<arch> tarballs (`npm pack` ignores the os/cpu
-      # install gate) at the version this build resolved and upload them
-      # together. Debug files are project-global (matched by debug ID, not tied
-      # to a build), so this runs once on Linux and needs no --release.
-      # sentry-cli uploads whatever is usable and skips the rest: macOS + Linux
-      # (every arch, incl. musl) symbolicate; Windows' duckdb.dll is stripped
-      # with no PDB shipped, so only its duckdb.node addon resolves. Soft-fail
+      # Now that each arch builds on its own native runner, node_modules/@duckdb
+      # already holds exactly the arch this job ships (asserted above), so upload
+      # it directly — across the six jobs every shipped arch is covered. (No musl
+      # variant: we don't ship a musl build.) Debug files are project-global
+      # (matched by debug ID, not tied to a build), so no --release. Soft-fail
       # like the source maps — never block a release.
       - name: Upload native debug files to Sentry
-        if: matrix.platform == 'linux' && vars.SENTRY_ORG != ''
+        if: vars.SENTRY_ORG != ''
         continue-on-error: true
         shell: bash
         env:
@@ -118,20 +169,14 @@ jobs:
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
           SENTRY_URL: ${{ vars.SENTRY_URL || 'https://de.sentry.io' }}
-        run: |
-          set -euo pipefail
-          dest="$RUNNER_TEMP/duckdb-dif"
-          mkdir -p "$dest"
-          # All eight per-arch packages are node-bindings' optionalDependencies
-          # and share its version — derive both so a DuckDB bump needs no edit.
-          specs=$(node -p "Object.entries(require('@duckdb/node-bindings/package.json').optionalDependencies||{}).map(([k,v])=>k+'@'+v).join(' ')")
-          ( cd "$dest"
-            for spec in $specs; do npm pack "$spec"; done
-            for tgz in *.tgz; do d="${tgz%.tgz}"; mkdir -p "$d"; tar -xzf "$tgz" -C "$d"; done )
-          npx --yes @sentry/cli@^2 debug-files upload "$dest"
+        run: npx --yes @sentry/cli@^2 debug-files upload node_modules/@duckdb
 
+      # Build the single arch this runner natively is. --publish never: the
+      # binaries + per-arch latest*.yml land in dist/ but nothing is uploaded to
+      # the release here — the `publish` job aggregates all arches so the manifests
+      # can be merged before going live.
       - name: Build installers
-        run: npx --no-install electron-builder --${{ matrix.platform }} --publish always
+        run: npx --no-install electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ matrix.platform == 'mac' && secrets.MAC_CERTIFICATE_P12 || '' }}
@@ -140,15 +185,111 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'mac' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_TEAM_ID || '' }}
 
-  # electron-builder uploads to a DRAFT release with an empty body. This job
-  # runs after every matrix build has uploaded its assets: it sets the body to
-  # GitHub's auto-generated changelog (PR titles + commit subjects since the
-  # previous tag) AND publishes the draft (--draft=false), so the release only
-  # goes live — and only becomes visible to auto-updaters — once it is
-  # complete. Single job to avoid the matrix-vs-release-body race that would
-  # happen if we patched the body from inside the build job.
-  notes:
+      # Distributables + blockmaps + the per-arch update manifest only — never the
+      # huge *-unpacked/ dirs or builder-*.yml. Globs that match nothing on a given
+      # platform are silently skipped; every platform matches at least one file.
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            dist/*.dmg
+            dist/*.dmg.blockmap
+            dist/*.zip
+            dist/*.zip.blockmap
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/*.AppImage
+            dist/*.deb
+            dist/latest*.yml
+
+  # Aggregate every arch's artifacts, merge the shared update manifests, and
+  # upload the whole set to ONE draft release. Runs only after all six build jobs
+  # succeed (a failed arch ⇒ this is skipped ⇒ no partial release). The draft
+  # stays invisible to auto-updaters until the `notes` job flips it live, so there
+  # is never a window where a half-uploaded manifest is served on a fresh release.
+  publish:
     needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+
+      - name: Download all dist artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts
+
+      # Collect every binary, then build the published manifest set:
+      #   - linux manifests are already arch-specific (latest-linux.yml +
+      #     latest-linux-arm64.yml — electron-updater fetches the arch-suffixed
+      #     name on arm64), so copy both as-is, no merge.
+      #   - mac and win share one manifest across their two arch jobs, so merge the
+      #     per-arch copies (x64 first — see merge-update-manifests.mjs). The merged
+      #     manifest still lists every arch's real sha512/size.
+      - name: Merge update manifests and stage release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-save js-yaml@^4
+
+          mkdir -p upload
+          find artifacts -type f \( \
+            -name '*.dmg' -o -name '*.dmg.blockmap' -o \
+            -name '*.zip' -o -name '*.zip.blockmap' -o \
+            -name '*.exe' -o -name '*.exe.blockmap' -o \
+            -name '*.AppImage' -o -name '*.deb' \) -exec cp {} upload/ \;
+
+          cp artifacts/dist-linux-x64/latest-linux.yml upload/
+          cp artifacts/dist-linux-arm64/latest-linux-arm64.yml upload/
+
+          node .github/scripts/merge-update-manifests.mjs upload/latest-mac.yml \
+            artifacts/dist-mac-x64/latest-mac.yml \
+            artifacts/dist-mac-arm64/latest-mac.yml
+          node .github/scripts/merge-update-manifests.mjs upload/latest.yml \
+            artifacts/dist-win-x64/latest.yml \
+            artifacts/dist-win-arm64/latest.yml
+
+          echo "Staged release assets:"
+          ls -la upload/
+
+      # electron-builder normally creates the draft; with --publish never we do it
+      # here. Idempotent while still a draft: a re-run reuses it and --clobber
+      # overwrites. But once `notes` has made the release live, refuse to clobber
+      # it — overwriting a published asset would briefly serve a manifest that
+      # mismatches the asset being replaced (a v0.2.6-class window).
+      - name: Create draft release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPO" >/dev/null 2>&1; then
+            is_draft=$(gh release view "$TAG" --repo "$GITHUB_REPO" --json isDraft --jq .isDraft)
+            if [ "$is_draft" != "true" ]; then
+              echo "::error::Release $TAG is already published (non-draft). Refusing to clobber live assets. Delete the release and re-run the whole workflow to re-release."
+              exit 1
+            fi
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPO" --draft --title "$TAG" --notes ""
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPO" --clobber upload/*
+
+  # Sets the release body to GitHub's auto-generated changelog (PR titles + commit
+  # subjects since the previous tag) AND publishes the draft (--draft=false), so
+  # the release only goes live — and only becomes visible to auto-updaters — once
+  # every arch is uploaded and the manifests are merged. Single job to avoid the
+  # matrix-vs-release-body race that would happen if we patched the body earlier.
+  notes:
+    needs: publish
     runs-on: ubuntu-latest
     permissions:
       contents: write
