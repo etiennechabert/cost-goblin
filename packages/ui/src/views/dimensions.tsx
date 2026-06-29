@@ -1782,7 +1782,7 @@ function resolveOrderedRows(config: DimensionsConfig): OrderedRow[] {
   return rows;
 }
 
-export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: string }>): React.JSX.Element {
+export function DimensionsView(): React.JSX.Element {
   const api = useCostApi();
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editingBuiltInIdx, setEditingBuiltInIdx] = useState<number | null>(null);
@@ -1857,10 +1857,13 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
   const debouncedEstimateSig = useDebouncedValue(estimateSig, 350);
   const estimateQuery = useQuery(
     () => config === null ? Promise.resolve(null) : api.estimateRollupGrain(config),
-    // Refetch when the (settled) grain changes OR when the built rollup changes
-    // (e.g. a re-roll finishes) so the actual/estimated badge updates without a
-    // remount.
-    [debouncedEstimateSig, rollupRevision ?? ''],
+    // Refetch ONLY when the (settled) draft grain changes. The estimate is a
+    // pre-apply preview — it must NOT re-run when the rollup rebuilds. Applying
+    // kicks off a re-roll, and re-probing on that transition would fire a heavy
+    // DuckDB scan redundantly AND in contention with the rebuild it just started.
+    // The actual/estimated badge therefore settles on the next grain change or a
+    // remount, never mid-rebuild.
+    [debouncedEstimateSig],
   );
   const estimate = estimateQuery.status === 'success' ? estimateQuery.data : null;
   const estimateLoading = estimateQuery.status === 'loading';
