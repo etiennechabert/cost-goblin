@@ -2665,6 +2665,10 @@ Format:   <span class="code-file">Parquet</span>
     applyHero();                       // labels now; href once the fetch resolves
     refineArch(os).then(applyHero);    // re-apply if UA-CH refines the arch
 
+    // Until the release fetch resolves, point every grid button at the releases
+    // page so an early click (e.g. via the Safari picker) is never a no-op '#'.
+    document.querySelectorAll('[data-asset]').forEach(el => { el.href = RELEASES_FALLBACK; });
+
     // Fetch latest release from GitHub API
     fetch('https://api.github.com/repos/etiennechabert/cost-goblin/releases/latest')
       .then(r => { if (!r.ok) throw new Error('release fetch failed'); return r.json(); })
@@ -2702,9 +2706,11 @@ Format:   <span class="code-file">Parquet</span>
         applyHero();
       })
       .catch(() => {
-        // Fallback: link to releases page
-        document.getElementById('hero-download').href = RELEASES_FALLBACK;
+        // Release fetch failed: keep every grid button on the releases page and let
+        // applyHero set the hero consistently (incl. the Safari "choose" picker),
+        // so the hero label and its href never disagree.
         document.querySelectorAll('[data-asset]').forEach(el => { el.href = RELEASES_FALLBACK; });
+        applyHero();
       });
 
     // Highlight detected platform card
