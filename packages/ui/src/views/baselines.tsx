@@ -30,25 +30,39 @@ const TRIAGE_LABEL: Readonly<Record<BaselineTriageStatus, string>> = {
   'resolved': 'Resolved', 'dismissed': 'Dismissed', 'ignored': 'Ignored',
 };
 
-function triageChip(status: BaselineTriageStatus): string {
-  switch (status) {
-    case 'tracking': return 'text-accent bg-accent/10 border-accent/30';
-    case 'acting': return 'text-warning bg-warning/10 border-warning/30';
-    case 'resolved': return 'text-positive bg-positive/10 border-positive/30';
-    case 'new': return 'text-text-secondary bg-bg-tertiary/30 border-border';
-    default: return 'text-text-muted bg-bg-tertiary/30 border-border';
-  }
-}
+type ChipTone = 'accent' | 'warning' | 'positive' | 'neutral';
 
-/** Status dot color for the filter chips — same palette as the triage chips. */
-const FILTER_DOT: Partial<Record<TriageFilter, string>> = {
-  'new': 'bg-text-secondary', tracking: 'bg-accent', acting: 'bg-warning',
-  resolved: 'bg-positive', dismissed: 'bg-text-muted', ignored: 'bg-text-muted',
+/** Single source of truth for the status palette — the chip, dot, and active
+ *  styles all derive from a status's tone, so the colors can't drift apart. */
+const STATUS_TONE: Readonly<Record<BaselineTriageStatus, ChipTone>> = {
+  'new': 'neutral', tracking: 'accent', acting: 'warning', resolved: 'positive', dismissed: 'neutral', ignored: 'neutral',
+};
+const TONE_CHIP: Readonly<Record<ChipTone, string>> = {
+  accent: 'text-accent bg-accent/10 border-accent/30',
+  warning: 'text-warning bg-warning/10 border-warning/30',
+  positive: 'text-positive bg-positive/10 border-positive/30',
+  neutral: 'text-text-secondary bg-bg-tertiary/30 border-border',
+};
+const TONE_DOT: Readonly<Record<ChipTone, string>> = {
+  accent: 'bg-accent', warning: 'bg-warning', positive: 'bg-positive', neutral: 'bg-text-muted',
+};
+// Stronger tint for the active filter chip, so even neutral statuses read
+// clearly as selected (the muted base alone was almost indistinguishable).
+const TONE_ACTIVE: Readonly<Record<ChipTone, string>> = {
+  accent: 'text-accent bg-accent/15 border-accent/60',
+  warning: 'text-warning bg-warning/15 border-warning/60',
+  positive: 'text-positive bg-positive/15 border-positive/60',
+  neutral: 'text-text-primary bg-bg-tertiary border-text-muted/60',
 };
 
+function triageChip(status: BaselineTriageStatus): string {
+  return TONE_CHIP[STATUS_TONE[status]];
+}
+function filterDot(id: TriageFilter): string | undefined {
+  return id === 'open' || id === 'all' ? undefined : TONE_DOT[STATUS_TONE[id]];
+}
 function activeFilterClass(id: TriageFilter): string {
-  const base = id === 'open' || id === 'all' ? 'text-accent bg-accent/10 border-accent/30' : triageChip(id);
-  return `${base} ring-1 ring-inset ring-current`;
+  return id === 'open' || id === 'all' ? TONE_ACTIVE.accent : TONE_ACTIVE[STATUS_TONE[id]];
 }
 
 function Kpi({ label, value, accent }: Readonly<{ label: string; value: string; accent?: string | undefined }>) {
@@ -102,6 +116,12 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
     [api, statusFilter, refreshKey],
   );
   const result: BaselinesListResult | null = listQuery.status === 'success' ? listQuery.data : null;
+  // Counts are filter-independent (same tally in every response), so hold the
+  // last-good set across the brief loading window on a filter switch — otherwise
+  // every chip's badge blinks away and the bar reflows on each click.
+  const lastCounts = useRef<BaselinesListResult['counts'] | null>(null);
+  if (result !== null) lastCounts.current = result.counts;
+  const counts = result?.counts ?? lastCounts.current;
   const rows = result?.items ?? [];
   const orderedIds = rows.map((r) => r.spec.id);
   const selIdx = selectedId !== null ? orderedIds.indexOf(selectedId) : -1;
@@ -149,7 +169,7 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
       <div className="flex items-start justify-between">
         <div>
           <p className="text-base font-medium text-text-secondary">Cost baselines — drift, potential &amp; realized savings</p>
-          {result !== null && <p className="text-xs text-text-muted mt-1 tabular-nums">{String(result.total)} baselines</p>}
+          {counts !== null && <p className="text-xs text-text-muted mt-1 tabular-nums">{String(counts.all)} baselines</p>}
         </div>
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => { void startTriage(); }} className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20">Triage new</button>
@@ -165,7 +185,7 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
         <div className="grid grid-cols-3 gap-3">
           <Kpi label="Potential savings" value={`${formatDollars(result.totalPotentialMonthly)}/mo`} accent="text-warning" />
           <Kpi label="Realized savings" value={`${formatDollars(result.totalRealizedMonthly)}/mo`} accent="text-positive" />
-          <Kpi label="Baselines" value={String(result.total)} />
+          <Kpi label="Baselines" value={String(counts?.all ?? result.total)} />
         </div>
       )}
 
@@ -185,8 +205,8 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
       <div className="flex flex-wrap items-center gap-2">
         {STATUS_FILTERS.map((f) => {
           const active = statusFilter === f.id;
-          const dot = FILTER_DOT[f.id];
-          const count = result?.counts[f.id];
+          const dot = filterDot(f.id);
+          const count = counts?.[f.id];
           return (
             <Fragment key={f.id}>
               {/* Divider between the meta filters (Open/All) and the lifecycle statuses. */}
