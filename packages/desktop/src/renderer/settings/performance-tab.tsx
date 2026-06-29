@@ -59,8 +59,16 @@ export function PerformanceTab(): React.JSX.Element {
     setSaving(true);
     setSavedAt(false);
     api.setPerformanceSettings(next)
-      .then(() => {
-        setInfo(prev => (prev === null ? prev : { ...prev, current: next }));
+      // Refetch the persisted settings rather than trusting `next`: the backend
+      // clamps out-of-range values (e.g. 9999 → maxThreads), so echoing `next`
+      // back would show an unclamped value as the saved/clean state. Reset the
+      // fields to what actually persisted so the UI never lies about the override.
+      .then(() => api.getPerformanceInfo())
+      .then((i) => {
+        setInfo(i);
+        setMem(fieldString(i.current.memoryLimitGB));
+        setThreads(fieldString(i.current.threads));
+        setRollupConc(fieldString(i.current.rollupConcurrency));
         setSavedAt(true);
       })
       .catch(() => undefined)

@@ -4,7 +4,6 @@ import type { UIPreferences, PerformanceInfo, PerformanceSettings } from '@costg
 import { type AppContext, prefsPath } from './context.js';
 import { updatePrefsFile } from './prefs-file.js';
 import {
-  DEFAULT_ROLLUP_CONCURRENCY,
   MAX_MEMORY_GB,
   MIN_MEMORY_GB,
   clampMemoryGB,
@@ -71,7 +70,9 @@ export function registerUIHandlers(app: AppContext): void {
     return {
       defaultMemoryGB: computeDefaultMemoryGB(),
       defaultThreads: computeDefaultThreads(),
-      defaultRollupConcurrency: DEFAULT_ROLLUP_CONCURRENCY,
+      // Clamp the displayed Auto to the real max so "Auto: N · range 1–N" can't
+      // contradict itself when the pool cap is below the default.
+      defaultRollupConcurrency: resolveRollupConcurrency(null),
       totalMemoryGB: totalMemoryGB(),
       maxThreads: maxThreads(),
       maxRollupConcurrency: maxRollupConcurrency(),

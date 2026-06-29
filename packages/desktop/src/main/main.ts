@@ -170,7 +170,7 @@ function readPerformanceOverrides(userDataPath: string): { memoryLimitGB: number
   return { memoryLimitGB: null, threads: null, rollupConcurrency: null };
 }
 
-async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<void> {
+async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConcurrency: number): Promise<void> {
   const userDataPath = app.getPath('userData');
   const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
   const configBase = process.env['COSTGOBLIN_CONFIG_DIR'] ?? join(userDataPath, 'config');
@@ -188,10 +188,9 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient): Promise<v
 
   // Apply the persisted rollup-build-parallelism override (perf:set updates it
   // live thereafter). The store is constructed at the default (2); this honours
-  // a saved override before the first warmup builds anything.
-  appContext.rollupStore.setBuildConcurrency(
-    resolveRollupConcurrency(readPerformanceOverrides(userDataPath).rollupConcurrency),
-  );
+  // a saved override before the first warmup builds anything. The value is read
+  // once in main() alongside the memory/threads overrides and passed in.
+  appContext.rollupStore.setBuildConcurrency(rollupConcurrency);
 
   startMcpServer(appContext).catch((err: unknown) => {
     logger.warn(`mcp: failed to start — ${err instanceof Error ? err.message : String(err)}`);
@@ -302,11 +301,12 @@ async function main(): Promise<void> {
   }
   registerUpdateHandlers();
 
-  await createWindow(db, syncClient);
+  const startupRollupConcurrency = resolveRollupConcurrency(perf.rollupConcurrency);
+  await createWindow(db, syncClient, startupRollupConcurrency);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow(db, syncClient).catch(() => undefined);
+      createWindow(db, syncClient, startupRollupConcurrency).catch(() => undefined);
     }
   });
 }

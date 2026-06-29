@@ -84,9 +84,11 @@ export function clampRollupConcurrency(n: number): number {
 }
 
 /** Resolve the effective rollup build parallelism: a clamped override, or the
- *  default (2) when null/undefined ("auto"). */
+ *  default ("auto") when null/undefined. The default itself is clamped to
+ *  maxRollupConcurrency so that on a machine whose pool cap is below the default
+ *  (e.g. COSTGOBLIN_DUCKDB_POOL_SIZE=1) "auto" never exceeds the real maximum. */
 export function resolveRollupConcurrency(override: number | null | undefined): number {
-  return override === null || override === undefined ? DEFAULT_ROLLUP_CONCURRENCY : clampRollupConcurrency(override);
+  return clampRollupConcurrency(override ?? DEFAULT_ROLLUP_CONCURRENCY);
 }
 
 /** Clamp a user-supplied memory override to a safe range. */
