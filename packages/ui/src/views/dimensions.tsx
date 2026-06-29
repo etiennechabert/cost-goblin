@@ -117,6 +117,24 @@ function reconcileOrder(config: DimensionsConfig): string[] {
   return out;
 }
 
+function isPlainRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** Order-insensitive serialization for dirty-checking: recursively sorts object
+ *  keys so two configs that differ only in key insertion order compare equal.
+ *  Array order is preserved (dimension/order arrays are semantically ordered).
+ *  Without this, saving a dim editor — which rebuilds the dim object key-by-key
+ *  in a different order than the on-disk baseline — would flip `dirty` true on a
+ *  no-op save and offer a needless rollup rebuild. */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (isPlainRecord(value)) {
+    return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 const CONCEPTS: { value: ConceptType; label: string }[] = [
   { value: 'environment', label: 'Environment' },
   { value: 'product', label: 'System' },
@@ -1688,18 +1706,27 @@ function RollupImpactPanel({ estimate, loading, stale, error, config }: Readonly
   // install must not flash the "Estimating…" spinner over the real "no data" state.
   const noData = estimate !== null && estimate.probePeriod.length === 0;
   const syncHint = <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>;
-  // `estimate === null` here always means "not resolved yet" (the panel only
-  // renders with a non-null config, and the probe always returns a non-null
-  // estimate — empty when there's no data). So treat it as loading, NOT no-data.
-  // Folding it into the loader branch keeps EstimateProgress mounted across the
-  // debounce→fetch handoff, where `loading` lags the settled grain by one tick —
-  // otherwise that one frame fell through to `syncHint`, flashing the wrong hint
-  // AND remounting the bar (resetting its progress). `error` guards the one case
-  // a null estimate is terminal, so it can't spin forever.
+  const errorHint = <p className="mt-3 text-xs text-text-muted">Couldn’t estimate the rollup size for this grain — change a dimension to retry.</p>;
+  // Branch order matters. `estimate === null` here means "not resolved yet" (the
+  // panel only renders with a non-null config, and the probe always returns a
+  // non-null estimate — empty when there's no data), so fold it into the loader
+  // branch: that keeps EstimateProgress mounted across the debounce→fetch handoff
+  // where `loading` lags the settled grain by one tick (otherwise that one frame
+  // flashed a hint and remounted the bar, resetting its progress).
+  //  - `stale || loading` wins over a leftover `error` so toggling after a failed
+  //    probe shows "Estimating…", not the stale error.
+  //  - a settled error (not stale/loading) shows a real error message, NOT the
+  //    "sync billing data" hint — that would mislead a user who already has data.
   let body: React.JSX.Element;
-  if (noData || (error && estimate === null)) {
+  if (noData) {
     body = syncHint;
-  } else if (stale || loading || estimate === null) {
+  } else if (estimate === null) {
+    // Not resolved yet, or a terminal error. While loading/stale (or simply not
+    // yet probed) show the bar; only a SETTLED error shows the error hint — so a
+    // leftover error from a prior grain doesn't flash over the next "Estimating…".
+    body = error && !stale && !loading ? errorHint : <EstimateProgress />;
+  } else if (stale || loading) {
+    // A non-null prior estimate is being re-probed for a changed grain.
     body = <EstimateProgress />;
   } else {
     body = (
@@ -1847,7 +1874,7 @@ export function DimensionsView(): React.JSX.Element {
   // Draft is dirty when it diverges from the persisted baseline. Registers with
   // the app-wide unsaved-changes guard so navigating away prompts before the
   // in-progress draft is lost.
-  const dirty = config !== null && savedConfig !== null && JSON.stringify(config) !== JSON.stringify(savedConfig);
+  const dirty = config !== null && savedConfig !== null && stableStringify(config) !== stableStringify(savedConfig);
   useUnsavedChanges(dirty, 'Dimensions');
 
   // Live rollup cost/benefit estimate for the current enabled grain. Keyed on
