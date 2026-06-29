@@ -146,34 +146,32 @@ async function saveEtags(
 }
 
 /**
- * Reconciles a freshly-synced directory against the current S3 manifest by
- * deleting any local `.parquet` whose name is no longer in it.
- *
- * `aws s3 sync` runs without `--delete`, so it only adds/updates files — it
- * never removes a local part file that vanished from S3. AWS restates a CUR
- * billing period repeatedly through the month and can change the part-file
- * assembly between exports; without this prune, an old export's parts linger
- * next to the new ones and every row they hold is double-counted at query time
- * (e.g. a $3,000 Shield subscription showing as $6,000 across 2 line items).
- *
- * `manifestFiles` MUST be the complete current file set for the directory's
- * period — every caller passes whole-period manifests (auto-sync and the
- * data-management views both `flatMap(p => p.files)`), the same invariant
- * `saveEtags` relies on when it overwrites a period's etags wholesale.
+ * Deletes any local `.parquet` not in the current manifest. `aws s3 sync` runs
+ * without `--delete`, so a previous CUR export's part files linger when AWS
+ * re-chunks a period — and get double-counted at query time. `manifestFiles`
+ * must be the period's complete file set (callers flatMap whole-period
+ * manifests). Best-effort: a failed deletion never fails a successful sync.
  */
 async function pruneStaleFiles(destDir: string, manifestFiles: readonly ManifestFileEntry[]): Promise<number> {
+  // An empty manifest must never be read as "delete everything in the dir".
+  if (manifestFiles.length === 0) return 0;
   const expected = new Set(manifestFiles.map(f => basename(f.key)));
   let entries: string[];
   try {
     entries = await readdir(destDir);
   } catch {
-    return 0;
+    return 0; // dir vanished or was never created — nothing to prune
   }
   let removed = 0;
   for (const name of entries) {
-    if (name.endsWith('.parquet') && !expected.has(name)) {
+    if (!name.endsWith('.parquet') || expected.has(name)) continue;
+    try {
       await rm(join(destDir, name), { force: true });
       removed++;
+    } catch (err) {
+      // A locked / permission-denied stale file must not fail a sync whose
+      // download already succeeded (mirrors the legacy-dir cleanup below).
+      logger.warn(`Failed to prune stale file ${name} from ${destDir}`, { err });
     }
   }
   if (removed > 0) {

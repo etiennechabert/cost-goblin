@@ -387,6 +387,26 @@ describe('syncSelectedFiles', () => {
       expect(mockRm).not.toHaveBeenCalledWith(join(dest, 'notes.txt'), expect.anything());
     });
 
+    it('treats a deletion failure as best-effort and still completes the sync', async () => {
+      mockSpawn.mockImplementation(() => createSuccessfulSpawn());
+      mockReaddir.mockResolvedValue(['file1.parquet', 'stale.parquet']);
+      // The stale file is locked / permission-denied — rm rejects.
+      mockRm.mockRejectedValue(new Error('EPERM: operation not permitted'));
+
+      const dataDir = '/tmp/prune-besteffort';
+      const result = await syncSelectedFiles({
+        bucketPath: 's3://test-bucket/cur/data/',
+        profile: 'test-profile',
+        dataDir,
+        expectedDataType: 'daily',
+        files: [file('cur/data/BILLING_PERIOD=2026-03/file1.parquet')],
+      });
+
+      // Download succeeded and etags were still persisted despite the prune error.
+      expect(result.filesDownloaded).toBe(1);
+      expect(mockWriteFile).toHaveBeenCalledWith(join(dataDir, 'sync-etags.json'), expect.any(String));
+    });
+
     it('does not prune when the period sync fails', async () => {
       mockSpawn.mockReturnValue(createFailedSpawn(1, 'Access Denied'));
       mockReaddir.mockResolvedValue(['stale.parquet']);
