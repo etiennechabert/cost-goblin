@@ -2572,19 +2572,22 @@ Format:   <span class="code-file">Parquet</span>
     }
 
     // --- CPU architecture detection (best-effort) ---
-    // macOS: Safari masks Apple Silicon in the UA, so the WebGL renderer string
-    // ("Apple GPU"/"Apple M…") is the reliable hardware signal. Win/Linux are
-    // refined async via UA Client Hints below. Falls back to the dominant arch.
+    // macOS: the WebGL renderer ("Apple GPU"/"Apple M…") is the reliable hardware
+    // signal since Safari masks Apple Silicon in the UA. When WebGL is blocked we
+    // default to x64 — it runs on every Mac (native on Intel, Rosetta on Apple
+    // Silicon), whereas an arm64 build won't launch on Intel at all. Win/Linux
+    // are refined async via UA Client Hints below.
     function detectArch(targetOs) {
       if (targetOs === 'mac') {
         try {
-          const gl = document.createElement('canvas').getContext('webgl');
+          const canvas = document.createElement('canvas');
+          const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
           const dbg = gl && gl.getExtension('WEBGL_debug_renderer_info');
-          const renderer = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '';
+          const renderer = (dbg && gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) || '';
+          if (gl) gl.getExtension('WEBGL_lose_context')?.loseContext();
           if (/apple/i.test(renderer)) return 'arm64';
           if (renderer) return 'x64';
         } catch (e) { /* ignore */ }
-        return 'arm64';
       }
       return 'x64';
     }
@@ -2616,7 +2619,7 @@ Format:   <span class="code-file">Parquet</span>
     const ASSET_MATCHERS = {
       'mac-arm64-dmg':       (n) => n.endsWith('.dmg') && n.includes('arm64'),
       'mac-intel-dmg':       (n) => n.endsWith('.dmg') && !n.includes('arm64'),
-      'win-x64-exe':         (n) => n.endsWith('.exe') && n.includes('x64'),
+      'win-x64-exe':         (n) => n.endsWith('.exe') && !n.includes('arm64'),
       'win-arm64-exe':       (n) => n.endsWith('.exe') && n.includes('arm64'),
       'linux-amd64-deb':     (n) => n.endsWith('.deb') && n.includes('amd64'),
       'linux-arm64-deb':     (n) => n.endsWith('.deb') && n.includes('arm64'),
@@ -2630,16 +2633,22 @@ Format:   <span class="code-file">Parquet</span>
       linux: { arm64: 'linux-arm64-deb', x64: 'linux-amd64-deb' },
     };
 
-    // Apply the hero button's label + (once the API fetch resolves) its URL for
-    // the detected os/arch, falling back to x64 if the arm64 asset is absent.
+    const RELEASES_FALLBACK = 'https://github.com/etiennechabert/cost-goblin/releases/latest';
+
+    // Apply the hero button's label + (once the API fetch resolves) its URL.
+    // Keep the label in sync with the arch actually served: fall back to x64 when
+    // the detected arch isn't published, then to the releases page so the primary
+    // CTA is never a dead end.
     function applyHero() {
       const labels = HERO_LABELS[os];
       document.getElementById('hero-download-label').textContent = labels.label;
-      document.getElementById('hero-platform-label').textContent = labels.platform[arch];
+      let shownArch = arch;
       if (urlMap) {
-        const heroUrl = urlMap[HERO_ASSET[os][arch]] || urlMap[HERO_ASSET[os].x64];
-        if (heroUrl) document.getElementById('hero-download').href = heroUrl;
+        let heroUrl = urlMap[HERO_ASSET[os][arch]];
+        if (!heroUrl) { shownArch = 'x64'; heroUrl = urlMap[HERO_ASSET[os].x64]; }
+        document.getElementById('hero-download').href = heroUrl || RELEASES_FALLBACK;
       }
+      document.getElementById('hero-platform-label').textContent = labels.platform[shownArch];
     }
 
     applyHero();                       // labels now; href once the fetch resolves
@@ -2683,9 +2692,8 @@ Format:   <span class="code-file">Parquet</span>
       })
       .catch(() => {
         // Fallback: link to releases page
-        const fallback = 'https://github.com/etiennechabert/cost-goblin/releases/latest';
-        document.getElementById('hero-download').href = fallback;
-        document.querySelectorAll('[data-asset]').forEach(el => { el.href = fallback; });
+        document.getElementById('hero-download').href = RELEASES_FALLBACK;
+        document.querySelectorAll('[data-asset]').forEach(el => { el.href = RELEASES_FALLBACK; });
       });
 
     // Highlight detected platform card
