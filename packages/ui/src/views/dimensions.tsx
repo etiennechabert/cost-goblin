@@ -1671,7 +1671,7 @@ function ImpactDetails({ estimate, matchedCurrent, sizeReduction, rowRatio, rank
 /** Cost/benefit summary for the current enabled grain (rollup design §8).
  *  Updates as dims are toggled so the user can weigh the rebuild before it
  *  happens. Numbers are directional (probed from one recent month). */
-function RollupImpactPanel({ estimate, loading, stale, config }: Readonly<{ estimate: RollupGrainEstimate | null; loading: boolean; stale: boolean; config: DimensionsConfig }>): React.JSX.Element {
+function RollupImpactPanel({ estimate, loading, stale, error, config }: Readonly<{ estimate: RollupGrainEstimate | null; loading: boolean; stale: boolean; error: boolean; config: DimensionsConfig }>): React.JSX.Element {
   const rankedDims = estimate === null
     ? []
     : [...estimate.dims].sort((a, b) => b.marginalMultiplier - a.marginalMultiplier);
@@ -1688,13 +1688,19 @@ function RollupImpactPanel({ estimate, loading, stale, config }: Readonly<{ esti
   // install must not flash the "Estimating…" spinner over the real "no data" state.
   const noData = estimate !== null && estimate.probePeriod.length === 0;
   const syncHint = <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>;
+  // `estimate === null` here always means "not resolved yet" (the panel only
+  // renders with a non-null config, and the probe always returns a non-null
+  // estimate — empty when there's no data). So treat it as loading, NOT no-data.
+  // Folding it into the loader branch keeps EstimateProgress mounted across the
+  // debounce→fetch handoff, where `loading` lags the settled grain by one tick —
+  // otherwise that one frame fell through to `syncHint`, flashing the wrong hint
+  // AND remounting the bar (resetting its progress). `error` guards the one case
+  // a null estimate is terminal, so it can't spin forever.
   let body: React.JSX.Element;
-  if (noData) {
+  if (noData || (error && estimate === null)) {
     body = syncHint;
-  } else if (stale || (loading && estimate === null)) {
+  } else if (stale || loading || estimate === null) {
     body = <EstimateProgress />;
-  } else if (estimate === null) {
-    body = syncHint;
   } else {
     body = (
       <ImpactDetails
@@ -2236,7 +2242,7 @@ export function DimensionsView(): React.JSX.Element {
 
           {/* Rollup cost/benefit for the current draft grain — updates live as
               pills are toggled so the user can weigh the rebuild before applying. */}
-          <RollupImpactPanel estimate={estimate} loading={estimateLoading} stale={estimateStale} config={config} />
+          <RollupImpactPanel estimate={estimate} loading={estimateLoading} stale={estimateStale} error={estimateQuery.status === 'error'} config={config} />
 
           {/* New-tag-dim form appears inline right after the pill rows so the
               user sees where the new pill will land. */}
