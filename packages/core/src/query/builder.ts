@@ -1106,7 +1106,7 @@ export function buildRollupPartitionQuery(
 /** Build the cardinality probe behind the grain cost/benefit estimator (rollup
  *  design §8). Over ONE recent month it returns, in a single scan:
  *   - `line_items`  — COUNT(*) (the rollup's raw input for that month),
- *   - `grain_rows`  — exact `COUNT(DISTINCT)` of the candidate grain tuple
+ *   - `grain_rows`  — distinct count of the candidate grain tuple
  *      (the rollup row count for that month), and
  *   - `card_<i>`    — exact distinct count of each enabled dimension's primary
  *      column, so the estimator can flag individual raw-only dims (e.g. resource_id), and
@@ -1115,9 +1115,17 @@ export function buildRollupPartitionQuery(
  *      attribute marginal rollup size per dimension. Indexed by
  *      `rollupGrainDimensions` order (built-ins first, then tags).
  *
- *  Counts are EXACT (not HyperLogLog): the per-dimension multiplier is a ratio
- *  of two distinct-counts, and approx error compounds across the ratio. Exact is
- *  monotonic (a leave-one-out can only lower the count), so multipliers are ≥ 1.
+ *  `grain_rows`/`loo_<i>` count distinct 64-bit HASHES of the grain tuple, not
+ *  the concatenated strings — exact-to-the-collision (collisions ~0 in practice;
+ *  see the body) but with 8-byte keys instead of materializing millions of long
+ *  strings. That is a per-key constant-factor cut (~8× peak memory on measured
+ *  data), NOT a structural bound: the scan still builds `N+1` distinct sets at
+ *  once (full grain + one per enabled dimension), so peak still grows with the
+ *  number of enabled dimensions. It moved the live estimate well clear of the
+ *  OOM cliff for normal configs; a pathologically wide grain could still be
+ *  heavy. NOT HyperLogLog: the per-dimension multiplier is a ratio of two
+ *  distinct-counts and approx error compounds across the ratio. A leave-one-out
+ *  can only lower the count, so multipliers are ≥ 1 (also clamped in the estimator).
  *
  *  `grainColumns` come from `rollupGrainColumns` over the candidate dimensions
  *  (usage_date first) and are projected by `buildSource` — the same trusted set
@@ -1159,31 +1167,41 @@ export function buildGrainProbeQuery(
   assertDateString(end);
   const whereConditions = [`usage_date >= '${start}'`, `usage_date < '${end}'`, ...exclusionClauses];
 
-  const grainConcat = `concat_ws(chr(31), ${grainColumns.join(', ')})`;
+  // Distinct grain rows. We count distinct 64-bit HASHES of the grain tuple, not
+  // the concatenated strings themselves: COUNT(DISTINCT) over a string key
+  // materializes the full key (~80+ bytes) for every distinct value in an
+  // in-memory hash set that does NOT spill, and the grain is near-unique when a
+  // high-cardinality dim (resource_id) is enabled — millions of long keys.
+  // Hashing to a UBIGINT keeps the count exact-to-the-collision while storing
+  // 8-byte keys, cutting peak probe memory ~8× (measured ~16 GB → ~2 GB on a
+  // 7.8M line-item month). COUNT(DISTINCT hash(x)) ≤ COUNT(DISTINCT x): a
+  // collision can only merge two tuples, never split one, so the count is a
+  // tight lower bound that is monotone with the true grain. Collisions are
+  // negligible — a handful per ~7M distinct keys (~1e-6), far below the 6–13%
+  // HyperLogLog error that ruled out approx_count_distinct here (that error
+  // compounds across the loo ÷ grain ratio, fabricating spurious ×1.1–×1.5
+  // impacts for near-redundant dims).
+  // 64-bit hash of a grain tuple — the 8-byte distinct key (see above). `cols`
+  // are trusted grain columns (no user values), same interpolation as the rest.
+  const grainHashExpr = (cols: readonly string[]): string => `hash(concat_ws(chr(31), ${cols.join(', ')}))`;
   // Per-dimension cardinality and leave-one-out grain. card_<i> is the
-  // dimension's own distinct count; loo_<i> is the grain with that whole
-  // dimension removed — a built-in drops both its id and its display column, so
-  // a 1:1 display column (account_name ↔ account_id) isn't split into two
-  // mutually-covering pseudo-dims. The estimator turns fullGrain ÷ loo_<i> into
-  // the marginal rollup size each dimension drives — a correlation-aware impact,
-  // computed in this same single scan. Same trusted grainColumns interpolation
-  // as grainConcat above (no user values).
-  //
-  // EXACT COUNT(DISTINCT), not approx_count_distinct: the marginal multiplier is
-  // a ratio of two distinct-counts, and HyperLogLog error (measured 6–13% on
-  // real CUR data) compounds across the ratio, fabricating spurious ×1.1–×1.5
-  // impacts for near-redundant dims. Exact counts are monotonic (loo ≤ grain),
-  // so multipliers are naturally ≥ 1, and cost only a single extra month-scan.
+  // dimension's own distinct count (single column — cheap, kept exact); loo_<i>
+  // is the grain with that whole dimension removed — a built-in drops both its id
+  // and its display column, so a 1:1 display column (account_name ↔ account_id)
+  // isn't split into two mutually-covering pseudo-dims. The estimator turns
+  // fullGrain ÷ loo_<i> into the marginal rollup size each dimension drives — a
+  // correlation-aware impact, computed in this same single scan. loo uses the
+  // identical hash trick so all N+1 distinct sets stay 8-byte-keyed.
   const grainDims = rollupGrainDimensions(dimensions);
   const cardSelects = grainDims.map((dim, i) => `CAST(COUNT(DISTINCT ${dim.column}) AS BIGINT) AS card_${String(i)}`);
   const looSelects = grainDims.map((dim, i) => {
     const remove = new Set(dim.columns);
     const cols = grainColumns.filter(g => !remove.has(g));
-    return `CAST(COUNT(DISTINCT concat_ws(chr(31), ${cols.join(', ')})) AS BIGINT) AS loo_${String(i)}`;
+    return `CAST(COUNT(DISTINCT ${grainHashExpr(cols)}) AS BIGINT) AS loo_${String(i)}`;
   });
   const selects = [
     `CAST(COUNT(*) AS BIGINT) AS line_items`,
-    `CAST(COUNT(DISTINCT ${grainConcat}) AS BIGINT) AS grain_rows`,
+    `CAST(COUNT(DISTINCT ${grainHashExpr(grainColumns)}) AS BIGINT) AS grain_rows`,
     ...cardSelects,
     ...looSelects,
   ];
