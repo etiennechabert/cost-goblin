@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { SortingState } from '@tanstack/react-table';
 import type { BaselineRecord, BaselineRecomputeStatus, BaselineTriageStatus, BaselinesListResult, DimensionsConfig } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
@@ -38,6 +38,17 @@ function triageChip(status: BaselineTriageStatus): string {
     case 'new': return 'text-text-secondary bg-bg-tertiary/30 border-border';
     default: return 'text-text-muted bg-bg-tertiary/30 border-border';
   }
+}
+
+/** Status dot color for the filter chips — same palette as the triage chips. */
+const FILTER_DOT: Partial<Record<TriageFilter, string>> = {
+  'new': 'bg-text-secondary', tracking: 'bg-accent', acting: 'bg-warning',
+  resolved: 'bg-positive', dismissed: 'bg-text-muted', ignored: 'bg-text-muted',
+};
+
+function activeFilterClass(id: TriageFilter): string {
+  const base = id === 'open' || id === 'all' ? 'text-accent bg-accent/10 border-accent/30' : triageChip(id);
+  return `${base} ring-1 ring-inset ring-current`;
 }
 
 function Kpi({ label, value, accent }: Readonly<{ label: string; value: string; accent?: string | undefined }>) {
@@ -172,13 +183,24 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        {STATUS_FILTERS.map((f) => (
-          <button key={f.id} type="button" onClick={() => { setStatusFilter(f.id); }}
-            className={['rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-              statusFilter === f.id ? 'border-accent/50 bg-accent/10 text-accent' : 'border-border bg-bg-tertiary/30 text-text-secondary hover:text-text-primary'].join(' ')}>
-            {f.label}
-          </button>
-        ))}
+        {STATUS_FILTERS.map((f) => {
+          const active = statusFilter === f.id;
+          const dot = FILTER_DOT[f.id];
+          const count = result?.counts[f.id];
+          return (
+            <Fragment key={f.id}>
+              {/* Divider between the meta filters (Open/All) and the lifecycle statuses. */}
+              {f.id === 'new' && <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />}
+              <button type="button" onClick={() => { setStatusFilter(f.id); }}
+                className={['flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                  active ? activeFilterClass(f.id) : 'border-border bg-bg-tertiary/30 text-text-secondary hover:text-text-primary'].join(' ')}>
+                {dot !== undefined && <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden="true" />}
+                {f.label}
+                {count !== undefined && <span className="tabular-nums text-[10px] opacity-60">{String(count)}</span>}
+              </button>
+            </Fragment>
+          );
+        })}
       </div>
 
       {baselineStatus?.state === 'error' && (

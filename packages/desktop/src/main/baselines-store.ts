@@ -328,8 +328,17 @@ export class BaselineStore {
     const orgTree = (await deps.getOrgTreeConfig()).tree;
     let records = [...this.specs.values()].map((s) => this.deriveRecord(s, accountMap, orgTree));
 
+    // Per-chip counts over ALL records (independent of the active filter).
+    const open: ReadonlySet<BaselineTriageStatus> = new Set<BaselineTriageStatus>(OPEN_TRIAGE_STATUSES);
+    const counts: Record<BaselineTriageStatus | 'open' | 'all', number> = {
+      all: records.length, open: 0, 'new': 0, tracking: 0, acting: 0, resolved: 0, dismissed: 0, ignored: 0,
+    };
+    for (const r of records) {
+      counts[r.triageStatus] += 1;
+      if (open.has(r.triageStatus)) counts.open += 1;
+    }
+
     if (params.triage !== undefined) {
-      const open: ReadonlySet<BaselineTriageStatus> = new Set<BaselineTriageStatus>(OPEN_TRIAGE_STATUSES);
       records = params.triage === 'open'
         ? records.filter((r) => open.has(r.triageStatus))
         : records.filter((r) => r.triageStatus === params.triage);
@@ -356,7 +365,7 @@ export class BaselineStore {
     const total = records.length;
     const offset = params.offset ?? 0;
     const limit = params.limit ?? records.length;
-    return { items: records.slice(offset, offset + limit), totalPotentialMonthly, totalRealizedMonthly, total };
+    return { items: records.slice(offset, offset + limit), totalPotentialMonthly, totalRealizedMonthly, total, counts };
   }
 
   async getDetail(deps: BaselineEngineDeps, id: string): Promise<BaselineDetail | null> {

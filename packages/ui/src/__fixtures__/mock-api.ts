@@ -452,7 +452,10 @@ export class MockCostApi implements CostApi {
   getMcpToken(): Promise<string> { return Promise.resolve('mock-token-abc123'); }
   regenerateMcpToken(): Promise<string> { return Promise.resolve('mock-token-regenerated'); }
   listBaselines(): Promise<BaselinesListResult> {
-    return Promise.resolve({ items: [], totalPotentialMonthly: asDollars(0), totalRealizedMonthly: asDollars(0), total: 0 });
+    return Promise.resolve({
+      items: [], totalPotentialMonthly: asDollars(0), totalRealizedMonthly: asDollars(0), total: 0,
+      counts: { all: 0, open: 0, 'new': 0, tracking: 0, acting: 0, resolved: 0, dismissed: 0, ignored: 0 },
+    });
   }
   getBaseline(): Promise<BaselineDetail | null> { return Promise.resolve(null); }
   createBaseline(input: BaselineCreateInput): Promise<BaselineRecord> {

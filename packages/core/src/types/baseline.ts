@@ -221,6 +221,11 @@ export interface BaselinesListParams {
   readonly limit?: number | undefined;
 }
 
+/** Baseline count per filter chip — every triage status plus the `open`
+ *  (still-actionable) and `all` meta-buckets. Computed over all baselines,
+ *  independent of the active filter, so the filter bar can show each tally. */
+export type BaselineCounts = Readonly<Record<BaselineTriageStatus | 'open' | 'all', number>>;
+
 export interface BaselinesListResult {
   readonly items: readonly BaselineRecord[];
   /** Summed over the filtered partition (discovered baselines only). */
@@ -228,6 +233,8 @@ export interface BaselinesListResult {
   readonly totalRealizedMonthly: Dollars;
   /** Total matching records before paging. */
   readonly total: number;
+  /** Count per filter chip (all statuses + open + all), filter-independent. */
+  readonly counts: BaselineCounts;
 }
 
 export interface BaselineCreateInput {
