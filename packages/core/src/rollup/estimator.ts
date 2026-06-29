@@ -127,7 +127,9 @@ export interface RollupGrainEstimate {
 export interface RollupEstimateInput {
   readonly probePeriod: string;
   readonly months: number;
-  /** approx_count_distinct over the candidate grain tuple in the probe month. */
+  /** Distinct count of the candidate grain tuple in the probe month (counted
+   *  over 64-bit hashes of the tuple — exact-to-the-collision; see
+   *  `buildGrainProbeQuery`). */
   readonly probeGrainRows: number;
   /** COUNT(*) in the probe month. */
   readonly probeLineItems: number;
