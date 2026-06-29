@@ -221,6 +221,8 @@ make dev        # launch Electron in dev mode
 make test       # run vitest
 make lint       # run tsc + eslint
 make reset      # wipe app data, restart with wizard
+make fuzz       # soak the query-param fuzzer (brute-force bug hunting)
+make fuzz-ui    # soak the UI monkey (random clicks through the real app)
 ```
 
 ## Backed by

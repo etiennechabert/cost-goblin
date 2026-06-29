@@ -1,4 +1,4 @@
-.PHONY: dev prod reset test e2e e2e-core e2e-config e2e-stress perf lint dist dist-mac dist-win dist-linux release help
+.PHONY: dev prod reset test e2e e2e-core e2e-config e2e-stress perf perf-queries fuzz fuzz-ui lint dist dist-mac dist-win dist-linux release help
 .DEFAULT_GOAL := help
 
 BUILD = npm run build --workspace=packages/desktop
@@ -83,6 +83,13 @@ perf: ## Build and run performance benchmarks
 perf-queries: ## Build and run query performance diagnostics
 	$(BUILD)
 	npx playwright test e2e/perf-queries.test.ts
+
+fuzz: ## Soak the query-param fuzzer (real DuckDB, adversarial inputs; --seed N to replay)
+	npx tsx packages/core/src/__fuzz__/run.ts --count 20000
+
+fuzz-ui: ## Build and soak the UI monkey (random clicks through the real app)
+	$(BUILD)
+	FUZZ_ACTIONS=300 npx playwright test e2e/fuzz-monkey.test.ts
 
 lint: ## Run tsc + eslint
 	npx tsc --noEmit -p packages/core/tsconfig.json
