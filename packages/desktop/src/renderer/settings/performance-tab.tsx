@@ -75,7 +75,7 @@ export function PerformanceTab(): React.JSX.Element {
   }
 
   return (
-    <div className="flex max-w-3xl flex-col gap-6 p-6">
+    <div className="flex w-full flex-col gap-6 p-6">
       <div>
         <h2 className="text-xl font-semibold text-text-primary">Performance</h2>
         <p className="mt-1 text-sm text-text-secondary">Tune how much of this machine DuckDB may use. Leave blank for Auto.</p>
