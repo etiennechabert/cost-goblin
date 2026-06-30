@@ -11,6 +11,7 @@ import { queryEntityDetail } from './query-entity-detail.js';
 import { queryMissingTags } from './query-missing-tags.js';
 import { exploreData } from './explore-data.js';
 import { runSql } from './run-sql.js';
+import { listBaselines, getBaselineDrift } from './baselines.js';
 import { toolError } from './tool-helpers.js';
 
 const dateRangeSchema = z.object({
@@ -236,6 +237,44 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     async (params) => {
       try {
         return await runSql(ctx, params);
+      } catch (err: unknown) {
+        return toolError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_baselines',
+    {
+      description: 'List cost baselines and their drift: current vs the normal band, with potential (above floor) and realized (below ceiling) monthly savings. Use status="actionable" to see scopes drifting up or hitting new lows.',
+      inputSchema: {
+        status: z.enum(['over', 'under', 'in-band', 'insufficient-data', 'actionable']).optional().describe('Filter by drift status'),
+        limit: z.number().optional().describe('Max baselines to return (default 25), ranked by potential savings'),
+        format: formatSchema,
+      },
+    },
+    async (params) => {
+      try {
+        return await listBaselines(ctx, params);
+      } catch (err: unknown) {
+        return toolError(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_baseline_drift',
+    {
+      description: 'Drift detail for one baseline: current vs band, potential/realized savings, and the recent snapshot trend. Identify the baseline by id (from list_baselines) or a substring match on its scope/name.',
+      inputSchema: {
+        id: z.string().optional().describe('Baseline id from list_baselines'),
+        match: z.string().optional().describe('Substring to match against the baseline scope/name (e.g. "AmazonRDS")'),
+        format: formatSchema,
+      },
+    },
+    async (params) => {
+      try {
+        return await getBaselineDrift(ctx, params);
       } catch (err: unknown) {
         return toolError(err instanceof Error ? err.message : String(err));
       }

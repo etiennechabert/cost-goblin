@@ -244,14 +244,16 @@ describe('MCP server E2E', () => {
     expect(names).toContain('query_missing_tags');
     expect(names).toContain('explore_data');
     expect(names).toContain('run_sql');
-    expect(tools.length).toBe(10);
+    expect(names).toContain('list_baselines');
+    expect(names).toContain('get_baseline_drift');
+    expect(tools.length).toBe(12);
   });
 
   it('supports multiple concurrent sessions', async () => {
     const client2 = await createMcpClient(port, TEST_TOKEN);
     expect(client2.sessionId).not.toBe(client.sessionId);
     const tools = await client2.listTools();
-    expect(tools.length).toBe(10);
+    expect(tools.length).toBe(12);
     await client2.close();
   });
 
