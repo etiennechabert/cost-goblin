@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import type { Dirent } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import {
   classifyPackPath,
@@ -11,6 +12,7 @@ import {
   parseSharingKey,
   parseSignedManifest,
   publicKeyFingerprint,
+  readFileWithinRoot,
   serializeConfigBundle,
   serializeSignedManifest,
   sha256Hex,
@@ -213,24 +215,27 @@ export function registerDataSharingHandlers(app: AppContext): void {
     const path = await import('node:path');
     const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
     const files: PackFileEntry[] = [];
-    let dirs: string[] = [];
+    let dirs: Dirent[] = [];
     try {
-      dirs = await fs.readdir(rawDir);
+      dirs = await fs.readdir(rawDir, { withFileTypes: true });
     } catch {
       dirs = [];
     }
     for (const dir of dirs) {
-      let names: string[] = [];
+      // isDirectory() is false for a symlink entry, so symlinked period dirs
+      // are skipped — we never serve through a link out of the data tree.
+      if (!dir.isDirectory()) continue;
+      let entries: Dirent[] = [];
       try {
-        names = await fs.readdir(path.join(rawDir, dir));
+        entries = await fs.readdir(path.join(rawDir, dir.name), { withFileTypes: true });
       } catch {
         continue;
       }
-      for (const name of names) {
-        if (!name.endsWith('.parquet')) continue;
-        const rel = `aws/raw/${dir}/${name}`;
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith('.parquet')) continue;
+        const rel = `aws/raw/${dir.name}/${entry.name}`;
         if (!isSafePackPath(rel)) continue;
-        const buf = await fs.readFile(path.join(rawDir, dir, name));
+        const buf = await fs.readFile(path.join(rawDir, dir.name, entry.name));
         files.push({ path: rel, size: buf.length, sha256: sha256Hex(buf) });
       }
     }
@@ -289,9 +294,12 @@ export function registerDataSharingHandlers(app: AppContext): void {
         getManifest: async () =>
           serializeSignedManifest(signManifest(await buildLocalManifest(identity, secret.label), identity.privateKey)),
         readFile: async (p) => {
-          const fs = await import('node:fs/promises');
           const path = await import('node:path');
-          return fs.readFile(path.join(ctx.dataDir, p));
+          // `p` is already string-validated by isSafePackPath, but a symlink in
+          // the data tree could still redirect the read off-tree — confine the
+          // resolved path to aws/raw.
+          const rawRoot = path.join(ctx.dataDir, 'aws', 'raw');
+          return readFileWithinRoot(rawRoot, path.join(ctx.dataDir, p));
         },
       },
     );
@@ -400,7 +408,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
         } catch {
           // not present locally — fetch it
         }
-        const buf = await fetchFile(endpoint, entry.path);
+        const buf = await fetchFile(endpoint, entry.path, entry.size);
         if (sha256Hex(buf) !== entry.sha256) {
           throw new Error(`Checksum mismatch for ${entry.path} — refusing to import.`);
         }

@@ -1,4 +1,5 @@
 import { asBucketPath, asDimensionId } from '../types/branded.js';
+import type { BucketPath } from '../types/branded.js';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
 import type {
   ConceptType,
@@ -48,12 +49,37 @@ function isValidNormalizationRule(value: string): value is NormalizationRule {
   return value === 'lowercase' || value === 'uppercase' || value === 'lowercase-kebab' || value === 'lowercase-underscore' || value === 'camelCase';
 }
 
+function hasControlChar(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/** The sync bucket is interpolated into an `aws s3 sync` source argument
+ *  (`s3://<bucket>/<prefix>`), spawned via an argv array (no shell) and always
+ *  carrying the `s3://` scheme — so the value can't act as a shell injection or
+ *  a leading-dash flag. We therefore reject only genuinely malformed input: an
+ *  empty value, a leading dash, `..` traversal, or control characters (which
+ *  would corrupt logs / the argument). S3 keys legitimately contain `=`, `+`,
+ *  `:`, spaces, etc. (e.g. CUR 2.0 Hive partitions like `BILLING_PERIOD=…`), so
+ *  the key charset is intentionally left unrestricted — over-restricting it
+ *  would reject valid existing configs on load. */
+function validateBucketPath(raw: unknown, context: string): BucketPath {
+  assertString(raw, context);
+  if (raw.length === 0 || raw.startsWith('-') || raw.includes('..') || hasControlChar(raw)) {
+    throw new ConfigValidationError(`${context} is not a valid S3 bucket location`);
+  }
+  return asBucketPath(raw);
+}
+
 function validateSyncTier(raw: unknown, context: string): SyncTierConfig {
   assertObject(raw, context);
-  assertString(raw['bucket'], `${context}.bucket`);
+  const bucket = validateBucketPath(raw['bucket'], `${context}.bucket`);
   assertNumber(raw['retentionDays'], `${context}.retentionDays`);
   return {
-    bucket: asBucketPath(raw['bucket']),
+    bucket,
     retentionDays: raw['retentionDays'],
   };
 }
