@@ -50,6 +50,20 @@ describe('validateViews', () => {
     })).toThrow(ConfigValidationError);
   });
 
+  it('accepts a baseline widget (optional topN)', () => {
+    const cfg = validateViews({
+      views: [{
+        id: 'v', name: 'V', rows: [{ widgets: [
+          { id: 'w1', type: 'baseline', size: 'medium' },
+          { id: 'w2', type: 'baseline', size: 'small', topN: 5 },
+        ] }],
+      }],
+    });
+    const widgets = cfg.views[0]?.rows[0]?.widgets;
+    expect(widgets?.[0]?.type).toBe('baseline');
+    expect(widgets?.[1]).toMatchObject({ type: 'baseline', topN: 5 });
+  });
+
   it('rejects a missing groupBy on a chart widget', () => {
     expect(() => validateViews({
       views: [{

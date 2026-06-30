@@ -1,6 +1,7 @@
 import { asBucketPath, asDimensionId } from '../types/branded.js';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
 import type {
+  ConceptType,
   CostGoblinConfig,
   DefaultsConfig,
   DimensionsConfig,
@@ -155,27 +156,45 @@ function assertSafeColumn(value: unknown, context: string): asserts value is str
   }
 }
 
+/** Optional string field: undefined when absent, else asserted to a string. */
+function optionalString(value: unknown, context: string): string | undefined {
+  if (value === undefined) return undefined;
+  assertString(value, context);
+  return value;
+}
+
+/** Optional bare-SQL-column field: undefined when absent, else asserted safe. */
+function optionalSafeColumn(value: unknown, context: string): string | undefined {
+  if (value === undefined) return undefined;
+  assertSafeColumn(value, context);
+  return value;
+}
+
+/** Optional non-empty string field: undefined when absent or empty. */
+function optionalNonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/** Optional string-array field: undefined when absent, else validated. */
+function optionalStringArray(value: unknown, context: string): string[] | undefined {
+  return value === undefined ? undefined : validateStringArray(value, context);
+}
+
 function validateBuiltInDimension(dim: unknown, i: number) {
   const ctx = `builtIn[${String(i)}]`;
   assertObject(dim, ctx);
   assertString(dim['name'], `${ctx}.name`);
   assertString(dim['label'], `${ctx}.label`);
   assertSafeColumn(dim['field'], `${ctx}.field`);
-  const displayField = dim['displayField'] === undefined ? undefined : (assertSafeColumn(dim['displayField'], `${ctx}.displayField`), dim['displayField']);
+  const displayField = optionalSafeColumn(dim['displayField'], `${ctx}.displayField`);
   const enabled = dim['enabled'] === false ? false : undefined;
-  const description = dim['description'] === undefined ? undefined : (assertString(dim['description'], `${ctx}.description`), dim['description']);
+  const description = optionalString(dim['description'], `${ctx}.description`);
   const useOrgAccounts = dim['useOrgAccounts'] === true ? true : undefined;
-  const accountNameFromTag = typeof dim['accountNameFromTag'] === 'string' && dim['accountNameFromTag'].length > 0
-    ? dim['accountNameFromTag']
-    : undefined;
-  const nameStripPatterns = dim['nameStripPatterns'] === undefined
-    ? undefined
-    : validateStringArray(dim['nameStripPatterns'], `${ctx}.nameStripPatterns`);
+  const accountNameFromTag = optionalNonEmptyString(dim['accountNameFromTag']);
+  const nameStripPatterns = optionalStringArray(dim['nameStripPatterns'], `${ctx}.nameStripPatterns`);
   const normalize = validateNormalize(dim['normalize'], ctx);
   const aliases = validateAliases(dim['aliases'], ctx);
-  const defaultFilterValues = dim['defaultFilterValues'] === undefined
-    ? undefined
-    : validateStringArray(dim['defaultFilterValues'], `${ctx}.defaultFilterValues`);
+  const defaultFilterValues = optionalStringArray(dim['defaultFilterValues'], `${ctx}.defaultFilterValues`);
   return {
     name: asDimensionId(dim['name']),
     label: dim['label'],
@@ -192,6 +211,33 @@ function validateBuiltInDimension(dim: unknown, i: number) {
   };
 }
 
+function isConceptType(value: string): value is ConceptType {
+  return value === 'owner' || value === 'product' || value === 'environment' || value === 'unit';
+}
+
+function validateConcept(value: unknown, ctx: string): ConceptType | undefined {
+  if (value === undefined) return undefined;
+  assertString(value, `${ctx}.concept`);
+  if (!isConceptType(value)) {
+    throw new ConfigValidationError(`${ctx}.concept must be 'owner', 'product', 'environment', or 'unit'`);
+  }
+  return value;
+}
+
+function validatePathSegment(value: unknown, ctx: string): { separator: string; index: number } | undefined {
+  if (value === undefined) return undefined;
+  assertObject(value, `${ctx}.pathSegment`);
+  assertString(value['separator'], `${ctx}.pathSegment.separator`);
+  assertNumber(value['index'], `${ctx}.pathSegment.index`);
+  if (value['separator'].length === 0) {
+    throw new ConfigValidationError(`${ctx}.pathSegment.separator must be non-empty`);
+  }
+  if (!Number.isInteger(value['index']) || value['index'] === 0) {
+    throw new ConfigValidationError(`${ctx}.pathSegment.index must be a non-zero integer (1-based; -1 = last)`);
+  }
+  return { separator: value['separator'], index: value['index'] };
+}
+
 function validateTagDimension(tag: unknown, i: number) {
   const ctx = `tags[${String(i)}]`;
   assertObject(tag, ctx);
@@ -202,45 +248,19 @@ function validateTagDimension(tag: unknown, i: number) {
     : (assertString(tag['tagName'], `${ctx}.tagName`), tag['tagName']);
   assertString(tag['label'], `${ctx}.label`);
 
-  const accountTagFallback = typeof tag['accountTagFallback'] === 'string' && tag['accountTagFallback'].length > 0
-    ? tag['accountTagFallback']
-    : undefined;
+  const accountTagFallback = optionalNonEmptyString(tag['accountTagFallback']);
 
   if (tagName === undefined && accountTagFallback === undefined) {
     throw new ConfigValidationError(`${ctx} must set either tagName or accountTagFallback`);
   }
 
-  const concept = tag['concept'] === undefined ? undefined : (() => {
-    assertString(tag['concept'], `${ctx}.concept`);
-    const validConcepts = new Set(['owner', 'product', 'environment', 'unit']);
-    if (!validConcepts.has(tag['concept'])) {
-      throw new ConfigValidationError(`${ctx}.concept must be 'owner', 'product', 'environment', or 'unit'`);
-    }
-    return tag['concept'] as 'owner' | 'product' | 'environment' | 'unit';
-  })();
+  const concept = validateConcept(tag['concept'], ctx);
   const normalize = validateNormalize(tag['normalize'], ctx);
-  const separator = tag['separator'] === undefined ? undefined : (assertString(tag['separator'], `${ctx}.separator`), tag['separator']);
+  const separator = optionalString(tag['separator'], `${ctx}.separator`);
   const aliases = validateAliases(tag['aliases'], ctx);
   const enabled = tag['enabled'] === false ? false : undefined;
-
-  let pathSegment: { separator: string; index: number } | undefined;
-  if (tag['pathSegment'] !== undefined) {
-    const raw = tag['pathSegment'];
-    assertObject(raw, `${ctx}.pathSegment`);
-    assertString(raw['separator'], `${ctx}.pathSegment.separator`);
-    assertNumber(raw['index'], `${ctx}.pathSegment.index`);
-    if (raw['separator'].length === 0) {
-      throw new ConfigValidationError(`${ctx}.pathSegment.separator must be non-empty`);
-    }
-    if (!Number.isInteger(raw['index']) || raw['index'] === 0) {
-      throw new ConfigValidationError(`${ctx}.pathSegment.index must be a non-zero integer (1-based; -1 = last)`);
-    }
-    pathSegment = { separator: raw['separator'], index: raw['index'] };
-  }
-
-  const defaultFilterValues = tag['defaultFilterValues'] === undefined
-    ? undefined
-    : validateStringArray(tag['defaultFilterValues'], `${ctx}.defaultFilterValues`);
+  const pathSegment = validatePathSegment(tag['pathSegment'], ctx);
+  const defaultFilterValues = optionalStringArray(tag['defaultFilterValues'], `${ctx}.defaultFilterValues`);
 
   return {
     ...(tagName === undefined ? {} : { tagName }),

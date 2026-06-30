@@ -13,10 +13,24 @@ import type { RawRow } from './duckdb-client.js';
 
 export type RollupStatusListener = (status: RollupStatus) => void;
 
+/** Build the human-readable `reason` for a failed batch from the distinct
+ *  errors its partitions threw. Picks the most common message (the systematic
+ *  root cause behind an all-fail batch), trims it for the popover/IPC payload,
+ *  and notes when other, different errors also occurred. Only called when at
+ *  least one period failed, so the map is never empty. */
+function summarizeErrors(errorCounts: ReadonlyMap<string, number>): string {
+  const sorted = [...errorCounts.entries()].sort((a, b) => b[1] - a[1]);
+  const top = sorted[0]?.[0] ?? 'Unknown error';
+  const trimmed = top.length > 400 ? `${top.slice(0, 400)}…` : top;
+  const others = sorted.length - 1;
+  return others > 0 ? `${trimmed} (+${String(others)} other error${others === 1 ? '' : 's'})` : trimmed;
+}
+
 /** Builds the `COPY (...) TO '<outPath>' (FORMAT PARQUET)` DDL for one period.
  *  Supplied by the caller (context.ts) so the store stays decoupled from the
- *  query builder. */
-export type BuildPartitionSql = (period: string, outPath: string) => string;
+ *  query builder. May be async: the caller probes each period's parquet schema
+ *  before emitting SQL (months drift in which optional cost columns they have). */
+export type BuildPartitionSql = (period: string, outPath: string) => string | Promise<string>;
 
 export interface RollupShape {
   readonly signature: string;
@@ -37,6 +51,15 @@ export interface ResolveSourceArgs {
 interface RollupStoreDeps {
   readonly dataDir: string;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
+  /** Runs a partition-build query on a fresh, disposable DuckDB connection so
+   *  per-build time doesn't climb across a batch (buffer/cache accumulation on
+   *  a reused connection). Defaults to `runQuery` (tests, which share one
+   *  connection and build a single period). */
+  readonly runBuild?: (sql: string) => Promise<RawRow[]>;
+  /** Max partitions built concurrently. Defaults to 1 (sequential) so the
+   *  single-connection test harness is safe; production passes the worker's
+   *  pool size so independent months build in parallel. */
+  readonly buildConcurrency?: number;
 }
 
 /**
@@ -59,6 +82,8 @@ interface RollupStoreDeps {
 export class RollupStore {
   private readonly dataDir: string;
   private readonly runQuery: (sql: string) => Promise<RawRow[]>;
+  private readonly runBuild: (sql: string) => Promise<RawRow[]>;
+  private buildConcurrency: number;
 
   private manifest: RollupManifest | null = null;
   private shape: RollupShape | null = null;
@@ -72,6 +97,8 @@ export class RollupStore {
   constructor(deps: RollupStoreDeps) {
     this.dataDir = deps.dataDir;
     this.runQuery = deps.runQuery;
+    this.runBuild = deps.runBuild ?? deps.runQuery;
+    this.buildConcurrency = Math.max(1, deps.buildConcurrency ?? 1);
   }
 
   /** Subscribe to rollup compute-state transitions. Fires immediately with the
@@ -84,6 +111,13 @@ export class RollupStore {
   }
 
   getStatus(): RollupStatus { return this.status; }
+
+  /** Adjust the cap on concurrent partition builds at runtime (the Performance
+   *  setting). Takes effect on the next maintainPeriods() batch — an in-flight
+   *  build keeps its current lane count. */
+  setBuildConcurrency(n: number): void {
+    this.buildConcurrency = Math.max(1, Math.round(n));
+  }
 
   private setStatus(status: RollupStatus): void {
     this.status = status;
@@ -132,6 +166,15 @@ export class RollupStore {
     let bytes = 0;
     for (const p of parts) { rows += p.rows; bytes += p.bytes; }
     return { rows, bytes, months: parts.length };
+  }
+
+  /** Shape signature the on-disk partitions were actually built against (null
+   *  when nothing is built). Lets callers tell whether a candidate grain matches
+   *  what's already materialized. Keyed off the manifest — stays consistent with
+   *  getStats (both null together) — not the in-memory `shape`, which may hold a
+   *  not-yet-built candidate. */
+  getBuiltSignature(): string | null {
+    return this.manifest === null ? null : this.manifest.shapeSignature;
   }
 
   /** Serialize a mutation; the callback receives the epoch captured at enqueue
@@ -199,9 +242,12 @@ export class RollupStore {
     return this.rollupGlob(args.requiredPeriods);
   }
 
-  /** Build (or replace) the given periods, updating the manifest atomically
-   *  after each. Periods already valid under the current shape are skipped.
-   *  Aborts silently if a concurrent invalidate() changed the epoch. */
+  /** Build (or replace) the given periods, updating the manifest atomically as
+   *  each completes. Periods already valid under the current shape are skipped.
+   *  Independent months build concurrently (bounded by `buildConcurrency`), each
+   *  on a fresh connection, so a full-history rebuild is far faster than the old
+   *  sequential pass. Aborts silently if a concurrent invalidate() changed the
+   *  epoch. */
   maintainPeriods(
     periods: readonly string[],
     buildSql: BuildPartitionSql,
@@ -217,47 +263,115 @@ export class RollupStore {
         ? this.manifest
         : { schemaVersion: ROLLUP_SCHEMA_VERSION, shapeSignature: shape.signature, builtAt: '', grainDimensions: shape.grainDimensions, availableColumns: shape.availableColumns, partitions: {} };
 
-      // Periods are processed in order, so the first `done` of them are
-      // finished and the rest are still pending — the renderer slices on `done`
-      // to show which months are built vs to-do.
+      // Progress is reported completed-first: the renderer's status popover
+      // labels chip `i` as built when `i < done`, so `periods[0..done)` must be
+      // the finished months. Parallel builds complete out of submission order,
+      // so we track completion order explicitly rather than assuming input order.
       const total = periods.length;
-      let done = 0;
       let failures = 0;
-      this.setStatus({ state: 'computing', done, total, periods });
+      // Distinct build-error messages → how many periods hit each. A "14 of 14
+      // failed" batch is almost always one systematic cause (bad SQL, missing
+      // column, disk full), so the most common message is the reason worth
+      // surfacing; we keep counts to note when failures are heterogeneous.
+      const errorCounts = new Map<string, number>();
+      const completed: string[] = [];
+      const completedSet = new Set<string>();
+      // `active` = periods whose build is in flight right now. The popover pulses
+      // these chips, so a parallel batch — where `done` stays 0 until builds land
+      // in a cluster — still visibly shows which months are being worked on.
+      const active = new Set<string>();
+      const reportProgress = (): void => {
+        const pending = periods.filter(p => !completedSet.has(p));
+        this.setStatus({ state: 'computing', done: completed.length, total, periods: [...completed, ...pending], active: [...active] });
+      };
+      const markDone = (period: string): void => {
+        if (!completedSet.has(period)) { completedSet.add(period); completed.push(period); }
+        reportProgress();
+      };
+      reportProgress();
 
+      // Split into already-valid (skip) and to-build. Reading manifest.partitions
+      // here is safe — it happens before any build starts, so the concurrent
+      // commits below can't be mutating it yet.
+      const toBuild: string[] = [];
       for (const period of periods) {
-        if (this.epoch !== startEpoch) return; // superseded mid-build — the newer op owns the status
         const wantHash = computePartitionEtagHash(etagsByPeriod[period]);
         if (opts.force !== true && manifest.partitions[period]?.rawEtagHash === wantHash) {
           this.validPeriods.add(period);
-          done += 1;
-          this.setStatus({ state: 'computing', done, total, periods });
-          continue;
+          markDone(period);
+        } else {
+          toBuild.push(period);
         }
-        try {
-          const outPath = this.partitionPath(period);
-          await mkdir(this.partitionDir(period), { recursive: true });
-          await this.runQuery(buildSql(period, outPath));
-          const meta = await this.partitionMeta(outPath, wantHash);
-          if (this.epoch !== startEpoch) return; // a drop landed during the build
-          manifest = { ...manifest, builtAt: '', partitions: { ...manifest.partitions, [period]: meta } };
-          this.manifest = manifest;
-          this.validPeriods.add(period);
-          await this.writeManifestAtomic(manifest);
-        } catch (err: unknown) {
-          failures += 1;
-          logger.warn(`rollup: build failed for ${period} — ${err instanceof Error ? err.message : String(err)}`);
-        }
-        done += 1;
-        this.setStatus({ state: 'computing', done, total, periods });
       }
 
+      if (toBuild.length > 0) {
+        // Manifest commits are serialized through this chain so concurrent builds
+        // never race on the shared manifest object or its temp file. Each commit
+        // re-checks the epoch so a mid-build invalidate() can't resurrect a
+        // dropped rollup.
+        let commitChain: Promise<void> = Promise.resolve();
+        const commit = (period: string, meta: RollupPartitionMeta): Promise<void> => {
+          const run = commitChain.then(async () => {
+            if (this.epoch !== startEpoch) return;
+            manifest = { ...manifest, builtAt: '', partitions: { ...manifest.partitions, [period]: meta } };
+            this.manifest = manifest;
+            this.validPeriods.add(period);
+            await this.writeManifestAtomic(manifest);
+          });
+          commitChain = run.then(() => undefined, () => undefined);
+          return run;
+        };
+
+        const buildOne = async (period: string): Promise<void> => {
+          if (this.epoch !== startEpoch) return; // superseded before we started
+          active.add(period);
+          reportProgress(); // chip starts pulsing the moment this period's build begins
+          const wantHash = computePartitionEtagHash(etagsByPeriod[period]);
+          try {
+            const outPath = this.partitionPath(period);
+            await mkdir(this.partitionDir(period), { recursive: true });
+            // buildSql may be async (it probes this period's parquet schema to
+            // emit column-correct SQL) — await before handing it to runBuild.
+            await this.runBuild(await buildSql(period, outPath));
+            if (this.epoch !== startEpoch) { active.delete(period); return; } // a drop landed during the build
+            const meta = await this.partitionMeta(outPath, wantHash);
+            await commit(period, meta);
+          } catch (err: unknown) {
+            failures += 1;
+            const msg = err instanceof Error ? err.message : String(err);
+            errorCounts.set(msg, (errorCounts.get(msg) ?? 0) + 1);
+            logger.warn(`rollup: build failed for ${period} — ${msg}`);
+          }
+          // Each finished period (built or failed) leaves the active set and
+          // advances progress.
+          active.delete(period);
+          markDone(period);
+        };
+
+        await this.runBounded(toBuild, buildOne);
+      }
+
+      // A concurrent invalidate() since enqueue means a newer op owns the status.
+      if (this.epoch !== startEpoch) return;
       this.setStatus(
         failures > 0
-          ? { state: 'failed', message: `${String(failures)} of ${String(total)} rollup partition${total === 1 ? '' : 's'} failed to build`, periods: this.validPeriods.size }
+          ? { state: 'failed', message: `${String(failures)} of ${String(total)} rollup partition${total === 1 ? '' : 's'} failed to build`, reason: summarizeErrors(errorCounts), periods: this.validPeriods.size }
           : this.settledStatus(),
       );
     });
+  }
+
+  /** Run `worker` over `items` with at most `buildConcurrency` in flight. */
+  private async runBounded(items: readonly string[], worker: (item: string) => Promise<void>): Promise<void> {
+    let next = 0;
+    const lanes = Math.min(this.buildConcurrency, items.length);
+    const run = async (): Promise<void> => {
+      while (next < items.length) {
+        const item = items[next++];
+        if (item !== undefined) await worker(item);
+      }
+    };
+    await Promise.all(Array.from({ length: lanes }, run));
   }
 
   private async partitionMeta(outPath: string, rawEtagHash: string): Promise<RollupPartitionMeta> {
@@ -292,7 +406,7 @@ export class RollupStore {
     // ensuing warmup either drives this through to `ready` (via maintainPeriods,
     // which fills in the period list) or calls markSettled() when there's
     // nothing to rebuild.
-    this.setStatus({ state: 'computing', done: 0, total: 0, periods: [] });
+    this.setStatus({ state: 'computing', done: 0, total: 0, periods: [], active: [] });
     return this.enqueue(async () => {
       await rm(this.rollupDir(), { recursive: true, force: true });
     });

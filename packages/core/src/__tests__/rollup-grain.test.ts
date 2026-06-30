@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { rm } from 'node:fs/promises';
 import { buildSource, buildRollupPartitionQuery } from '../query/builder.js';
-import { rollupGrainColumns } from '../rollup/grain.js';
+import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
 import { asDimensionId } from '../types/branded.js';
@@ -58,6 +58,37 @@ function rawSourceJan(): string {
   return buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, periods: [PERIOD], costMetric: 'unblended' });
 }
 
+describe('rollupGrainDimensions', () => {
+  it('groups a built-in display column under its dimension and drops disabled dims', () => {
+    const dims = rollupGrainDimensions(dimensions);
+    // account_name rides with account_id — it is NOT a standalone dimension.
+    expect(dims.find(d => d.column === 'account_id')?.columns).toEqual(['account_id', 'account_name']);
+    expect(dims.some(d => d.column === 'account_name')).toBe(false);
+    // disabled usage_type is absent; single-column dims carry just themselves.
+    expect(dims.some(d => d.column === 'usage_type')).toBe(false);
+    expect(dims.find(d => d.column === 'service')?.columns).toEqual(['service']);
+    expect(dims.find(d => d.column === 'tag_team')?.columns).toEqual(['tag_team']);
+    // Built-ins first, then tags; one entry per enabled dimension.
+    expect(dims.map(d => d.column)).toEqual(['account_id', 'service', 'region', 'tag_team', 'tag_environment']);
+  });
+
+  it('collapses derived dimensions that share one physical column to a single entry', () => {
+    // Region / Country / Continent are query-time views of the same `region`
+    // column — they must not produce duplicate, identically-attributed rows.
+    const shared: DimensionsConfig = {
+      builtIn: [
+        { name: asDimensionId('region'), label: 'Region', field: 'region' },
+        { name: asDimensionId('region_country'), label: 'Country', field: 'region' },
+        { name: asDimensionId('region_continent'), label: 'Continent', field: 'region' },
+        { name: asDimensionId('service'), label: 'Service', field: 'service' },
+      ],
+      tags: [],
+    };
+    const dims = rollupGrainDimensions(shared);
+    expect(dims.map(d => d.column)).toEqual(['region', 'service']);
+  });
+});
+
 describe('buildRollupPartitionQuery', () => {
   let db: Awaited<ReturnType<typeof DuckDBInstance.create>>;
   let conn: Awaited<ReturnType<typeof db.connect>>;
@@ -99,6 +130,18 @@ describe('buildRollupPartitionQuery', () => {
     }
   });
 
+  it('SUM(line_items) equals the raw line-item count — backs the Table overview total_rows on the rollup', async () => {
+    // The Table widget's overview routes through the rollup (SUM(cost) /
+    // SUM(line_items) per usage_date). For total_rows to match the raw path's
+    // COUNT(*), the per-grain line_items must sum back to the raw row count.
+    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, availablePeriods: [PERIOD], costScope: scope([]) }));
+    const rawWhere = `WHERE usage_date >= '${PERIOD}-01' AND usage_date < '2026-02-01'`;
+    const rawCount = Number((await queryAll(conn, `SELECT CAST(COUNT(*) AS BIGINT) n FROM ${rawSourceJan()} ${rawWhere}`))[0]?.['n']);
+    const rollCount = Number((await queryAll(conn, `SELECT CAST(SUM(line_items) AS BIGINT) n FROM ${glob}`))[0]?.['n']);
+    expect(rollCount).toBeGreaterThan(0);
+    expect(rollCount).toBe(rawCount);
+  });
+
   it('drops exclusion rows at build time', async () => {
     const rawWhere = `WHERE usage_date >= '${PERIOD}-01' AND usage_date < '2026-02-01'`;
     const top = (await queryAll(conn, `SELECT service, CAST(SUM(cost) AS DOUBLE) c FROM ${rawSourceJan()} ${rawWhere} GROUP BY service ORDER BY c DESC LIMIT 1`))[0];
@@ -112,6 +155,6 @@ describe('buildRollupPartitionQuery', () => {
     const rollTotal = Number((await queryAll(conn, `SELECT CAST(SUM(cost) AS DOUBLE) t FROM ${glob}`))[0]?.['t']);
     expect(rollTotal).toBeCloseTo(rawTotal - excludedCost, 2);
     const stillThere = await queryAll(conn, `SELECT 1 FROM ${glob} WHERE service = '${excludedService.replaceAll("'", "''")}' LIMIT 1`);
-    expect(stillThere.length).toBe(0);
+    expect(stillThere).toHaveLength(0);
   });
 });

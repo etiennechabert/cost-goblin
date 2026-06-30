@@ -34,6 +34,63 @@ export function computeDefaultThreads(): number {
   return maxThreads();
 }
 
+function poolSizeOverride(): number | null {
+  const raw = process.env['COSTGOBLIN_DUCKDB_POOL_SIZE'];
+  if (raw !== undefined) {
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n) && n >= 1 && n <= 32) return n;
+  }
+  return null;
+}
+
+/** Cap on concurrent rollup partition builds (each on a fresh connection).
+ *  min(max(4, cores), 16), overridable via COSTGOBLIN_DUCKDB_POOL_SIZE (1..32).
+ *  NOTE: this no longer sizes the query connection pool — that is
+ *  {@link computeQueryPoolSize}. Builds run on fresh connections, so their
+ *  parallelism is independent of the (smaller) query gate. */
+export function computeDefaultPoolSize(): number {
+  return poolSizeOverride() ?? Math.min(Math.max(4, maxThreads()), 16);
+}
+
+/** Size of the worker's DuckDB connection pool = the cap on concurrent REGULAR
+ *  (dashboard / Explorer) queries. Deliberately FAR below the core count:
+ *  `SET threads` is instance-global, so N concurrent queries time-slice the SAME
+ *  cores and a ~15 ms rollup query ends up queued behind multi-second raw scans
+ *  (measured ~5 ms → ~550 ms under a burst of raw Table-widget scans). ~cores/4,
+ *  clamped [2,4], gives each in-flight query a healthy thread share while a lone
+ *  scan still gets all cores. Rollup builds use fresh connections capped by
+ *  {@link computeDefaultPoolSize}, so this never throttles them. Override with
+ *  COSTGOBLIN_DUCKDB_POOL_SIZE. */
+export function computeQueryPoolSize(): number {
+  return poolSizeOverride() ?? Math.max(2, Math.min(4, Math.ceil(maxThreads() / 4)));
+}
+
+/** Default number of monthly rollup partitions built in parallel. Deliberately
+ *  low (2): each partition build is a heavy DuckDB scan, and running more than a
+ *  couple at once starves the cores that keep dashboards/the UI responsive while
+ *  a rebuild runs, for little wall-clock gain. Users can raise it in Performance
+ *  settings up to {@link maxRollupConcurrency}. */
+export const DEFAULT_ROLLUP_CONCURRENCY = 2;
+
+/** Upper bound for the rollup-build-parallelism override: the build-pool cap.
+ *  Building more partitions at once than there are fresh connections can't help. */
+export function maxRollupConcurrency(): number {
+  return computeDefaultPoolSize();
+}
+
+/** Clamp a user-supplied rollup-concurrency override to [1, maxRollupConcurrency]. */
+export function clampRollupConcurrency(n: number): number {
+  return Math.min(maxRollupConcurrency(), Math.max(1, Math.round(n)));
+}
+
+/** Resolve the effective rollup build parallelism: a clamped override, or the
+ *  default ("auto") when null/undefined. The default itself is clamped to
+ *  maxRollupConcurrency so that on a machine whose pool cap is below the default
+ *  (e.g. COSTGOBLIN_DUCKDB_POOL_SIZE=1) "auto" never exceeds the real maximum. */
+export function resolveRollupConcurrency(override: number | null | undefined): number {
+  return clampRollupConcurrency(override ?? DEFAULT_ROLLUP_CONCURRENCY);
+}
+
 /** Clamp a user-supplied memory override to a safe range. */
 export function clampMemoryGB(gb: number): number {
   const ceiling = Math.max(MIN_MEMORY_GB, Math.min(MAX_MEMORY_GB, totalMemoryGB()));

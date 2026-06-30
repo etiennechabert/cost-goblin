@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { CloudDownload, RefreshCw } from 'lucide-react';
-import { Popover, PopoverTrigger, PopoverContent } from '@costgoblin/ui';
+import { Popover, PopoverTrigger, PopoverContent, formatRelativeTime, SsoLoginButton } from '@costgoblin/ui';
 import type { SyncStatus } from '@costgoblin/core/browser';
 
 export type SyncActivity = 'idle' | 'syncing' | 'downloading';
@@ -16,10 +16,20 @@ interface Props {
   error: string | null;
   filesRemaining: number;
   missingPeriods: number;
+  /** The current (in-progress) month has newer remote data than what's local.
+   *  Shown as an informational "updating" note rather than counted as un-synced,
+   *  since the current month is almost always stale as CUR re-publishes. */
+  currentMonthUpdating: boolean;
   tiers: readonly SyncTier[];
   inSettingsData: boolean;
   onManageData: () => void;
   onRecheck: () => Promise<void>;
+}
+
+function syncBarFraction(status: Extract<SyncStatus, { status: 'syncing' }>): number {
+  if (status.bytesTotal > 0) return status.bytesDone / status.bytesTotal;
+  if (status.filesTotal > 0) return status.filesDone / status.filesTotal;
+  return 0;
 }
 
 function tierState(status: SyncStatus, synced: boolean): React.JSX.Element {
@@ -38,20 +48,33 @@ function tierState(status: SyncStatus, synced: boolean): React.JSX.Element {
   }
 }
 
+/** The durable "last synced" time for a tier, or null while syncing / never
+ *  synced. The main process backfills this onto idle/failed statuses from disk
+ *  so it survives restarts. */
+function statusLastSync(status: SyncStatus): Date | null {
+  switch (status.status) {
+    case 'syncing': return null;
+    case 'completed': return status.lastSync;
+    case 'idle':
+    case 'failed': return status.lastSync;
+  }
+}
+
 function SyncTierRow({ label, status, synced }: Readonly<{ label: string; status: SyncStatus; synced: boolean }>): React.JSX.Element {
   const bar = status.status === 'syncing'
-    ? (() => {
-        const fraction = status.bytesTotal > 0
-          ? status.bytesDone / status.bytesTotal
-          : (status.filesTotal > 0 ? status.filesDone / status.filesTotal : 0);
-        return Math.min(100, Math.max(0, Math.round(fraction * 100)));
-      })()
+    ? Math.min(100, Math.max(0, Math.round(syncBarFraction(status) * 100)))
     : null;
+  const lastSync = statusLastSync(status);
   return (
     <div className="py-1.5">
       <div className="flex items-center justify-between text-xs">
         <span className="text-text-secondary">{label}</span>
-        {tierState(status, synced)}
+        <div className="flex items-center gap-1.5">
+          {tierState(status, synced)}
+          {lastSync !== null && (
+            <span className="text-[10px] text-text-muted" title={lastSync.toLocaleString()}>· {formatRelativeTime(lastSync)}</span>
+          )}
+        </div>
       </div>
       {bar !== null && (
         <div className="mt-1 h-1 overflow-hidden rounded-full bg-bg-tertiary">
@@ -62,12 +85,30 @@ function SyncTierRow({ label, status, synced }: Readonly<{ label: string; status
   );
 }
 
+function buttonTitle(opts: Readonly<{ showError: boolean; error: string | null; showActive: boolean; showMissing: boolean; missingPeriods: number; currentMonthUpdating: boolean }>): string {
+  const { showError, error, showActive, showMissing, missingPeriods, currentMonthUpdating } = opts;
+  if (showError) return `Sync error — ${error ?? ''}`;
+  if (showActive) return 'Syncing…';
+  if (showMissing) return `${String(missingPeriods)} billing period${missingPeriods === 1 ? '' : 's'} not synced`;
+  if (currentMonthUpdating) return 'Current month has newer data to sync';
+  return 'Data sync';
+}
+
+/** Pull the AWS profile out of an expired-credentials sync error so the popover
+ *  can offer the same "Open SSO Login" action as the Data & Sync screen. The
+ *  message is built as `… Run: aws sso login --profile <profile>`, so the
+ *  profile is the trailing token; null for any non-credential error. */
+function ssoLoginProfile(error: string | null): string | null {
+  if (error === null || !error.includes('aws sso login')) return null;
+  return /--profile\s+(\S+)/.exec(error)?.[1] ?? null;
+}
+
 /** Dedicated data-sync indicator, split out of the Settings gear. Shows whether
  *  a download is in progress (and how many files remain), surfaces sync errors,
  *  and flags un-synced periods — with a per-tier breakdown on click, so the user
  *  doesn't have to open Settings › Data just to see activity. */
 export function SyncStatusButton({
-  activity, error, filesRemaining, missingPeriods, tiers, inSettingsData, onManageData, onRecheck,
+  activity, error, filesRemaining, missingPeriods, currentMonthUpdating, tiers, inSettingsData, onManageData, onRecheck,
 }: Readonly<Props>): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [rechecking, setRechecking] = useState(false);
@@ -80,16 +121,17 @@ export function SyncStatusButton({
   }
 
   const showError = error !== null;
+  const ssoProfile = ssoLoginProfile(error);
   const showActive = !showError && activity !== 'idle';
   const showMissing = !showError && activity === 'idle' && missingPeriods > 0 && !inSettingsData;
 
-  const title = showError
-    ? `Sync error — ${error}`
-    : showActive
-      ? 'Syncing…'
-      : showMissing
-        ? `${String(missingPeriods)} billing period${missingPeriods === 1 ? '' : 's'} not synced`
-        : 'Data sync';
+  const title = buttonTitle({ showError, error, showActive, showMissing, missingPeriods, currentMonthUpdating });
+  const periodPlural = missingPeriods === 1 ? '' : 's';
+  const footerLabel = missingPeriods > 0
+    ? `${String(missingPeriods)} period${periodPlural} not synced`
+    : currentMonthUpdating
+      ? 'Current month updating'
+      : 'All periods synced';
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -140,16 +182,19 @@ export function SyncStatusButton({
           </button>
         </div>
         {showError && (
-          <div className="mb-2 rounded-md border border-negative/50 bg-negative-muted px-2.5 py-1.5 text-xs text-negative">{error}</div>
+          <div className="mb-2 rounded-md border border-negative/50 bg-negative-muted px-2.5 py-1.5 text-xs text-negative">
+            {error}
+            {ssoProfile !== null && (
+              <SsoLoginButton profile={ssoProfile} hint="A browser window will open. Refresh above after logging in." />
+            )}
+          </div>
         )}
         <div className="divide-y divide-border-subtle">
           {tiers.map(t => <SyncTierRow key={t.id} label={t.label} status={t.status} synced={synced} />)}
         </div>
         <div className="mt-3 flex items-center justify-between border-t border-border pt-2">
           <span className="text-[11px] text-text-muted">
-            {missingPeriods > 0
-              ? `${String(missingPeriods)} period${missingPeriods === 1 ? '' : 's'} not synced`
-              : 'All periods synced'}
+            {footerLabel}
           </span>
           <button
             type="button"

@@ -44,6 +44,7 @@ function migrateLocked(cfg: DimensionsConfig): { config: DimensionsConfig; chang
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useUnsavedChanges } from '../hooks/use-unsaved-changes.js';
 import { useQuery } from '../hooks/use-query.js';
+import { useDebouncedValue } from '../hooks/use-debounced-value.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { AliasSuggestions } from '../components/alias-suggestions.js';
@@ -116,6 +117,24 @@ function reconcileOrder(config: DimensionsConfig): string[] {
   return out;
 }
 
+function isPlainRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** Order-insensitive serialization for dirty-checking: recursively sorts object
+ *  keys so two configs that differ only in key insertion order compare equal.
+ *  Array order is preserved (dimension/order arrays are semantically ordered).
+ *  Without this, saving a dim editor — which rebuilds the dim object key-by-key
+ *  in a different order than the on-disk baseline — would flip `dirty` true on a
+ *  no-op save and offer a needless rollup rebuild. */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (isPlainRecord(value)) {
+    return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 const CONCEPTS: { value: ConceptType; label: string }[] = [
   { value: 'environment', label: 'Environment' },
   { value: 'product', label: 'System' },
@@ -171,9 +190,10 @@ function DefaultValuesPicker({ available, selected, onChange }: Readonly<{
     else onChange([...selected, value]);
   }
 
-  const summary = selected.length === 0
-    ? 'No defaults'
-    : selected.length <= 3 ? selected.join(', ') : `${String(selected.length)} selected`;
+  let summary: string;
+  if (selected.length === 0) summary = 'No defaults';
+  else if (selected.length <= 3) summary = selected.join(', ');
+  else summary = `${String(selected.length)} selected`;
 
   return (
     <div ref={containerRef} className="relative">
@@ -803,13 +823,29 @@ function sourceColor(source: TagSource, aliased: boolean): string {
   }
 }
 
+function camelStripSeparators(value: string): string {
+  let out = '';
+  let pending = '';
+  for (const ch of value) {
+    if (ch === '-' || ch === '_' || /\s/.test(ch)) {
+      pending += ch;
+    } else if (pending === '') {
+      out += ch;
+    } else {
+      out += ch.toUpperCase();
+      pending = '';
+    }
+  }
+  return out + pending;
+}
+
 function applyPreviewNormalize(v: string, rule: string): string {
   switch (rule) {
     case 'lowercase': return v.toLowerCase();
     case 'uppercase': return v.toUpperCase();
     case 'lowercase-kebab': return v.replaceAll(/([a-z])([A-Z])/g, '$1-$2').replaceAll('_', '-').replaceAll(' ', '-').toLowerCase();
     case 'lowercase-underscore': return v.replaceAll(/([a-z])([A-Z])/g, '$1_$2').replaceAll('-', '_').replaceAll(' ', '_').toLowerCase();
-    case 'camelCase': return v.replaceAll(/[-_\s]+([^-_\s])/g, (_, c: string) => c.toUpperCase()).replace(/^(.)/, (_, c: string) => c.toLowerCase());
+    case 'camelCase': return camelStripSeparators(v).replace(/^(.)/, (_, c: string) => c.toLowerCase());
     default: return v;
   }
 }
@@ -960,7 +996,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
   const fallbackValues = (() => {
     if (state.fallbackTag === undefined || state.fallbackTag.length === 0) return [];
     const usesOuPath = state.fallbackTag === OU_PATH_SOURCE_KEY;
-    const parsedSegIndex = parseInt(state.pathSegIndex, 10);
+    const parsedSegIndex = Number.parseInt(state.pathSegIndex, 10);
     const segActive = usesOuPath && Number.isInteger(parsedSegIndex) && parsedSegIndex !== 0;
     const counts = new Map<string, number>();
     for (const acct of orgAccounts) {
@@ -991,7 +1027,7 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
       const normalized = applyPreviewNormalize(raw, state.normalize);
       resolved.add(aliasMap.get(normalized) ?? normalized);
     }
-    return [...resolved].sort();
+    return [...resolved].sort((a, b) => a.localeCompare(b));
   })();
 
   return (
@@ -1427,11 +1463,14 @@ function AccountTagsContent({ orgData, accountTagKeys, hiddenAccountCols, setHid
 }
 
 function pillClass(enabled: boolean, danger = false): string {
-  const state = !enabled
-    ? 'border-border bg-bg-tertiary/20 text-text-muted hover:border-text-muted hover:text-text-secondary'
-    : danger
-      ? 'border-amber-500/50 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20'
-      : 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20';
+  let state: string;
+  if (enabled && danger) {
+    state = 'border-amber-500/50 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20';
+  } else if (enabled) {
+    state = 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20';
+  } else {
+    state = 'border-border bg-bg-tertiary/20 text-text-muted hover:border-text-muted hover:text-text-secondary';
+  }
   return ['rounded-full border px-3 py-1 text-xs font-medium transition-colors', state].join(' ');
 }
 
@@ -1475,9 +1514,10 @@ function formatCount(n: number): string {
  *  Such dims are best kept raw-only (their widgets fall back to raw Parquet). */
 function RawOnlyBadge({ cardinality }: Readonly<{ cardinality: number | undefined }>): React.JSX.Element {
   const count = cardinality !== undefined && cardinality > 0 ? formatCount(cardinality) : null;
+  const countSuffix = count === null ? '' : ` (~${count} distinct values)`;
   return (
     <span
-      title={`High-cardinality${count !== null ? ` (~${count} distinct values)` : ''} — a primary driver of rollup size. Best kept raw-only: widgets grouping by it query raw data instead of the rollup.`}
+      title={`High-cardinality${countSuffix} — a primary driver of rollup size. Best kept raw-only: widgets grouping by it query raw data instead of the rollup.`}
       className="ml-1.5 inline-flex items-center gap-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wide text-amber-500"
     >
       <Database className="h-2.5 w-2.5" />{count ?? 'raw'}
@@ -1504,16 +1544,203 @@ function ImpactStat({ label, value, hint }: Readonly<{ label: string; value: str
   );
 }
 
+/** Eased progress feedback for the rollup estimate. The probe is an exact
+ *  DuckDB scan (a few seconds; longer when resource_id is on) with no real
+ *  per-query progress to read, so we ease asymptotically toward ~92% — slowing
+ *  as it goes rather than stalling at a hard cap — and let completion unmount
+ *  this (the panel only renders it while a probe is in flight). */
+function EstimateProgress(): React.JSX.Element {
+  const [pct, setPct] = useState(8);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setPct(p => (p >= 92 ? p : p + Math.max(0.6, (92 - p) * 0.1)));
+    }, 150);
+    return () => { clearInterval(id); };
+  }, []);
+  return (
+    <div className="mt-3">
+      <span className="text-xs text-text-muted">Estimating…</span>
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-bg-tertiary">
+        <div className="h-full rounded-full bg-accent transition-all duration-200 ease-out" style={{ width: `${String(Math.round(pct))}%` }} />
+      </div>
+    </div>
+  );
+}
+
+type RollupDimEstimate = RollupGrainEstimate['dims'][number];
+
+function computeRowRatio(
+  estimate: RollupGrainEstimate | null,
+  matchedCurrent: RollupGrainEstimate['current'],
+): number {
+  if (estimate === null) return 0;
+  if (matchedCurrent !== null && matchedCurrent.rows > 0) return estimate.raw.rows / matchedCurrent.rows;
+  return estimate.compressionRate;
+}
+
+function ImpactWarning({ config, outlierDim, rawOnly }: Readonly<{
+  config: DimensionsConfig;
+  outlierDim: RollupDimEstimate | undefined;
+  rawOnly: RollupGrainEstimate['rawOnly'];
+}>): React.JSX.Element | null {
+  if (outlierDim !== undefined) {
+    return (
+      <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+        <p className="text-[11px] leading-snug text-text-secondary">
+          <span className="font-medium text-amber-500">{columnLabel(config, outlierDim.column)}</span> alone multiplies the rollup ~×{outlierDim.marginalMultiplier.toFixed(1)} — most of the grain comes from this one dimension. Dimensions work best as filters with a handful of values; the detail table can still show every value when you need it, so keeping this one raw-only keeps dashboards fast.
+        </p>
+      </div>
+    );
+  }
+  if (rawOnly.recommended) {
+    return (
+      <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+        <p className="text-[11px] leading-snug text-text-secondary">
+          This grain is heavy for the rollup — {rawOnly.reason ?? 'it exceeds the size budget'}. Consider a leaner grain so dashboards stay fast.
+        </p>
+      </div>
+    );
+  }
+  return null;
+}
+
+function impactReadout(d: RollupDimEstimate): string {
+  if (d.marginalMultiplier < 1.05) return '~×1';
+  const rows = d.marginalRows > 0 ? ` · +${formatCount(d.marginalRows)}` : '';
+  return `×${d.marginalMultiplier.toFixed(1)}${rows}`;
+}
+
+function ImpactDimRow({ d, config }: Readonly<{ d: RollupDimEstimate; config: DimensionsConfig }>): React.JSX.Element {
+  return (
+    <li className="flex items-center gap-2 text-[11px]">
+      <span className={`flex w-28 shrink-0 items-center gap-1 truncate ${d.outlier ? 'font-medium text-amber-500' : 'text-text-secondary'}`}>
+        {d.outlier && <AlertTriangle className="h-3 w-3 shrink-0" />}
+        <span className="truncate">{columnLabel(config, d.column)}</span>
+      </span>
+      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-tertiary">
+        <span
+          className={`block h-full rounded-full ${d.outlier ? 'bg-amber-500/70' : 'bg-accent/60'}`}
+          style={{ width: `${String(Math.round(Math.min(1, d.impactShare) * 100))}%` }}
+        />
+      </span>
+      <span className={`w-24 shrink-0 text-right tabular-nums ${d.outlier ? 'text-amber-500' : 'text-text-muted'}`}>{impactReadout(d)}</span>
+    </li>
+  );
+}
+
+function ImpactDetails({ estimate, matchedCurrent, sizeReduction, rowRatio, rankedDims, outlierDim, config }: Readonly<{
+  estimate: RollupGrainEstimate;
+  matchedCurrent: RollupGrainEstimate['current'];
+  sizeReduction: number;
+  rowRatio: number;
+  rankedDims: readonly RollupDimEstimate[];
+  outlierDim: RollupDimEstimate | undefined;
+  config: DimensionsConfig;
+}>): React.JSX.Element {
+  return (
+    <>
+      <div className={`mt-3 grid grid-cols-2 gap-4 ${matchedCurrent === null ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
+        <ImpactStat
+          label="Raw data"
+          value={formatBytes(estimate.raw.bytes)}
+          hint={`${formatCount(estimate.raw.rows)} line items · ${String(estimate.months)} mo`}
+        />
+        {matchedCurrent === null ? (
+          <ImpactStat
+            label="Est. rollup"
+            value={formatBytes(estimate.candidate.bytes)}
+            hint={`${SIZE_BAND_LABEL[estimate.candidate.sizeBand]} · ${formatCount(estimate.candidate.rows)} rows`}
+          />
+        ) : (
+          <ImpactStat
+            label="Rollup"
+            value={formatBytes(matchedCurrent.bytes)}
+            hint={`${formatCount(matchedCurrent.rows)} rows`}
+          />
+        )}
+        <ImpactStat
+          label="Compression"
+          value={sizeReduction >= 1.05 ? `${sizeReduction.toFixed(1)}×` : '~1×'}
+          hint={`smaller than raw · ${rowRatio >= 1 ? rowRatio.toFixed(0) : rowRatio.toFixed(1)}× fewer rows`}
+        />
+        {matchedCurrent === null && (
+          <ImpactStat
+            label="Rebuild"
+            value={formatRebuild(estimate.candidate.rebuildSeconds)}
+            hint="background re-roll"
+          />
+        )}
+      </div>
+      {rankedDims.length > 0 && (
+        <div className="mt-4">
+          <span className="text-[10px] uppercase tracking-wider text-text-muted">Per-dimension impact</span>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {rankedDims.map(d => <ImpactDimRow key={d.column} d={d} config={config} />)}
+          </ul>
+          <ImpactWarning config={config} outlierDim={outlierDim} rawOnly={estimate.rawOnly} />
+        </div>
+      )}
+    </>
+  );
+}
+
 /** Cost/benefit summary for the current enabled grain (rollup design §8).
  *  Updates as dims are toggled so the user can weigh the rebuild before it
  *  happens. Numbers are directional (probed from one recent month). */
-function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: RollupGrainEstimate | null; loading: boolean; config: DimensionsConfig }>): React.JSX.Element {
-  const heaviest = estimate === null
+function RollupImpactPanel({ estimate, loading, stale, error, config }: Readonly<{ estimate: RollupGrainEstimate | null; loading: boolean; stale: boolean; error: boolean; config: DimensionsConfig }>): React.JSX.Element {
+  const rankedDims = estimate === null
     ? []
-    : [...estimate.dims].filter(d => d.rawOnly).sort((a, b) => b.cardinality - a.cardinality);
-  const sizeReduction = estimate !== null && estimate.candidate.bytes > 0
-    ? estimate.raw.bytes / estimate.candidate.bytes
-    : 0;
+    : [...estimate.dims].sort((a, b) => b.marginalMultiplier - a.marginalMultiplier);
+  const outlierDim = rankedDims.find(d => d.outlier);
+  // When the built rollup already matches this exact grain, show its ACTUAL
+  // size/rows (the same numbers as the header Rollup popover) instead of the
+  // directional estimate, and drop the Rebuild stat (nothing to rebuild).
+  const matchedCurrent = estimate !== null && estimate.currentMatchesCandidate ? estimate.current : null;
+  const rollupBytes = matchedCurrent === null ? (estimate?.candidate.bytes ?? 0) : matchedCurrent.bytes;
+  const sizeReduction = estimate !== null && rollupBytes > 0 ? estimate.raw.bytes / rollupBytes : 0;
+  const rowRatio = computeRowRatio(estimate, matchedCurrent);
+  // When the probe has run and found no data on disk (probePeriod === ''), show
+  // the sync hint even while stale/loading — toggling a dim on an un-synced
+  // install must not flash the "Estimating…" spinner over the real "no data" state.
+  const noData = estimate !== null && estimate.probePeriod.length === 0;
+  const syncHint = <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>;
+  const errorHint = <p className="mt-3 text-xs text-text-muted">Couldn’t estimate the rollup size for this grain — change a dimension to retry.</p>;
+  // Branch order matters. `estimate === null` here means "not resolved yet" (the
+  // panel only renders with a non-null config, and the probe always returns a
+  // non-null estimate — empty when there's no data), so fold it into the loader
+  // branch: that keeps EstimateProgress mounted across the debounce→fetch handoff
+  // where `loading` lags the settled grain by one tick (otherwise that one frame
+  // flashed a hint and remounted the bar, resetting its progress).
+  //  - `stale || loading` wins over a leftover `error` so toggling after a failed
+  //    probe shows "Estimating…", not the stale error.
+  //  - a settled error (not stale/loading) shows a real error message, NOT the
+  //    "sync billing data" hint — that would mislead a user who already has data.
+  let body: React.JSX.Element;
+  if (noData) {
+    body = syncHint;
+  } else if (estimate === null) {
+    // Not resolved yet, or a terminal error. While loading/stale (or simply not
+    // yet probed) show the bar; only a SETTLED error shows the error hint — so a
+    // leftover error from a prior grain doesn't flash over the next "Estimating…".
+    body = error && !stale && !loading ? errorHint : <EstimateProgress />;
+  } else if (stale || loading) {
+    // A non-null prior estimate is being re-probed for a changed grain.
+    body = <EstimateProgress />;
+  } else {
+    body = (
+      <ImpactDetails
+        estimate={estimate}
+        matchedCurrent={matchedCurrent}
+        sizeReduction={sizeReduction}
+        rowRatio={rowRatio}
+        rankedDims={rankedDims}
+        outlierDim={outlierDim}
+        config={config}
+      />
+    );
+  }
   return (
     <div className="rounded-xl border border-border bg-bg-secondary/40 px-5 py-4">
       <div className="flex items-center justify-between">
@@ -1521,63 +1748,29 @@ function RollupImpactPanel({ estimate, loading, config }: Readonly<{ estimate: R
           <Database className="h-4 w-4 text-text-muted" />
           <h3 className="text-sm font-medium text-text-secondary">Rollup impact</h3>
         </div>
-        {estimate !== null && estimate.probePeriod.length > 0 && (
-          <span className="text-[10px] text-text-muted">estimated from {estimate.probePeriod} · directional</span>
+        {!stale && estimate !== null && estimate.probePeriod.length > 0 && (
+          matchedCurrent === null ? (
+            <span
+              title={`Directional estimate, probed from ${estimate.probePeriod}. Rebuild this grain to get exact numbers.`}
+              className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-500"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />Estimated
+            </span>
+          ) : (
+            <span
+              title="These are the real size and row counts of the rollup already built for this grain."
+              className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-accent" />Actual
+            </span>
+          )
         )}
       </div>
+      <p className="mt-1 text-[11px] leading-snug text-text-muted">
+        The rollup is a compact, pre-aggregated copy of your billing data grouped by these dimensions — dashboards query it instead of the raw line items, so a leaner grain keeps them fast.
+      </p>
 
-      {loading && estimate === null ? (
-        <p className="mt-3 text-xs text-text-muted">Estimating…</p>
-      ) : estimate === null || estimate.probePeriod.length === 0 ? (
-        <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>
-      ) : (
-        <>
-          <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <ImpactStat
-              label="Raw data"
-              value={formatBytes(estimate.raw.bytes)}
-              hint={`${formatCount(estimate.raw.rows)} line items · ${String(estimate.months)} mo`}
-            />
-            <ImpactStat
-              label="Est. rollup"
-              value={formatBytes(estimate.candidate.bytes)}
-              hint={`${SIZE_BAND_LABEL[estimate.candidate.sizeBand]} · ${formatCount(estimate.candidate.rows)} rows`}
-            />
-            <ImpactStat
-              label="Compression"
-              value={sizeReduction >= 1.05 ? `${sizeReduction.toFixed(1)}×` : '~1×'}
-              hint={`smaller than raw · ${estimate.compressionRate >= 1 ? estimate.compressionRate.toFixed(0) : estimate.compressionRate.toFixed(1)}× fewer rows`}
-            />
-            <ImpactStat
-              label="Rebuild"
-              value={formatRebuild(estimate.candidate.rebuildSeconds)}
-              hint="background re-roll"
-            />
-          </div>
-          {estimate.rawOnly.recommended && (
-            <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-              <p className="text-[11px] leading-snug text-text-secondary">
-                {heaviest.length > 0 ? (
-                  <>
-                    Heavy grain — most of the rollup size comes from{' '}
-                    {heaviest.slice(0, 4).map((d, i) => (
-                      <span key={d.column}>
-                        {i > 0 ? ', ' : ''}
-                        <span className="font-medium text-amber-500">{columnLabel(config, d.column)}</span>
-                        {' '}({formatCount(d.cardinality)})
-                      </span>
-                    ))}
-                    . Disabling the heaviest keeps it raw-only so dashboards stay fast.
-                  </>
-                ) : (
-                  <>This grain is heavy for the rollup — {estimate.rawOnly.reason ?? 'it exceeds the size budget'}. Consider a leaner grain so dashboards stay fast.</>
-                )}
-              </p>
-            </div>
-          )}
-        </>
-      )}
+      {body}
     </div>
   );
 }
@@ -1622,14 +1815,13 @@ function resolveOrderedRows(config: DimensionsConfig): OrderedRow[] {
   return rows;
 }
 
-export function DimensionsView() {
+export function DimensionsView(): React.JSX.Element {
   const api = useCostApi();
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editingBuiltInIdx, setEditingBuiltInIdx] = useState<number | null>(null);
   const [hiddenResourceCols, setHiddenResourceCols] = useState(new Set<string>());
   const [hiddenAccountCols, setHiddenAccountCols] = useState(new Set<string>());
   const [addingNew, setAddingNew] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
   // Debug-panel expansion state. Collapsed by default — the two tag pivot
   // tables are exploratory, not primary content.
   const [resourceTagsExpanded, setResourceTagsExpanded] = useState(false);
@@ -1648,39 +1840,73 @@ export function DimensionsView() {
     () => needsTagDiscovery ? api.discoverTagKeys() : Promise.resolve(null),
     [needsTagDiscovery],
   );
-  const configQuery = useQuery(() => api.getDimensionsConfig(), [refreshKey]);
+  const configQuery = useQuery(() => api.getDimensionsConfig(), []);
   const orgQuery = useQuery(() => api.getOrgSyncResult(), []);
 
   const tagsResult = tagsQuery.status === 'success' ? tagsQuery.data : null;
   const discoveredTags = tagsResult?.tags ?? [];
 
-  // Keep the last good config visible while a refetch is in flight — useQuery
-  // resets to status=loading on every dep change, which would otherwise blank
-  // the dimensions list for a frame after every reorder/toggle/save.
+  // Draft-editing model: `config` is the working draft the user edits freely;
+  // `savedConfig` is the last-persisted baseline. Edits stay LOCAL — toggling,
+  // reordering, and the per-dim editors mutate only the draft, so the live
+  // estimate and value previews update instantly while the expensive rollup
+  // rebuild is deferred. Nothing persists (and so nothing re-rolls) until the
+  // user clicks Apply, which writes the draft and lets the backend rebuild the
+  // rollup for the new grain. Mirrors the draft/saved/dirty pattern in Cost Scope.
   const [config, setConfig] = useState<DimensionsConfig | null>(null);
+  const [savedConfig, setSavedConfig] = useState<DimensionsConfig | null>(null);
+  const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   useEffect(() => {
     if (configQuery.status !== 'success') return;
     const { config: migrated, changed } = migrateLocked(configQuery.data);
-    setConfig(migrated);
-    if (changed) {
-      const reconciled = { ...migrated, order: reconcileOrder(migrated) };
-      api.saveDimensionsConfig(reconciled).catch(() => undefined);
-    }
+    // Normalize `order` up front so a toggle-on-then-off round-trips to a
+    // byte-identical draft (no spurious dirty against the baseline).
+    const baseline = { ...migrated, order: reconcileOrder(migrated) };
+    setConfig(baseline);
+    setSavedConfig(baseline);
+    // A locked-dim migration is a correctness fix, not a user edit — persist it
+    // immediately (matches the legacy behaviour) so the baseline is on disk.
+    if (changed) api.saveDimensionsConfig(baseline).catch(() => undefined);
   }, [configQuery, api]);
   const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
+
+  // Draft is dirty when it diverges from the persisted baseline. Registers with
+  // the app-wide unsaved-changes guard so navigating away prompts before the
+  // in-progress draft is lost.
+  const dirty = config !== null && savedConfig !== null && stableStringify(config) !== stableStringify(savedConfig);
+  useUnsavedChanges(dirty, 'Dimensions');
 
   // Live rollup cost/benefit estimate for the current enabled grain. Keyed on
   // the grain signature so it refetches when a dim is toggled (the grain
   // changes) but not on reorder/relabel. The probe hits DuckDB, so this is
   // intentionally cheap and fire-and-forget.
+  // Debounce the grain signature before probing: each dim toggle changes the
+  // grain, and the probe is a heavy DuckDB scan (multi-second, multi-GB on real
+  // data). Without this, dragging through several toggles fires a probe per
+  // intermediate grain, stacking heavy queries against the worker pool. Wait for
+  // the grain to settle (350 ms) so only the final grain is probed.
   const estimateSig = config === null ? '' : grainSignature(config);
+  const debouncedEstimateSig = useDebouncedValue(estimateSig, 350);
   const estimateQuery = useQuery(
     () => config === null ? Promise.resolve(null) : api.estimateRollupGrain(config),
-    [estimateSig],
+    // Refetch ONLY when the (settled) draft grain changes. The estimate is a
+    // pre-apply preview — it must NOT re-run when the rollup rebuilds. Applying
+    // kicks off a re-roll, and re-probing on that transition would fire a heavy
+    // DuckDB scan redundantly AND in contention with the rebuild it just started.
+    // The actual/estimated badge therefore settles on the next grain change or a
+    // remount, never mid-rebuild.
+    [debouncedEstimateSig],
   );
   const estimate = estimateQuery.status === 'success' ? estimateQuery.data : null;
   const estimateLoading = estimateQuery.status === 'loading';
+  // The grain changed but the (debounced) probe hasn't refired yet — the shown
+  // estimate is for the previous grain. Surface the "Estimating…" cue instantly
+  // (as it did before the debounce) for the 350 ms settle window so the panel
+  // doesn't sit on the previous grain's numbers without a hint. (useQuery flips
+  // to its own loading state one passive-effect tick after the window closes, so
+  // a single handoff frame can still paint the prior estimate — acceptable.)
+  const estimateStale = estimateSig !== debouncedEstimateSig;
   const rawOnlyColumns = new Set((estimate?.dims ?? []).filter(d => d.rawOnly).map(d => d.column));
   const cardinalityByColumn = new Map((estimate?.dims ?? []).map(d => [d.column, d.cardinality]));
 
@@ -1710,7 +1936,7 @@ export function DimensionsView() {
     const accountTagFallback = editing.fallbackTag !== undefined && editing.fallbackTag.length > 0 ? editing.fallbackTag : undefined;
     const missingValueTemplate = editing.missingValueTemplate.length > 0 ? editing.missingValueTemplate : undefined;
     const usesOuPath = editing.fallbackTag === OU_PATH_SOURCE_KEY;
-    const parsedIndex = parseInt(editing.pathSegIndex, 10);
+    const parsedIndex = Number.parseInt(editing.pathSegIndex, 10);
     const pathSegment = usesOuPath && Number.isInteger(parsedIndex) && parsedIndex !== 0
       ? { separator: OU_PATH_SEPARATOR, index: parsedIndex }
       : undefined;
@@ -1720,36 +1946,30 @@ export function DimensionsView() {
     return { ...base, concept, normalize, aliases, accountTagFallback, missingValueTemplate, pathSegment, defaultFilterValues };
   }
 
-  async function handleSaveTag(idx: number, editing: EditingTag) {
+  function handleSaveTag(idx: number, editing: EditingTag): void {
     if (config === null) return;
     const tags = [...config.tags];
     tags[idx] = editingToTagDimension(editing);
-    const next = { ...config, tags, order: reconcileOrder({ ...config, tags }) };
-    await api.saveDimensionsConfig(next);
+    setConfig({ ...config, tags, order: reconcileOrder({ ...config, tags }) });
     setEditingIdx(null);
-    setRefreshKey(k => k + 1);
   }
 
-  async function handleAddTag(editing: EditingTag) {
+  function handleAddTag(editing: EditingTag): void {
     if (config === null) return;
     const newTag = editingToTagDimension(editing);
     const tags = [...config.tags, newTag];
-    const next = { ...config, tags, order: reconcileOrder({ ...config, tags }) };
-    await api.saveDimensionsConfig(next);
+    setConfig({ ...config, tags, order: reconcileOrder({ ...config, tags }) });
     setAddingNew(false);
-    setRefreshKey(k => k + 1);
   }
 
-  async function handleRemoveTag(idx: number) {
+  function handleRemoveTag(idx: number): void {
     if (config === null) return;
     const tags = config.tags.filter((_, i) => i !== idx);
-    const next = { ...config, tags, order: reconcileOrder({ ...config, tags }) };
-    await api.saveDimensionsConfig(next);
+    setConfig({ ...config, tags, order: reconcileOrder({ ...config, tags }) });
     setEditingIdx(null);
-    setRefreshKey(k => k + 1);
   }
 
-  async function handleSaveBuiltIn(idx: number, edited: EditingBuiltIn) {
+  function handleSaveBuiltIn(idx: number, edited: EditingBuiltIn): void {
     if (config === null) return;
     const builtIn = config.builtIn.map((d, i) => {
       if (i !== idx) return d;
@@ -1782,25 +2002,41 @@ export function DimensionsView() {
         ...(edited.defaultFilterValues.length > 0 ? { defaultFilterValues: [...edited.defaultFilterValues] } : {}),
       };
     });
-    const next = { ...config, builtIn, order: reconcileOrder({ ...config, builtIn }) };
-    await api.saveDimensionsConfig(next);
+    setConfig({ ...config, builtIn, order: reconcileOrder({ ...config, builtIn }) });
     setEditingBuiltInIdx(null);
-    setRefreshKey(k => k + 1);
   }
 
-  // Optimistic save: paint the new config locally first, then persist in the
-  // background. Always writes a reconciled `order` so the YAML is in sync
-  // with the visible list (entries for disabled dims are dropped; newly-
-  // enabled dims are appended).
-  function applyOptimistic(next: DimensionsConfig): void {
-    const reconciled = { ...next, order: reconcileOrder(next) };
-    setConfig(reconciled);
+  // Draft mutation: paint the change into the local draft only. No persistence
+  // here — the estimate and value previews react to the draft, but the rollup
+  // rebuild waits for Apply. `order` is reconciled so disabled dims drop out and
+  // newly-enabled ones append, keeping the visible list and serialized order in sync.
+  function applyDraft(next: DimensionsConfig): void {
+    setConfig({ ...next, order: reconcileOrder(next) });
+  }
+
+  // Commit point: persist the draft. The backend save drops the old rollup and
+  // rebuilds it for the new grain (debounced, in the background) — this is the
+  // ONLY path that triggers a re-roll now. Exploring/editing the draft never does.
+  async function confirmChanges(): Promise<void> {
+    if (config === null) return;
+    setSaving(true);
     setSaveError(null);
-    api.saveDimensionsConfig(reconciled).catch((err: unknown) => {
-      // The toggle/reorder autosave used to swallow this — a failed persist left
-      // the UI showing a change that never reached disk. Surface it instead.
+    try {
+      await api.saveDimensionsConfig(config);
+      setSavedConfig(config);
+    } catch (err: unknown) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save dimensions');
-    });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function discardChanges(): void {
+    setConfig(savedConfig);
+    setSaveError(null);
+    setEditingIdx(null);
+    setEditingBuiltInIdx(null);
+    setAddingNew(false);
   }
 
   function toggleBuiltInEnabled(idx: number): void {
@@ -1812,7 +2048,7 @@ export function DimensionsView() {
       delete (rest as { enabled?: boolean }).enabled;
       return nextEnabled === undefined ? rest : { ...rest, enabled: nextEnabled };
     });
-    applyOptimistic({ ...config, builtIn });
+    applyDraft({ ...config, builtIn });
   }
 
   function toggleTagEnabled(idx: number): void {
@@ -1824,7 +2060,7 @@ export function DimensionsView() {
       delete (rest as { enabled?: boolean }).enabled;
       return nextEnabled === undefined ? rest : { ...rest, enabled: nextEnabled };
     });
-    applyOptimistic({ ...config, tags });
+    applyDraft({ ...config, tags });
   }
 
   // Quick-add a discovered tag as a dimension
@@ -1837,7 +2073,7 @@ export function DimensionsView() {
     const moved = order.splice(fromIdx, 1)[0];
     if (moved === undefined) return;
     order.splice(toIdx, 0, moved);
-    applyOptimistic({ ...config, order });
+    applyDraft({ ...config, order });
   }
 
   /** Drag/drop attrs for a row. Single unified-order index — no separate
@@ -1913,14 +2149,48 @@ export function DimensionsView() {
 
   return (
     <div className="flex flex-col gap-8 p-6">
-      <div>
-        <h2 className="text-xl font-semibold text-text-primary">Dimensions</h2>
-        <p className="text-sm text-text-secondary mt-1">Map tags to cost allocation dimensions</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-semibold text-text-primary">Dimensions</h2>
+          <p className="text-sm text-text-secondary mt-1">Map tags to cost allocation dimensions</p>
+        </div>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <div className="flex items-center gap-2">
+            {dirty ? (
+              <>
+                <button
+                  type="button"
+                  onClick={discardChanges}
+                  disabled={saving}
+                  className="rounded-md px-4 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+                >
+                  Discard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { confirmChanges().catch(() => undefined); }}
+                  disabled={saving}
+                  title="Save these dimensions and rebuild the rollup for the new grain"
+                  className="rounded-md bg-accent px-4 py-1.5 text-xs font-medium text-bg-primary hover:bg-accent/90 transition-colors disabled:opacity-50"
+                >
+                  {saving ? 'Applying…' : 'Apply & rebuild rollup'}
+                </button>
+              </>
+            ) : (
+              <span className="text-xs text-text-muted">Saved</span>
+            )}
+          </div>
+          {dirty && (
+            <span className="text-[11px] text-text-muted max-w-xs text-right">
+              Previewing changes — the rollup rebuilds only when you apply.
+            </span>
+          )}
+        </div>
       </div>
 
       {saveError !== null && (
         <div className="flex items-start justify-between gap-3 rounded-lg border border-negative/50 bg-negative-muted px-4 py-2.5">
-          <p className="text-sm text-negative">Couldn’t save your change: {saveError}</p>
+          <p className="text-sm text-negative">Couldn’t apply your changes: {saveError}</p>
           <button
             type="button"
             onClick={() => { setSaveError(null); }}
@@ -1997,16 +2267,16 @@ export function DimensionsView() {
             </div>
           </div>
 
-          {/* Rollup cost/benefit for the current grain — updates as pills are
-              toggled so the user can weigh the (background) re-roll first. */}
-          <RollupImpactPanel estimate={estimate} loading={estimateLoading} config={config} />
+          {/* Rollup cost/benefit for the current draft grain — updates live as
+              pills are toggled so the user can weigh the rebuild before applying. */}
+          <RollupImpactPanel estimate={estimate} loading={estimateLoading} stale={estimateStale} error={estimateQuery.status === 'error'} config={config} />
 
           {/* New-tag-dim form appears inline right after the pill rows so the
               user sees where the new pill will land. */}
           {addingNew && (
             <TagEditor
               tag={quickAddState ?? { tagName: '', label: '', concept: '', normalize: '', aliases: '', fallbackTag: undefined, missingValueTemplate: '', pathSegIndex: '', defaultFilterValues: [] }}
-              onSave={(edited) => { handleAddTag(edited).catch(() => undefined); }}
+              onSave={(edited) => { handleAddTag(edited); }}
               onCancel={() => { setAddingNew(false); setQuickAddState(null); }}
               onRemove={undefined}
               availableTags={unmappedTagKeys}
@@ -2054,7 +2324,7 @@ export function DimensionsView() {
                         defaultFilterValues: d.defaultFilterValues ?? [],
                       },
                     }}
-                    onSave={(edited) => { handleSaveBuiltIn(row.idx, edited).catch(() => undefined); }}
+                    onSave={(edited) => { handleSaveBuiltIn(row.idx, edited); }}
                     onCancel={() => { setEditingBuiltInIdx(null); }}
                     accountTagKeys={accountTagKeys}
                   />
@@ -2113,9 +2383,9 @@ export function DimensionsView() {
                     pathSegIndex: tag.pathSegment === undefined ? '' : String(tag.pathSegment.index),
                     defaultFilterValues: tag.defaultFilterValues ?? [],
                   }}
-                  onSave={(edited) => { handleSaveTag(row.idx, edited).catch(() => undefined); }}
+                  onSave={(edited) => { handleSaveTag(row.idx, edited); }}
                   onCancel={() => { setEditingIdx(null); }}
-                  onRemove={() => { handleRemoveTag(row.idx).catch(() => undefined); }}
+                  onRemove={() => { handleRemoveTag(row.idx); }}
                   availableTags={unmappedTagKeys}
                   discoveredTags={discoveredTags}
                   accountTagKeys={accountTagKeys}

@@ -12,36 +12,42 @@ npmRebuild: false
 asar: true
 asarUnpack:
   - "node_modules/@duckdb/**"
+# No per-target `arch:` lists on purpose. Each release job runs ONE
+# electron-builder invocation per arch (`--<platform> --<arch>`) on a
+# matching-arch runner, so the CLI flag — not a pinned config list — selects the
+# single arch to build. With npmRebuild:false electron-builder packages
+# node_modules as-is, and `npm ci` on each runner installs only the host-arch
+# @duckdb/node-bindings; building the arch the runner actually is keeps the right
+# DuckDB binary in each installer. (When a target pins both archs the CLI flag
+# does NOT narrow it — that is what made every job build both archs and ship the
+# wrong-arch DuckDB binding to the secondary arch. This replaces the old
+# beforePack binding-swap hook: native-arch runners make it unnecessary.)
 mac:
   target:
-    - target: dmg
-      arch:
-        - x64
-        - arm64
-    - target: zip
-      arch:
-        - x64
-        - arm64
+    - dmg
+    - zip
   category: public.app-category.business
   notarize: true
 win:
   target:
-    - target: nsis
-      arch:
-        - x64
-        - arm64
+    - nsis
+  # The two single-arch Windows jobs each emit an nsis installer. The default
+  # nsis name carries no arch, so both would be named identically, collide on
+  # upload, and be indistinguishable to electron-updater. ${arch} makes each name
+  # arch-unique (CostGoblin-Setup-<ver>-x64.exe / -arm64.exe) so the merged
+  # latest.yml resolves the right one per process.arch.
+  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
 linux:
   category: Office
   target:
-    - target: AppImage
-      arch:
-        - x64
-        - arm64
-    - target: deb
-      arch:
-        - x64
-        - arm64
+    - AppImage
+    - deb
 publish:
   provider: github
   vPrefixedTagName: true
-  releaseType: release
+  # Build jobs run with `--publish never` and upload their dist/ as artifacts; the
+  # `publish` job in release.yml aggregates all arches, merges the update
+  # manifests, and uploads them to a single draft release (made live by the
+  # `notes` job). This block stays so electron-updater is still pointed at the
+  # GitHub releases at runtime.
+  releaseType: draft

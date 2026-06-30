@@ -69,6 +69,15 @@ function formatDay(d: Date): DateString {
   return asDateString(`${year}-${month}-${day}`);
 }
 
+function formatHourBound(hour: HourString): string {
+  // "2026-04-30 14:00:00" → "Apr 30 14:00"
+  const s = String(hour);
+  const date = new Date(`${s.slice(0, 10)}T${s.slice(11, 16)}:00`);
+  if (Number.isNaN(date.getTime())) return s;
+  const month = date.toLocaleString('en-US', { month: 'short' });
+  return `${month} ${String(date.getDate())} ${s.slice(11, 16)}`;
+}
+
 export interface DateRange {
   start: DateString;
   end: DateString;
@@ -115,15 +124,6 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
   }
 
   const hasHourBounds = value.startHour !== undefined && value.endHour !== undefined;
-
-  function formatHourBound(hour: HourString): string {
-    // "2026-04-30 14:00:00" → "Apr 30 14:00"
-    const s = String(hour);
-    const date = new Date(`${s.slice(0, 10)}T${s.slice(11, 16)}:00`);
-    if (Number.isNaN(date.getTime())) return s;
-    const month = date.toLocaleString('en-US', { month: 'short' });
-    return `${month} ${String(date.getDate())} ${s.slice(11, 16)}`;
-  }
 
   function getActiveLabel(): string {
     if (hasHourBounds && value.startHour !== undefined && value.endHour !== undefined) {
@@ -222,7 +222,7 @@ export function DateRangePicker({ value, granularity, onChange, hideHourly, lagD
               granularity === 'hourly'
                 ? 'bg-accent text-bg-primary shadow-sm'
                 : 'text-text-muted hover:text-text-primary',
-              !hourlyAvailable ? 'opacity-50 cursor-not-allowed' : '',
+              hourlyAvailable ? '' : 'opacity-50 cursor-not-allowed',
             ].join(' ')}
           >
             Hourly

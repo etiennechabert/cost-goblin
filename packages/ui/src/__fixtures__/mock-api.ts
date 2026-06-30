@@ -43,9 +43,22 @@ import {
   type SharedPullSelection,
   type SharedSourcePreview,
   type SharedSourceInfo,
+  type BaselinesListResult,
+  type BaselineDetail,
+  type BaselineRecord,
+  type BaselineCreateInput,
+  type BaselineSnapshot,
+  type BaselineDriftRow,
+  type BaselinesConfigState,
+  type BaselinesDiscoveryConfig,
   type RollupGrainEstimate,
+  type TelemetryPreferences,
+  type TelemetryStatus,
+  type TelemetryOutboxEntry,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE, computeRollupEstimate } from '@costgoblin/core/browser';
+
+const MOCK_PEER_HOST = 'mock-peer.local';
 
 const costResult: CostResult = {
   rows: [
@@ -252,14 +265,14 @@ export class MockCostApi implements CostApi {
   getDimensions(): Promise<Dimension[]> { return Promise.resolve(mockDimensions); }
   getOrgTree(): Promise<OrgNode[]> { return Promise.resolve(orgTree); }
   getFilterValues(): Promise<{ value: string; label: string; count: number }[]> { return Promise.resolve([]); }
-  getDataInventory(): Promise<DataInventoryResult> { return Promise.resolve({ periods: [], totalRemoteSize: 0, totalLocalPeriods: 0, totalRemotePeriods: 0, local: { periods: [], diskBytes: 0, oldestPeriod: null, newestPeriod: null } }); }
+  getDataInventory(): Promise<DataInventoryResult> { return Promise.resolve({ periods: [], totalRemoteSize: 0, totalLocalPeriods: 0, totalRemotePeriods: 0, lastSync: null, local: { periods: [], diskBytes: 0, oldestPeriod: null, newestPeriod: null } }); }
   syncPeriods(): Promise<{ filesDownloaded: number; rowsProcessed: number }> { return Promise.resolve({ filesDownloaded: 0, rowsProcessed: 0 }); }
   cancelSync(): Promise<void> { return Promise.resolve(); }
   deleteLocalPeriod(): Promise<void> { return Promise.resolve(); }
   openDataFolder(): Promise<void> { return Promise.resolve(); }
   ssoLogin(): Promise<void> { return Promise.resolve(); }
   getAccountMapping(): Promise<AccountMappingStatus> { return Promise.resolve({ status: 'missing' }); }
-  getSetupStatus(): Promise<{ configured: boolean }> { return Promise.resolve({ configured: true }); }
+  getSetupStatus(): Promise<{ configured: boolean; postSetup: boolean }> { return Promise.resolve({ configured: true, postSetup: false }); }
   testConnection(): Promise<{ ok: boolean; error?: string | undefined }> { return Promise.resolve({ ok: true }); }
   listAwsProfiles(): Promise<string[]> { return Promise.resolve(['default', 'prod', 'staging']); }
   listS3Buckets(): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> { return Promise.resolve({ buckets: [{ name: 'my-cur-bucket', region: 'eu-central-1' }] }); }
@@ -288,13 +301,22 @@ export class MockCostApi implements CostApi {
     const enabled = (d: { enabled?: boolean | undefined }): boolean => d.enabled !== false;
     const hasResourceId = candidate.builtIn.some(d => d.field === 'resource_id' && enabled(d));
     const probeLineItems = 2_100_000;
-    const dimCardinalities = [
-      { column: 'account_id', cardinality: 14 },
-      { column: 'service', cardinality: 38 },
-      { column: 'tag_team', cardinality: 22 },
-      ...(hasResourceId ? [{ column: 'resource_id', cardinality: 1_820_000 }] : []),
-    ];
     const probeGrainRows = hasResourceId ? 1_840_000 : 92_000;
+    // leaveOneOutGrainRows = grain with that dim removed. With resource_id
+    // enabled it dominates (removing it collapses the grain ~20×); the others
+    // are near-redundant (loo ≈ full grain → ≈ ×1).
+    const dimCardinalities = hasResourceId
+      ? [
+          { column: 'account_id', cardinality: 14, leaveOneOutGrainRows: 1_800_000 },
+          { column: 'service', cardinality: 38, leaveOneOutGrainRows: 1_780_000 },
+          { column: 'tag_team', cardinality: 22, leaveOneOutGrainRows: 1_820_000 },
+          { column: 'resource_id', cardinality: 1_820_000, leaveOneOutGrainRows: 92_000 },
+        ]
+      : [
+          { column: 'account_id', cardinality: 14, leaveOneOutGrainRows: 84_000 },
+          { column: 'service', cardinality: 38, leaveOneOutGrainRows: 66_000 },
+          { column: 'tag_team', cardinality: 22, leaveOneOutGrainRows: 88_000 },
+        ];
     return Promise.resolve(computeRollupEstimate({
       probePeriod: '2026-04',
       months: 12,
@@ -302,6 +324,9 @@ export class MockCostApi implements CostApi {
       probeLineItems,
       rawBytes: 4_900_000_000,
       current: { rows: 1_100_000, bytes: 17_600_000 },
+      // The built rollup (current) represents the navigational grain; toggling
+      // resource_id ON changes the grain → estimate, OFF → matches → actuals.
+      currentMatchesCandidate: !hasResourceId,
       dimCardinalities,
     }));
   }
@@ -419,13 +444,59 @@ export class MockCostApi implements CostApi {
   acceptSuggestion(): Promise<void> { return Promise.resolve(); }
   cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
   clearAllCaches(): Promise<void> { return Promise.resolve(); }
-  getPerformanceInfo(): Promise<PerformanceInfo> { return Promise.resolve({ defaultMemoryGB: 8, defaultThreads: 8, totalMemoryGB: 16, maxThreads: 8, minMemoryGB: 1, maxMemoryGB: 24, current: { memoryLimitGB: null, threads: null } }); }
+  getPerformanceInfo(): Promise<PerformanceInfo> { return Promise.resolve({ defaultMemoryGB: 8, defaultThreads: 8, defaultRollupConcurrency: 2, totalMemoryGB: 16, maxThreads: 8, maxRollupConcurrency: 8, minMemoryGB: 1, maxMemoryGB: 24, current: { memoryLimitGB: null, threads: null, rollupConcurrency: null } }); }
   setPerformanceSettings(): Promise<void> { return Promise.resolve(); }
   awaitMaterializedBase(): Promise<boolean> { return Promise.resolve(true); }
   getMcpServerRunning(): Promise<boolean> { return Promise.resolve(true); }
   setMcpServerRunning(): Promise<void> { return Promise.resolve(); }
   getMcpToken(): Promise<string> { return Promise.resolve('mock-token-abc123'); }
   regenerateMcpToken(): Promise<string> { return Promise.resolve('mock-token-regenerated'); }
+  listBaselines(): Promise<BaselinesListResult> {
+    return Promise.resolve({
+      items: [], totalPotentialMonthly: asDollars(0), totalRealizedMonthly: asDollars(0), total: 0,
+      counts: { all: 0, open: 0, 'new': 0, tracking: 0, acting: 0, resolved: 0, dismissed: 0, ignored: 0 },
+    });
+  }
+  getBaseline(): Promise<BaselineDetail | null> { return Promise.resolve(null); }
+  createBaseline(input: BaselineCreateInput): Promise<BaselineRecord> {
+    return Promise.resolve({
+      spec: { id: 'mock', source: 'manual', scope: input.scope, basis: { costMetric: 'amortized', rules: [] }, basisSnapshotAt: '', createdAt: '', updatedAt: '' },
+      stats: null,
+      current: null,
+      savings: { potentialDaily: asDollars(0), realizedDaily: asDollars(0), potentialMonthly: asDollars(0), realizedMonthly: asDollars(0) },
+      status: 'insufficient-data',
+      triageStatus: 'new',
+      effectiveLower: asDollars(0),
+      effectiveUpper: asDollars(0),
+      currentDaily: asDollars(0),
+      potentialDaily: asDollars(0),
+      realizedDaily: asDollars(0),
+      bestAchieved: null,
+      scopeLabel: 'mock',
+      triage: { notes: [] },
+    });
+  }
+  updateBaseline(): Promise<BaselineRecord | null> { return Promise.resolve(null); }
+  deleteBaseline(): Promise<void> { return Promise.resolve(); }
+  recomputeBaselines(): Promise<void> { return Promise.resolve(); }
+  getBaselineSnapshots(): Promise<readonly BaselineSnapshot[]> { return Promise.resolve([]); }
+  getBaselineDrift(): Promise<readonly BaselineDriftRow[]> { return Promise.resolve([]); }
+  getBaselinesConfig(): Promise<BaselinesConfigState> {
+    return Promise.resolve({ config: this.mockBaselinesConfig(), isCustom: false });
+  }
+  setBaselinesConfig(config: BaselinesDiscoveryConfig): Promise<BaselinesConfigState> {
+    return Promise.resolve({ config, isCustom: true });
+  }
+  resetBaselinesConfig(): Promise<BaselinesConfigState> {
+    return Promise.resolve({ config: this.mockBaselinesConfig(), isCustom: false });
+  }
+  private mockBaselinesConfig(): BaselinesDiscoveryConfig {
+    return { lookbackDays: 365, windowDays: 30, lowerPct: 10, upperPct: 90, minMonthlyCost: asDollars(100), minSavings: asDollars(0), reopenPct: 15, grainDimensions: [] };
+  }
+  getTelemetryPreferences(): Promise<TelemetryPreferences> { return Promise.resolve({ errorReports: false, nativeCrashReports: false, performance: false, analytics: false }); }
+  setTelemetryPreferences(): Promise<void> { return Promise.resolve(); }
+  getTelemetryStatus(): Promise<TelemetryStatus> { return Promise.resolve({ dsnConfigured: false, active: false, preferences: { errorReports: false, nativeCrashReports: false, performance: false, analytics: false }, armed: { errorReports: false, nativeCrashReports: false, performance: false, analytics: false } }); }
+  getTelemetryOutbox(): Promise<readonly TelemetryOutboxEntry[]> { return Promise.resolve([]); }
   exportConfigBundle(): Promise<ExportConfigBundleResult> {
     return Promise.resolve({ status: 'saved', path: '/mock/costgoblin-config-2026-06-11.yaml' });
   }
@@ -452,13 +523,13 @@ export class MockCostApi implements CostApi {
     return Promise.resolve({ enabled: false, sharingKey: null, label: 'Mock · CostGoblin', port: null, hosts: [], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 });
   }
   enableDataSharing(): Promise<DataSharingResult> {
-    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-mock-sharing-key', label: 'Mock · CostGoblin', port: 53178, hosts: ['192.168.1.42'], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
+    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-mock-sharing-key', label: 'Mock · CostGoblin', port: 53178, hosts: [MOCK_PEER_HOST], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
   }
   disableDataSharing(): Promise<DataSharingResult> {
     return Promise.resolve({ status: 'ok', sharing: { enabled: false, sharingKey: null, label: 'Mock · CostGoblin', port: null, hosts: [], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
   }
   rotateDataSharingKey(): Promise<DataSharingResult> {
-    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-rotated-key', label: 'Mock · CostGoblin', port: 53178, hosts: ['192.168.1.42'], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
+    return Promise.resolve({ status: 'ok', sharing: { enabled: true, sharingKey: 'CGSHARE1-rotated-key', label: 'Mock · CostGoblin', port: 53178, hosts: [MOCK_PEER_HOST], fingerprint: 'ABCD-EF01-2345-6789', lastServedAt: null, filesServed: 0, lastPeer: null, bytesServed: 0, connectedClients: 0, bytesPerSecond: 0 } });
   }
   getSharedPullProgress(): Promise<SharedPullProgress> {
     return Promise.resolve({ active: false, phase: 'idle', filesDone: 0, filesTotal: 0, currentPeriod: null, bytesDone: 0, bytesTotal: 0, error: null });
@@ -484,7 +555,7 @@ export class MockCostApi implements CostApi {
 export const MOCK_SHARED_SOURCE: SharedSourceInfo = {
   label: 'Etienne · CostGoblin',
   fingerprint: 'ABCD-EF01-2345-6789',
-  host: '192.168.1.42',
+  host: MOCK_PEER_HOST,
   port: 53178,
   lastPulledAt: '2026-06-21T09:00:00.000Z',
   periods: ['2026-05', '2026-06'],
@@ -515,6 +586,7 @@ export const MOCK_BUNDLE_SUMMARY: ConfigBundleSummary = {
   orgTreeNodeCount: 12,
   exclusionRuleCount: 6,
   viewCount: 2,
+  baselineCount: 0,
 };
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {

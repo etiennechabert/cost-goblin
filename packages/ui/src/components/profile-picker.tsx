@@ -64,15 +64,14 @@ export function ProfilePicker({ profiles, selected, onSelect, currentProfile, au
       />
       <div
         className={['flex flex-col gap-1 overflow-y-auto', listClassName ?? 'max-h-48'].join(' ')}
-        role="listbox"
+        role="group"
         aria-label="AWS profiles"
       >
         {filtered.map(profile => (
           <button
             key={profile}
             type="button"
-            role="option"
-            aria-selected={selected === profile}
+            aria-pressed={selected === profile}
             onClick={() => { onSelect(profile); }}
             className={[
               'flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors',

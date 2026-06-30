@@ -94,7 +94,7 @@ describe('ShareConfigDialog', () => {
     await waitFor(() => {
       expect(input).toHaveProperty('value', 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml');
     });
-    await user.click(screen.getByRole('option', { name: 'staging' }));
+    await user.click(screen.getByRole('button', { name: 'staging' }));
     await user.click(screen.getByText('Publish'));
     await waitFor(() => {
       expect(publishSpy).toHaveBeenCalledWith({ location: 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml', profile: 'staging' });
@@ -182,7 +182,7 @@ describe('ImportConfigDialog', () => {
       expect(screen.getByText('s3://my-cur-bucket/daily/')).toBeDefined();
     });
 
-    await user.click(screen.getByRole('option', { name: 'prod' }));
+    await user.click(screen.getByRole('button', { name: 'prod' }));
     await user.click(screen.getByText('Apply configuration'));
     await waitFor(() => {
       expect(screen.getByText('Configuration applied.')).toBeDefined();
@@ -253,7 +253,7 @@ describe('ImportConfigDialog', () => {
     await waitFor(() => {
       expect(input).toHaveProperty('value', 's3://costgoblin-cur-bucket/costgoblin/org-config.yaml');
     });
-    await user.click(screen.getByRole('option', { name: 'staging' }));
+    await user.click(screen.getByRole('button', { name: 'staging' }));
     await user.clear(input);
     await user.type(input, 's3://client-bucket/costgoblin/org-config.yaml');
     await user.click(screen.getByText('Fetch from S3'));

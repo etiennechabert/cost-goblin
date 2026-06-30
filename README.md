@@ -11,17 +11,21 @@
 
 <p align="center">
   <a href="https://github.com/etiennechabert/cost-goblin/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/Node.js-%3E%3D%2020-339933.svg?logo=node.js&logoColor=white" alt="Node.js">
+  <img src="https://img.shields.io/badge/Node.js-%3E%3D%2024-339933.svg?logo=node.js&logoColor=white" alt="Node.js">
   <img src="https://img.shields.io/badge/Electron-41-47848F.svg?logo=electron&logoColor=white" alt="Electron">
   <img src="https://img.shields.io/badge/DuckDB-1.5-FFF000.svg?logo=duckdb&logoColor=black" alt="DuckDB">
   <a href="https://github.com/etiennechabert/cost-goblin/actions/workflows/ci.yml"><img src="https://github.com/etiennechabert/cost-goblin/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://buymeacoffee.com/etiennechak"><img src="https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buymeacoffee&logoColor=white" alt="Buy Me A Coffee"></a>
 </p>
 
 <p align="center">
   <a href="https://sonarcloud.io/summary/new_code?id=etiennechabert_cost-goblin"><img src="https://sonarcloud.io/api/project_badges/measure?project=etiennechabert_cost-goblin&metric=security_rating" alt="Security Rating"></a>
   <a href="https://sonarcloud.io/summary/new_code?id=etiennechabert_cost-goblin"><img src="https://sonarcloud.io/api/project_badges/measure?project=etiennechabert_cost-goblin&metric=reliability_rating" alt="Reliability Rating"></a>
   <a href="https://sonarcloud.io/summary/new_code?id=etiennechabert_cost-goblin"><img src="https://sonarcloud.io/api/project_badges/measure?project=etiennechabert_cost-goblin&metric=sqale_rating" alt="Maintainability Rating"></a>
+</p>
+
+<p align="center">
+  <a href="https://buymeacoffee.com/etiennechak"><img src="https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?logo=buymeacoffee&logoColor=white" alt="Buy Me A Coffee"></a>
+  <a href="https://sentry.io"><img src="https://img.shields.io/badge/Sponsored%20by-Sentry-362D59?logo=sentry&logoColor=white" alt="Sponsored by Sentry"></a>
 </p>
 
 <h3 align="center">
@@ -57,7 +61,7 @@ On first launch, the setup wizard guides you through connecting to your AWS CUR 
 
 ## Prerequisites
 
-- **Node.js** 20+
+- **Node.js** 24+
 - **AWS CUR 2.0** report exported as Parquet to S3
 
 ### Setting Up a CUR Report
@@ -218,6 +222,15 @@ make test       # run vitest
 make lint       # run tsc + eslint
 make reset      # wipe app data, restart with wizard
 ```
+
+## Backed by
+
+CostGoblin is free and open source — kept that way with the help of companies that support open-source projects:
+
+- **[Sentry](https://sentry.io)** — error monitoring, via their [open-source program](https://sentry.io/for/open-source/)
+- **[SonarCloud](https://sonarcloud.io)** — code quality & static analysis
+- **[GitHub](https://github.com)** — repository hosting & CI
+- **[Cloudflare](https://www.cloudflare.com)** — website hosting & CDN
 
 ## License
 

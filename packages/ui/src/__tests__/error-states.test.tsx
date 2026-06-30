@@ -1,6 +1,6 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { DataManagement } from '../views/data-management.js';
@@ -26,6 +26,10 @@ function renderDataManagement(api?: MockCostApi) {
 }
 
 describe('DataManagement error states', () => {
+  // The sync-error test spies on the global Date.now; restore between tests so
+  // it can't leak into the others.
+  afterEach(() => { vi.restoreAllMocks(); });
+
   it('shows SSO login error with refresh hint', async () => {
     const api = new MockCostApi();
     vi.spyOn(api, 'getDataInventory').mockRejectedValue(
@@ -65,6 +69,11 @@ describe('DataManagement error states', () => {
   });
 
   it('shows sync error in tier panel when sync fails', async () => {
+    // The download list only includes periods within the tier's retention
+    // window (mock daily retentionDays = 90). Pin the clock near the fixture's
+    // '2026-03' period so it stays in-window; otherwise this time-bombs once
+    // wall-clock time advances >90 days past March 2026.
+    vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-03-15T00:00:00Z').getTime());
     const api = new MockCostApi();
     vi.spyOn(api, 'syncPeriods').mockRejectedValue(
       new Error('S3 bucket access denied'),
@@ -74,6 +83,7 @@ describe('DataManagement error states', () => {
       totalRemoteSize: 100,
       totalLocalPeriods: 0,
       totalRemotePeriods: 1,
+      lastSync: null,
       local: { periods: [], diskBytes: 0, oldestPeriod: null, newestPeriod: null },
     });
     const { user } = renderDataManagement(api);

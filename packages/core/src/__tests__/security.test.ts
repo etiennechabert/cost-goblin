@@ -251,7 +251,7 @@ describe('SQL Injection Prevention', () => {
       expect(result.params).toContain('2026-01-01');
       expect(result.params).toContain('2026-01-31');
       // Verify we have exactly 4 parameters
-      expect(result.params.length).toBe(4);
+      expect(result.params).toHaveLength(4);
     });
   });
 
@@ -389,7 +389,7 @@ describe('SQL Injection Prevention', () => {
       const placeholders = result.sql.match(/\$\d+/g);
       expect(placeholders).toBeTruthy();
       if (placeholders !== null) {
-        expect(placeholders.length).toBe(result.params.length);
+        expect(placeholders).toHaveLength(result.params.length);
       }
     });
 

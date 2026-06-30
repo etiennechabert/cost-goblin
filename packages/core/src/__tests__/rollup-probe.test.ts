@@ -3,7 +3,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildGrainProbeQuery } from '../query/builder.js';
-import { rollupGrainColumns } from '../rollup/grain.js';
+import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 import { computeRollupEstimate } from '../rollup/estimator.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
@@ -62,19 +62,28 @@ function toNum(v: unknown): number {
   return 0;
 }
 
-/** Run the probe and return line_items, grain_rows, and a column→cardinality
- *  map (mirroring the desktop handler's card_<i> decoding). */
+/** Run the probe and return line_items, grain_rows, a column→cardinality map and
+ *  a column→leave-one-out-grain map (mirroring the desktop handler's card_<i> /
+ *  loo_<i> decoding). */
 async function probe(
   conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>,
   dimensions: DimensionsConfig,
-): Promise<{ lineItems: number; grainRows: number; cards: Map<string, number> }> {
+): Promise<{ lineItems: number; grainRows: number; cards: Map<string, number>; loo: Map<string, number> }> {
   const grain = rollupGrainColumns(dimensions);
-  const cardCols = grain.filter(c => c !== 'usage_date');
+  const grainDims = rollupGrainDimensions(dimensions);
   const sql = buildGrainProbeQuery(PERIOD, grain, { dataDir: SYNTHETIC_DIR, dimensions, costScope: scope });
   const row = (await queryAll(conn, sql))[0];
   const cards = new Map<string, number>();
-  cardCols.forEach((col, i) => { cards.set(col, toNum(row?.[`card_${String(i)}`])); });
-  return { lineItems: toNum(row?.['line_items']), grainRows: toNum(row?.['grain_rows']), cards };
+  const loo = new Map<string, number>();
+  grainDims.forEach((dim, i) => {
+    cards.set(dim.column, toNum(row?.[`card_${String(i)}`]));
+    loo.set(dim.column, toNum(row?.[`loo_${String(i)}`]));
+  });
+  return { lineItems: toNum(row?.['line_items']), grainRows: toNum(row?.['grain_rows']), cards, loo };
+}
+
+function dimInputs(cards: Map<string, number>, loo: Map<string, number>): { column: string; cardinality: number; leaveOneOutGrainRows: number }[] {
+  return [...cards].map(([column, cardinality]) => ({ column, cardinality, leaveOneOutGrainRows: loo.get(column) ?? 0 }));
 }
 
 describe('buildGrainProbeQuery', () => {
@@ -88,7 +97,7 @@ describe('buildGrainProbeQuery', () => {
   afterAll(async () => { /* in-memory db, nothing to clean */ });
 
   it('a stable grain aggregates well below the line-item count', async () => {
-    const { lineItems, grainRows, cards } = await probe(conn, stableGrain);
+    const { lineItems, grainRows, cards, loo } = await probe(conn, stableGrain);
     expect(lineItems).toBeGreaterThan(0);
     expect(grainRows).toBeGreaterThan(0);
     // Pre-aggregation must collapse rows — the stable grain compresses raw.
@@ -96,11 +105,14 @@ describe('buildGrainProbeQuery', () => {
 
     const estimate = computeRollupEstimate({
       probePeriod: PERIOD, months: 1, probeGrainRows: grainRows, probeLineItems: lineItems, rawBytes: 0,
-      current: null, dimCardinalities: [...cards].map(([column, cardinality]) => ({ column, cardinality })),
+      current: null, dimCardinalities: dimInputs(cards, loo),
     });
     expect(estimate.compressionRate).toBeGreaterThan(1);
     expect(estimate.dims.find(d => d.column === 'resource_id')).toBeUndefined();
     expect(estimate.dims.every(d => !d.rawOnly)).toBe(true);
+    // No single navigational dim dominates a balanced grain.
+    expect(estimate.dims.every(d => !d.outlier)).toBe(true);
+    expect(estimate.dims.every(d => d.marginalMultiplier >= 1)).toBe(true);
   });
 
   it('flags resource_id raw-only: it is near-unique per line item', async () => {
@@ -116,11 +128,20 @@ describe('buildGrainProbeQuery', () => {
     const estimate = computeRollupEstimate({
       probePeriod: PERIOD, months: 1, probeGrainRows: withResource.grainRows, probeLineItems: withResource.lineItems, rawBytes: 0,
       current: null,
-      dimCardinalities: [...withResource.cards].map(([column, cardinality]) => ({ column, cardinality })),
+      dimCardinalities: dimInputs(withResource.cards, withResource.loo),
     });
     // The data-driven verdict: resource_id is raw-only, the others are not.
     expect(estimate.dims.find(d => d.column === 'resource_id')?.rawOnly).toBe(true);
     expect(estimate.dims.find(d => d.column === 'service')?.rawOnly).toBe(false);
     expect(estimate.dims.find(d => d.column === 'account_id')?.rawOnly).toBe(false);
+    // The leave-one-out SQL columns flow through to valid per-dim marginals
+    // (multipliers clamped ≥ 1, shares in [0,1] and summing to 1). On this tiny,
+    // dense fixture the other dims already near-uniquely identify each row, so
+    // resource_id's *marginal* multiplier stays modest even though its
+    // *cardinality* flags it raw-only — the cardinality-vs-LOO distinction.
+    const resource = estimate.dims.find(d => d.column === 'resource_id');
+    expect(resource).toBeDefined();
+    expect(estimate.dims.every(d => d.marginalMultiplier >= 1 && d.impactShare >= 0 && d.impactShare <= 1)).toBe(true);
+    expect(estimate.dims.reduce((sum, d) => sum + d.impactShare, 0)).toBeCloseTo(1, 5);
   });
 });

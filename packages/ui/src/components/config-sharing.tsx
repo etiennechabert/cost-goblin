@@ -132,6 +132,12 @@ function SharingModal({ title, onClose, children, dismissable = true }: Readonly
 // with zero AWS access pull this machine's data + config from one pasted key.
 // ---------------------------------------------------------------------------
 
+function lastPullSummary(status: DataSharingStatus): string {
+  const peer = status.lastPeer ?? 'a peer';
+  const fileWord = status.filesServed === 1 ? 'file' : 'files';
+  return `Last pull from ${peer} · ${String(status.filesServed)} ${fileWord} served`;
+}
+
 function ShareDataSection(): React.JSX.Element {
   const api = useCostApi();
   const [status, setStatus] = useState<DataSharingStatus | null>(null);
@@ -220,7 +226,7 @@ function ShareDataSection(): React.JSX.Element {
             <p className="text-xs text-text-secondary">
               {status.lastServedAt === null
                 ? 'Waiting for a teammate to connect…'
-                : `Last pull from ${status.lastPeer ?? 'a peer'} · ${String(status.filesServed)} file${status.filesServed === 1 ? '' : 's'} served`}
+                : lastPullSummary(status)}
             </p>
           </div>
         </div>
@@ -253,6 +259,97 @@ function pullPhaseLabel(progress: SharedPullProgress | null): string {
 
 function availablePeriods(preview: SharedSourcePreview): string[] {
   return [...new Set(preview.tiers.flatMap(t => t.periods))].sort((a, b) => a.localeCompare(b));
+}
+
+function ChoosingView({ preview, tiers, periods, onToggleTier, onTogglePeriod, onSetPeriods, onBack, onPull }: Readonly<{
+  preview: SharedSourcePreview;
+  tiers: ReadonlySet<SharedSourceTier>;
+  periods: ReadonlySet<string>;
+  onToggleTier: (t: SharedSourceTier) => void;
+  onTogglePeriod: (p: string) => void;
+  onSetPeriods: (next: ReadonlySet<string>) => void;
+  onBack: () => void;
+  onPull: () => void;
+}>): React.JSX.Element {
+  const months = availablePeriods(preview);
+  const hasData = DATA_TIERS.some(t => tiers.has(t));
+  const canPull = tiers.has('config') || (hasData && periods.size > 0);
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-sm text-text-primary">
+        From <span className="font-medium">{preview.label}</span> — choose what to pull.
+      </p>
+
+      {preview.hasConfig && (
+        <label htmlFor="cg-pull-config-tier" className="grid grid-cols-[auto_1fr] items-start gap-x-2 rounded-lg border border-border bg-bg-tertiary/20 px-3 py-2 cursor-pointer">
+          <input id="cg-pull-config-tier" type="checkbox" checked={tiers.has('config')} onChange={() => { onToggleTier('config'); }} className="mt-0.5 accent-accent" />
+          <span className="text-sm text-text-primary">Configuration</span>
+          <span className="col-start-2 block text-xs text-text-muted">Dimensions, dashboards, cost scope &amp; org tree — applied under your AWS profile.</span>
+        </label>
+      )}
+
+      <div className="flex flex-col gap-1.5">
+        <span className="text-xs text-text-muted uppercase tracking-wider">Data</span>
+        <div className="flex flex-wrap gap-2">
+          {preview.tiers.map(t => (
+            <button
+              key={t.tier}
+              type="button"
+              onClick={() => { onToggleTier(t.tier); }}
+              className={[
+                'rounded-md border px-2.5 py-1.5 text-xs transition-colors',
+                tiers.has(t.tier) ? 'border-accent bg-accent-muted text-accent' : 'border-border bg-bg-tertiary/20 text-text-secondary hover:text-text-primary',
+              ].join(' ')}
+            >
+              {DATA_TIER_LABELS[t.tier]} <span className="opacity-70">· {formatBytes(t.bytes)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {months.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-text-muted uppercase tracking-wider">Months</span>
+            <div className="flex items-center gap-2 text-xs">
+              <button type="button" onClick={() => { onSetPeriods(new Set(months)); }} className="text-text-muted hover:text-text-secondary">All</button>
+              <button type="button" onClick={() => { onSetPeriods(new Set()); }} className="text-text-muted hover:text-text-secondary">None</button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {months.map(m => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => { onTogglePeriod(m); }}
+                className={[
+                  'rounded-md border px-2 py-1 font-mono text-xs transition-colors',
+                  periods.has(m) ? 'border-accent bg-accent-muted text-accent' : 'border-border bg-bg-tertiary/20 text-text-secondary hover:text-text-primary',
+                ].join(' ')}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between pt-1">
+        <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
+        <Button onClick={onPull} disabled={!canPull} className="bg-accent hover:bg-accent-hover text-white">
+          <CloudDownload size={16} className="mr-1.5" />
+          Pull
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function toggleInSet<T>(set: ReadonlySet<T>, value: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
 }
 
 function AddSharedSourceSection({ onPulled, onBusyChange }: Readonly<{
@@ -298,12 +395,8 @@ function AddSharedSourceSection({ onPulled, onBusyChange }: Readonly<{
     }).catch((e: unknown) => { setState({ kind: 'entry', error: e instanceof Error ? e.message : String(e) }); });
   }
 
-  function toggleTier(t: SharedSourceTier): void {
-    setTiers(prev => { const next = new Set(prev); if (next.has(t)) next.delete(t); else next.add(t); return next; });
-  }
-  function togglePeriod(p: string): void {
-    setPeriods(prev => { const next = new Set(prev); if (next.has(p)) next.delete(p); else next.add(p); return next; });
-  }
+  function toggleTier(t: SharedSourceTier): void { setTiers(prev => toggleInSet(prev, t)); }
+  function togglePeriod(p: string): void { setPeriods(prev => toggleInSet(prev, p)); }
 
   function startPull(): void {
     const selection: SharedPullSelection = { sources: [...tiers], periods: [...periods].sort((a, b) => a.localeCompare(b)) };
@@ -349,7 +442,7 @@ function AddSharedSourceSection({ onPulled, onBusyChange }: Readonly<{
               <div className="h-full bg-accent transition-all" style={{ width: `${String(pct)}%` }} />
             </div>
             <p className="text-xs text-text-muted">
-              {formatBytes(progress.bytesDone)} / {formatBytes(progress.bytesTotal)} · {progress.filesDone}/{progress.filesTotal} files{progress.currentPeriod !== null ? ` · ${progress.currentPeriod}` : ''}
+              {formatBytes(progress.bytesDone)} / {formatBytes(progress.bytesTotal)} · {progress.filesDone}/{progress.filesTotal} files{progress.currentPeriod === null ? '' : ` · ${progress.currentPeriod}`}
             </p>
           </div>
         )}
@@ -382,79 +475,17 @@ function AddSharedSourceSection({ onPulled, onBusyChange }: Readonly<{
   }
 
   if (state.kind === 'choosing') {
-    const months = availablePeriods(state.preview);
-    const hasData = DATA_TIERS.some(t => tiers.has(t));
-    const canPull = tiers.has('config') || (hasData && periods.size > 0);
     return (
-      <div className="flex flex-col gap-3">
-        <p className="text-sm text-text-primary">
-          From <span className="font-medium">{state.preview.label}</span> — choose what to pull.
-        </p>
-
-        {state.preview.hasConfig && (
-          <label className="flex items-start gap-2 rounded-lg border border-border bg-bg-tertiary/20 px-3 py-2 cursor-pointer">
-            <input type="checkbox" checked={tiers.has('config')} onChange={() => { toggleTier('config'); }} className="mt-0.5 accent-accent" />
-            <span>
-              <span className="text-sm text-text-primary">Configuration</span>
-              <span className="block text-xs text-text-muted">Dimensions, dashboards, cost scope &amp; org tree — applied under your AWS profile.</span>
-            </span>
-          </label>
-        )}
-
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs text-text-muted uppercase tracking-wider">Data</span>
-          <div className="flex flex-wrap gap-2">
-            {state.preview.tiers.map(t => (
-              <button
-                key={t.tier}
-                type="button"
-                onClick={() => { toggleTier(t.tier); }}
-                className={[
-                  'rounded-md border px-2.5 py-1.5 text-xs transition-colors',
-                  tiers.has(t.tier) ? 'border-accent bg-accent-muted text-accent' : 'border-border bg-bg-tertiary/20 text-text-secondary hover:text-text-primary',
-                ].join(' ')}
-              >
-                {DATA_TIER_LABELS[t.tier]} <span className="opacity-70">· {formatBytes(t.bytes)}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {months.length > 0 && (
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-text-muted uppercase tracking-wider">Months</span>
-              <div className="flex items-center gap-2 text-xs">
-                <button type="button" onClick={() => { setPeriods(new Set(months)); }} className="text-text-muted hover:text-text-secondary">All</button>
-                <button type="button" onClick={() => { setPeriods(new Set()); }} className="text-text-muted hover:text-text-secondary">None</button>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {months.map(m => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => { togglePeriod(m); }}
-                  className={[
-                    'rounded-md border px-2 py-1 font-mono text-xs transition-colors',
-                    periods.has(m) ? 'border-accent bg-accent-muted text-accent' : 'border-border bg-bg-tertiary/20 text-text-secondary hover:text-text-primary',
-                  ].join(' ')}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="flex items-center justify-between pt-1">
-          <button type="button" onClick={() => { setState({ kind: 'entry', error: null }); }} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
-          <Button onClick={startPull} disabled={!canPull} className="bg-accent hover:bg-accent-hover text-white">
-            <CloudDownload size={16} className="mr-1.5" />
-            Pull
-          </Button>
-        </div>
-      </div>
+      <ChoosingView
+        preview={state.preview}
+        tiers={tiers}
+        periods={periods}
+        onToggleTier={toggleTier}
+        onTogglePeriod={togglePeriod}
+        onSetPeriods={setPeriods}
+        onBack={() => { setState({ kind: 'entry', error: null }); }}
+        onPull={startPull}
+      />
     );
   }
 
@@ -467,7 +498,7 @@ function AddSharedSourceSection({ onPulled, onBusyChange }: Readonly<{
             <div className="min-w-0">
               <p className="truncate text-sm text-text-primary">Reconnect to <span className="font-medium">{stored.label}</span></p>
               <p className="text-xs text-text-muted">
-                {stored.lastPulledAt !== null ? `Last pulled ${stored.lastPulledAt.slice(0, 10)}` : 'Saved source'} · fingerprint <span className="font-mono">{stored.fingerprint.slice(0, 8)}</span>
+                {stored.lastPulledAt === null ? 'Saved source' : `Last pulled ${stored.lastPulledAt.slice(0, 10)}`} · fingerprint <span className="font-mono">{stored.fingerprint.slice(0, 8)}</span>
               </p>
             </div>
             <Button onClick={() => { startPreview('stored'); }} className="bg-accent hover:bg-accent-hover text-white shrink-0">
@@ -482,7 +513,7 @@ function AddSharedSourceSection({ onPulled, onBusyChange }: Readonly<{
       )}
 
       <label htmlFor="cg-add-source-key" className="text-xs text-text-muted uppercase tracking-wider">
-        {stored !== null ? 'Or a key from someone else' : 'Sharing key from a teammate'}
+        {stored === null ? 'Sharing key from a teammate' : 'Or a key from someone else'}
       </label>
       <p className="text-xs text-text-muted">
         Your teammate creates this by clicking <span className="font-medium text-text-secondary">Start sharing</span> in their CostGoblin (under <span className="font-medium text-text-secondary">Share configuration…</span>). Their app needs to stay open on the same network while you connect.

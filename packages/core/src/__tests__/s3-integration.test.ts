@@ -97,7 +97,7 @@ describe.skipIf(!available)('S3 integration (MinIO)', () => {
 
   it('listFiles returns parquet entries', async () => {
     const files = await s3.listFiles(BUCKET, `${PREFIX}data/`);
-    expect(files.length).toBe(2);
+    expect(files).toHaveLength(2);
     expect(files.every(f => f.key.endsWith('.parquet'))).toBe(true);
     expect(files.every(f => f.size > 0)).toBe(true);
     expect(files.every(f => f.contentHash.length > 0)).toBe(true);
@@ -105,7 +105,7 @@ describe.skipIf(!available)('S3 integration (MinIO)', () => {
 
   it('listFiles filters by prefix', async () => {
     const files = await s3.listFiles(BUCKET, `${PREFIX}data/BILLING_PERIOD=2026-01/`);
-    expect(files.length).toBe(1);
+    expect(files).toHaveLength(1);
     expect(files[0]?.key).toContain('2026-01');
   });
 
@@ -120,7 +120,7 @@ describe.skipIf(!available)('S3 integration (MinIO)', () => {
 
     const downloaded = await readFile(localPath);
     const original = await readFile(join(FIXTURES_DIR, 'daily-2026-01', 'data.parquet'));
-    expect(downloaded.length).toBe(original.length);
+    expect(downloaded).toHaveLength(original.length);
   });
 
   it('downloadFile supports abort signal', async () => {

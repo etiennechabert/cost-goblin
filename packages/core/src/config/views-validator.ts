@@ -16,7 +16,8 @@ import {
 } from './validator.js';
 
 const WIDGET_TYPES: readonly WidgetType[] = [
-  'summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table',
+  'summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table', 'baseline',
+  'waterfall', 'priceVolume', 'burndown', 'pareto',
 ];
 
 const WIDGET_SIZES: readonly WidgetSize[] = ['small', 'medium', 'large', 'full'];
@@ -77,7 +78,36 @@ function validateSummaryWidget(raw: Record<string, unknown>, ctx: string, base: 
   return { type: 'summary', ...base, ...(metric === undefined ? {} : { metric }) };
 }
 
-function validateGroupByWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, type: 'pie' | 'stackedBar' | 'bubble' | 'treemap'): WidgetSpec {
+function parseBubbleLogScale(raw: Record<string, unknown>, ctx: string): number | 'linear' | undefined {
+  const rawLog: unknown = raw['logScale'];
+  if (rawLog === 'linear') return 'linear';
+  if (typeof rawLog === 'number') return rawLog;
+  if (rawLog !== undefined) {
+    throw new ConfigValidationError(`${ctx}.logScale must be a number or 'linear'`);
+  }
+  return undefined;
+}
+
+function parseOptionalNumber(raw: Record<string, unknown>, key: string, ctx: string): number | undefined {
+  const value = raw[key];
+  if (value === undefined) return undefined;
+  assertNumber(value, `${ctx}.${key}`);
+  return value;
+}
+
+function validateBubbleWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, groupBy: ReturnType<typeof asDimensionId>): WidgetSpec {
+  const logScale = parseBubbleLogScale(raw, ctx);
+  const deltaThreshold = parseOptionalNumber(raw, 'deltaThreshold', ctx);
+  const percentThreshold = parseOptionalNumber(raw, 'percentThreshold', ctx);
+  return {
+    type: 'bubble', ...base, groupBy,
+    ...(logScale === undefined ? {} : { logScale }),
+    ...(deltaThreshold === undefined ? {} : { deltaThreshold }),
+    ...(percentThreshold === undefined ? {} : { percentThreshold }),
+  };
+}
+
+function validateGroupByWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, type: 'pie' | 'stackedBar' | 'bubble' | 'treemap' | 'pareto'): WidgetSpec {
   assertString(raw['groupBy'], `${ctx}.groupBy`);
   const groupBy = asDimensionId(raw['groupBy']);
   if (type === 'treemap') {
@@ -86,38 +116,11 @@ function validateGroupByWidget(raw: Record<string, unknown>, ctx: string, base: 
       : (assertString(raw['drillTo'], `${ctx}.drillTo`), asDimensionId(raw['drillTo']));
     return { type, ...base, groupBy, ...(drillTo === undefined ? {} : { drillTo }) };
   }
-  if (type === 'pie') return { type, ...base, groupBy };
-  if (type === 'bubble') {
-    let logScale: number | 'linear' | undefined;
-    const rawLog: unknown = raw['logScale'];
-    if (rawLog === 'linear') {
-      logScale = 'linear';
-    } else if (typeof rawLog === 'number') {
-      logScale = rawLog;
-    } else if (rawLog !== undefined) {
-      throw new ConfigValidationError(`${ctx}.logScale must be a number or 'linear'`);
-    }
-    let deltaThreshold: number | undefined;
-    if (raw['deltaThreshold'] !== undefined) {
-      assertNumber(raw['deltaThreshold'], `${ctx}.deltaThreshold`);
-      deltaThreshold = raw['deltaThreshold'];
-    }
-    let percentThreshold: number | undefined;
-    if (raw['percentThreshold'] !== undefined) {
-      assertNumber(raw['percentThreshold'], `${ctx}.percentThreshold`);
-      percentThreshold = raw['percentThreshold'];
-    }
-    return {
-      type, ...base, groupBy,
-      ...(logScale === undefined ? {} : { logScale }),
-      ...(deltaThreshold === undefined ? {} : { deltaThreshold }),
-      ...(percentThreshold === undefined ? {} : { percentThreshold }),
-    };
-  }
+  if (type === 'bubble') return validateBubbleWidget(raw, ctx, base, groupBy);
   return { type, ...base, groupBy };
 }
 
-function validateTopNWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, type: 'line' | 'topNBar' | 'heatmap'): WidgetSpec {
+function validateTopNWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, type: 'line' | 'topNBar' | 'heatmap' | 'waterfall' | 'priceVolume'): WidgetSpec {
   assertString(raw['groupBy'], `${ctx}.groupBy`);
   let topN: number | undefined;
   if (raw['topN'] !== undefined) {
@@ -125,6 +128,11 @@ function validateTopNWidget(raw: Record<string, unknown>, ctx: string, base: Wid
     topN = raw['topN'];
   }
   return { type, ...base, groupBy: asDimensionId(raw['groupBy']), ...(topN === undefined ? {} : { topN }) };
+}
+
+function validateBurndownWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase): WidgetSpec {
+  const budget = parseOptionalNumber(raw, 'budget', ctx);
+  return { type: 'burndown', ...base, ...(budget === undefined ? {} : { budget }) };
 }
 
 function validateTableWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase): WidgetSpec {
@@ -152,13 +160,22 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
     case 'stackedBar':
     case 'bubble':
     case 'treemap':
+    case 'pareto':
       return validateGroupByWidget(raw, ctx, base, type);
     case 'line':
     case 'topNBar':
     case 'heatmap':
+    case 'waterfall':
+    case 'priceVolume':
       return validateTopNWidget(raw, ctx, base, type);
+    case 'burndown':
+      return validateBurndownWidget(raw, ctx, base);
     case 'table':
       return validateTableWidget(raw, ctx, base);
+    case 'baseline': {
+      const topN = raw['topN'] === undefined ? undefined : (assertNumber(raw['topN'], `${ctx}.topN`), raw['topN']);
+      return { type: 'baseline', ...base, ...(topN === undefined ? {} : { topN }) };
+    }
   }
 }
 

@@ -44,7 +44,7 @@ export function SettingsShell({
     e.preventDefault();
     const current = tabs.findIndex(t => t.id === activeTab);
     if (current === -1) return;
-    let next = current;
+    let next: number;
     if (e.key === 'ArrowDown') next = (current + 1) % tabs.length;
     else if (e.key === 'ArrowUp') next = (current - 1 + tabs.length) % tabs.length;
     else if (e.key === 'Home') next = 0;
@@ -59,7 +59,6 @@ export function SettingsShell({
       <nav
         ref={railRef}
         aria-label="Settings sections"
-        onKeyDown={handleRailKeyDown}
         className="sticky w-56 shrink-0 self-start border-r border-border bg-bg-secondary/40 p-3"
         style={{ top: topOffset, minHeight: `calc(100vh - ${String(topOffset)}px)` }}
       >
@@ -74,6 +73,7 @@ export function SettingsShell({
                   data-tab={tab.id}
                   tabIndex={isActive ? 0 : -1}
                   onClick={() => { onTabChange(tab.id); }}
+                  onKeyDown={handleRailKeyDown}
                   aria-current={isActive ? 'page' : undefined}
                   className={[
                     'flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors',

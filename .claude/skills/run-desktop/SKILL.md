@@ -46,6 +46,23 @@ Rules:
 - Both `fetch` and `merge` are no-ops when already up to date — this is cheap to
   run every launch.
 
+## Always export the Sentry DSN
+
+Launch with `COSTGOBLIN_SENTRY_DSN` set so the opt-in telemetry / crash reporter
+has an endpoint and can be exercised. Telemetry is still **off by default** — the
+DSN just makes it possible to enable it in Settings → Telemetry; nothing is sent
+until a channel is turned on (and, post-restart-model, the app must be relaunched
+to apply a consent change). The DSN isn't a secret but is kept out of the repo,
+so fetch it from the GitHub `release` environment in the SAME shell you launch
+from:
+
+```bash
+export COSTGOBLIN_SENTRY_DSN="$(gh variable get SENTRY_DSN --env release)"
+```
+
+(If `gh` isn't available, read the DSN from the Sentry project settings instead.)
+Then run `npm run dev` below in that shell.
+
 ## Launch (normal checkout)
 
 ```bash

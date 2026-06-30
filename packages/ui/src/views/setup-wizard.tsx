@@ -48,7 +48,7 @@ function WelcomeStep({ onNext, onImport }: Readonly<{ onNext: () => void; onImpo
         </Button>
         <div className="flex items-center gap-3 text-xs text-text-muted">
           <span className="h-px flex-1 bg-border" />
-          or
+          <span>or</span>
           <span className="h-px flex-1 bg-border" />
         </div>
         <Button variant="outline" onClick={onImport}>

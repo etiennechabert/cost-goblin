@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -201,41 +201,39 @@ interface SyncDateGroupOptions {
   readonly dateFiles: readonly ManifestFileEntry[];
   readonly s3Bucket: string;
   readonly dataDir: string;
-  readonly outputDir: string;
   readonly profile: string;
   readonly signal: AbortSignal | undefined;
   readonly onLine: (line: string) => void;
 }
 
 async function syncDateGroup(opts: SyncDateGroupOptions): Promise<number> {
-  const { date, dateFiles, s3Bucket, dataDir, outputDir, profile, signal, onLine } = opts;
+  const { date, dateFiles, s3Bucket, dataDir, profile, signal, onLine } = opts;
   const firstFile = dateFiles[0];
   if (firstFile === undefined) return 0;
 
   const datePrefix = extractPeriodPrefix(firstFile.key);
   const s3Source = `s3://${s3Bucket}/${datePrefix}`;
-  const stagingDir = join(dataDir, 'aws', 'raw', `cost-opt-${date}`);
-  await mkdir(stagingDir, { recursive: true });
+  // This raw dir is the copy the Savings query actually reads
+  // (query-recommendations reads aws/raw/cost-opt-*/*.parquet).
+  const destDir = join(dataDir, 'aws', 'raw', `cost-opt-${date}`);
+  await mkdir(destDir, { recursive: true });
 
-  await runAwsS3Sync({ source: s3Source, dest: stagingDir, profile, signal, onLine });
+  await runAwsS3Sync({ source: s3Source, dest: destDir, profile, signal, onLine });
 
-  const dateDir = join(outputDir, `usage_date=${date}`);
-  await mkdir(dateDir, { recursive: true });
-
-  const downloaded = await readdir(stagingDir);
-  for (const f of downloaded) {
-    if (f.endsWith('.parquet')) {
-      await copyFile(join(stagingDir, f), join(dateDir, 'data.parquet'));
-    }
-  }
   return dateFiles.length;
 }
 
 async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
   const { bucketPath, profile, dataDir, files, onProgress } = options;
   const s3Path = parseS3Path(bucketPath);
-  const outputDir = join(dataDir, 'aws', 'cost-optimization');
-  await mkdir(outputDir, { recursive: true });
+
+  // Cost-optimization data is read straight from aws/raw/cost-opt-*/ (see
+  // query-recommendations). An earlier version also copied each day into a
+  // Hive-partitioned aws/cost-optimization/usage_date=*/ tree that nothing ever
+  // read and prune never cleaned — so it leaked unbounded. Stop writing it and
+  // drop any legacy copy left behind (best-effort: cosmetic, never fail a sync).
+  await rm(join(dataDir, 'aws', 'cost-optimization'), { recursive: true, force: true })
+    .catch(() => { /* legacy dir may not exist */ });
 
   const periods = groupByPeriod(files);
   const periodList = [...periods.entries()].sort((a, b) => a[0].localeCompare(b[0]));
@@ -253,7 +251,7 @@ async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ fi
     for (const [date, dateFiles] of dateGroups) {
       if (options.signal?.aborted) break;
       totalFilesDownloaded += await syncDateGroup({
-        date, dateFiles, s3Bucket: s3Path.bucket, dataDir, outputDir, profile,
+        date, dateFiles, s3Bucket: s3Path.bucket, dataDir, profile,
         signal: options.signal, onLine: makeLineHandler(onProgress, totalFiles, counter, bytes),
       });
     }

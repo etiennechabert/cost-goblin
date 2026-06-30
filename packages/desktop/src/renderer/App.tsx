@@ -1,15 +1,18 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
-import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus } from '@costgoblin/core/browser';
+import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
-import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw, Settings, ArrowLeft, GitBranch, GitPullRequest } from 'lucide-react';
+import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Gauge, Terminal, RotateCw, Settings, ArrowLeft, GitBranch, GitPullRequest } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
 import { SyncStatusButton, type SyncActivity, type SyncTier } from './top-menu/sync-status-button.js';
 import { RollupStatusButton } from './top-menu/rollup-status-button.js';
 import { GeneralTab } from './settings/general-tab.js';
 import { PerformanceTab } from './settings/performance-tab.js';
+import { TelemetryTab } from './settings/telemetry-tab.js';
+import { SetupTelemetryStep } from './setup-telemetry-step.js';
+import { syncRendererTelemetry } from './telemetry/renderer-telemetry.js';
 import { ShareTab } from './settings/share-tab.js';
 import { ImportTab } from './settings/import-tab.js';
 
@@ -69,6 +72,7 @@ type View =
   | { page: 'trends' }
   | { page: 'missing-tags' }
   | { page: 'savings' }
+  | { page: 'baselines' }
   | { page: 'explorer' };
 
 interface AnalyticalNavItem {
@@ -80,6 +84,7 @@ interface AnalyticalNavItem {
 const ANALYTICAL_NAV: readonly AnalyticalNavItem[] = [
   { id: 'trends', label: 'Trends', Icon: TrendingUp },
   { id: 'savings', label: 'Findings', Icon: Lightbulb },
+  { id: 'baselines', label: 'Baselines', Icon: Gauge },
   { id: 'missing-tags', label: 'Tags', Icon: Tag },
   { id: 'explorer', label: 'Explorer', Icon: Search },
 ];
@@ -91,6 +96,7 @@ function hasUpdateIndicator(status: UpdateStatus): boolean {
 type SetupCheck =
   | { status: 'checking' }
   | { status: 'needs-setup' }
+  | { status: 'telemetry' }
   | { status: 'ready' };
 
 const FALLBACK_VIEWS: ViewsConfig = { views: [OVERVIEW_SEED_VIEW] };
@@ -165,11 +171,16 @@ function ReleaseNotesModal({
             <div className="mt-3">
               <div className="text-xs text-text-secondary mb-1">Recent events</div>
               <pre className="max-h-60 overflow-y-auto rounded-md bg-bg-primary p-3 text-xs text-text-secondary whitespace-pre-wrap break-words">
-                {status.logs.map((entry, i) => (
-                  <div key={i} className={entry.level === 'error' ? 'text-negative' : entry.level === 'warn' ? 'text-warning' : undefined}>
-                    [{formatLogTimestamp(entry.timestamp)}] {entry.level.toUpperCase()}: {entry.message}
-                  </div>
-                ))}
+                {status.logs.map((entry, i) => {
+                  let levelClass: string | undefined;
+                  if (entry.level === 'error') levelClass = 'text-negative';
+                  else if (entry.level === 'warn') levelClass = 'text-warning';
+                  return (
+                    <div key={`${String(entry.timestamp)}-${String(i)}`} className={levelClass}>
+                      [{formatLogTimestamp(entry.timestamp)}] {entry.level.toUpperCase()}: {entry.message}
+                    </div>
+                  );
+                })}
               </pre>
             </div>
           )}
@@ -193,11 +204,9 @@ function ReleaseNotesModal({
   if (status.state !== 'available' && status.state !== 'downloading' && status.state !== 'downloaded') return null;
   const { info } = status;
 
-  const title = status.state === 'downloaded'
-    ? 'Ready to Install'
-    : status.state === 'downloading'
-      ? 'Downloading Update'
-      : 'Update Available';
+  let title = 'Update Available';
+  if (status.state === 'downloaded') title = 'Ready to Install';
+  else if (status.state === 'downloading') title = 'Downloading Update';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -213,9 +222,9 @@ function ReleaseNotesModal({
             <div className="flex items-center justify-between text-xs text-text-secondary mb-1.5">
               <span className="flex items-center gap-1.5">
                 <RefreshCw size={12} className="animate-spin" />
-                Downloading...
+                {status.percent === 0 ? 'Preparing...' : 'Downloading...'}
               </span>
-              <span>{String(status.percent)}%</span>
+              {status.percent > 0 && <span>{String(status.percent)}%</span>}
             </div>
             <div className="h-2 rounded-full bg-bg-tertiary overflow-hidden">
               <div
@@ -481,9 +490,10 @@ function AppShell(): React.JSX.Element {
   // clears this and the user lands back exactly where they were.
   const [settingsTab, setSettingsTab] = useState<SettingsTabId | null>(null);
   const [missingPeriods, setMissingPeriods] = useState(0);
+  const [currentMonthUpdating, setCurrentMonthUpdating] = useState(false);
   const [isDark, setIsDark] = useState(true);
   const [palette, setPalette] = useState<'standard' | 'colorblind'>('standard');
-  const [defaultViewId, setDefaultViewIdState] = useState<string>(OVERVIEW_SEED_VIEW.id);
+  const [defaultViewId, setDefaultViewId] = useState<string>(OVERVIEW_SEED_VIEW.id);
   const [setupCheck, setSetupCheck] = useState<SetupCheck>({ status: 'checking' });
   const [splashStep, setSplashStep] = useState('Connecting...');
   const [viewsConfig, setViewsConfig] = useState<ViewsConfig | null>(null);
@@ -497,7 +507,7 @@ function AppShell(): React.JSX.Element {
   const inFlightCount = useDebugBadge();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
   const [rollupStatus, setRollupStatus] = useState<RollupStatus>({ state: 'idle' });
-  const [rollupEverReady, setRollupEverReady] = useState(false);
+  const [baselineStatus, setBaselineStatus] = useState<BaselineRecomputeStatus>({ state: 'idle', lastRun: null });
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [devBranch, setDevBranch] = useState<string | null>(null);
@@ -524,6 +534,13 @@ function AppShell(): React.JSX.Element {
     globalThis.costgoblinUpdate.getAppVersion().then(setAppVersion).catch(() => undefined);
   }, []);
 
+  // Start renderer-process crash capture when (and only when) crash reports are
+  // already opted-in and the main reporter is active. Renderer events forward to
+  // main, where they're scrubbed; this never sends anything on its own.
+  useEffect(() => {
+    api.getTelemetryStatus().then(syncRendererTelemetry).catch(() => undefined);
+  }, [api]);
+
   useEffect(() => {
     globalThis.costgoblinDebug.getGitBranch().then(setDevBranch).catch(() => undefined);
     // Resolved separately (a gh subprocess, ~0.5s) so the branch label never
@@ -541,16 +558,16 @@ function AppShell(): React.JSX.Element {
     // the renderer subscribes), then track transitions via the push channel.
     const apply = (status: RollupStatus): void => {
       setRollupStatus(status);
-      if (status.state === 'ready') setRollupEverReady(true);
     };
     globalThis.costgoblinRollup.getStatus().then(apply).catch(() => undefined);
     return globalThis.costgoblinRollup.onStatusChanged(apply);
   }, []);
 
-  // A re-roll = recomputing an existing rollup (after a sync or dimensions
-  // change). Gating on "ever ready" keeps the first cold build — where widgets
-  // already show their own loaders — from flashing the "Updating…" badge.
-  const reRolling = rollupStatus.state === 'computing' && rollupEverReady;
+  useEffect(() => {
+    const apply = (status: BaselineRecomputeStatus): void => { setBaselineStatus(status); };
+    globalThis.costgoblinBaselines.getStatus().then(apply).catch(() => undefined);
+    return globalThis.costgoblinBaselines.onStatusChanged(apply);
+  }, []);
 
   useEffect(() => {
     if (setupCheck.status !== 'ready') return;
@@ -570,7 +587,7 @@ function AppShell(): React.JSX.Element {
   useEffect(() => {
     async function initialize(): Promise<void> {
       setSplashStep('Checking configuration...');
-      const { configured } = await api.getSetupStatus();
+      const { configured, postSetup } = await api.getSetupStatus();
 
       if (!configured) {
         setSetupCheck({ status: 'needs-setup' });
@@ -579,6 +596,10 @@ function AppShell(): React.JSX.Element {
 
       setSplashStep('Preparing cost data...');
       await api.awaitMaterializedBase(BASE_READY_TIMEOUT_MS);
+      // First launch right after the wizard (the relaunch carried a one-shot
+      // flag): land on data-sync so a freshly-configured user is guided to sync,
+      // rather than dropping them on an empty default dashboard.
+      if (postSetup) setSettingsTab('data-sync');
       // Reveal the app as soon as the in-memory base is ready. The dimension
       // filter-value prewarm previously blocked the splash here for ~13s (~8
       // concurrent probes). Run it in the background instead: with cost_base
@@ -595,7 +616,7 @@ function AppShell(): React.JSX.Element {
       setIsDark(prefs.theme === 'dark');
       setPalette(prefs.palette);
       const defaultId = prefs.defaultViewId ?? OVERVIEW_SEED_VIEW.id;
-      setDefaultViewIdState(defaultId);
+      setDefaultViewId(defaultId);
       // Only redirect to the configured default once on startup, so that
       // navigating around (or starring a different default mid-session)
       // doesn't yank the user away from the page they're looking at.
@@ -645,7 +666,7 @@ function AppShell(): React.JSX.Element {
   }
 
   function handleSetDefaultView(id: string) {
-    setDefaultViewIdState(id);
+    setDefaultViewId(id);
     api.saveUIPreferences({
       theme: isDark ? 'dark' : 'light',
       palette,
@@ -680,10 +701,20 @@ function AppShell(): React.JSX.Element {
     try {
       const [inv, config] = await Promise.all([api.getDataInventory(), api.getConfig()]);
       const retentionDays = config.providers[0]?.sync.daily.retentionDays ?? 365;
-      const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+      const now = new Date();
+      const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
       const cutoffPeriod = `${String(cutoff.getFullYear())}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
-      const missing = inv.periods.filter(p => p.localStatus === 'missing' && p.period >= cutoffPeriod).length;
+      const currentPeriod = `${String(now.getFullYear())}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      // "Behind" = no local data ('missing'), or a *closed* month whose remote
+      // files changed since we synced ('stale'). The current month is almost
+      // always 'stale' (CUR re-publishes all month), so it's surfaced as a soft
+      // "updating" note instead of nagging as un-synced — matching the Data &
+      // Sync view, which already lists stale periods under "Available".
+      const inWindow = inv.periods.filter(p => p.period >= cutoffPeriod);
+      const missing = inWindow.filter(p =>
+        p.localStatus === 'missing' || (p.localStatus === 'stale' && p.period < currentPeriod)).length;
       setMissingPeriods(missing);
+      setCurrentMonthUpdating(inWindow.some(p => p.localStatus === 'stale' && p.period === currentPeriod));
       setSyncError(null);
     } catch (err: unknown) {
       // Most common cause is expired AWS credentials — surface the message on
@@ -696,7 +727,7 @@ function AppShell(): React.JSX.Element {
   // Re-check on view / settings-tab change (leaving the Data & Sync tab after a
   // download must refresh the missing-periods badge) and on demand from the
   // sync popover's recheck button.
-  useEffect(() => { void checkMissingPeriods(); }, [checkMissingPeriods, view, settingsTab]);
+  useEffect(() => { checkMissingPeriods().catch(() => undefined); }, [checkMissingPeriods, view, settingsTab]);
 
   function handleNavClick(id: string) {
     const inSettings = settingsTab !== null;
@@ -709,6 +740,7 @@ function AppShell(): React.JSX.Element {
         case 'trends': setView({ page: 'trends' }); break;
         case 'missing-tags': setView({ page: 'missing-tags' }); break;
         case 'savings': setView({ page: 'savings' }); break;
+        case 'baselines': setView({ page: 'baselines' }); break;
         case 'explorer': setView({ page: 'explorer' }); break;
         default:
           // Anything else is a custom view id (every left-nav entry that
@@ -736,8 +768,8 @@ function AppShell(): React.JSX.Element {
   function toggleSettings() {
     // The gear carries the app-wide sync/update badge, so opening it always
     // lands on Data & Sync — the activity that badge is inviting a click for.
-    if (settingsTab !== null) exitSettings();
-    else enterSettings('data-sync');
+    if (settingsTab === null) enterSettings('data-sync');
+    else exitSettings();
   }
 
   // Single entry point for the command palette: routes settings tabs and
@@ -762,9 +794,22 @@ function AppShell(): React.JSX.Element {
     });
   }
 
+  // Finishing the wizard restarts the app. Telemetry choices can only arm at
+  // boot (before Electron's `ready` event), and a clean restart also avoids the
+  // in-place data reload after a config rewrite (which otherwise cancels the
+  // in-flight rollup rebuild and looks like a freeze). After relaunch, the normal
+  // startup flow re-checks setup and materialises data.
   function handleSetupComplete() {
-    setSetupCheck({ status: 'ready' });
-    setSettingsTab('data-sync');
+    // postSetup=true → the next launch resumes on the data-sync screen.
+    globalThis.costgoblinUpdate.relaunch(true);
+  }
+
+  // Re-run the first-run wizard on demand (Settings → General). The wizard
+  // funnels into the telemetry step and then back to the dashboard; existing
+  // config is preserved (setup:write-config merges).
+  function handleRerunSetup() {
+    setSettingsTab(null);
+    setSetupCheck({ status: 'needs-setup' });
   }
 
   const views = viewsConfig ?? FALLBACK_VIEWS;
@@ -783,7 +828,11 @@ function AppShell(): React.JSX.Element {
   }
 
   if (setupCheck.status === 'needs-setup') {
-    return <SetupWizard onComplete={handleSetupComplete} />;
+    return <SetupWizard onComplete={() => { setSetupCheck({ status: 'telemetry' }); }} />;
+  }
+
+  if (setupCheck.status === 'telemetry') {
+    return <SetupTelemetryStep onDone={handleSetupComplete} />;
   }
 
   function activeNavId(): string | null {
@@ -792,6 +841,7 @@ function AppShell(): React.JSX.Element {
     if (view.page === 'trends') return 'trends';
     if (view.page === 'missing-tags') return 'missing-tags';
     if (view.page === 'savings') return 'savings';
+    if (view.page === 'baselines') return 'baselines';
     if (view.page === 'explorer') return 'explorer';
     return null;
   }
@@ -828,6 +878,7 @@ function AppShell(): React.JSX.Element {
             updateStatus={updateStatus}
             onCheckForUpdates={handleCheckForUpdates}
             onShowReleaseNotes={() => { setReleaseNotesOpen(true); }}
+            onRerunSetup={handleRerunSetup}
           />
         );
       case 'data-sync':
@@ -847,7 +898,7 @@ function AppShell(): React.JSX.Element {
               // The whole org config just changed under the renderer — a full
               // reload re-runs the boot path (setup check, views, dimensions
               // prewarm) so nothing serves stale state.
-              window.location.reload();
+              globalThis.location.reload();
             }}
           />
         );
@@ -855,9 +906,38 @@ function AppShell(): React.JSX.Element {
         return <McpView />;
       case 'performance':
         return <PerformanceTab />;
+      case 'telemetry':
+        return <TelemetryTab />;
       case null:
         return null;
     }
+  }
+
+  // The build indicator prefers a PR link, falls back to the git branch, then to
+  // the app version — rendered as a flat sequence rather than a nested ternary.
+  function renderBuildIndicator(): React.JSX.Element | false {
+    if (branchPr !== null) {
+      return (
+        <a
+          href={branchPr.url}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-1 max-w-[320px] font-medium text-accent hover:underline [-webkit-app-region:no-drag]"
+          title={`#${String(branchPr.number)} ${branchPr.title} — open on GitHub`}
+        >
+          <GitPullRequest size={10} className="shrink-0" />
+          <span className="truncate">#{branchPr.number} {branchPr.title}</span>
+        </a>
+      );
+    }
+    if (devBranch !== null) {
+      return (
+        <span className="flex items-center gap-1 font-medium text-accent" title="Running from this git branch">
+          <GitBranch size={10} />{devBranch}
+        </span>
+      );
+    }
+    return appVersion !== '' && <span>v{appVersion}</span>;
   }
 
   return (
@@ -945,26 +1025,7 @@ function AppShell(): React.JSX.Element {
           <div className="flex flex-col items-center justify-center px-4">
             <span className="text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
             <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
-              {branchPr !== null
-                ? (
-                  <a
-                    href={branchPr.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-1 max-w-[320px] font-medium text-accent hover:underline [-webkit-app-region:no-drag]"
-                    title={`#${String(branchPr.number)} ${branchPr.title} — open on GitHub`}
-                  >
-                    <GitPullRequest size={10} className="shrink-0" />
-                    <span className="truncate">#{branchPr.number} {branchPr.title}</span>
-                  </a>
-                )
-                : devBranch !== null
-                  ? (
-                    <span className="flex items-center gap-1 font-medium text-accent" title="Running from this git branch">
-                      <GitBranch size={10} />{devBranch}
-                    </span>
-                  )
-                  : appVersion !== '' && <span>v{appVersion}</span>}
+              {renderBuildIndicator()}
               {isDev && memoryMB > 0 && <span>{formatMemory(memoryMB)}</span>}
             </div>
           </div>
@@ -1009,6 +1070,7 @@ function AppShell(): React.JSX.Element {
               error={syncError}
               filesRemaining={syncFilesRemaining}
               missingPeriods={missingPeriods}
+              currentMonthUpdating={currentMonthUpdating}
               tiers={syncTiers}
               inSettingsData={settingsTab === 'data-sync'}
               onManageData={() => { enterSettings('data-sync'); }}
@@ -1055,13 +1117,13 @@ function AppShell(): React.JSX.Element {
               const spec = findViewSpec(view.viewId) ?? OVERVIEW_SEED_VIEW;
               return (
                 <Profiler id={`custom:${view.viewId}`} onRender={onPerfRender}>
-                  <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} reRolling={reRolling} />
+                  <CustomView spec={spec} headerSubtitle="Cloud spending visibility" initialFilter={view.initialFilter} rollupStatus={rollupStatus} />
                 </Profiler>
               );
             })()}
             {view.page === 'trends' && (
               <Profiler id="trends" onRender={onPerfRender}>
-                <CostTrends onEntityClick={handleEntityClick} />
+                <CostTrends onEntityClick={handleEntityClick} rollupStatus={rollupStatus} />
               </Profiler>
             )}
             {view.page === 'missing-tags' && (
@@ -1072,6 +1134,11 @@ function AppShell(): React.JSX.Element {
             {view.page === 'savings' && (
               <Profiler id="savings" onRender={onPerfRender}>
                 <Savings />
+              </Profiler>
+            )}
+            {view.page === 'baselines' && (
+              <Profiler id="baselines" onRender={onPerfRender}>
+                <Baselines baselineStatus={baselineStatus} />
               </Profiler>
             )}
             {view.page === 'explorer' && (

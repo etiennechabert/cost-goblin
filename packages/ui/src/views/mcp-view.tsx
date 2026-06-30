@@ -116,31 +116,36 @@ export function McpView() {
   const [regenerating, setRegenerating] = useState(false);
 
   useEffect(() => {
-    void api.getMcpServerRunning().then(setRunning);
-    void api.getMcpToken().then(setToken).catch(() => undefined);
+    api.getMcpServerRunning().then(setRunning).catch(() => undefined);
+    api.getMcpToken().then(setToken).catch(() => undefined);
   }, [api]);
 
   const handleToggle = useCallback(() => {
     setToggling(true);
     const next = !running;
-    void api.setMcpServerRunning(next).then(() => {
+    api.setMcpServerRunning(next).then(() => {
       setRunning(next);
       setToggling(false);
-    });
+    }).catch(() => undefined);
   }, [api, running]);
 
   const handleRegenerate = useCallback(() => {
     setRegenerating(true);
-    void api.regenerateMcpToken().then((next) => {
+    api.regenerateMcpToken().then((next) => {
       setToken(next);
       setTokenRevealed(true);
-    }).finally(() => {
+    }).catch(() => undefined).finally(() => {
       setRegenerating(false);
       setConfirmingRegen(false);
     });
   }, [api]);
 
   const providers = useMemo(() => buildProviders(token), [token]);
+
+  let tokenDisplay: string;
+  if (token.length === 0) tokenDisplay = 'Loading…';
+  else if (tokenRevealed) tokenDisplay = token;
+  else tokenDisplay = TOKEN_MASK;
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-3xl mx-auto">
@@ -189,7 +194,7 @@ export function McpView() {
         <div className="relative">
           {token.length > 0 && <CopyButton text={token} />}
           <pre className="rounded-lg bg-bg-primary border border-border p-4 pr-12 text-sm text-text-secondary overflow-x-auto font-mono">
-            {token.length === 0 ? 'Loading…' : tokenRevealed ? token : TOKEN_MASK}
+            {tokenDisplay}
           </pre>
         </div>
         <div className="flex items-center gap-2 mt-2">

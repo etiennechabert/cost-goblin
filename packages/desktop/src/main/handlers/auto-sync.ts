@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { getDataInventory, getLocalDataInventory, extractPeriod } from '@costgoblin/core';
+import { getDataInventory, getLocalDataInventory, extractPeriod, isCredentialError, writeTierLastSync } from '@costgoblin/core';
 import type { AutoSyncStatus } from '@costgoblin/core';
 import {
   startAutoSync,
@@ -13,7 +13,7 @@ import {
   writeAutoSyncIntervalMinutes,
 } from '../auto-sync.js';
 import { deleteLocalPeriodFiles, cascadeRollupForDeletedMonth, changedRollupMonths } from './sync.js';
-import { type AppContext, prefsPath } from './context.js';
+import { type AppContext, prefsPath, toUserFriendlyError } from './context.js';
 import type { SyncClient } from '../sync-client.js';
 
 type Tier = 'daily' | 'hourly' | 'cost-optimization';
@@ -21,6 +21,12 @@ type Tier = 'daily' | 'hourly' | 'cost-optimization';
 function asTier(s: string): Tier {
   if (s === 'hourly' || s === 'cost-optimization') return s;
   return 'daily';
+}
+
+function computeSyncFraction(bytesDone: number, bytesTotal: number, filesDone: number, filesTotal: number): number {
+  if (bytesTotal > 0) return bytesDone / bytesTotal;
+  if (filesTotal > 0) return filesDone / filesTotal;
+  return 0;
 }
 
 export function registerAutoSyncHandlers(app: AppContext): void {
@@ -45,7 +51,16 @@ export function registerAutoSyncHandlers(app: AppContext): void {
         const bucket = tier === 'hourly'
           ? provider.sync.hourly?.bucket ?? provider.sync.daily.bucket
           : tierBucket;
-        const inv = await getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, asTier(tier));
+        let inv;
+        try {
+          inv = await getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, asTier(tier));
+        } catch (err: unknown) {
+          // Rewrite credential failures into the actionable "run aws sso login"
+          // message so the scheduler surfaces it (instead of silently skipping)
+          // and the toolbar shows why background sync stopped.
+          if (isCredentialError(err)) throw toUserFriendlyError(err, provider.credentials.profile);
+          throw err;
+        }
         return {
           periods: inv.periods.map(p => ({
             period: p.period,
@@ -77,9 +92,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
             onProgress: (progress) => {
               const bytesDone = progress.bytesDone ?? 0;
               const bytesTotal = progress.bytesTotal ?? 0;
-              const fraction = bytesTotal > 0
-                ? bytesDone / bytesTotal
-                : (progress.filesTotal > 0 ? progress.filesDone / progress.filesTotal : 0);
+              const fraction = computeSyncFraction(bytesDone, bytesTotal, progress.filesDone, progress.filesTotal);
               state.syncStatuses[syncId] = {
                 status: 'syncing',
                 phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
@@ -92,7 +105,11 @@ export function registerAutoSyncHandlers(app: AppContext): void {
               };
             },
           });
-          state.syncStatuses[syncId] = { status: 'completed', lastSync: new Date(), filesDownloaded: result.filesDownloaded };
+          const now = new Date();
+          state.syncStatuses[syncId] = { status: 'completed', lastSync: now, filesDownloaded: result.filesDownloaded };
+          // Best-effort: cosmetic timestamp; a write failure must not flip this
+          // successful sync to 'failed' (the catch below would do exactly that).
+          await writeTierLastSync(ctx.dataDir, syncId, now.toISOString()).catch(() => { /* cosmetic */ });
           // Keep the rollup in step with the raw the auto-sync just pulled,
           // mirroring the manual data:sync-periods path.
           if (result.filesDownloaded > 0) {
@@ -101,9 +118,12 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           }
           return result;
         } catch (err: unknown) {
-          const error = err instanceof Error ? err : new Error(String(err));
+          // Surface credential expiry / opaque `aws s3 sync` download failures as
+          // the actionable "run aws sso login" message so the toolbar offers
+          // one-click re-auth instead of a raw CLI error (mirrors getInventory).
+          const error = toUserFriendlyError(err, provider.credentials.profile);
           state.syncStatuses[syncId] = { status: 'failed', error, lastSync: null };
-          throw err;
+          throw error;
         }
       },
       getLocalPeriods: async (tier: string) => {

@@ -61,7 +61,11 @@ function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
   const entries = Object.entries(value).sort((a, b) => (a[0] < b[0] ? -1 : 1));
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(',')}}`;
+  const pairs = entries.map(([k, v]) => {
+    const pair = `${JSON.stringify(k)}:${stableStringify(v)}`;
+    return pair;
+  });
+  return `{${pairs.join(',')}}`;
 }
 
 function canonicalManifestBytes(manifest: PackManifest): Buffer {
@@ -166,7 +170,7 @@ function validateManifest(raw: unknown): PackManifest {
     label,
     configBundle,
     enrichment: validateEnrichment(raw['enrichment']),
-    files: files.map(validateFile),
+    files: files.map((file, i) => validateFile(file, i)),
   };
 }
 

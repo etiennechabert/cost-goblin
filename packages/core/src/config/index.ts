@@ -8,8 +8,10 @@ export {
   effectiveExclusionRules,
   negotiatedDiscountExclusionRule,
 } from './discount-treatment.js';
+export { validateBaselines } from './baselines-validator.js';
 export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './views-serialize.js';
 export { costScopeToYaml } from './cost-scope-serialize.js';
+export { baselineSpecToYaml, baselinesToYaml } from './baselines-serialize.js';
 export { dimensionsConfigToYaml } from './dimensions-serialize.js';
 export {
   buildConfigBundle,

@@ -1,12 +1,30 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { DuckDBInstance } from '@duckdb/node-api';
+import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { mkdtemp, rm, stat, readdir } from 'node:fs/promises';
-import { buildRollupPartitionQuery, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, asDimensionId } from '@costgoblin/core';
+import { buildRollupPartitionQuery, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, type RollupStatus, asDimensionId } from '@costgoblin/core';
 import { RollupStore, type RollupShape } from '../main/rollup-store.js';
 import type { RawRow } from '../main/duckdb-client.js';
+
+async function fetchRows(conn: DuckDBConnection, sql: string): Promise<RawRow[]> {
+  const result = await conn.run(sql);
+  const cols = result.columnCount;
+  const names: string[] = [];
+  for (let i = 0; i < cols; i++) names.push(result.columnName(i));
+  const rows: RawRow[] = [];
+  let chunk = await result.fetchChunk();
+  while (chunk !== null && chunk.rowCount > 0) {
+    for (let r = 0; r < chunk.rowCount; r++) {
+      const row: Record<string, unknown> = {};
+      for (let c = 0; c < cols; c++) { const n = names[c]; if (n !== undefined) row[n] = chunk.getColumnVector(c).getItem(r); }
+      rows.push(row);
+    }
+    chunk = await result.fetchChunk();
+  }
+  return rows;
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // core synthetic fixtures live under packages/core/src/__fixtures__/synthetic
@@ -36,23 +54,7 @@ describe('RollupStore', () => {
     db = await DuckDBInstance.create();
     conn = await db.connect();
     dataDir = await mkdtemp(join(tmpdir(), 'cg-rollup-store-'));
-    runQuery = async (sql: string): Promise<RawRow[]> => {
-      const result = await conn.run(sql);
-      const cols = result.columnCount;
-      const names: string[] = [];
-      for (let i = 0; i < cols; i++) names.push(result.columnName(i));
-      const rows: RawRow[] = [];
-      let chunk = await result.fetchChunk();
-      while (chunk !== null && chunk.rowCount > 0) {
-        for (let r = 0; r < chunk.rowCount; r++) {
-          const row: Record<string, unknown> = {};
-          for (let c = 0; c < cols; c++) { const n = names[c]; if (n !== undefined) row[n] = chunk.getColumnVector(c).getItem(r); }
-          rows.push(row);
-        }
-        chunk = await result.fetchChunk();
-      }
-      return rows;
-    };
+    runQuery = (sql: string): Promise<RawRow[]> => fetchRows(conn, sql);
   });
   afterAll(async () => { await rm(dataDir, { recursive: true, force: true }); });
 
@@ -72,6 +74,45 @@ describe('RollupStore', () => {
     // Reads only the requested month's partition, never a daily-* wildcard.
     expect(src).toContain('daily-2026-01/rollup.parquet');
     expect(src).not.toContain('daily-*');
+  });
+
+  it('builds multiple periods concurrently on fresh connections, committing every manifest entry', async () => {
+    // Each build runs on its own connection; a gate that only trips once BOTH
+    // builds have arrived proves they actually overlap (a sequential impl would
+    // stall at the gate until the 2s safety valve, leaving peak in-flight at 1).
+    let arrived = 0;
+    let inFlight = 0;
+    let peakInFlight = 0;
+    let trip!: () => void;
+    const gate = new Promise<void>(r => { trip = r; });
+    const safety = setTimeout(() => { trip(); }, 2000);
+    const onFreshConn = async (sql: string): Promise<RawRow[]> => {
+      const c: DuckDBConnection = await db.connect();
+      try { return await fetchRows(c, sql); } finally { c.disconnectSync(); }
+    };
+    const runBuild = async (sql: string): Promise<RawRow[]> => {
+      arrived += 1;
+      if (arrived >= 2) { clearTimeout(safety); trip(); }
+      await gate;
+      inFlight += 1;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      try { return await onFreshConn(sql); } finally { inFlight -= 1; }
+    };
+    const store = new RollupStore({ dataDir, runQuery: onFreshConn, runBuild, buildConcurrency: 2 });
+    await store.maintainPeriods(['2026-01', '2026-02'], buildSql, etags, shape);
+    clearTimeout(safety);
+
+    expect(peakInFlight).toBe(2);
+    expect([...store.getValidPeriods()].sort()).toEqual(['2026-01', '2026-02']);
+    for (const period of ['2026-01', '2026-02']) {
+      await expect(stat(join(dataDir, 'aws', 'rollup', `daily-${period}`, 'rollup.parquet'))).resolves.toBeDefined();
+    }
+    // A reloaded store sees both partitions as valid → every commit landed.
+    const reloaded = new RollupStore({ dataDir, runQuery });
+    const v = await reloaded.loadAndValidate(shape, etags);
+    expect([...v.validPeriods].sort()).toEqual(['2026-01', '2026-02']);
+    const dir = await readdir(join(dataDir, 'aws', 'rollup'));
+    expect(dir.some(f => f.endsWith('.tmp'))).toBe(false);
   });
 
   it('resolveSource falls back to raw (undefined) on hour bounds, out-of-grain column, or an unbuilt period', async () => {
@@ -112,6 +153,23 @@ describe('RollupStore', () => {
     const reloaded = new RollupStore({ dataDir, runQuery });
     const v = await reloaded.loadAndValidate(shape, etags);
     expect(v.validPeriods.size).toBe(0);
+  });
+
+  it('surfaces the underlying error as the failed status reason', async () => {
+    const failDir = await mkdtemp(join(tmpdir(), 'cg-rollup-fail-'));
+    let captured: RollupStatus | undefined;
+    const runBuild = (): Promise<RawRow[]> => Promise.reject(new Error('Binder Error: column "service" not found'));
+    const store = new RollupStore({ dataDir: failDir, runQuery, runBuild });
+    store.onStatusChanged((s) => { captured = s; });
+    await store.maintainPeriods(['2026-01', '2026-02'], buildSql, etags, shape);
+
+    expect(captured?.state).toBe('failed');
+    if (captured?.state === 'failed') {
+      expect(captured.message).toBe('2 of 2 rollup partitions failed to build');
+      // Both periods fail with the same cause → one distinct reason, no "+N".
+      expect(captured.reason).toBe('Binder Error: column "service" not found');
+    }
+    await rm(failDir, { recursive: true, force: true });
   });
 
   it('invalidate() removes the on-disk rollup and resets state', async () => {

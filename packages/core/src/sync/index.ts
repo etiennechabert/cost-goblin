@@ -14,6 +14,8 @@ export {
   type S3Handle,
   createS3Handle,
   parseS3Path,
+  isCredentialError,
+  isS3SyncDownloadFailure,
 } from './s3-client.js';
 
 export {
@@ -21,7 +23,14 @@ export {
   type DataInventory,
   getDataInventory,
   getLocalDataInventory,
+  hasSyncedTier,
 } from './data-inventory.js';
+
+export {
+  readSyncTimestamps,
+  readTierLastSync,
+  writeTierLastSync,
+} from './sync-timestamps.js';
 
 export {
   type SelectiveSyncOptions,

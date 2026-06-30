@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Dimension,
   DimensionId,
+  RollupStatus,
   TrendResult,
   TrendRow,
   EntityRef,
@@ -11,7 +12,9 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
 import { useQuery } from '../hooks/use-query.js';
 import { getDimensionId } from '../lib/dimensions.js';
+import { rollupGate } from '../lib/rollup-gate.js';
 import { BubbleChart } from '../components/bubble-chart.js';
+import { RollupBuildingOverlay } from '../components/rollup-building-overlay.js';
 import { DateRangePicker, getDefaultDateRange } from '../components/date-range-picker.js';
 import type { DateRange, Granularity } from '../components/date-range-picker.js';
 import { DimensionSelector } from '../components/dimension-selector.js';
@@ -73,9 +76,78 @@ function TrendRowItem({ row, onClick }: Readonly<{ row: TrendRow; onClick: (e: E
 
 interface CostTrendsProps {
   onEntityClick?: (entity: string, dimension: string) => void;
+  /** Live rollup state — Cost Trends is rollup-backed, so it blocks with the
+   *  build overlay whenever the rollup can't serve the viewed period and is
+   *  building it (cold build or a cleared rollup). */
+  rollupStatus?: RollupStatus;
 }
 
-export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps = {}) {
+function percentChangeOf(currentCost: number, previousCost: number, delta: number): number {
+  if (previousCost !== 0) return (delta / previousCost) * 100;
+  return currentCost === 0 ? 0 : 100;
+}
+
+interface ComputedTrends {
+  rows: readonly TrendRow[];
+  totalIncrease: number;
+  totalSavings: number;
+}
+
+const EMPTY_TRENDS: ComputedTrends = { rows: [], totalIncrease: 0, totalSavings: 0 };
+
+function computeTrends(trendData: TrendResult, direction: Direction): ComputedTrends {
+  // The backend partitions raw SQL rows into increases / savings by sign
+  // and then merges within each bucket by friendly entity name. For the
+  // account dim, two account_ids can resolve to the same name with opposing
+  // deltas — leaving the same entity in *both* buckets and hiding its true
+  // net direction. Net the buckets here so each entity surfaces once with
+  // the right sign.
+  const merged = new Map<string, { currentCost: number; previousCost: number; delta: number }>();
+  for (const r of [...trendData.increases, ...trendData.savings]) {
+    const existing = merged.get(r.entity);
+    if (existing === undefined) {
+      merged.set(r.entity, { currentCost: r.currentCost, previousCost: r.previousCost, delta: r.delta });
+    } else {
+      existing.currentCost += r.currentCost;
+      existing.previousCost += r.previousCost;
+      existing.delta += r.delta;
+    }
+  }
+  const allRows: TrendRow[] = [...merged.entries()].map(([entity, d]) => ({
+    entity: asEntityRef(entity),
+    currentCost: asDollars(d.currentCost),
+    previousCost: asDollars(d.previousCost),
+    delta: asDollars(d.delta),
+    percentChange: percentChangeOf(d.currentCost, d.previousCost, d.delta),
+  }));
+  let totalIncrease = 0;
+  let totalSavings = 0;
+  for (const r of allRows) {
+    if (r.delta > 0) totalIncrease += r.delta;
+    else totalSavings += Math.abs(r.delta);
+  }
+  const pool = filterByDirection(allRows, direction);
+  pool.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+  return { rows: pool, totalIncrease, totalSavings };
+}
+
+function filterByDirection(allRows: TrendRow[], direction: Direction): TrendRow[] {
+  if (direction === 'increases') return allRows.filter(r => r.delta > 0);
+  if (direction === 'savings') return allRows.filter(r => r.delta < 0);
+  return allRows;
+}
+
+function formatTotalLabel(direction: Direction, totalIncrease: number, totalSavings: number): string {
+  if (direction === 'increases') {
+    return `+${formatDollars(asDollars(totalIncrease))} total increase`;
+  }
+  if (direction === 'savings') {
+    return `-${formatDollars(asDollars(totalSavings))} total savings`;
+  }
+  return `+${formatDollars(asDollars(totalIncrease))} increase · -${formatDollars(asDollars(totalSavings))} savings`;
+}
+
+export function CostTrends({ onEntityClick: onEntityClickProp, rollupStatus }: CostTrendsProps = {}) {
   const api = useCostApi();
   const lagDays = useLagDays();
   const dimensionsQuery = useQuery(() => api.getDimensions(), []);
@@ -92,6 +164,13 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
 
   const dimensions: Dimension[] =
     dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
+
+  const gate = useMemo(
+    () => rollupStatus === undefined
+      ? { blocked: false, selectedMonths: [], pendingMonths: [] }
+      : rollupGate(rollupStatus, state.dateRange),
+    [rollupStatus, state.dateRange],
+  );
 
   const firstDimId = dimensions.length > 0 && dimensions[0] !== undefined
     ? getDimensionId(dimensions[0])
@@ -125,58 +204,10 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
   const trendData: TrendResult | null =
     trendsQuery.status === 'success' ? trendsQuery.data : null;
 
-  let rows: readonly TrendRow[] = [];
-  let totalIncrease = 0;
-  let totalSavings = 0;
-  if (trendData !== null) {
-    // The backend partitions raw SQL rows into increases / savings by sign
-    // and then merges within each bucket by friendly entity name. For the
-    // account dim, two account_ids can resolve to the same name with opposing
-    // deltas — leaving the same entity in *both* buckets and hiding its true
-    // net direction. Net the buckets here so each entity surfaces once with
-    // the right sign.
-    const merged = new Map<string, { currentCost: number; previousCost: number; delta: number }>();
-    for (const r of [...trendData.increases, ...trendData.savings]) {
-      const existing = merged.get(r.entity);
-      if (existing === undefined) {
-        merged.set(r.entity, { currentCost: r.currentCost, previousCost: r.previousCost, delta: r.delta });
-      } else {
-        existing.currentCost += r.currentCost;
-        existing.previousCost += r.previousCost;
-        existing.delta += r.delta;
-      }
-    }
-    const allRows: TrendRow[] = [...merged.entries()].map(([entity, d]) => ({
-      entity: asEntityRef(entity),
-      currentCost: asDollars(d.currentCost),
-      previousCost: asDollars(d.previousCost),
-      delta: asDollars(d.delta),
-      percentChange: d.previousCost === 0
-        ? (d.currentCost === 0 ? 0 : 100)
-        : (d.delta / d.previousCost) * 100,
-    }));
-    for (const r of allRows) {
-      if (r.delta > 0) totalIncrease += r.delta;
-      else totalSavings += Math.abs(r.delta);
-    }
-    let pool: TrendRow[];
-    if (state.direction === 'increases') pool = allRows.filter(r => r.delta > 0);
-    else if (state.direction === 'savings') pool = allRows.filter(r => r.delta < 0);
-    else pool = allRows;
-    pool.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
-    rows = pool;
-  }
-
-  let totalLabel = '';
-  if (trendData !== null) {
-    if (state.direction === 'increases') {
-      totalLabel = `+${formatDollars(asDollars(totalIncrease))} total increase`;
-    } else if (state.direction === 'savings') {
-      totalLabel = `-${formatDollars(asDollars(totalSavings))} total savings`;
-    } else {
-      totalLabel = `+${formatDollars(asDollars(totalIncrease))} increase · -${formatDollars(asDollars(totalSavings))} savings`;
-    }
-  }
+  const { rows, totalIncrease, totalSavings } =
+    trendData === null ? EMPTY_TRENDS : computeTrends(trendData, state.direction);
+  const totalLabel =
+    trendData === null ? '' : formatTotalLabel(state.direction, totalIncrease, totalSavings);
 
   function handleEntityClick(entity: EntityRef) {
     if (onEntityClickProp !== undefined && activeDimensionId !== null) {
@@ -197,6 +228,10 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
         />
       </div>
 
+      {gate.blocked && rollupStatus !== undefined ? (
+        <RollupBuildingOverlay status={rollupStatus} pendingMonths={gate.pendingMonths} />
+      ) : (
+      <>
       {dimensions.length > 0 && (
         <div className="flex flex-wrap items-center gap-4">
           <DimensionSelector
@@ -310,6 +345,8 @@ export function CostTrends({ onEntityClick: onEntityClickProp }: CostTrendsProps
         <div className="rounded-xl border border-border bg-bg-secondary/50 p-12 text-center text-text-secondary">
           No {state.direction === 'all' ? 'changes' : state.direction} above thresholds
         </div>
+      )}
+      </>
       )}
     </div>
   );

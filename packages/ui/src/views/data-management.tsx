@@ -23,6 +23,10 @@ function syncStatusToState(s: SyncStatus): SyncState | null {
   return null;
 }
 
+function incrementKey(k: number): number {
+  return k + 1;
+}
+
 function retentionCutoffPeriod(retentionDays: number): string {
   const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
   return `${String(cutoff.getFullYear())}-${String(cutoff.getMonth() + 1).padStart(2, '0')}`;
@@ -46,6 +50,19 @@ function missingWithinCutoff(
   if (inventory === null) return [];
   return inventory.periods
     .filter(p => p.localStatus === 'missing')
+    .filter(p => p.period >= cutoffPeriod);
+}
+
+// Periods that an on-demand sync should pull: not yet local ('missing') or
+// out of date vs. S3 ('stale'), within the tier's retention window. Mirrors the
+// background auto-sync's selection so the manual "Sync" button does the same work.
+function syncableWithinCutoff(
+  inventory: DataInventoryResult | null,
+  cutoffPeriod: string,
+): DataInventoryResult['periods'] {
+  if (inventory === null) return [];
+  return inventory.periods
+    .filter(p => p.localStatus === 'missing' || p.localStatus === 'stale')
     .filter(p => p.period >= cutoffPeriod);
 }
 
@@ -119,9 +136,9 @@ export function DataManagement() {
       }).catch(() => undefined);
     }
     function tick() {
-      applyStatus('daily', setDailySyncState, () => { setDailyRefreshKey(k => k + 1); });
-      applyStatus('hourly', setHourlySyncState, () => { setHourlyRefreshKey(k => k + 1); });
-      applyStatus('cost-optimization', setCostOptSyncState, () => { setCostOptRefreshKey(k => k + 1); });
+      applyStatus('daily', setDailySyncState, () => { setDailyRefreshKey(incrementKey); });
+      applyStatus('hourly', setHourlySyncState, () => { setHourlyRefreshKey(incrementKey); });
+      applyStatus('cost-optimization', setCostOptSyncState, () => { setCostOptRefreshKey(incrementKey); });
     }
     tick();
     const timer = setInterval(tick, 2_000);
@@ -269,6 +286,11 @@ export function DataManagement() {
   const costOptPrunable = prunable(costOptInventory?.local.periods, costOptCutoffPeriod, costOptRetentionDays);
   const prunableTotal = dailyPrunable.length + hourlyPrunable.length + costOptPrunable.length;
 
+  const syncableTotal =
+    syncableWithinCutoff(inventory, dailyCutoffPeriod).length +
+    syncableWithinCutoff(hourlyInventory, hourlyCutoffPeriod).length +
+    syncableWithinCutoff(costOptInventory, costOptCutoffPeriod).length;
+
   function handlePrune() {
     setShowPrune(false);
     api.pruneNow().then((result) => {
@@ -284,6 +306,36 @@ export function DataManagement() {
     }).catch((err: unknown) => {
       setPruneNotice(`Prune failed: ${err instanceof Error ? err.message : String(err)}`);
     });
+  }
+
+  // On-demand counterpart to the auto-sync schedule: pull every tier's missing /
+  // stale periods now. Runs tiers sequentially (like the scheduler) so concurrent
+  // `aws s3 sync` processes don't contend; the 2s status poller above drives each
+  // tier card's progress while a sync is in flight.
+  async function handleSyncAll() {
+    const tiers: {
+      id: string;
+      inventory: DataInventoryResult | null;
+      cutoff: string;
+      setState: (s: SyncState) => void;
+      bump: () => void;
+    }[] = [
+      { id: 'daily', inventory, cutoff: dailyCutoffPeriod, setState: setDailySyncState, bump: () => { setDailyRefreshKey(k => k + 1); } },
+      { id: 'hourly', inventory: hourlyInventory, cutoff: hourlyCutoffPeriod, setState: setHourlySyncState, bump: () => { setHourlyRefreshKey(k => k + 1); } },
+      { id: 'cost-optimization', inventory: costOptInventory, cutoff: costOptCutoffPeriod, setState: setCostOptSyncState, bump: () => { setCostOptRefreshKey(k => k + 1); } },
+    ];
+    for (const tier of tiers) {
+      const files = syncableWithinCutoff(tier.inventory, tier.cutoff).flatMap(p => [...p.files]);
+      if (files.length === 0) continue;
+      tier.setState({ status: 'downloading', filesDone: 0, filesTotal: files.length, bytesDone: 0, bytesTotal: 0, message: '' });
+      try {
+        const result = await api.syncPeriods(files, tier.id);
+        tier.setState({ status: 'done', filesDownloaded: result.filesDownloaded });
+        tier.bump();
+      } catch (err: unknown) {
+        tier.setState({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+      }
+    }
   }
 
   const [hourlyInitialized, setHourlyInitialized] = useState(false);
@@ -431,6 +483,15 @@ export function DataManagement() {
         <div className="flex items-center gap-4">
           <button
             type="button"
+            onClick={() => { handleSyncAll().catch(() => undefined); }}
+            disabled={syncableTotal === 0 || anySyncing}
+            title={syncableTotal === 0 ? 'All tiers are up to date' : `Sync ${String(syncableTotal)} period(s) that are missing or out of date`}
+            className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {syncableTotal === 0 ? 'Sync' : `Sync (${String(syncableTotal)})`}
+          </button>
+          <button
+            type="button"
             onClick={() => { setShowPrune(true); }}
             disabled={prunableTotal === 0}
             title={prunableTotal === 0 ? 'No local data is outside the retention window' : `Delete ${String(prunableTotal)} period(s) outside the retention window`}
@@ -514,6 +575,7 @@ export function DataManagement() {
             diskBytes={inventory?.local.diskBytes ?? 0}
             oldestPeriod={inventory?.local.oldestPeriod ?? null}
             newestPeriod={inventory?.local.newestPeriod ?? null}
+            lastSync={inventory?.lastSync ?? null}
             periods={inventory === null ? [] : [...inventory.periods]}
             selected={selected}
             onToggle={togglePeriod}
@@ -535,6 +597,7 @@ export function DataManagement() {
             diskBytes={hourlyInventory?.local.diskBytes ?? 0}
             oldestPeriod={hourlyInventory?.local.oldestPeriod ?? null}
             newestPeriod={hourlyInventory?.local.newestPeriod ?? null}
+            lastSync={hourlyInventory?.lastSync ?? null}
             periods={hourlyInventory === null ? [] : [...hourlyInventory.periods]}
             selected={hourlySelected}
             onToggle={toggleHourlyPeriod}
@@ -556,6 +619,7 @@ export function DataManagement() {
             diskBytes={costOptInventory?.local.diskBytes ?? 0}
             oldestPeriod={costOptInventory?.local.oldestPeriod ?? null}
             newestPeriod={costOptInventory?.local.newestPeriod ?? null}
+            lastSync={costOptInventory?.lastSync ?? null}
             periods={costOptInventory === null ? [] : [...costOptInventory.periods]}
             selected={costOptSelected}
             onToggle={toggleCostOptPeriod}

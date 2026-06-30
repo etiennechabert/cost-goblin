@@ -1,5 +1,5 @@
 import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
-import type { CostQueryParams, DailyCostsParams, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
+import type { CostQueryParams, DailyCostsParams, DateRange, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import { DEFAULT_PLACEHOLDER_PATTERNS } from '../types/query.js';
 import type { DimensionId } from '../types/branded.js';
 import { tagDimColumn } from '../types/branded.js';
@@ -9,8 +9,8 @@ import { discountPerspective, effectiveExclusionRules } from '../config/discount
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor, LIST_METRIC_LINE_ITEM_TYPES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
-import { assertDateString, assertHourString, SecurityError } from './identifier-validator.js';
-import { rollupGrainColumns } from '../rollup/grain.js';
+import { assertDateString, assertHourString, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
+import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 
 function assertFiniteNumber(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
@@ -349,7 +349,7 @@ export interface BuildSourceOptions {
 function activeMarketplaceRules(
   cfg: MarketplaceAttributionConfig | undefined,
 ): readonly MarketplaceAttributionRule[] {
-  if (cfg === undefined || !cfg.enabled) return [];
+  if (!cfg?.enabled) return [];
   return cfg.rules.filter(r => r.service.length > 0 && r.operations.length > 0);
 }
 
@@ -495,8 +495,9 @@ export function buildSource(opts: BuildSourceOptions): string {
   // retail equivalent, and including them just adds zero-cost rows that bloat
   // group-by buckets. Restrict at the source level so every downstream query
   // (Explorer, custom views, MCP, materialized base) sees a consistent slice.
+  const listTypeLiterals = LIST_METRIC_LINE_ITEM_TYPES.map(t => `'${t}'`).join(', ');
   const metricWhere = costMetric === 'list'
-    ? `\n    WHERE COALESCE(${tablePrefix}line_item_line_item_type, '') IN (${LIST_METRIC_LINE_ITEM_TYPES.map(t => `'${t}'`).join(', ')})`
+    ? `\n    WHERE COALESCE(${tablePrefix}line_item_line_item_type, '') IN (${listTypeLiterals})`
     : '';
 
   return `(
@@ -944,6 +945,143 @@ export function buildDailyCostsQuery(
   return { sql, params: qb.build().params };
 }
 
+export interface BaselineDiscoveryParams {
+  readonly dateRange: DateRange;
+  readonly filters: FilterMap;
+  /** Built-in dimension ids that form the discovery grain (the tuple key). */
+  readonly grainDimensionIds: readonly DimensionId[];
+  /** Keep only tuples whose total cost over the window is at least this much. */
+  readonly minTotalCost: number;
+}
+
+/** Enumerate per-day cost series for every distinct tuple over the discovery
+ *  grain, restricted to tuples whose window total clears `minTotalCost`. Each
+ *  grain dimension is projected under its physical column name so the caller
+ *  can rebuild the tuple. Uses the same source/exclusion machinery as the cost
+ *  queries, so it hits the rollup cache when the grain columns are in-grain. */
+export function buildBaselineDiscoveryQuery(
+  params: BaselineDiscoveryParams,
+  opts: QueryContextOptions,
+): ParameterizedQuery {
+  if (params.grainDimensionIds.length === 0) {
+    throw new SecurityError('Baseline discovery requires at least one grain dimension.');
+  }
+  assertFiniteNumber(params.minTotalCost, 'minTotalCost');
+  const { qb, filterClauses, exclusionClauses, source } = setupQuery(
+    { filters: params.filters, dateRange: params.dateRange },
+    'daily',
+    opts,
+  );
+  const resolved = params.grainDimensionIds.map((id) => resolveField(id, opts.dimensions));
+  for (const r of resolved) {
+    if (!isSafeColumnIdentifier(r.rawField)) {
+      throw new SecurityError(`Unsafe grain column "${r.rawField}" in baseline discovery.`);
+    }
+  }
+  const dimCols = resolved.map((r) => r.rawField);
+  const dimSelects = resolved.map((r) => `${r.fieldExpr} AS ${r.rawField}`);
+  // Group on the normalize/alias expressions, not the raw columns — `AS service`
+  // shadows the base column, so `GROUP BY service` would bind to the un-normalized
+  // value and split aliased variants apart (and the projected normalized value
+  // would collide). Grouping by fieldExpr matches buildDailyCostsQuery's group_name.
+  const dimGroupExprs = resolved.map((r) => r.fieldExpr);
+  const whereConditions = [
+    buildDateRangeWhere(qb, params.dateRange),
+    ...filterClauses,
+    ...exclusionClauses,
+  ];
+  const minLiteral = String(params.minTotalCost);
+  const joinOn = dimCols.map((c) => `pd.${c} IS NOT DISTINCT FROM t.${c}`).join(' AND ');
+
+  const sql = `
+    WITH per_day AS (
+      SELECT
+        usage_date::VARCHAR AS date,
+        ${dimSelects.join(',\n        ')},
+        SUM(cost) AS cost
+      FROM ${source}
+      WHERE ${whereConditions.join(' AND ')}
+      GROUP BY date, ${dimGroupExprs.join(', ')}
+    ),
+    totals AS (
+      SELECT ${dimCols.join(', ')}, SUM(cost) AS total
+      FROM per_day
+      GROUP BY ${dimCols.join(', ')}
+      HAVING SUM(cost) >= ${minLiteral}
+    )
+    SELECT pd.date AS date, ${dimCols.map((c) => `pd.${c} AS ${c}`).join(', ')}, pd.cost AS cost
+    FROM per_day pd
+    JOIN totals t ON ${joinOn}
+    ORDER BY ${dimCols.join(', ')}, pd.date
+  `.trim();
+
+  return { sql, params: qb.build().params };
+}
+
+/** Per-column distinct-value counts over the window, plus a row count. Used to
+ *  decide which enabled built-in dimensions are stable enough for the default
+ *  discovery grain (drops high-cardinality dims like resource_id). */
+export function buildDimCardinalityQuery(
+  fields: readonly string[],
+  dateRange: DateRange,
+  opts: QueryContextOptions,
+): ParameterizedQuery {
+  for (const f of fields) {
+    if (!isSafeColumnIdentifier(f)) {
+      throw new SecurityError(`Unsafe column "${f}" in cardinality probe.`);
+    }
+  }
+  const { qb, exclusionClauses, source } = setupQuery({ filters: {}, dateRange }, 'daily', opts);
+  const where = [buildDateRangeWhere(qb, dateRange), ...exclusionClauses];
+  const selects = fields.map((f) => `COUNT(DISTINCT ${f}) AS ${f}`);
+  selects.push('COUNT(*) AS row_count');
+  const sql = `
+    SELECT ${selects.join(', ')}
+    FROM ${source}
+    WHERE ${where.join(' AND ')}
+  `.trim();
+  return { sql, params: qb.build().params };
+}
+
+/** One row per distinct tuple over the discovery grain, with its total cost
+ *  over the window. Cheap (no per-day fan-out) — used to enumerate EVERY scope
+ *  for discovery, then classify each as worth tracking vs auto-ignore. */
+export function buildBaselineTotalsQuery(
+  params: { readonly dateRange: DateRange; readonly filters: FilterMap; readonly grainDimensionIds: readonly DimensionId[] },
+  opts: QueryContextOptions,
+): ParameterizedQuery {
+  if (params.grainDimensionIds.length === 0) {
+    throw new SecurityError('Baseline discovery requires at least one grain dimension.');
+  }
+  const { qb, filterClauses, exclusionClauses, source } = setupQuery(
+    { filters: params.filters, dateRange: params.dateRange },
+    'daily',
+    opts,
+  );
+  const resolved = params.grainDimensionIds.map((id) => resolveField(id, opts.dimensions));
+  for (const r of resolved) {
+    if (!isSafeColumnIdentifier(r.rawField)) {
+      throw new SecurityError(`Unsafe grain column "${r.rawField}" in baseline discovery.`);
+    }
+  }
+  const dimSelects = resolved.map((r) => `${r.fieldExpr} AS ${r.rawField}`);
+  // Group on the normalize/alias expressions, not the raw columns (see
+  // buildBaselineDiscoveryQuery) so aliased values collapse to one tuple.
+  const dimGroupExprs = resolved.map((r) => r.fieldExpr);
+  const whereConditions = [
+    buildDateRangeWhere(qb, params.dateRange),
+    ...filterClauses,
+    ...exclusionClauses,
+  ];
+  const sql = `
+    SELECT ${dimSelects.join(', ')}, SUM(cost) AS total
+    FROM ${source}
+    WHERE ${whereConditions.join(' AND ')}
+    GROUP BY ${dimGroupExprs.join(', ')}
+  `.trim();
+  return { sql, params: qb.build().params };
+}
+
 export function buildEntityDetailQuery(
   params: EntityDetailParams,
   opts: QueryContextOptions,
@@ -1102,10 +1240,26 @@ export function buildRollupPartitionQuery(
 /** Build the cardinality probe behind the grain cost/benefit estimator (rollup
  *  design §8). Over ONE recent month it returns, in a single scan:
  *   - `line_items`  — COUNT(*) (the rollup's raw input for that month),
- *   - `grain_rows`  — `approx_count_distinct` of the candidate grain tuple
- *      (≈ the rollup row count for that month), and
- *   - `card_<i>`    — `approx_count_distinct` of each non-date grain column,
- *      so the estimator can flag individual raw-only dims (e.g. resource_id).
+ *   - `grain_rows`  — distinct count of the candidate grain tuple
+ *      (the rollup row count for that month), and
+ *   - `card_<i>`    — exact distinct count of each enabled dimension's primary
+ *      column, so the estimator can flag individual raw-only dims (e.g. resource_id), and
+ *   - `loo_<i>`     — the grain row count with that whole dimension removed (a
+ *      built-in drops both its id and display column), so the estimator can
+ *      attribute marginal rollup size per dimension. Indexed by
+ *      `rollupGrainDimensions` order (built-ins first, then tags).
+ *
+ *  `grain_rows`/`loo_<i>` count distinct 64-bit HASHES of the grain tuple, not
+ *  the concatenated strings — exact-to-the-collision (collisions ~0 in practice;
+ *  see the body) but with 8-byte keys instead of materializing millions of long
+ *  strings. That is a per-key constant-factor cut (~8× peak memory on measured
+ *  data), NOT a structural bound: the scan still builds `N+1` distinct sets at
+ *  once (full grain + one per enabled dimension), so peak still grows with the
+ *  number of enabled dimensions. It moved the live estimate well clear of the
+ *  OOM cliff for normal configs; a pathologically wide grain could still be
+ *  heavy. NOT HyperLogLog: the per-dimension multiplier is a ratio of two
+ *  distinct-counts and approx error compounds across the ratio. A leave-one-out
+ *  can only lower the count, so multipliers are ≥ 1 (also clamped in the estimator).
  *
  *  `grainColumns` come from `rollupGrainColumns` over the candidate dimensions
  *  (usage_date first) and are projected by `buildSource` — the same trusted set
@@ -1145,13 +1299,43 @@ export function buildGrainProbeQuery(
   assertDateString(end);
   const whereConditions = [`usage_date >= '${start}'`, `usage_date < '${end}'`, ...exclusionClauses];
 
-  const grainConcat = `concat_ws(chr(31), ${grainColumns.join(', ')})`;
-  const cardCols = grainColumns.filter(c => c !== 'usage_date');
-  const cardSelects = cardCols.map((c, i) => `CAST(approx_count_distinct(${c}) AS BIGINT) AS card_${String(i)}`);
+  // Distinct grain rows. We count distinct 64-bit HASHES of the grain tuple, not
+  // the concatenated strings themselves: COUNT(DISTINCT) over a string key
+  // materializes the full key (~80+ bytes) for every distinct value in an
+  // in-memory hash set that does NOT spill, and the grain is near-unique when a
+  // high-cardinality dim (resource_id) is enabled — millions of long keys.
+  // Hashing to a UBIGINT keeps the count exact-to-the-collision while storing
+  // 8-byte keys, cutting peak probe memory ~8× (measured ~16 GB → ~2 GB on a
+  // 7.8M line-item month). COUNT(DISTINCT hash(x)) ≤ COUNT(DISTINCT x): a
+  // collision can only merge two tuples, never split one, so the count is a
+  // tight lower bound that is monotone with the true grain. Collisions are
+  // negligible — a handful per ~7M distinct keys (~1e-6), far below the 6–13%
+  // HyperLogLog error that ruled out approx_count_distinct here (that error
+  // compounds across the loo ÷ grain ratio, fabricating spurious ×1.1–×1.5
+  // impacts for near-redundant dims).
+  // 64-bit hash of a grain tuple — the 8-byte distinct key (see above). `cols`
+  // are trusted grain columns (no user values), same interpolation as the rest.
+  const grainHashExpr = (cols: readonly string[]): string => `hash(concat_ws(chr(31), ${cols.join(', ')}))`;
+  // Per-dimension cardinality and leave-one-out grain. card_<i> is the
+  // dimension's own distinct count (single column — cheap, kept exact); loo_<i>
+  // is the grain with that whole dimension removed — a built-in drops both its id
+  // and its display column, so a 1:1 display column (account_name ↔ account_id)
+  // isn't split into two mutually-covering pseudo-dims. The estimator turns
+  // fullGrain ÷ loo_<i> into the marginal rollup size each dimension drives — a
+  // correlation-aware impact, computed in this same single scan. loo uses the
+  // identical hash trick so all N+1 distinct sets stay 8-byte-keyed.
+  const grainDims = rollupGrainDimensions(dimensions);
+  const cardSelects = grainDims.map((dim, i) => `CAST(COUNT(DISTINCT ${dim.column}) AS BIGINT) AS card_${String(i)}`);
+  const looSelects = grainDims.map((dim, i) => {
+    const remove = new Set(dim.columns);
+    const cols = grainColumns.filter(g => !remove.has(g));
+    return `CAST(COUNT(DISTINCT ${grainHashExpr(cols)}) AS BIGINT) AS loo_${String(i)}`;
+  });
   const selects = [
     `CAST(COUNT(*) AS BIGINT) AS line_items`,
-    `CAST(approx_count_distinct(${grainConcat}) AS BIGINT) AS grain_rows`,
+    `CAST(COUNT(DISTINCT ${grainHashExpr(grainColumns)}) AS BIGINT) AS grain_rows`,
     ...cardSelects,
+    ...looSelects,
   ];
   return `SELECT ${selects.join(', ')} FROM ${source} WHERE ${whereConditions.join(' AND ')}`;
 }

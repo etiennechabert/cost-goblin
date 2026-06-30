@@ -95,13 +95,13 @@ export function useBarDragSelect(options: UseBarDragSelectOptions): UseBarDragSe
       setOverlay(null);
       setSelection(null);
     };
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseup', handleUp);
-    window.addEventListener('keydown', handleEsc);
+    globalThis.addEventListener('mousemove', handleMove);
+    globalThis.addEventListener('mouseup', handleUp);
+    globalThis.addEventListener('keydown', handleEsc);
     return () => {
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', handleUp);
-      window.removeEventListener('keydown', handleEsc);
+      globalThis.removeEventListener('mousemove', handleMove);
+      globalThis.removeEventListener('mouseup', handleUp);
+      globalThis.removeEventListener('keydown', handleEsc);
     };
   }, []);
 

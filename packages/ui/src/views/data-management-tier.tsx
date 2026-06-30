@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { DataInventoryResult } from '@costgoblin/core/browser';
 import { ConfirmModal } from '../components/confirm-modal.js';
+import { formatRelativeTime } from '../components/format.js';
 
 export type SyncState =
   | { status: 'idle' }
@@ -33,6 +34,7 @@ interface TierPanelProps {
   diskBytes: number;
   oldestPeriod: string | null;
   newestPeriod: string | null;
+  lastSync: string | null;
   periods: DataInventoryResult['periods'];
   selected: Set<string>;
   onToggle: (period: string) => void;
@@ -47,7 +49,7 @@ interface TierPanelProps {
 
 export function TierPanel({
   title, configured, bucket, retentionDays,
-  localPeriods, diskBytes, oldestPeriod, newestPeriod,
+  localPeriods, diskBytes, oldestPeriod, newestPeriod, lastSync,
   periods, selected, onToggle, onSelectAll, onDeselectAll, onDownload, onDeletePeriod,
   syncState, onConfigure, onCancelSync,
 }: Readonly<TierPanelProps>) {
@@ -103,6 +105,15 @@ export function TierPanel({
           <span className="text-text-muted">Retention</span>
           <span className="text-text-secondary tabular-nums">{retentionDays === null ? '—' : `${String(retentionDays)} days`}</span>
         </div>
+        <div className="flex justify-between">
+          <span className="text-text-muted">Last sync</span>
+          <span
+            className="text-text-secondary tabular-nums"
+            title={lastSync === null ? undefined : new Date(lastSync).toLocaleString()}
+          >
+            {lastSync === null ? 'Never' : formatRelativeTime(lastSync)}
+          </span>
+        </div>
       </div>
 
       {/* Local stats */}
@@ -125,9 +136,12 @@ export function TierPanel({
         // each file fully completes, so on a few large files the bar would
         // sit at 0% for minutes. Bytes from the "Completed" line move
         // smoothly. Fall back to file-count until the first bytes land.
-        const fraction = syncState.bytesTotal > 0
-          ? syncState.bytesDone / syncState.bytesTotal
-          : (syncState.filesTotal > 0 ? syncState.filesDone / syncState.filesTotal : 0);
+        let fraction = 0;
+        if (syncState.bytesTotal > 0) {
+          fraction = syncState.bytesDone / syncState.bytesTotal;
+        } else if (syncState.filesTotal > 0) {
+          fraction = syncState.filesDone / syncState.filesTotal;
+        }
         const percent = Math.min(100, Math.max(0, Math.round(fraction * 100)));
         return (
           <div className="rounded-lg border border-accent/50 bg-positive-muted px-3 py-2">

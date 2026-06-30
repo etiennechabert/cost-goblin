@@ -1,0 +1,4 @@
+# Runtime peer device-state written by the desktop peer-store handler when
+# COSTGOBLIN_CONFIG_DIR points here (e2e / homepage-screenshots). Generated,
+# not fixtures — never commit.
+peer-*.json

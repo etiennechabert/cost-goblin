@@ -2,7 +2,9 @@ import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import { LRUCache } from '../lru-cache.js';
 import { QueryLog } from '../query-log.js';
 import { awaitWithTimeout } from '../async-timeout.js';
+import { DEFAULT_ROLLUP_CONCURRENCY } from '../duckdb-tuning.js';
 import { RollupStore, type BuildPartitionSql, type RollupShape } from '../rollup-store.js';
+import { BaselineStore, type BaselineEngineDeps } from '../baselines-store.js';
 import {
   asDimensionId,
   applyNormalizationRule,
@@ -25,6 +27,8 @@ import {
   listLocalMonths,
   logger,
   isStringRecord,
+  isCredentialError,
+  isS3SyncDownloadFailure,
 } from '@costgoblin/core';
 import { buildAccountReverseMap } from './query-utils.js';
 import type {
@@ -155,9 +159,19 @@ export interface AppContext {
    *  or line_item_net_*. Cached per-tier for the session; invalidated on
    *  explicit reset via invalidateColumnCache. */
   readonly getAvailableColumns: (tier: 'daily' | 'hourly') => Promise<ReadonlySet<string>>;
+  /** Build-affecting shape signature for a dimensions config — compare against
+   *  rollupStore.getBuiltSignature() to tell if the built rollup matches a grain. */
+  readonly signatureForDimensions: (dims: DimensionsConfig) => Promise<string>;
   readonly queryLog: QueryLog;
   /** Persistent per-period pre-aggregated rollup backing dashboard queries. */
   readonly rollupStore: RollupStore;
+  /** Local-only cost baselines: discovery, drift, savings (issue #412). */
+  readonly baselineStore: BaselineStore;
+  /** The query/config capabilities the baseline store needs to recompute. */
+  readonly baselineEngineDeps: BaselineEngineDeps;
+  /** Re-discover + recompute all baselines (fire-and-forget). Hooked into the
+   *  post-sync rollup-maintenance step. */
+  readonly recomputeBaselines: () => void;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly runPreparedQuery: (sql: string, params: readonly unknown[], materialized?: boolean) => Promise<RawRow[]>;
   readonly invalidateConfig: () => void;
@@ -402,44 +416,75 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // unblended.
   const columnCache = new Map<string, Promise<ReadonlySet<string>>>();
 
+  // DESCRIBE one month's parquet → its column set. Errors degrade to the empty
+  // set (downstream reads that as "no optional columns" and uses the unblended
+  // fallback) rather than blocking the probe.
+  async function probeColumns(tier: string, month: string): Promise<ReadonlySet<string>> {
+    try {
+      const glob = `${ctx.dataDir}/aws/raw/${tier}-${month}/*.parquet`;
+      const rows = await ctx.db.runQuery(`DESCRIBE SELECT * FROM read_parquet('${glob}') LIMIT 0`);
+      const cols = new Set<string>();
+      for (const r of rows) {
+        const name = r['column_name'];
+        if (typeof name === 'string') cols.add(name);
+      }
+      return cols;
+    } catch (err: unknown) {
+      logger.warn(`column-probe: failed — ${err instanceof Error ? err.message : String(err)}`, { tier, month });
+      return new Set<string>();
+    }
+  }
+
   async function getAvailableColumns(tier: 'daily' | 'hourly'): Promise<ReadonlySet<string>> {
     const cached = columnCache.get(tier);
     if (cached !== undefined) return cached;
     const fetch = (async (): Promise<ReadonlySet<string>> => {
-      try {
-        const months = await listLocalMonths(ctx.dataDir, tier);
-        if (months.length === 0) {
-          // No data on disk for this tier — log loudly because the silent
-          // fallback used to surface as misleading "Degraded" warnings in
-          // Cost Scope when capability checks interpreted the empty set as
-          // "all columns missing."
-          logger.warn('column-probe: no months on disk', { tier, dataDir: ctx.dataDir });
-          return new Set<string>();
-        }
-        // Latest month sample is enough — CUR schema is stable across months
-        // within a billing report (AWS bumps schema on version changes, rare
-        // and user-initiated). Recent months also reflect any newly enabled
-        // optional columns whereas older months won't.
-        const month = months.at(-1);
-        const glob = `${ctx.dataDir}/aws/raw/${tier}-${String(month)}/*.parquet`;
-        const rows = await ctx.db.runQuery(`DESCRIBE SELECT * FROM read_parquet('${glob}') LIMIT 0`);
-        const cols = new Set<string>();
-        for (const r of rows) {
-          const name = r['column_name'];
-          if (typeof name === 'string') cols.add(name);
-        }
-        return cols;
-      } catch (err: unknown) {
-        logger.warn(`column-probe: failed — ${err instanceof Error ? err.message : String(err)}`, { tier });
+      const months = await listLocalMonths(ctx.dataDir, tier);
+      if (months.length === 0) {
+        // No data on disk for this tier — log loudly because the silent
+        // fallback used to surface as misleading "Degraded" warnings in
+        // Cost Scope when capability checks interpreted the empty set as
+        // "all columns missing."
+        logger.warn('column-probe: no months on disk', { tier, dataDir: ctx.dataDir });
         return new Set<string>();
       }
+      // Latest month = current capability: newly enabled optional columns
+      // (reservation_effective_cost, the SP/net families) show up here first.
+      // Used for the shape signature and the Cost Scope capability checks. The
+      // rollup BUILD must instead probe per-period — see getColumnsForPeriod.
+      const month = months.at(-1);
+      return probeColumns(tier, String(month));
     })();
     columnCache.set(tier, fetch);
     return fetch;
   }
 
+  // Columns present in ONE specific month's parquet. Months drift: a CUR only
+  // carries the optional cost columns from the billing period the user enabled
+  // them, so an older month has fewer columns than the latest. The rollup
+  // builds one month at a time over a single-month read, so it must reference
+  // only that month's columns — otherwise DuckDB throws a Binder Error on the
+  // absent column and the partition never builds. Cached per (tier, period).
+  async function getColumnsForPeriod(tier: 'daily' | 'hourly', period: string): Promise<ReadonlySet<string>> {
+    const key = `${tier}:${period}`;
+    const cached = columnCache.get(key);
+    if (cached !== undefined) return cached;
+    const fetch = probeColumns(tier, period);
+    columnCache.set(key, fetch);
+    return fetch;
+  }
+
   const queryLog = new QueryLog();
-  const rollupStore = new RollupStore({ dataDir: ctx.dataDir, runQuery: (sql) => ctx.db.runQuery(sql) });
+  const rollupStore = new RollupStore({
+    dataDir: ctx.dataDir,
+    runQuery: (sql) => ctx.db.runQuery(sql),
+    // Partition builds run on a fresh, disposable connection (flat per-build
+    // time) and fan out up to buildConcurrency at a time. Defaults to 2 (kept
+    // low so a rebuild stays gentle on the UI); the persisted Performance
+    // override is applied at startup (main.ts) and live via perf:set.
+    runBuild: (sql) => ctx.db.runBuildQuery(sql),
+    buildConcurrency: DEFAULT_ROLLUP_CONCURRENCY,
+  });
   const resultCache = new LRUCache<string, RawRow[]>(50);
 
   const wrappedRunQuery = queryLog.wrapQuery((sql, onStarted) => ctx.db.runQuery(sql, onStarted));
@@ -482,15 +527,22 @@ export function createAppContext(ctx: IpcContext): AppContext {
     });
   };
 
-  async function getRollupShape(): Promise<RollupShape> {
+  // Full build-affecting shape signature for an arbitrary dimensions config.
+  // The single source of truth for both the built rollup's signature (via
+  // getRollupShape) and the what-if estimate's "does this grain match what's
+  // built" check — keeping them on one code path so they can never drift (a
+  // drift would silently make the estimate's matched-check always false).
+  // computeShapeSignature ignores aliases/labels/region-enrichment, so the raw
+  // editor `candidate` and the query-enriched dims hash identically for the same
+  // enabled grain.
+  async function signatureForDimensions(dimensions: DimensionsConfig): Promise<string> {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const dimensions = await getQueryDimensions();
     const costScope = await getCostScope().catch(() => undefined);
     const availableColumns = await getAvailableColumns('daily');
     let orgRaw = '';
     try { orgRaw = await fs.readFile(path.join(path.dirname(ctx.dataDir), 'org-accounts.json'), 'utf-8'); } catch { /* no org sync yet */ }
-    const signature = computeShapeSignature({
+    return computeShapeSignature({
       dimensions,
       costMetric: costScope?.costMetric ?? 'unblended',
       costPerspective: discountPerspective(costScope),
@@ -499,6 +551,12 @@ export function createAppContext(ctx: IpcContext): AppContext {
       orgAccountsDigest: computeOrgAccountsDigest(orgRaw),
       availableColumns: [...availableColumns],
     });
+  }
+
+  async function getRollupShape(): Promise<RollupShape> {
+    const dimensions = await getQueryDimensions();
+    const signature = await signatureForDimensions(dimensions);
+    const availableColumns = await getAvailableColumns('daily');
     return { signature, grainDimensions: rollupGrainColumns(dimensions), availableColumns: [...availableColumns] };
   }
 
@@ -516,10 +574,16 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const orgPath = await getOrgAccountsPath();
     const accountReverseMap = await getAccountReverseMap();
     const costScope = await getCostScope().catch(() => undefined);
-    const availableColumns = await getAvailableColumns('daily');
-    return (period, outPath) => buildRollupPartitionQuery(period, 'daily', outPath, {
-      dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, accountReverseMap, costScope, availableColumns,
-    });
+    return async (period, outPath) => {
+      // Probe THIS period's columns, not the latest month's: an older month may
+      // lack optional cost columns the latest has, and a single-month build
+      // referencing an absent column throws a Binder Error (Issue: cold rebuild
+      // over mixed-schema months).
+      const availableColumns = await getColumnsForPeriod('daily', period);
+      return buildRollupPartitionQuery(period, 'daily', outPath, {
+        dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, accountReverseMap, costScope, availableColumns,
+      });
+    };
   }
 
   // Warm-load the persisted rollup: validate the manifest against the current
@@ -575,6 +639,19 @@ export function createAppContext(ctx: IpcContext): AppContext {
     rerollTimer = setTimeout(() => { rerollTimer = null; triggerWarmup(); }, ROLLUP_REROLL_DEBOUNCE_MS);
   }
 
+  const baselineStore = new BaselineStore(ctx.dataDir);
+  const baselineEngineDeps: BaselineEngineDeps = {
+    dataDir: ctx.dataDir,
+    getQueryDimensions,
+    getCostScope,
+    getAccountMap,
+    getAccountReverseMap,
+    getOrgTreeConfig,
+    getAvailableColumns,
+    runPreparedQuery,
+    rollupStore,
+  };
+
   return {
     ctx,
     state,
@@ -589,6 +666,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getRegionMap,
     getOrgAccountsPath,
     getAvailableColumns,
+    signatureForDimensions,
     queryLog,
     rollupStore,
     runQuery,
@@ -608,6 +686,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
     invalidateColumnCache: () => { columnCache.clear(); },
     warmupBase: () => { resultCache.clear(); triggerWarmup(); },
     maintainRollup: (changedPeriods: readonly string[]) => { void maintainRollupForPeriods(changedPeriods); },
+    baselineStore,
+    baselineEngineDeps,
+    recomputeBaselines: () => { void baselineStore.recompute(baselineEngineDeps); },
     awaitWarmup: async (timeoutMs: number): Promise<boolean> => {
       await awaitWithTimeout(warmupInFlight, timeoutMs);
       return rollupStore.isReady();
@@ -672,16 +753,17 @@ export async function prefsPath(dataDir: string, name: string): Promise<string> 
   return path.join(path.dirname(dataDir), `${name}.json`);
 }
 
-export function isCredentialError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const name = err.name;
-  if (name === 'CredentialsProviderError' || name === 'TokenProviderError') return true;
-  return err.message.includes('Token is expired') || err.message.includes('SSO session') || err.message.includes('credentials');
-}
+// `isCredentialError` now lives in @costgoblin/core (next to the S3 client that
+// throws these errors) so the auto-sync scheduler can share it. Re-exported here
+// for the handlers that already import it from this module.
+export { isCredentialError };
 
 export function toUserFriendlyError(err: unknown, profile: string): Error {
   if (isCredentialError(err)) {
     return new Error(`AWS credentials expired for profile "${profile}". Run: aws sso login --profile ${profile}`);
+  }
+  if (isS3SyncDownloadFailure(err)) {
+    return new Error(`Download from S3 failed — your AWS session may have expired. Run: aws sso login --profile ${profile} and retry. If it persists, check your network/VPN connection.`);
   }
   return err instanceof Error ? err : new Error(String(err));
 }

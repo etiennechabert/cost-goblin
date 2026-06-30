@@ -5,6 +5,9 @@ export {
   buildMissingTagsQuery,
   buildNonResourceCostQuery,
   buildEntityDetailQuery,
+  buildBaselineDiscoveryQuery,
+  buildBaselineTotalsQuery,
+  buildDimCardinalityQuery,
   buildSource,
   buildMaterializeBaseQuery,
   buildRollupPartitionQuery,
@@ -12,9 +15,11 @@ export {
   buildRuleMatchExpr,
   computePeriodsInRange,
 } from './builder.js';
-export type { QueryContextOptions, BuildSourceOptions } from './builder.js';
+export type { QueryContextOptions, BuildSourceOptions, BaselineDiscoveryParams } from './builder.js';
 
 export { costExprFor } from './cost-metric.js';
+
+export { QUERY_CANCELLED_MESSAGE } from './cancellation.js';
 
 export { assertDateString, assertHourString, validateColumnName, validateTablePath, SecurityError } from './identifier-validator.js';
 

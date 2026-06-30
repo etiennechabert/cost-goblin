@@ -1,8 +1,22 @@
 import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, NormalizationRule, OrgNode, TagDimension } from './config.js';
+import type {
+  BaselineCreateInput,
+  BaselineDetail,
+  BaselineDriftRow,
+  BaselineRecomputeStatus,
+  BaselineRecord,
+  BaselineSnapshot,
+  BaselinesConfigState,
+  BaselinesDiscoveryConfig,
+  BaselinesListParams,
+  BaselinesListResult,
+  BaselineUpdatePatch,
+} from './baseline.js';
 import type { RollupGrainEstimate } from '../rollup/estimator.js';
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { CostScopeCapabilities, CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
+import type { TelemetryPreferences, TelemetryStatus, TelemetryOutboxEntry } from '../telemetry/types.js';
 import type {
   ApplyConfigBundleParams,
   ApplyConfigBundleResult,
@@ -57,10 +71,13 @@ export interface UIPreferences {
 }
 
 /** User overrides for DuckDB resource tuning. `null` means "auto" — use the
- *  machine-derived default. */
+ *  default (machine-derived for memory/threads; a fixed 2 for rollupConcurrency). */
 export interface PerformanceSettings {
   readonly memoryLimitGB: number | null;
   readonly threads: number | null;
+  /** Max monthly rollup partitions built in parallel. null = default (2). Kept
+   *  low so a rebuild doesn't starve the cores that keep the UI responsive. */
+  readonly rollupConcurrency: number | null;
 }
 
 /** Performance tuning context for the settings UI: the machine-derived defaults
@@ -68,8 +85,10 @@ export interface PerformanceSettings {
 export interface PerformanceInfo {
   readonly defaultMemoryGB: number;
   readonly defaultThreads: number;
+  readonly defaultRollupConcurrency: number;
   readonly totalMemoryGB: number;
   readonly maxThreads: number;
+  readonly maxRollupConcurrency: number;
   readonly minMemoryGB: number;
   readonly maxMemoryGB: number;
   readonly current: PerformanceSettings;
@@ -118,6 +137,9 @@ export interface DataInventoryResult {
   readonly totalRemoteSize: number;
   readonly totalLocalPeriods: number;
   readonly totalRemotePeriods: number;
+  /** ISO 8601 of the last successful sync for this tier, or null if never
+   *  synced (imported-only or fresh). Durable across app restarts. */
+  readonly lastSync: string | null;
   readonly local: {
     readonly periods: readonly string[];
     readonly diskBytes: number;
@@ -149,7 +171,10 @@ export interface CostApi {
   openDataFolder(): Promise<void>;
   ssoLogin(profile: string): Promise<void>;
   getAccountMapping(): Promise<AccountMappingStatus>;
-  getSetupStatus(): Promise<{ configured: boolean }>;
+  /** `postSetup` is true only on the launch immediately following the setup
+   *  wizard (carried across the wizard's relaunch), so the UI can land the user
+   *  on the data-sync screen instead of an empty dashboard. */
+  getSetupStatus(): Promise<{ configured: boolean; postSetup: boolean }>;
   testConnection(params: { profile: string; bucket: string }): Promise<{ ok: boolean; error?: string | undefined }>;
   listAwsProfiles(): Promise<string[]>;
   listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }>;
@@ -322,6 +347,29 @@ export interface CostApi {
    *  first dashboard queries that follow — hit the in-memory base instead of
    *  racing the materialize with concurrent full raw-parquet scans. */
   awaitMaterializedBase(timeoutMs: number): Promise<boolean>;
+  // --- Cost Baselines ---
+  /** List baselines with filter/sort/paging; returns items plus the summed
+   *  potential/realized over the filtered discovered partition. */
+  listBaselines(params: BaselinesListParams): Promise<BaselinesListResult>;
+  /** Full detail (record + stored daily history + snapshots) for one baseline. */
+  getBaseline(id: string): Promise<BaselineDetail | null>;
+  /** Pin a baseline for a scope. Rejects a duplicate normalized scope+basis. */
+  createBaseline(input: BaselineCreateInput): Promise<BaselineRecord>;
+  /** Atomic update: band edit + status change + note, with auto-summary. */
+  updateBaseline(id: string, patch: BaselineUpdatePatch): Promise<BaselineRecord | null>;
+  deleteBaseline(id: string): Promise<void>;
+  /** Re-discover + recompute all baselines. `startFresh` wipes every discovered
+   *  baseline (incl. user-edited) before re-discovering; otherwise untouched
+   *  orphans are pruned and edited ones preserved. */
+  recomputeBaselines(opts?: { readonly startFresh?: boolean }): Promise<void>;
+  /** Point-in-time snapshot history for a baseline (for trend analysis). */
+  getBaselineSnapshots(id: string): Promise<readonly BaselineSnapshot[]>;
+  /** "What changed" breakdown: contribution by a child dimension, trailing vs
+   *  band window. */
+  getBaselineDrift(id: string, childDimension: string): Promise<readonly BaselineDriftRow[]>;
+  getBaselinesConfig(): Promise<BaselinesConfigState>;
+  setBaselinesConfig(config: BaselinesDiscoveryConfig): Promise<BaselinesConfigState>;
+  resetBaselinesConfig(): Promise<BaselinesConfigState>;
   getMcpServerRunning(): Promise<boolean>;
   setMcpServerRunning(enabled: boolean): Promise<void>;
   /** The shared secret a client must send (as `Authorization: Bearer <token>`
@@ -330,6 +378,19 @@ export interface CostApi {
   /** Rotate the MCP token, restarting the server if running. Returns the new
    *  token. Existing clients must update their config to keep working. */
   regenerateMcpToken(): Promise<string>;
+  /** Opt-in telemetry channel preferences (all default OFF). */
+  getTelemetryPreferences(): Promise<TelemetryPreferences>;
+  /** Persist telemetry channel preferences and apply them live — enabling a
+   *  channel lazily initialises the Sentry SDK, disabling all of them flushes
+   *  and shuts it down. */
+  setTelemetryPreferences(prefs: TelemetryPreferences): Promise<void>;
+  /** Whether a DSN is configured and whether the SDK is active this session,
+   *  so the UI can explain why nothing is (or is) being sent. */
+  getTelemetryStatus(): Promise<TelemetryStatus>;
+  /** The local telemetry audit log — one entry per event handed to the
+   *  transport — so the user can see exactly what left the machine. Most
+   *  recent first. */
+  getTelemetryOutbox(): Promise<readonly TelemetryOutboxEntry[]>;
 }
 
 export interface AccountMappingEntry {
@@ -375,6 +436,11 @@ export interface UpdateApi {
   checkForUpdates(): Promise<void>;
   downloadUpdate(): Promise<void>;
   quitAndInstall(): void;
+  /** Relaunch the app (not an update) — used to apply a telemetry consent
+   *  change, which can only take effect at startup. Pass `postSetup` when
+   *  relaunching at the end of the setup wizard so the next launch can resume on
+   *  the data-sync screen. */
+  relaunch(postSetup?: boolean): void;
   onStatusChanged(callback: (status: UpdateStatus) => void): () => void;
   getAppVersion(): Promise<string>;
 }
@@ -383,13 +449,18 @@ export interface UpdateApi {
  *  can show whether dashboards are currently served from the pre-aggregated
  *  rollup (`ready`) or transiently from the slower raw path while a re-roll runs
  *  (`computing`) — e.g. after a dimensions save or a sync. `idle` = no rollup
- *  built yet (no local data); `failed` = the last build batch hit an error
- *  (otherwise swallowed to the log). */
+ *  built yet (no local data); `failed` = the last build batch hit an error.
+ *  `message` is the count summary ("N of M partitions failed"); `reason` is the
+ *  underlying error (the DuckDB/IO message the build threw) so the user can tell
+ *  *why* it failed without digging through logs. While `computing`, `periods`
+ *  lists every month completed-first (the first `done` are built) and `active` is
+ *  the subset whose build is in flight right now, so the popover can pulse those
+ *  chips. */
 export type RollupStatus =
   | { readonly state: 'idle' }
-  | { readonly state: 'computing'; readonly done: number; readonly total: number; readonly periods: readonly string[] }
+  | { readonly state: 'computing'; readonly done: number; readonly total: number; readonly periods: readonly string[]; readonly active: readonly string[] }
   | { readonly state: 'ready'; readonly periods: number }
-  | { readonly state: 'failed'; readonly message: string; readonly periods: number };
+  | { readonly state: 'failed'; readonly message: string; readonly reason: string; readonly periods: number };
 
 /** Size KPIs for the built rollup vs the raw daily Parquet it's derived from.
  *  `rawBytes` is read from the local filesystem (no S3), so it's available even
@@ -405,4 +476,11 @@ export interface RollupApi {
   getStatus(): Promise<RollupStatus>;
   getStats(): Promise<RollupStats | null>;
   onStatusChanged(callback: (status: RollupStatus) => void): () => void;
+}
+
+/** Push channel for live baseline recompute/discovery status — model of the
+ *  rollup/update status channels. Exposed as `window.costgoblinBaselines`. */
+export interface BaselinesApi {
+  getStatus(): Promise<BaselineRecomputeStatus>;
+  onStatusChanged(callback: (status: BaselineRecomputeStatus) => void): () => void;
 }

@@ -723,9 +723,11 @@ function Histogram({ days, loading, onRangeSelect }: HistogramProps): React.JSX.
         {/* Bars */}
         <div
           ref={barsRef}
+          role={onRangeSelect === undefined ? undefined : 'button'}
+          tabIndex={onRangeSelect === undefined ? undefined : 0}
           className={[
-            'absolute top-0 right-0 h-full flex items-end',
-            onRangeSelect !== undefined ? 'cursor-crosshair select-none' : '',
+            'absolute top-0 right-0 h-full flex items-end outline-none',
+            onRangeSelect === undefined ? '' : 'cursor-crosshair select-none',
           ].join(' ')}
           style={{ left: Y_AXIS_WIDTH, gap: 2 }}
           onMouseDown={handleMouseDown}

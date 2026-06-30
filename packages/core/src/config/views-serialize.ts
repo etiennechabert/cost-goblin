@@ -10,6 +10,13 @@ function addGroupByFields(base: Record<string, unknown>, w: WidgetSpec & { group
   base['groupBy'] = w.groupBy;
 }
 
+function addBubbleFields(base: Record<string, unknown>, w: WidgetSpec & { type: 'bubble' }): void {
+  addGroupByFields(base, w);
+  if (w.logScale !== undefined) base['logScale'] = w.logScale;
+  if (w.deltaThreshold !== undefined) base['deltaThreshold'] = w.deltaThreshold;
+  if (w.percentThreshold !== undefined) base['percentThreshold'] = w.percentThreshold;
+}
+
 /** YAML-ready shape for a single widget. Keeps keys in a stable order so
  *  round-tripping a config doesn't produce noisy diffs. */
 export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
@@ -23,10 +30,7 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
       addGroupByFields(base, w);
       return base;
     case 'bubble':
-      addGroupByFields(base, w);
-      if (w.logScale !== undefined) base['logScale'] = w.logScale;
-      if (w.deltaThreshold !== undefined) base['deltaThreshold'] = w.deltaThreshold;
-      if (w.percentThreshold !== undefined) base['percentThreshold'] = w.percentThreshold;
+      addBubbleFields(base, w);
       return base;
     case 'treemap':
       addGroupByFields(base, w);
@@ -35,11 +39,22 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
     case 'line':
     case 'topNBar':
     case 'heatmap':
+    case 'waterfall':
+    case 'priceVolume':
       addGroupByFields(base, w);
       if (w.topN !== undefined) base['topN'] = w.topN;
       return base;
+    case 'pareto':
+      addGroupByFields(base, w);
+      return base;
+    case 'burndown':
+      if (w.budget !== undefined) base['budget'] = w.budget;
+      return base;
     case 'table':
       if (w.enabledColumns !== undefined && w.enabledColumns.length > 0) base['enabledColumns'] = [...w.enabledColumns];
+      return base;
+    case 'baseline':
+      if (w.topN !== undefined) base['topN'] = w.topN;
       return base;
   }
 }

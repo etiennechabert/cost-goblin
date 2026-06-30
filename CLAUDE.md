@@ -60,6 +60,9 @@ Follow this sequence for EVERY feature:
 7. Run: vitest run <test-file> → see tests pass (green)
 8. Run: npm run check → full verification (MUST pass before moving on)
 9. If working on UI: npm run dev in desktop/ to visually verify
+10. After pushing & opening the PR — close the review loop (see "After pushing"):
+    - Ask the user to run `/code-review ultra --fix` (user-triggered & billed — you can't launch it), then apply its fixes and re-run npm run check
+    - Address every sentry[bot] review comment on the PR
 ```
 
 ## TypeScript Rules — STRICTLY ENFORCED
@@ -165,9 +168,44 @@ The project version lives in `package.json` and `packages/desktop/package.json` 
 What this means in practice:
 - **Don't bump on every PR.** Once `main` is one release ahead of the latest tag, that version is correct — further PRs inherit it and change nothing. Only the **first** PR of a new release cycle bumps the version.
 - **Don't over-increment.** If the latest tag is `v0.2.6`, the target is `0.2.7`. Setting `0.2.8` (skipping `0.2.7`) is rejected — pick `0.2.7`, or, for an intentional minor/major release, `0.3.0` / `1.0.0`.
-- A bump (when needed) updates **both** `package.json` files together.
+- A bump (when needed) updates **only the two `package.json` files** (root + `packages/desktop`) together — **leave `package-lock.json` alone.** Its version field intentionally drifts (it currently lags several releases behind) and the `version-bump` CI job reads *only* the two `package.json` files. A version-only bump needs no `npm install`.
 
 So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` → subsequent PRs stay at `0.2.7` → maintainer tags `v0.2.7` to release → next PR bumps to `0.2.8`.
+
+**A deliberate minor/major (`0.5.0`, `1.0.0`)** is just a first-PR bump that jumps the minor/major instead of the patch — allowed even when `main` already sits one patch ahead, because the CI check accepts any of `next_patch` / `next_minor` / `next_major` relative to the latest tag. E.g. latest tag `v0.4.1`, `main` at `0.4.2` → a release PR may set `0.5.0` (replacing the unreleased `0.4.2`).
+
+> ⚠️ The pre-commit hook runs `npm run check`, which needs the worker bundle built first — run `npm run build:worker --workspace=packages/desktop` once before committing, or the commit fails on 2 worker tests (unrelated to the version change).
+
+## After pushing — close the review loop
+
+A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, run BOTH of the following before considering the work finished.
+
+### 1. `/code-review ultra --fix`
+
+At the end of a dev cycle (changes just pushed), run `/code-review ultra --fix` — a deep, multi-agent review that runs in the cloud and applies its findings to the working tree.
+
+- **It is user-triggered and billed — you (Claude) cannot launch it** (not via Bash, the `Skill` tool, or otherwise). When a cycle wraps, prompt the user to run it; don't attempt to invoke it yourself.
+- `ultra` reviews the current branch; `/code-review ultra <PR#>` reviews a specific GitHub PR. `--fix` applies the review's findings to the working tree after it completes (use `--comment` instead to post them as inline PR comments).
+- After it applies fixes: review the resulting diff, run `npm run check` (build the worker first — see the versioning note above), then commit and push. Treat anything it changed as a normal change that must pass verification.
+- The lighter effort levels (`/code-review` at low…max, optionally `--fix` / `--comment`) you *can* run yourself via the `Skill` tool for a quick local pass mid-development — only `ultra` is off-limits to you.
+
+### 2. Sentry comments
+
+This repo has Sentry's AI reviewer (`sentry[bot]`) configured. **Every PR you open, always check for and address its review comments** before considering the PR done — don't leave them unanswered.
+
+For each `sentry[bot]` comment:
+1. **Verify it against the actual code** — trace the data/control flow end-to-end; Sentry raises real bugs *and* false positives, so don't fix on faith or dismiss on reflex.
+2. **If valid** — fix it, run `npm run check`, and reply to the comment noting the fix (reference the commit SHA).
+3. **If a false positive** — reply explaining precisely why, citing the code paths that disprove it.
+4. **Answer Sentry's "Did we get this right? 👍 / 👎 to inform future reviews." footer** by reacting on the comment: 👍 (`+1`) when the finding was valid, 👎 (`-1`) when it was a false positive. This feeds Sentry's model.
+
+Fetch comments and reply/react with `gh`:
+```bash
+gh api repos/etiennechabert/cost-goblin/pulls/<pr>/comments --jq '.[] | select(.user.login=="sentry[bot]") | {id, path, line, body}'
+gh api -X POST repos/etiennechabert/cost-goblin/pulls/<pr>/comments/<id>/replies -f body="…"
+gh api -X POST repos/etiennechabert/cost-goblin/pulls/comments/<id>/reactions -f content='+1'   # or -1
+```
+Keep replies professional and free of any AI attribution (see global git rules).
 
 ## Key Architecture Decisions
 
@@ -197,6 +235,7 @@ So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` �
 ## What NOT To Do
 
 - Do NOT skip `npm run check`. Every change must pass before moving on.
+- Do NOT consider a pushed change "done" until `/code-review ultra --fix` has been run on it and every `sentry[bot]` comment is addressed.
 - Do NOT add `any`, `@ts-ignore`, or `eslint-disable` to make code compile.
 - Do NOT write tests after implementation. Write them before or alongside.
 - Do NOT import from `core` into `ui` for anything except types.
