@@ -68,7 +68,16 @@ class TelemetryController {
       active: this.active,
       preferences: this.prefs,
       armed: this.armedChannels(),
+      tracesSampleRate: this.tracesSampleRate(),
     };
+  }
+
+  /** The Sentry `tracesSampleRate` this build uses for performance tracing — dev
+   *  (unpackaged) samples everything, packaged releases sample the prod fraction.
+   *  Resolved once here from `app.isPackaged` and surfaced via {@link getStatus}
+   *  so the renderer samples at the same rate (no cross-process drift). */
+  private tracesSampleRate(): number {
+    return resolveTracesSampleRate(!app.isPackaged);
   }
 
   /** What each channel is *actually* doing this session (vs. the desired state in
@@ -154,7 +163,7 @@ class TelemetryController {
           this.prefs.nativeCrashReports ? defaults : defaults.filter((i) => i.name !== 'SentryMinidump'),
         // Tracing only when the performance channel is on. Dev (unpackaged, with
         // a DSN set) samples everything; packaged releases sample at the prod rate.
-        tracesSampleRate: this.prefs.performance ? resolveTracesSampleRate(!app.isPackaged) : 0,
+        tracesSampleRate: this.prefs.performance ? this.tracesSampleRate() : 0,
         // Never let the SDK attach IP/user/cookies — our scrub is the backstop,
         // but default-off is the first line of defence.
         sendDefaultPii: false,

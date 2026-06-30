@@ -12,6 +12,8 @@ export const SPAN_OP = {
   dbQuery: 'db.query',
   /** One rollup partition build (a single period, on a fresh connection). */
   rollupBuild: 'rollup.build',
+  /** The startup warm-load rebuild of missing/stale partitions. */
+  rollupWarmup: 'rollup.warmup',
   /** A post-sync rollup re-roll over the periods a sync changed. */
   rollupMaintain: 'rollup.maintain',
   /** One S3 selective-sync run (download + ingest of a set of periods). */

@@ -603,7 +603,13 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const toBuild = available.filter(p => !validation.validPeriods.has(p)).sort((a, b) => b.localeCompare(a));
       if (toBuild.length === 0) { rollupStore.markSettled(); return; }
       const buildSql = await buildRollupSqlFor();
-      void rollupStore.maintainPeriods(toBuild, buildSql, etags, shape).then(() => { resultCache.clear(); });
+      // Wrap the fire-and-forget rebuild in a transaction (the span is tied to the
+      // promise, so it stays open until the background builds settle), mirroring
+      // rollup.maintain — the rollup.build child spans nest under it.
+      void traceSpan(
+        { name: 'rollup.warmup', op: SPAN_OP.rollupWarmup, forceTransaction: true, attributes: { 'rollup.periods': toBuild.length } },
+        () => rollupStore.maintainPeriods(toBuild, buildSql, etags, shape),
+      ).then(() => { resultCache.clear(); });
     } catch (err: unknown) {
       rollupStore.markSettled();
       logger.warn(`rollup-warmup: ${err instanceof Error ? err.message : String(err)}`);

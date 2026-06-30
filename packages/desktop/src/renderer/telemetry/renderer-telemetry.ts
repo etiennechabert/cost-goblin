@@ -1,4 +1,3 @@
-import { resolveTracesSampleRate } from '@costgoblin/core/browser';
 import type { TelemetryStatus } from '@costgoblin/core/browser';
 
 let initialized = false;
@@ -16,8 +15,8 @@ let initialized = false;
  * at boot, so we key off `armed.performance` — the channel state the main
  * process actually init'd with — to avoid emitting transactions the main gate
  * would only drop. The browser-tracing integration auto-creates pageload +
- * navigation transactions; their sampling is decided here in the renderer, so
- * the rate must be set on this init too (the same value the main process uses).
+ * navigation transactions; the sample rate comes from `status.tracesSampleRate`
+ * (resolved once in the main process) so both processes sample identically.
  *
  * Idempotent (one init per session) and fail-safe: a bundling/SDK failure is
  * swallowed so it can never break the UI. The sole caller runs once on mount, so
@@ -33,10 +32,7 @@ export async function syncRendererTelemetry(status: TelemetryStatus): Promise<vo
     const Sentry = await import('@sentry/electron/renderer');
     Sentry.init({
       ...(wantTracing
-        ? {
-            tracesSampleRate: resolveTracesSampleRate(globalThis.costgoblinDebug.isDev()),
-            integrations: [Sentry.browserTracingIntegration()],
-          }
+        ? { tracesSampleRate: status.tracesSampleRate, integrations: [Sentry.browserTracingIntegration()] }
         : {}),
     });
   } catch {
