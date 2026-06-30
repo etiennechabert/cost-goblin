@@ -17,9 +17,8 @@ export class ContainedReadError extends Error {
  *  containment closes that out-of-tree read. Both paths are realpath'd so the
  *  comparison is robust to symlinked roots (e.g. macOS `/var` → `/private/var`). */
 export async function readFileWithinRoot(root: string, filePath: string): Promise<Buffer> {
-  const realRoot = await realpath(root);
-  const realFile = await realpath(filePath);
-  if (realFile !== realRoot && !realFile.startsWith(realRoot + sep)) {
+  const [realRoot, realFile] = await Promise.all([realpath(root), realpath(filePath)]);
+  if (!realFile.startsWith(realRoot + sep)) {
     throw new ContainedReadError('Resolved path escapes the shared data root');
   }
   return readFile(realFile);

@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { readFileWithinRoot, ContainedReadError } from '../peer/contained-read.js';
 
 describe('readFileWithinRoot', () => {
-  it('reads an in-tree file but refuses a symlink that escapes the root', async () => {
+  // Creating a symlink needs elevated privilege / Developer Mode on Windows
+  // (fs.symlink throws EPERM), so skip there rather than fail an unrelated suite.
+  it.skipIf(process.platform === 'win32')('reads an in-tree file but refuses a symlink that escapes the root', async () => {
     const base = await mkdtemp(join(tmpdir(), 'cg-contained-'));
     try {
       const root = join(base, 'aws', 'raw');

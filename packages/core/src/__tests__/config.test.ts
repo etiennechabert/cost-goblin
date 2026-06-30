@@ -73,15 +73,16 @@ describe('validateConfig', () => {
       }],
       defaults: { periodDays: 30, costMetric: 'unblended_cost', lagDays: 1 },
     });
-    // An imported bundle must not smuggle a leading-dash flag, whitespace, a
-    // newline, or traversal into the `aws s3 sync` source argument.
+    // An imported bundle must not smuggle a leading-dash flag, a newline/control
+    // char, or `..` traversal into the `aws s3 sync` source argument.
     expect(() => validateConfig(withBucket('-rf'))).toThrow(ConfigValidationError);
-    expect(() => validateConfig(withBucket('my bucket'))).toThrow(ConfigValidationError);
     expect(() => validateConfig(withBucket('bucket/../../../etc'))).toThrow(ConfigValidationError);
     expect(() => validateConfig(withBucket('evil\n--profile=x'))).toThrow(ConfigValidationError);
-    // A normal S3 location — with or without scheme and prefix — still passes.
+    // Normal S3 locations still pass — including legitimate key characters like
+    // a CUR 2.0 Hive partition prefix, which must not be over-rejected.
     expect(() => validateConfig(withBucket('s3://my-cur-bucket/daily/'))).not.toThrow();
     expect(() => validateConfig(withBucket('my-cur-bucket/daily'))).not.toThrow();
+    expect(() => validateConfig(withBucket('s3://my-bucket/cur/BILLING_PERIOD=2026-06/'))).not.toThrow();
   });
 });
 

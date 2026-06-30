@@ -45,6 +45,7 @@ function get(endpoint: PeerEndpoint, path: string, maxBytes: number): Promise<Bu
     const fail = (err: Error): void => { if (!settled) { settled = true; reject(err); } };
     const succeed = (buf: Buffer): void => { if (!settled) { settled = true; resolve(buf); } };
     const req = request(requestOptions(endpoint, path), (res) => {
+      res.on('error', fail);
       if (res.statusCode !== 200) {
         res.resume();
         fail(new Error(`Peer responded ${String(res.statusCode)} for ${path}`));
@@ -62,7 +63,6 @@ function get(endpoint: PeerEndpoint, path: string, maxBytes: number): Promise<Bu
         chunks.push(chunk);
       });
       res.on('end', () => { succeed(Buffer.concat(chunks)); });
-      res.on('error', fail);
     });
     req.on('error', fail);
     req.setTimeout(REQUEST_TIMEOUT_MS, () => { fail(new Error('Peer request timed out')); req.destroy(); });

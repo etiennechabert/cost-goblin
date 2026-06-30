@@ -49,17 +49,26 @@ function isValidNormalizationRule(value: string): value is NormalizationRule {
   return value === 'lowercase' || value === 'uppercase' || value === 'lowercase-kebab' || value === 'lowercase-underscore' || value === 'camelCase';
 }
 
-/** A sync bucket is interpolated into `s3://<bucket>/<prefix>` and handed to
- *  `aws s3 sync` as a positional argument. Confine it to a plausible S3
- *  location — an optional `s3://` scheme, a DNS-style bucket name, and an
- *  optional key prefix — so an imported config bundle can't smuggle
- *  whitespace, control characters, a leading-dash flag, or `..` traversal into
- *  the download source. */
-const BUCKET_PATH = /^(?:s3:\/\/)?[a-z0-9][a-z0-9.-]{1,61}[a-z0-9](?:\/[A-Za-z0-9._-]+)*\/?$/;
+function hasControlChar(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
 
+/** The sync bucket is interpolated into an `aws s3 sync` source argument
+ *  (`s3://<bucket>/<prefix>`), spawned via an argv array (no shell) and always
+ *  carrying the `s3://` scheme — so the value can't act as a shell injection or
+ *  a leading-dash flag. We therefore reject only genuinely malformed input: an
+ *  empty value, a leading dash, `..` traversal, or control characters (which
+ *  would corrupt logs / the argument). S3 keys legitimately contain `=`, `+`,
+ *  `:`, spaces, etc. (e.g. CUR 2.0 Hive partitions like `BILLING_PERIOD=…`), so
+ *  the key charset is intentionally left unrestricted — over-restricting it
+ *  would reject valid existing configs on load. */
 function validateBucketPath(raw: unknown, context: string): BucketPath {
   assertString(raw, context);
-  if (raw.includes('..') || !BUCKET_PATH.test(raw)) {
+  if (raw.length === 0 || raw.startsWith('-') || raw.includes('..') || hasControlChar(raw)) {
     throw new ConfigValidationError(`${context} is not a valid S3 bucket location`);
   }
   return asBucketPath(raw);
