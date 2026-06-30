@@ -1,4 +1,5 @@
 import { asBucketPath, asDimensionId } from '../types/branded.js';
+import type { BucketPath } from '../types/branded.js';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
 import type {
   ConceptType,
@@ -48,12 +49,28 @@ function isValidNormalizationRule(value: string): value is NormalizationRule {
   return value === 'lowercase' || value === 'uppercase' || value === 'lowercase-kebab' || value === 'lowercase-underscore' || value === 'camelCase';
 }
 
+/** A sync bucket is interpolated into `s3://<bucket>/<prefix>` and handed to
+ *  `aws s3 sync` as a positional argument. Confine it to a plausible S3
+ *  location — an optional `s3://` scheme, a DNS-style bucket name, and an
+ *  optional key prefix — so an imported config bundle can't smuggle
+ *  whitespace, control characters, a leading-dash flag, or `..` traversal into
+ *  the download source. */
+const BUCKET_PATH = /^(?:s3:\/\/)?[a-z0-9][a-z0-9.-]{1,61}[a-z0-9](?:\/[A-Za-z0-9._-]+)*\/?$/;
+
+function validateBucketPath(raw: unknown, context: string): BucketPath {
+  assertString(raw, context);
+  if (raw.includes('..') || !BUCKET_PATH.test(raw)) {
+    throw new ConfigValidationError(`${context} is not a valid S3 bucket location`);
+  }
+  return asBucketPath(raw);
+}
+
 function validateSyncTier(raw: unknown, context: string): SyncTierConfig {
   assertObject(raw, context);
-  assertString(raw['bucket'], `${context}.bucket`);
+  const bucket = validateBucketPath(raw['bucket'], `${context}.bucket`);
   assertNumber(raw['retentionDays'], `${context}.retentionDays`);
   return {
-    bucket: asBucketPath(raw['bucket']),
+    bucket,
     retentionDays: raw['retentionDays'],
   };
 }
