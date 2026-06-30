@@ -499,7 +499,7 @@ export class MockCostApi implements CostApi {
   }
   getTelemetryPreferences(): Promise<TelemetryPreferences> { return Promise.resolve({ errorReports: false, nativeCrashReports: false, performance: false, analytics: false }); }
   setTelemetryPreferences(): Promise<void> { return Promise.resolve(); }
-  getTelemetryStatus(): Promise<TelemetryStatus> { return Promise.resolve({ dsnConfigured: false, active: false, preferences: { errorReports: false, nativeCrashReports: false, performance: false, analytics: false }, armed: { errorReports: false, nativeCrashReports: false, performance: false, analytics: false } }); }
+  getTelemetryStatus(): Promise<TelemetryStatus> { return Promise.resolve({ dsnConfigured: false, active: false, preferences: { errorReports: false, nativeCrashReports: false, performance: false, analytics: false }, armed: { errorReports: false, nativeCrashReports: false, performance: false, analytics: false }, tracesSampleRate: 0 }); }
   getTelemetryOutbox(): Promise<readonly TelemetryOutboxEntry[]> { return Promise.resolve([]); }
   exportConfigBundle(): Promise<ExportConfigBundleResult> {
     return Promise.resolve({ status: 'saved', path: '/mock/costgoblin-config-2026-06-11.yaml' });

@@ -33,6 +33,7 @@ import {
 } from './context.js';
 import { triggerAutoSyncNow } from '../auto-sync.js';
 import { recordSyncLog } from '../sync-log.js';
+import { traceSpan, SPAN_OP } from '../telemetry/tracing.js';
 
 type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
 
@@ -261,7 +262,20 @@ export function registerSyncHandlers(app: AppContext): void {
     recordSyncLog('info', `Sync started: ${tier} (${String(fileEntries.length)} file(s))`);
 
     try {
-      const result = await runSync(ctx, provider.credentials.profile, bucketPath, tier, fileEntries, syncId, state);
+      const result = await traceSpan(
+        {
+          name: 'sync.s3',
+          op: SPAN_OP.sync,
+          forceTransaction: true,
+          attributes: { 'sync.tier': tier, 'sync.files_requested': fileEntries.length },
+        },
+        async (span) => {
+          const r = await runSync(ctx, provider.credentials.profile, bucketPath, tier, fileEntries, syncId, state);
+          span?.setAttribute('sync.files_downloaded', r.filesDownloaded);
+          span?.setAttribute('sync.rows_processed', r.rowsProcessed);
+          return r;
+        },
+      );
       syncWorkerIds.delete(syncId);
 
       const now = new Date();
