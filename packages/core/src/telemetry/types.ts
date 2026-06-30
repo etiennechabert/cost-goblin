@@ -29,6 +29,22 @@ export const TELEMETRY_DEFAULTS: TelemetryPreferences = {
   analytics: false,
 };
 
+/**
+ * Sentry `tracesSampleRate` when the performance channel is on. Production
+ * samples a fraction — enough volume for p95/p99 latency trends across releases
+ * while staying well under Sentry's quota; local dev (only ever emits when a DSN
+ * is set) samples everything so a developer sees every trace they generate. The
+ * main process resolves this ONCE (from `app.isPackaged`) and surfaces it on
+ * {@link TelemetryStatus.tracesSampleRate}, so the renderer samples at the same
+ * rate — one decision, no cross-process drift.
+ */
+export const TELEMETRY_TRACES_SAMPLE_RATE_DEV = 1.0;
+export const TELEMETRY_TRACES_SAMPLE_RATE_PROD = 0.1;
+
+export function resolveTracesSampleRate(isDev: boolean): number {
+  return isDev ? TELEMETRY_TRACES_SAMPLE_RATE_DEV : TELEMETRY_TRACES_SAMPLE_RATE_PROD;
+}
+
 /** True when at least one channel is on — i.e. the SDK should be initialised. */
 export function isTelemetryEnabled(prefs: TelemetryPreferences): boolean {
   return prefs.errorReports || prefs.nativeCrashReports || prefs.performance || prefs.analytics;
@@ -63,6 +79,11 @@ export interface TelemetryStatus {
    *  here until the app restarts — distinct from {@link preferences}, the desired
    *  state. The settings "● Active" badge keys off this, not the saved pref. */
   readonly armed: TelemetryPreferences;
+  /** The Sentry `tracesSampleRate` this build uses for performance tracing,
+   *  resolved once in the main process (dev samples more than prod). Surfaced so
+   *  the renderer samples at the SAME rate as the main process — one decision, no
+   *  cross-process drift. See {@link resolveTracesSampleRate}. */
+  readonly tracesSampleRate: number;
 }
 
 export type TelemetryEventKind = 'error' | 'transaction' | 'session' | 'crash' | 'other';

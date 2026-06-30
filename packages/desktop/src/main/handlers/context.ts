@@ -4,6 +4,7 @@ import { QueryLog } from '../query-log.js';
 import { awaitWithTimeout } from '../async-timeout.js';
 import { DEFAULT_ROLLUP_CONCURRENCY } from '../duckdb-tuning.js';
 import { RollupStore, type BuildPartitionSql, type RollupShape } from '../rollup-store.js';
+import { traceSpan, SPAN_OP, type SpanOptions } from '../telemetry/tracing.js';
 import { BaselineStore, type BaselineEngineDeps } from '../baselines-store.js';
 import {
   asDimensionId,
@@ -472,6 +473,12 @@ export function createAppContext(ctx: IpcContext): AppContext {
     return fetch;
   }
 
+  // Static span options, hoisted out of the per-call closures so a query/build
+  // with tracing OFF (the common case) allocates nothing on the hot path.
+  const QUERY_SPAN: SpanOptions = { name: 'duckdb.query', op: SPAN_OP.dbQuery, attributes: { 'db.system': 'duckdb' } };
+  const PREPARED_QUERY_SPAN: SpanOptions = { name: 'duckdb.query', op: SPAN_OP.dbQuery, attributes: { 'db.system': 'duckdb', 'db.prepared': true } };
+  const ROLLUP_BUILD_SPAN: SpanOptions = { name: 'rollup.build', op: SPAN_OP.rollupBuild };
+
   const queryLog = new QueryLog();
   const rollupStore = new RollupStore({
     dataDir: ctx.dataDir,
@@ -480,7 +487,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     // time) and fan out up to buildConcurrency at a time. Defaults to 2 (kept
     // low so a rebuild stays gentle on the UI); the persisted Performance
     // override is applied at startup (main.ts) and live via perf:set.
-    runBuild: (sql) => ctx.db.runBuildQuery(sql),
+    runBuild: (sql) => traceSpan(ROLLUP_BUILD_SPAN, () => ctx.db.runBuildQuery(sql)),
     buildConcurrency: DEFAULT_ROLLUP_CONCURRENCY,
   });
   const resultCache = new LRUCache<string, RawRow[]>(50);
@@ -503,7 +510,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const cached = resultCache.get(sql);
     if (cached !== undefined) return Promise.resolve(cached);
     return dedup(sql, async () => {
-      const result = await wrappedRunQuery(sql);
+      const result = await traceSpan(QUERY_SPAN, () => wrappedRunQuery(sql));
       if (result.length > 0) resultCache.set(sql, result);
       return result;
     });
@@ -519,7 +526,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
       return Promise.resolve(cached);
     }
     return dedup(key, async () => {
-      const result = await wrappedRunPreparedQuery(sql, params, materialized);
+      const result = await traceSpan(PREPARED_QUERY_SPAN, () => wrappedRunPreparedQuery(sql, params, materialized));
       if (result.length > 0) resultCache.set(key, result);
       return result;
     });
@@ -596,7 +603,13 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const toBuild = available.filter(p => !validation.validPeriods.has(p)).sort((a, b) => b.localeCompare(a));
       if (toBuild.length === 0) { rollupStore.markSettled(); return; }
       const buildSql = await buildRollupSqlFor();
-      void rollupStore.maintainPeriods(toBuild, buildSql, etags, shape).then(() => { resultCache.clear(); });
+      // Wrap the fire-and-forget rebuild in a transaction (the span is tied to the
+      // promise, so it stays open until the background builds settle), mirroring
+      // rollup.maintain — the rollup.build child spans nest under it.
+      void traceSpan(
+        { name: 'rollup.warmup', op: SPAN_OP.rollupWarmup, forceTransaction: true, attributes: { 'rollup.periods': toBuild.length } },
+        () => rollupStore.maintainPeriods(toBuild, buildSql, etags, shape),
+      ).then(() => { resultCache.clear(); });
     } catch (err: unknown) {
       rollupStore.markSettled();
       logger.warn(`rollup-warmup: ${err instanceof Error ? err.message : String(err)}`);
@@ -614,7 +627,10 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const etags = await getEtagsByPeriod();
       if (!rollupStore.isReady()) await rollupStore.loadAndValidate(shape, etags);
       const buildSql = await buildRollupSqlFor();
-      await rollupStore.maintainPeriods(periods, buildSql, etags, shape, { force: true });
+      await traceSpan(
+        { name: 'rollup.maintain', op: SPAN_OP.rollupMaintain, forceTransaction: true, attributes: { 'rollup.periods': periods.length } },
+        () => rollupStore.maintainPeriods(periods, buildSql, etags, shape, { force: true }),
+      );
       resultCache.clear();
     } catch (err: unknown) {
       logger.warn(`rollup-maintain: ${err instanceof Error ? err.message : String(err)}`);
