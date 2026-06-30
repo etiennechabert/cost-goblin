@@ -56,6 +56,7 @@ import type {
   SavingsResult,
   SyncStatus,
   SyncLogLine,
+  SyncLogLevel,
   TrendQueryParams,
   TrendResult,
 } from './query.js';
@@ -167,6 +168,10 @@ export interface CostApi {
   /** Subscribe to new sync/S3 log lines as they're appended. Returns an
    *  unsubscribe fn. Pushed via IPC, so no polling. */
   subscribeSyncLog(listener: (line: SyncLogLine) => void): () => void;
+  /** Append a renderer-originated line to the sync/S3 activity log — used by
+   *  on-demand actions (manual Sync/Prune) to narrate the S3 check, which
+   *  otherwise runs silently when there's nothing to download. */
+  appendSyncLog(level: SyncLogLevel, message: string): Promise<void>;
   /** Empty the sync/S3 activity log ring buffer. */
   clearSyncLog(): Promise<void>;
   getConfig(): Promise<CostGoblinConfig>;

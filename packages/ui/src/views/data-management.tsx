@@ -294,17 +294,24 @@ export function DataManagement() {
 
   function handlePrune() {
     setShowPrune(false);
+    void api.appendSyncLog('info', 'Manual prune — checking local data against retention…');
     api.pruneNow().then((result) => {
       setPruneNotice(
         result.deleted.length === 0
           ? 'Nothing to prune — all local data is within retention.'
           : `Pruned ${String(result.deleted.length)} period(s) outside retention.`,
       );
+      // The data:prune handler logs the removals when there are any; narrate the
+      // no-op case here so the click always leaves a trace in the activity log.
+      if (result.deleted.length === 0) {
+        void api.appendSyncLog('info', 'Prune — nothing outside the retention window');
+      }
       setDailyRefreshKey(k => k + 1);
       setHourlyRefreshKey(k => k + 1);
       setCostOptRefreshKey(k => k + 1);
       setTimeout(() => { setPruneNotice(null); }, 6000);
     }).catch((err: unknown) => {
+      void api.appendSyncLog('error', `Prune failed — ${err instanceof Error ? err.message : String(err)}`);
       setPruneNotice(`Prune failed: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
@@ -314,6 +321,7 @@ export function DataManagement() {
   // `aws s3 sync` processes don't contend; the 2s status poller above drives each
   // tier card's progress while a sync is in flight.
   async function handleSyncAll() {
+    void api.appendSyncLog('info', 'Manual sync — checking S3 for new or updated data…');
     const tiers: {
       id: DataTier;
       cutoff: string;
@@ -333,11 +341,16 @@ export function DataManagement() {
       let fresh: DataInventoryResult;
       try {
         fresh = await api.getDataInventory(tier.id);
-      } catch {
-        continue; // S3 unreachable / creds expired — skip (mirrors auto-sync)
+      } catch (err: unknown) {
+        // S3 unreachable / creds expired — surface it instead of skipping silently.
+        void api.appendSyncLog('warn', `${tier.id}: S3 check failed — ${err instanceof Error ? err.message : String(err)}`);
+        continue;
       }
       const files = syncableWithinCutoff(fresh, tier.cutoff).flatMap(p => [...p.files]);
-      if (files.length === 0) continue;
+      if (files.length === 0) {
+        void api.appendSyncLog('info', `${tier.id}: up to date`);
+        continue;
+      }
       tier.setState({ status: 'downloading', filesDone: 0, filesTotal: files.length, bytesDone: 0, bytesTotal: 0, message: '' });
       try {
         const result = await api.syncPeriods(files, tier.id);

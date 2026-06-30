@@ -147,6 +147,9 @@ const api: CostApi = {
     ipcRenderer.on('sync-log:append', handler);
     return () => { ipcRenderer.removeListener('sync-log:append', handler); };
   },
+  appendSyncLog(level: SyncLogLine['level'], message: string): Promise<void> {
+    return invoke<undefined>('sync-log:record', level, message).then(() => undefined);
+  },
   clearSyncLog(): Promise<void> {
     return invoke<undefined>('sync-log:clear').then(() => undefined);
   },

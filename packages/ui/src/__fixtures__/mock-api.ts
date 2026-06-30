@@ -264,6 +264,7 @@ export class MockCostApi implements CostApi {
   getSyncStatus(): Promise<SyncStatus> { return Promise.resolve(syncStatus); }
   getSyncLog(): Promise<readonly SyncLogLine[]> { return Promise.resolve([]); }
   subscribeSyncLog(): () => void { return () => undefined; }
+  appendSyncLog(): Promise<void> { return Promise.resolve(); }
   clearSyncLog(): Promise<void> { return Promise.resolve(); }
   getConfig(): Promise<CostGoblinConfig> { return Promise.resolve(config); }
   getDimensions(): Promise<Dimension[]> { return Promise.resolve(mockDimensions); }
