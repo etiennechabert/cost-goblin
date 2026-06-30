@@ -139,4 +139,40 @@ describe('DataManagement', () => {
       expect(spy).toHaveBeenCalledTimes(1);
     });
   });
+
+  it('sync button is disabled when all tiers are up to date', async () => {
+    renderDataManagement();
+    const syncBtn = await screen.findByRole('button', { name: /^Sync$/ });
+    expect(syncBtn).toHaveProperty('disabled', true);
+  });
+
+  it('sync button shows count and syncs missing/stale periods on demand', async () => {
+    const api = new MockCostApi();
+    // A far-future period is always within the retention cutoff, and 'missing'
+    // marks it as needing a sync — so the toolbar offers "Sync (1)".
+    api.getDataInventory = () => Promise.resolve({
+      periods: [
+        {
+          period: '2099-12',
+          files: [{ key: 'cur/BILLING_PERIOD=2099-12/file.parquet', contentHash: 'h', size: 1 }],
+          totalSize: 1,
+          localStatus: 'missing',
+        },
+      ],
+      totalRemoteSize: 1,
+      totalLocalPeriods: 0,
+      totalRemotePeriods: 1,
+      lastSync: null,
+      local: { periods: [], diskBytes: 0, oldestPeriod: null, newestPeriod: null },
+    });
+    const spy = vi.spyOn(api, 'syncPeriods');
+    const { user } = renderDataManagement(api);
+    const syncBtn = await screen.findByRole('button', { name: /Sync \(1\)/ });
+    await user.click(syncBtn);
+    // Only the daily tier is configured in the mock, so the on-demand sync
+    // fans out to exactly one syncPeriods call.
+    await waitFor(() => {
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+  });
 });
