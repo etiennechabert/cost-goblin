@@ -64,6 +64,26 @@ describe('validateConfig', () => {
       defaults: { periodDays: 30, costMetric: 'x', lagDays: 1 },
     })).toThrow(ConfigValidationError);
   });
+
+  it('rejects a sync bucket that is not a plausible S3 location', () => {
+    const withBucket = (bucket: string): unknown => ({
+      providers: [{
+        name: 'aws', type: 'aws', credentials: { profile: 'p' },
+        sync: { daily: { bucket, retentionDays: 30 }, intervalMinutes: 60 },
+      }],
+      defaults: { periodDays: 30, costMetric: 'unblended_cost', lagDays: 1 },
+    });
+    // An imported bundle must not smuggle a leading-dash flag, a newline/control
+    // char, or `..` traversal into the `aws s3 sync` source argument.
+    expect(() => validateConfig(withBucket('-rf'))).toThrow(ConfigValidationError);
+    expect(() => validateConfig(withBucket('bucket/../../../etc'))).toThrow(ConfigValidationError);
+    expect(() => validateConfig(withBucket('evil\n--profile=x'))).toThrow(ConfigValidationError);
+    // Normal S3 locations still pass — including legitimate key characters like
+    // a CUR 2.0 Hive partition prefix, which must not be over-rejected.
+    expect(() => validateConfig(withBucket('s3://my-cur-bucket/daily/'))).not.toThrow();
+    expect(() => validateConfig(withBucket('my-cur-bucket/daily'))).not.toThrow();
+    expect(() => validateConfig(withBucket('s3://my-bucket/cur/BILLING_PERIOD=2026-06/'))).not.toThrow();
+  });
 });
 
 describe('validateDimensions', () => {
