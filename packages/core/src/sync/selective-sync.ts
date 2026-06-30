@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 let cachedAwsPath: string | null = null;
 function findAwsCli(): string {
@@ -145,6 +145,41 @@ async function saveEtags(
   await writeFile(etagPath, JSON.stringify(savedEtags, null, 2));
 }
 
+/**
+ * Deletes any local `.parquet` not in the current manifest. `aws s3 sync` runs
+ * without `--delete`, so a previous CUR export's part files linger when AWS
+ * re-chunks a period — and get double-counted at query time. `manifestFiles`
+ * must be the period's complete file set (callers flatMap whole-period
+ * manifests). Best-effort: a failed deletion never fails a successful sync.
+ */
+async function pruneStaleFiles(destDir: string, manifestFiles: readonly ManifestFileEntry[]): Promise<number> {
+  // An empty manifest must never be read as "delete everything in the dir".
+  if (manifestFiles.length === 0) return 0;
+  const expected = new Set(manifestFiles.map(f => basename(f.key)));
+  let entries: string[];
+  try {
+    entries = await readdir(destDir);
+  } catch {
+    return 0; // dir vanished or was never created — nothing to prune
+  }
+  let removed = 0;
+  for (const name of entries) {
+    if (!name.endsWith('.parquet') || expected.has(name)) continue;
+    try {
+      await rm(join(destDir, name), { force: true });
+      removed++;
+    } catch (err) {
+      // A locked / permission-denied stale file must not fail a sync whose
+      // download already succeeded (mirrors the legacy-dir cleanup below).
+      logger.warn(`Failed to prune stale file ${name} from ${destDir}`, { err });
+    }
+  }
+  if (removed > 0) {
+    logger.info(`Pruned ${String(removed)} stale file(s) not in current manifest from ${destDir}`);
+  }
+  return removed;
+}
+
 function groupFilesByDate(periodFiles: readonly ManifestFileEntry[]): Map<string, ManifestFileEntry[]> {
   const dateGroups = new Map<string, ManifestFileEntry[]>();
   for (const file of periodFiles) {
@@ -219,6 +254,7 @@ async function syncDateGroup(opts: SyncDateGroupOptions): Promise<number> {
   await mkdir(destDir, { recursive: true });
 
   await runAwsS3Sync({ source: s3Source, dest: destDir, profile, signal, onLine });
+  await pruneStaleFiles(destDir, dateFiles);
 
   return dateFiles.length;
 }
@@ -345,6 +381,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
 
     totalFilesDownloaded += periodFiles.length;
 
+    await pruneStaleFiles(stagingDir, periodFiles);
     await saveEtags(dataDir, tier, period, periodFiles);
   }
 
