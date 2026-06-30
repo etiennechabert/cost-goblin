@@ -94,10 +94,17 @@ describe('DataManagement', () => {
     });
   });
 
-  it('prune button is disabled when no local data is outside retention', async () => {
-    renderDataManagement();
+  it('prune button is clickable even when nothing is outside retention', async () => {
+    // Prune is an on-demand action: always clickable so the user can re-check
+    // and remove anything outside retention. With nothing expired it opens the
+    // confirmation rather than being inert.
+    const { user } = renderDataManagement();
     const pruneBtn = await screen.findByRole('button', { name: /^Prune$/ });
-    expect(pruneBtn).toHaveProperty('disabled', true);
+    expect(pruneBtn).toHaveProperty('disabled', false);
+    await user.click(pruneBtn);
+    await waitFor(() => {
+      expect(screen.getByText('Prune old data')).toBeDefined();
+    });
   });
 
   it('prune button shows confirmation when data is outside retention', async () => {
@@ -140,10 +147,21 @@ describe('DataManagement', () => {
     });
   });
 
-  it('sync button is disabled when all tiers are up to date', async () => {
-    renderDataManagement();
+  it('sync button is clickable even when all tiers are up to date', async () => {
+    // Sync is on-demand: always clickable (except mid-sync) so a click re-checks
+    // S3 and pulls anything new, rather than being hard-disabled off a possibly
+    // stale snapshot.
+    const api = new MockCostApi();
+    const spy = vi.spyOn(api, 'getDataInventory');
+    const { user } = renderDataManagement(api);
     const syncBtn = await screen.findByRole('button', { name: /^Sync$/ });
-    expect(syncBtn).toHaveProperty('disabled', true);
+    expect(syncBtn).toHaveProperty('disabled', false);
+    const callsBefore = spy.mock.calls.length;
+    await user.click(syncBtn);
+    // The click re-checks the configured tier(s) against S3.
+    await waitFor(() => {
+      expect(spy.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
   });
 
   it('sync button shows count and syncs missing/stale periods on demand', async () => {

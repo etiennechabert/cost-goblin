@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import type { DataInventoryResult, CostGoblinConfig, SyncStatus } from '@costgoblin/core/browser';
+import type { DataInventoryResult, DataTier, CostGoblinConfig, SyncStatus } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
@@ -315,18 +315,28 @@ export function DataManagement() {
   // tier card's progress while a sync is in flight.
   async function handleSyncAll() {
     const tiers: {
-      id: string;
-      inventory: DataInventoryResult | null;
+      id: DataTier;
       cutoff: string;
+      configured: boolean;
       setState: (s: SyncState) => void;
       bump: () => void;
     }[] = [
-      { id: 'daily', inventory, cutoff: dailyCutoffPeriod, setState: setDailySyncState, bump: () => { setDailyRefreshKey(k => k + 1); } },
-      { id: 'hourly', inventory: hourlyInventory, cutoff: hourlyCutoffPeriod, setState: setHourlySyncState, bump: () => { setHourlyRefreshKey(k => k + 1); } },
-      { id: 'cost-optimization', inventory: costOptInventory, cutoff: costOptCutoffPeriod, setState: setCostOptSyncState, bump: () => { setCostOptRefreshKey(k => k + 1); } },
+      { id: 'daily', cutoff: dailyCutoffPeriod, configured: dailyBucket !== null, setState: setDailySyncState, bump: () => { setDailyRefreshKey(k => k + 1); } },
+      { id: 'hourly', cutoff: hourlyCutoffPeriod, configured: hourlyBucket !== null, setState: setHourlySyncState, bump: () => { setHourlyRefreshKey(k => k + 1); } },
+      { id: 'cost-optimization', cutoff: costOptCutoffPeriod, configured: costOptBucket !== null, setState: setCostOptSyncState, bump: () => { setCostOptRefreshKey(k => k + 1); } },
     ];
     for (const tier of tiers) {
-      const files = syncableWithinCutoff(tier.inventory, tier.cutoff).flatMap(p => [...p.files]);
+      if (!tier.configured) continue;
+      // Re-check S3 now rather than trusting the inventory snapshot the disabled
+      // state was derived from — a manual Sync should always reflect what's
+      // actually on S3 and pull anything missing or out of date.
+      let fresh: DataInventoryResult;
+      try {
+        fresh = await api.getDataInventory(tier.id);
+      } catch {
+        continue; // S3 unreachable / creds expired — skip (mirrors auto-sync)
+      }
+      const files = syncableWithinCutoff(fresh, tier.cutoff).flatMap(p => [...p.files]);
       if (files.length === 0) continue;
       tier.setState({ status: 'downloading', filesDone: 0, filesTotal: files.length, bytesDone: 0, bytesTotal: 0, message: '' });
       try {
@@ -485,8 +495,8 @@ export function DataManagement() {
           <button
             type="button"
             onClick={() => { handleSyncAll().catch(() => undefined); }}
-            disabled={syncableTotal === 0 || anySyncing}
-            title={syncableTotal === 0 ? 'All tiers are up to date' : `Sync ${String(syncableTotal)} period(s) that are missing or out of date`}
+            disabled={anySyncing}
+            title={anySyncing ? 'Sync in progress…' : syncableTotal === 0 ? 'Re-check S3 and download any new or updated data' : `Sync ${String(syncableTotal)} period(s) that are missing or out of date`}
             className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {syncableTotal === 0 ? 'Sync' : `Sync (${String(syncableTotal)})`}
@@ -494,8 +504,7 @@ export function DataManagement() {
           <button
             type="button"
             onClick={() => { setShowPrune(true); }}
-            disabled={prunableTotal === 0}
-            title={prunableTotal === 0 ? 'No local data is outside the retention window' : `Delete ${String(prunableTotal)} period(s) outside the retention window`}
+            title={prunableTotal === 0 ? 'Re-check local data and remove anything outside the retention window' : `Delete ${String(prunableTotal)} period(s) outside the retention window`}
             className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {prunableTotal === 0 ? 'Prune' : `Prune (${String(prunableTotal)})`}
@@ -652,7 +661,9 @@ export function DataManagement() {
       {showPrune && (
         <ConfirmModal
           title="Prune old data"
-          message={`Remove ${String(prunableTotal)} local period(s) that fall outside each tier's retention window? This data can be re-downloaded from S3 anytime.`}
+          message={prunableTotal === 0
+            ? "Re-check local data and remove anything that falls outside each tier's retention window? This data can be re-downloaded from S3 anytime."
+            : `Remove ${String(prunableTotal)} local period(s) that fall outside each tier's retention window? This data can be re-downloaded from S3 anytime.`}
           confirmLabel="Prune"
           destructive
           onConfirm={handlePrune}
