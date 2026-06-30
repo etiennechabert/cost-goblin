@@ -83,7 +83,7 @@ export class RollupStore {
   private readonly dataDir: string;
   private readonly runQuery: (sql: string) => Promise<RawRow[]>;
   private readonly runBuild: (sql: string) => Promise<RawRow[]>;
-  private readonly buildConcurrency: number;
+  private buildConcurrency: number;
 
   private manifest: RollupManifest | null = null;
   private shape: RollupShape | null = null;
@@ -111,6 +111,13 @@ export class RollupStore {
   }
 
   getStatus(): RollupStatus { return this.status; }
+
+  /** Adjust the cap on concurrent partition builds at runtime (the Performance
+   *  setting). Takes effect on the next maintainPeriods() batch — an in-flight
+   *  build keeps its current lane count. */
+  setBuildConcurrency(n: number): void {
+    this.buildConcurrency = Math.max(1, Math.round(n));
+  }
 
   private setStatus(status: RollupStatus): void {
     this.status = status;

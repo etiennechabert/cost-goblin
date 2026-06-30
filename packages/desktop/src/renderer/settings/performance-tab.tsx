@@ -23,6 +23,7 @@ export function PerformanceTab(): React.JSX.Element {
   const [info, setInfo] = useState<PerformanceInfo | null>(null);
   const [mem, setMem] = useState('');
   const [threads, setThreads] = useState('');
+  const [rollupConc, setRollupConc] = useState('');
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(false);
 
@@ -33,11 +34,16 @@ export function PerformanceTab(): React.JSX.Element {
       setInfo(i);
       setMem(fieldString(i.current.memoryLimitGB));
       setThreads(fieldString(i.current.threads));
+      setRollupConc(fieldString(i.current.rollupConcurrency));
     }).catch(() => undefined);
     return () => { cancelled = true; };
   }, [api]);
 
-  const dirty = info !== null && (parseField(mem) !== info.current.memoryLimitGB || parseField(threads) !== info.current.threads);
+  const dirty = info !== null && (
+    parseField(mem) !== info.current.memoryLimitGB ||
+    parseField(threads) !== info.current.threads ||
+    parseField(rollupConc) !== info.current.rollupConcurrency
+  );
   useUnsavedChanges(dirty, 'Performance');
 
   if (info === null) {
@@ -49,12 +55,20 @@ export function PerformanceTab(): React.JSX.Element {
 
   function save(): void {
     if (info === null || saving) return;
-    const next = { memoryLimitGB: parseField(mem), threads: parseField(threads) };
+    const next = { memoryLimitGB: parseField(mem), threads: parseField(threads), rollupConcurrency: parseField(rollupConc) };
     setSaving(true);
     setSavedAt(false);
     api.setPerformanceSettings(next)
-      .then(() => {
-        setInfo(prev => (prev === null ? prev : { ...prev, current: next }));
+      // Refetch the persisted settings rather than trusting `next`: the backend
+      // clamps out-of-range values (e.g. 9999 → maxThreads), so echoing `next`
+      // back would show an unclamped value as the saved/clean state. Reset the
+      // fields to what actually persisted so the UI never lies about the override.
+      .then(() => api.getPerformanceInfo())
+      .then((i) => {
+        setInfo(i);
+        setMem(fieldString(i.current.memoryLimitGB));
+        setThreads(fieldString(i.current.threads));
+        setRollupConc(fieldString(i.current.rollupConcurrency));
         setSavedAt(true);
       })
       .catch(() => undefined)
@@ -64,21 +78,25 @@ export function PerformanceTab(): React.JSX.Element {
   function resetToAuto(): void {
     setMem('');
     setThreads('');
+    setRollupConc('');
     setSavedAt(false);
   }
 
   return (
-    <div className="flex max-w-3xl flex-col gap-6 p-6">
+    <div className="flex w-full flex-col gap-6 p-6">
       <div>
         <h2 className="text-xl font-semibold text-text-primary">Performance</h2>
-        <p className="mt-1 text-sm text-text-secondary">Tune how much of this machine DuckDB may use. Leave blank for Auto.</p>
+        <p className="mt-1 text-sm text-text-secondary">Tune how much of this machine the app may use for queries and rollup builds. Leave a field blank for Auto.</p>
       </div>
 
       <div className="flex flex-col gap-5 rounded-lg border border-border p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <label htmlFor="perf-mem" className="text-sm text-text-primary">Memory limit (GB)</label>
-            <p className="mt-0.5 text-xs text-text-muted">
+            <p className="mt-0.5 max-w-xl text-xs text-text-muted">
+              How much RAM DuckDB may use for queries. Higher keeps large aggregations in memory instead of spilling to disk (faster on heavy queries); set too high it competes with the OS and your other apps and can make the whole machine sluggish.
+            </p>
+            <p className="mt-1 text-[11px] text-text-muted">
               Auto: {info.defaultMemoryGB} GB · range {info.minMemoryGB}–{memCeiling} · {info.totalMemoryGB} GB detected
             </p>
           </div>
@@ -98,7 +116,10 @@ export function PerformanceTab(): React.JSX.Element {
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <label htmlFor="perf-threads" className="text-sm text-text-primary">DuckDB threads</label>
-            <p className="mt-0.5 text-xs text-text-muted">
+            <p className="mt-0.5 max-w-xl text-xs text-text-muted">
+              CPU cores DuckDB uses per query. Higher makes a single big scan finish faster; lower leaves cores free so the UI and other queries stay responsive when several run at once.
+            </p>
+            <p className="mt-1 text-[11px] text-text-muted">
               Auto: {info.defaultThreads} · range 1–{info.maxThreads} cores
             </p>
           </div>
@@ -112,6 +133,29 @@ export function PerformanceTab(): React.JSX.Element {
             placeholder={`Auto (${String(info.defaultThreads)})`}
             value={threads}
             onChange={(e) => { setThreads(e.target.value); setSavedAt(false); }}
+          />
+        </div>
+
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <label htmlFor="perf-rollup-conc" className="text-sm text-text-primary">Parallel rollup builds</label>
+            <p className="mt-0.5 max-w-xl text-xs text-text-muted">
+              How many monthly rollup partitions build at once when a rollup is (re)built. Higher finishes a full rebuild sooner; lower keeps dashboards and the UI snappier while it runs in the background.
+            </p>
+            <p className="mt-1 text-[11px] text-text-muted">
+              Auto: {info.defaultRollupConcurrency} · range 1–{info.maxRollupConcurrency}
+            </p>
+          </div>
+          <input
+            id="perf-rollup-conc"
+            type="number"
+            min={1}
+            max={info.maxRollupConcurrency}
+            inputMode="numeric"
+            className={inputCls}
+            placeholder={`Auto (${String(info.defaultRollupConcurrency)})`}
+            value={rollupConc}
+            onChange={(e) => { setRollupConc(e.target.value); setSavedAt(false); }}
           />
         </div>
       </div>
@@ -133,7 +177,7 @@ export function PerformanceTab(): React.JSX.Element {
         <button
           type="button"
           onClick={resetToAuto}
-          disabled={mem === '' && threads === ''}
+          disabled={mem === '' && threads === '' && rollupConc === ''}
           className="rounded-md border border-border px-4 py-1.5 text-sm text-text-secondary transition-colors hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
         >
           Reset to Auto

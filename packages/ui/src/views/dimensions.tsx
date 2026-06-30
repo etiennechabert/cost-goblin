@@ -117,6 +117,24 @@ function reconcileOrder(config: DimensionsConfig): string[] {
   return out;
 }
 
+function isPlainRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** Order-insensitive serialization for dirty-checking: recursively sorts object
+ *  keys so two configs that differ only in key insertion order compare equal.
+ *  Array order is preserved (dimension/order arrays are semantically ordered).
+ *  Without this, saving a dim editor — which rebuilds the dim object key-by-key
+ *  in a different order than the on-disk baseline — would flip `dirty` true on a
+ *  no-op save and offer a needless rollup rebuild. */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (isPlainRecord(value)) {
+    return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 const CONCEPTS: { value: ConceptType; label: string }[] = [
   { value: 'environment', label: 'Environment' },
   { value: 'product', label: 'System' },
@@ -1671,7 +1689,7 @@ function ImpactDetails({ estimate, matchedCurrent, sizeReduction, rowRatio, rank
 /** Cost/benefit summary for the current enabled grain (rollup design §8).
  *  Updates as dims are toggled so the user can weigh the rebuild before it
  *  happens. Numbers are directional (probed from one recent month). */
-function RollupImpactPanel({ estimate, loading, stale, config }: Readonly<{ estimate: RollupGrainEstimate | null; loading: boolean; stale: boolean; config: DimensionsConfig }>): React.JSX.Element {
+function RollupImpactPanel({ estimate, loading, stale, error, config }: Readonly<{ estimate: RollupGrainEstimate | null; loading: boolean; stale: boolean; error: boolean; config: DimensionsConfig }>): React.JSX.Element {
   const rankedDims = estimate === null
     ? []
     : [...estimate.dims].sort((a, b) => b.marginalMultiplier - a.marginalMultiplier);
@@ -1688,13 +1706,28 @@ function RollupImpactPanel({ estimate, loading, stale, config }: Readonly<{ esti
   // install must not flash the "Estimating…" spinner over the real "no data" state.
   const noData = estimate !== null && estimate.probePeriod.length === 0;
   const syncHint = <p className="mt-3 text-xs text-text-muted">Sync billing data to estimate the rollup size for this grain.</p>;
+  const errorHint = <p className="mt-3 text-xs text-text-muted">Couldn’t estimate the rollup size for this grain — change a dimension to retry.</p>;
+  // Branch order matters. `estimate === null` here means "not resolved yet" (the
+  // panel only renders with a non-null config, and the probe always returns a
+  // non-null estimate — empty when there's no data), so fold it into the loader
+  // branch: that keeps EstimateProgress mounted across the debounce→fetch handoff
+  // where `loading` lags the settled grain by one tick (otherwise that one frame
+  // flashed a hint and remounted the bar, resetting its progress).
+  //  - `stale || loading` wins over a leftover `error` so toggling after a failed
+  //    probe shows "Estimating…", not the stale error.
+  //  - a settled error (not stale/loading) shows a real error message, NOT the
+  //    "sync billing data" hint — that would mislead a user who already has data.
   let body: React.JSX.Element;
   if (noData) {
     body = syncHint;
-  } else if (stale || (loading && estimate === null)) {
-    body = <EstimateProgress />;
   } else if (estimate === null) {
-    body = syncHint;
+    // Not resolved yet, or a terminal error. While loading/stale (or simply not
+    // yet probed) show the bar; only a SETTLED error shows the error hint — so a
+    // leftover error from a prior grain doesn't flash over the next "Estimating…".
+    body = error && !stale && !loading ? errorHint : <EstimateProgress />;
+  } else if (stale || loading) {
+    // A non-null prior estimate is being re-probed for a changed grain.
+    body = <EstimateProgress />;
   } else {
     body = (
       <ImpactDetails
@@ -1782,14 +1815,13 @@ function resolveOrderedRows(config: DimensionsConfig): OrderedRow[] {
   return rows;
 }
 
-export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: string }>): React.JSX.Element {
+export function DimensionsView(): React.JSX.Element {
   const api = useCostApi();
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editingBuiltInIdx, setEditingBuiltInIdx] = useState<number | null>(null);
   const [hiddenResourceCols, setHiddenResourceCols] = useState(new Set<string>());
   const [hiddenAccountCols, setHiddenAccountCols] = useState(new Set<string>());
   const [addingNew, setAddingNew] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0);
   // Debug-panel expansion state. Collapsed by default — the two tag pivot
   // tables are exploratory, not primary content.
   const [resourceTagsExpanded, setResourceTagsExpanded] = useState(false);
@@ -1808,27 +1840,42 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
     () => needsTagDiscovery ? api.discoverTagKeys() : Promise.resolve(null),
     [needsTagDiscovery],
   );
-  const configQuery = useQuery(() => api.getDimensionsConfig(), [refreshKey]);
+  const configQuery = useQuery(() => api.getDimensionsConfig(), []);
   const orgQuery = useQuery(() => api.getOrgSyncResult(), []);
 
   const tagsResult = tagsQuery.status === 'success' ? tagsQuery.data : null;
   const discoveredTags = tagsResult?.tags ?? [];
 
-  // Keep the last good config visible while a refetch is in flight — useQuery
-  // resets to status=loading on every dep change, which would otherwise blank
-  // the dimensions list for a frame after every reorder/toggle/save.
+  // Draft-editing model: `config` is the working draft the user edits freely;
+  // `savedConfig` is the last-persisted baseline. Edits stay LOCAL — toggling,
+  // reordering, and the per-dim editors mutate only the draft, so the live
+  // estimate and value previews update instantly while the expensive rollup
+  // rebuild is deferred. Nothing persists (and so nothing re-rolls) until the
+  // user clicks Apply, which writes the draft and lets the backend rebuild the
+  // rollup for the new grain. Mirrors the draft/saved/dirty pattern in Cost Scope.
   const [config, setConfig] = useState<DimensionsConfig | null>(null);
+  const [savedConfig, setSavedConfig] = useState<DimensionsConfig | null>(null);
+  const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   useEffect(() => {
     if (configQuery.status !== 'success') return;
     const { config: migrated, changed } = migrateLocked(configQuery.data);
-    setConfig(migrated);
-    if (changed) {
-      const reconciled = { ...migrated, order: reconcileOrder(migrated) };
-      api.saveDimensionsConfig(reconciled).catch(() => undefined);
-    }
+    // Normalize `order` up front so a toggle-on-then-off round-trips to a
+    // byte-identical draft (no spurious dirty against the baseline).
+    const baseline = { ...migrated, order: reconcileOrder(migrated) };
+    setConfig(baseline);
+    setSavedConfig(baseline);
+    // A locked-dim migration is a correctness fix, not a user edit — persist it
+    // immediately (matches the legacy behaviour) so the baseline is on disk.
+    if (changed) api.saveDimensionsConfig(baseline).catch(() => undefined);
   }, [configQuery, api]);
   const orgData = orgQuery.status === 'success' ? orgQuery.data : null;
+
+  // Draft is dirty when it diverges from the persisted baseline. Registers with
+  // the app-wide unsaved-changes guard so navigating away prompts before the
+  // in-progress draft is lost.
+  const dirty = config !== null && savedConfig !== null && stableStringify(config) !== stableStringify(savedConfig);
+  useUnsavedChanges(dirty, 'Dimensions');
 
   // Live rollup cost/benefit estimate for the current enabled grain. Keyed on
   // the grain signature so it refetches when a dim is toggled (the grain
@@ -1843,10 +1890,13 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
   const debouncedEstimateSig = useDebouncedValue(estimateSig, 350);
   const estimateQuery = useQuery(
     () => config === null ? Promise.resolve(null) : api.estimateRollupGrain(config),
-    // Refetch when the (settled) grain changes OR when the built rollup changes
-    // (e.g. a re-roll finishes) so the actual/estimated badge updates without a
-    // remount.
-    [debouncedEstimateSig, rollupRevision ?? ''],
+    // Refetch ONLY when the (settled) draft grain changes. The estimate is a
+    // pre-apply preview — it must NOT re-run when the rollup rebuilds. Applying
+    // kicks off a re-roll, and re-probing on that transition would fire a heavy
+    // DuckDB scan redundantly AND in contention with the rebuild it just started.
+    // The actual/estimated badge therefore settles on the next grain change or a
+    // remount, never mid-rebuild.
+    [debouncedEstimateSig],
   );
   const estimate = estimateQuery.status === 'success' ? estimateQuery.data : null;
   const estimateLoading = estimateQuery.status === 'loading';
@@ -1896,36 +1946,30 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
     return { ...base, concept, normalize, aliases, accountTagFallback, missingValueTemplate, pathSegment, defaultFilterValues };
   }
 
-  async function handleSaveTag(idx: number, editing: EditingTag) {
+  function handleSaveTag(idx: number, editing: EditingTag): void {
     if (config === null) return;
     const tags = [...config.tags];
     tags[idx] = editingToTagDimension(editing);
-    const next = { ...config, tags, order: reconcileOrder({ ...config, tags }) };
-    await api.saveDimensionsConfig(next);
+    setConfig({ ...config, tags, order: reconcileOrder({ ...config, tags }) });
     setEditingIdx(null);
-    setRefreshKey(k => k + 1);
   }
 
-  async function handleAddTag(editing: EditingTag) {
+  function handleAddTag(editing: EditingTag): void {
     if (config === null) return;
     const newTag = editingToTagDimension(editing);
     const tags = [...config.tags, newTag];
-    const next = { ...config, tags, order: reconcileOrder({ ...config, tags }) };
-    await api.saveDimensionsConfig(next);
+    setConfig({ ...config, tags, order: reconcileOrder({ ...config, tags }) });
     setAddingNew(false);
-    setRefreshKey(k => k + 1);
   }
 
-  async function handleRemoveTag(idx: number) {
+  function handleRemoveTag(idx: number): void {
     if (config === null) return;
     const tags = config.tags.filter((_, i) => i !== idx);
-    const next = { ...config, tags, order: reconcileOrder({ ...config, tags }) };
-    await api.saveDimensionsConfig(next);
+    setConfig({ ...config, tags, order: reconcileOrder({ ...config, tags }) });
     setEditingIdx(null);
-    setRefreshKey(k => k + 1);
   }
 
-  async function handleSaveBuiltIn(idx: number, edited: EditingBuiltIn) {
+  function handleSaveBuiltIn(idx: number, edited: EditingBuiltIn): void {
     if (config === null) return;
     const builtIn = config.builtIn.map((d, i) => {
       if (i !== idx) return d;
@@ -1958,25 +2002,41 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
         ...(edited.defaultFilterValues.length > 0 ? { defaultFilterValues: [...edited.defaultFilterValues] } : {}),
       };
     });
-    const next = { ...config, builtIn, order: reconcileOrder({ ...config, builtIn }) };
-    await api.saveDimensionsConfig(next);
+    setConfig({ ...config, builtIn, order: reconcileOrder({ ...config, builtIn }) });
     setEditingBuiltInIdx(null);
-    setRefreshKey(k => k + 1);
   }
 
-  // Optimistic save: paint the new config locally first, then persist in the
-  // background. Always writes a reconciled `order` so the YAML is in sync
-  // with the visible list (entries for disabled dims are dropped; newly-
-  // enabled dims are appended).
-  function applyOptimistic(next: DimensionsConfig): void {
-    const reconciled = { ...next, order: reconcileOrder(next) };
-    setConfig(reconciled);
+  // Draft mutation: paint the change into the local draft only. No persistence
+  // here — the estimate and value previews react to the draft, but the rollup
+  // rebuild waits for Apply. `order` is reconciled so disabled dims drop out and
+  // newly-enabled ones append, keeping the visible list and serialized order in sync.
+  function applyDraft(next: DimensionsConfig): void {
+    setConfig({ ...next, order: reconcileOrder(next) });
+  }
+
+  // Commit point: persist the draft. The backend save drops the old rollup and
+  // rebuilds it for the new grain (debounced, in the background) — this is the
+  // ONLY path that triggers a re-roll now. Exploring/editing the draft never does.
+  async function confirmChanges(): Promise<void> {
+    if (config === null) return;
+    setSaving(true);
     setSaveError(null);
-    api.saveDimensionsConfig(reconciled).catch((err: unknown) => {
-      // The toggle/reorder autosave used to swallow this — a failed persist left
-      // the UI showing a change that never reached disk. Surface it instead.
+    try {
+      await api.saveDimensionsConfig(config);
+      setSavedConfig(config);
+    } catch (err: unknown) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save dimensions');
-    });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function discardChanges(): void {
+    setConfig(savedConfig);
+    setSaveError(null);
+    setEditingIdx(null);
+    setEditingBuiltInIdx(null);
+    setAddingNew(false);
   }
 
   function toggleBuiltInEnabled(idx: number): void {
@@ -1988,7 +2048,7 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
       delete (rest as { enabled?: boolean }).enabled;
       return nextEnabled === undefined ? rest : { ...rest, enabled: nextEnabled };
     });
-    applyOptimistic({ ...config, builtIn });
+    applyDraft({ ...config, builtIn });
   }
 
   function toggleTagEnabled(idx: number): void {
@@ -2000,7 +2060,7 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
       delete (rest as { enabled?: boolean }).enabled;
       return nextEnabled === undefined ? rest : { ...rest, enabled: nextEnabled };
     });
-    applyOptimistic({ ...config, tags });
+    applyDraft({ ...config, tags });
   }
 
   // Quick-add a discovered tag as a dimension
@@ -2013,7 +2073,7 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
     const moved = order.splice(fromIdx, 1)[0];
     if (moved === undefined) return;
     order.splice(toIdx, 0, moved);
-    applyOptimistic({ ...config, order });
+    applyDraft({ ...config, order });
   }
 
   /** Drag/drop attrs for a row. Single unified-order index — no separate
@@ -2089,14 +2149,48 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
 
   return (
     <div className="flex flex-col gap-8 p-6">
-      <div>
-        <h2 className="text-xl font-semibold text-text-primary">Dimensions</h2>
-        <p className="text-sm text-text-secondary mt-1">Map tags to cost allocation dimensions</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-semibold text-text-primary">Dimensions</h2>
+          <p className="text-sm text-text-secondary mt-1">Map tags to cost allocation dimensions</p>
+        </div>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <div className="flex items-center gap-2">
+            {dirty ? (
+              <>
+                <button
+                  type="button"
+                  onClick={discardChanges}
+                  disabled={saving}
+                  className="rounded-md px-4 py-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+                >
+                  Discard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { confirmChanges().catch(() => undefined); }}
+                  disabled={saving}
+                  title="Save these dimensions and rebuild the rollup for the new grain"
+                  className="rounded-md bg-accent px-4 py-1.5 text-xs font-medium text-bg-primary hover:bg-accent/90 transition-colors disabled:opacity-50"
+                >
+                  {saving ? 'Applying…' : 'Apply & rebuild rollup'}
+                </button>
+              </>
+            ) : (
+              <span className="text-xs text-text-muted">Saved</span>
+            )}
+          </div>
+          {dirty && (
+            <span className="text-[11px] text-text-muted max-w-xs text-right">
+              Previewing changes — the rollup rebuilds only when you apply.
+            </span>
+          )}
+        </div>
       </div>
 
       {saveError !== null && (
         <div className="flex items-start justify-between gap-3 rounded-lg border border-negative/50 bg-negative-muted px-4 py-2.5">
-          <p className="text-sm text-negative">Couldn’t save your change: {saveError}</p>
+          <p className="text-sm text-negative">Couldn’t apply your changes: {saveError}</p>
           <button
             type="button"
             onClick={() => { setSaveError(null); }}
@@ -2173,16 +2267,16 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
             </div>
           </div>
 
-          {/* Rollup cost/benefit for the current grain — updates as pills are
-              toggled so the user can weigh the (background) re-roll first. */}
-          <RollupImpactPanel estimate={estimate} loading={estimateLoading} stale={estimateStale} config={config} />
+          {/* Rollup cost/benefit for the current draft grain — updates live as
+              pills are toggled so the user can weigh the rebuild before applying. */}
+          <RollupImpactPanel estimate={estimate} loading={estimateLoading} stale={estimateStale} error={estimateQuery.status === 'error'} config={config} />
 
           {/* New-tag-dim form appears inline right after the pill rows so the
               user sees where the new pill will land. */}
           {addingNew && (
             <TagEditor
               tag={quickAddState ?? { tagName: '', label: '', concept: '', normalize: '', aliases: '', fallbackTag: undefined, missingValueTemplate: '', pathSegIndex: '', defaultFilterValues: [] }}
-              onSave={(edited) => { handleAddTag(edited).catch(() => undefined); }}
+              onSave={(edited) => { handleAddTag(edited); }}
               onCancel={() => { setAddingNew(false); setQuickAddState(null); }}
               onRemove={undefined}
               availableTags={unmappedTagKeys}
@@ -2230,7 +2324,7 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
                         defaultFilterValues: d.defaultFilterValues ?? [],
                       },
                     }}
-                    onSave={(edited) => { handleSaveBuiltIn(row.idx, edited).catch(() => undefined); }}
+                    onSave={(edited) => { handleSaveBuiltIn(row.idx, edited); }}
                     onCancel={() => { setEditingBuiltInIdx(null); }}
                     accountTagKeys={accountTagKeys}
                   />
@@ -2289,9 +2383,9 @@ export function DimensionsView({ rollupRevision }: Readonly<{ rollupRevision?: s
                     pathSegIndex: tag.pathSegment === undefined ? '' : String(tag.pathSegment.index),
                     defaultFilterValues: tag.defaultFilterValues ?? [],
                   }}
-                  onSave={(edited) => { handleSaveTag(row.idx, edited).catch(() => undefined); }}
+                  onSave={(edited) => { handleSaveTag(row.idx, edited); }}
                   onCancel={() => { setEditingIdx(null); }}
-                  onRemove={() => { handleRemoveTag(row.idx).catch(() => undefined); }}
+                  onRemove={() => { handleRemoveTag(row.idx); }}
                   availableTags={unmappedTagKeys}
                   discoveredTags={discoveredTags}
                   accountTagKeys={accountTagKeys}
