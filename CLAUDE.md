@@ -44,6 +44,11 @@ npx vitest run <specific-file>        # single test file (fastest iteration)
 # Fixtures
 npx tsx packages/core/src/__fixtures__/generate.ts --profile    # profile real data
 npx tsx packages/core/src/__fixtures__/generate.ts --generate   # create synthetic fixtures
+
+# Fuzz / soak (bug-hunting by brute force — see "Fuzz testing" below)
+npx tsx packages/core/src/__fuzz__/run.ts --count 20000         # query-param fuzzer soak (add --seed N to replay)
+npm run e2e:fuzz                                                # UI monkey: random clicks through the real app
+FUZZ_SEED=123 FUZZ_ACTIONS=500 npm run e2e:fuzz                # replay / longer monkey soak
 ```
 
 ## Development Workflow
@@ -133,6 +138,12 @@ No Electron, no DuckDB, no file system.
 ### Layer 4: Electron E2E (Playwright)
 Full app launch with `--fixture-mode` flag pointing at fixture data directory.
 Slow (seconds). Run before commits, always in CI.
+
+### Fuzz testing (brute-force bug hunting)
+Two seeded fuzzers hunt for bugs the example-based suites miss. Both are documented in detail in `packages/core/src/__fuzz__/README.md`.
+
+- **Query-param fuzzer** (`packages/core/src/__fuzz__/`, Layer 2): throws adversarial-but-type-valid `CostQueryParams`/`DailyCostsParams`/`EntityDetailParams` at the real builders + a real DuckDB prepared statement. Oracle: no hang, and no injection (an executed query's columns must stay within its fixed schema). The deterministic batch `query-fuzz.test.ts` runs inside `npm run check`; soak harder with `npx tsx packages/core/src/__fuzz__/run.ts --count 20000` (or `make fuzz`), replay a finding with `--seed N`.
+- **UI monkey** (`e2e/fuzz-monkey.test.ts`, Layer 4): seeded random clicks over the accessibility tree of the real app — a **crash oracle only** (page error / renderer crash / React error boundary), not a correctness oracle. Opt-in via `npm run e2e:fuzz` / `make fuzz-ui` (env `FUZZ_ACTIONS`, `FUZZ_SEED`); deliberately **not** in the CI `e2e` gate (slow, nondeterministic — run it as a nightly soak). It isolates its own config+data dirs so a run never dirties committed fixtures.
 
 ### Fixture Data
 - Real company data is in `data/raw/` — NEVER committed (gitignored + pre-commit guard)

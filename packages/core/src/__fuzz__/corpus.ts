@@ -1,0 +1,106 @@
+/**
+ * Adversarial value pools for the query fuzzer.
+ *
+ * Every value here is a plain `string` / `number` — the branded constructors
+ * (`asTagValue`, `asDateString`, `asDimensionId`, ...) brand without validating,
+ * so these hostile values are fully type-valid `CostQueryParams` fields. That is
+ * exactly the real threat model: filter values come from user input and dates /
+ * dimension ids can arrive from a shared config bundle. The fuzzer proves that
+ * none of them can break out of parameterization or the identifier allow-list.
+ */
+
+/** Classic SQL-injection payloads + parameterization-stressing literals. */
+const SQL_INJECTION_PAYLOADS: readonly string[] = [
+  "' OR '1'='1",
+  "' OR 1=1 --",
+  "'; DROP TABLE base; --",
+  "x') UNION SELECT 1, 2, 3, 4 --",
+  "1; SELECT 42 AS pwned",
+  "') OR (SELECT COUNT(*) FROM base) > 0 --",
+  "\\'; --",
+  "$1",
+  "${injected}",
+  "'||(SELECT 1)||'",
+  "1' AND SLEEP(5) --",
+  "*/ UNION ALL SELECT NULL --",
+];
+
+/** Strings that stress LIKE handling, escaping, and unicode/length edges. */
+const HOSTILE_STRINGS: readonly string[] = [
+  '',
+  ' ',
+  '\t\n\r',
+  '%',
+  '_',
+  '%%%',
+  '"',
+  '`',
+  ';',
+  '--',
+  '/*',
+  '\u0000',
+  ' embedded',
+  'null',
+  'NaN',
+  'Infinity',
+  '💀🔥',
+  '𝕏𝕐𝕑',
+  '‮RTL-override',
+  'a'.repeat(100_000),
+];
+
+/** Plausible real values present in the synthetic fixture (productive cases). */
+const VALID_SERVICES: readonly string[] = ['AmazonRDS', 'AmazonEC2', 'AmazonS3', 'AWSLambda'];
+const VALID_REGIONS: readonly string[] = ['eu-central-1', 'us-east-1', 'us-west-2'];
+
+/** Union of hostile + valid filter values. */
+export const FILTER_VALUES: readonly string[] = [
+  ...SQL_INJECTION_PAYLOADS,
+  ...HOSTILE_STRINGS,
+  ...VALID_SERVICES,
+  ...VALID_REGIONS,
+];
+
+/** Dimension ids that are NOT in the dimensions config — must be rejected. */
+export const HOSTILE_DIMENSION_IDS: readonly string[] = [
+  '',
+  'account',
+  'nonexistent',
+  'resource_id',
+  'cost',
+  'account_id; DROP TABLE base',
+  "service' --",
+  'tag_',
+  'tag_does_not_exist',
+  '1=1',
+  '../../etc/passwd',
+  'tag_team OR 1=1',
+];
+
+/** Date strings: well-formed in-window, out-of-window, and malformed/hostile. */
+export const HOSTILE_DATES: readonly string[] = [
+  '',
+  'not-a-date',
+  '2026-13-01',
+  '2026-02-30',
+  '2026-00-00',
+  '0000-00-00',
+  "2026-01-01' OR '1'='1",
+  '2026-01-01; DROP TABLE base',
+  '2026-01-01 00:00:00',
+  '99999-01-01',
+  '2026/01/01',
+  '2026-1-1',
+];
+
+/** Hour strings for sub-day windows: valid and hostile. */
+export const HOSTILE_HOURS: readonly string[] = [
+  '2026-02-01 00:00:00',
+  '2026-02-15 12:00:00',
+  '2026-02-28 23:00:00',
+  '2026-02-01 25:00:00',
+  '2026-02-01 12:30:00',
+  "2026-02-01 12:00:00' --",
+  'not-an-hour',
+  '',
+];
