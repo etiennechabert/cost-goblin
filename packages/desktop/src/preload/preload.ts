@@ -20,6 +20,7 @@ import type {
   EntityDetailParams,
   EntityDetailResult,
   SyncStatus,
+  SyncLogLine,
   SavingsResult,
   DataInventoryResult,
   DataTier,
@@ -137,6 +138,20 @@ const api: CostApi = {
   },
   getSyncStatus(syncId?: string): Promise<SyncStatus> {
     return invoke<SyncStatus>('sync:status', syncId);
+  },
+  getSyncLog(): Promise<readonly SyncLogLine[]> {
+    return invoke<readonly SyncLogLine[]>('sync-log:get');
+  },
+  subscribeSyncLog(listener: (line: SyncLogLine) => void): () => void {
+    const handler = (_event: unknown, line: SyncLogLine): void => { listener(line); };
+    ipcRenderer.on('sync-log:append', handler);
+    return () => { ipcRenderer.removeListener('sync-log:append', handler); };
+  },
+  appendSyncLog(level: SyncLogLine['level'], message: string): Promise<void> {
+    return invoke<undefined>('sync-log:record', level, message).then(() => undefined);
+  },
+  clearSyncLog(): Promise<void> {
+    return invoke<undefined>('sync-log:clear').then(() => undefined);
   },
   getConfig(): Promise<CostGoblinConfig> {
     return invoke<CostGoblinConfig>('config:get');

@@ -1,6 +1,9 @@
 import { logger } from '@costgoblin/core';
-import type { ManifestFileEntry, SyncProgress } from '@costgoblin/core';
+import type { ManifestFileEntry, SyncProgress, SyncLogLevel } from '@costgoblin/core';
 import { initWorkerLifecycle } from './worker-lifecycle.js';
+
+/** A log line forwarded from the sync worker thread. */
+export type SyncLogSink = (level: SyncLogLevel, message: string, ts: number) => void;
 
 export interface SyncOptions {
   readonly bucketPath: string;
@@ -26,7 +29,8 @@ type WorkerResponse =
   | { kind: 'ready' }
   | { kind: 'progress'; id: number; phase: 'downloading' | 'repartitioning' | 'done'; filesDone: number; filesTotal: number; bytesDone?: number; bytesTotal?: number; message?: string }
   | { kind: 'complete'; id: number; filesDownloaded: number; rowsProcessed: number }
-  | { kind: 'error'; id: number; message: string };
+  | { kind: 'error'; id: number; message: string }
+  | { kind: 'log'; level: SyncLogLevel; message: string; ts: number };
 
 function hasProps(msg: unknown): msg is Record<string, unknown> {
   return typeof msg === 'object' && msg !== null;
@@ -35,6 +39,9 @@ function hasProps(msg: unknown): msg is Record<string, unknown> {
 function isWorkerResponse(msg: unknown): msg is WorkerResponse {
   if (!hasProps(msg)) return false;
   if (msg['kind'] === 'ready') return true;
+  if (msg['kind'] === 'log') {
+    return typeof msg['message'] === 'string' && typeof msg['ts'] === 'number' && typeof msg['level'] === 'string';
+  }
   if ((msg['kind'] === 'progress' || msg['kind'] === 'complete' || msg['kind'] === 'error') && typeof msg['id'] === 'number') {
     if (msg['kind'] === 'progress') {
       return (
@@ -57,7 +64,7 @@ interface PendingSync {
   onProgress?: ((progress: SyncProgress) => void) | undefined;
 }
 
-export async function createSyncClient(workerPath: string): Promise<SyncClient> {
+export async function createSyncClient(workerPath: string, onLog?: SyncLogSink): Promise<SyncClient> {
   const lifecycle = await initWorkerLifecycle<PendingSync>(
     workerPath,
     (msg) => isWorkerResponse(msg) && msg.kind === 'ready',
@@ -72,6 +79,12 @@ export async function createSyncClient(workerPath: string): Promise<SyncClient> 
   worker.on('message', (msg: unknown) => {
     if (!isWorkerResponse(msg)) return;
     if (msg.kind === 'ready') return;
+    if (msg.kind === 'log') {
+      // Log lines aren't tied to a request id — they stream for the whole
+      // worker lifetime and feed the sync activity log.
+      onLog?.(msg.level, msg.message, msg.ts);
+      return;
+    }
 
     const entry = pending.get(msg.id);
     if (entry === undefined) return;

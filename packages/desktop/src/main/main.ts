@@ -15,6 +15,7 @@ import type { DuckDBClient } from './duckdb-client.js';
 import { resolveMemoryGB, resolveRollupConcurrency, resolveThreads } from './duckdb-tuning.js';
 import { createSyncClient } from './sync-client.js';
 import type { SyncClient } from './sync-client.js';
+import { recordSyncLog } from './sync-log.js';
 import { registerIpcHandlers } from './ipc.js';
 import { startMcpServer, stopMcpServer } from './mcp.js';
 import { initAutoUpdater, checkForUpdates } from './update-manager.js';
@@ -287,7 +288,7 @@ async function main(): Promise<void> {
   logger.info('DuckDB worker ready');
 
   const syncWorkerPath = join(__dirname, '..', 'worker', 'sync-worker.cjs');
-  const syncClient = await createSyncClient(syncWorkerPath);
+  const syncClient = await createSyncClient(syncWorkerPath, recordSyncLog);
   logger.info('Sync worker ready');
 
   installCSP();

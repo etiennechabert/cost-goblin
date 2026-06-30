@@ -1,6 +1,6 @@
 import { parentPort } from 'node:worker_threads';
-import { syncSelectedFiles } from '@costgoblin/core';
-import type { SelectiveSyncOptions, ManifestFileEntry, SyncProgress } from '@costgoblin/core';
+import { syncSelectedFiles, logger } from '@costgoblin/core';
+import type { SelectiveSyncOptions, ManifestFileEntry, SyncProgress, SyncLogLevel } from '@costgoblin/core';
 
 if (parentPort === null) {
   throw new Error('sync-worker.ts must be run as a Node.js Worker thread');
@@ -54,7 +54,18 @@ interface ErrorResponse {
   readonly message: string;
 }
 
-type WorkerResponse = ReadyResponse | ProgressResponse | CompleteResponse | ErrorResponse;
+// Worker logs go to a logger with no handlers in this thread (the stdout handler
+// is installed only in main), so they'd otherwise be discarded. Forward every
+// entry to main — the worker runs nothing but the sync, so all of it is
+// sync/S3 activity for the Data & Sync log panel.
+interface LogResponse {
+  readonly kind: 'log';
+  readonly level: SyncLogLevel;
+  readonly message: string;
+  readonly ts: number;
+}
+
+type WorkerResponse = ReadyResponse | ProgressResponse | CompleteResponse | ErrorResponse | LogResponse;
 
 // ---------------------------------------------------------------------------
 // Type guards
@@ -96,6 +107,13 @@ const cancelledIds = new Set<number>();
 function send(msg: WorkerResponse): void {
   port.postMessage(msg);
 }
+
+// Forward this thread's logs (the `[aws] …` transfer lines, "Processing
+// period", "Sync complete", prune warnings) to main so the Data & Sync panel
+// can tail them. minLevel is 'info' by default, so debug noise is dropped.
+logger.addHandler((entry) => {
+  send({ kind: 'log', level: entry.level, message: entry.message, ts: Date.parse(entry.timestamp) });
+});
 
 // ---------------------------------------------------------------------------
 // Sync request handler

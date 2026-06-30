@@ -32,6 +32,7 @@ import {
   toUserFriendlyError,
 } from './context.js';
 import { triggerAutoSyncNow } from '../auto-sync.js';
+import { recordSyncLog } from '../sync-log.js';
 import { traceSpan, SPAN_OP } from '../telemetry/tracing.js';
 
 type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
@@ -138,6 +139,7 @@ export async function deleteLocalPeriodFiles(
   const removedAny = await removeMatchingDirs(rawDir, prefix, period, fs, path);
   if (removedAny) {
     logger.info(`Deleted local data (${tier}): ${prefix}-${period}*`);
+    recordSyncLog('info', `Deleted local data (${tier}): ${prefix}-${period}`);
   }
 
   await pruneEtagFile(path.join(dataDir, getEtagFileName(tier)), period, fs);
@@ -241,6 +243,7 @@ export function registerSyncHandlers(app: AppContext): void {
     }
     if (deleted.length > 0) {
       logger.info(`Prune: removed ${String(deleted.length)} period(s) outside retention`);
+      recordSyncLog('info', `Prune: removed ${String(deleted.length)} period(s) outside retention`);
     }
     return { deleted };
   });
@@ -256,6 +259,7 @@ export function registerSyncHandlers(app: AppContext): void {
     state.syncStatuses[syncId] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0, bytesTotal: 0, bytesDone: 0, message: '' };
 
     const tier = resolveDataType(syncId);
+    recordSyncLog('info', `Sync started: ${tier} (${String(fileEntries.length)} file(s))`);
 
     try {
       const result = await traceSpan(
@@ -306,6 +310,7 @@ export function registerSyncHandlers(app: AppContext): void {
     if (workerId !== undefined) {
       ctx.syncClient.cancelSync(workerId);
       logger.info(`Sync '${syncId}' cancelled by user`);
+      recordSyncLog('warn', `Sync '${syncId}' cancelled by user`);
     }
   });
 
@@ -441,6 +446,7 @@ function handleSyncError(
   }
   const error = toUserFriendlyError(err, profile);
   logger.error(`Selective sync '${syncId}' failed: ${error.message}`);
+  recordSyncLog('error', `Sync '${syncId}' failed: ${error.message}`);
   state.syncStatuses[syncId] = { status: 'failed', error, lastSync: null };
   return error;
 }

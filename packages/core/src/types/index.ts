@@ -62,6 +62,8 @@ export type {
   SavingsRecommendation,
   SavingsResult,
   SyncStatus,
+  SyncLogLevel,
+  SyncLogLine,
   QueryState,
 } from './query.js';
 export { DEFAULT_PLACEHOLDER_PATTERNS } from './query.js';
