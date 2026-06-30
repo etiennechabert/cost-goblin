@@ -2,7 +2,7 @@ import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import { LRUCache } from '../lru-cache.js';
 import { QueryLog } from '../query-log.js';
 import { awaitWithTimeout } from '../async-timeout.js';
-import { computeDefaultPoolSize } from '../duckdb-tuning.js';
+import { DEFAULT_ROLLUP_CONCURRENCY } from '../duckdb-tuning.js';
 import { RollupStore, type BuildPartitionSql, type RollupShape } from '../rollup-store.js';
 import { BaselineStore, type BaselineEngineDeps } from '../baselines-store.js';
 import {
@@ -477,10 +477,11 @@ export function createAppContext(ctx: IpcContext): AppContext {
     dataDir: ctx.dataDir,
     runQuery: (sql) => ctx.db.runQuery(sql),
     // Partition builds run on a fresh, disposable connection (flat per-build
-    // time) and fan out across the DuckDB pool so a full-history rebuild is
-    // ~pool-size faster than the old sequential pass.
+    // time) and fan out up to buildConcurrency at a time. Defaults to 2 (kept
+    // low so a rebuild stays gentle on the UI); the persisted Performance
+    // override is applied at startup (main.ts) and live via perf:set.
     runBuild: (sql) => ctx.db.runBuildQuery(sql),
-    buildConcurrency: computeDefaultPoolSize(),
+    buildConcurrency: DEFAULT_ROLLUP_CONCURRENCY,
   });
   const resultCache = new LRUCache<string, RawRow[]>(50);
 

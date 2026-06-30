@@ -71,10 +71,13 @@ export interface UIPreferences {
 }
 
 /** User overrides for DuckDB resource tuning. `null` means "auto" — use the
- *  machine-derived default. */
+ *  default (machine-derived for memory/threads; a fixed 2 for rollupConcurrency). */
 export interface PerformanceSettings {
   readonly memoryLimitGB: number | null;
   readonly threads: number | null;
+  /** Max monthly rollup partitions built in parallel. null = default (2). Kept
+   *  low so a rebuild doesn't starve the cores that keep the UI responsive. */
+  readonly rollupConcurrency: number | null;
 }
 
 /** Performance tuning context for the settings UI: the machine-derived defaults
@@ -82,8 +85,10 @@ export interface PerformanceSettings {
 export interface PerformanceInfo {
   readonly defaultMemoryGB: number;
   readonly defaultThreads: number;
+  readonly defaultRollupConcurrency: number;
   readonly totalMemoryGB: number;
   readonly maxThreads: number;
+  readonly maxRollupConcurrency: number;
   readonly minMemoryGB: number;
   readonly maxMemoryGB: number;
   readonly current: PerformanceSettings;
