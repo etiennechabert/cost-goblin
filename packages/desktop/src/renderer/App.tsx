@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
-import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus } from '@costgoblin/core/browser';
+import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
-import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Terminal, RotateCw, Settings, ArrowLeft, GitBranch, GitPullRequest } from 'lucide-react';
+import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Gauge, Terminal, RotateCw, Settings, ArrowLeft, GitBranch, GitPullRequest } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
 import { DashboardsDropdown } from './top-menu/dashboards-dropdown.js';
 import { SyncStatusButton, type SyncActivity, type SyncTier } from './top-menu/sync-status-button.js';
@@ -72,6 +72,7 @@ type View =
   | { page: 'trends' }
   | { page: 'missing-tags' }
   | { page: 'savings' }
+  | { page: 'baselines' }
   | { page: 'explorer' };
 
 interface AnalyticalNavItem {
@@ -83,6 +84,7 @@ interface AnalyticalNavItem {
 const ANALYTICAL_NAV: readonly AnalyticalNavItem[] = [
   { id: 'trends', label: 'Trends', Icon: TrendingUp },
   { id: 'savings', label: 'Findings', Icon: Lightbulb },
+  { id: 'baselines', label: 'Baselines', Icon: Gauge },
   { id: 'missing-tags', label: 'Tags', Icon: Tag },
   { id: 'explorer', label: 'Explorer', Icon: Search },
 ];
@@ -505,6 +507,7 @@ function AppShell(): React.JSX.Element {
   const inFlightCount = useDebugBadge();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
   const [rollupStatus, setRollupStatus] = useState<RollupStatus>({ state: 'idle' });
+  const [baselineStatus, setBaselineStatus] = useState<BaselineRecomputeStatus>({ state: 'idle', lastRun: null });
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [appVersion, setAppVersion] = useState('');
   const [devBranch, setDevBranch] = useState<string | null>(null);
@@ -558,6 +561,12 @@ function AppShell(): React.JSX.Element {
     };
     globalThis.costgoblinRollup.getStatus().then(apply).catch(() => undefined);
     return globalThis.costgoblinRollup.onStatusChanged(apply);
+  }, []);
+
+  useEffect(() => {
+    const apply = (status: BaselineRecomputeStatus): void => { setBaselineStatus(status); };
+    globalThis.costgoblinBaselines.getStatus().then(apply).catch(() => undefined);
+    return globalThis.costgoblinBaselines.onStatusChanged(apply);
   }, []);
 
   useEffect(() => {
@@ -731,6 +740,7 @@ function AppShell(): React.JSX.Element {
         case 'trends': setView({ page: 'trends' }); break;
         case 'missing-tags': setView({ page: 'missing-tags' }); break;
         case 'savings': setView({ page: 'savings' }); break;
+        case 'baselines': setView({ page: 'baselines' }); break;
         case 'explorer': setView({ page: 'explorer' }); break;
         default:
           // Anything else is a custom view id (every left-nav entry that
@@ -831,6 +841,7 @@ function AppShell(): React.JSX.Element {
     if (view.page === 'trends') return 'trends';
     if (view.page === 'missing-tags') return 'missing-tags';
     if (view.page === 'savings') return 'savings';
+    if (view.page === 'baselines') return 'baselines';
     if (view.page === 'explorer') return 'explorer';
     return null;
   }
@@ -1123,6 +1134,11 @@ function AppShell(): React.JSX.Element {
             {view.page === 'savings' && (
               <Profiler id="savings" onRender={onPerfRender}>
                 <Savings />
+              </Profiler>
+            )}
+            {view.page === 'baselines' && (
+              <Profiler id="baselines" onRender={onPerfRender}>
+                <Baselines baselineStatus={baselineStatus} />
               </Profiler>
             )}
             {view.page === 'explorer' && (

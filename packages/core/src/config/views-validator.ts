@@ -16,7 +16,7 @@ import {
 } from './validator.js';
 
 const WIDGET_TYPES: readonly WidgetType[] = [
-  'summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table',
+  'summary', 'pie', 'stackedBar', 'line', 'topNBar', 'treemap', 'heatmap', 'bubble', 'table', 'baseline',
   'waterfall', 'priceVolume', 'burndown', 'pareto',
 ];
 
@@ -172,6 +172,10 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
       return validateBurndownWidget(raw, ctx, base);
     case 'table':
       return validateTableWidget(raw, ctx, base);
+    case 'baseline': {
+      const topN = raw['topN'] === undefined ? undefined : (assertNumber(raw['topN'], `${ctx}.topN`), raw['topN']);
+      return { type: 'baseline', ...base, ...(topN === undefined ? {} : { topN }) };
+    }
   }
 }
 

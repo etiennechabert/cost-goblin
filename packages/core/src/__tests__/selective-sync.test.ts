@@ -325,6 +325,106 @@ describe('syncSelectedFiles', () => {
     expect(mockWriteFile).toHaveBeenCalledWith(expectedEtagFile, expect.stringContaining('new-hash'));
   });
 
+  describe('stale-file pruning', () => {
+    it('deletes local parquet no longer in the current manifest', async () => {
+      mockSpawn.mockImplementation(() => createSuccessfulSpawn());
+      // Staging dir holds the two current parts plus a leftover from a prior export.
+      mockReaddir.mockResolvedValue(['file1.parquet', 'file2.parquet', 'stale-old-part.parquet']);
+
+      const files = [
+        file('cur/data/BILLING_PERIOD=2026-03/file1.parquet', 'h1'),
+        file('cur/data/BILLING_PERIOD=2026-03/file2.parquet', 'h2'),
+      ];
+      const dataDir = join('/tmp', 'prune-test');
+      const dest = join(dataDir, 'aws', 'raw', 'daily-2026-03');
+
+      await syncSelectedFiles({
+        bucketPath: 's3://test-bucket/cur/data/',
+        profile: 'test-profile',
+        dataDir,
+        expectedDataType: 'daily',
+        files,
+      });
+
+      expect(mockRm).toHaveBeenCalledWith(join(dest, 'stale-old-part.parquet'), { force: true });
+      expect(mockRm).not.toHaveBeenCalledWith(join(dest, 'file1.parquet'), expect.anything());
+      expect(mockRm).not.toHaveBeenCalledWith(join(dest, 'file2.parquet'), expect.anything());
+    });
+
+    it('keeps every file when the directory matches the manifest', async () => {
+      mockSpawn.mockImplementation(() => createSuccessfulSpawn());
+      mockReaddir.mockResolvedValue(['file1.parquet', 'file2.parquet']);
+
+      await syncSelectedFiles({
+        bucketPath: 's3://test-bucket/cur/data/',
+        profile: 'test-profile',
+        dataDir: '/tmp/prune-clean',
+        expectedDataType: 'daily',
+        files: [
+          file('cur/data/BILLING_PERIOD=2026-03/file1.parquet'),
+          file('cur/data/BILLING_PERIOD=2026-03/file2.parquet'),
+        ],
+      });
+
+      expect(mockRm).not.toHaveBeenCalled();
+    });
+
+    it('leaves non-parquet files (e.g. in-flight download temp files) untouched', async () => {
+      mockSpawn.mockImplementation(() => createSuccessfulSpawn());
+      mockReaddir.mockResolvedValue(['file1.parquet', 'file1.parquet.aB3x9', 'notes.txt', 'stale.parquet']);
+
+      const dest = join('/tmp/prune-temp', 'aws', 'raw', 'daily-2026-03');
+      await syncSelectedFiles({
+        bucketPath: 's3://test-bucket/cur/data/',
+        profile: 'test-profile',
+        dataDir: '/tmp/prune-temp',
+        expectedDataType: 'daily',
+        files: [file('cur/data/BILLING_PERIOD=2026-03/file1.parquet')],
+      });
+
+      expect(mockRm).toHaveBeenCalledWith(join(dest, 'stale.parquet'), { force: true });
+      expect(mockRm).not.toHaveBeenCalledWith(join(dest, 'file1.parquet.aB3x9'), expect.anything());
+      expect(mockRm).not.toHaveBeenCalledWith(join(dest, 'notes.txt'), expect.anything());
+    });
+
+    it('treats a deletion failure as best-effort and still completes the sync', async () => {
+      mockSpawn.mockImplementation(() => createSuccessfulSpawn());
+      mockReaddir.mockResolvedValue(['file1.parquet', 'stale.parquet']);
+      // The stale file is locked / permission-denied — rm rejects.
+      mockRm.mockRejectedValue(new Error('EPERM: operation not permitted'));
+
+      const dataDir = '/tmp/prune-besteffort';
+      const result = await syncSelectedFiles({
+        bucketPath: 's3://test-bucket/cur/data/',
+        profile: 'test-profile',
+        dataDir,
+        expectedDataType: 'daily',
+        files: [file('cur/data/BILLING_PERIOD=2026-03/file1.parquet')],
+      });
+
+      // Download succeeded and etags were still persisted despite the prune error.
+      expect(result.filesDownloaded).toBe(1);
+      expect(mockWriteFile).toHaveBeenCalledWith(join(dataDir, 'sync-etags.json'), expect.any(String));
+    });
+
+    it('does not prune when the period sync fails', async () => {
+      mockSpawn.mockReturnValue(createFailedSpawn(1, 'Access Denied'));
+      mockReaddir.mockResolvedValue(['stale.parquet']);
+
+      await expect(
+        syncSelectedFiles({
+          bucketPath: 's3://test-bucket/cur/data/',
+          profile: 'test-profile',
+          dataDir: '/tmp/prune-fail',
+          expectedDataType: 'daily',
+          files: [file('cur/data/BILLING_PERIOD=2026-03/file1.parquet')],
+        })
+      ).rejects.toThrow('Access Denied');
+
+      expect(mockRm).not.toHaveBeenCalled();
+    });
+  });
+
   it('handles empty file list', async () => {
     const result = await syncSelectedFiles({
       bucketPath: 's3://bucket/cur/',

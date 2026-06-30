@@ -1,4 +1,17 @@
 import type { BuiltInDimension, CostGoblinConfig, DimensionsConfig, NormalizationRule, OrgNode, TagDimension } from './config.js';
+import type {
+  BaselineCreateInput,
+  BaselineDetail,
+  BaselineDriftRow,
+  BaselineRecomputeStatus,
+  BaselineRecord,
+  BaselineSnapshot,
+  BaselinesConfigState,
+  BaselinesDiscoveryConfig,
+  BaselinesListParams,
+  BaselinesListResult,
+  BaselineUpdatePatch,
+} from './baseline.js';
 import type { RollupGrainEstimate } from '../rollup/estimator.js';
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
@@ -334,6 +347,29 @@ export interface CostApi {
    *  first dashboard queries that follow — hit the in-memory base instead of
    *  racing the materialize with concurrent full raw-parquet scans. */
   awaitMaterializedBase(timeoutMs: number): Promise<boolean>;
+  // --- Cost Baselines ---
+  /** List baselines with filter/sort/paging; returns items plus the summed
+   *  potential/realized over the filtered discovered partition. */
+  listBaselines(params: BaselinesListParams): Promise<BaselinesListResult>;
+  /** Full detail (record + stored daily history + snapshots) for one baseline. */
+  getBaseline(id: string): Promise<BaselineDetail | null>;
+  /** Pin a baseline for a scope. Rejects a duplicate normalized scope+basis. */
+  createBaseline(input: BaselineCreateInput): Promise<BaselineRecord>;
+  /** Atomic update: band edit + status change + note, with auto-summary. */
+  updateBaseline(id: string, patch: BaselineUpdatePatch): Promise<BaselineRecord | null>;
+  deleteBaseline(id: string): Promise<void>;
+  /** Re-discover + recompute all baselines. `startFresh` wipes every discovered
+   *  baseline (incl. user-edited) before re-discovering; otherwise untouched
+   *  orphans are pruned and edited ones preserved. */
+  recomputeBaselines(opts?: { readonly startFresh?: boolean }): Promise<void>;
+  /** Point-in-time snapshot history for a baseline (for trend analysis). */
+  getBaselineSnapshots(id: string): Promise<readonly BaselineSnapshot[]>;
+  /** "What changed" breakdown: contribution by a child dimension, trailing vs
+   *  band window. */
+  getBaselineDrift(id: string, childDimension: string): Promise<readonly BaselineDriftRow[]>;
+  getBaselinesConfig(): Promise<BaselinesConfigState>;
+  setBaselinesConfig(config: BaselinesDiscoveryConfig): Promise<BaselinesConfigState>;
+  resetBaselinesConfig(): Promise<BaselinesConfigState>;
   getMcpServerRunning(): Promise<boolean>;
   setMcpServerRunning(enabled: boolean): Promise<void>;
   /** The shared secret a client must send (as `Authorization: Bearer <token>`
@@ -440,4 +476,11 @@ export interface RollupApi {
   getStatus(): Promise<RollupStatus>;
   getStats(): Promise<RollupStats | null>;
   onStatusChanged(callback: (status: RollupStatus) => void): () => void;
+}
+
+/** Push channel for live baseline recompute/discovery status — model of the
+ *  rollup/update status channels. Exposed as `window.costgoblinBaselines`. */
+export interface BaselinesApi {
+  getStatus(): Promise<BaselineRecomputeStatus>;
+  onStatusChanged(callback: (status: BaselineRecomputeStatus) => void): () => void;
 }
