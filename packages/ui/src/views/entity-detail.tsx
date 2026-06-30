@@ -22,6 +22,7 @@ import { StackedBarChart, bucketBars } from '../components/stacked-bar-chart.js'
 import type { BarDay, HistogramTab } from '../components/stacked-bar-chart.js';
 import { getDimensionId, getDimensionLabel, isEnvironmentDimension, isOwnerDimension, isProductDimension, isUnitDimension } from '../lib/dimensions.js';
 import { computeBucketedHourRange, computeBucketedRange, shouldAutoSwitchToHourly } from '../lib/drag-select.js';
+import { BaselineMicroBar } from '../components/baseline-micro-bar.js';
 
 interface EntityDetailProps {
   entity: string;
@@ -403,8 +404,44 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
               </table>
             </div>
           </div>
+          <EntityBaselinesPanel entity={entity} dimension={dimension} />
         </>
       )}
+    </div>
+  );
+}
+
+function EntityBaselinesPanel({ entity, dimension }: Readonly<{ entity: string; dimension: string }>) {
+  const api = useCostApi();
+  const query = useQuery(() => api.listBaselines({}), [api]);
+  const items = query.status === 'success' ? query.data.items : [];
+  const dimId = asDimensionId(dimension);
+  const matches = items.filter((r) => {
+    if (r.spec.scope.kind !== 'filter') return false;
+    const vals = (r.spec.scope.filters[dimId] ?? []).map(String);
+    if (vals.length === 0) return false;
+    if (vals.includes(entity)) return true;
+    // Account scopes store the raw account id in the filter, but entity-detail
+    // passes the resolved display name. describeScope put that name into the
+    // scopeLabel, so match it there as a token for the account dimension.
+    if (dimension === 'account' || dimension === 'account_id') {
+      return new Set(r.scopeLabel.split(/ · |, /)).has(entity);
+    }
+    return false;
+  });
+  if (matches.length === 0) return null;
+  return (
+    <div className="rounded-xl border border-border bg-bg-secondary/50 p-4">
+      <h3 className="text-sm font-medium text-text-secondary mb-3">Baselines</h3>
+      <div className="flex flex-col divide-y divide-border-subtle">
+        {matches.map((r) => (
+          <div key={r.spec.id} className="flex items-center gap-3 py-1.5 text-xs">
+            <span className="flex-1 truncate text-text-secondary" title={r.scopeLabel}>{r.spec.name ?? r.scopeLabel}</span>
+            <BaselineMicroBar lower={r.effectiveLower} upper={r.effectiveUpper} current={r.currentDaily} status={r.status} />
+            <span className={`w-24 text-right tabular-nums ${r.savings.potentialMonthly > 0 ? 'text-warning' : 'text-text-muted'}`}>{formatDollars(r.savings.potentialMonthly)}/mo</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

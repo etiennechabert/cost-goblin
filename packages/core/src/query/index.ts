@@ -5,6 +5,9 @@ export {
   buildMissingTagsQuery,
   buildNonResourceCostQuery,
   buildEntityDetailQuery,
+  buildBaselineDiscoveryQuery,
+  buildBaselineTotalsQuery,
+  buildDimCardinalityQuery,
   buildSource,
   buildMaterializeBaseQuery,
   buildRollupPartitionQuery,
@@ -12,7 +15,7 @@ export {
   buildRuleMatchExpr,
   computePeriodsInRange,
 } from './builder.js';
-export type { QueryContextOptions, BuildSourceOptions } from './builder.js';
+export type { QueryContextOptions, BuildSourceOptions, BaselineDiscoveryParams } from './builder.js';
 
 export { costExprFor } from './cost-metric.js';
 

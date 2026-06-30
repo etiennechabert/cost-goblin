@@ -283,6 +283,8 @@ export function registerSyncHandlers(app: AppContext): void {
         if (tier === 'daily') {
           // Re-roll only the daily partitions this sync touched (file replace).
           app.maintainRollup(changedRollupMonths(fileEntries.map(e => extractPeriod(e.key))));
+          // Then re-discover + recompute baselines against the refreshed data.
+          app.recomputeBaselines();
         } else {
           // Hourly / cost-opt don't feed the daily rollup; just refresh caches.
           app.warmupBase();

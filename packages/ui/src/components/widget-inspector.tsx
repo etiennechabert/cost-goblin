@@ -64,6 +64,8 @@ function stripTitle(w: WidgetSpec): WidgetSpec {
         type: w.type,
         ...(w.enabledColumns === undefined ? {} : { enabledColumns: w.enabledColumns }),
       };
+    case 'baseline':
+      return { ...common, type: w.type, ...(w.topN === undefined ? {} : { topN: w.topN }) };
   }
 }
 
@@ -97,6 +99,8 @@ function defaultSpecForType(type: WidgetType, prev: WidgetSpec, fallbackDim: str
         type,
         enabledColumns: [...SEED_TABLE_ENABLED],
       };
+    case 'baseline':
+      return { ...base, type, topN: 'topN' in prev && prev.topN !== undefined ? prev.topN : 8 };
   }
 }
 
@@ -135,7 +139,7 @@ export function WidgetInspector({
   }
 
   function setTopN(value: number) {
-    if (widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap' || widget.type === 'waterfall' || widget.type === 'priceVolume') {
+    if (widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap' || widget.type === 'baseline' || widget.type === 'waterfall' || widget.type === 'priceVolume') {
       onChange({ ...widget, topN: value });
     }
   }
@@ -312,7 +316,7 @@ export function WidgetInspector({
         );
       })()}
 
-      {(widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap' || widget.type === 'waterfall' || widget.type === 'priceVolume') && (
+      {(widget.type === 'line' || widget.type === 'topNBar' || widget.type === 'heatmap' || widget.type === 'baseline' || widget.type === 'waterfall' || widget.type === 'priceVolume') && (
         <label className="flex items-center gap-2">
           <span className="text-text-muted shrink-0 w-14">Top N</span>
           <input

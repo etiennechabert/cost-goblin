@@ -2,8 +2,10 @@ export { loadConfig, loadDimensions, loadOrgTree, loadViews, loadCostScope } fro
 export { validateConfig, validateDimensions, validateOrgTree, ConfigValidationError, assertObject, assertArray, assertString, assertNumber } from './validator.js';
 export { validateViews } from './views-validator.js';
 export { validateCostScope } from './cost-scope-validator.js';
+export { validateBaselines } from './baselines-validator.js';
 export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './views-serialize.js';
 export { costScopeToYaml } from './cost-scope-serialize.js';
+export { baselineSpecToYaml, baselinesToYaml } from './baselines-serialize.js';
 export { dimensionsConfigToYaml } from './dimensions-serialize.js';
 export {
   buildConfigBundle,

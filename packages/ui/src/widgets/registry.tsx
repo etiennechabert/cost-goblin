@@ -9,6 +9,7 @@ import { TreemapWidget } from './treemap-widget.js';
 import { HeatmapWidget } from './heatmap-widget.js';
 import { BubbleWidget } from './bubble-widget.js';
 import { TableWidget } from './table-widget.js';
+import { BaselineWidget } from './baseline-widget.js';
 import { WaterfallWidget } from './waterfall-widget.js';
 import { PriceVolumeWidget } from './price-volume-widget.js';
 import { BurndownWidget } from './burndown-widget.js';
@@ -24,6 +25,7 @@ export const WIDGET_REGISTRY: Readonly<Record<WidgetType, WidgetComponent>> = {
   heatmap: HeatmapWidget,
   bubble: BubbleWidget,
   table: TableWidget,
+  baseline: BaselineWidget,
   waterfall: WaterfallWidget,
   priceVolume: PriceVolumeWidget,
   burndown: BurndownWidget,
@@ -49,6 +51,7 @@ export const WIDGET_CATALOG: readonly WidgetCatalogEntry[] = [
   { type: 'heatmap',    label: 'Heatmap',          description: 'Dimension × date density.', needsGroupBy: true },
   { type: 'bubble',     label: 'Bubble (trends)',  description: 'Period-over-period scatter.', needsGroupBy: true },
   { type: 'table',      label: 'Table',            description: 'Raw line-item rows with dynamic columns.', needsGroupBy: false },
+  { type: 'baseline',   label: 'Baselines',        description: 'Top scopes by potential savings, with drift band.', needsGroupBy: false },
   { type: 'waterfall',  label: 'Waterfall',        description: 'Period-over-period delta decomposed into drivers.', needsGroupBy: true },
   { type: 'priceVolume', label: 'Price vs volume', description: 'Split cost change into volume and rate effects.', needsGroupBy: true },
   { type: 'burndown',   label: 'Burndown',         description: 'Cumulative spend vs last period, with projection.', needsGroupBy: false },

@@ -1,3 +1,4 @@
+import type { BaselineSpec } from './baseline.js';
 import type { CostScopeConfig } from './cost-scope.js';
 import type { DefaultsConfig, DimensionsConfig, OrgTreeConfig, SyncConfig } from './config.js';
 import type { ViewsConfig } from './views.js';
@@ -34,17 +35,20 @@ export interface SharedCostGoblinConfig {
   readonly defaults: DefaultsConfig;
 }
 
-export type BundleSectionId = 'config' | 'dimensions' | 'orgTree' | 'costScope' | 'views';
+export type BundleSectionId = 'config' | 'dimensions' | 'orgTree' | 'costScope' | 'views' | 'baselines';
 
 /** The shareable configuration surface. `config` and `dimensions` are
  *  mandatory — a bundle without them couldn't bootstrap a working app.
- *  The rest are included only when present on the exporting machine. */
+ *  The rest are included only when present on the exporting machine.
+ *  `baselines` carries only the user-authored specs (scope + basis + manual
+ *  overrides) — never the volatile computed stats/history. */
 export interface ConfigBundleSections {
   readonly config: SharedCostGoblinConfig;
   readonly dimensions: DimensionsConfig;
   readonly orgTree?: OrgTreeConfig | undefined;
   readonly costScope?: CostScopeConfig | undefined;
   readonly views?: ViewsConfig | undefined;
+  readonly baselines?: readonly BaselineSpec[] | undefined;
 }
 
 export interface ConfigBundle {
@@ -75,6 +79,7 @@ export interface ConfigBundleSummary {
   readonly orgTreeNodeCount: number;
   readonly exclusionRuleCount: number;
   readonly viewCount: number;
+  readonly baselineCount: number;
 }
 
 export type ExportConfigBundleResult =

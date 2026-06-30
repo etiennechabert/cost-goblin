@@ -43,6 +43,14 @@ import {
   type SharedPullSelection,
   type SharedSourcePreview,
   type SharedSourceInfo,
+  type BaselinesListResult,
+  type BaselineDetail,
+  type BaselineRecord,
+  type BaselineCreateInput,
+  type BaselineSnapshot,
+  type BaselineDriftRow,
+  type BaselinesConfigState,
+  type BaselinesDiscoveryConfig,
   type RollupGrainEstimate,
   type TelemetryPreferences,
   type TelemetryStatus,
@@ -436,13 +444,55 @@ export class MockCostApi implements CostApi {
   acceptSuggestion(): Promise<void> { return Promise.resolve(); }
   cancelPendingQueries(): Promise<void> { return Promise.resolve(); }
   clearAllCaches(): Promise<void> { return Promise.resolve(); }
-  getPerformanceInfo(): Promise<PerformanceInfo> { return Promise.resolve({ defaultMemoryGB: 8, defaultThreads: 8, totalMemoryGB: 16, maxThreads: 8, minMemoryGB: 1, maxMemoryGB: 24, current: { memoryLimitGB: null, threads: null } }); }
+  getPerformanceInfo(): Promise<PerformanceInfo> { return Promise.resolve({ defaultMemoryGB: 8, defaultThreads: 8, defaultRollupConcurrency: 2, totalMemoryGB: 16, maxThreads: 8, maxRollupConcurrency: 8, minMemoryGB: 1, maxMemoryGB: 24, current: { memoryLimitGB: null, threads: null, rollupConcurrency: null } }); }
   setPerformanceSettings(): Promise<void> { return Promise.resolve(); }
   awaitMaterializedBase(): Promise<boolean> { return Promise.resolve(true); }
   getMcpServerRunning(): Promise<boolean> { return Promise.resolve(true); }
   setMcpServerRunning(): Promise<void> { return Promise.resolve(); }
   getMcpToken(): Promise<string> { return Promise.resolve('mock-token-abc123'); }
   regenerateMcpToken(): Promise<string> { return Promise.resolve('mock-token-regenerated'); }
+  listBaselines(): Promise<BaselinesListResult> {
+    return Promise.resolve({
+      items: [], totalPotentialMonthly: asDollars(0), totalRealizedMonthly: asDollars(0), total: 0,
+      counts: { all: 0, open: 0, 'new': 0, tracking: 0, acting: 0, resolved: 0, dismissed: 0, ignored: 0 },
+    });
+  }
+  getBaseline(): Promise<BaselineDetail | null> { return Promise.resolve(null); }
+  createBaseline(input: BaselineCreateInput): Promise<BaselineRecord> {
+    return Promise.resolve({
+      spec: { id: 'mock', source: 'manual', scope: input.scope, basis: { costMetric: 'amortized', costPerspective: 'gross', rules: [] }, basisSnapshotAt: '', createdAt: '', updatedAt: '' },
+      stats: null,
+      current: null,
+      savings: { potentialDaily: asDollars(0), realizedDaily: asDollars(0), potentialMonthly: asDollars(0), realizedMonthly: asDollars(0) },
+      status: 'insufficient-data',
+      triageStatus: 'new',
+      effectiveLower: asDollars(0),
+      effectiveUpper: asDollars(0),
+      currentDaily: asDollars(0),
+      potentialDaily: asDollars(0),
+      realizedDaily: asDollars(0),
+      bestAchieved: null,
+      scopeLabel: 'mock',
+      triage: { notes: [] },
+    });
+  }
+  updateBaseline(): Promise<BaselineRecord | null> { return Promise.resolve(null); }
+  deleteBaseline(): Promise<void> { return Promise.resolve(); }
+  recomputeBaselines(): Promise<void> { return Promise.resolve(); }
+  getBaselineSnapshots(): Promise<readonly BaselineSnapshot[]> { return Promise.resolve([]); }
+  getBaselineDrift(): Promise<readonly BaselineDriftRow[]> { return Promise.resolve([]); }
+  getBaselinesConfig(): Promise<BaselinesConfigState> {
+    return Promise.resolve({ config: this.mockBaselinesConfig(), isCustom: false });
+  }
+  setBaselinesConfig(config: BaselinesDiscoveryConfig): Promise<BaselinesConfigState> {
+    return Promise.resolve({ config, isCustom: true });
+  }
+  resetBaselinesConfig(): Promise<BaselinesConfigState> {
+    return Promise.resolve({ config: this.mockBaselinesConfig(), isCustom: false });
+  }
+  private mockBaselinesConfig(): BaselinesDiscoveryConfig {
+    return { lookbackDays: 365, windowDays: 30, lowerPct: 10, upperPct: 90, minMonthlyCost: asDollars(100), minSavings: asDollars(0), reopenPct: 15, grainDimensions: [] };
+  }
   getTelemetryPreferences(): Promise<TelemetryPreferences> { return Promise.resolve({ errorReports: false, nativeCrashReports: false, performance: false, analytics: false }); }
   setTelemetryPreferences(): Promise<void> { return Promise.resolve(); }
   getTelemetryStatus(): Promise<TelemetryStatus> { return Promise.resolve({ dsnConfigured: false, active: false, preferences: { errorReports: false, nativeCrashReports: false, performance: false, analytics: false }, armed: { errorReports: false, nativeCrashReports: false, performance: false, analytics: false } }); }
@@ -536,6 +586,7 @@ export const MOCK_BUNDLE_SUMMARY: ConfigBundleSummary = {
   orgTreeNodeCount: 12,
   exclusionRuleCount: 6,
   viewCount: 2,
+  baselineCount: 0,
 };
 
 const MOCK_VIEWS_CONFIG: ViewsConfig = {

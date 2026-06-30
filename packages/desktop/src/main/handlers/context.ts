@@ -2,9 +2,10 @@ import type { DuckDBClient, RawRow } from '../duckdb-client.js';
 import { LRUCache } from '../lru-cache.js';
 import { QueryLog } from '../query-log.js';
 import { awaitWithTimeout } from '../async-timeout.js';
-import { computeDefaultPoolSize } from '../duckdb-tuning.js';
+import { DEFAULT_ROLLUP_CONCURRENCY } from '../duckdb-tuning.js';
 import { RollupStore, type BuildPartitionSql, type RollupShape } from '../rollup-store.js';
 import { traceSpan, SPAN_OP, type SpanOptions } from '../telemetry/tracing.js';
+import { BaselineStore, type BaselineEngineDeps } from '../baselines-store.js';
 import {
   asDimensionId,
   applyNormalizationRule,
@@ -163,6 +164,13 @@ export interface AppContext {
   readonly queryLog: QueryLog;
   /** Persistent per-period pre-aggregated rollup backing dashboard queries. */
   readonly rollupStore: RollupStore;
+  /** Local-only cost baselines: discovery, drift, savings (issue #412). */
+  readonly baselineStore: BaselineStore;
+  /** The query/config capabilities the baseline store needs to recompute. */
+  readonly baselineEngineDeps: BaselineEngineDeps;
+  /** Re-discover + recompute all baselines (fire-and-forget). Hooked into the
+   *  post-sync rollup-maintenance step. */
+  readonly recomputeBaselines: () => void;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly runPreparedQuery: (sql: string, params: readonly unknown[], materialized?: boolean) => Promise<RawRow[]>;
   readonly invalidateConfig: () => void;
@@ -476,10 +484,11 @@ export function createAppContext(ctx: IpcContext): AppContext {
     dataDir: ctx.dataDir,
     runQuery: (sql) => ctx.db.runQuery(sql),
     // Partition builds run on a fresh, disposable connection (flat per-build
-    // time) and fan out across the DuckDB pool so a full-history rebuild is
-    // ~pool-size faster than the old sequential pass.
+    // time) and fan out up to buildConcurrency at a time. Defaults to 2 (kept
+    // low so a rebuild stays gentle on the UI); the persisted Performance
+    // override is applied at startup (main.ts) and live via perf:set.
     runBuild: (sql) => traceSpan(ROLLUP_BUILD_SPAN, () => ctx.db.runBuildQuery(sql)),
-    buildConcurrency: computeDefaultPoolSize(),
+    buildConcurrency: DEFAULT_ROLLUP_CONCURRENCY,
   });
   const resultCache = new LRUCache<string, RawRow[]>(50);
 
@@ -638,6 +647,19 @@ export function createAppContext(ctx: IpcContext): AppContext {
     rerollTimer = setTimeout(() => { rerollTimer = null; triggerWarmup(); }, ROLLUP_REROLL_DEBOUNCE_MS);
   }
 
+  const baselineStore = new BaselineStore(ctx.dataDir);
+  const baselineEngineDeps: BaselineEngineDeps = {
+    dataDir: ctx.dataDir,
+    getQueryDimensions,
+    getCostScope,
+    getAccountMap,
+    getAccountReverseMap,
+    getOrgTreeConfig,
+    getAvailableColumns,
+    runPreparedQuery,
+    rollupStore,
+  };
+
   return {
     ctx,
     state,
@@ -672,6 +694,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
     invalidateColumnCache: () => { columnCache.clear(); },
     warmupBase: () => { resultCache.clear(); triggerWarmup(); },
     maintainRollup: (changedPeriods: readonly string[]) => { void maintainRollupForPeriods(changedPeriods); },
+    baselineStore,
+    baselineEngineDeps,
+    recomputeBaselines: () => { void baselineStore.recompute(baselineEngineDeps); },
     awaitWarmup: async (timeoutMs: number): Promise<boolean> => {
       await awaitWithTimeout(warmupInFlight, timeoutMs);
       return rollupStore.isReady();
