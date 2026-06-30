@@ -4,7 +4,7 @@ import { QueryLog } from '../query-log.js';
 import { awaitWithTimeout } from '../async-timeout.js';
 import { computeDefaultPoolSize } from '../duckdb-tuning.js';
 import { RollupStore, type BuildPartitionSql, type RollupShape } from '../rollup-store.js';
-import { traceSpan, SPAN_OP } from '../telemetry/tracing.js';
+import { traceSpan, SPAN_OP, type SpanOptions } from '../telemetry/tracing.js';
 import {
   asDimensionId,
   applyNormalizationRule,
@@ -465,6 +465,12 @@ export function createAppContext(ctx: IpcContext): AppContext {
     return fetch;
   }
 
+  // Static span options, hoisted out of the per-call closures so a query/build
+  // with tracing OFF (the common case) allocates nothing on the hot path.
+  const QUERY_SPAN: SpanOptions = { name: 'duckdb.query', op: SPAN_OP.dbQuery, attributes: { 'db.system': 'duckdb' } };
+  const PREPARED_QUERY_SPAN: SpanOptions = { name: 'duckdb.query', op: SPAN_OP.dbQuery, attributes: { 'db.system': 'duckdb', 'db.prepared': true } };
+  const ROLLUP_BUILD_SPAN: SpanOptions = { name: 'rollup.build', op: SPAN_OP.rollupBuild };
+
   const queryLog = new QueryLog();
   const rollupStore = new RollupStore({
     dataDir: ctx.dataDir,
@@ -472,7 +478,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     // Partition builds run on a fresh, disposable connection (flat per-build
     // time) and fan out across the DuckDB pool so a full-history rebuild is
     // ~pool-size faster than the old sequential pass.
-    runBuild: (sql) => ctx.db.runBuildQuery(sql),
+    runBuild: (sql) => traceSpan(ROLLUP_BUILD_SPAN, () => ctx.db.runBuildQuery(sql)),
     buildConcurrency: computeDefaultPoolSize(),
   });
   const resultCache = new LRUCache<string, RawRow[]>(50);
@@ -495,10 +501,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const cached = resultCache.get(sql);
     if (cached !== undefined) return Promise.resolve(cached);
     return dedup(sql, async () => {
-      const result = await traceSpan(
-        { name: 'duckdb.query', op: SPAN_OP.dbQuery, attributes: { 'db.system': 'duckdb' } },
-        () => wrappedRunQuery(sql),
-      );
+      const result = await traceSpan(QUERY_SPAN, () => wrappedRunQuery(sql));
       if (result.length > 0) resultCache.set(sql, result);
       return result;
     });
@@ -514,10 +517,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
       return Promise.resolve(cached);
     }
     return dedup(key, async () => {
-      const result = await traceSpan(
-        { name: 'duckdb.query', op: SPAN_OP.dbQuery, attributes: { 'db.system': 'duckdb', 'db.prepared': true } },
-        () => wrappedRunPreparedQuery(sql, params, materialized),
-      );
+      const result = await traceSpan(PREPARED_QUERY_SPAN, () => wrappedRunPreparedQuery(sql, params, materialized));
       if (result.length > 0) resultCache.set(key, result);
       return result;
     });
@@ -612,7 +612,10 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const etags = await getEtagsByPeriod();
       if (!rollupStore.isReady()) await rollupStore.loadAndValidate(shape, etags);
       const buildSql = await buildRollupSqlFor();
-      await rollupStore.maintainPeriods(periods, buildSql, etags, shape, { force: true });
+      await traceSpan(
+        { name: 'rollup.maintain', op: SPAN_OP.rollupMaintain, forceTransaction: true, attributes: { 'rollup.periods': periods.length } },
+        () => rollupStore.maintainPeriods(periods, buildSql, etags, shape, { force: true }),
+      );
       resultCache.clear();
     } catch (err: unknown) {
       logger.warn(`rollup-maintain: ${err instanceof Error ? err.message : String(err)}`);

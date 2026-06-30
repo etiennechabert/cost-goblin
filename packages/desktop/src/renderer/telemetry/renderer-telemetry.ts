@@ -1,4 +1,4 @@
-import { TELEMETRY_TRACES_SAMPLE_RATE } from '@costgoblin/core/browser';
+import { resolveTracesSampleRate } from '@costgoblin/core/browser';
 import type { TelemetryStatus } from '@costgoblin/core/browser';
 
 let initialized = false;
@@ -33,7 +33,10 @@ export async function syncRendererTelemetry(status: TelemetryStatus): Promise<vo
     const Sentry = await import('@sentry/electron/renderer');
     Sentry.init({
       ...(wantTracing
-        ? { tracesSampleRate: TELEMETRY_TRACES_SAMPLE_RATE, integrations: [Sentry.browserTracingIntegration()] }
+        ? {
+            tracesSampleRate: resolveTracesSampleRate(globalThis.costgoblinDebug.isDev()),
+            integrations: [Sentry.browserTracingIntegration()],
+          }
         : {}),
     });
   } catch {

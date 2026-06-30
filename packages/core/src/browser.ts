@@ -5,7 +5,7 @@ export type {
   TelemetryEventKind,
   TelemetryOutboxEntry,
 } from './telemetry/types.js';
-export { TELEMETRY_DEFAULTS, TELEMETRY_TRACES_SAMPLE_RATE, isTelemetryEnabled } from './telemetry/types.js';
+export { TELEMETRY_DEFAULTS, TELEMETRY_TRACES_SAMPLE_RATE_DEV, TELEMETRY_TRACES_SAMPLE_RATE_PROD, resolveTracesSampleRate, isTelemetryEnabled } from './telemetry/types.js';
 export * from './normalize/index.js';
 export * from './models/index.js';
 export { QUERY_CANCELLED_MESSAGE } from './query/cancellation.js';

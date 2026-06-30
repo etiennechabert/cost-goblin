@@ -9,9 +9,9 @@ import {
   isTelemetryEnabled,
   logger,
   QUERY_CANCELLED_MESSAGE,
+  resolveTracesSampleRate,
   summarizeEventForOutbox,
   TELEMETRY_DEFAULTS,
-  TELEMETRY_TRACES_SAMPLE_RATE,
 } from '@costgoblin/core';
 import type { TelemetryPreferences, TelemetryStatus } from '@costgoblin/core';
 import { redactEventInPlace } from './scrub-event.js';
@@ -87,11 +87,12 @@ class TelemetryController {
 
   /** True when performance tracing is actually armed this session — the gate the
    *  span helpers ({@link ./tracing}) consult before creating any Sentry span.
-   *  Mirrors {@link armedChannels}'s performance value (SDK active, armed at boot,
-   *  still wanted); when false the helpers are pure pass-throughs that create no
-   *  SDK objects, so the hot query path pays nothing for non-opted-in users. */
+   *  Equivalent to {@link armedChannels}'s performance value (SDK active, armed at
+   *  boot, still wanted) but inlined: this runs on the hot query path, so it must
+   *  not allocate the way armedChannels() does. When false the helpers are pure
+   *  pass-throughs that create no SDK objects, so opted-out users pay nothing. */
   isTracingActive(): boolean {
-    return this.armedChannels().performance;
+    return this.active && this.initSnapshot !== null && this.initSnapshot.performance && this.prefs.performance;
   }
 
   async getOutbox(): ReturnType<TelemetryOutbox['list']> {
@@ -151,8 +152,9 @@ class TelemetryController {
         // arms the native crash handler. Scrubbed JS error capture flows either way.
         integrations: (defaults) =>
           this.prefs.nativeCrashReports ? defaults : defaults.filter((i) => i.name !== 'SentryMinidump'),
-        // Tracing only when the performance channel is on.
-        tracesSampleRate: this.prefs.performance ? TELEMETRY_TRACES_SAMPLE_RATE : 0,
+        // Tracing only when the performance channel is on. Dev (unpackaged, with
+        // a DSN set) samples everything; packaged releases sample at the prod rate.
+        tracesSampleRate: this.prefs.performance ? resolveTracesSampleRate(!app.isPackaged) : 0,
         // Never let the SDK attach IP/user/cookies — our scrub is the backstop,
         // but default-off is the first line of defence.
         sendDefaultPii: false,

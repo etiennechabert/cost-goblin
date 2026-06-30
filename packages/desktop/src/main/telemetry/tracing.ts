@@ -10,11 +10,18 @@ import { telemetry } from './controller.js';
 export const SPAN_OP = {
   /** One DuckDB query round-trip (main → worker → main). */
   dbQuery: 'db.query',
+  /** One rollup partition build (a single period, on a fresh connection). */
+  rollupBuild: 'rollup.build',
+  /** A post-sync rollup re-roll over the periods a sync changed. */
+  rollupMaintain: 'rollup.maintain',
   /** One S3 selective-sync run (download + ingest of a set of periods). */
   sync: 'sync.s3',
 } as const;
 
-type StartSpanOptions = Parameters<typeof Sentry.startSpan>[0];
+/** Options accepted by {@link traceSpan} — Sentry's `startSpan` options. Exported
+ *  so call sites can hoist static span options to module constants (no per-call
+ *  allocation on the hot path) without importing the Sentry SDK themselves. */
+export type SpanOptions = Parameters<typeof Sentry.startSpan>[0];
 
 /**
  * Run `fn` inside a Sentry span when performance tracing is armed; otherwise call
@@ -27,7 +34,7 @@ type StartSpanOptions = Parameters<typeof Sentry.startSpan>[0];
  * when tracing is off) so callers can attach result attributes — row counts,
  * byte totals — after the work completes.
  */
-export function traceSpan<T>(options: StartSpanOptions, fn: (span: Span | undefined) => T): T {
+export function traceSpan<T>(options: SpanOptions, fn: (span: Span | undefined) => T): T {
   if (!telemetry.isTracingActive()) return fn(undefined);
   return Sentry.startSpan(options, (span) => fn(span));
 }

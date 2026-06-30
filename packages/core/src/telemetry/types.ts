@@ -30,12 +30,19 @@ export const TELEMETRY_DEFAULTS: TelemetryPreferences = {
 };
 
 /**
- * Sentry `tracesSampleRate` when the performance channel is on. The sampling
- * decision is made independently in each process (main + renderer), so both
- * inits must use this same value — keep it here as the single source of truth so
- * the two can't drift.
+ * Sentry `tracesSampleRate` when the performance channel is on. Production
+ * samples a fraction — enough volume for p95/p99 latency trends across releases
+ * while staying well under Sentry's quota; local dev (only ever emits when a DSN
+ * is set) samples everything so a developer sees every trace they generate. The
+ * sampling decision is made independently in each process (main + renderer), so
+ * both resolve it from here — one source of truth so the two can't drift.
  */
-export const TELEMETRY_TRACES_SAMPLE_RATE = 0.1;
+export const TELEMETRY_TRACES_SAMPLE_RATE_DEV = 1.0;
+export const TELEMETRY_TRACES_SAMPLE_RATE_PROD = 0.1;
+
+export function resolveTracesSampleRate(isDev: boolean): number {
+  return isDev ? TELEMETRY_TRACES_SAMPLE_RATE_DEV : TELEMETRY_TRACES_SAMPLE_RATE_PROD;
+}
 
 /** True when at least one channel is on — i.e. the SDK should be initialised. */
 export function isTelemetryEnabled(prefs: TelemetryPreferences): boolean {
