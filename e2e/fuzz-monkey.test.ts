@@ -45,12 +45,13 @@ function makeRng(seed: number): () => number {
   };
 }
 
-// Controls that open native dialogs, hit the network, or mutate persisted state
-// destructively — skipped so the monkey stays in the safe exploratory surface
-// (navigation, toggles, filters, sorts, date presets) and never hangs on an OS
-// file picker Playwright can't dismiss.
+// Controls the monkey should NOT click: ones that open native dialogs / hit the
+// network / mutate persisted state, AND the whole settings surface (the gear,
+// AWS-profile selection, sync/rollup/debug). The high-signal target is the
+// analytical canvas — dimensions, date ranges, charts, tables, view-jumps — so
+// settings churn (e.g. flipping AWS profiles) is pure noise and gets skipped.
 const DENYLIST =
-  /sync|import|export|delete|remove|reload|refresh|login|sso|sign in|\bopen\b|browse|choose|upload|download|\bsave\b|connect|add server|quit|update|install|reset/i;
+  /sync|import|export|delete|remove|reload|refresh|login|sso|sign in|\bopen\b|browse|choose|upload|download|\bsave\b|connect|add server|quit|update|install|reset|settings|rollup|debug|profile|\baws\b/i;
 
 const CANDIDATE_SELECTOR = [
   'button',
@@ -65,6 +66,10 @@ const CANDIDATE_SELECTOR = [
 
 const SAFE_NAV = ['Trends', 'Tags', 'Findings', 'Explorer', 'Dashboards'];
 const DATE_PRESETS = ['Last 7 days', 'Last 30 days', 'Last 90 days', 'This month', 'Last month'];
+// Group-by / dimension labels the analytical views expose as clickable controls
+// (the segmented selector on dashboards, the popover trigger + options in
+// Explorer). Clicking one re-pivots the current view and re-queries.
+const DIMENSION_LABELS = ['Service', 'Region', 'Account', 'Team', 'Environment', 'Owner', 'Service Family', 'Usage Type'];
 
 // Guard against a non-numeric / empty env var: parseInt('abc') is NaN, which
 // would make the action loop run zero iterations and seed the PRNG with 0,
@@ -117,6 +122,18 @@ async function pickRandomDate(page: Page, rng: () => number, log: string[]): Pro
   await selectDatePreset(page, preset).catch(() => undefined);
 }
 
+async function changeDimension(page: Page, rng: () => number, log: string[]): Promise<void> {
+  // Re-pivot the current view by clicking a visible group-by / dimension control.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const label = DIMENSION_LABELS[pickIndex(rng, DIMENSION_LABELS.length)] ?? 'Service';
+    const btn = page.getByRole('button', { name: label, exact: true }).first();
+    if (!(await btn.isVisible().catch(() => false))) continue;
+    log.push(`dim: ${label}`);
+    await btn.click({ timeout: 1200 }).catch(() => undefined);
+    return;
+  }
+}
+
 let app: ElectronApplication;
 let page: Page;
 const pageErrors: string[] = [];
@@ -159,14 +176,25 @@ test.afterAll(async () => {
 
 test.describe('UI monkey', () => {
   test('clicks randomly through the app without crashing', async () => {
-    test.setTimeout(ACTIONS * 2_500 + 60_000);
+    // Budget per action covers the worst case: a click (~1.2s) plus
+    // waitForQuerySettle, which waits up to LOAD_TIMEOUT (5s) when a "Loading"
+    // marker lingers. ~3s is typical, but the ceiling must clear the worst case
+    // (and local-machine load) or a healthy run trips its own timeout.
+    test.setTimeout(ACTIONS * 6_000 + 60_000);
     const rng = makeRng(SEED);
     const log: string[] = [`seed=${SEED} actions=${ACTIONS}`];
 
     for (let i = 0; i < ACTIONS; i++) {
+      // Weighted toward the analytical surface: jump between views/dashboards
+      // (re-render), re-pivot the group-by dimension, and move the date range —
+      // the query-and-render churn that exposes the most bugs. The generic click
+      // (35%) then exercises charts / tables / filters / granularity within
+      // whatever view we landed on. Settings + AWS-profile controls are
+      // denylisted, so none of these stray into config churn.
       const roll = rng();
-      if (roll < 0.12) await navigateRandom(page, rng, log);
-      else if (roll < 0.2) await pickRandomDate(page, rng, log);
+      if (roll < 0.25) await navigateRandom(page, rng, log);
+      else if (roll < 0.50) await changeDimension(page, rng, log);
+      else if (roll < 0.65) await pickRandomDate(page, rng, log);
       else await clickRandomControl(page, rng, log);
 
       await waitForQuerySettle(page);
