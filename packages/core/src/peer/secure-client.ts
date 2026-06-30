@@ -39,10 +39,16 @@ function requestOptions(endpoint: PeerEndpoint, path: string): RequestOptions & 
 
 function get(endpoint: PeerEndpoint, path: string, maxBytes: number): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
+    // Settle exactly once: aborting the request emits further 'error' events on
+    // both req and res, which we absorb here rather than leaving unhandled.
+    let settled = false;
+    const fail = (err: Error): void => { if (!settled) { settled = true; reject(err); } };
+    const succeed = (buf: Buffer): void => { if (!settled) { settled = true; resolve(buf); } };
     const req = request(requestOptions(endpoint, path), (res) => {
+      res.on('error', fail);
       if (res.statusCode !== 200) {
         res.resume();
-        reject(new Error(`Peer responded ${String(res.statusCode)} for ${path}`));
+        fail(new Error(`Peer responded ${String(res.statusCode)} for ${path}`));
         return;
       }
       const chunks: Buffer[] = [];
@@ -50,16 +56,16 @@ function get(endpoint: PeerEndpoint, path: string, maxBytes: number): Promise<Bu
       res.on('data', (chunk: Buffer) => {
         total += chunk.length;
         if (total > maxBytes) {
-          req.destroy(new Error('Peer response exceeded the size limit'));
+          fail(new Error('Peer response exceeded the size limit'));
+          req.destroy();
           return;
         }
         chunks.push(chunk);
       });
-      res.on('end', () => { resolve(Buffer.concat(chunks)); });
-      res.on('error', reject);
+      res.on('end', () => { succeed(Buffer.concat(chunks)); });
     });
-    req.on('error', reject);
-    req.setTimeout(REQUEST_TIMEOUT_MS, () => { req.destroy(new Error('Peer request timed out')); });
+    req.on('error', fail);
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => { fail(new Error('Peer request timed out')); req.destroy(); });
     req.end();
   });
 }
@@ -70,7 +76,10 @@ export function fetchManifest(endpoint: PeerEndpoint): Promise<string> {
   return get(endpoint, '/manifest', MAX_MANIFEST_BYTES).then((buf) => buf.toString('utf-8'));
 }
 
-/** Fetch one data file by its safe pack path. Verify its SHA-256 before use. */
-export function fetchFile(endpoint: PeerEndpoint, path: string): Promise<Buffer> {
-  return get(endpoint, `/file?path=${encodeURIComponent(path)}`, MAX_FILE_BYTES);
+/** Fetch one data file by its safe pack path. Verify its SHA-256 before use.
+ *  `maxBytes` (the manifest's advertised size) caps the in-memory buffer so a
+ *  publisher can't stream far more than it claimed; it is clamped to the
+ *  absolute MAX_FILE_BYTES ceiling regardless. */
+export function fetchFile(endpoint: PeerEndpoint, path: string, maxBytes = MAX_FILE_BYTES): Promise<Buffer> {
+  return get(endpoint, `/file?path=${encodeURIComponent(path)}`, Math.min(maxBytes, MAX_FILE_BYTES));
 }

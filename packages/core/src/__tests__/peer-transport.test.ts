@@ -132,6 +132,34 @@ describe('encrypted peer transport (TLS-PSK)', () => {
     }
   });
 
+  it('aborts a file transfer that exceeds the requested byte cap', async () => {
+    const id = generateIdentityKeyPair();
+    const psk = Buffer.from('shared-access-secret-0123456789ab');
+    const server = await startSharingServer(
+      { psk, host: '127.0.0.1' },
+      {
+        getManifest: () => serializeSignedManifest(signManifest(buildManifest(id.publicKey), id.privateKey)),
+        readFile: (p) => {
+          const buf = files.get(p);
+          if (buf === undefined) throw new Error(`unknown file ${p}`);
+          return Promise.resolve(buf);
+        },
+      },
+    );
+
+    try {
+      const endpoint = { host: '127.0.0.1', port: server.port, psk };
+      const path = 'aws/raw/daily-2026-06/part-0.parquet';
+      const size = files.get(path)?.length ?? 0;
+      // A cap below the true size (a publisher under-reporting its file) aborts.
+      await expect(fetchFile(endpoint, path, size - 1)).rejects.toThrow();
+      // The honest advertised size still transfers fully.
+      expect((await fetchFile(endpoint, path, size)).length).toBe(size);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects a request for a path outside the data tree', async () => {
     const id = generateIdentityKeyPair();
     const psk = Buffer.from('shared-access-secret-0123456789ab');

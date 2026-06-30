@@ -9,6 +9,7 @@ import {
   isTelemetryEnabled,
   logger,
   QUERY_CANCELLED_MESSAGE,
+  resolveTracesSampleRate,
   summarizeEventForOutbox,
   TELEMETRY_DEFAULTS,
 } from '@costgoblin/core';
@@ -67,7 +68,16 @@ class TelemetryController {
       active: this.active,
       preferences: this.prefs,
       armed: this.armedChannels(),
+      tracesSampleRate: this.tracesSampleRate(),
     };
+  }
+
+  /** The Sentry `tracesSampleRate` this build uses for performance tracing — dev
+   *  (unpackaged) samples everything, packaged releases sample the prod fraction.
+   *  Resolved once here from `app.isPackaged` and surfaced via {@link getStatus}
+   *  so the renderer samples at the same rate (no cross-process drift). */
+  private tracesSampleRate(): number {
+    return resolveTracesSampleRate(!app.isPackaged);
   }
 
   /** What each channel is *actually* doing this session (vs. the desired state in
@@ -82,6 +92,16 @@ class TelemetryController {
       performance: this.initSnapshot.performance && this.prefs.performance,
       analytics: false,
     };
+  }
+
+  /** True when performance tracing is actually armed this session — the gate the
+   *  span helpers ({@link ./tracing}) consult before creating any Sentry span.
+   *  Equivalent to {@link armedChannels}'s performance value (SDK active, armed at
+   *  boot, still wanted) but inlined: this runs on the hot query path, so it must
+   *  not allocate the way armedChannels() does. When false the helpers are pure
+   *  pass-throughs that create no SDK objects, so opted-out users pay nothing. */
+  isTracingActive(): boolean {
+    return this.active && this.initSnapshot !== null && this.initSnapshot.performance && this.prefs.performance;
   }
 
   async getOutbox(): ReturnType<TelemetryOutbox['list']> {
@@ -141,8 +161,9 @@ class TelemetryController {
         // arms the native crash handler. Scrubbed JS error capture flows either way.
         integrations: (defaults) =>
           this.prefs.nativeCrashReports ? defaults : defaults.filter((i) => i.name !== 'SentryMinidump'),
-        // Tracing only when the performance channel is on.
-        tracesSampleRate: this.prefs.performance ? 0.1 : 0,
+        // Tracing only when the performance channel is on. Dev (unpackaged, with
+        // a DSN set) samples everything; packaged releases sample at the prod rate.
+        tracesSampleRate: this.prefs.performance ? this.tracesSampleRate() : 0,
         // Never let the SDK attach IP/user/cookies — our scrub is the backstop,
         // but default-off is the first line of defence.
         sendDefaultPii: false,
