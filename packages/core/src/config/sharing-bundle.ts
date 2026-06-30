@@ -7,6 +7,7 @@ import type {
   OrgTreeConfig,
   SyncConfig,
 } from '../types/config.js';
+import type { BaselineSpec } from '../types/baseline.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
 import type {
   BundleSectionId,
@@ -31,6 +32,8 @@ import {
 import { validateCostScope } from './cost-scope-validator.js';
 import { validateViews } from './views-validator.js';
 import { viewsConfigToYaml } from './views-serialize.js';
+import { validateBaselines } from './baselines-validator.js';
+import { baselinesToYaml } from './baselines-serialize.js';
 
 // ---------------------------------------------------------------------------
 // YAML-object serialization — stable key order so fingerprints are
@@ -95,6 +98,7 @@ function sectionsToYamlObjects(sections: ConfigBundleSections): Record<string, u
     ...(sections.orgTree === undefined ? {} : { orgTree: orgTreeToYaml(sections.orgTree) }),
     ...(sections.costScope === undefined ? {} : { costScope: costScopeToYaml(sections.costScope) }),
     ...(sections.views === undefined ? {} : { views: viewsConfigToYaml(sections.views) }),
+    ...(sections.baselines === undefined ? {} : { baselines: baselinesToYaml(sections.baselines) }),
   };
 }
 
@@ -115,6 +119,7 @@ export interface BuildConfigBundleInput {
   readonly orgTree?: OrgTreeConfig | undefined;
   readonly costScope?: CostScopeConfig | undefined;
   readonly views?: ViewsConfig | undefined;
+  readonly baselines?: readonly BaselineSpec[] | undefined;
   readonly appVersion: string;
   /** Injectable for tests. Defaults to now. */
   readonly exportedAt?: string | undefined;
@@ -133,6 +138,7 @@ export function buildConfigBundle(input: BuildConfigBundleInput): ConfigBundle {
     ...(input.orgTree === undefined || input.orgTree.tree.length === 0 ? {} : { orgTree: input.orgTree }),
     ...(input.costScope === undefined ? {} : { costScope: input.costScope }),
     ...(input.views === undefined || input.views.views.length === 0 ? {} : { views: input.views }),
+    ...(input.baselines === undefined || input.baselines.length === 0 ? {} : { baselines: input.baselines }),
   };
   return {
     schemaVersion: CONFIG_BUNDLE_SCHEMA_VERSION,
@@ -233,6 +239,7 @@ export function parseConfigBundle(content: string): ParsedConfigBundle {
   const orgTree: OrgTreeConfig | undefined = rawSections['orgTree'] === undefined ? undefined : validateOrgTree(rawSections['orgTree']);
   const costScope: CostScopeConfig | undefined = rawSections['costScope'] === undefined ? undefined : validateCostScope(rawSections['costScope']);
   const views: ViewsConfig | undefined = rawSections['views'] === undefined ? undefined : validateViews(rawSections['views']);
+  const baselines: readonly BaselineSpec[] | undefined = rawSections['baselines'] === undefined ? undefined : validateBaselines(rawSections['baselines'], dimensions);
 
   const sections: ConfigBundleSections = {
     config,
@@ -240,6 +247,7 @@ export function parseConfigBundle(content: string): ParsedConfigBundle {
     ...(orgTree === undefined ? {} : { orgTree }),
     ...(costScope === undefined ? {} : { costScope }),
     ...(views === undefined ? {} : { views }),
+    ...(baselines === undefined ? {} : { baselines }),
   };
   return {
     bundle: {
@@ -266,6 +274,7 @@ export function bundleSectionIds(sections: ConfigBundleSections): readonly Bundl
   if (sections.orgTree !== undefined) ids.push('orgTree');
   if (sections.costScope !== undefined) ids.push('costScope');
   if (sections.views !== undefined) ids.push('views');
+  if (sections.baselines !== undefined) ids.push('baselines');
   return ids;
 }
 
@@ -285,6 +294,7 @@ export function summarizeConfigBundle(parsed: ParsedConfigBundle): ConfigBundleS
     orgTreeNodeCount: countOrgNodes(sections.orgTree?.tree ?? []),
     exclusionRuleCount: sections.costScope?.rules.length ?? 0,
     viewCount: sections.views?.views.length ?? 0,
+    baselineCount: sections.baselines?.length ?? 0,
   };
 }
 

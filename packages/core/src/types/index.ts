@@ -54,6 +54,7 @@ export type {
   DailyCostsParams,
   DailyCostDay,
   DailyCostsResult,
+  BaselineDiscoveryRow,
   EntityDetailParams,
   DailyCost,
   DistributionSlice,
@@ -65,7 +66,7 @@ export type {
 } from './query.js';
 export { DEFAULT_PLACEHOLDER_PATTERNS } from './query.js';
 
-export type { Dimension, CostApi, DataInventoryResult, DataTier, PruneResult, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, PerformanceSettings, PerformanceInfo, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateLogEntry, UpdateStage, UpdateStatus, UpdateApi, RollupStatus, RollupApi, RollupStats } from './api.js';
+export type { Dimension, CostApi, DataInventoryResult, DataTier, PruneResult, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, PerformanceSettings, PerformanceInfo, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateLogEntry, UpdateStage, UpdateStatus, UpdateApi, RollupStatus, RollupApi, RollupStats, BaselinesApi } from './api.js';
 
 export type {
   WidgetSize,
@@ -93,6 +94,37 @@ export type {
   CostScopeSampleRow,
 } from './cost-scope.js';
 export { COST_METRICS, COST_PERSPECTIVES, DEFAULT_LAG_DAYS } from './cost-scope.js';
+
+export type {
+  BaselineScope,
+  BaselineCostBasis,
+  BaselineBands,
+  ManualBand,
+  ManualBandMode,
+  BaselineStats,
+  BaselineCurrent,
+  BaselineSavings,
+  BaselineStatus,
+  BaselineSource,
+  BaselineDailyPoint,
+  BaselineNote,
+  BaselineTriage,
+  BaselineSpec,
+  BaselineRecord,
+  BaselineSnapshot,
+  BaselineDetail,
+  BaselineDriftRow,
+  BaselinesDiscoveryConfig,
+  BaselinesConfigState,
+  BaselineSortKey,
+  BaselinesListParams,
+  BaselinesListResult,
+  BaselineCreateInput,
+  BaselineUpdatePatch,
+  BaselineRecomputeStatus,
+  BaselineTriageStatus,
+} from './baseline.js';
+export { BASELINE_STATUSES, BASELINE_TRIAGE_STATUSES, OPEN_TRIAGE_STATUSES } from './baseline.js';
 
 export type {
   ApplyConfigBundleParams,

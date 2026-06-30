@@ -60,6 +60,11 @@ export type WidgetSpec =
       readonly enabledColumns?: readonly string[] | undefined;
     })
   | (WidgetBase & {
+      readonly type: 'baseline';
+      /** Max baselines to show, ranked by potential savings. Default 8. */
+      readonly topN?: number | undefined;
+    })
+  | (WidgetBase & {
       readonly type: 'waterfall';
       readonly groupBy: DimensionId;
       /** Named drivers shown before the remainder is folded into "Other".
