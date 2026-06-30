@@ -13,7 +13,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
 const PERIOD = '2026-01';
 
-const scope: CostScopeConfig = { costMetric: 'unblended', costPerspective: 'gross', rules: [] };
+const scope: CostScopeConfig = { costMetric: 'unblended', rules: [] };
 
 const stableGrain: DimensionsConfig = {
   builtIn: [

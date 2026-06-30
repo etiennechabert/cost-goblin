@@ -21,7 +21,7 @@ const dimensions: DimensionsConfig = {
   tags: [],
 };
 
-const costScope: CostScopeConfig = { costMetric: 'unblended', costPerspective: 'gross', rules: [] };
+const costScope: CostScopeConfig = { costMetric: 'unblended', rules: [] };
 const opts: QueryContextOptions = { dataDir: SYNTHETIC_DIR, dimensions, availablePeriods: PERIODS, costScope };
 const dateRange = { start: asDateString('2026-01-01'), end: asDateString('2026-02-28') };
 

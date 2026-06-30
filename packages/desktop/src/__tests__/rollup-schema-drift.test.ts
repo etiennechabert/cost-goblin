@@ -73,7 +73,7 @@ const dimensions: DimensionsConfig = {
   tags: [],
 };
 // Amortized is the metric that references the optional RI/SP columns.
-const costScope: CostScopeConfig = { costMetric: 'amortized', costPerspective: 'gross', rules: [] };
+const costScope: CostScopeConfig = { costMetric: 'amortized', rules: [] };
 const shape: RollupShape = { signature: 'SIG-DRIFT', grainDimensions: rollupGrainColumns(dimensions), availableColumns: ['account_id', 'account_name', 'service'] };
 const etags = { '2025-10': { f: 'h-old' }, '2026-04': { f: 'h-new' } };
 

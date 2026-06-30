@@ -14,7 +14,7 @@ function sampleSpec(): BaselineSpec {
     scope: { kind: 'filter', filters: { [asDimensionId('service')]: [asTagValue('AmazonRDS')] } },
     // A real baseline snapshots the active cost scope, which always carries the
     // marketplace-attribution default — mirror that so the bundle round-trips.
-    basis: { costMetric: 'amortized', costPerspective: 'gross', rules: [], marketplaceAttribution: DEFAULT_COST_SCOPE.marketplaceAttribution },
+    basis: { costMetric: 'amortized', rules: [], marketplaceAttribution: DEFAULT_COST_SCOPE.marketplaceAttribution },
     basisSnapshotAt: '2026-06-01T00:00:00.000Z',
     createdAt: '2026-06-01T00:00:00.000Z',
     updatedAt: '2026-06-01T00:00:00.000Z',

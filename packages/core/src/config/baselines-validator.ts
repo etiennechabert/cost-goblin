@@ -52,7 +52,7 @@ function validateBasis(raw: unknown): BaselineCostBasis {
   const cs = validateCostScope(raw);
   return {
     costMetric: cs.costMetric,
-    costPerspective: cs.costPerspective ?? 'gross',
+    ...(cs.discountTreatment === undefined ? {} : { discountTreatment: cs.discountTreatment }),
     rules: cs.rules,
     ...(cs.marketplaceAttribution === undefined ? {} : { marketplaceAttribution: cs.marketplaceAttribution }),
     ...(cs.lagDays === undefined ? {} : { lagDays: cs.lagDays }),

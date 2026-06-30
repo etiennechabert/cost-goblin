@@ -27,14 +27,44 @@ export type CostMetric = 'unblended' | 'amortized' | 'list';
 
 export const COST_METRICS: readonly CostMetric[] = ['unblended', 'amortized', 'list'] as const;
 
-/** Whether the cost column should be the as-billed ("gross") value or the
- *  post-credit/refund ("net") value. Orthogonal to the metric axis —
- *  every metric has a net variant in CUR when "Include Net Columns" is
- *  enabled on the report. When net columns are missing, the expression
- *  falls back to the gross column for that metric. */
+/** Low-level cost-column selector: gross uses the as-billed
+ *  `*_unblended_cost` columns; net uses the `*_net_*` columns, which fold each
+ *  negotiated discount into the line that earned it. Not a user-facing setting
+ *  any more — it's DERIVED from {@link DiscountTreatment} (see
+ *  config/discount-treatment.ts). Still threaded directly through the query
+ *  builder, the rollup signature, and the Explorer's per-view override. When
+ *  net columns are missing, `costExprFor` falls back to gross. */
 export type CostPerspective = 'gross' | 'net';
 
 export const COST_PERSPECTIVES: readonly CostPerspective[] = ['gross', 'net'] as const;
+
+/** How negotiated AWS discounts are reflected in every query. AWS books the
+ *  Enterprise Discount Program (EDP) volume discount and automatic bundled
+ *  discounts in two interchangeable ways, and this single axis picks between
+ *  them — replacing the former gross/net "perspective" toggle PLUS the
+ *  standalone EDP / Bundled exclusion rules. Those two controls together
+ *  produced four states but only three distinct outcomes (net already folds
+ *  the discount in, so excluding it on top was a no-op).
+ *   - `spread`   — AWS net columns: each negotiated discount is folded into the
+ *                  service / usage line that earned it, so per-service cost is
+ *                  discount-accurate. The real bill, attributed. Best for
+ *                  chargeback (what Cost Explorer shows).
+ *   - `itemized` — gross columns: the discount stays as its own standalone
+ *                  negative line item, unattributed. Bill total is identical to
+ *                  `spread`, but no individual service shows its discounted rate.
+ *   - `excluded` — gross columns with the `EdpDiscount` / `BundledDiscount` rows
+ *                  removed: pre-negotiation "rack rate". NOT money you paid.
+ *
+ *  Derivation to the low-level {@link CostPerspective} + the synthetic
+ *  negotiated-discount exclusion lives in config/discount-treatment.ts. */
+export type DiscountTreatment = 'spread' | 'itemized' | 'excluded';
+
+export const DISCOUNT_TREATMENTS: readonly DiscountTreatment[] = ['spread', 'itemized', 'excluded'] as const;
+
+/** Gross columns with the discount left as a standalone line item — preserves
+ *  the historic default (old `gross` perspective + EDP/Bundled rules disabled),
+ *  so totals and attribution don't shift for existing installs on upgrade. */
+export const DEFAULT_DISCOUNT_TREATMENT: DiscountTreatment = 'itemized';
 
 /** One AND-ed condition inside an exclusion rule. Matches when the row's
  *  value for `dimensionId` is in `values` (OR within values). Empty `values`
@@ -97,9 +127,12 @@ export const DEFAULT_LAG_DAYS = 2;
 
 export interface CostScopeConfig {
   readonly costMetric: CostMetric;
-  /** Optional. Defaults to 'gross' when omitted (back-compat with
-   *  earlier on-disk configs that predate the perspective axis). */
-  readonly costPerspective?: CostPerspective;
+  /** How negotiated discounts are handled. Optional on disk; absent defaults to
+   *  {@link DEFAULT_DISCOUNT_TREATMENT} ('itemized'). Replaced the former
+   *  `costPerspective` field and the EDP/Bundled exclusion rules — legacy configs
+   *  carrying either are migrated at load time (see cost-scope-validator.ts and
+   *  mergeBuiltInExclusionRules). */
+  readonly discountTreatment?: DiscountTreatment;
   /** How many recent days to trim from query date ranges. Defaults to
    *  `DEFAULT_LAG_DAYS` (2) when omitted. */
   readonly lagDays?: number | undefined;

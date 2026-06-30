@@ -3,22 +3,22 @@ import { asDimensionId } from '../types/branded.js';
 import { logger } from '../logger/logger.js';
 import type {
   CostMetric,
-  CostPerspective,
   CostScopeConfig,
+  DiscountTreatment,
   ExclusionCondition,
   ExclusionRule,
   MarketplaceAttributionConfig,
   MarketplaceAttributionRule,
 } from '../types/cost-scope.js';
-import { COST_METRICS, COST_PERSPECTIVES } from '../types/cost-scope.js';
+import { COST_METRICS, DISCOUNT_TREATMENTS } from '../types/cost-scope.js';
 import { DEFAULT_MARKETPLACE_ATTRIBUTION } from './cost-scope-seed.js';
 
 function isCostMetric(v: string): v is CostMetric {
   return (COST_METRICS as readonly string[]).includes(v);
 }
 
-function isCostPerspective(v: string): v is CostPerspective {
-  return (COST_PERSPECTIVES as readonly string[]).includes(v);
+function isDiscountTreatment(v: string): v is DiscountTreatment {
+  return (DISCOUNT_TREATMENTS as readonly string[]).includes(v);
 }
 
 function validateCondition(raw: unknown, ctx: string): ExclusionCondition {
@@ -110,17 +110,23 @@ export function validateCostScope(raw: unknown): CostScopeConfig {
       `costScope.costMetric must be one of: ${COST_METRICS.join(', ')}`,
     );
   }
-  // costPerspective is optional — missing key defaults to 'gross' so older
-  // on-disk configs keep working unchanged.
-  let costPerspective: CostPerspective | undefined;
-  if (raw['costPerspective'] !== undefined) {
-    assertString(raw['costPerspective'], 'costScope.costPerspective');
-    if (!isCostPerspective(raw['costPerspective'])) {
+  // discountTreatment is optional — missing key defaults to 'itemized'.
+  // Legacy configs predate the axis: translate the old `costPerspective: net`
+  // (the "spread negotiated discounts into services" column choice) to
+  // 'spread'. The rule-based half of the migration — an enabled EDP/Bundled
+  // exclusion rule meaning "show pre-negotiation cost" → 'excluded' — happens
+  // in mergeBuiltInExclusionRules, which has the built-in reconciliation context.
+  let discountTreatment: DiscountTreatment | undefined;
+  if (raw['discountTreatment'] !== undefined) {
+    assertString(raw['discountTreatment'], 'costScope.discountTreatment');
+    if (!isDiscountTreatment(raw['discountTreatment'])) {
       throw new ConfigValidationError(
-        `costScope.costPerspective must be one of: ${COST_PERSPECTIVES.join(', ')}`,
+        `costScope.discountTreatment must be one of: ${DISCOUNT_TREATMENTS.join(', ')}`,
       );
     }
-    costPerspective = raw['costPerspective'];
+    discountTreatment = raw['discountTreatment'];
+  } else if (raw['costPerspective'] === 'net') {
+    discountTreatment = 'spread';
   }
   let lagDays: number | undefined;
   if (raw['lagDays'] !== undefined) {
@@ -136,7 +142,7 @@ export function validateCostScope(raw: unknown): CostScopeConfig {
   const marketplaceAttribution = validateMarketplaceAttribution(raw['marketplaceAttribution']);
   return {
     costMetric: costMetricRaw,
-    ...(costPerspective === undefined ? {} : { costPerspective }),
+    ...(discountTreatment === undefined ? {} : { discountTreatment }),
     ...(lagDays === undefined ? {} : { lagDays }),
     rules,
     marketplaceAttribution,

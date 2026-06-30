@@ -18,6 +18,8 @@ import {
   computeSavings,
   computeShapeSignature,
   deriveStatus,
+  discountPerspective,
+  effectiveExclusionRules,
   effectiveBands,
   estimateBytesPerRow,
   getAncestorPath,
@@ -831,8 +833,8 @@ export class BaselineStore {
     const sig = computeShapeSignature({
       dimensions,
       costMetric: costScope.costMetric,
-      costPerspective: costScope.costPerspective ?? 'gross',
-      rules: costScope.rules,
+      costPerspective: discountPerspective(costScope),
+      rules: effectiveExclusionRules(costScope),
       marketplaceAttribution: costScope.marketplaceAttribution,
       orgAccountsDigest: this.cachedOrgDigest,
       availableColumns: [...availableColumns],
@@ -890,7 +892,7 @@ async function snapshotBasis(deps: BaselineEngineDeps): Promise<BaselineCostBasi
   const cs = await deps.getCostScope();
   return {
     costMetric: cs.costMetric,
-    costPerspective: cs.costPerspective ?? 'gross',
+    ...(cs.discountTreatment === undefined ? {} : { discountTreatment: cs.discountTreatment }),
     rules: cs.rules,
     ...(cs.marketplaceAttribution === undefined ? {} : { marketplaceAttribution: cs.marketplaceAttribution }),
     ...(cs.lagDays === undefined ? {} : { lagDays: cs.lagDays }),
@@ -900,7 +902,7 @@ async function snapshotBasis(deps: BaselineEngineDeps): Promise<BaselineCostBasi
 function basisToCostScope(basis: BaselineCostBasis): CostScopeConfig {
   return {
     costMetric: basis.costMetric,
-    costPerspective: basis.costPerspective,
+    ...(basis.discountTreatment === undefined ? {} : { discountTreatment: basis.discountTreatment }),
     rules: basis.rules,
     ...(basis.marketplaceAttribution === undefined ? {} : { marketplaceAttribution: basis.marketplaceAttribution }),
     ...(basis.lagDays === undefined ? {} : { lagDays: basis.lagDays }),

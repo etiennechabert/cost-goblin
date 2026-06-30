@@ -82,6 +82,7 @@ export { OVERVIEW_SEED_VIEW, SEED_VIEWS_CONFIG } from './seed-views.js';
 export type {
   CostMetric,
   CostPerspective,
+  DiscountTreatment,
   CostScopeCapabilities,
   CostScopeConfig,
   MarketplaceAttributionConfig,
@@ -93,7 +94,7 @@ export type {
   CostScopePreviewResult,
   CostScopeSampleRow,
 } from './cost-scope.js';
-export { COST_METRICS, COST_PERSPECTIVES, DEFAULT_LAG_DAYS } from './cost-scope.js';
+export { COST_METRICS, COST_PERSPECTIVES, DISCOUNT_TREATMENTS, DEFAULT_DISCOUNT_TREATMENT, DEFAULT_LAG_DAYS } from './cost-scope.js';
 
 export type {
   BaselineScope,

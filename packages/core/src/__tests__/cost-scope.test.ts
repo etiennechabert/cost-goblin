@@ -8,6 +8,7 @@ import type { CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
 import { DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, BUILTIN_EXCLUSION_RULES, mergeBuiltInExclusionRules } from '../config/cost-scope-seed.js';
 import { validateCostScope } from '../config/cost-scope-validator.js';
 import { costScopeToYaml } from '../config/cost-scope-serialize.js';
+import { discountPerspective, effectiveExclusionRules } from '../config/discount-treatment.js';
 import { asDimensionId, asDateString } from '../types/branded.js';
 
 const dimensions: DimensionsConfig = {
@@ -71,7 +72,7 @@ describe('cost metric column selection', () => {
     // SQL should prefer the net variant.
     const { sql } = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, costScope: { costMetric: 'unblended', costPerspective: 'net', rules: [] }, availableColumns: new Set(['line_item_unblended_cost', 'line_item_net_unblended_cost']) },
+      { dataDir: '/data', dimensions, costScope: { costMetric: 'unblended', discountTreatment: 'spread', rules: [] }, availableColumns: new Set(['line_item_unblended_cost', 'line_item_net_unblended_cost']) },
       5,
     );
     expect(sql).toContain('line_item_net_unblended_cost');
@@ -83,7 +84,7 @@ describe('cost metric column selection', () => {
     // a missing column (which would error at query time).
     const { sql } = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, costScope: { costMetric: 'unblended', costPerspective: 'net', rules: [] }, availableColumns: new Set(['line_item_unblended_cost']) },
+      { dataDir: '/data', dimensions, costScope: { costMetric: 'unblended', discountTreatment: 'spread', rules: [] }, availableColumns: new Set(['line_item_unblended_cost']) },
       5,
     );
     expect(sql).not.toContain('line_item_net_unblended_cost');
@@ -93,7 +94,7 @@ describe('cost metric column selection', () => {
   it('amortized + net uses net effective-cost columns when available', () => {
     const { sql } = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, costScope: { costMetric: 'amortized', costPerspective: 'net', rules: [] }, availableColumns: new Set([
+      { dataDir: '/data', dimensions, costScope: { costMetric: 'amortized', discountTreatment: 'spread', rules: [] }, availableColumns: new Set([
         'line_item_unblended_cost',
         'line_item_net_unblended_cost',
         'reservation_net_effective_cost',
@@ -111,7 +112,7 @@ describe('cost metric column selection', () => {
     // degrades all the way down to line_item_unblended_cost.
     const { sql } = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, costScope: { costMetric: 'amortized', costPerspective: 'net', rules: [] }, availableColumns: new Set(['line_item_unblended_cost']) },
+      { dataDir: '/data', dimensions, costScope: { costMetric: 'amortized', discountTreatment: 'spread', rules: [] }, availableColumns: new Set(['line_item_unblended_cost']) },
       5,
     );
     expect(sql).toMatch(/COALESCE\(line_item_unblended_cost, 0\) AS cost/);
@@ -335,10 +336,77 @@ describe('mergeBuiltInExclusionRules', () => {
     };
   }
 
+  function legacyEdpRule(enabled: boolean): ExclusionRule {
+    return {
+      id: 'builtin:edp-discount',
+      name: 'EDP discount',
+      enabled,
+      builtIn: true,
+      conditions: [{ dimensionId: asDimensionId('line_item_type'), values: ['EdpDiscount'] }],
+    };
+  }
+
+  function legacyBundledRule(enabled: boolean): ExclusionRule {
+    return {
+      id: 'builtin:bundled-discount',
+      name: 'Bundled discount',
+      enabled,
+      builtIn: true,
+      conditions: [{ dimensionId: asDimensionId('line_item_type'), values: ['BundledDiscount'] }],
+    };
+  }
+
   it('does not ship the retired RI/SP rules in the default seed', () => {
     const ids = BUILTIN_EXCLUSION_RULES.map(r => r.id);
     expect(ids).not.toContain('builtin:ri-sp-purchases');
     expect(ids).not.toContain('builtin:commitment-covered-usage');
+  });
+
+  it('no longer ships any discount-exclusion rule in the seed (folded into discountTreatment)', () => {
+    const ids = BUILTIN_EXCLUSION_RULES.map(r => r.id);
+    expect(ids).not.toContain('builtin:edp-discount');
+    expect(ids).not.toContain('builtin:bundled-discount');
+    expect(ids).not.toContain('builtin:negotiated-discounts');
+  });
+
+  it('drops legacy discount rules without backfilling any replacement rule', () => {
+    const loaded: CostScopeConfig = {
+      costMetric: 'unblended',
+      rules: [legacyEdpRule(false), legacyBundledRule(false)],
+    };
+    const merged = mergeBuiltInExclusionRules(loaded);
+    const ids = merged.rules.map(r => r.id);
+    expect(ids).not.toContain('builtin:edp-discount');
+    expect(ids).not.toContain('builtin:bundled-discount');
+    expect(ids).not.toContain('builtin:negotiated-discounts');
+  });
+
+  it('infers discountTreatment=excluded when either legacy discount rule was enabled', () => {
+    for (const loaded of [
+      { costMetric: 'unblended' as const, rules: [legacyEdpRule(true), legacyBundledRule(false)] },
+      { costMetric: 'unblended' as const, rules: [legacyEdpRule(false), legacyBundledRule(true)] },
+    ]) {
+      expect(mergeBuiltInExclusionRules(loaded).discountTreatment).toBe('excluded');
+    }
+  });
+
+  it('leaves discountTreatment unset (defaults to itemized) when legacy discount rules were disabled', () => {
+    const loaded: CostScopeConfig = {
+      costMetric: 'unblended',
+      rules: [legacyEdpRule(false), legacyBundledRule(false)],
+    };
+    expect(mergeBuiltInExclusionRules(loaded).discountTreatment).toBeUndefined();
+  });
+
+  it('keeps an explicit discountTreatment over legacy-rule inference', () => {
+    const loaded: CostScopeConfig = {
+      costMetric: 'unblended',
+      discountTreatment: 'spread',
+      rules: [legacyEdpRule(true)],
+    };
+    const merged = mergeBuiltInExclusionRules(loaded);
+    expect(merged.discountTreatment).toBe('spread');
+    expect(merged.rules.map(r => r.id)).not.toContain('builtin:edp-discount');
   });
 
   it('drops retired rules from loaded configs silently', () => {
@@ -412,6 +480,60 @@ describe('validateCostScope: blended migration', () => {
 
   it('rejects truly unknown costMetric values', () => {
     expect(() => validateCostScope({ costMetric: 'nonsense', rules: [] })).toThrow(/costScope.costMetric must be one of/);
+  });
+});
+
+describe('discountTreatment', () => {
+  it('maps spread→net and everything else→gross', () => {
+    expect(discountPerspective({ discountTreatment: 'spread' })).toBe('net');
+    expect(discountPerspective({ discountTreatment: 'itemized' })).toBe('gross');
+    expect(discountPerspective({ discountTreatment: 'excluded' })).toBe('gross');
+    expect(discountPerspective(undefined)).toBe('gross');
+    expect(discountPerspective({})).toBe('gross'); // default itemized
+  });
+
+  it('appends a synthetic negotiated-discount exclusion only for `excluded`', () => {
+    const base: ExclusionRule[] = [
+      { id: 'user:x', name: 'x', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('service'), values: ['EC2'] }] },
+    ];
+    expect(effectiveExclusionRules({ discountTreatment: 'itemized', rules: base })).toHaveLength(1);
+    expect(effectiveExclusionRules({ discountTreatment: 'spread', rules: base })).toHaveLength(1);
+    const excluded = effectiveExclusionRules({ discountTreatment: 'excluded', rules: base });
+    expect(excluded).toHaveLength(2);
+    const synthetic = excluded[1];
+    expect(synthetic?.conditions[0]?.values).toEqual(['EdpDiscount', 'BundledDiscount']);
+    expect(synthetic?.enabled).toBe(true);
+  });
+
+  it('excluded treatment removes the negotiated-discount rows from generated SQL', () => {
+    const { sql } = buildCostQuery(
+      baseParams,
+      { dataDir: '/data', dimensions, costScope: { costMetric: 'unblended', discountTreatment: 'excluded', rules: [] } },
+      5,
+    );
+    expect(sql).toMatch(/line_item_type NOT IN \(\$\d+, \$\d+\)/);
+  });
+
+  it('itemized treatment leaves negotiated-discount rows in (no exclusion clause)', () => {
+    const { sql } = buildCostQuery(
+      baseParams,
+      { dataDir: '/data', dimensions, costScope: { costMetric: 'unblended', discountTreatment: 'itemized', rules: [] } },
+      5,
+    );
+    expect(sql).not.toContain('EdpDiscount');
+    expect(sql).not.toMatch(/line_item_type NOT IN/);
+  });
+
+  it('validator translates legacy costPerspective:net → spread, drops the old field', () => {
+    const result = validateCostScope({ costMetric: 'unblended', costPerspective: 'net', rules: [] });
+    expect(result.discountTreatment).toBe('spread');
+    expect('costPerspective' in result).toBe(false);
+  });
+
+  it('serializer omits discountTreatment when itemized (default) and emits it otherwise', () => {
+    expect(costScopeToYaml({ costMetric: 'unblended', discountTreatment: 'itemized', rules: [] }).discountTreatment).toBeUndefined();
+    expect(costScopeToYaml({ costMetric: 'unblended', discountTreatment: 'spread', rules: [] }).discountTreatment).toBe('spread');
+    expect(costScopeToYaml({ costMetric: 'unblended', discountTreatment: 'excluded', rules: [] }).discountTreatment).toBe('excluded');
   });
 });
 

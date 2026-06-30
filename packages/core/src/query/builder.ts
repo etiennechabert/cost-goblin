@@ -5,6 +5,7 @@ import type { DimensionId } from '../types/branded.js';
 import { tagDimColumn } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule, MarketplaceAttributionConfig, MarketplaceAttributionRule } from '../types/cost-scope.js';
+import { discountPerspective, effectiveExclusionRules } from '../config/discount-treatment.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor, LIST_METRIC_LINE_ITEM_TYPES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
@@ -612,8 +613,8 @@ function setupQuery(
     return { qb, filterClauses, exclusionClauses: [], source: materializedSource, costMetric };
   }
 
-  const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
-  const costPerspective = costScope?.costPerspective ?? 'gross';
+  const exclusionClauses = buildExclusionClauses(effectiveExclusionRules(costScope), dimensions, accountReverseMap, qb);
+  const costPerspective = discountPerspective(costScope);
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const resolvedTier = effectiveTier(tier, params.dateRange);
   const source = buildSource({ dataDir, tier: resolvedTier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution, ...extraSourceOpts });
@@ -690,7 +691,7 @@ export function buildTrendQuery(
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
   const costMetric = costScope?.costMetric ?? 'unblended';
-  const costPerspective = costScope?.costPerspective ?? 'gross';
+  const costPerspective = discountPerspective(costScope);
 
   const startDate = params.dateRange.start;
   const endDate = params.dateRange.end;
@@ -698,7 +699,7 @@ export function buildTrendQuery(
   let source: string;
   let exclusionClauses: string[];
   if (materializedSource === undefined) {
-    exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
+    exclusionClauses = buildExclusionClauses(effectiveExclusionRules(costScope), dimensions, accountReverseMap, qb);
 
     // Trend reads both the current period and the previous (same-duration)
     // period, so the source needs to cover months from both spans. The previous
@@ -1147,16 +1148,14 @@ export function buildMaterializeBaseQuery(
 ): string {
   const { dataDir, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns } = opts;
   const exclusionClauses: string[] = [];
-  if (costScope !== undefined) {
-    for (const rule of costScope.rules) {
-      if (!rule.enabled) continue;
-      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-      if (matchExpr === null) continue;
-      exclusionClauses.push(`NOT (${matchExpr})`);
-    }
+  for (const rule of effectiveExclusionRules(costScope)) {
+    if (!rule.enabled) continue;
+    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
+    if (matchExpr === null) continue;
+    exclusionClauses.push(`NOT (${matchExpr})`);
   }
   const costMetric = costScope?.costMetric ?? 'unblended';
-  const costPerspective = costScope?.costPerspective ?? 'gross';
+  const costPerspective = discountPerspective(costScope);
   const periods = resolveQueryPeriods(dateRange, availablePeriods);
   const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution, includeRawTags: true, slim: true });
 
@@ -1207,7 +1206,7 @@ export function buildRollupPartitionQuery(
   const { dataDir, dimensions, orgAccountsPath, accountReverseMap, costScope, availableColumns } = opts;
   const grain = rollupGrainColumns(dimensions);
   const costMetric = costScope?.costMetric ?? 'unblended';
-  const costPerspective = costScope?.costPerspective ?? 'gross';
+  const costPerspective = discountPerspective(costScope);
 
   const source = buildSource({
     dataDir, tier, dimensions, orgAccountsPath, periods: [period],
@@ -1217,13 +1216,11 @@ export function buildRollupPartitionQuery(
   });
 
   const exclusionClauses: string[] = [];
-  if (costScope !== undefined) {
-    for (const rule of costScope.rules) {
-      if (!rule.enabled) continue;
-      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-      if (matchExpr === null) continue;
-      exclusionClauses.push(`NOT (${matchExpr})`);
-    }
+  for (const rule of effectiveExclusionRules(costScope)) {
+    if (!rule.enabled) continue;
+    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
+    if (matchExpr === null) continue;
+    exclusionClauses.push(`NOT (${matchExpr})`);
   }
 
   const start = `${period}-01`;
@@ -1279,7 +1276,7 @@ export function buildGrainProbeQuery(
   }
   const { dataDir, dimensions, orgAccountsPath, accountReverseMap, costScope, availableColumns } = opts;
   const costMetric = costScope?.costMetric ?? 'unblended';
-  const costPerspective = costScope?.costPerspective ?? 'gross';
+  const costPerspective = discountPerspective(costScope);
 
   const source = buildSource({
     dataDir, tier: 'daily', dimensions, orgAccountsPath, periods: [period],
@@ -1289,13 +1286,11 @@ export function buildGrainProbeQuery(
   });
 
   const exclusionClauses: string[] = [];
-  if (costScope !== undefined) {
-    for (const rule of costScope.rules) {
-      if (!rule.enabled) continue;
-      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-      if (matchExpr === null) continue;
-      exclusionClauses.push(`NOT (${matchExpr})`);
-    }
+  for (const rule of effectiveExclusionRules(costScope)) {
+    if (!rule.enabled) continue;
+    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
+    if (matchExpr === null) continue;
+    exclusionClauses.push(`NOT (${matchExpr})`);
   }
 
   const start = `${period}-01`;

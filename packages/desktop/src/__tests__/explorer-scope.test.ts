@@ -54,16 +54,21 @@ describe('pickPerspective capability gate', () => {
 });
 
 describe('resolveScopePerspective', () => {
-  it('inherits the scope perspective when applyCostScope and no override', () => {
-    expect(resolveScopePerspective(undefined, true, { costPerspective: 'net' }, FULL)).toBe('net');
+  it('derives net from the scope discount treatment (spread) when applyCostScope and no override', () => {
+    expect(resolveScopePerspective(undefined, true, { discountTreatment: 'spread' }, FULL)).toBe('net');
+  });
+
+  it('derives gross for non-spread treatments', () => {
+    expect(resolveScopePerspective(undefined, true, { discountTreatment: 'itemized' }, FULL)).toBe('gross');
+    expect(resolveScopePerspective(undefined, true, { discountTreatment: 'excluded' }, FULL)).toBe('gross');
   });
 
   it('does NOT inherit when applyCostScope is false', () => {
-    expect(resolveScopePerspective(undefined, false, { costPerspective: 'net' }, FULL)).toBe('gross');
+    expect(resolveScopePerspective(undefined, false, { discountTreatment: 'spread' }, FULL)).toBe('gross');
   });
 
   it('lets an explicit perspective win and stays capability-gated', () => {
-    expect(resolveScopePerspective('gross', true, { costPerspective: 'net' }, FULL)).toBe('gross');
-    expect(resolveScopePerspective(undefined, true, { costPerspective: 'net' }, BARE)).toBe('gross');
+    expect(resolveScopePerspective('gross', true, { discountTreatment: 'spread' }, FULL)).toBe('gross');
+    expect(resolveScopePerspective(undefined, true, { discountTreatment: 'spread' }, BARE)).toBe('gross');
   });
 });

@@ -460,7 +460,7 @@ export class MockCostApi implements CostApi {
   getBaseline(): Promise<BaselineDetail | null> { return Promise.resolve(null); }
   createBaseline(input: BaselineCreateInput): Promise<BaselineRecord> {
     return Promise.resolve({
-      spec: { id: 'mock', source: 'manual', scope: input.scope, basis: { costMetric: 'amortized', costPerspective: 'gross', rules: [] }, basisSnapshotAt: '', createdAt: '', updatedAt: '' },
+      spec: { id: 'mock', source: 'manual', scope: input.scope, basis: { costMetric: 'amortized', rules: [] }, basisSnapshotAt: '', createdAt: '', updatedAt: '' },
       stats: null,
       current: null,
       savings: { potentialDaily: asDollars(0), realizedDaily: asDollars(0), potentialMonthly: asDollars(0), realizedMonthly: asDollars(0) },

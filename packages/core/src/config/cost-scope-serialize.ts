@@ -1,5 +1,5 @@
 import type { CostScopeConfig, ExclusionCondition, ExclusionRule } from '../types/cost-scope.js';
-import { DEFAULT_LAG_DAYS } from '../types/cost-scope.js';
+import { DEFAULT_DISCOUNT_TREATMENT, DEFAULT_LAG_DAYS } from '../types/cost-scope.js';
 
 interface YamlCondition { dimensionId: string; values: string[] }
 interface YamlRule {
@@ -16,7 +16,7 @@ interface YamlMarketplaceAttribution { enabled: boolean; rules: YamlMarketplaceR
 
 export interface YamlCostScope {
   costMetric: string;
-  costPerspective?: string;
+  discountTreatment?: string;
   lagDays?: number;
   rules: YamlRule[];
   marketplaceAttribution?: YamlMarketplaceAttribution;
@@ -43,9 +43,9 @@ export function costScopeToYaml(cfg: CostScopeConfig): YamlCostScope {
     costMetric: cfg.costMetric,
     // Only emit when non-default — keeps legacy YAMLs from churning
     // when the serializer round-trips them.
-    ...(cfg.costPerspective === undefined || cfg.costPerspective === 'gross'
+    ...(cfg.discountTreatment === undefined || cfg.discountTreatment === DEFAULT_DISCOUNT_TREATMENT
       ? {}
-      : { costPerspective: cfg.costPerspective }),
+      : { discountTreatment: cfg.discountTreatment }),
     ...(lagDays === DEFAULT_LAG_DAYS ? {} : { lagDays }),
     rules: cfg.rules.map(ruleToYaml),
     ...(cfg.marketplaceAttribution === undefined

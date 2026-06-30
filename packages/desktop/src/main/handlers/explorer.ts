@@ -7,6 +7,7 @@ import {
   buildSource,
   buildRuleMatchExpr,
   buildAliasSqlCase,
+  effectiveExclusionRules,
   computePeriodsInRange,
   DEFAULT_LAG_DAYS,
   isStringRecord,
@@ -259,7 +260,9 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
   const perspective = resolveScopePerspective(params.costPerspective, applyCostScope, scopeForExclusions, availableColumns);
 
   const source = buildSource({ dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath, periods, costMetric: metric, availableColumns, costPerspective: perspective, marketplaceAttribution: fullScope?.marketplaceAttribution });
-  const exclusions = buildExclusionClauses(scopeForExclusions, dimensions, accountReverseMap);
+  // effectiveExclusionRules folds in the synthetic negotiated-discount exclusion
+  // when the scope's treatment is `excluded`, so the Explorer matches dashboards.
+  const exclusions = buildExclusionClauses({ rules: effectiveExclusionRules(scopeForExclusions) }, dimensions, accountReverseMap);
 
   // When the histogram drag-zoom emits hour bounds, swap the day-level
   // BETWEEN for an hour-level filter so the rest of the Explorer (overview,

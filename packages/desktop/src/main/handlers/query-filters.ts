@@ -3,6 +3,7 @@ import {
   buildSource,
   buildAliasSqlCase,
   buildRuleMatchExpr,
+  effectiveExclusionRules,
   computePeriodsInRange,
   tagDimColumn,
   QueryBuilder,
@@ -93,7 +94,7 @@ function buildExclusionWhereClauses(
 ): string[] {
   if (costScope === undefined) return [];
   const clauses: string[] = [];
-  for (const rule of costScope.rules) {
+  for (const rule of effectiveExclusionRules(costScope)) {
     if (!rule.enabled) continue;
     const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap, qb);
     if (matchExpr !== null) clauses.push(`NOT (${matchExpr})`);

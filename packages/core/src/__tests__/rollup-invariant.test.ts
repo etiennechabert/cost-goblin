@@ -20,7 +20,7 @@ const dimensions: DimensionsConfig = {
   ],
   tags: [{ tagName: 'team', label: 'Team', concept: 'owner', normalize: 'lowercase-kebab' }],
 };
-const costScope: CostScopeConfig = { costMetric: 'unblended', costPerspective: 'gross', rules: [] };
+const costScope: CostScopeConfig = { costMetric: 'unblended', rules: [] };
 
 interface Row { [k: string]: unknown }
 async function queryAll(conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>, sql: string): Promise<Row[]> {
