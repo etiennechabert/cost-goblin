@@ -17,6 +17,7 @@ import {
   type PruneResult,
   type SavingsResult,
   type SyncStatus,
+  type SyncLogLine,
   type TrendResult,
   type CostGoblinConfig,
   type DimensionsConfig,
@@ -261,6 +262,9 @@ export class MockCostApi implements CostApi {
   }
   queryEntityDetail(): Promise<EntityDetailResult> { return Promise.resolve(entityDetailResult); }
   getSyncStatus(): Promise<SyncStatus> { return Promise.resolve(syncStatus); }
+  getSyncLog(): Promise<readonly SyncLogLine[]> { return Promise.resolve([]); }
+  subscribeSyncLog(): () => void { return () => undefined; }
+  clearSyncLog(): Promise<void> { return Promise.resolve(); }
   getConfig(): Promise<CostGoblinConfig> { return Promise.resolve(config); }
   getDimensions(): Promise<Dimension[]> { return Promise.resolve(mockDimensions); }
   getOrgTree(): Promise<OrgNode[]> { return Promise.resolve(orgTree); }

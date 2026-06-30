@@ -15,6 +15,7 @@ import {
 import { deleteLocalPeriodFiles, cascadeRollupForDeletedMonth, changedRollupMonths } from './sync.js';
 import { type AppContext, prefsPath, toUserFriendlyError } from './context.js';
 import type { SyncClient } from '../sync-client.js';
+import { recordSyncLog } from '../sync-log.js';
 
 type Tier = 'daily' | 'hourly' | 'cost-optimization';
 
@@ -36,6 +37,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
 
   function buildAutoSyncDeps(syncClient: SyncClient) {
     return {
+      onLog: recordSyncLog,
       getPrefsPath: autoSyncPrefsPath,
       getConfig: async () => {
         const config = await getConfig();

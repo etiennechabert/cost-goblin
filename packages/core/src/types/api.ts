@@ -55,6 +55,7 @@ import type {
   MissingTagsResult,
   SavingsResult,
   SyncStatus,
+  SyncLogLine,
   TrendQueryParams,
   TrendResult,
 } from './query.js';
@@ -160,6 +161,14 @@ export interface CostApi {
   querySavings(): Promise<SavingsResult>;
   queryEntityDetail(params: EntityDetailParams): Promise<EntityDetailResult>;
   getSyncStatus(syncId?: string): Promise<SyncStatus>;
+  /** Current backlog of the live sync/S3 activity log (main-process ring
+   *  buffer, ephemeral — cleared on app restart). */
+  getSyncLog(): Promise<readonly SyncLogLine[]>;
+  /** Subscribe to new sync/S3 log lines as they're appended. Returns an
+   *  unsubscribe fn. Pushed via IPC, so no polling. */
+  subscribeSyncLog(listener: (line: SyncLogLine) => void): () => void;
+  /** Empty the sync/S3 activity log ring buffer. */
+  clearSyncLog(): Promise<void>;
   getConfig(): Promise<CostGoblinConfig>;
   getDimensions(): Promise<Dimension[]>;
   getOrgTree(): Promise<OrgNode[]>;

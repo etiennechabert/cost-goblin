@@ -252,6 +252,19 @@ export type SyncStatus =
   | { readonly status: 'completed'; readonly lastSync: Date; readonly filesDownloaded: number }
   | { readonly status: 'failed'; readonly error: Error; readonly lastSync: Date | null };
 
+export type SyncLogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+/** One line in the live, ephemeral sync/S3 activity log surfaced on the
+ *  Data & Sync screen. `seq` is a monotonic id assigned by the main-process
+ *  ring buffer — it gives the renderer stable React keys and lets it dedup the
+ *  initial backlog against pushed lines. `ts` is epoch ms. */
+export interface SyncLogLine {
+  readonly seq: number;
+  readonly ts: number;
+  readonly level: SyncLogLevel;
+  readonly message: string;
+}
+
 export type QueryState<T> =
   | { readonly status: 'idle' }
   | { readonly status: 'loading' }

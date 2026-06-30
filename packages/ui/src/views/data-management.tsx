@@ -8,6 +8,7 @@ import { SetupWizard } from './setup-wizard.js';
 import { OrgAccountsSection } from './data-management-org.js';
 import { SsmParameterSection } from './data-management-ssm.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
+import { SyncLogPanel } from './data-management-logs.js';
 import { SsoLoginButton } from '../components/sso-login-button.js';
 import { SchedulerControls } from '../components/scheduler-controls.js';
 
@@ -634,6 +635,8 @@ export function DataManagement() {
           />
         </div>
       )}
+
+      <SyncLogPanel active={anySyncing} />
 
       {showDeleteAll && (
         <ConfirmModal

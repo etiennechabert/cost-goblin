@@ -1,8 +1,12 @@
 import { logger, parseJsonObject, configuredTierRetentions, periodsOutsideRetention, retentionCutoffPeriod, isCredentialError } from '@costgoblin/core';
-import type { AutoSyncStatus } from '@costgoblin/core';
+import type { AutoSyncStatus, SyncLogLevel } from '@costgoblin/core';
 import { updatePrefsFile } from './handlers/prefs-file.js';
 
 export interface AutoSyncDeps {
+  /** Optional sink for the Data & Sync activity log. The actual downloads
+   *  stream through the sync worker already; this surfaces the local-only
+   *  breadcrumbs (checking / nothing-to-sync / prune) that never hit it. */
+  onLog?: (level: SyncLogLevel, message: string) => void;
   getPrefsPath: () => Promise<string>;
   getConfig: () => Promise<{ providers: { sync: {
     daily: { retentionDays?: number | undefined };
@@ -97,6 +101,14 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+// Log a scheduler breadcrumb: keep the existing stdout line (always info, as
+// before) and additionally feed the Data & Sync activity log at the given
+// level so failures stand out there.
+function note(deps: AutoSyncDeps, level: SyncLogLevel, message: string): void {
+  logger.info(message);
+  deps.onLog?.(level, message);
+}
+
 async function syncTier(
   deps: AutoSyncDeps,
   tier: { name: string; retention: number },
@@ -110,11 +122,11 @@ async function syncTier(
     // error status so the toolbar flags that background sync is blocked. Other
     // (transient) inventory failures stay a silent skip as before.
     if (isCredentialError(err)) {
-      logger.info(`Auto-sync: ${tier.name} inventory failed (credentials) — ${errorMessage(err)}`);
+      note(deps, 'warn', `Auto-sync: ${tier.name} inventory failed (credentials) — ${errorMessage(err)}`);
       status = { state: 'error', message: errorMessage(err), lastRun: new Date().toISOString() };
       return 'error';
     }
-    logger.info(`Auto-sync: failed to get ${tier.name} inventory — ${errorMessage(err)}`);
+    note(deps, 'warn', `Auto-sync: failed to get ${tier.name} inventory — ${errorMessage(err)}`);
     return 'skip';
   }
 
@@ -122,20 +134,20 @@ async function syncTier(
     .filter(p => (p.localStatus === 'missing' || p.localStatus === 'stale') && p.period >= cutoff);
 
   if (missing.length === 0) {
-    logger.info(`Auto-sync: ${tier.name} — nothing to sync`);
+    note(deps, 'info', `Auto-sync: ${tier.name} — nothing to sync`);
     return 'skip';
   }
 
   const files = missing.flatMap(p => [...p.files]);
-  logger.info(`Auto-sync: ${tier.name} — syncing ${String(missing.length)} periods (${String(files.length)} files)`);
+  note(deps, 'info', `Auto-sync: ${tier.name} — syncing ${String(missing.length)} periods (${String(files.length)} files)`);
   status = { state: 'syncing', tier: tier.name, filesDone: 0, filesTotal: files.length };
 
   try {
     const result = await deps.syncPeriods(files, tier.name);
-    logger.info(`Auto-sync: ${tier.name} — synced ${String(result.filesDownloaded)} files`);
+    note(deps, 'info', `Auto-sync: ${tier.name} — synced ${String(result.filesDownloaded)} files`);
     return 'ok';
   } catch (err: unknown) {
-    logger.info(`Auto-sync: ${tier.name} — sync failed: ${errorMessage(err)}`);
+    note(deps, 'warn', `Auto-sync: ${tier.name} — sync failed: ${errorMessage(err)}`);
     status = { state: 'error', message: errorMessage(err), lastRun: new Date().toISOString() };
     return 'error';
   }
@@ -153,16 +165,16 @@ async function prunePass(
     try {
       local = await deps.getLocalPeriods(tier);
     } catch (err: unknown) {
-      logger.info(`Auto-prune: failed to read ${tier} local data — ${errorMessage(err)}`);
+      note(deps, 'warn', `Auto-prune: failed to read ${tier} local data — ${errorMessage(err)}`);
       continue;
     }
     const expired = periodsOutsideRetention(local, retentionDays);
     if (expired.length === 0) continue;
-    logger.info(`Auto-prune: ${tier} — removing ${String(expired.length)} period(s) outside ${String(retentionDays)}d retention: ${expired.join(', ')}`);
+    note(deps, 'info', `Auto-prune: ${tier} — removing ${String(expired.length)} period(s) outside ${String(retentionDays)}d retention: ${expired.join(', ')}`);
     try {
       await deps.deletePeriods(expired, tier);
     } catch (err: unknown) {
-      logger.info(`Auto-prune: ${tier} — delete failed: ${errorMessage(err)}`);
+      note(deps, 'warn', `Auto-prune: ${tier} — delete failed: ${errorMessage(err)}`);
     }
   }
 }
@@ -182,7 +194,7 @@ async function runOnce(deps: AutoSyncDeps): Promise<void> {
     }
 
     status = { state: 'checking' };
-    logger.info('Auto-sync: checking');
+    note(deps, 'info', 'Auto-sync: checking');
 
     const config = await deps.getConfig();
     const provider = config.providers[0];
