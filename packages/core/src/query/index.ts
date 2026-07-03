@@ -15,8 +15,10 @@ export {
   buildRuleMatchExpr,
   buildExclusionClauses,
   computePeriodsInRange,
+  resolveField,
+  tryResolveField,
 } from './builder.js';
-export type { QueryContextOptions, BuildSourceOptions, BaselineDiscoveryParams } from './builder.js';
+export type { QueryContextOptions, BuildSourceOptions, BaselineDiscoveryParams, ResolvedDimension } from './builder.js';
 
 export { costExprFor } from './cost-metric.js';
 

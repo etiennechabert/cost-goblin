@@ -59,7 +59,7 @@ export function computePeriodsInRange(dateRange: { readonly start: string; reado
   return periods;
 }
 
-interface ResolvedDimension {
+export interface ResolvedDimension {
   readonly fieldExpr: string;
   readonly rawField: string;
   /** The backing dim, when the id resolves to a known built-in or tag.
@@ -69,7 +69,12 @@ interface ResolvedDimension {
   readonly dim: BuiltInDimension | TagDimension | null;
 }
 
-function tryResolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): ResolvedDimension | null {
+/** Resolve a dimension id to its SQL field expression, or null when the id
+ *  matches neither a built-in nor a tag dimension. This (and its throwing
+ *  wrapper `resolveField`) is the ONLY sanctioned way to turn a
+ *  renderer/config-supplied dimension id into SQL — an unresolved id must
+ *  never be interpolated as-is. */
+export function tryResolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): ResolvedDimension | null {
   const builtIn = dimensions.builtIn.find(d => d.name === dimensionId);
   if (builtIn !== undefined) {
     // Built-ins now support normalize + aliases just like tags; apply them at
@@ -99,7 +104,9 @@ function normalizeRuleValue(value: string, dim: BuiltInDimension | TagDimension 
   return resolveAlias(normalized, dim.aliases);
 }
 
-function resolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): ResolvedDimension {
+/** Like `tryResolveField`, but throws `SecurityError` for unknown ids —
+ *  use this whenever the resolved expression is interpolated into SQL. */
+export function resolveField(dimensionId: DimensionId, dimensions: DimensionsConfig): ResolvedDimension {
   const resolved = tryResolveField(dimensionId, dimensions);
   if (resolved !== null) return resolved;
   throw new SecurityError(

@@ -1,9 +1,9 @@
 import {
-  buildAliasSqlCase,
+  asDimensionId,
   buildSource,
   computePeriodsInRange,
   QueryBuilder,
-  tagDimColumn,
+  resolveField,
   logger,
 } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
@@ -48,12 +48,10 @@ export async function getFilterValues(
   const orgPath = await ctx.getOrgAccountsPath();
   const availableColumns = await ctx.getAvailableColumns('daily');
 
-  const builtIn = dimensions.builtIn.find(d => d.name === dimensionId);
-  const tag = dimensions.tags.find(d => tagDimColumn(d) === dimensionId);
-  const field = builtIn !== undefined ? builtIn.field : dimensionId;
-  let fieldExpr = field;
-  if (builtIn !== undefined) fieldExpr = buildAliasSqlCase(field, builtIn);
-  else if (tag !== undefined) fieldExpr = buildAliasSqlCase(field, tag);
+  // lookupDimension above already rejected unknown ids with a friendly error;
+  // resolveField still throws SecurityError as defense in depth so the id can
+  // never reach the SQL verbatim.
+  const { fieldExpr } = resolveField(asDimensionId(dimensionId), dimensions);
 
   const qb = new QueryBuilder();
   const startParam = qb.addParam(dateRange.start);

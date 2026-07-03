@@ -59,14 +59,14 @@ function WelcomeStep({ onNext, onImport }: Readonly<{ onNext: () => void; onImpo
         </p>
       </div>
       <p className="text-text-muted text-xs">
-        {"Don't have a CUR yet? "}
+        {"Don't have a CUR yet? Create a CUR 2.0 export in "}
         <a
-          href="https://docs.aws.amazon.com/cur/latest/userguide/cur-create.html"
+          href="https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports"
           target="_blank"
           rel="noopener noreferrer"
           className="text-accent underline underline-offset-2 hover:text-accent-hover"
         >
-          Learn how to create a CUR v2 report
+          Billing and Cost Management &rarr; Data Exports
         </a>
       </p>
     </div>
