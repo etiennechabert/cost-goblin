@@ -6,6 +6,7 @@ import {
   assertHourString,
   buildSource,
   buildRuleMatchExpr,
+  buildExclusionClauses,
   computePeriodsInRange,
   DEFAULT_LAG_DAYS,
   isStringRecord,
@@ -167,64 +168,6 @@ interface QueryContext {
   readonly accountMap: ReadonlyMap<string, string>;
 }
 
-function classifyExclusionRule(
-  rule: ExclusionRule,
-  dimensions: DimensionsConfig,
-  accountReverseMap: ReadonlyMap<string, readonly string[]>,
-  singleByDim: Map<string, { fieldExpr: string; values: string[] }>,
-): ExclusionRule | null {
-  if (rule.conditions.length !== 1) return rule;
-
-  const cond = rule.conditions[0];
-  if (cond === undefined || cond.values.length === 0) return null;
-
-  const key = cond.dimensionId;
-  const existing = singleByDim.get(key);
-  if (existing !== undefined) {
-    existing.values.push(...cond.values.map(v => v.replaceAll("'", "''")));
-    return null;
-  }
-
-  const probe: ExclusionRule = { ...rule, conditions: [cond] };
-  const expr = buildRuleMatchExpr(probe, dimensions, accountReverseMap);
-  if (expr === null) return null;
-
-  const inIdx = expr.indexOf(' IN (');
-  if (inIdx === -1) return rule;
-
-  const fieldExpr = expr.slice(0, inIdx);
-  singleByDim.set(key, { fieldExpr, values: cond.values.map(v => v.replaceAll("'", "''")) });
-  return null;
-}
-
-function buildExclusionClauses(
-  costScope: { rules: readonly ExclusionRule[] } | undefined,
-  dimensions: DimensionsConfig,
-  accountReverseMap: ReadonlyMap<string, readonly string[]>,
-): string[] {
-  if (costScope === undefined) return [];
-
-  const singleByDim = new Map<string, { fieldExpr: string; values: string[] }>();
-  const multiRules: ExclusionRule[] = [];
-
-  for (const rule of costScope.rules) {
-    if (!rule.enabled) continue;
-    const multi = classifyExclusionRule(rule, dimensions, accountReverseMap, singleByDim);
-    if (multi !== null) multiRules.push(multi);
-  }
-
-  const clauses: string[] = [];
-  for (const [, { fieldExpr, values }] of singleByDim) {
-    const list = values.map(v => `'${v}'`).join(', ');
-    clauses.push(`${fieldExpr} NOT IN (${list})`);
-  }
-  for (const rule of multiRules) {
-    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-    if (matchExpr !== null) clauses.push(`NOT (${matchExpr})`);
-  }
-  return clauses;
-}
-
 interface BuildFreshSourceOptions {
   readonly app: AppContext;
   readonly params: ExplorerBaseParams;
@@ -259,7 +202,7 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
   const perspective = resolveScopePerspective(params.costPerspective, applyCostScope, scopeForExclusions, availableColumns);
 
   const source = buildSource({ dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath, periods, costMetric: metric, availableColumns, costPerspective: perspective, marketplaceAttribution: fullScope?.marketplaceAttribution });
-  const exclusions = buildExclusionClauses(scopeForExclusions, dimensions, accountReverseMap);
+  const exclusions = buildExclusionClauses(scopeForExclusions?.rules, dimensions, accountReverseMap);
 
   // When the histogram drag-zoom emits hour bounds, swap the day-level
   // BETWEEN for an hour-level filter so the rest of the Explorer (overview,

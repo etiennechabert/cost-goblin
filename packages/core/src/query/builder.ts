@@ -174,7 +174,11 @@ function tryExpandAccountIds(
 }
 
 /** Build the SQL fragment for a single condition within a rule. Returns null
- *  when the condition should be skipped (empty values, unknown dimension). */
+ *  when the condition should be skipped (empty values, unknown dimension).
+ *
+ *  The IN test is COALESCEd to FALSE: tag-dimension expressions are NULL for
+ *  untagged rows, and `NULL IN (...)` is NULL — which flips to NULL (row
+ *  silently dropped) when callers negate the rule match for exclusion. */
 function buildConditionSql(
   cond: ExclusionRule['conditions'][number],
   dimensions: DimensionsConfig,
@@ -185,16 +189,20 @@ function buildConditionSql(
   const resolved = tryResolveField(cond.dimensionId, dimensions);
   if (resolved === null) return null;
   const expanded = tryExpandAccountIds(cond.values, resolved.rawField, accountReverseMap, qb);
-  if (expanded !== null) return expanded;
+  if (expanded !== null) return `COALESCE(${expanded}, FALSE)`;
   const normalizedValues = cond.values.map(v => normalizeRuleValue(v, resolved.dim));
   const list = buildSqlList(normalizedValues, qb);
-  return `${resolved.fieldExpr} IN (${list})`;
+  return `COALESCE(${resolved.fieldExpr} IN (${list}), FALSE)`;
 }
 
 /** Build the positive match expression for a single rule (AND of conditions,
  *  OR within each condition's values). Used both for NOT-exclusion in queries
  *  and for the positive preview queries. Returns null when the rule has no
- *  valid conditions (all empty values). */
+ *  valid conditions (all empty values).
+ *
+ *  Never evaluates to SQL NULL — each condition COALESCEs to FALSE — so
+ *  callers may wrap the result in `NOT (...)` without dropping rows where a
+ *  tag dimension is NULL (untagged resources). */
 export function buildRuleMatchExpr(
   rule: ExclusionRule,
   dimensions: DimensionsConfig,
@@ -235,12 +243,24 @@ function tryMergeSingleConditionRule(
   return true;
 }
 
-function buildExclusionClauses(
-  rules: readonly ExclusionRule[],
+/** Build the WHERE clauses that apply cost-scope exclusion rules. Accepts
+ *  `undefined` rules (no cost scope configured) so callers can pass
+ *  `costScope?.rules` without guarding. Prefer passing a QueryBuilder so
+ *  values become $n placeholders; callers whose SQL cannot be prepared
+ *  (DDL builders — DuckDB has no prepared DDL — and the Explorer handler's
+ *  literal-SQL pipeline) omit it and get sqlEscapeString'd literals instead.
+ *
+ *  Every clause must treat a NULL dimension value (untagged row) as "not
+ *  excluded": `NULL NOT IN (...)` is NULL, which WHERE drops, so a plain
+ *  NOT IN would silently erase all untagged cost from totals, the
+ *  materialized base, and persisted rollups. */
+export function buildExclusionClauses(
+  rules: readonly ExclusionRule[] | undefined,
   dimensions: DimensionsConfig,
   accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
-  qb: QueryBuilder,
+  qb?: QueryBuilder,
 ): string[] {
+  if (rules === undefined) return [];
   const singleConditionByDim = new Map<string, { resolved: ResolvedDimension; values: string[] }>();
   const multiConditionRules: ExclusionRule[] = [];
 
@@ -255,10 +275,11 @@ function buildExclusionClauses(
 
   for (const [, { resolved, values }] of singleConditionByDim) {
     const list = buildSqlList(values, qb);
-    clauses.push(`${resolved.fieldExpr} NOT IN (${list})`);
+    clauses.push(`COALESCE(${resolved.fieldExpr} NOT IN (${list}), TRUE)`);
   }
 
   for (const rule of multiConditionRules) {
+    // Safe to negate directly: buildRuleMatchExpr never evaluates to NULL.
     const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap, qb);
     if (matchExpr === null) continue;
     clauses.push(`NOT (${matchExpr})`);
@@ -619,7 +640,7 @@ function setupQuery(
     return { qb, filterClauses, exclusionClauses: [], source: materializedSource, costMetric };
   }
 
-  const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
+  const exclusionClauses = buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap, qb);
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const resolvedTier = effectiveTier(tier, params.dateRange);
@@ -705,7 +726,7 @@ export function buildTrendQuery(
   let source: string;
   let exclusionClauses: string[];
   if (materializedSource === undefined) {
-    exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
+    exclusionClauses = buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap, qb);
 
     // Trend reads both the current period and the previous (same-duration)
     // period, so the source needs to cover months from both spans. The previous
@@ -1153,15 +1174,7 @@ export function buildMaterializeBaseQuery(
   opts: QueryContextOptions,
 ): string {
   const { dataDir, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns } = opts;
-  const exclusionClauses: string[] = [];
-  if (costScope !== undefined) {
-    for (const rule of costScope.rules) {
-      if (!rule.enabled) continue;
-      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-      if (matchExpr === null) continue;
-      exclusionClauses.push(`NOT (${matchExpr})`);
-    }
-  }
+  const exclusionClauses = buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap);
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(dateRange, availablePeriods);
@@ -1223,15 +1236,7 @@ export function buildRollupPartitionQuery(
     includeRawTags: false, slim: true,
   });
 
-  const exclusionClauses: string[] = [];
-  if (costScope !== undefined) {
-    for (const rule of costScope.rules) {
-      if (!rule.enabled) continue;
-      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-      if (matchExpr === null) continue;
-      exclusionClauses.push(`NOT (${matchExpr})`);
-    }
-  }
+  const exclusionClauses = buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap);
 
   const start = `${period}-01`;
   const end = periodUpperBound(period);
@@ -1295,15 +1300,7 @@ export function buildGrainProbeQuery(
     includeRawTags: false, slim: true,
   });
 
-  const exclusionClauses: string[] = [];
-  if (costScope !== undefined) {
-    for (const rule of costScope.rules) {
-      if (!rule.enabled) continue;
-      const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap);
-      if (matchExpr === null) continue;
-      exclusionClauses.push(`NOT (${matchExpr})`);
-    }
-  }
+  const exclusionClauses = buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap);
 
   const start = `${period}-01`;
   const end = periodUpperBound(period);

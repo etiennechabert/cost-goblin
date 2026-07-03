@@ -2,7 +2,7 @@ import { ipcMain } from 'electron';
 import {
   asDimensionId,
   buildSource,
-  buildRuleMatchExpr,
+  buildExclusionClauses,
   computePeriodsInRange,
   resolveField,
   QueryBuilder,
@@ -72,22 +72,6 @@ function buildFilterWhereClauses(
   return clauses;
 }
 
-function buildExclusionWhereClauses(
-  costScope: import('@costgoblin/core').CostScopeConfig | undefined,
-  dimensions: import('@costgoblin/core').DimensionsConfig,
-  accountReverseMap: Map<string, readonly string[]>,
-  qb: QueryBuilder,
-): string[] {
-  if (costScope === undefined) return [];
-  const clauses: string[] = [];
-  for (const rule of costScope.rules) {
-    if (!rule.enabled) continue;
-    const matchExpr = buildRuleMatchExpr(rule, dimensions, accountReverseMap, qb);
-    if (matchExpr !== null) clauses.push(`NOT (${matchExpr})`);
-  }
-  return clauses;
-}
-
 function mergeAccountRows(
   rows: import('../duckdb-client.js').RawRow[],
   accountMap: Map<string, string>,
@@ -119,14 +103,25 @@ export function registerFilterHandlers(app: AppContext): void {
     // dimension — a renderer-supplied id must never reach the SQL verbatim.
     const { fieldExpr } = resolveField(asDimensionId(dimensionId), dimensions);
 
-    const matSource = dateRange === undefined
+    // Rollup-fit must require EVERY referenced column — the target dim AND all
+    // filtered dims — or a filter on an out-of-grain column routes to a rollup
+    // that lacks it and fails to bind (same rule as baselines-store recomputeOne).
+    // Exclusions are baked into the rollup at build time, so a bypass request
+    // must force the raw path — clearing the query-time clauses alone would
+    // still return scope-filtered values.
+    const neededColumns = [...new Set([
+      columnForDimension(dimensions, dimensionId),
+      ...Object.entries(filterEntries).filter(([, v]) => v.length > 0).map(([k]) => columnForDimension(dimensions, k)),
+      'cost',
+    ])];
+    const matSource = dateRange === undefined || opts?.bypassCostScope === true
       ? undefined
-      : resolveRollupSource(rollupStore, dateRange, 'daily', [columnForDimension(dimensions, dimensionId), 'cost']);
+      : resolveRollupSource(rollupStore, dateRange, 'daily', neededColumns);
 
     const filterClauses = buildFilterWhereClauses(filterEntries, dimensions, accountReverseMap, qb);
     // Exclusions are baked into the rollup; only apply them on the raw path.
     const exclusionClauses = matSource === undefined
-      ? buildExclusionWhereClauses(costScope, dimensions, accountReverseMap, qb)
+      ? buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap, qb)
       : [];
     const whereClauses = [...filterClauses, ...exclusionClauses];
 

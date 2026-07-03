@@ -7,6 +7,7 @@ import type { QueryContextOptions } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
 import { asDateString, asDimensionId } from '../types/branded.js';
+import { substituteParams } from './helpers/sql.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
@@ -26,16 +27,6 @@ const opts: QueryContextOptions = { dataDir: SYNTHETIC_DIR, dimensions, availabl
 const dateRange = { start: asDateString('2026-01-01'), end: asDateString('2026-02-28') };
 
 interface Row { [k: string]: unknown }
-
-function substituteParams(sql: string, params: readonly unknown[]): string {
-  let out = sql;
-  for (let i = params.length; i >= 1; i--) {
-    const param = params[i - 1];
-    const value = typeof param === 'string' ? `'${param}'` : String(param);
-    out = out.replaceAll('$' + String(i), value);
-  }
-  return out;
-}
 
 describe('baseline discovery query (DuckDB)', () => {
   let conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>;

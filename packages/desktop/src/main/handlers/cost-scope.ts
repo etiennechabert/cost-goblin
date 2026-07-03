@@ -97,7 +97,7 @@ function isEnoent(err: unknown): boolean {
 }
 
 export function registerCostScopeHandlers(app: AppContext): void {
-  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, getAvailableColumns, runQuery } = app;
+  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getAccountReverseMap, getOrgAccountsPath, getAvailableColumns, runQuery } = app;
 
   ipcMain.handle('cost-scope:get-config', async (): Promise<CostScopeConfig> => {
     try {
@@ -154,6 +154,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
     const dimensions = await getQueryDimensions();
     const orgPath = await getOrgAccountsPath();
     const availableColumns = await getAvailableColumns('daily');
+    const accountReverseMap = await getAccountReverseMap();
 
     const source = buildSource({ dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath, periods, costMetric: config.costMetric, availableColumns, costPerspective: config.costPerspective });
 
@@ -161,9 +162,12 @@ export function registerCostScopeHandlers(app: AppContext): void {
     // build the `excluded` predicate for the main aggregate query, each
     // per-rule tally, the daily breakdown, and the sample row flag. Rules
     // whose expression is null (all conditions empty) are treated as
-    // no-ops and don't appear in the SQL at all.
+    // no-ops and don't appear in the SQL at all. The account reverse map must
+    // be passed so display-name account rules expand to IDs exactly like the
+    // real query paths — otherwise the preview reports $0 excluded for rules
+    // the dashboards do apply.
     const ruleExprs: { readonly rule: typeof enabledRules[number]; readonly expr: string | null }[] =
-      enabledRules.map(rule => ({ rule, expr: buildRuleMatchExpr(rule, dimensions) }));
+      enabledRules.map(rule => ({ rule, expr: buildRuleMatchExpr(rule, dimensions, accountReverseMap) }));
     const liveExprs = ruleExprs.filter(e => e.expr !== null).map(e => e.expr as string);
     const excludedPredicate = liveExprs.length > 0
       ? liveExprs.map(e => `(${e})`).join(' OR ')

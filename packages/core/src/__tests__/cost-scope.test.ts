@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   buildCostQuery,
   buildDailyCostsQuery,
+  buildMaterializeBaseQuery,
+  buildRollupPartitionQuery,
+  buildGrainProbeQuery,
 } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
@@ -180,8 +183,10 @@ describe('exclusion clauses', () => {
       } },
       5,
     );
-    // Single-condition rules are merged into `dim NOT IN (...)` form
-    expect(result.sql).toContain('service NOT IN ($');
+    // Single-condition rules merge into a NULL-safe COALESCE(dim NOT IN (...), TRUE)
+    // form — a NULL dimension value must be kept, not silently dropped.
+    expect(result.sql).toContain('COALESCE(service NOT IN ($');
+    expect(result.sql).toContain('), TRUE)');
     expect(result.params).toContain('AWSSupport');
   });
 
@@ -194,8 +199,8 @@ describe('exclusion clauses', () => {
       } },
       5,
     );
-    // Single-condition rules merge into `dim NOT IN (...)` form
-    expect(result.sql).toContain('line_item_type NOT IN ($');
+    // Single-condition rules merge into the NULL-safe COALESCE NOT IN form
+    expect(result.sql).toContain('COALESCE(line_item_type NOT IN ($');
     expect(result.params).toContain('RIFee');
     expect(result.params).toContain('SavingsPlanRecurringFee');
   });
@@ -212,8 +217,9 @@ describe('exclusion clauses', () => {
       } },
       5,
     );
-    expect(result.sql).toContain('NOT (service IN ($');
-    expect(result.sql).toContain('AND service_family IN ($');
+    // Each condition COALESCEs to FALSE so the negated AND can never be NULL
+    expect(result.sql).toContain('NOT (COALESCE(service IN ($');
+    expect(result.sql).toContain('AND COALESCE(service_family IN ($');
     expect(result.params).toContain('EC2');
     expect(result.params).toContain('Compute');
   });
@@ -308,9 +314,32 @@ describe('exclusion clauses', () => {
       5,
     );
     // Resolvable condition still applies; dangling one is silently dropped.
-    expect(result.sql).toContain('NOT (service IN ($');
+    expect(result.sql).toContain('NOT (COALESCE(service IN ($');
     expect(result.params).toContain('EC2');
     expect(result.sql).not.toContain('nonexistent_dim');
+  });
+
+  it('DDL builders (materialize base, rollup partition, grain probe) emit the same NULL-safe clauses', () => {
+    // Regression for issue #451: these three builders each carried their own
+    // copy of the exclusion loop with plain `NOT (expr IN ...)`, which baked
+    // the loss of every untagged row into the materialized base and the
+    // persisted rollup partitions. All three now share buildExclusionClauses.
+    const scope: CostScopeConfig = {
+      costMetric: 'unblended',
+      rules: [{ id: 'sandbox', name: 'Sandbox', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('tag_org_team'), values: ['sandbox'] }] }],
+    };
+    const ctx = { dataDir: '/data', dimensions, costScope: scope };
+    const range = { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') };
+    const ddls = [
+      buildMaterializeBaseQuery('daily', range, ctx),
+      buildRollupPartitionQuery('2026-01', 'daily', '/out/part.parquet', ctx),
+      buildGrainProbeQuery('2026-01', ['usage_date', 'service'], ctx),
+    ];
+    // The full COALESCE(<tag expr> NOT IN (...), TRUE) tail — asserting on
+    // bare `COALESCE(` would be vacuous (buildSource always COALESCEs cost).
+    for (const sql of ddls) {
+      expect(sql).toContain("NOT IN ('sandbox'), TRUE)");
+    }
   });
 });
 
@@ -488,8 +517,8 @@ describe('buildDailyCostsQuery with costScope', () => {
         rules: [{ id: 'support', name: 'Support', enabled: true, builtIn: true, conditions: [{ dimensionId: asDimensionId('service_family'), values: ['Support'] }] }],
       } },
     );
-    // Single-condition rules use merged NOT IN form
-    expect(sql).toContain('service_family NOT IN ($');
+    // Single-condition rules use the merged NULL-safe NOT IN form
+    expect(sql).toContain('COALESCE(service_family NOT IN ($');
     expect(params).toContain('Support');
     expect(sql).toContain('line_item_unblended_cost');
   });
