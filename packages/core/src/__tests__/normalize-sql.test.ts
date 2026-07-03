@@ -72,4 +72,17 @@ describe('normalize SQL ↔ JS parity', () => {
     const sqlExpr = buildAliasSqlCase('NULL', { normalize: 'camelCase' });
     expect(await evalScalar(conn, sqlExpr)).toBeNull();
   });
+
+  // Regression: an empty alias list used to emit `WHEN field IN () THEN ...`,
+  // a DuckDB parse error that broke every query on the dimension.
+  it('empty alias lists still produce parseable SQL', async () => {
+    const empty = buildAliasSqlCase(`'prod'`, { aliases: { production: [] } });
+    expect(await evalScalar(conn, empty)).toBe('prod');
+
+    const mixed = buildAliasSqlCase(`'STG'`, {
+      normalize: 'lowercase',
+      aliases: { production: [], staging: ['stg'] },
+    });
+    expect(await evalScalar(conn, mixed)).toBe('staging');
+  });
 });

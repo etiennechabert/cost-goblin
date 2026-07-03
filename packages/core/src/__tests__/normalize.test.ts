@@ -111,4 +111,26 @@ describe('buildAliasSqlCase', () => {
     expect(result).toContain("'prd'");
     expect(result).toContain("'production'");
   });
+
+  it('returns plain field when every alias list is empty', () => {
+    const dim: TagDimension = {
+      tagName: 'x',
+      label: 'X',
+      aliases: { production: [] },
+    };
+    expect(buildAliasSqlCase('tag_x', dim)).toBe('tag_x');
+  });
+
+  it('skips empty alias lists so no invalid IN () is emitted', () => {
+    const dim: TagDimension = {
+      tagName: 'x',
+      label: 'X',
+      aliases: { production: [], development: ['dev'] },
+    };
+    const result = buildAliasSqlCase('tag_x', dim);
+    expect(result).not.toContain('IN ()');
+    expect(result).not.toContain("'production'");
+    expect(result).toContain("'dev'");
+    expect(result).toContain("'development'");
+  });
 });

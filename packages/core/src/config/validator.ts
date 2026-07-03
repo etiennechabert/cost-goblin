@@ -153,6 +153,11 @@ function validateAliases(value: unknown, ctx: string): Record<string, string[]> 
   const result: Record<string, string[]> = {};
   for (const [key, arr] of Object.entries(value)) {
     assertArray(arr, `${ctx}.aliases.${key}`);
+    // Drop empty entries rather than reject: they're semantic no-ops the UI
+    // editor already discards on save, but hand-edited YAML and shared
+    // bundles can contain them — and downstream SQL generation must never
+    // see an alias entry with no values (invalid `IN ()`).
+    if (arr.length === 0) continue;
     result[key] = arr.map((v, j) => {
       assertString(v, `${ctx}.aliases.${key}[${String(j)}]`);
       return v;
