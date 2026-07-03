@@ -5,8 +5,11 @@ import { normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { canonicalJson, sha256Hex } from './digest.js';
 
 /** Bump to invalidate every persisted rollup partition (e.g. when the stored
- *  partition schema or build semantics change in a backwards-incompatible way). */
-export const ROLLUP_SCHEMA_VERSION = 1;
+ *  partition schema or build semantics change in a backwards-incompatible way).
+ *  v2: exclusion clauses became NULL-safe — partitions built at v1 with an
+ *  enabled exclusion rule on a nullable (tag) dimension silently dropped every
+ *  untagged row and must be rebuilt. */
+export const ROLLUP_SCHEMA_VERSION = 2;
 
 function isEnabled(d: { readonly enabled?: boolean | undefined }): boolean {
   return d.enabled !== false;

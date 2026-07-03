@@ -13,6 +13,7 @@ export {
   buildRollupPartitionQuery,
   buildGrainProbeQuery,
   buildRuleMatchExpr,
+  buildExclusionClauses,
   computePeriodsInRange,
 } from './builder.js';
 export type { QueryContextOptions, BuildSourceOptions, BaselineDiscoveryParams } from './builder.js';
