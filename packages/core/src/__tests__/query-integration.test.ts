@@ -6,6 +6,7 @@ import { buildCostQuery, buildDailyCostsQuery, buildMissingTagsQuery, buildNonRe
 import { buildSource as rebuildSource } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asTagValue } from '../types/branded.js';
+import { substituteParams } from './helpers/sql.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
@@ -61,21 +62,6 @@ async function queryAll(conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckD
     chunk = await result.fetchChunk();
   }
   return rows;
-}
-
-/**
- * For integration testing only: substitutes parameters into SQL.
- * In production, the worker thread uses real prepared statements.
- */
-function substituteParams(sql: string, params: readonly unknown[]): string {
-  let result = sql;
-  for (let i = params.length; i >= 1; i--) {
-    const param = params[i - 1];
-    const placeholder = '$' + String(i);
-    const value = typeof param === 'string' ? `'${param}'` : String(param);
-    result = result.replaceAll(placeholder, value);
-  }
-  return result;
 }
 
 async function queryAllPrepared(conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>, sql: string, params: readonly unknown[]): Promise<QueryRow[]> {

@@ -67,6 +67,18 @@ describe('computeShapeSignature', () => {
     expect(sig({ rules: [...rulesOnService(), { id: 'r3', name: 'off', enabled: false, builtIn: false, conditions: [{ dimensionId: asDimensionId('region'), values: ['eu'] }] }] })).toBe(sig());
   });
 
+  it('exclusionSemantics marker: disabled-only rules hash identically to no rules at all', () => {
+    // Guards the #451 upgrade property: configs with zero ENABLED rules emit no
+    // exclusion clauses, so their pre-fix partitions are byte-identical and must
+    // NOT be invalidated — the NULL-safety marker only enters the signature when
+    // an enabled rule exists. Keying the marker on rules.length instead of the
+    // enabled count would break this and force a full rebuild on every default
+    // config (all shipped built-in rules are disabled).
+    const disabledOnly: ExclusionRule[] = [{ id: 'off', name: 'off', enabled: false, builtIn: true, conditions: [{ dimensionId: asDimensionId('service'), values: ['AWSSupport'] }] }];
+    expect(sig({ rules: disabledOnly })).toBe(sig({ rules: [] }));
+    expect(sig({ rules: rulesOnService() })).not.toBe(sig({ rules: [] }));
+  });
+
   it('alias carve-out: alias change on a dim REFERENCED by an enabled rule changes the signature', () => {
     const teamRule: ExclusionRule[] = [{ id: 'rt', name: 't', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('tag_sb_team'), values: ['architecture'] }] }];
     // 'architecture' is aliased in A but not B → the rule drops different rows.

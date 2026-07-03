@@ -1,12 +1,13 @@
-import { describe, it, expect, beforeAll } from 'vitest';
-import { DuckDBInstance } from '@duckdb/node-api';
-import { mkdtemp, mkdir } from 'node:fs/promises';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildDailyCostsQuery, buildMaterializeBaseQuery, buildRollupPartitionQuery } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
 import { asDimensionId, asDateString } from '../types/branded.js';
+import { substituteParams } from './helpers/sql.js';
 
 /**
  * Regression for issue #451: exclusion rules on tag dimensions emitted plain
@@ -30,28 +31,20 @@ function scopeWith(conditions: ExclusionRule['conditions']): CostScopeConfig {
   };
 }
 
-type Conn = Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>;
-
-/** Test-only: inline string params in place of prepared-statement placeholders. */
-function substituteParams(sql: string, params: readonly unknown[]): string {
-  let result = sql;
-  for (let i = params.length; i >= 1; i--) {
-    const param = params[i - 1];
-    const value = typeof param === 'string' ? `'${param}'` : String(param);
-    result = result.replaceAll('$' + String(i), value);
-  }
-  return result;
-}
-
-async function sumColumn(conn: Conn, sql: string): Promise<number> {
+async function sumColumn(conn: DuckDBConnection, sql: string): Promise<number> {
   const result = await conn.run(sql);
   const rows = await result.getRowObjects();
   return rows.reduce((acc, r) => acc + Number(r['cost']), 0);
 }
 
 describe('exclusion NULL-safety (DuckDB end-to-end)', () => {
-  let conn: Conn;
+  let conn: DuckDBConnection;
   let dataDir: string;
+
+  afterAll(async () => {
+    conn.disconnectSync();
+    await rm(dataDir, { recursive: true, force: true });
+  });
 
   beforeAll(async () => {
     const db = await DuckDBInstance.create();

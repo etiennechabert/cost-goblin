@@ -202,9 +202,7 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
   const perspective = resolveScopePerspective(params.costPerspective, applyCostScope, scopeForExclusions, availableColumns);
 
   const source = buildSource({ dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath, periods, costMetric: metric, availableColumns, costPerspective: perspective, marketplaceAttribution: fullScope?.marketplaceAttribution });
-  const exclusions = scopeForExclusions === undefined
-    ? []
-    : buildExclusionClauses(scopeForExclusions.rules, dimensions, accountReverseMap);
+  const exclusions = buildExclusionClauses(scopeForExclusions?.rules, dimensions, accountReverseMap);
 
   // When the histogram drag-zoom emits hour bounds, swap the day-level
   // BETWEEN for an hour-level filter so the rest of the Explorer (overview,

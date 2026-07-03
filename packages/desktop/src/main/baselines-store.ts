@@ -139,6 +139,20 @@ function todayUtc(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** Version stamped into baselines.json / baselines-data.json.
+ *  v2: exclusion clauses became NULL-safe (#451). At v1, specs whose cost
+ *  basis had ANY enabled exclusion rule recomputed against SQL that silently
+ *  dropped every untagged row, so their persisted `bestAchieved` floors (a
+ *  monotonic min that can never rise) and snapshot trend rows are understated.
+ *  Those values are discarded once on load; bestAchieved reseeds from the next
+ *  recompute and snapshots re-accumulate. Histories are re-queried in full on
+ *  recompute, so they self-heal and are kept. */
+const BASELINES_SCHEMA_VERSION = 2;
+
+function docVersion(raw: Record<string, unknown>): number {
+  return typeof raw['version'] === 'number' ? raw['version'] : 1;
+}
+
 export class BaselineStore {
   private readonly dataDir: string;
   private readonly specs = new Map<string, BaselineSpec>();
@@ -205,6 +219,20 @@ export class BaselineStore {
         if (m['userTriaged'] === true) this.userTriaged.add(id);
       }
     }
+    if (docVersion(raw) < BASELINES_SCHEMA_VERSION) {
+      let dropped = 0;
+      for (const id of [...this.bestAchieved.keys()]) {
+        if (this.specAffectedByV1ExclusionBug(id)) { this.bestAchieved.delete(id); dropped += 1; }
+      }
+      if (dropped > 0) logger.info('baselines: dropped v1 bestAchieved floors computed with NULL-unsafe exclusions', { dropped });
+    }
+  }
+
+  /** See BASELINES_SCHEMA_VERSION — only specs whose basis snapshot carried an
+   *  enabled exclusion rule ever ran the NULL-unsafe clauses. */
+  private specAffectedByV1ExclusionBug(id: string): boolean {
+    const spec = this.specs.get(id);
+    return spec !== undefined && spec.basis.rules.some(r => r.enabled);
   }
 
   private async loadData(): Promise<void> {
@@ -221,6 +249,14 @@ export class BaselineStore {
         if (Array.isArray(snaps)) this.snapshots.set(id, parseSnapshots(snaps));
       }
     }
+    // loadSpecs ran first (see load()), so specs/basis are available here.
+    if (docVersion(raw) < BASELINES_SCHEMA_VERSION) {
+      let dropped = 0;
+      for (const id of [...this.snapshots.keys()]) {
+        if (this.specAffectedByV1ExclusionBug(id)) { this.snapshots.delete(id); dropped += 1; }
+      }
+      if (dropped > 0) logger.info('baselines: dropped v1 snapshot trends computed with NULL-unsafe exclusions', { dropped });
+    }
   }
 
   private async save(): Promise<void> {
@@ -234,7 +270,7 @@ export class BaselineStore {
       };
     }
     const specsDoc = {
-      version: 1,
+      version: BASELINES_SCHEMA_VERSION,
       config: this.userConfig,
       baselines: [...this.specs.values()],
       meta,
@@ -245,7 +281,7 @@ export class BaselineStore {
     // delete that raced a recompute, so they don't survive across restarts.
     for (const [id, pts] of this.histories) if (this.specs.has(id)) history[id] = pts;
     for (const [id, s] of this.snapshots) if (this.specs.has(id)) snaps[id] = s;
-    const dataDoc = { version: 1, history, snapshots: snaps };
+    const dataDoc = { version: BASELINES_SCHEMA_VERSION, history, snapshots: snaps };
     await writeFile(this.specsPath(), JSON.stringify(specsDoc, null, 2));
     await writeFile(this.dataPath(), JSON.stringify(dataDoc, null, 2));
   }

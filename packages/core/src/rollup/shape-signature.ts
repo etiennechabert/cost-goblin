@@ -6,10 +6,10 @@ import { canonicalJson, sha256Hex } from './digest.js';
 
 /** Bump to invalidate every persisted rollup partition (e.g. when the stored
  *  partition schema or build semantics change in a backwards-incompatible way).
- *  v2: exclusion clauses became NULL-safe — partitions built at v1 with an
- *  enabled exclusion rule on a nullable (tag) dimension silently dropped every
- *  untagged row and must be rebuilt. */
-export const ROLLUP_SCHEMA_VERSION = 2;
+ *  Prefer a conditional signature marker (see `exclusionSemantics` below) when
+ *  only some configs are affected — a version bump forces a full-history
+ *  rebuild for everyone, including configs whose partitions are byte-identical. */
+export const ROLLUP_SCHEMA_VERSION = 1;
 
 function isEnabled(d: { readonly enabled?: boolean | undefined }): boolean {
   return d.enabled !== false;
@@ -118,6 +118,13 @@ export function computeShapeSignature(input: ShapeSignatureInput): string {
     costMetric,
     costPerspective,
     exclusionRules,
+    // Exclusion clauses became NULL-safe (issue #451): partitions built under
+    // the old semantics with ANY enabled rule may be missing untagged/NULL-dim
+    // rows and must rebuild. With zero enabled rules no exclusion clause is
+    // emitted at all, so those partitions are byte-identical across the fix —
+    // omit the marker to keep their signature (and skip the rebuild), same
+    // omit-when-inert pattern as marketplaceAttribution below.
+    ...(exclusionRules.length === 0 ? {} : { exclusionSemantics: 2 }),
     ...(marketplace === null ? {} : { marketplaceAttribution: marketplace }),
     orgAccountsDigest,
     availableColumns: [...availableColumns].sort((a, b) => a.localeCompare(b)),

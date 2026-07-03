@@ -335,9 +335,10 @@ describe('exclusion clauses', () => {
       buildRollupPartitionQuery('2026-01', 'daily', '/out/part.parquet', ctx),
       buildGrainProbeQuery('2026-01', ['usage_date', 'service'], ctx),
     ];
+    // The full COALESCE(<tag expr> NOT IN (...), TRUE) tail — asserting on
+    // bare `COALESCE(` would be vacuous (buildSource always COALESCEs cost).
     for (const sql of ddls) {
       expect(sql).toContain("NOT IN ('sandbox'), TRUE)");
-      expect(sql).toContain('COALESCE(');
     }
   });
 });

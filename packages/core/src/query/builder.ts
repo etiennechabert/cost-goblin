@@ -243,20 +243,24 @@ function tryMergeSingleConditionRule(
   return true;
 }
 
-/** Build the WHERE clauses that apply cost-scope exclusion rules. Shared by
- *  the parameterized query builders (pass a QueryBuilder) and the DDL builders
- *  (omit it — DuckDB has no prepared DDL, so values become escaped literals).
+/** Build the WHERE clauses that apply cost-scope exclusion rules. Accepts
+ *  `undefined` rules (no cost scope configured) so callers can pass
+ *  `costScope?.rules` without guarding. Prefer passing a QueryBuilder so
+ *  values become $n placeholders; callers whose SQL cannot be prepared
+ *  (DDL builders — DuckDB has no prepared DDL — and the Explorer handler's
+ *  literal-SQL pipeline) omit it and get sqlEscapeString'd literals instead.
  *
  *  Every clause must treat a NULL dimension value (untagged row) as "not
  *  excluded": `NULL NOT IN (...)` is NULL, which WHERE drops, so a plain
  *  NOT IN would silently erase all untagged cost from totals, the
  *  materialized base, and persisted rollups. */
 export function buildExclusionClauses(
-  rules: readonly ExclusionRule[],
+  rules: readonly ExclusionRule[] | undefined,
   dimensions: DimensionsConfig,
   accountReverseMap: ReadonlyMap<string, readonly string[]> | undefined,
   qb?: QueryBuilder,
 ): string[] {
+  if (rules === undefined) return [];
   const singleConditionByDim = new Map<string, { resolved: ResolvedDimension; values: string[] }>();
   const multiConditionRules: ExclusionRule[] = [];
 
@@ -636,7 +640,7 @@ function setupQuery(
     return { qb, filterClauses, exclusionClauses: [], source: materializedSource, costMetric };
   }
 
-  const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
+  const exclusionClauses = buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap, qb);
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
   const resolvedTier = effectiveTier(tier, params.dateRange);
@@ -722,7 +726,7 @@ export function buildTrendQuery(
   let source: string;
   let exclusionClauses: string[];
   if (materializedSource === undefined) {
-    exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
+    exclusionClauses = buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap, qb);
 
     // Trend reads both the current period and the previous (same-duration)
     // period, so the source needs to cover months from both spans. The previous
@@ -1170,9 +1174,7 @@ export function buildMaterializeBaseQuery(
   opts: QueryContextOptions,
 ): string {
   const { dataDir, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns } = opts;
-  const exclusionClauses = costScope === undefined
-    ? []
-    : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
+  const exclusionClauses = buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap);
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
   const periods = resolveQueryPeriods(dateRange, availablePeriods);
@@ -1234,9 +1236,7 @@ export function buildRollupPartitionQuery(
     includeRawTags: false, slim: true,
   });
 
-  const exclusionClauses = costScope === undefined
-    ? []
-    : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
+  const exclusionClauses = buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap);
 
   const start = `${period}-01`;
   const end = periodUpperBound(period);
@@ -1300,9 +1300,7 @@ export function buildGrainProbeQuery(
     includeRawTags: false, slim: true,
   });
 
-  const exclusionClauses = costScope === undefined
-    ? []
-    : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap);
+  const exclusionClauses = buildExclusionClauses(costScope?.rules, dimensions, accountReverseMap);
 
   const start = `${period}-01`;
   const end = periodUpperBound(period);
