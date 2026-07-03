@@ -191,10 +191,15 @@ function buildAliasCases(
   fieldExpr: string,
   aliases: Readonly<Record<string, readonly string[]>>,
 ): string[] {
-  return Object.entries(aliases).map(([canonical, aliasList]) => {
-    const allValues = aliasList.map(a => `'${a.replaceAll("'", "''")}'`).join(', ');
-    return `WHEN ${fieldExpr} IN (${allValues}) THEN '${canonical.replaceAll("'", "''")}'`;
-  });
+  // Empty alias lists are semantic no-ops (resolveAlias only maps
+  // canonical→canonical for them) but would emit `IN ()` — a DuckDB parse
+  // error that breaks every query touching the dimension.
+  return Object.entries(aliases)
+    .filter(([, aliasList]) => aliasList.length > 0)
+    .map(([canonical, aliasList]) => {
+      const allValues = aliasList.map(a => `'${a.replaceAll("'", "''")}'`).join(', ');
+      return `WHEN ${fieldExpr} IN (${allValues}) THEN '${canonical.replaceAll("'", "''")}'`;
+    });
 }
 
 export function buildAliasSqlCase(

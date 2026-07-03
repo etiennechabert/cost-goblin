@@ -114,6 +114,14 @@ describe('validateDimensions', () => {
       tags: [],
     })).toThrow(ConfigValidationError);
   });
+
+  it('drops alias entries with empty lists', () => {
+    const dims = validateDimensions({
+      builtIn: [],
+      tags: [{ tagName: 'x', label: 'X', aliases: { production: [], development: ['dev'] } }],
+    });
+    expect(dims.tags[0]?.aliases).toEqual({ development: ['dev'] });
+  });
 });
 
 describe('validateOrgTree', () => {
