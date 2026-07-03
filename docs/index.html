@@ -2208,7 +2208,8 @@
             <span class="step-num">2</span>
             <h4>Create the CUR exports</h4>
           </div>
-          <p>In the AWS Billing Console &rarr; <strong>Data Exports</strong>, create two exports. Select <strong>Cost and usage report (CUR)</strong> as the data table and configure each one as follows:</p>
+          <p>From <strong>Billing and Cost Management</strong>, open <a href="https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports" target="_blank" rel="noopener"><strong>Data Exports</strong></a> in the left navigation, then click <strong>Create export</strong>. Select <strong>CUR 2.0</strong> as the data table and create two exports, configured as follows:</p>
+          <div class="step-note">Use <strong>Data Exports</strong>, not the legacy <strong>Cost &amp; Usage Reports</strong> page &mdash; legacy reports deliver <em>.csv.gz</em> files with a <em>Manifest.json</em>, which CostGoblin can't read. A correct CUR 2.0 export lands as Parquet under <em>data/</em> and <em>metadata/</em> folders.</div>
           <div class="code-block">
 <span class="code-comment">Data table content settings</span>
 <span class="code-comment">─────────────────────────────────────</span>
