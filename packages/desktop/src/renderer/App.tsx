@@ -442,8 +442,8 @@ function SplashScreen({ step }: Readonly<{ step: string }>): React.JSX.Element {
 
   return (
     <div
-      className="min-h-screen flex flex-col items-center justify-center"
-      style={{ background: '#0a0a0a', WebkitAppRegion: 'drag' } as React.CSSProperties}
+      className="min-h-screen flex flex-col items-center justify-center [-webkit-app-region:drag]"
+      style={{ background: '#0a0a0a' }}
     >
       <div className="relative h-48 w-48 mb-6">
         {order.map((src, i) => (
