@@ -1,10 +1,10 @@
 import { ipcMain } from 'electron';
 import {
+  asDimensionId,
   buildSource,
-  buildAliasSqlCase,
   buildRuleMatchExpr,
   computePeriodsInRange,
-  tagDimColumn,
+  resolveField,
   QueryBuilder,
 } from '@costgoblin/core';
 import type { AppContext } from './context.js';
@@ -15,19 +15,6 @@ import {
   toStr,
 } from './query-utils.js';
 import { originStore } from '../query-log.js';
-
-function resolveFieldExpr(
-  dimensionId: string,
-  dimensions: import('@costgoblin/core').DimensionsConfig,
-): { field: string; fieldExpr: string } {
-  const builtIn = dimensions.builtIn.find(d => d.name === dimensionId);
-  const tag = dimensions.tags.find(d => tagDimColumn(d) === dimensionId);
-  const field = builtIn === undefined ? dimensionId : builtIn.field;
-  let fieldExpr = field;
-  if (builtIn !== undefined) fieldExpr = buildAliasSqlCase(field, builtIn);
-  else if (tag !== undefined) fieldExpr = buildAliasSqlCase(field, tag);
-  return { field, fieldExpr };
-}
 
 /** Build a SQL IN-list using parameterized placeholders. */
 function buildSqlList(values: readonly string[], qb: QueryBuilder): string {
@@ -70,16 +57,16 @@ function buildFilterWhereClauses(
   const clauses: string[] = [];
   for (const [key, values] of Object.entries(filterEntries)) {
     if (values.length === 0) continue;
-    const { field: ff, fieldExpr: ffExpr } = resolveFieldExpr(key, dimensions);
+    const { rawField, fieldExpr } = resolveField(asDimensionId(key), dimensions);
 
-    if (ff === 'account_id') {
+    if (rawField === 'account_id') {
       const { allIds, usedReverse } = resolveAccountIds(values, accountReverseMap);
       if (usedReverse) {
-        clauses.push(`${ff} IN (${buildSqlList([...allIds], qb)})`);
+        clauses.push(`${rawField} IN (${buildSqlList([...allIds], qb)})`);
         continue;
       }
     }
-    const clause = buildValueClause(ffExpr, values, qb);
+    const clause = buildValueClause(fieldExpr, values, qb);
     if (clause.length > 0) clauses.push(clause);
   }
   return clauses;
@@ -128,7 +115,9 @@ export function registerFilterHandlers(app: AppContext): void {
       : await getCostScope().catch(() => undefined);
 
     const qb = new QueryBuilder();
-    const { fieldExpr } = resolveFieldExpr(dimensionId, dimensions);
+    // Throws SecurityError for ids that match neither a built-in nor a tag
+    // dimension — a renderer-supplied id must never reach the SQL verbatim.
+    const { fieldExpr } = resolveField(asDimensionId(dimensionId), dimensions);
 
     const matSource = dateRange === undefined
       ? undefined

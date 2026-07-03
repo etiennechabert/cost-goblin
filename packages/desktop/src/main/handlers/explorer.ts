@@ -6,13 +6,13 @@ import {
   assertHourString,
   buildSource,
   buildRuleMatchExpr,
-  buildAliasSqlCase,
   computePeriodsInRange,
   DEFAULT_LAG_DAYS,
   isStringRecord,
   logger,
   listLocalMonths,
   parseJsonObject,
+  resolveField,
   tagDimColumn,
 } from '@costgoblin/core';
 import type {
@@ -705,12 +705,9 @@ export function registerExplorerHandlers(app: AppContext): void {
     const qc = await prepareQueryContext(app, { ...params, filters: withoutSelf });
     if (qc.empty) return [];
 
-    const builtIn = qc.dimensions.builtIn.find(d => d.name === dimId);
-    const tag = qc.dimensions.tags.find(d => tagDimColumn(d) === dimId);
-    const field = builtIn === undefined ? dimId : builtIn.field;
-    let fieldExpr = field;
-    if (builtIn !== undefined) fieldExpr = buildAliasSqlCase(field, builtIn);
-    else if (tag !== undefined) fieldExpr = buildAliasSqlCase(tagDimColumn(tag), tag);
+    // Throws SecurityError for ids that match neither a built-in nor a tag
+    // dimension — a renderer-supplied id must never reach the SQL verbatim.
+    const { fieldExpr } = resolveField(asDimensionId(dimId), qc.dimensions);
 
     const sql = `
       SELECT ${fieldExpr} AS val,
