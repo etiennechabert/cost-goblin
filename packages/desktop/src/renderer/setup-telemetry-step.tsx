@@ -99,9 +99,12 @@ export function SetupTelemetryStep({ onDone }: Readonly<{ onDone: () => void }>)
     api.setTelemetryPreferences(next).then(onDone, onDone);
   }
 
+  // Like the setup wizard, this step renders without the app header (the
+  // window's only macOS drag region) — the backdrop takes over as the drag
+  // area and the card opts back out to stay clickable. (#317)
   return (
-    <div className="flex min-h-screen items-center justify-center bg-bg-primary p-4">
-      <div className="w-full max-w-lg rounded-xl border border-border bg-bg-secondary p-8">
+    <div className="flex min-h-screen items-center justify-center bg-bg-primary p-4 [-webkit-app-region:drag]">
+      <div className="w-full max-w-lg rounded-xl border border-border bg-bg-secondary p-8 [-webkit-app-region:no-drag]">
         <div className="mb-6 flex justify-center">
           <img src="goblin.png" alt="CostGoblin" className="h-16 w-auto" />
         </div>
