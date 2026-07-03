@@ -3,6 +3,7 @@ import { userEvent } from '@testing-library/user-event';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
+import { ErrorBoundary } from '../components/error-boundary.js';
 import { DataManagement } from '../views/data-management.js';
 import { SetupWizard } from '../views/setup-wizard.js';
 import { ViewsEditor } from '../views/views-editor.js';
@@ -236,5 +237,29 @@ describe('ViewsEditor error states', () => {
     await waitFor(() => {
       expect(screen.getByText('Config file corrupted')).toBeDefined();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Error Boundary — crash fallback
+// ---------------------------------------------------------------------------
+
+function Boom(): never {
+  throw new Error('kaboom');
+}
+
+describe('ErrorBoundary fallback', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  // The fallback replaces the whole tree, including the app header that hosts
+  // the macOS window drag region — so it needs its own, or a crashed window
+  // can't be moved (same trap as issue #317).
+  it('fallback screen is a window drag region and the card opts out', () => {
+    // React logs the caught error via console.error; keep the test output clean.
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { container } = render(<ErrorBoundary><Boom /></ErrorBoundary>);
+    expect(screen.getByText('Something went wrong')).toBeDefined();
+    expect(container.firstElementChild?.className).toContain('[-webkit-app-region:drag]');
+    expect(container.querySelector('[class*="[-webkit-app-region:no-drag]"]')).not.toBeNull();
   });
 });
