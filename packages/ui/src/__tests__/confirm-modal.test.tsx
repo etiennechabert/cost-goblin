@@ -44,6 +44,16 @@ describe('ConfirmModal', () => {
     expect(onCancel).toHaveBeenCalledOnce();
   });
 
+  it('opts the modal out of window drag regions', () => {
+    render(
+      <ConfirmModal title="Test" message="msg" onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    );
+    // The overlay covers the frameless window's drag region (app header), so
+    // it must carve itself out — otherwise backdrop clicks in the top band
+    // drag the window instead of dismissing the modal.
+    expect(screen.getByRole('dialog').className).toContain('[-webkit-app-region:no-drag]');
+  });
+
   it('applies destructive styling when destructive prop is true', () => {
     render(
       <ConfirmModal title="Delete" message="msg" destructive onConfirm={vi.fn()} onCancel={vi.fn()} />,
