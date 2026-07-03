@@ -45,6 +45,14 @@ describe('BundleSummaryCard', () => {
 });
 
 describe('ShareConfigDialog', () => {
+  it('opts the modal out of window drag regions', () => {
+    renderWithApi(new MockCostApi(), <ShareConfigDialog onClose={() => undefined} />);
+    // The overlay covers the frameless window's drag region (app header), so
+    // it must carve itself out — otherwise backdrop clicks in the top band
+    // drag the window instead of dismissing the modal.
+    expect(screen.getByRole('dialog').className).toContain('[-webkit-app-region:no-drag]');
+  });
+
   it('exports to a file and shows the saved path', async () => {
     const api = new MockCostApi();
     const exportSpy = vi.spyOn(api, 'exportConfigBundle');

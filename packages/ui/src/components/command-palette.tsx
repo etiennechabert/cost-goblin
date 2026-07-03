@@ -52,8 +52,8 @@ export function CommandPalette({ items, onNavigate }: CommandPaletteProps) {
       onOpenChange={setOpen}
       label="Command palette"
       loop
-      overlayClassName="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm"
-      contentClassName="fixed left-1/2 top-[20%] z-[100] w-full max-w-lg -translate-x-1/2 rounded-xl border border-border bg-bg-secondary shadow-2xl"
+      overlayClassName="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm [-webkit-app-region:no-drag]"
+      contentClassName="fixed left-1/2 top-[20%] z-[100] w-full max-w-lg -translate-x-1/2 rounded-xl border border-border bg-bg-secondary shadow-2xl [-webkit-app-region:no-drag]"
     >
       <div className="flex items-center gap-2 border-b border-border px-3">
         <Search className="h-4 w-4 shrink-0 text-text-secondary" />
