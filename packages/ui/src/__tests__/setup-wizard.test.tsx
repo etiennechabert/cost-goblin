@@ -165,3 +165,21 @@ describe('SetupWizard', () => {
     expect(screen.queryByLabelText('Back to welcome')).toBeNull();
   });
 });
+
+// The desktop window has no native title bar (titleBarStyle: hiddenInset), and
+// standalone onboarding renders without the app header that normally hosts the
+// macOS drag region — so the wizard backdrop must itself be draggable or the
+// window can't be moved at all during setup (issue #317).
+describe('SetupWizard window drag region', () => {
+  it('standalone wizard backdrop is a drag region and the card opts out', () => {
+    const { container } = renderWizard();
+    expect(container.firstElementChild?.className).toContain('[-webkit-app-region:drag]');
+    expect(container.querySelector('[class*="[-webkit-app-region:no-drag]"]')).not.toBeNull();
+  });
+
+  it('embedded source mode (Data Management modal) is not a drag region', async () => {
+    const { container } = renderWizard({ source: 'daily', profile: 'default' });
+    await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
+    expect(container.firstElementChild?.className).not.toContain('[-webkit-app-region:drag]');
+  });
+});

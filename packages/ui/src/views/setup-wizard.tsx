@@ -654,9 +654,14 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     }
   }
 
+  // Standalone onboarding renders without the app header — the window's only
+  // macOS drag region (titleBarStyle: hiddenInset means no native title bar) —
+  // so the backdrop doubles as one and the card opts back out to stay
+  // clickable. Skipped in source mode, where the wizard sits in a modal over
+  // the normal app chrome. (#317)
   return (
-    <div className="min-h-screen bg-bg-primary flex items-center justify-center p-4">
-      <Card className="relative w-full max-w-lg border-border bg-bg-secondary">
+    <div className={`min-h-screen bg-bg-primary flex items-center justify-center p-4${isSourceMode ? '' : ' [-webkit-app-region:drag]'}`}>
+      <Card className="relative w-full max-w-lg border-border bg-bg-secondary [-webkit-app-region:no-drag]">
         {!isSourceMode && wizard.step !== 'welcome' && (
           <button
             type="button"

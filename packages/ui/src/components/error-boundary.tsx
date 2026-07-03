@@ -22,8 +22,11 @@ export class ErrorBoundary extends Component<Props, State> {
   render(): ReactNode {
     if (this.state.error !== null) {
       return (
-        <div className="min-h-screen bg-bg-primary flex items-center justify-center p-8">
-          <div className="max-w-lg w-full rounded-xl border border-negative/50 bg-negative-muted p-6">
+        // This fallback replaces the whole tree, including the app header that
+        // hosts the macOS window drag region — the backdrop takes over as the
+        // drag area so a crashed window can still be moved (see #317).
+        <div className="min-h-screen bg-bg-primary flex items-center justify-center p-8 [-webkit-app-region:drag]">
+          <div className="max-w-lg w-full rounded-xl border border-negative/50 bg-negative-muted p-6 [-webkit-app-region:no-drag]">
             <h2 className="text-lg font-semibold text-negative">Something went wrong</h2>
             <p className="mt-2 text-sm text-text-secondary leading-relaxed">
               {this.state.error.message}

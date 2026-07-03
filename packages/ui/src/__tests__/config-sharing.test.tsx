@@ -170,6 +170,16 @@ describe('ShareConfigDialog', () => {
 });
 
 describe('ImportConfigDialog', () => {
+  // The dialog can open above a window drag region (e.g. the standalone setup
+  // wizard's backdrop, issue #317); without an explicit no-drag opt-out, clicks
+  // on it would drag the window instead of reaching the modal.
+  it('opts the modal out of window drag regions', () => {
+    const api = new MockCostApi();
+    const { container } = renderWithApi(api, <ImportConfigDialog onClose={() => undefined} onApplied={() => undefined} />);
+    const dialog = container.querySelector('dialog');
+    expect(dialog?.className).toContain('[-webkit-app-region:no-drag]');
+  });
+
   it('previews a bundle, applies it with the chosen profile, then reports done', async () => {
     const api = new MockCostApi();
     const applySpy = vi.spyOn(api, 'applyConfigBundle');
