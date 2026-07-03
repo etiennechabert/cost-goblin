@@ -66,7 +66,13 @@ On first launch, the setup wizard guides you through connecting to your AWS CUR 
 
 ### Setting Up a CUR Report
 
-CostGoblin reads **CUR 2.0 via AWS Data Exports** (not legacy CUR). Create one in the [AWS Billing Console → Data Exports](https://docs.aws.amazon.com/cur/latest/userguide/what-is-data-exports.html).
+CostGoblin reads **CUR 2.0 via AWS Data Exports** (not legacy CUR). To create one:
+
+1. In the AWS console, open **Billing and Cost Management**.
+2. In the left navigation, choose **Data Exports** ([direct console link](https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports)).
+3. Click **Create export** and select **CUR 2.0** as the data table, with the settings below.
+
+> ⚠️ Don't create the report from the legacy **Cost & Usage Reports** page — that produces legacy CUR: `.csv.gz` files next to a `*-Manifest.json`, which CostGoblin can't read. A correct CUR 2.0 export delivers Parquet files under `data/` and `metadata/` folders. If you see the former in your bucket, delete that report and recreate it in [Data Exports](https://docs.aws.amazon.com/cur/latest/userguide/what-is-data-exports.html).
 
 **Export settings:**
 

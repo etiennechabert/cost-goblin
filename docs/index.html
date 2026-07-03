@@ -26,8 +26,8 @@
       --border: #1a1f1a;
       --border-glow: #10b981;
       --text: #e2e8e2;
-      --text-dim: #6b7b6b;
-      --text-muted: #3a4a3a;
+      --text-dim: #8fa08f;
+      --text-muted: #758575;
       --emerald: #10b981;
       --emerald-dim: #065f46;
       --emerald-glow: rgba(16, 185, 129, 0.15);
@@ -2196,8 +2196,8 @@
           <p>Pick a dedicated bucket (or prefix) for all CostGoblin data. We recommend this structure so each export lands in its own namespace:</p>
           <div class="code-block">
 <span class="code-dir">s3://your-company-billing/</span>
-├── <span class="code-dir">cur_daily/</span>         <span class="code-comment"># Daily Cost &amp; Usage Report</span>
-├── <span class="code-dir">cur_hourly/</span>        <span class="code-comment"># Hourly Cost &amp; Usage Report</span>
+├── <span class="code-dir">cur_daily/</span>         <span class="code-comment"># Daily Cost &amp; Usage Report — required</span>
+├── <span class="code-dir">cur_hourly/</span>        <span class="code-comment"># Hourly Cost &amp; Usage Report — optional</span>
 └── <span class="code-dir">cost_optimization/</span> <span class="code-comment"># Cost Optimization Hub export</span>
           </div>
           <div class="step-note">Use any bucket name. The three prefixes are what matters.</div>
@@ -2208,11 +2208,12 @@
             <span class="step-num">2</span>
             <h4>Create the CUR exports</h4>
           </div>
-          <p>In the AWS Billing Console &rarr; <strong>Data Exports</strong>, create two exports. Select <strong>Cost and usage report (CUR)</strong> as the data table and configure each one as follows:</p>
+          <p>From <strong>Billing and Cost Management</strong>, open <a href="https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports" target="_blank" rel="noopener"><strong>Data Exports</strong></a> in the left navigation, then click <strong>Create export</strong>. Select <strong>CUR 2.0</strong> as the data table. Only the <strong>daily</strong> export is required. You can optionally create a second, <strong>hourly</strong> export &mdash; helpful to understand how costs distribute within a day (intraday drill-down and incident analysis). Configure each as follows:</p>
+          <div class="step-note">Use <strong>Data Exports</strong>, not the legacy <strong>Cost &amp; Usage Reports</strong> page &mdash; legacy reports deliver <em>.csv.gz</em> files with a <em>Manifest.json</em>, which CostGoblin can't read. A correct CUR 2.0 export lands as Parquet under <em>data/</em> and <em>metadata/</em> folders.</div>
           <div class="code-block">
 <span class="code-comment">Data table content settings</span>
 <span class="code-comment">─────────────────────────────────────</span>
-Time granularity:    <span class="code-file">Daily</span>  <span class="code-comment">(or Hourly for the second export)</span>
+Time granularity:    <span class="code-file">Daily</span>  <span class="code-comment">(or Hourly for the optional second export)</span>
 
 Additional export content:
  <span class="code-file">&#x2713;</span> Include resource IDs                             <span class="code-comment">on by default</span>
@@ -2228,7 +2229,7 @@ Data export overwriting: <span class="code-file">Overwrite existing data export 
 <span class="code-comment">Data export storage settings</span>
 <span class="code-comment">─────────────────────────────────────</span>
 S3 bucket:       <span class="code-dir">your-company-billing</span>
-S3 path prefix:  <span class="code-dir">cur_daily</span>  <span class="code-comment">(or cur_hourly for the second export)</span>
+S3 path prefix:  <span class="code-dir">cur_daily</span>  <span class="code-comment">(or cur_hourly for the optional hourly export)</span>
           </div>
           <p>Under <strong>Column selection</strong>, enable these and disable the rest to keep file sizes small:</p>
           <div class="code-block">
