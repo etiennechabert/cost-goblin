@@ -2,6 +2,7 @@ import {
   asDimensionId,
   buildSource,
   computePeriodsInRange,
+  listLocalMonths,
   QueryBuilder,
   resolveField,
   logger,
@@ -12,6 +13,8 @@ import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
   computeDataCoverage,
   defaultDateRange,
+  emptyRangeResult,
+  getFirstProviderName,
   lookupDimension,
   resolveEntityName,
   resolveFormat,
@@ -57,15 +60,20 @@ export async function getFilterValues(
   const startParam = qb.addParam(dateRange.start);
   const endParam = qb.addParam(dateRange.end);
 
-  const periods = computePeriodsInRange(dateRange);
+  const provider = await getFirstProviderName(ctx);
+  const available = provider === null ? [] : await listLocalMonths(ctx.dataDir, provider, 'daily');
+  const required = computePeriodsInRange(dateRange);
+  const periods = required.filter(p => available.includes(p));
+  if (provider === null || periods.length === 0) {
+    return emptyRangeResult(ctx, dateRange, format, `${dimLabel} Values (${dateRange.start} to ${dateRange.end})`);
+  }
   const source = buildSource({
     dataDir: ctx.dataDir,
     tier: 'daily',
     dimensions,
     orgAccountsPath: orgPath,
-    periods,
+    providers: [{ name: provider, periods, availableColumns }],
     costMetric: 'unblended',
-    availableColumns,
   });
 
   const sql = `

@@ -11,6 +11,7 @@ import {
   computeDataCoverage,
   defaultDateRange,
   emptyRangeResult,
+  getFirstProviderName,
   resolveFormat,
   structuredToolResult,
   toDateRange,
@@ -48,10 +49,11 @@ export async function exploreData(
   const dimensions = await ctx.getQueryDimensions();
   const orgPath = await ctx.getOrgAccountsPath();
   const availableColumns = await ctx.getAvailableColumns('daily');
-  const available = await listLocalMonths(ctx.dataDir, 'daily');
+  const provider = await getFirstProviderName(ctx);
+  const available = provider === null ? [] : await listLocalMonths(ctx.dataDir, provider, 'daily');
   const required = computePeriodsInRange(dateRange);
   const periods = required.filter(p => available.includes(p));
-  if (periods.length === 0) return emptyRangeResult(ctx, dateRange, format, `Explore Data (${dateRange.start} to ${dateRange.end})`);
+  if (provider === null || periods.length === 0) return emptyRangeResult(ctx, dateRange, format, `Explore Data (${dateRange.start} to ${dateRange.end})`);
 
   const matSource = ctx.materializedBase.getSource(dateRange, 'daily');
   const source = matSource ?? buildSource({
@@ -59,9 +61,8 @@ export async function exploreData(
     tier: 'daily',
     dimensions,
     orgAccountsPath: orgPath,
-    periods,
+    providers: [{ name: provider, periods, availableColumns }],
     costMetric: 'unblended',
-    availableColumns,
   });
 
   const whereClause = `WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}'`;

@@ -17,7 +17,7 @@ export {
   resolveField,
   tryResolveField,
 } from './builder.js';
-export type { QueryContextOptions, BuildSourceOptions, BaselineDiscoveryParams, ResolvedDimension } from './builder.js';
+export type { QueryContextOptions, BuildSourceOptions, ProviderSourceSpec, ProviderSourceBranch, BaselineDiscoveryParams, ResolvedDimension } from './builder.js';
 
 export { costExprFor } from './cost-metric.js';
 

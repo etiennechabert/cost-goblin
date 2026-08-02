@@ -16,7 +16,10 @@ export function registerRollupHandlers(app: AppContext): void {
     if (stats === null) return null;
     let rawBytes = 0;
     try {
-      rawBytes = (await getLocalDataInventory(app.ctx.dataDir, 'daily')).local.diskBytes;
+      const provider = await app.getFirstProviderName();
+      if (provider !== null) {
+        rawBytes = (await getLocalDataInventory(app.ctx.dataDir, provider, 'daily')).local.diskBytes;
+      }
     } catch { /* raw size is best-effort — fall back to 0 (compression hidden) */ }
     return { months: stats.months, rollupRows: stats.rows, rollupBytes: stats.bytes, rawBytes };
   });

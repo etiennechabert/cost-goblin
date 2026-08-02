@@ -11,6 +11,7 @@ import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
   computeDataCoverage,
   emptyRangeResult,
+  getFirstProviderName,
   resolveFormat,
   structuredToolResult,
   toStr,
@@ -156,10 +157,11 @@ export async function runSql(
   if (matSource !== undefined) {
     costsCte = `costs AS (SELECT * FROM ${matSource} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
   } else {
-    const available = await listLocalMonths(ctx.dataDir, 'daily');
+    const provider = await getFirstProviderName(ctx);
+    const available = provider === null ? [] : await listLocalMonths(ctx.dataDir, provider, 'daily');
     const required = computePeriodsInRange(dateRange);
     const periods = required.filter(p => available.includes(p));
-    if (periods.length === 0) {
+    if (provider === null || periods.length === 0) {
       return emptyRangeResult(ctx, dateRange, format, `Query Result`);
     }
     const source = buildSource({
@@ -167,9 +169,8 @@ export async function runSql(
       tier: 'daily',
       dimensions,
       orgAccountsPath: orgPath,
-      periods,
+      providers: [{ name: provider, periods, availableColumns }],
       costMetric: 'unblended',
-      availableColumns,
     });
     costsCte = `costs AS (SELECT * FROM ${source} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
   }

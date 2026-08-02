@@ -243,6 +243,7 @@ function optionalTag(rand: () => number, missingRate: number, values: readonly s
 }
 
 import { SERVICE_META, DEFAULT_META } from './service-meta.js';
+import { FIXTURE_PROVIDER_NAME } from './layout.js';
 
 interface GenerateRowOpts {
   date: string;
@@ -371,7 +372,7 @@ async function generate(): Promise<void> {
   process.stdout.write(`  Generated ${String(rows.length)} rows\n`);
 
   // Export daily data as raw monthly files
-  const rawDir = join(SYNTHETIC_DIR, 'aws', 'raw');
+  const rawDir = join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw');
   const months = [...new Set(dailyDates.map(d => d.slice(0, 7)))];
   for (const month of months) {
     const monthDir = join(rawDir, `daily-${month}`);

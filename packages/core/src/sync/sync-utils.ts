@@ -1,5 +1,6 @@
 import { isStringRecord } from '../utils/json.js';
 import { logger } from '../logger/logger.js';
+import type { ProviderName } from '../types/branded.js';
 import type { ManifestFileEntry } from './manifest.js';
 
 export type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
@@ -24,9 +25,9 @@ export function getEtagFileName(tier: string): string {
 }
 
 /**
- * Returns the directory-name prefix used under aws/raw/ for a given tier.
- * Files for a period live under aws/raw/{prefix}-{period}/ — e.g.
- * aws/raw/daily-2026-04/, aws/raw/cost-opt-2026-04-08/.
+ * Returns the directory-name prefix used under {providerName}/raw/ for a
+ * given tier. Files for a period live under {providerName}/raw/{prefix}-{period}/
+ * — e.g. aws-main/raw/daily-2026-04/, aws-main/raw/cost-opt-2026-04-08/.
  */
 export function getRawDirPrefix(tier: string): string {
   if (tier === 'hourly' || tier === 'cost-optimization' || tier === 'daily') {
@@ -36,16 +37,16 @@ export function getRawDirPrefix(tier: string): string {
 }
 
 /**
- * Lists YYYY-MM period directories on disk for a given tier. Used by query
- * handlers to intersect a date range's required months with what's actually
- * been synced — DuckDB's read_parquet errors on glob patterns that match
- * zero files, so missing months must be filtered out before query time.
+ * Lists YYYY-MM period directories on disk for one provider's tier. Used by
+ * query handlers to intersect a date range's required months with what's
+ * actually been synced — DuckDB's read_parquet errors on glob patterns that
+ * match zero files, so missing months must be filtered out before query time.
  */
-export async function listLocalMonths(dataDir: string, tier: string): Promise<string[]> {
+export async function listLocalMonths(dataDir: string, provider: ProviderName, tier: string): Promise<string[]> {
   const fs = await import('node:fs/promises');
   const path = await import('node:path');
   const prefix = getRawDirPrefix(tier);
-  const rawDir = path.join(dataDir, 'aws', 'raw');
+  const rawDir = path.join(dataDir, String(provider), 'raw');
   try {
     const entries = await fs.readdir(rawDir);
     const months = new Set<string>();

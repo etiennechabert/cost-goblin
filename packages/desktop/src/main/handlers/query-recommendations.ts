@@ -23,7 +23,7 @@ import {
 import { originStore } from '../query-log.js';
 
 export function registerRecommendationHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getConfig, getCostScope, getAvailableColumns, runQuery, runPreparedQuery } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getConfig, getCostScope, getQueryProviders, runQuery, runPreparedQuery } = app;
 
   ipcMain.handle('query:missing-tags', (_event, params: MissingTagsParams): Promise<MissingTagsResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
@@ -31,10 +31,12 @@ export function registerRecommendationHandlers(app: AppContext): void {
     const accountReverseMap = await getAccountReverseMap();
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
-    const availableColumns = await getAvailableColumns('daily');
     logger.info('query:missing-tags', { tagDimension: params.tagDimension });
 
-    const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, 'daily', params.dateRange);
+    const providers = await getQueryProviders('daily');
+    const firstProvider = providers[0];
+    const empty = firstProvider === undefined
+      || (await resolveAvailablePeriods(ctx.dataDir, firstProvider.name, 'daily', params.dateRange)).empty;
     if (empty) {
       return {
         rows: [],
@@ -53,7 +55,7 @@ export function registerRecommendationHandlers(app: AppContext): void {
     }
     // missing-tags / non-resource-cost reference resource_id, line_item_type and
     // raw tags — none in the rollup grain — so they always query raw.
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: undefined };
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: undefined };
     const resourceQuery = buildMissingTagsQuery(params, qcOpts);
     const nonResourceQuery = buildNonResourceCostQuery(params, qcOpts);
     const [resourceRows, nonResourceRows] = await Promise.all([
@@ -98,7 +100,7 @@ export function registerRecommendationHandlers(app: AppContext): void {
           COALESCE(restart_needed, false) AS restart_needed,
           COALESCE(rollback_possible, false) AS rollback_possible,
           COALESCE(recommendation_source, '') AS recommendation_source
-        FROM read_parquet('${ctx.dataDir}/aws/raw/cost-opt-*/*.parquet', filename=true)
+        FROM read_parquet('${ctx.dataDir}/${String(provider.name)}/raw/cost-opt-*/*.parquet', filename=true)
         QUALIFY ROW_NUMBER() OVER (PARTITION BY recommendation_id ORDER BY filename DESC) = 1
         ORDER BY monthly_savings DESC
       `);

@@ -1,5 +1,5 @@
 import { parentPort } from 'node:worker_threads';
-import { syncSelectedFiles, logger } from '@costgoblin/core';
+import { parseProviderName, syncSelectedFiles, logger } from '@costgoblin/core';
 import type { SelectiveSyncOptions, ManifestFileEntry, SyncProgress, SyncLogLevel } from '@costgoblin/core';
 
 if (parentPort === null) {
@@ -16,6 +16,10 @@ interface SyncRequest {
   readonly id: number;
   readonly bucketPath: string;
   readonly profile: string;
+  /** Provider directory the download lands in. Arrives as a plain string over
+   *  the message boundary — re-parsed with `parseProviderName` before it is
+   *  used in any path (the brand does not survive structured cloning). */
+  readonly providerName: string;
   readonly dataDir: string;
   readonly tier: string;
   readonly files: readonly ManifestFileEntry[];
@@ -82,6 +86,7 @@ function isSyncRequest(msg: unknown): msg is SyncRequest {
     typeof msg['id'] === 'number' &&
     typeof msg['bucketPath'] === 'string' &&
     typeof msg['profile'] === 'string' &&
+    typeof msg['providerName'] === 'string' &&
     typeof msg['dataDir'] === 'string' &&
     typeof msg['tier'] === 'string' &&
     Array.isArray(msg['files'])
@@ -134,6 +139,10 @@ async function handleSyncRequest(req: SyncRequest): Promise<void> {
     const options: SelectiveSyncOptions = {
       bucketPath: req.bucketPath,
       profile: req.profile,
+      // Re-validate on this side of the thread boundary: the brand is a
+      // compile-time construct, so a malformed name must be rejected here
+      // before it can become a directory segment (throws → error response).
+      providerName: parseProviderName(req.providerName),
       dataDir: req.dataDir,
       expectedDataType: req.tier as 'daily' | 'hourly' | 'cost-optimization' | undefined,
       files: req.files,

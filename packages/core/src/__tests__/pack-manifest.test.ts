@@ -40,6 +40,10 @@ describe('isSafePackPath', () => {
     expect(isSafePackPath('aws/raw/daily-2026-06/part-0.parquet')).toBe(true);
     expect(isSafePackPath('aws/raw/cost-opt-2026-06-08/part.parquet')).toBe(true);
   });
+  it('accepts any valid provider-name segment, not just aws', () => {
+    expect(isSafePackPath('aws-main/raw/daily-2026-06/part-0.parquet')).toBe(true);
+    expect(isSafePackPath('prod_2/raw/hourly-2026-05/part-1.parquet')).toBe(true);
+  });
   it('rejects traversal and out-of-tree paths', () => {
     for (const p of [
       '../../etc/passwd',
@@ -48,6 +52,8 @@ describe('isSafePackPath', () => {
       'aws/raw/daily-2026-06/file.txt',
       'config/dimensions.yaml',
       'aws/raw/daily-2026-06/sub/dir/x.parquet',
+      '.hidden/raw/daily-2026-06/x.parquet',
+      'aws.prod/raw/daily-2026-06/x.parquet',
     ]) {
       expect(isSafePackPath(p)).toBe(false);
     }
@@ -56,13 +62,17 @@ describe('isSafePackPath', () => {
 
 describe('classifyPackPath', () => {
   it('classifies daily and hourly paths by their tier prefix', () => {
-    expect(classifyPackPath('aws/raw/daily-2026-06/part-0.parquet')).toEqual({ tier: 'daily', period: '2026-06' });
-    expect(classifyPackPath('aws/raw/hourly-2026-05/part-1.parquet')).toEqual({ tier: 'hourly', period: '2026-05' });
+    expect(classifyPackPath('aws/raw/daily-2026-06/part-0.parquet')).toEqual({ provider: 'aws', tier: 'daily', period: '2026-06' });
+    expect(classifyPackPath('aws/raw/hourly-2026-05/part-1.parquet')).toEqual({ provider: 'aws', tier: 'hourly', period: '2026-05' });
+  });
+
+  it('returns the provider segment for non-aws provider names', () => {
+    expect(classifyPackPath('aws-main/raw/daily-2026-06/part-0.parquet')).toEqual({ provider: 'aws-main', tier: 'daily', period: '2026-06' });
   });
 
   it('maps the cost-opt directory prefix to the cost-optimization tier and a YYYY-MM period', () => {
     // cost-opt directories carry a -DD day suffix; the period is still the month.
-    expect(classifyPackPath('aws/raw/cost-opt-2026-04-08/r.parquet')).toEqual({ tier: 'cost-optimization', period: '2026-04' });
+    expect(classifyPackPath('aws/raw/cost-opt-2026-04-08/r.parquet')).toEqual({ provider: 'aws', tier: 'cost-optimization', period: '2026-04' });
   });
 
   it('returns null for unknown prefixes and non-pack paths', () => {
@@ -73,10 +83,26 @@ describe('classifyPackPath', () => {
 });
 
 describe('signed pack manifest', () => {
+  it('publishes new packs at manifest version 2', () => {
+    expect(PACK_MANIFEST_VERSION).toBe(2);
+  });
+
   it('signs, serializes, parses, and verifies a round trip', () => {
     const id = generateIdentityKeyPair();
     const signed = signManifest(fixtureManifest(id.publicKey), id.privateKey);
     const parsed = parseSignedManifest(serializeSignedManifest(signed));
+    expect(parsed.manifest).toEqual(signed.manifest);
+    expect(verifyManifestSignature(parsed)).toBe(true);
+  });
+
+  it('still accepts a v1 manifest and preserves its version so the signature verifies', () => {
+    const id = generateIdentityKeyPair();
+    const v1: PackManifest = { ...fixtureManifest(id.publicKey), v: 1 };
+    const signed = signManifest(v1, id.privateKey);
+    const parsed = parseSignedManifest(serializeSignedManifest(signed));
+    // `v` must round-trip verbatim — rewriting it to 2 would break the
+    // signature, which covers the exact bytes the publisher signed.
+    expect(parsed.manifest.v).toBe(1);
     expect(parsed.manifest).toEqual(signed.manifest);
     expect(verifyManifestSignature(parsed)).toBe(true);
   });

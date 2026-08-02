@@ -3,6 +3,8 @@ import { mkdir, access, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { FIXTURE_PROVIDER_NAME } from './layout.js';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, 'synthetic');
 const MARKER = join(SYNTHETIC_DIR, '.generated');
@@ -147,7 +149,7 @@ function generateCostOptRows(actionTypes: readonly ActionType[], cfg: FixtureCon
 }
 
 export async function setup(): Promise<void> {
-  const dailyParquet = join(SYNTHETIC_DIR, 'aws', 'raw', 'daily-2026-01', 'data.parquet');
+  const dailyParquet = join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw', 'daily-2026-01', 'data.parquet');
   try {
     await access(dailyParquet);
     return;
@@ -232,7 +234,7 @@ export async function setup(): Promise<void> {
     await conn.run(`INSERT INTO synthetic VALUES ${batch.join(',')}`);
   }
 
-  const rawDir = join(SYNTHETIC_DIR, 'aws', 'raw');
+  const rawDir = join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw');
   const months = [...new Set(dailyDates.map(d => d.slice(0, 7)))];
   for (const month of months) {
     const monthDir = join(rawDir, `daily-${month}`);

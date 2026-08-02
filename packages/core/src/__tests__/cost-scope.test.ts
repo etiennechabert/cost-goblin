@@ -8,7 +8,9 @@ import type { CostScopeConfig, ExclusionRule } from '../types/cost-scope.js';
 import { DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, BUILTIN_EXCLUSION_RULES, mergeBuiltInExclusionRules } from '../config/cost-scope-seed.js';
 import { validateCostScope } from '../config/cost-scope-validator.js';
 import { costScopeToYaml } from '../config/cost-scope-serialize.js';
-import { asDimensionId, asDateString } from '../types/branded.js';
+import { asDimensionId, asDateString, asProviderName } from '../types/branded.js';
+
+const PROVIDER = asProviderName('aws');
 
 const dimensions: DimensionsConfig = {
   builtIn: [
@@ -36,7 +38,7 @@ const baseParams = {
 };
 
 function buildQuery(costScope?: CostScopeConfig): string {
-  return buildCostQuery(baseParams, { dataDir: '/data', dimensions, costScope }, 5).sql;
+  return buildCostQuery(baseParams, { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope }, 5).sql;
 }
 
 describe('cost metric column selection', () => {
@@ -71,7 +73,7 @@ describe('cost metric column selection', () => {
     // SQL should prefer the net variant.
     const { sql } = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, costScope: { costMetric: 'unblended', costPerspective: 'net', rules: [] }, availableColumns: new Set(['line_item_unblended_cost', 'line_item_net_unblended_cost']) },
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER, availableColumns: new Set(['line_item_unblended_cost', 'line_item_net_unblended_cost']) }], costScope: { costMetric: 'unblended', costPerspective: 'net', rules: [] } },
       5,
     );
     expect(sql).toContain('line_item_net_unblended_cost');
@@ -83,7 +85,7 @@ describe('cost metric column selection', () => {
     // a missing column (which would error at query time).
     const { sql } = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, costScope: { costMetric: 'unblended', costPerspective: 'net', rules: [] }, availableColumns: new Set(['line_item_unblended_cost']) },
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER, availableColumns: new Set(['line_item_unblended_cost']) }], costScope: { costMetric: 'unblended', costPerspective: 'net', rules: [] } },
       5,
     );
     expect(sql).not.toContain('line_item_net_unblended_cost');
@@ -93,12 +95,12 @@ describe('cost metric column selection', () => {
   it('amortized + net uses net effective-cost columns when available', () => {
     const { sql } = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, costScope: { costMetric: 'amortized', costPerspective: 'net', rules: [] }, availableColumns: new Set([
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER, availableColumns: new Set([
         'line_item_unblended_cost',
         'line_item_net_unblended_cost',
         'reservation_net_effective_cost',
         'savings_plan_net_savings_plan_effective_cost',
-      ]) },
+      ]) }], costScope: { costMetric: 'amortized', costPerspective: 'net', rules: [] } },
       5,
     );
     expect(sql).toContain("WHEN line_item_line_item_type = 'DiscountedUsage' THEN COALESCE(reservation_net_effective_cost, line_item_net_unblended_cost, 0)");
@@ -111,7 +113,7 @@ describe('cost metric column selection', () => {
     // degrades all the way down to line_item_unblended_cost.
     const { sql } = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, costScope: { costMetric: 'amortized', costPerspective: 'net', rules: [] }, availableColumns: new Set(['line_item_unblended_cost']) },
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER, availableColumns: new Set(['line_item_unblended_cost']) }], costScope: { costMetric: 'amortized', costPerspective: 'net', rules: [] } },
       5,
     );
     expect(sql).toMatch(/COALESCE\(line_item_unblended_cost, 0\) AS cost/);
@@ -134,7 +136,7 @@ describe('cost metric column selection', () => {
   it('list metric degrades to unblended when on-demand column missing', () => {
     const { sql } = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, costScope: { costMetric: 'list', rules: [] }, availableColumns: new Set(['line_item_unblended_cost']) },
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER, availableColumns: new Set(['line_item_unblended_cost']) }], costScope: { costMetric: 'list', rules: [] } },
       5,
     );
     expect(sql).toMatch(/COALESCE\(line_item_unblended_cost, 0\) AS cost/);
@@ -174,7 +176,7 @@ describe('exclusion clauses', () => {
   it('enabled rule with one condition produces NOT IN clause', () => {
     const result = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, costScope: {
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
         costMetric: 'unblended',
         rules: [{ id: 'test', name: 'Test', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('service'), values: ['AWSSupport'] }] }],
       } },
@@ -188,7 +190,7 @@ describe('exclusion clauses', () => {
   it('rule with multiple values uses NOT IN list', () => {
     const result = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, costScope: {
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
         costMetric: 'unblended',
         rules: [{ id: 'test', name: 'Test', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('line_item_type'), values: ['RIFee', 'SavingsPlanRecurringFee'] }] }],
       } },
@@ -203,7 +205,7 @@ describe('exclusion clauses', () => {
   it('rule with multiple conditions uses AND', () => {
     const result = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, costScope: {
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
         costMetric: 'unblended',
         rules: [{ id: 'test', name: 'Test', enabled: true, builtIn: false, conditions: [
           { dimensionId: asDimensionId('service'), values: ['EC2'] },
@@ -221,7 +223,7 @@ describe('exclusion clauses', () => {
   it('tag dimension resolves through alias CASE', () => {
     const { sql, params } = buildCostQuery(
       { ...baseParams, groupBy: asDimensionId('service') },
-      { dataDir: '/data', dimensions, costScope: {
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
         costMetric: 'unblended',
         rules: [{ id: 'test', name: 'Test', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('tag_org_team'), values: ['core-banking'] }] }],
       } },
@@ -280,7 +282,7 @@ describe('exclusion clauses', () => {
     };
     const { params } = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions: dimsWithNormalize, costScope: {
+      { dataDir: '/data', dimensions: dimsWithNormalize, providers: [{ name: PROVIDER }], costScope: {
         costMetric: 'unblended',
         rules: [{ id: 'test', name: 'Test', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('line_item_type'), values: ['RIFee', 'Tax'] }] }],
       } },
@@ -298,7 +300,7 @@ describe('exclusion clauses', () => {
   it('partially applies a rule when only some conditions are resolvable', () => {
     const result = buildCostQuery(
       baseParams,
-      { dataDir: '/data', dimensions, costScope: {
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
         costMetric: 'unblended',
         rules: [{ id: 'mixed', name: 'Mixed', enabled: true, builtIn: false, conditions: [
           { dimensionId: asDimensionId('service'), values: ['EC2'] },
@@ -483,7 +485,7 @@ describe('buildDailyCostsQuery with costScope', () => {
   it('injects exclusion clause in daily costs query', () => {
     const { sql, params } = buildDailyCostsQuery(
       { ...baseParams, granularity: 'daily' },
-      { dataDir: '/data', dimensions, costScope: {
+      { dataDir: '/data', dimensions, providers: [{ name: PROVIDER }], costScope: {
         costMetric: 'unblended',
         rules: [{ id: 'support', name: 'Support', enabled: true, builtIn: true, conditions: [{ dimensionId: asDimensionId('service_family'), values: ['Support'] }] }],
       } },

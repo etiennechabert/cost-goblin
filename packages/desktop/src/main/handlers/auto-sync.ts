@@ -55,7 +55,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           : tierBucket;
         let inv;
         try {
-          inv = await getDataInventory(bucket, provider.credentialsProfile, ctx.dataDir, asTier(tier));
+          inv = await getDataInventory(bucket, provider.credentialsProfile, ctx.dataDir, provider.name, asTier(tier));
         } catch (err: unknown) {
           // Rewrite credential failures into the actionable "run aws sso login"
           // message so the scheduler surfaces it (instead of silently skipping)
@@ -88,6 +88,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           const result = await syncClient.syncPeriods({
             bucketPath: bucket,
             profile: provider.credentialsProfile,
+            providerName: provider.name,
             dataDir: ctx.dataDir,
             tier: syncId,
             files,
@@ -111,7 +112,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           state.syncStatuses[syncId] = { status: 'completed', lastSync: now, filesDownloaded: result.filesDownloaded };
           // Best-effort: cosmetic timestamp; a write failure must not flip this
           // successful sync to 'failed' (the catch below would do exactly that).
-          await writeTierLastSync(ctx.dataDir, syncId, now.toISOString()).catch(() => { /* cosmetic */ });
+          await writeTierLastSync(ctx.dataDir, provider.name, syncId, now.toISOString()).catch(() => { /* cosmetic */ });
           // Keep the rollup in step with the raw the auto-sync just pulled,
           // mirroring the manual data:sync-periods path.
           if (result.filesDownloaded > 0) {
@@ -129,12 +130,18 @@ export function registerAutoSyncHandlers(app: AppContext): void {
         }
       },
       getLocalPeriods: async (tier: string) => {
-        const inv = await getLocalDataInventory(ctx.dataDir, asTier(tier));
+        // No providers[0] in hand here (no bucket needed) — resolve the first
+        // provider's name; while onboarding there is nothing on disk to list.
+        const provider = await app.getFirstProviderName();
+        if (provider === null) return [];
+        const inv = await getLocalDataInventory(ctx.dataDir, provider, asTier(tier));
         return [...inv.local.periods];
       },
       deletePeriods: async (periods: readonly string[], tier: string) => {
+        const provider = await app.getFirstProviderName();
+        if (provider === null) return;
         for (const period of periods) {
-          await deleteLocalPeriodFiles(ctx.dataDir, period, asTier(tier));
+          await deleteLocalPeriodFiles(ctx.dataDir, provider, period, asTier(tier));
         }
         // Cascade the auto-prune into the rollup, once per unique daily month.
         if (asTier(tier) === 'daily') {

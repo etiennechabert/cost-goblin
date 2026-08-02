@@ -4,12 +4,14 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildBaselineDiscoveryQuery, buildBaselineTotalsQuery, buildDimCardinalityQuery, buildSource } from '../query/builder.js';
 import type { QueryContextOptions } from '../query/builder.js';
+import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
-import { asDateString, asDimensionId } from '../types/branded.js';
+import { asDateString, asDimensionId, asProviderName } from '../types/branded.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
+const PROVIDER = asProviderName(FIXTURE_PROVIDER_NAME);
 const PERIODS = ['2026-01', '2026-02'];
 
 const dimensions: DimensionsConfig = {
@@ -22,7 +24,7 @@ const dimensions: DimensionsConfig = {
 };
 
 const costScope: CostScopeConfig = { costMetric: 'unblended', costPerspective: 'gross', rules: [] };
-const opts: QueryContextOptions = { dataDir: SYNTHETIC_DIR, dimensions, availablePeriods: PERIODS, costScope };
+const opts: QueryContextOptions = { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, availablePeriods: PERIODS }], costScope };
 const dateRange = { start: asDateString('2026-01-01'), end: asDateString('2026-02-28') };
 
 interface Row { [k: string]: unknown }
@@ -80,7 +82,7 @@ describe('baseline discovery query (DuckDB)', () => {
 
     const discoveryTotal = rows.reduce((acc, r) => acc + Number(r['cost']), 0);
 
-    const src = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, periods: PERIODS, costMetric: 'unblended' });
+    const src = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: PERIODS }], costMetric: 'unblended' });
     // Reference: sum/count over per-tuple totals that clear the same >= 0 floor,
     // so the per-day decomposition is verified lossless.
     const [rawTotalRow] = await queryAll(
@@ -116,7 +118,7 @@ describe('baseline discovery query (DuckDB)', () => {
       opts,
     );
     const rows = await queryAll(q.sql, q.params);
-    const src = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, periods: PERIODS, costMetric: 'unblended' });
+    const src = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: PERIODS }], costMetric: 'unblended' });
     const [ref] = await queryAll(
       `SELECT COUNT(*) AS n, SUM(c) AS t FROM (SELECT account_id, service, SUM(cost) AS c FROM ${src} WHERE usage_date BETWEEN '2026-01-01' AND '2026-02-28' GROUP BY account_id, service)`,
     );

@@ -23,6 +23,7 @@ import type {
   DailyCost,
   DistributionSlice,
   OrgNode,
+  ProviderName,
 } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import type { RollupStore } from '../rollup-store.js';
@@ -101,10 +102,11 @@ export function buildAccountReverseMap(accountMap: Map<string, string>): Map<str
 
 export async function resolveAvailablePeriods(
   dataDir: string,
+  provider: ProviderName,
   tier: 'daily' | 'hourly',
   dateRange: { readonly start: string; readonly end: string },
 ): Promise<{ available: string[]; empty: boolean }> {
-  const available = await listLocalMonths(dataDir, tier);
+  const available = await listLocalMonths(dataDir, provider, tier);
   const required = computePeriodsInRange(dateRange);
   const usePeriods = required.filter(p => available.includes(p));
   if (usePeriods.length === 0) {

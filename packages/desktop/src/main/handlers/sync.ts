@@ -3,13 +3,14 @@ import {
   getDataInventory,
   getLocalDataInventory,
   hasSyncedTier,
-  getEtagFileName,
   getRawDirPrefix,
   parseEtagsJson,
   extractPeriod,
   listLocalMonths,
   configuredTierRetentions,
   periodsOutsideRetention,
+  providerEtagPath,
+  providerRawDir,
   readTierLastSync,
   writeTierLastSync,
   isCredentialError,
@@ -22,6 +23,7 @@ import type {
   ManifestFileEntry,
   AccountMappingStatus,
   AccountMappingEntry,
+  ProviderName,
   PruneResult,
   SyncStatus,
 } from '@costgoblin/core';
@@ -124,6 +126,7 @@ const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/;
  *  they all delete data identically. Returns whether any files were removed. */
 export async function deleteLocalPeriodFiles(
   dataDir: string,
+  provider: ProviderName,
   period: string,
   tier: ExpectedDataType,
 ): Promise<boolean> {
@@ -134,7 +137,7 @@ export async function deleteLocalPeriodFiles(
   const path = await import('node:path');
 
   const prefix = getRawDirPrefix(tier);
-  const rawDir = path.join(dataDir, 'aws', 'raw');
+  const rawDir = providerRawDir(dataDir, provider);
 
   const removedAny = await removeMatchingDirs(rawDir, prefix, period, fs, path);
   if (removedAny) {
@@ -142,7 +145,7 @@ export async function deleteLocalPeriodFiles(
     recordSyncLog('info', `Deleted local data (${tier}): ${prefix}-${period}`);
   }
 
-  await pruneEtagFile(path.join(dataDir, getEtagFileName(tier)), period, fs);
+  await pruneEtagFile(providerEtagPath(dataDir, provider, tier), period, fs);
 
   if (!removedAny) {
     logger.info(`Delete (${tier}) for ${period}: nothing matched ${prefix}-${period}*`);
@@ -155,7 +158,9 @@ export async function deleteLocalPeriodFiles(
  *  tier only — hourly / cost-opt don't feed the daily rollup. Shared by the
  *  manual delete/prune handlers and auto-prune. */
 export async function cascadeRollupForDeletedMonth(app: AppContext, month: string): Promise<void> {
-  const monthsLeft = await listLocalMonths(app.ctx.dataDir, 'daily');
+  const provider = await app.getFirstProviderName();
+  if (provider === null) return;
+  const monthsLeft = await listLocalMonths(app.ctx.dataDir, provider, 'daily');
   if (monthsLeft.includes(month)) app.maintainRollup([month]);
   else await app.rollupStore.deletePeriod(month);
 }
@@ -171,17 +176,25 @@ export function registerSyncHandlers(app: AppContext): void {
   const syncWorkerIds = new Map<string, number>();
   let nextWorkerId = 0;
 
+  // Durable per-tier timestamp for the first configured provider, or null
+  // while onboarding (no provider → nothing was ever synced).
+  async function readFirstProviderLastSync(tier: string): Promise<string | null> {
+    const provider = await app.getFirstProviderName();
+    if (provider === null) return null;
+    return readTierLastSync(ctx.dataDir, provider, tier);
+  }
+
   ipcMain.handle('sync:status', async (_event, syncId: string = 'default'): Promise<SyncStatus> => {
     const current = state.syncStatuses[syncId];
     if (current === undefined) {
-      const iso = await readTierLastSync(ctx.dataDir, syncId);
+      const iso = await readFirstProviderLastSync(syncId);
       return { status: 'idle', lastSync: iso === null ? null : new Date(iso) };
     }
     // The in-memory lastSync resets to null on every launch; backfill it from the
     // durable timestamp file so the toolbar can show "Synced <time>" after a
     // restart for tiers that aren't mid-sync.
     if ((current.status === 'idle' || current.status === 'failed') && current.lastSync === null) {
-      const iso = await readTierLastSync(ctx.dataDir, syncId);
+      const iso = await readFirstProviderLastSync(syncId);
       if (iso !== null) return { ...current, lastSync: new Date(iso) };
     }
     return current;
@@ -194,18 +207,18 @@ export function registerSyncHandlers(app: AppContext): void {
     const t = tier ?? 'daily';
     const bucket = resolveBucketPath(config, t);
     try {
-      return await getDataInventory(bucket, provider.credentialsProfile, ctx.dataDir, t);
+      return await getDataInventory(bucket, provider.credentialsProfile, ctx.dataDir, provider.name, t);
     } catch (err: unknown) {
       // Expired/invalid credentials on an install that has synced this tier from
       // S3 before (its etag file exists) is a real auth failure, not the
       // imported-snapshot case — surface it so the user re-authenticates instead
       // of silently showing stale local data as if everything were up to date.
-      if (isCredentialError(err) && await hasSyncedTier(ctx.dataDir, t)) {
+      if (isCredentialError(err) && await hasSyncedTier(ctx.dataDir, provider.name, t)) {
         throw toUserFriendlyError(err, provider.credentialsProfile);
       }
       // Otherwise fall back to a disk-only inventory so a consumer that imported
       // a shared snapshot (no S3 access) still sees the data it has.
-      const local = await getLocalDataInventory(ctx.dataDir, t);
+      const local = await getLocalDataInventory(ctx.dataDir, provider.name, t);
       if (local.totalLocalPeriods > 0) {
         logger.info('S3 inventory unavailable — using local-only inventory', { tier: t });
         return local;
@@ -215,7 +228,9 @@ export function registerSyncHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('data:delete-period', async (_event, period: string, tier: ExpectedDataType = 'daily'): Promise<void> => {
-    await deleteLocalPeriodFiles(ctx.dataDir, period, tier);
+    const provider = await app.getFirstProviderName();
+    if (provider === null) throw new Error('No provider configured');
+    await deleteLocalPeriodFiles(ctx.dataDir, provider, period, tier);
     if (tier === 'daily') await cascadeRollupForDeletedMonth(app, period.slice(0, 7));
   });
 
@@ -230,10 +245,10 @@ export function registerSyncHandlers(app: AppContext): void {
 
     const deleted: { tier: DataTier; period: string }[] = [];
     for (const { tier, retentionDays } of configuredTierRetentions(provider.sync)) {
-      const local = await getLocalDataInventory(ctx.dataDir, tier);
+      const local = await getLocalDataInventory(ctx.dataDir, provider.name, tier);
       const expired = periodsOutsideRetention(local.local.periods, retentionDays);
       for (const period of expired) {
-        const removed = await deleteLocalPeriodFiles(ctx.dataDir, period, tier);
+        const removed = await deleteLocalPeriodFiles(ctx.dataDir, provider.name, period, tier);
         if (removed) deleted.push({ tier, period });
       }
     }
@@ -270,7 +285,7 @@ export function registerSyncHandlers(app: AppContext): void {
           attributes: { 'sync.tier': tier, 'sync.files_requested': fileEntries.length },
         },
         async (span) => {
-          const r = await runSync(ctx, provider.credentialsProfile, bucketPath, tier, fileEntries, syncId, state);
+          const r = await runSync(ctx, provider.credentialsProfile, provider.name, bucketPath, tier, fileEntries, syncId, state);
           span?.setAttribute('sync.files_downloaded', r.filesDownloaded);
           span?.setAttribute('sync.rows_processed', r.rowsProcessed);
           return r;
@@ -282,7 +297,7 @@ export function registerSyncHandlers(app: AppContext): void {
       state.syncStatuses[syncId] = { status: 'completed', lastSync: now, filesDownloaded: result.filesDownloaded };
       // Best-effort: the persisted timestamp is cosmetic and self-heals on the
       // next sync, so a write failure must never fail the (successful) sync.
-      await writeTierLastSync(ctx.dataDir, tier, now.toISOString()).catch(() => { /* cosmetic */ });
+      await writeTierLastSync(ctx.dataDir, provider.name, tier, now.toISOString()).catch(() => { /* cosmetic */ });
       if (result.filesDownloaded > 0) {
         if (tier === 'daily') {
           // Re-roll only the daily partitions this sync touched (file replace).
@@ -403,6 +418,7 @@ export function registerSyncHandlers(app: AppContext): void {
 async function runSync(
   ctx: IpcContext,
   profile: string,
+  providerName: ProviderName,
   bucketPath: string,
   tier: ExpectedDataType,
   fileEntries: readonly ManifestFileEntry[],
@@ -412,6 +428,7 @@ async function runSync(
   return ctx.syncClient.syncPeriods({
     bucketPath,
     profile,
+    providerName,
     dataDir: ctx.dataDir,
     tier,
     files: fileEntries,

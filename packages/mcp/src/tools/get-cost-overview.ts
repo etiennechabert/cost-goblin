@@ -11,6 +11,7 @@ import {
   computeDataCoverage,
   defaultDateRange,
   emptyRangeResult,
+  getFirstProviderName,
   resolveFormat,
   structuredToolResult,
   toDateRange,
@@ -29,7 +30,8 @@ export async function getCostOverview(
     ? toDateRange(params.dateRange)
     : defaultDateRange();
 
-  const months = await listLocalMonths(ctx.dataDir, 'daily');
+  const provider = await getFirstProviderName(ctx);
+  const months = provider === null ? [] : await listLocalMonths(ctx.dataDir, provider, 'daily');
   if (months.length === 0) {
     return toolError('No data found. Ensure COSTGOBLIN_DATA_DIR points to a directory with synced Parquet data.');
   }

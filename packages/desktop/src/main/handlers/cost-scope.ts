@@ -11,7 +11,6 @@ import {
   buildRuleMatchExpr,
   computePeriodsInRange,
   logger,
-  listLocalMonths,
   tagDimColumn,
 } from '@costgoblin/core';
 import type {
@@ -97,7 +96,7 @@ function isEnoent(err: unknown): boolean {
 }
 
 export function registerCostScopeHandlers(app: AppContext): void {
-  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, getAvailableColumns, runQuery } = app;
+  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, getAvailableColumns, getQueryProviders, runQuery } = app;
 
   ipcMain.handle('cost-scope:get-config', async (): Promise<CostScopeConfig> => {
     try {
@@ -146,16 +145,22 @@ export function registerCostScopeHandlers(app: AppContext): void {
       tagColumns: [],
     };
 
-    const available = await listLocalMonths(ctx.dataDir, 'daily');
+    // Empty while onboarding (no provider configured) — same zero-period
+    // early return as "no months on disk".
+    const providers = await getQueryProviders('daily');
+    const available = providers[0]?.availablePeriods ?? [];
     const required = computePeriodsInRange({ start: startStr, end: endStr });
     const periods = required.filter(p => available.includes(p));
     if (periods.length === 0) return zero;
 
     const dimensions = await getQueryDimensions();
     const orgPath = await getOrgAccountsPath();
-    const availableColumns = await getAvailableColumns('daily');
 
-    const source = buildSource({ dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath, periods, costMetric: config.costMetric, availableColumns, costPerspective: config.costPerspective });
+    const source = buildSource({
+      dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath,
+      providers: providers.map(p => ({ name: p.name, periods, availableColumns: p.availableColumns })),
+      costMetric: config.costMetric, costPerspective: config.costPerspective,
+    });
 
     // Pre-compute each rule's positive match expression once — used to
     // build the `excluded` predicate for the main aggregate query, each

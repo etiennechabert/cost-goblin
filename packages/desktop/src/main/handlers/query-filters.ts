@@ -104,7 +104,7 @@ function mergeAccountRows(
 }
 
 export function registerFilterHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery, rollupStore } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
 
   ipcMain.handle('query:filter-values', (_event, dimensionId: string, filterEntries: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]> => originStore.run(origin ?? null, async () => {
     const dimensions = await getDimensions();
@@ -142,10 +142,16 @@ export function registerFilterHandlers(app: AppContext): void {
 
     let source: string;
     if (matSource === undefined) {
+      const providers = await getQueryProviders('daily');
+      // No provider configured yet (onboarding) — nothing on disk to scan.
+      if (providers.length === 0) return [];
       const orgPath = await getOrgAccountsPath();
       const periods = dateRange === undefined ? undefined : computePeriodsInRange(dateRange);
-      const availableColumns = await getAvailableColumns('daily');
-      source = buildSource({ dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath, periods, costMetric: 'unblended', availableColumns });
+      source = buildSource({
+        dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath,
+        providers: providers.map(p => ({ name: p.name, periods, availableColumns: p.availableColumns })),
+        costMetric: 'unblended',
+      });
     } else {
       source = matSource;
     }

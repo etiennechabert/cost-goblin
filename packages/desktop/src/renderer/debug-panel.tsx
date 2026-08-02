@@ -33,10 +33,12 @@ type QuerySource = 'rollup' | 'raw' | null;
 
 /** Infer the on-disk source the query reads from. CACHE / MEM are set on the
  *  entry directly; ROLLUP / RAW we infer by looking for the path markers in
- *  the SQL since those flags are not plumbed through. */
+ *  the SQL since those flags are not plumbed through. Paths are
+ *  provider-scoped ({dataDir}/{provider}/rollup|raw/...), so match on the
+ *  tier segment alone. */
 function detectSource(sql: string): QuerySource {
-  if (sql.includes('/aws/rollup/')) return 'rollup';
-  if (sql.includes('/aws/raw/')) return 'raw';
+  if (sql.includes('/rollup/')) return 'rollup';
+  if (sql.includes('/raw/')) return 'raw';
   return null;
 }
 

@@ -163,62 +163,89 @@ describe('assertHourString', () => {
 
 describe('validateTablePath', () => {
   it('accepts valid daily tier paths', () => {
-    expect(() => { validateTablePath('/data/aws/raw/daily-2026-03/*.parquet'); }).not.toThrow();
-    expect(() => { validateTablePath('/data/aws/raw/daily-2026-04/*.parquet'); }).not.toThrow();
-    expect(() => { validateTablePath('/data/aws/raw/daily-2025-12/*.parquet'); }).not.toThrow();
+    expect(() => { validateTablePath('/data/aws/raw/daily-2026-03/*.parquet', ['aws']); }).not.toThrow();
+    expect(() => { validateTablePath('/data/aws/raw/daily-2026-04/*.parquet', ['aws']); }).not.toThrow();
+    expect(() => { validateTablePath('/data/aws/raw/daily-2025-12/*.parquet', ['aws']); }).not.toThrow();
   });
 
   it('accepts valid hourly tier paths', () => {
-    expect(() => { validateTablePath('/data/aws/raw/hourly-2026-03/*.parquet'); }).not.toThrow();
-    expect(() => { validateTablePath('/data/aws/raw/hourly-2026-04/*.parquet'); }).not.toThrow();
+    expect(() => { validateTablePath('/data/aws/raw/hourly-2026-03/*.parquet', ['aws']); }).not.toThrow();
+    expect(() => { validateTablePath('/data/aws/raw/hourly-2026-04/*.parquet', ['aws']); }).not.toThrow();
   });
 
   it('accepts valid cost-optimization tier paths', () => {
-    expect(() => { validateTablePath('/data/aws/raw/cost-optimization-2026-03/*.parquet'); }).not.toThrow();
+    expect(() => { validateTablePath('/data/aws/raw/cost-optimization-2026-03/*.parquet', ['aws']); }).not.toThrow();
   });
 
   it('accepts wildcard period paths', () => {
-    expect(() => { validateTablePath('/data/aws/raw/daily-*/*.parquet'); }).not.toThrow();
-    expect(() => { validateTablePath('/data/aws/raw/hourly-*/*.parquet'); }).not.toThrow();
+    expect(() => { validateTablePath('/data/aws/raw/daily-*/*.parquet', ['aws']); }).not.toThrow();
+    expect(() => { validateTablePath('/data/aws/raw/hourly-*/*.parquet', ['aws']); }).not.toThrow();
   });
 
   it('accepts read_parquet wrapped paths', () => {
-    expect(() => { validateTablePath("read_parquet('/data/aws/raw/daily-2026-03/*.parquet')"); }).not.toThrow();
-    expect(() => { validateTablePath('read_parquet(\'/data/aws/raw/daily-*/*.parquet\')'); }).not.toThrow();
+    expect(() => { validateTablePath("read_parquet('/data/aws/raw/daily-2026-03/*.parquet')", ['aws']); }).not.toThrow();
+    expect(() => { validateTablePath('read_parquet(\'/data/aws/raw/daily-*/*.parquet\')', ['aws']); }).not.toThrow();
+  });
+
+  it('accepts allow-listed provider names with hyphens and underscores', () => {
+    expect(() => { validateTablePath('/data/aws-main/raw/daily-2026-03/*.parquet', ['aws-main']); }).not.toThrow();
+    expect(() => { validateTablePath('/data/aws_prod/raw/hourly-2026-04/*.parquet', ['aws_prod']); }).not.toThrow();
+    expect(() => { validateTablePath('/data/aws-main/raw/daily-*/*.parquet', ['aws', 'aws-main']); }).not.toThrow();
+  });
+
+  it('rejects provider segments not in the allow-list', () => {
+    expect(() => { validateTablePath('/data/gcp/raw/daily-2026-03/*.parquet', ['aws']); })
+      .toThrow(SecurityError);
+    expect(() => { validateTablePath('/data/aws-main/raw/daily-2026-03/*.parquet', ['aws']); })
+      .toThrow(SecurityError);
+    expect(() => { validateTablePath('/data/aws/raw/daily-2026-03/*.parquet', []); })
+      .toThrow(SecurityError);
+  });
+
+  it('throws SecurityError with descriptive message for unknown provider', () => {
+    expect(() => { validateTablePath('/data/gcp/raw/daily-2026-03/*.parquet', ['aws']); })
+      .toThrow('Invalid provider "gcp" in table path');
   });
 
   it('rejects invalid tier names', () => {
-    expect(() => { validateTablePath('/data/aws/raw/malicious-2026-03/*.parquet'); })
+    expect(() => { validateTablePath('/data/aws/raw/malicious-2026-03/*.parquet', ['aws']); })
       .toThrow(SecurityError);
-    expect(() => { validateTablePath('/data/aws/raw/DROP-2026-03/*.parquet'); })
+    expect(() => { validateTablePath('/data/aws/raw/DROP-2026-03/*.parquet', ['aws']); })
       .toThrow(SecurityError);
   });
 
   it('rejects invalid period formats', () => {
-    expect(() => { validateTablePath('/data/aws/raw/daily-2026/*.parquet'); })
+    expect(() => { validateTablePath('/data/aws/raw/daily-2026/*.parquet', ['aws']); })
       .toThrow(SecurityError);
-    expect(() => { validateTablePath('/data/aws/raw/daily-invalid/*.parquet'); })
+    expect(() => { validateTablePath('/data/aws/raw/daily-invalid/*.parquet', ['aws']); })
       .toThrow(SecurityError);
-    expect(() => { validateTablePath('/data/aws/raw/daily-2026-13/*.parquet'); })
+    expect(() => { validateTablePath('/data/aws/raw/daily-2026-13/*.parquet', ['aws']); })
       .toThrow(SecurityError);
   });
 
   it('rejects invalid path structure', () => {
-    expect(() => { validateTablePath('/data/wrong/path/daily-2026-03/*.parquet'); })
+    expect(() => { validateTablePath('/data/wrong/path/daily-2026-03/*.parquet', ['aws']); })
       .toThrow(SecurityError);
-    expect(() => { validateTablePath('SELECT * FROM users'); })
+    expect(() => { validateTablePath('SELECT * FROM users', ['aws']); })
       .toThrow(SecurityError);
-    expect(() => { validateTablePath('../../../etc/passwd'); })
+    expect(() => { validateTablePath('../../../etc/passwd', ['aws']); })
+      .toThrow(SecurityError);
+  });
+
+  it('rejects traversal through the provider segment', () => {
+    expect(() => { validateTablePath('/data/aws/../evil/raw/daily-2026-03/*.parquet', ['aws']); })
+      .toThrow(SecurityError);
+    expect(() => { validateTablePath('read_parquet(\'../../../etc/passwd\')', ['aws']); })
       .toThrow(SecurityError);
   });
 
   it('throws SecurityError with descriptive message for invalid tier', () => {
-    expect(() => { validateTablePath('/data/aws/raw/invalid-2026-03/*.parquet'); })
+    expect(() => { validateTablePath('/data/aws/raw/invalid-2026-03/*.parquet', ['aws']); })
       .toThrow('Invalid tier "invalid" in table path');
   });
 
   it('throws SecurityError with descriptive message for invalid period', () => {
-    expect(() => { validateTablePath('/data/aws/raw/daily-badperiod/*.parquet'); })
+    expect(() => { validateTablePath('/data/aws/raw/daily-badperiod/*.parquet', ['aws']); })
       .toThrow('Invalid period "badperiod" in table path');
   });
 });

@@ -77,7 +77,7 @@ function filterUncoveredSuggestions(
 }
 
 export function registerDimensionsHandlers(app: AppContext): void {
-  const { ctx, getConfig, getDimensions, getQueryDimensions, getCostScope, getAvailableColumns, getOrgAccountsPath, getAccountReverseMap, getRegionMap, signatureForDimensions, invalidateDimensions, rollupStore, runQuery } = app;
+  const { ctx, getConfig, getDimensions, getQueryDimensions, getCostScope, getFirstProviderName, getQueryProviders, getOrgAccountsPath, getAccountReverseMap, getRegionMap, signatureForDimensions, invalidateDimensions, rollupStore, runQuery } = app;
 
   ipcMain.handle('dimensions:discover-tags', async (): Promise<{ tags: { key: string; sampleValues: string[]; rowCount: number; distinctCount: number; coveragePct: number }[]; samplePeriod: string }> => {
     const config = await getConfig();
@@ -86,16 +86,17 @@ export function registerDimensionsHandlers(app: AppContext): void {
 
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const dailyDir = path.join(ctx.dataDir, 'aws', 'raw');
+    const providerRoot = `${ctx.dataDir}/${String(provider.name)}/raw`;
+    const dailyDir = path.join(ctx.dataDir, String(provider.name), 'raw');
     let dirs: string[] = [];
     try {
       dirs = (await fs.readdir(dailyDir)).filter(d => /^daily-\d{4}-(0[1-9]|1[0-2])$/.test(d)).sort((a, b) => a.localeCompare(b));
     } catch { /* no data */ }
     const recentDirs = dirs.slice(-2);
-    const parquetGlobs = recentDirs.map(d => `'${ctx.dataDir}/aws/raw/${d}/*.parquet'`).join(', ');
+    const parquetGlobs = recentDirs.map(d => `'${providerRoot}/${d}/*.parquet'`).join(', ');
     const rawParquet = recentDirs.length > 0
       ? `read_parquet([${parquetGlobs}])`
-      : `read_parquet('${ctx.dataDir}/aws/raw/daily-*/*.parquet')`;
+      : `read_parquet('${providerRoot}/daily-*/*.parquet')`;
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
     const totalSql = `SELECT COUNT(*) AS total FROM ${rawParquet} WHERE line_item_usage_start_date >= '${thirtyDaysAgo}'`;
@@ -167,9 +168,13 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const ALLOWED = new Set(['account_id', 'account_name', 'region', 'service', 'service_family', 'line_item_type', 'operation', 'usage_type']);
     if (!ALLOWED.has(field)) return { values: [], distinctCount: 0, period: '' };
 
+    const providers = await getQueryProviders('daily');
+    const firstProvider = providers[0];
+    if (firstProvider === undefined) return { values: [], distinctCount: 0, period: '' };
+
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
+    const rawDir = path.join(ctx.dataDir, String(firstProvider.name), 'raw');
     let dirs: string[] = [];
     try {
       dirs = (await fs.readdir(rawDir)).filter(d => /^daily-\d{4}-(0[1-9]|1[0-2])$/.test(d)).sort((a, b) => a.localeCompare(b));
@@ -183,11 +188,12 @@ export function registerDimensionsHandlers(app: AppContext): void {
     // is already a buildSource output alias (validated against ALLOWED above).
     const period = latest.replace(/^daily-/, '');
     const costScope = await getCostScope().catch(() => undefined);
-    const availableColumns = await getAvailableColumns('daily');
     const orgAccountsPath = await getOrgAccountsPath();
     const source = buildSource({
       dataDir: ctx.dataDir, tier: 'daily', dimensions: await getQueryDimensions(),
-      orgAccountsPath, periods: [period], costMetric: 'unblended', availableColumns,
+      orgAccountsPath,
+      providers: providers.map(p => ({ name: p.name, periods: [period], availableColumns: p.availableColumns })),
+      costMetric: 'unblended',
       marketplaceAttribution: costScope?.marketplaceAttribution,
     });
 
@@ -237,9 +243,13 @@ export function registerDimensionsHandlers(app: AppContext): void {
   // (one scan, ~150–550 ms) so the UI can call it live as dims are toggled.
   ipcMain.handle('dimensions:estimate-rollup-grain', async (_event, candidate: DimensionsConfig): Promise<RollupGrainEstimate> => {
     const current = rollupStore.getStats();
+    const providers = await getQueryProviders('daily');
+    const firstProvider = providers[0];
+    if (firstProvider === undefined) return emptyRollupEstimate(current);
+
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
+    const rawDir = path.join(ctx.dataDir, String(firstProvider.name), 'raw');
     let dirs: string[] = [];
     try {
       dirs = (await fs.readdir(rawDir)).filter(d => /^daily-\d{4}-(0[1-9]|1[0-2])$/.test(d)).sort((a, b) => a.localeCompare(b));
@@ -252,11 +262,10 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const grainDims = rollupGrainDimensions(candidate);
 
     const costScope = await getCostScope().catch(() => undefined);
-    const availableColumns = await getAvailableColumns('daily');
     const orgAccountsPath = await getOrgAccountsPath();
     const accountReverseMap = await getAccountReverseMap();
     const sql = buildGrainProbeQuery(period, grainColumns, {
-      dataDir: ctx.dataDir, dimensions: candidate, orgAccountsPath, accountReverseMap, costScope, availableColumns,
+      dataDir: ctx.dataDir, dimensions: candidate, orgAccountsPath, accountReverseMap, costScope, providers,
     });
     const rows = await runQuery(sql);
     const row = rows[0];
@@ -299,9 +308,12 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const tag = config.tags.find(t => t.tagName === tagName);
     if (tag === undefined) return [];
 
+    const provider = await getFirstProviderName();
+    if (provider === null) return [];
+
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
+    const rawDir = path.join(ctx.dataDir, String(provider), 'raw');
     let dirs: string[] = [];
     try {
       dirs = (await fs.readdir(rawDir)).filter(d => /^daily-\d{4}-(0[1-9]|1[0-2])$/.test(d)).sort();
@@ -309,7 +321,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const latest = dirs.at(-1);
     if (latest === undefined) return [];
 
-    const source = `read_parquet('${ctx.dataDir}/aws/raw/${latest}/*.parquet')`;
+    const source = `read_parquet('${ctx.dataDir}/${String(provider)}/raw/${latest}/*.parquet')`;
     const rows = await runQuery(`
       WITH tags AS (
         SELECT unnest(map_keys(resource_tags)) AS tag_key,

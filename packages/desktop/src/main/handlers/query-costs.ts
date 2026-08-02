@@ -43,7 +43,7 @@ function toDailyCostDay([date, breakdown]: readonly [string, Record<string, numb
 }
 
 export function registerCostHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getCostScope, getAvailableColumns, runPreparedQuery, rollupStore } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getOrgTreeConfig, getCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
 
   ipcMain.handle('query:costs', (_event, params: CostQueryParams): Promise<CostResult> => originStore.run(params.origin ?? null, async () => {
     const dimensions = await getDimensions();
@@ -52,12 +52,14 @@ export function registerCostHandlers(app: AppContext): void {
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
-    const availableColumns = await getAvailableColumns(tier);
-    const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, tier, params.dateRange);
+    const providers = await getQueryProviders(tier);
+    const firstProvider = providers[0];
+    const empty = firstProvider === undefined
+      || (await resolveAvailablePeriods(ctx.dataDir, firstProvider.name, tier, params.dateRange)).empty;
     if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
     const matSource = resolveRollupSource(rollupStore, params.dateRange, tier, [columnForDimension(dimensions, params.groupBy), 'service', 'cost']);
     const isMat = matSource !== undefined;
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };
     const { sql, params: queryParams } = buildCostQuery(params, qcOpts);
     logger.info('query:costs', { groupBy: params.groupBy, materialized: isMat });
 
@@ -87,12 +89,14 @@ export function registerCostHandlers(app: AppContext): void {
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
-    const availableColumns = await getAvailableColumns(tier);
-    const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, tier, params.dateRange);
+    const providers = await getQueryProviders(tier);
+    const firstProvider = providers[0];
+    const empty = firstProvider === undefined
+      || (await resolveAvailablePeriods(ctx.dataDir, firstProvider.name, tier, params.dateRange)).empty;
     if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
     const matSource = resolveRollupSource(rollupStore, params.dateRange, tier, [columnForDimension(dimensions, params.groupBy), 'cost']);
     const isMat = matSource !== undefined;
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };
     const { sql, params: queryParams } = buildDailyCostsQuery(params, qcOpts);
     logger.info('query:daily-costs', { groupBy: params.groupBy, materialized: isMat });
 
@@ -141,8 +145,10 @@ export function registerCostHandlers(app: AppContext): void {
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
-    const availableColumns = await getAvailableColumns(tier);
-    const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, tier, params.dateRange);
+    const providers = await getQueryProviders(tier);
+    const firstProvider = providers[0];
+    const empty = firstProvider === undefined
+      || (await resolveAvailablePeriods(ctx.dataDir, firstProvider.name, tier, params.dateRange)).empty;
     if (empty) {
       return {
         entity: params.entity,
@@ -157,7 +163,7 @@ export function registerCostHandlers(app: AppContext): void {
     }
     const matSource = resolveRollupSource(rollupStore, params.dateRange, tier, [columnForDimension(dimensions, params.dimension), 'service', 'account_id', 'account_name', 'cost']);
     const isMat = matSource !== undefined;
-    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns, materializedSource: matSource };
+    const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };
     const { sql, params: queryParams } = buildEntityDetailQuery(params, qcOpts);
     logger.info('query:entity-detail', { entity: params.entity, materialized: isMat });
 

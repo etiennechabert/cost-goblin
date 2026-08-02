@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { mkdtemp, rm, stat, readdir } from 'node:fs/promises';
-import { buildRollupPartitionQuery, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, type RollupStatus, asDimensionId } from '@costgoblin/core';
+import { buildRollupPartitionQuery, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, type ProviderName, type RollupStatus, asDimensionId, asProviderName } from '@costgoblin/core';
 import { RollupStore, type RollupShape } from '../main/rollup-store.js';
 import type { RawRow } from '../main/duckdb-client.js';
 
@@ -29,6 +29,12 @@ async function fetchRows(conn: DuckDBConnection, sql: string): Promise<RawRow[]>
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // core synthetic fixtures live under packages/core/src/__fixtures__/synthetic
 const SYNTHETIC_DIR = join(__dirname, '..', '..', '..', 'core', 'src', '__fixtures__', 'synthetic');
+// Provider the committed synthetic tree is laid out under (synthetic/aws-main/raw/...).
+// Literal mirror of FIXTURE_PROVIDER_NAME in packages/core/src/__fixtures__/layout.ts —
+// not importable here (outside this package's tsconfig rootDir).
+const FIXTURE_PROVIDER = asProviderName('aws-main');
+// The store writes under {dataDir}/{provider}/rollup — path assertions below pin 'aws'.
+const providerName = (): ProviderName => asProviderName('aws');
 
 const dimensions: DimensionsConfig = {
   builtIn: [
@@ -48,7 +54,7 @@ describe('RollupStore', () => {
   let runQuery: (sql: string) => Promise<RawRow[]>;
 
   const buildSql = (period: string, outPath: string) =>
-    buildRollupPartitionQuery(period, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, availablePeriods: [period], costScope });
+    buildRollupPartitionQuery(period, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: FIXTURE_PROVIDER, availablePeriods: [period] }], costScope });
 
   beforeAll(async () => {
     db = await DuckDBInstance.create();
@@ -59,7 +65,7 @@ describe('RollupStore', () => {
   afterAll(async () => { await rm(dataDir, { recursive: true, force: true }); });
 
   it('builds a partition, writes an atomic manifest (no .tmp), and routes to it', async () => {
-    const store = new RollupStore({ dataDir, runQuery });
+    const store = new RollupStore({ dataDir, providerName, runQuery });
     await store.maintainPeriods(['2026-01'], buildSql, etags, shape);
 
     expect(store.isReady()).toBe(true);
@@ -98,7 +104,7 @@ describe('RollupStore', () => {
       peakInFlight = Math.max(peakInFlight, inFlight);
       try { return await onFreshConn(sql); } finally { inFlight -= 1; }
     };
-    const store = new RollupStore({ dataDir, runQuery: onFreshConn, runBuild, buildConcurrency: 2 });
+    const store = new RollupStore({ dataDir, providerName, runQuery: onFreshConn, runBuild, buildConcurrency: 2 });
     await store.maintainPeriods(['2026-01', '2026-02'], buildSql, etags, shape);
     clearTimeout(safety);
 
@@ -108,7 +114,7 @@ describe('RollupStore', () => {
       await expect(stat(join(dataDir, 'aws', 'rollup', `daily-${period}`, 'rollup.parquet'))).resolves.toBeDefined();
     }
     // A reloaded store sees both partitions as valid → every commit landed.
-    const reloaded = new RollupStore({ dataDir, runQuery });
+    const reloaded = new RollupStore({ dataDir, providerName, runQuery });
     const v = await reloaded.loadAndValidate(shape, etags);
     expect([...v.validPeriods].sort()).toEqual(['2026-01', '2026-02']);
     const dir = await readdir(join(dataDir, 'aws', 'rollup'));
@@ -116,7 +122,7 @@ describe('RollupStore', () => {
   });
 
   it('resolveSource falls back to raw (undefined) on hour bounds, out-of-grain column, or an unbuilt period', async () => {
-    const store = new RollupStore({ dataDir, runQuery });
+    const store = new RollupStore({ dataDir, providerName, runQuery });
     await store.maintainPeriods(['2026-01'], buildSql, etags, shape);
     expect(store.resolveSource({ requiredPeriods: ['2026-01'], tier: 'hourly', neededColumns: ['service'] })).toBeUndefined();
     expect(store.resolveSource({ requiredPeriods: ['2026-01'], tier: 'daily', neededColumns: ['resource_id'] })).toBeUndefined();
@@ -124,33 +130,33 @@ describe('RollupStore', () => {
   });
 
   it('warm-load validates a persisted manifest: matching reuses, changed etag is stale, new signature is fully invalid', async () => {
-    const builder = new RollupStore({ dataDir, runQuery });
+    const builder = new RollupStore({ dataDir, providerName, runQuery });
     await builder.maintainPeriods(['2026-01'], buildSql, etags, shape);
 
-    const fresh = new RollupStore({ dataDir, runQuery });
+    const fresh = new RollupStore({ dataDir, providerName, runQuery });
     const ok = await fresh.loadAndValidate(shape, etags);
     expect(ok.fullyInvalid).toBe(false);
     expect([...ok.validPeriods]).toEqual(['2026-01']);
     expect(fresh.resolveSource({ requiredPeriods: ['2026-01'], tier: 'daily', neededColumns: ['service'] })).toContain('read_parquet');
 
-    const staleStore = new RollupStore({ dataDir, runQuery });
+    const staleStore = new RollupStore({ dataDir, providerName, runQuery });
     const stale = await staleStore.loadAndValidate(shape, { ...etags, '2026-01': { 'f1': 'h1-CHANGED' } });
     expect([...stale.stalePeriods]).toEqual(['2026-01']);
     expect(stale.validPeriods.size).toBe(0);
 
-    const sigStore = new RollupStore({ dataDir, runQuery });
+    const sigStore = new RollupStore({ dataDir, providerName, runQuery });
     const bad = await sigStore.loadAndValidate({ ...shape, signature: 'SIG-2' }, etags);
     expect(bad.fullyInvalid).toBe(true);
     expect(sigStore.resolveSource({ requiredPeriods: ['2026-01'], tier: 'daily', neededColumns: ['service'] })).toBeUndefined();
   });
 
   it('deletePeriod removes the partition and its manifest entry', async () => {
-    const store = new RollupStore({ dataDir, runQuery });
+    const store = new RollupStore({ dataDir, providerName, runQuery });
     await store.maintainPeriods(['2026-01'], buildSql, etags, shape);
     await store.deletePeriod('2026-01');
     expect([...store.getValidPeriods()]).toEqual([]);
     await expect(stat(join(dataDir, 'aws', 'rollup', 'daily-2026-01'))).rejects.toThrow();
-    const reloaded = new RollupStore({ dataDir, runQuery });
+    const reloaded = new RollupStore({ dataDir, providerName, runQuery });
     const v = await reloaded.loadAndValidate(shape, etags);
     expect(v.validPeriods.size).toBe(0);
   });
@@ -159,7 +165,7 @@ describe('RollupStore', () => {
     const failDir = await mkdtemp(join(tmpdir(), 'cg-rollup-fail-'));
     let captured: RollupStatus | undefined;
     const runBuild = (): Promise<RawRow[]> => Promise.reject(new Error('Binder Error: column "service" not found'));
-    const store = new RollupStore({ dataDir: failDir, runQuery, runBuild });
+    const store = new RollupStore({ dataDir: failDir, providerName, runQuery, runBuild });
     store.onStatusChanged((s) => { captured = s; });
     await store.maintainPeriods(['2026-01', '2026-02'], buildSql, etags, shape);
 
@@ -173,7 +179,7 @@ describe('RollupStore', () => {
   });
 
   it('invalidate() removes the on-disk rollup and resets state', async () => {
-    const store = new RollupStore({ dataDir, runQuery });
+    const store = new RollupStore({ dataDir, providerName, runQuery });
     await store.maintainPeriods(['2026-01'], buildSql, etags, shape);
     await store.invalidate();
     expect(store.isReady()).toBe(false);

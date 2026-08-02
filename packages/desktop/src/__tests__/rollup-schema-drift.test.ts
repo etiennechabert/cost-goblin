@@ -3,7 +3,7 @@ import { DuckDBInstance } from '@duckdb/node-api';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp, mkdir, rm, stat } from 'node:fs/promises';
-import { buildRollupPartitionQuery, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, asDimensionId } from '@costgoblin/core';
+import { buildRollupPartitionQuery, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, type ProviderName, asDimensionId, asProviderName } from '@costgoblin/core';
 import { RollupStore, type RollupShape, type BuildPartitionSql } from '../main/rollup-store.js';
 import type { RawRow } from '../main/duckdb-client.js';
 
@@ -76,6 +76,9 @@ const dimensions: DimensionsConfig = {
 const costScope: CostScopeConfig = { costMetric: 'amortized', costPerspective: 'gross', rules: [] };
 const shape: RollupShape = { signature: 'SIG-DRIFT', grainDimensions: rollupGrainColumns(dimensions), availableColumns: ['account_id', 'account_name', 'service'] };
 const etags = { '2025-10': { f: 'h-old' }, '2026-04': { f: 'h-new' } };
+// This suite seeds its raw tree under {dataDir}/aws/raw/... — 'aws' is the
+// provider name for both the build SQL and the store's rollup dir.
+const providerName = (): ProviderName => asProviderName('aws');
 
 describe('RollupStore cold rebuild over mixed-schema months', () => {
   let db: Awaited<ReturnType<typeof DuckDBInstance.create>>;
@@ -94,11 +97,11 @@ describe('RollupStore cold rebuild over mixed-schema months', () => {
 
   // The fixed wiring: each period's build SQL uses THAT period's columns.
   const buildPerPeriod: BuildPartitionSql = async (period, outPath) =>
-    buildRollupPartitionQuery(period, 'daily', outPath, { dataDir, dimensions, costScope, availableColumns: await probe(period) });
+    buildRollupPartitionQuery(period, 'daily', outPath, { dataDir, dimensions, costScope, providers: [{ name: providerName(), availableColumns: await probe(period) }] });
 
   // The OLD (buggy) wiring: every period uses the latest month's columns.
   const buildLatestForAll: BuildPartitionSql = async (period, outPath) =>
-    buildRollupPartitionQuery(period, 'daily', outPath, { dataDir, dimensions, costScope, availableColumns: await probe('2026-04') });
+    buildRollupPartitionQuery(period, 'daily', outPath, { dataDir, dimensions, costScope, providers: [{ name: providerName(), availableColumns: await probe('2026-04') }] });
 
   function sqlValue(col: string, type: string, row: FixtureRow): string {
     switch (col) {
@@ -158,7 +161,7 @@ describe('RollupStore cold rebuild over mixed-schema months', () => {
   afterAll(async () => { await rm(dataDir, { recursive: true, force: true }); });
 
   it('builds every month, including the older drifted-schema one (no Binder Error)', async () => {
-    const store = new RollupStore({ dataDir, runQuery });
+    const store = new RollupStore({ dataDir, providerName, runQuery });
     // Newest-first, exactly like warmupRollup orders toBuild.
     await store.maintainPeriods(['2026-04', '2025-10'], buildPerPeriod, etags, shape);
 
@@ -178,7 +181,7 @@ describe('RollupStore cold rebuild over mixed-schema months', () => {
   });
 
   it('regression guard: the old latest-month-for-all wiring fails to build the drifted month', async () => {
-    const store = new RollupStore({ dataDir, runQuery });
+    const store = new RollupStore({ dataDir, providerName, runQuery });
     await store.maintainPeriods(['2026-04', '2025-10'], buildLatestForAll, etags, shape);
     // 2026-04 builds; 2025-10's COPY throws a Binder Error and is skipped.
     expect([...store.getValidPeriods()]).toEqual(['2026-04']);

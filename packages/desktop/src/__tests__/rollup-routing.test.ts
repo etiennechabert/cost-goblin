@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { type DimensionsConfig, asDimensionId } from '@costgoblin/core';
+import { type DimensionsConfig, asDimensionId, asProviderName } from '@costgoblin/core';
 import { columnForDimension, resolveRollupSource } from '../main/handlers/query-utils.js';
 import { RollupStore } from '../main/rollup-store.js';
 
@@ -24,7 +24,7 @@ describe('columnForDimension', () => {
 
 describe('resolveRollupSource', () => {
   it('returns undefined when the store has no valid partitions (falls back to raw)', () => {
-    const store = new RollupStore({ dataDir: '/tmp/none', runQuery: () => Promise.resolve([]) });
+    const store = new RollupStore({ dataDir: '/tmp/none', providerName: () => asProviderName('aws'), runQuery: () => Promise.resolve([]) });
     expect(resolveRollupSource(store, { start: '2026-01-01', end: '2026-01-31' }, 'daily', ['service', 'cost'])).toBeUndefined();
   });
 });

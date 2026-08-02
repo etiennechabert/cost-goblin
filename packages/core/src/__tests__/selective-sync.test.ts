@@ -4,12 +4,15 @@ import { join } from 'node:path';
 import type { ManifestFileEntry } from '../sync/manifest.js';
 import { syncSelectedFiles } from '../sync/selective-sync.js';
 import type { SyncProgress } from '../sync/s3-client.js';
+import { asProviderName } from '../types/branded.js';
 
 vi.mock('node:child_process');
 vi.mock('node:fs/promises');
 vi.mock('../logger/logger.js');
 
 const file = (key: string, hash = 'h', size = 1): ManifestFileEntry => ({ key, contentHash: hash, size });
+
+const providerName = asProviderName('aws');
 
 class MockChildProcess extends EventEmitter {
   stdout = new EventEmitter();
@@ -87,6 +90,7 @@ describe('syncSelectedFiles', () => {
     const result = await syncSelectedFiles({
       bucketPath: 's3://test-bucket/cur/data/',
       profile: 'test-profile',
+      providerName,
       dataDir,
       expectedDataType: 'daily',
       files,
@@ -112,6 +116,7 @@ describe('syncSelectedFiles', () => {
     const result = await syncSelectedFiles({
       bucketPath: 's3://test-bucket/cost-opt/',
       profile: 'test-profile',
+      providerName,
       dataDir: '/tmp/test',
       expectedDataType: 'cost-optimization',
       files,
@@ -133,6 +138,7 @@ describe('syncSelectedFiles', () => {
     await syncSelectedFiles({
       bucketPath: 's3://bucket/cur/',
       profile: 'test',
+      providerName,
       dataDir: '/data',
       files,
     });
@@ -159,6 +165,7 @@ describe('syncSelectedFiles', () => {
     await syncSelectedFiles({
       bucketPath: 's3://bucket/cur/',
       profile: 'test',
+      providerName,
       dataDir: '/tmp',
       files,
       onProgress: (progress) => { progressEvents.push(progress); },
@@ -183,6 +190,7 @@ describe('syncSelectedFiles', () => {
     await syncSelectedFiles({
       bucketPath: 's3://bucket/cur/',
       profile: 'test',
+      providerName,
       dataDir: '/tmp',
       files,
       onFileDownloaded: (localPath) => { downloadedPaths.push(localPath); },
@@ -200,6 +208,7 @@ describe('syncSelectedFiles', () => {
       syncSelectedFiles({
         bucketPath: 's3://bucket/cur/',
         profile: 'test',
+        providerName,
         dataDir: '/tmp',
         files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
       })
@@ -223,6 +232,7 @@ describe('syncSelectedFiles', () => {
       syncSelectedFiles({
         bucketPath: 's3://bucket/cur/',
         profile: 'test',
+        providerName,
         dataDir: '/tmp',
         files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
       })
@@ -236,6 +246,7 @@ describe('syncSelectedFiles', () => {
     const result = await syncSelectedFiles({
       bucketPath: 's3://bucket/cur/',
       profile: 'test',
+      providerName,
       dataDir: '/tmp',
       files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
       signal: controller.signal,
@@ -256,6 +267,7 @@ describe('syncSelectedFiles', () => {
       syncSelectedFiles({
         bucketPath: 's3://bucket/cur/',
         profile: 'test',
+        providerName,
         dataDir: '/tmp',
         files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
         signal: controller.signal,
@@ -285,6 +297,7 @@ describe('syncSelectedFiles', () => {
       syncSelectedFiles({
         bucketPath: 's3://bucket/cur/',
         profile: 'test',
+        providerName,
         dataDir: '/tmp',
         files: [
           file('cur/BILLING_PERIOD=2026-01/a.parquet'),
@@ -311,11 +324,12 @@ describe('syncSelectedFiles', () => {
 
     const files = [file('cur/BILLING_PERIOD=2026-02/new-file.parquet', 'new-hash')];
     const dataDir = '/tmp';
-    const expectedEtagFile = join(dataDir, 'sync-etags.json');
+    const expectedEtagFile = join(dataDir, 'aws', 'meta', 'sync-etags.json');
 
     await syncSelectedFiles({
       bucketPath: 's3://bucket/cur/',
       profile: 'test',
+      providerName,
       dataDir,
       files,
     });
@@ -341,6 +355,7 @@ describe('syncSelectedFiles', () => {
       await syncSelectedFiles({
         bucketPath: 's3://test-bucket/cur/data/',
         profile: 'test-profile',
+        providerName,
         dataDir,
         expectedDataType: 'daily',
         files,
@@ -358,6 +373,7 @@ describe('syncSelectedFiles', () => {
       await syncSelectedFiles({
         bucketPath: 's3://test-bucket/cur/data/',
         profile: 'test-profile',
+        providerName,
         dataDir: '/tmp/prune-clean',
         expectedDataType: 'daily',
         files: [
@@ -377,6 +393,7 @@ describe('syncSelectedFiles', () => {
       await syncSelectedFiles({
         bucketPath: 's3://test-bucket/cur/data/',
         profile: 'test-profile',
+        providerName,
         dataDir: '/tmp/prune-temp',
         expectedDataType: 'daily',
         files: [file('cur/data/BILLING_PERIOD=2026-03/file1.parquet')],
@@ -397,6 +414,7 @@ describe('syncSelectedFiles', () => {
       const result = await syncSelectedFiles({
         bucketPath: 's3://test-bucket/cur/data/',
         profile: 'test-profile',
+        providerName,
         dataDir,
         expectedDataType: 'daily',
         files: [file('cur/data/BILLING_PERIOD=2026-03/file1.parquet')],
@@ -404,7 +422,7 @@ describe('syncSelectedFiles', () => {
 
       // Download succeeded and etags were still persisted despite the prune error.
       expect(result.filesDownloaded).toBe(1);
-      expect(mockWriteFile).toHaveBeenCalledWith(join(dataDir, 'sync-etags.json'), expect.any(String));
+      expect(mockWriteFile).toHaveBeenCalledWith(join(dataDir, 'aws', 'meta', 'sync-etags.json'), expect.any(String));
     });
 
     it('does not prune when the period sync fails', async () => {
@@ -415,6 +433,7 @@ describe('syncSelectedFiles', () => {
         syncSelectedFiles({
           bucketPath: 's3://test-bucket/cur/data/',
           profile: 'test-profile',
+          providerName,
           dataDir: '/tmp/prune-fail',
           expectedDataType: 'daily',
           files: [file('cur/data/BILLING_PERIOD=2026-03/file1.parquet')],
@@ -429,6 +448,7 @@ describe('syncSelectedFiles', () => {
     const result = await syncSelectedFiles({
       bucketPath: 's3://bucket/cur/',
       profile: 'test',
+      providerName,
       dataDir: '/tmp',
       files: [],
     });
@@ -446,6 +466,7 @@ describe('syncSelectedFiles', () => {
     await syncSelectedFiles({
       bucketPath: 's3://bucket/cur/',
       profile: 'test',
+      providerName,
       dataDir,
       files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
     });
@@ -468,6 +489,7 @@ describe('syncSelectedFiles', () => {
       syncSelectedFiles({
         bucketPath: 's3://bucket/cur/',
         profile: 'test',
+        providerName,
         dataDir: '/tmp',
         files: [
           file('cur/BILLING_PERIOD=2026-01/a.parquet'),
@@ -507,6 +529,7 @@ describe('syncSelectedFiles', () => {
       await syncSelectedFiles({
         bucketPath: 's3://bucket/cur/',
         profile: 'test',
+        providerName,
         dataDir: '/tmp',
         files: [
           file('cur/BILLING_PERIOD=2026-01/a.parquet', 'hash-jan'),
@@ -539,6 +562,7 @@ describe('syncSelectedFiles', () => {
       await syncSelectedFiles({
         bucketPath: 's3://bucket/cur/',
         profile: 'test',
+        providerName,
         dataDir: '/tmp',
         files: [
           file('cur/BILLING_PERIOD=2026-01/a.parquet'),
@@ -562,6 +586,7 @@ describe('syncSelectedFiles', () => {
         syncSelectedFiles({
           bucketPath: 's3://bucket/cur/',
           profile: 'test',
+          providerName,
           dataDir: '/tmp',
           files: [
             file('cur/BILLING_PERIOD=2026-01/a.parquet'),
@@ -594,6 +619,7 @@ describe('syncSelectedFiles', () => {
       await syncSelectedFiles({
         bucketPath: 's3://bucket/cur/',
         profile: 'test',
+        providerName,
         dataDir: '/tmp',
         files: [
           file('cur/BILLING_PERIOD=2026-01/a.parquet'),
@@ -628,6 +654,7 @@ describe('syncSelectedFiles', () => {
       await syncSelectedFiles({
         bucketPath: 's3://bucket/cur/',
         profile: 'test',
+        providerName,
         dataDir: '/tmp',
         files: [file('cur/BILLING_PERIOD=2026-01/new-file.parquet', 'new-hash-1')],
       });
@@ -664,6 +691,7 @@ describe('syncSelectedFiles', () => {
       const result = await syncSelectedFiles({
         bucketPath: 's3://bucket/cur/',
         profile: 'test',
+        providerName,
         dataDir: '/tmp',
         files: [
           file('cur/BILLING_PERIOD=2026-01/a.parquet'),
@@ -687,6 +715,7 @@ describe('syncSelectedFiles', () => {
       await syncSelectedFiles({
         bucketPath: 's3://bucket/cost-opt/',
         profile: 'test',
+        providerName,
         dataDir: '/data',
         expectedDataType: 'cost-optimization',
         files: [
@@ -711,6 +740,7 @@ describe('syncSelectedFiles', () => {
       await syncSelectedFiles({
         bucketPath: 's3://bucket/cost-opt/',
         profile: 'test',
+        providerName,
         dataDir: '/tmp',
         expectedDataType: 'cost-optimization',
         files: [file('cost-opt/date=2026-03-15/file.parquet')],
@@ -727,6 +757,7 @@ describe('syncSelectedFiles', () => {
       await syncSelectedFiles({
         bucketPath: 's3://test-bucket/cost-opt/',
         profile: 'prod-profile',
+        providerName,
         dataDir: '/tmp/test',
         expectedDataType: 'cost-optimization',
         files: [file('cost-opt/date=2026-03-15/file.parquet', 'h1')],
@@ -747,6 +778,7 @@ describe('syncSelectedFiles', () => {
       await syncSelectedFiles({
         bucketPath: 's3://bucket/cost-opt/',
         profile: 'test',
+        providerName,
         dataDir,
         expectedDataType: 'cost-optimization',
         files: [
@@ -769,6 +801,7 @@ describe('syncSelectedFiles', () => {
       const result = await syncSelectedFiles({
         bucketPath: 's3://bucket/cost-opt/',
         profile: 'test',
+        providerName,
         dataDir: '/tmp',
         expectedDataType: 'cost-optimization',
         files: [
@@ -800,6 +833,7 @@ describe('syncSelectedFiles', () => {
       const result = await syncSelectedFiles({
         bucketPath: 's3://bucket/cost-opt/',
         profile: 'test',
+        providerName,
         dataDir: '/tmp',
         expectedDataType: 'cost-optimization',
         files: [
@@ -823,6 +857,7 @@ describe('syncSelectedFiles', () => {
         syncSelectedFiles({
           bucketPath: 's3://bucket/cost-opt/',
           profile: 'test',
+          providerName,
           dataDir: '/tmp',
           expectedDataType: 'cost-optimization',
           files: [file('cost-opt/date=2026-03-15/file.parquet')],
@@ -845,6 +880,7 @@ describe('syncSelectedFiles', () => {
         syncSelectedFiles({
           bucketPath: 's3://bucket/cur/',
           profile: 'test',
+          providerName,
           dataDir: '/tmp',
           files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
         })
@@ -858,6 +894,7 @@ describe('syncSelectedFiles', () => {
         syncSelectedFiles({
           bucketPath: 's3://bucket/cur/',
           profile: 'test',
+          providerName,
           dataDir: '/tmp',
           files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
         })
@@ -888,6 +925,7 @@ describe('syncSelectedFiles', () => {
         syncSelectedFiles({
           bucketPath: 's3://bucket/cur/',
           profile: 'test',
+          providerName,
           dataDir: '/tmp',
           files: [
             file('cur/BILLING_PERIOD=2026-01/a.parquet', 'hash-jan'),

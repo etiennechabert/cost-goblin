@@ -5,12 +5,14 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { buildSource, buildRollupPartitionQuery } from '../query/builder.js';
+import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
-import { asDimensionId } from '../types/branded.js';
+import { asDimensionId, asProviderName } from '../types/branded.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
+const PROVIDER = asProviderName(FIXTURE_PROVIDER_NAME);
 const MONTHS = ['2026-01', '2026-02'];
 
 const dimensions: DimensionsConfig = {
@@ -52,14 +54,14 @@ describe('rollup multi-month glob == raw over the window', () => {
     for (const m of MONTHS) {
       const dir = join(rollupDir, `daily-${m}`);
       await mkdir(dir, { recursive: true });
-      await conn.run(buildRollupPartitionQuery(m, 'daily', join(dir, 'rollup.parquet'), { dataDir: SYNTHETIC_DIR, dimensions, availablePeriods: [m], costScope }));
+      await conn.run(buildRollupPartitionQuery(m, 'daily', join(dir, 'rollup.parquet'), { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, availablePeriods: [m] }], costScope }));
     }
     glob = `read_parquet('${join(rollupDir, 'daily-*', 'rollup.parquet').replaceAll('\\', '/')}')`;
   });
   afterAll(async () => { await rm(rollupDir, { recursive: true, force: true }); });
 
   const window = `usage_date >= '2026-01-01' AND usage_date < '2026-03-01'`;
-  const rawSrc = () => buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, periods: MONTHS, costMetric: 'unblended' });
+  const rawSrc = () => buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: MONTHS }], costMetric: 'unblended' });
 
   it('total matches across the 2-month window', async () => {
     const raw = Number((await queryAll(conn, `SELECT CAST(SUM(cost) AS DOUBLE) t FROM ${rawSrc()} WHERE ${window}`))[0]?.['t']);
