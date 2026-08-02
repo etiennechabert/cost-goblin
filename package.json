@@ -63,8 +63,18 @@
   },
   "overrides": {
     "tmp": "^0.2.7",
-    "electron-vite": { "vite": "7.3.6" },
-    "@tailwindcss/vite": { "vite": "7.3.6" },
-    "vitest": { "vite": "7.3.6" }
+    "electron-vite": {
+      "vite": "7.3.6"
+    },
+    "@tailwindcss/vite": {
+      "vite": "7.3.6"
+    },
+    "vitest": {
+      "vite": "7.3.6"
+    }
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "electron-winstaller@5.4.0": true
   }
 }

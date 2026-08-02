@@ -637,7 +637,12 @@ function AppShell(): React.JSX.Element {
   }, [api]);
 
   useEffect(() => {
-    api.getWorkspaces().then(setWorkspacesInfo).catch(() => undefined);
+    // The needs-setup render holds for this result (the wizard's naming step
+    // depends on it) — on failure fall back to pinned-style info so the app
+    // can't hang on the splash screen.
+    api.getWorkspaces().then(setWorkspacesInfo).catch(() => {
+      setWorkspacesInfo({ mode: 'pinned', active: null, workspaces: [] });
+    });
   }, [api]);
 
   const applyViews = useCallback((cfg: ViewsConfig): void => {
@@ -863,15 +868,28 @@ function AppShell(): React.JSX.Element {
   }
 
   if (setupCheck.status === 'needs-setup') {
-    // Offer the workspace-name field only on the true first run of a fresh
+    // The wizard's shape (naming step, workspace label, jump-back list)
+    // depends on the workspaces info — hold on the splash until it arrives
+    // so the wizard mounts once, with its final props.
+    if (workspacesInfo === null) {
+      return <SplashScreen step={splashStep} />;
+    }
+    // Offer the workspace-name step only on the true first run of a fresh
     // install (initial 'default' workspace, not a settings-triggered re-run,
     // never in pinned/e2e mode).
     const allowNaming = !setupRerunRef.current
-      && workspacesInfo?.mode === 'workspace'
+      && workspacesInfo.mode === 'workspace'
       && workspacesInfo.active === 'default';
+    const otherWorkspaces = workspacesInfo.mode === 'workspace'
+      ? workspacesInfo.workspaces.filter(w => !w.active && w.configured).map(w => w.name)
+      : [];
     return (
       <SetupWizard
         {...(allowNaming ? { workspaceNaming: { initialName: 'default' } } : {})}
+        {...(workspacesInfo.mode === 'workspace' && workspacesInfo.active !== null
+          ? { workspaceLabel: workspacesInfo.active }
+          : {})}
+        {...(otherWorkspaces.length > 0 ? { otherWorkspaces } : {})}
         onComplete={(result) => {
           pendingWorkspaceNameRef.current = result?.workspaceName ?? null;
           setSetupCheck({ status: 'telemetry' });

@@ -545,11 +545,16 @@ and machine-level preferences (theme, chart palette) in `app-state.json`.
 - **Naming**: `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`, Windows reserved device names
   rejected, uniqueness case-insensitive. Same rules will apply to provider
   directory names later.
-- **First run**: the setup wizard's Welcome step offers an optional workspace
-  name (prefilled `default`); the directory is renamed when setup completes.
-- **Lifecycle** (Settings → Workspaces): create (start fresh / copy current
-  config without data / import a shared config bundle), rename, delete (with
-  destructive confirmation; the active and last workspaces can't be deleted).
+- **First run**: the setup wizard opens with a naming step (prefilled
+  `default`, Continue) before the get-started hub ("Set up from S3" / "Import
+  from a teammate"); the directory is renamed when setup completes.
+- **Creating another workspace** (Settings → Workspaces, ⌘K): a name-only
+  prompt (listing existing workspaces), then the app restarts into the new
+  empty workspace — the same setup wizard takes over at the get-started hub,
+  with a jump-back list of the other configured workspaces as the escape
+  hatch.
+- **Lifecycle** (Settings → Workspaces): rename and delete (with destructive
+  confirmation; the active and last workspaces can't be deleted).
 - **Switching = relaunch**: the app persists the target as last-used and
   restarts. Surfaces: a header chip (visible once ≥2 workspaces exist), the
   ⌘K command palette, and the Workspaces settings tab.

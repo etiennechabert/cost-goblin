@@ -69,7 +69,7 @@ describe('WorkspacesView', () => {
     expect(screen.queryByTestId('workspace-row-default')).toBeNull();
   });
 
-  it('rejects an invalid name in the New workspace modal and disables both create buttons', async () => {
+  it('rejects an invalid name in the New workspace modal and disables Create & Restart', async () => {
     const user = userEvent.setup();
     renderView(apiWith(TWO_WORKSPACES));
 
@@ -77,8 +77,7 @@ describe('WorkspacesView', () => {
     await user.type(screen.getByLabelText('Workspace name'), 'bad name');
 
     expect(screen.getByText(/letters, digits/)).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Create' }).hasAttribute('disabled')).toBe(true);
-    expect(screen.getByRole('button', { name: 'Create & switch' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Create & Restart' }).hasAttribute('disabled')).toBe(true);
   });
 
   it('rejects a duplicate name case-insensitively', async () => {
@@ -89,11 +88,20 @@ describe('WorkspacesView', () => {
     await user.type(screen.getByLabelText('Workspace name'), 'Default');
 
     expect(screen.getByText('A workspace named "Default" already exists.')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Create' }).hasAttribute('disabled')).toBe(true);
-    expect(screen.getByRole('button', { name: 'Create & switch' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Create & Restart' }).hasAttribute('disabled')).toBe(true);
   });
 
-  it('creates a fresh workspace without switching', async () => {
+  it('lists the existing workspaces in the New workspace modal', async () => {
+    const user = userEvent.setup();
+    renderView(apiWith(TWO_WORKSPACES));
+
+    await user.click(await screen.findByRole('button', { name: 'New workspace' }));
+
+    expect(screen.getByText(/Existing:/)).toBeDefined();
+    expect(screen.getByText(/default, client-acme/)).toBeDefined();
+  });
+
+  it('creates a fresh workspace and restarts into it', async () => {
     const api = apiWith(TWO_WORKSPACES);
     const createSpy = vi.spyOn(api, 'createWorkspace');
     const user = userEvent.setup();
@@ -101,27 +109,10 @@ describe('WorkspacesView', () => {
 
     await user.click(await screen.findByRole('button', { name: 'New workspace' }));
     await user.type(screen.getByLabelText('Workspace name'), 'client-two');
-    await user.click(screen.getByRole('button', { name: 'Create' }));
+    await user.click(screen.getByRole('button', { name: 'Create & Restart' }));
 
-    await waitFor(() => {
-      expect(createSpy).toHaveBeenCalledWith('client-two', { kind: 'fresh' }, false);
-    });
-    // The modal closes once the refreshed list lands.
-    await waitFor(() => {
-      expect(screen.queryByLabelText('Workspace name')).toBeNull();
-    });
-  });
-
-  it('creates & switches with switchTo=true', async () => {
-    const api = apiWith(TWO_WORKSPACES);
-    const createSpy = vi.spyOn(api, 'createWorkspace');
-    const user = userEvent.setup();
-    renderView(api);
-
-    await user.click(await screen.findByRole('button', { name: 'New workspace' }));
-    await user.type(screen.getByLabelText('Workspace name'), 'client-two');
-    await user.click(screen.getByRole('button', { name: 'Create & switch' }));
-
+    // Creation always switches into the new workspace (the boot wizard takes
+    // over from there).
     await waitFor(() => {
       expect(createSpy).toHaveBeenCalledWith('client-two', { kind: 'fresh' }, true);
     });
@@ -135,7 +126,7 @@ describe('WorkspacesView', () => {
 
     await user.click(await screen.findByRole('button', { name: 'New workspace' }));
     await user.type(screen.getByLabelText('Workspace name'), 'client-two');
-    await user.click(screen.getByRole('button', { name: 'Create' }));
+    await user.click(screen.getByRole('button', { name: 'Create & Restart' }));
 
     expect(await screen.findByText('disk full')).toBeDefined();
     // The modal stays open for another attempt.

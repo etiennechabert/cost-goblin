@@ -18,6 +18,7 @@ const SOURCE_LABELS: Record<DataSource, { title: string; description: string }> 
 
 type WizardStep =
   | { step: 'welcome' }
+  | { step: 'start' }
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
@@ -30,9 +31,16 @@ interface SetupWizardProps {
   onComplete: (result?: { workspaceName?: string }) => void;
   source?: DataSource | undefined;
   profile?: string | undefined;
-  /** Present only on the true first run of a fresh install: offers naming the
-   *  initial workspace on the Welcome step (prefilled with the current name). */
+  /** Present only on the true first run of a fresh install: shows the naming
+   *  step first (prefilled with the current name) before the get-started hub. */
   workspaceNaming?: { initialName: string } | undefined;
+  /** Active workspace name shown on the get-started hub when the workspace was
+   *  already named before this boot (e.g. created via Settings → New workspace).
+   *  Ignored when `workspaceNaming` is present — the typed name shows instead. */
+  workspaceLabel?: string | undefined;
+  /** Other configured workspaces the user can jump back into instead of
+   *  setting this one up (switch & restart). */
+  otherWorkspaces?: readonly string[] | undefined;
 }
 
 interface WelcomeNaming {
@@ -40,8 +48,47 @@ interface WelcomeNaming {
   readonly onChange: (value: string) => void;
 }
 
-function WelcomeStep({ onNext, onImport, naming }: Readonly<{ onNext: () => void; onImport: () => void; naming?: WelcomeNaming | undefined }>) {
-  const nameInvalid = naming !== undefined && !isValidWorkspaceName(naming.value);
+interface JumpBackProps {
+  readonly names: readonly string[];
+  readonly onSwitch: (name: string) => void;
+  readonly switchingTo: string | null;
+  readonly error: string;
+}
+
+/** "Jump back into an existing workspace" section — an escape hatch out of the
+ *  wizard when this boot landed in an unconfigured workspace but configured
+ *  ones exist. Switching restarts the app. */
+function JumpBackList({ jumpBack }: Readonly<{ jumpBack: JumpBackProps | undefined }>) {
+  if (jumpBack === undefined || jumpBack.names.length === 0) return null;
+  return (
+    <div className="flex w-full max-w-xs flex-col gap-2">
+      <div className="flex items-center gap-3 text-xs text-text-muted">
+        <span className="h-px flex-1 bg-border" />
+        <span>or</span>
+        <span className="h-px flex-1 bg-border" />
+      </div>
+      <p className="text-text-muted text-xs">Jump back into an existing workspace:</p>
+      <div className="flex flex-wrap justify-center gap-2">
+        {jumpBack.names.map((name) => (
+          <Button
+            key={name}
+            variant="outline"
+            size="sm"
+            disabled={jumpBack.switchingTo !== null}
+            onClick={() => { jumpBack.onSwitch(name); }}
+          >
+            {jumpBack.switchingTo === name ? 'Switching…' : name}
+          </Button>
+        ))}
+      </div>
+      {jumpBack.error !== '' && <p className="text-xs text-negative">{jumpBack.error}</p>}
+    </div>
+  );
+}
+
+/** Step 1 (first run only): name the workspace before choosing a path. */
+function WelcomeStep({ onNext, naming, jumpBack }: Readonly<{ onNext: () => void; naming: WelcomeNaming; jumpBack: JumpBackProps | undefined }>) {
+  const nameInvalid = !isValidWorkspaceName(naming.value);
   return (
     <div className="flex flex-col items-center gap-6 text-center">
       <div className="flex flex-col items-center gap-2">
@@ -49,45 +96,71 @@ function WelcomeStep({ onNext, onImport, naming }: Readonly<{ onNext: () => void
         <p className="text-text-secondary text-lg">Cloud cost visibility for your team</p>
       </div>
       <p className="text-text-muted text-sm max-w-md">
-        Connect your AWS billing data to get started. CostGoblin syncs CUR (Cost and Usage Report) data from S3, stores it locally, and lets you slice costs by any dimension.
+        Your costs live in a workspace — config, data, and preferences bundled together. Give this one a name to get going.
       </p>
-      {naming !== undefined && (
-        <div className="flex w-full max-w-xs flex-col gap-1 text-left">
-          <label htmlFor="workspace-name" className="text-xs font-medium text-text-secondary">Workspace name</label>
-          <input
-            id="workspace-name"
-            value={naming.value}
-            onChange={(e) => { naming.onChange(e.target.value); }}
-            spellCheck={false}
-            className="rounded-md border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          />
-          {nameInvalid ? (
-            <p className="text-xs text-negative">Use letters, digits, - or _, starting with a letter or digit (64 characters max).</p>
-          ) : (
-            <p className="text-xs text-text-muted">Keep &quot;default&quot;, or name it after a client or environment — more workspaces can be added later.</p>
-          )}
-        </div>
-      )}
+      <div className="flex w-full max-w-xs flex-col gap-1 text-left">
+        <label htmlFor="workspace-name" className="text-xs font-medium text-text-secondary">Workspace name</label>
+        <input
+          id="workspace-name"
+          value={naming.value}
+          onChange={(e) => { naming.onChange(e.target.value); }}
+          spellCheck={false}
+          className="rounded-md border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        />
+        {nameInvalid ? (
+          <p className="text-xs text-negative">Use letters, digits, - or _, starting with a letter or digit (64 characters max).</p>
+        ) : (
+          <p className="text-xs text-text-muted">Keep &quot;default&quot;, or name it after a client or environment — more workspaces can be added later.</p>
+        )}
+      </div>
       <div className="flex w-full max-w-xs flex-col gap-3">
         <Button
           onClick={onNext}
           disabled={nameInvalid}
           className="bg-accent hover:bg-accent-hover text-white"
         >
-          Get Started
+          Continue
         </Button>
-        <div className="flex items-center gap-3 text-xs text-text-muted">
-          <span className="h-px flex-1 bg-border" />
-          <span>or</span>
-          <span className="h-px flex-1 bg-border" />
-        </div>
-        <Button variant="outline" onClick={onImport} disabled={nameInvalid}>
+      </div>
+      <JumpBackList jumpBack={jumpBack} />
+    </div>
+  );
+}
+
+/** Step 2 — the get-started hub: set up from S3 or import from a teammate. */
+function StartStep({ workspaceLabel, onSetup, onImport, onBack, jumpBack }: Readonly<{
+  workspaceLabel: string | undefined;
+  onSetup: () => void;
+  onImport: () => void;
+  onBack?: (() => void) | undefined;
+  jumpBack: JumpBackProps | undefined;
+}>) {
+  return (
+    <div className="flex flex-col items-center gap-6 text-center">
+      <div className="flex flex-col items-center gap-2">
+        <span className="text-4xl font-bold text-accent tracking-wider">CostGoblin</span>
+        {workspaceLabel !== undefined && (
+          <p className="text-text-secondary text-sm">
+            Workspace: <span className="font-medium text-text-primary">{workspaceLabel}</span>
+          </p>
+        )}
+      </div>
+      <p className="text-text-secondary text-lg">How do you want to get started?</p>
+      <div className="flex w-full max-w-xs flex-col gap-3">
+        <Button onClick={onSetup} className="bg-accent hover:bg-accent-hover text-white">
+          Set up from S3
+        </Button>
+        <p className="text-text-muted text-xs">
+          Connect your AWS billing data. CostGoblin syncs CUR (Cost and Usage Report) data from S3, stores it locally, and lets you slice costs by any dimension.
+        </p>
+        <Button variant="outline" onClick={onImport}>
           Import from a teammate
         </Button>
         <p className="text-text-muted text-xs">
           Pull config and data from a teammate — a bundle file, from S3, or straight over your network. No AWS access needed.
         </p>
       </div>
+      <JumpBackList jumpBack={jumpBack} />
       <p className="text-text-muted text-xs">
         {"Don't have a CUR yet? Create a CUR 2.0 export in "}
         <a
@@ -99,6 +172,11 @@ function WelcomeStep({ onNext, onImport, naming }: Readonly<{ onNext: () => void
           Billing and Cost Management &rarr; Data Exports
         </a>
       </p>
+      {onBack !== undefined && (
+        <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">
+          ← Change workspace name
+        </button>
+      )}
     </div>
   );
 }
@@ -521,7 +599,7 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: Readonly<
   );
 }
 
-export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile, workspaceNaming }: Readonly<SetupWizardProps>): React.JSX.Element {
+export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile, workspaceNaming, workspaceLabel, otherWorkspaces }: Readonly<SetupWizardProps>): React.JSX.Element {
   const api = useCostApi();
   const isSourceMode = initialSource !== undefined && initialProfile !== undefined;
   const [workspaceName, setWorkspaceName] = useState(workspaceNaming?.initialName ?? '');
@@ -535,14 +613,35 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       setWorkspaceName((current) => (current === '' ? initialWorkspaceName : current));
     }
   }, [initialWorkspaceName]);
-  const [wizard, setWizard] = useState<WizardStep>(
-    isSourceMode
-      ? { step: 'bucket', profile: initialProfile, source: initialSource, buckets: [], loading: true, selected: '', error: '' }
-      : { step: 'welcome' },
-  );
+  const [wizard, setWizard] = useState<WizardStep>(() => {
+    if (isSourceMode) {
+      return { step: 'bucket', profile: initialProfile, source: initialSource, buckets: [], loading: true, selected: '', error: '' };
+    }
+    // Naming comes first on a true first run; otherwise (workspace already
+    // named, e.g. created via Settings → New workspace) start at the hub.
+    return workspaceNaming !== undefined ? { step: 'welcome' } : { step: 'start' };
+  });
   const [collectedPaths, setCollectedPaths] = useState({ daily: '', hourly: '', costOpt: '' });
   const [bucketsLoaded, setBucketsLoaded] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [switchingTo, setSwitchingTo] = useState<string | null>(null);
+  const [switchError, setSwitchError] = useState('');
+
+  function handleJumpBack(name: string) {
+    setSwitchingTo(name);
+    setSwitchError('');
+    // Switching relaunches the app into the chosen workspace — on success
+    // this process quits, so there is no follow-up state to manage.
+    api.switchWorkspace(name).catch((err: unknown) => {
+      setSwitchingTo(null);
+      setSwitchError(err instanceof Error ? err.message : String(err));
+    });
+  }
+
+  const jumpBack: JumpBackProps | undefined =
+    otherWorkspaces !== undefined && otherWorkspaces.length > 0
+      ? { names: otherWorkspaces, onSwitch: handleJumpBack, switchingTo, error: switchError }
+      : undefined;
 
   // Single completion funnel: every finish path reports the chosen workspace
   // name (when the user changed it to something valid) so the host can claim
@@ -572,12 +671,12 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }
 
   function handleWelcomeNext() {
-    goToProfileStep();
+    setWizard({ step: 'start' });
   }
 
-  function handleReturnToWelcome() {
+  function handleReturnToStart() {
     setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
-    setWizard({ step: 'welcome' });
+    setWizard({ step: 'start' });
   }
 
   function handleProfileSelect(profile: string) {
@@ -688,7 +787,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
 
   function handleBack() {
     if (wizard.step === 'profile') {
-      setWizard({ step: 'welcome' });
+      setWizard({ step: 'start' });
     } else if (wizard.step === 'beacon') {
       startBucketStep(wizard.profile, wizard.source);
     } else if (wizard.step === 'bucket') {
@@ -714,12 +813,12 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   return (
     <div className={`min-h-screen bg-bg-primary flex items-center justify-center p-4${isSourceMode ? '' : ' [-webkit-app-region:drag]'}`}>
       <Card className="relative w-full max-w-lg border-border bg-bg-secondary [-webkit-app-region:no-drag]">
-        {!isSourceMode && wizard.step !== 'welcome' && (
+        {!isSourceMode && wizard.step !== 'welcome' && wizard.step !== 'start' && (
           <button
             type="button"
-            onClick={handleReturnToWelcome}
+            onClick={handleReturnToStart}
             className="absolute right-3 top-3 z-10 rounded-md px-2 py-1 text-sm text-text-muted hover:text-text-primary hover:bg-bg-tertiary transition-colors"
-            aria-label="Back to welcome"
+            aria-label="Back to start"
           >
             ✕
           </button>
@@ -728,11 +827,20 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
           <div className="flex justify-center mb-6">
             <img src="goblin.png" alt="CostGoblin" className="h-16 w-auto" />
           </div>
-          {wizard.step === 'welcome' && (
+          {wizard.step === 'welcome' && workspaceNaming !== undefined && (
             <WelcomeStep
               onNext={handleWelcomeNext}
+              naming={{ value: workspaceName, onChange: setWorkspaceName }}
+              jumpBack={jumpBack}
+            />
+          )}
+          {wizard.step === 'start' && (
+            <StartStep
+              workspaceLabel={workspaceNaming !== undefined ? workspaceName : workspaceLabel}
+              onSetup={goToProfileStep}
               onImport={() => { setImportOpen(true); }}
-              {...(workspaceNaming !== undefined ? { naming: { value: workspaceName, onChange: setWorkspaceName } } : {})}
+              onBack={workspaceNaming !== undefined ? () => { setWizard({ step: 'welcome' }); } : undefined}
+              jumpBack={jumpBack}
             />
           )}
           {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={finish} onBack={handleBack} />}

@@ -1,16 +1,9 @@
-import type {
-  ConfigBundleSummary,
-  CreateWorkspaceSource,
-  WorkspaceSummary,
-  WorkspacesInfo,
-} from '@costgoblin/core/browser';
+import type { WorkspaceSummary, WorkspacesInfo } from '@costgoblin/core/browser';
 import { WORKSPACE_NAME_PATTERN, WorkspaceNameError, isValidWorkspaceName, parseWorkspaceName } from '@costgoblin/core/browser';
-import { Boxes, FileUp, Info, Plus } from 'lucide-react';
+import { Boxes, Info, Plus } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { BundleSummaryCard } from '../components/config-sharing.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
 import { formatBytes } from '../components/format.js';
-import { ProfilePicker } from '../components/profile-picker.js';
 import { Button } from '../components/ui/button.js';
 import { useCostApi } from '../hooks/use-cost-api.js';
 
@@ -116,98 +109,34 @@ function WorkspaceModal({ title, onClose, children }: Readonly<{
 }
 
 // ---------------------------------------------------------------------------
-// New workspace — validated name + start-from source (fresh / copy / bundle).
+// New workspace — name only. Creation always restarts into the new (empty)
+// workspace, where the setup wizard takes over (set up from S3, import from a
+// teammate, or jump back to an existing workspace).
 // ---------------------------------------------------------------------------
-
-type SourceKind = CreateWorkspaceSource['kind'];
-
-const SOURCE_OPTIONS: readonly { readonly kind: SourceKind; readonly label: string; readonly description: string }[] = [
-  {
-    kind: 'fresh',
-    label: 'Start fresh',
-    description: 'An empty workspace — run setup from scratch.',
-  },
-  {
-    kind: 'copy-config',
-    label: 'Copy current config (no data)',
-    description: 'Reuses this workspace’s dimensions, dashboards, and cost scope. Synced data is not copied.',
-  },
-  {
-    kind: 'bundle',
-    label: 'Import a shared config bundle',
-    description: 'Start from a configuration bundle a teammate exported.',
-  },
-];
-
-type BundlePick =
-  | { readonly phase: 'idle'; readonly error: string | null }
-  | { readonly phase: 'loading' }
-  | { readonly phase: 'ready'; readonly content: string; readonly summary: ConfigBundleSummary };
-
-type CreatePhase = 'idle' | 'stay' | 'switch';
 
 function CreateWorkspaceModal({ existing, onClose, onCreated }: Readonly<{
   existing: readonly WorkspaceSummary[];
   onClose: () => void;
-  /** Called with the refreshed list after a non-switching create. A "Create &
-   *  switch" relaunches the app, so this only runs when the promise resolves
-   *  (non-switch, or mocked tests). */
+  /** Creation relaunches the app into the new workspace, so this only runs
+   *  when the promise resolves (e2e mode, or mocked tests). */
   onCreated: (info: WorkspacesInfo) => void;
 }>): React.JSX.Element {
   const api = useCostApi();
   const [name, setName] = useState('');
-  const [sourceKind, setSourceKind] = useState<SourceKind>('fresh');
-  const [bundle, setBundle] = useState<BundlePick>({ phase: 'idle', error: null });
-  const [profiles, setProfiles] = useState<readonly string[]>([]);
-  const [awsProfile, setAwsProfile] = useState('');
-  const [creating, setCreating] = useState<CreatePhase>('idle');
+  const [creating, setCreating] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // AWS profiles back the bundle branch's profile picker — obtained the same
-  // way ImportConfigPanel does (listAwsProfiles), loaded once on open.
-  useEffect(() => {
-    api.listAwsProfiles().then(loaded => {
-      setProfiles(loaded);
-      setAwsProfile(prev => prev.length > 0 ? prev : (loaded[0] ?? 'default'));
-    }).catch(() => undefined);
-  }, [api]);
-
   const nameIssue = workspaceNameIssue(name, existing);
-  const nameOk = name.length > 0 && isValidWorkspaceName(name) && nameIssue === null;
-  const sourceReady = sourceKind !== 'bundle' || (bundle.phase === 'ready' && awsProfile.length > 0);
-  const canSubmit = nameOk && sourceReady && creating === 'idle';
+  const canSubmit = name.length > 0 && isValidWorkspaceName(name) && nameIssue === null && !creating;
 
-  function handlePickBundle(): void {
-    setBundle({ phase: 'loading' });
-    api.previewConfigBundleFile().then(res => {
-      if (res.status === 'ok') {
-        setBundle({ phase: 'ready', content: res.content, summary: res.summary });
-      } else if (res.status === 'canceled') {
-        setBundle({ phase: 'idle', error: null });
-      } else {
-        setBundle({ phase: 'idle', error: res.message });
-      }
-    }).catch((err: unknown) => {
-      setBundle({ phase: 'idle', error: err instanceof Error ? err.message : String(err) });
-    });
-  }
-
-  function buildSource(): CreateWorkspaceSource | null {
-    if (sourceKind === 'fresh') return { kind: 'fresh' };
-    if (sourceKind === 'copy-config') return { kind: 'copy-config' };
-    if (bundle.phase !== 'ready' || awsProfile.length === 0) return null;
-    return { kind: 'bundle', content: bundle.content, awsProfile };
-  }
-
-  function handleCreate(switchTo: boolean): void {
-    const source = buildSource();
-    if (source === null || !canSubmit) return;
-    setCreating(switchTo ? 'switch' : 'stay');
+  function handleCreate(): void {
+    if (!canSubmit) return;
+    setCreating(true);
     setSubmitError(null);
-    api.createWorkspace(name, source, switchTo)
+    api.createWorkspace(name, { kind: 'fresh' }, true)
       .then(info => { onCreated(info); })
       .catch((err: unknown) => {
-        setCreating('idle');
+        setCreating(false);
         setSubmitError(err instanceof Error ? err.message : String(err));
       });
   }
@@ -230,78 +159,18 @@ function CreateWorkspaceModal({ existing, onClose, onCreated }: Readonly<{
         {nameIssue !== null && <p className="text-xs text-negative">{nameIssue}</p>}
       </div>
 
-      <fieldset className="flex flex-col gap-1.5">
-        <legend className="text-xs text-text-muted uppercase tracking-wider mb-1.5">Start from</legend>
-        {SOURCE_OPTIONS.map(option => (
-          <label
-            key={option.kind}
-            htmlFor={`workspace-source-${option.kind}`}
-            className="grid grid-cols-[auto_1fr] items-start gap-x-2 rounded-lg border border-border bg-bg-tertiary/20 px-3 py-2 cursor-pointer"
-          >
-            <input
-              id={`workspace-source-${option.kind}`}
-              type="radio"
-              name="workspace-source"
-              checked={sourceKind === option.kind}
-              onChange={() => { setSourceKind(option.kind); }}
-              className="mt-0.5 accent-accent"
-            />
-            <span className="text-sm text-text-primary">{option.label}</span>
-            <span className="col-start-2 block text-xs text-text-muted">{option.description}</span>
-          </label>
-        ))}
-      </fieldset>
-
-      {sourceKind === 'bundle' && (
-        <div className="flex flex-col gap-2">
-          {bundle.phase === 'idle' && (
-            <>
-              {bundle.error !== null && (
-                <div className="rounded-lg border border-negative/50 bg-negative-muted px-3 py-2">
-                  <p className="text-xs text-negative">{bundle.error}</p>
-                </div>
-              )}
-              <Button onClick={handlePickBundle} className="bg-accent hover:bg-accent-hover text-white self-start">
-                <FileUp size={16} className="mr-1.5" />
-                Choose bundle file…
-              </Button>
-            </>
-          )}
-          {bundle.phase === 'loading' && (
-            <div className="flex items-center py-2">
-              <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border border-t-accent" />
-              <span className="ml-2 text-sm text-text-secondary">Reading bundle…</span>
-            </div>
-          )}
-          {bundle.phase === 'ready' && (
-            <>
-              <BundleSummaryCard summary={bundle.summary} />
-              <button
-                type="button"
-                onClick={handlePickBundle}
-                className="self-start text-xs text-text-muted hover:text-text-secondary underline underline-offset-2"
-              >
-                Choose a different file…
-              </button>
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="workspace-bundle-profile" className="text-xs text-text-muted uppercase tracking-wider">
-                  Your AWS profile
-                </label>
-                <ProfilePicker
-                  profiles={profiles}
-                  selected={awsProfile}
-                  onSelect={setAwsProfile}
-                  listClassName="max-h-32"
-                  inputId="workspace-bundle-profile"
-                />
-                <p className="text-xs text-text-muted">
-                  Bundles never contain credentials — the new workspace uses this AWS profile to reach the S3 buckets above.
-                </p>
-              </div>
-            </>
-          )}
-        </div>
+      {existing.length > 0 && (
+        <p className="text-xs text-text-muted">
+          {'Existing: '}
+          <span className="font-mono text-text-secondary">{existing.map(w => w.name).join(', ')}</span>
+        </p>
       )}
+
+      <p className="text-xs text-text-muted">
+        CostGoblin will restart into the new workspace, where the setup wizard
+        helps you connect billing data or import from a teammate — you can jump
+        back to this workspace at any point.
+      </p>
 
       {submitError !== null && (
         <div className="rounded-lg border border-negative/50 bg-negative-muted px-3 py-2">
@@ -310,19 +179,15 @@ function CreateWorkspaceModal({ existing, onClose, onCreated }: Readonly<{
       )}
 
       <div className="flex items-center justify-end gap-2">
-        <Button
-          onClick={() => { handleCreate(false); }}
-          disabled={!canSubmit}
-          className="bg-bg-tertiary hover:bg-bg-tertiary/70 text-text-primary"
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md px-3 py-1.5 text-sm font-medium text-text-secondary hover:bg-bg-tertiary transition-colors"
         >
-          {creating === 'stay' ? 'Creating…' : 'Create'}
-        </Button>
-        <Button
-          onClick={() => { handleCreate(true); }}
-          disabled={!canSubmit}
-          className="bg-accent hover:bg-accent-hover text-white"
-        >
-          {creating === 'switch' ? 'Creating…' : 'Create & switch'}
+          Cancel
+        </button>
+        <Button onClick={handleCreate} disabled={!canSubmit} className="bg-accent hover:bg-accent-hover text-white">
+          {creating ? 'Creating…' : 'Create & Restart'}
         </Button>
       </div>
     </WorkspaceModal>
