@@ -137,10 +137,18 @@ export interface OrgSyncResult {
 
 export type AutoSyncStatus =
   | { readonly state: 'disabled' }
-  | { readonly state: 'idle'; readonly lastRun: string | null; readonly nextRun: string | null }
-  | { readonly state: 'checking' }
-  | { readonly state: 'syncing'; readonly tier: string; readonly filesDone: number; readonly filesTotal: number }
-  | { readonly state: 'error'; readonly message: string; readonly lastRun: string | null };
+  | { readonly state: 'idle'; readonly lastRun: string | null; readonly nextRun: string | null; readonly providerErrors?: readonly ProviderSyncError[] | undefined }
+  | { readonly state: 'checking'; readonly provider?: string | undefined }
+  | { readonly state: 'syncing'; readonly tier: string; readonly filesDone: number; readonly filesTotal: number; readonly provider?: string | undefined }
+  | { readonly state: 'error'; readonly message: string; readonly lastRun: string | null; readonly providerErrors?: readonly ProviderSyncError[] | undefined };
+
+/** One provider's failure inside an auto-sync pass. Providers sync
+ *  independently — one expired SSO session must not hide the others'
+ *  results, so per-provider errors are collected instead of aborting. */
+export interface ProviderSyncError {
+  readonly provider: string;
+  readonly message: string;
+}
 
 export interface OrgSyncProgress {
   readonly phase: 'accounts' | 'ous' | 'tags' | 'regions';
@@ -153,6 +161,8 @@ export type Dimension = BuiltInDimension | TagDimension;
 export type DataTier = 'daily' | 'hourly' | 'cost-optimization';
 
 export interface DataInventoryResult {
+  /** Which configured provider this inventory describes. */
+  readonly provider?: string | undefined;
   readonly periods: readonly {
     readonly period: string;
     readonly files: readonly { readonly key: string; readonly contentHash: string; readonly size: number }[];
@@ -174,7 +184,7 @@ export interface DataInventoryResult {
 }
 
 export interface PruneResult {
-  readonly deleted: readonly { readonly tier: DataTier; readonly period: string }[];
+  readonly deleted: readonly { readonly tier: DataTier; readonly period: string; readonly provider?: string | undefined }[];
 }
 
 export interface CostApi {
@@ -184,6 +194,9 @@ export interface CostApi {
   queryMissingTags(params: MissingTagsParams): Promise<MissingTagsResult>;
   querySavings(): Promise<SavingsResult>;
   queryEntityDetail(params: EntityDetailParams): Promise<EntityDetailResult>;
+  /** `syncId` addresses one (provider, tier) sync: `'{providerName}:{tier}'`.
+   *  The legacy tier-only ids ('default'|'hourly'|'cost-optimization') are
+   *  still accepted and resolve against the first configured provider. */
   getSyncStatus(syncId?: string): Promise<SyncStatus>;
   /** Current backlog of the live sync/S3 activity log (main-process ring
    *  buffer, ephemeral — cleared on app restart). */
@@ -200,11 +213,13 @@ export interface CostApi {
   getConfig(): Promise<CostGoblinConfig>;
   getDimensions(): Promise<Dimension[]>;
   getOrgTree(): Promise<OrgNode[]>;
-  getDataInventory(tier?: DataTier): Promise<DataInventoryResult>;
+  /** Inventory for one provider's tier. `providerName` defaults to the
+   *  first configured provider. */
+  getDataInventory(tier?: DataTier, providerName?: string): Promise<DataInventoryResult>;
   syncPeriods(files: readonly { key: string; contentHash: string; size: number }[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }>;
   cancelSync(syncId?: string): Promise<void>;
   getFilterValues(dimensionId: string, filters: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]>;
-  deleteLocalPeriod(period: string, tier?: DataTier): Promise<void>;
+  deleteLocalPeriod(period: string, tier?: DataTier, providerName?: string): Promise<void>;
   openDataFolder(): Promise<void>;
   ssoLogin(profile: string): Promise<void>;
   getAccountMapping(): Promise<AccountMappingStatus>;
@@ -275,7 +290,11 @@ export interface CostApi {
    *  retention window, across all configured tiers. Returns what was removed.
    *  Local-only — no S3 access required. */
   pruneNow(): Promise<PruneResult>;
-  syncOrgAccounts(profile: string): Promise<OrgSyncResult>;
+  /** Runs the AWS Organizations side sync with `profile`'s credentials and
+   *  stores the result under `providerName` (defaults to the first
+   *  configured provider). Results from every provider are merged into the
+   *  account-name/tag lookups the queries consume. */
+  syncOrgAccounts(profile: string, providerName?: string): Promise<OrgSyncResult>;
   getOrgSyncResult(): Promise<OrgSyncResult | null>;
   getOrgSyncProgress(): Promise<OrgSyncProgress | null>;
   /** Region-name cache info (count of resolved long-names + last sync time +
@@ -291,6 +310,9 @@ export interface CostApi {
   /** Re-fetch only the SSM region-name cache, without re-running the slow
    *  per-account org sync. Surfaces errors directly to the caller. */
   syncRegionNames(profile: string): Promise<{ count: number; syncedAt: string }>;
+
+  /** Create or update the provider named `providerName` (UPSERT — other
+   *  configured providers are preserved). */
   writeConfig(config: {
     providerName: string;
     profile: string;
@@ -300,9 +322,9 @@ export interface CostApi {
     costOptBucket?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
   }): Promise<void>;
-  /** Swap the AWS profile used to talk to AWS, leaving bucket paths and
-   *  every other config field untouched. */
-  updateAwsProfile(profile: string): Promise<void>;
+  /** Swap the AWS credentials profile of one provider (default: the first),
+   *  leaving bucket paths and every other config field untouched. */
+  updateAwsProfile(profile: string, providerName?: string): Promise<void>;
   getAliasSuggestions(tagName: string): Promise<AliasSuggestion[]>;
   dismissSuggestion(tagName: string, canonical: string, aliases: readonly string[]): Promise<void>;
   acceptSuggestion(tagName: string, canonical: string, aliases: readonly string[]): Promise<void>;

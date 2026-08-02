@@ -72,7 +72,7 @@ export type {
 } from './query.js';
 export { DEFAULT_PLACEHOLDER_PATTERNS } from './query.js';
 
-export type { Dimension, CostApi, DataInventoryResult, DataTier, PruneResult, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, PerformanceSettings, PerformanceInfo, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateLogEntry, UpdateStage, UpdateStatus, UpdateApi, RollupStatus, RollupApi, RollupStats, BaselinesApi, WorkspaceSummary, WorkspacesInfo, CreateWorkspaceSource } from './api.js';
+export type { Dimension, CostApi, DataInventoryResult, DataTier, PruneResult, ProviderSyncError, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, PerformanceSettings, PerformanceInfo, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateLogEntry, UpdateStage, UpdateStatus, UpdateApi, RollupStatus, RollupApi, RollupStats, BaselinesApi, WorkspaceSummary, WorkspacesInfo, CreateWorkspaceSource } from './api.js';
 
 export type {
   WidgetSize,

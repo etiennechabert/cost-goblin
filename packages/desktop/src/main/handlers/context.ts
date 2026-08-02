@@ -461,22 +461,20 @@ export function createAppContext(ctx: IpcContext): AppContext {
     }
   }
 
-  async function getAvailableColumns(tier: 'daily' | 'hourly'): Promise<ReadonlySet<string>> {
-    const cached = columnCache.get(tier);
+  // Latest-month column set for ONE provider's tier. Cached per
+  // (provider, tier); empty set when the provider has no data on disk.
+  async function getAvailableColumnsFor(provider: ProviderName, tier: 'daily' | 'hourly'): Promise<ReadonlySet<string>> {
+    const key = `${String(provider)}:${tier}:latest`;
+    const cached = columnCache.get(key);
     if (cached !== undefined) return cached;
     const fetch = (async (): Promise<ReadonlySet<string>> => {
-      const provider = await getFirstProviderName();
-      if (provider === null) {
-        logger.warn('column-probe: no provider configured', { tier });
-        return new Set<string>();
-      }
       const months = await listLocalMonths(ctx.dataDir, provider, tier);
       if (months.length === 0) {
         // No data on disk for this tier — log loudly because the silent
         // fallback used to surface as misleading "Degraded" warnings in
         // Cost Scope when capability checks interpreted the empty set as
         // "all columns missing."
-        logger.warn('column-probe: no months on disk', { tier, dataDir: ctx.dataDir });
+        logger.warn('column-probe: no months on disk', { tier, provider: String(provider), dataDir: ctx.dataDir });
         return new Set<string>();
       }
       // Latest month = current capability: newly enabled optional columns
@@ -486,22 +484,37 @@ export function createAppContext(ctx: IpcContext): AppContext {
       const month = months.at(-1);
       return probeColumns(provider, tier, String(month));
     })();
-    columnCache.set(tier, fetch);
+    columnCache.set(key, fetch);
     return fetch;
   }
 
-  // ProviderSourceSpec list for QueryContextOptions. Single-provider
-  // semantics for now: the first configured provider, or [] while
-  // onboarding (queries against an empty list throw in buildSource, but
-  // every handler already early-returns on empty period availability).
-  async function getQueryProviders(tier: 'daily' | 'hourly'): Promise<readonly ProviderSourceSpec[]> {
+  // The FIRST provider's latest-month columns. Feeds the rollup shape
+  // signature and the Cost Scope capability checks — both single-provider
+  // concerns (the rollup only routes with exactly one provider configured).
+  async function getAvailableColumns(tier: 'daily' | 'hourly'): Promise<ReadonlySet<string>> {
     const provider = await getFirstProviderName();
-    if (provider === null) return [];
-    const [availablePeriods, availableColumns] = await Promise.all([
-      listLocalMonths(ctx.dataDir, provider, tier),
-      getAvailableColumns(tier),
-    ]);
-    return [{ name: provider, availablePeriods, availableColumns }];
+    if (provider === null) {
+      logger.warn('column-probe: no provider configured', { tier });
+      return new Set<string>();
+    }
+    return getAvailableColumnsFor(provider, tier);
+  }
+
+  // ProviderSourceSpec list for QueryContextOptions: EVERY configured
+  // provider with its own on-disk months and probed columns, in config
+  // order. [] while onboarding (queries against an empty list throw in
+  // buildSource, but every handler already early-returns on empty period
+  // availability).
+  async function getQueryProviders(tier: 'daily' | 'hourly'): Promise<readonly ProviderSourceSpec[]> {
+    const config = await getConfig().catch(() => null);
+    if (config === null) return [];
+    return Promise.all(config.providers.map(async provider => {
+      const [availablePeriods, availableColumns] = await Promise.all([
+        listLocalMonths(ctx.dataDir, provider.name, tier),
+        getAvailableColumnsFor(provider.name, tier),
+      ]);
+      return { name: provider.name, availablePeriods, availableColumns };
+    }));
   }
 
   // Columns present in ONE specific month's parquet. Months drift: a CUR only

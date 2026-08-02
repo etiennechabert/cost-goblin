@@ -23,8 +23,14 @@ describe('columnForDimension', () => {
 });
 
 describe('resolveRollupSource', () => {
+  const oneProvider = [{ name: asProviderName('aws') }];
   it('returns undefined when the store has no valid partitions (falls back to raw)', () => {
     const store = new RollupStore({ dataDir: '/tmp/none', providerName: () => asProviderName('aws'), runQuery: () => Promise.resolve([]) });
-    expect(resolveRollupSource(store, { start: '2026-01-01', end: '2026-01-31' }, 'daily', ['service', 'cost'])).toBeUndefined();
+    expect(resolveRollupSource(store, oneProvider, { start: '2026-01-01', end: '2026-01-31' }, 'daily', ['service', 'cost'])).toBeUndefined();
+  });
+  it('never routes a multi-provider query through the single-provider store', () => {
+    const store = new RollupStore({ dataDir: '/tmp/none', providerName: () => asProviderName('aws'), runQuery: () => Promise.resolve([]) });
+    const two = [{ name: asProviderName('aws') }, { name: asProviderName('aws-b') }];
+    expect(resolveRollupSource(store, two, { start: '2026-01-01', end: '2026-01-31' }, 'daily', ['service', 'cost'])).toBeUndefined();
   });
 });

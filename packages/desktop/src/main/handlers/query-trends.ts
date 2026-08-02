@@ -46,7 +46,7 @@ export function registerTrendHandlers(app: AppContext): void {
     const fullRange = { start: prevStart, end: params.dateRange.end };
     // Coverage must include the previous-period span (fullRange), or trends
     // under-reports previous_cost. resolveRollupSource checks every touched month.
-    const matSource = resolveRollupSource(rollupStore, fullRange, 'daily', [columnForDimension(dimensions, params.groupBy), 'cost']);
+    const matSource = resolveRollupSource(rollupStore, providers, fullRange, 'daily', [columnForDimension(dimensions, params.groupBy), 'cost']);
     const isMat = matSource !== undefined;
 
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };

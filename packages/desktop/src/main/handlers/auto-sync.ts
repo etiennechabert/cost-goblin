@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 import { getDataInventory, getLocalDataInventory, extractPeriod, isCredentialError, writeTierLastSync } from '@costgoblin/core';
-import type { AutoSyncStatus } from '@costgoblin/core';
+import type { AutoSyncStatus, ProviderConfig } from '@costgoblin/core';
 import {
   startAutoSync,
   stopAutoSync,
@@ -12,7 +12,8 @@ import {
   readAutoSyncIntervalMinutes,
   writeAutoSyncIntervalMinutes,
 } from '../auto-sync.js';
-import { deleteLocalPeriodFiles, cascadeRollupForDeletedMonth, changedRollupMonths } from './sync.js';
+import { deleteLocalPeriodFiles, cascadeRollupForDeletedMonth, changedRollupMonths, resolveBucketPath } from './sync.js';
+import { resolveProvider, syncStatusKey } from '../sync-id.js';
 import { type AppContext, prefsPath, toUserFriendlyError } from './context.js';
 import type { SyncClient } from '../sync-client.js';
 import { recordSyncLog } from '../sync-log.js';
@@ -36,6 +37,23 @@ export function registerAutoSyncHandlers(app: AppContext): void {
   const autoSyncPrefsPath = () => prefsPath(ctx.stateDir, 'app-preferences');
 
   function buildAutoSyncDeps(syncClient: SyncClient) {
+    // Resolve one provider's full config (credentials, buckets) by name — the
+    // scheduler passes only the name, so every call re-reads config and picks
+    // up edits between passes. An unknown name throws and surfaces as that
+    // provider's ProviderSyncError instead of silently syncing the wrong one.
+    async function providerByName(providerName: string): Promise<ProviderConfig> {
+      const config = await getConfig();
+      return resolveProvider(config.providers, providerName);
+    }
+
+    // Rollup maintenance is bound to the FIRST provider (the single
+    // RollupStore rolls up its tree only); other providers' data is queried
+    // raw, so their changes must never re-roll it.
+    async function isFirstProvider(provider: ProviderConfig): Promise<boolean> {
+      const first = await app.getFirstProviderName();
+      return first !== null && provider.name === first;
+    }
+
     return {
       onLog: recordSyncLog,
       getPrefsPath: autoSyncPrefsPath,
@@ -43,19 +61,13 @@ export function registerAutoSyncHandlers(app: AppContext): void {
         const config = await getConfig();
         return { providers: [...config.providers] };
       },
-      getInventory: async (tier: string) => {
-        const config = await getConfig();
-        const provider = config.providers[0];
-        if (provider === undefined) return { periods: [] };
-        const tierBucket = tier === 'cost-optimization'
-          ? provider.sync.costOptimization?.bucket ?? provider.sync.daily.bucket
-          : provider.sync.daily.bucket;
-        const bucket = tier === 'hourly'
-          ? provider.sync.hourly?.bucket ?? provider.sync.daily.bucket
-          : tierBucket;
+      getInventory: async (providerName: string, tier: string) => {
+        const provider = await providerByName(providerName);
+        const t = asTier(tier);
+        const bucket = resolveBucketPath(provider, t);
         let inv;
         try {
-          inv = await getDataInventory(bucket, provider.credentialsProfile, ctx.dataDir, provider.name, asTier(tier));
+          inv = await getDataInventory(bucket, provider.credentialsProfile, ctx.dataDir, provider.name, t);
         } catch (err: unknown) {
           // Rewrite credential failures into the actionable "run aws sso login"
           // message so the scheduler surfaces it (instead of silently skipping)
@@ -71,32 +83,26 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           })),
         };
       },
-      syncPeriods: async (files: { key: string; contentHash: string; size: number }[], tier: string) => {
-        const config = await getConfig();
-        const provider = config.providers[0];
-        if (provider === undefined) return { filesDownloaded: 0, rowsProcessed: 0 };
-        const syncTierBucket = tier === 'cost-optimization'
-          ? provider.sync.costOptimization?.bucket ?? provider.sync.daily.bucket
-          : provider.sync.daily.bucket;
-        const bucket = tier === 'hourly'
-          ? provider.sync.hourly?.bucket ?? provider.sync.daily.bucket
-          : syncTierBucket;
+      syncPeriods: async (providerName: string, files: { key: string; contentHash: string; size: number }[], tier: string) => {
+        const provider = await providerByName(providerName);
+        const t = asTier(tier);
+        const bucket = resolveBucketPath(provider, t);
 
-        const syncId = asTier(tier);
-        state.syncStatuses[syncId] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: files.length, filesDone: 0, bytesTotal: 0, bytesDone: 0, message: '' };
+        const key = syncStatusKey(provider.name, t);
+        state.syncStatuses[key] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: files.length, filesDone: 0, bytesTotal: 0, bytesDone: 0, message: '' };
         try {
           const result = await syncClient.syncPeriods({
             bucketPath: bucket,
             profile: provider.credentialsProfile,
             providerName: provider.name,
             dataDir: ctx.dataDir,
-            tier: syncId,
+            tier: t,
             files,
             onProgress: (progress) => {
               const bytesDone = progress.bytesDone ?? 0;
               const bytesTotal = progress.bytesTotal ?? 0;
               const fraction = computeSyncFraction(bytesDone, bytesTotal, progress.filesDone, progress.filesTotal);
-              state.syncStatuses[syncId] = {
+              state.syncStatuses[key] = {
                 status: 'syncing',
                 phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
                 progress: fraction,
@@ -109,15 +115,19 @@ export function registerAutoSyncHandlers(app: AppContext): void {
             },
           });
           const now = new Date();
-          state.syncStatuses[syncId] = { status: 'completed', lastSync: now, filesDownloaded: result.filesDownloaded };
+          state.syncStatuses[key] = { status: 'completed', lastSync: now, filesDownloaded: result.filesDownloaded };
           // Best-effort: cosmetic timestamp; a write failure must not flip this
           // successful sync to 'failed' (the catch below would do exactly that).
-          await writeTierLastSync(ctx.dataDir, provider.name, syncId, now.toISOString()).catch(() => { /* cosmetic */ });
+          await writeTierLastSync(ctx.dataDir, provider.name, t, now.toISOString()).catch(() => { /* cosmetic */ });
           // Keep the rollup in step with the raw the auto-sync just pulled,
-          // mirroring the manual data:sync-periods path.
+          // mirroring the manual data:sync-periods path — first provider's
+          // daily only; everything else just refreshes caches.
           if (result.filesDownloaded > 0) {
-            if (syncId === 'daily') app.maintainRollup(changedRollupMonths(files.map(f => extractPeriod(f.key))));
-            else app.warmupBase();
+            if (t === 'daily' && await isFirstProvider(provider)) {
+              app.maintainRollup(changedRollupMonths(files.map(f => extractPeriod(f.key))));
+            } else {
+              app.warmupBase();
+            }
           }
           return result;
         } catch (err: unknown) {
@@ -125,26 +135,23 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           // the actionable "run aws sso login" message so the toolbar offers
           // one-click re-auth instead of a raw CLI error (mirrors getInventory).
           const error = toUserFriendlyError(err, provider.credentialsProfile);
-          state.syncStatuses[syncId] = { status: 'failed', error, lastSync: null };
+          state.syncStatuses[key] = { status: 'failed', error, lastSync: null };
           throw error;
         }
       },
-      getLocalPeriods: async (tier: string) => {
-        // No providers[0] in hand here (no bucket needed) — resolve the first
-        // provider's name; while onboarding there is nothing on disk to list.
-        const provider = await app.getFirstProviderName();
-        if (provider === null) return [];
-        const inv = await getLocalDataInventory(ctx.dataDir, provider, asTier(tier));
+      getLocalPeriods: async (providerName: string, tier: string) => {
+        const provider = await providerByName(providerName);
+        const inv = await getLocalDataInventory(ctx.dataDir, provider.name, asTier(tier));
         return [...inv.local.periods];
       },
-      deletePeriods: async (periods: readonly string[], tier: string) => {
-        const provider = await app.getFirstProviderName();
-        if (provider === null) return;
+      deletePeriods: async (providerName: string, periods: readonly string[], tier: string) => {
+        const provider = await providerByName(providerName);
         for (const period of periods) {
-          await deleteLocalPeriodFiles(ctx.dataDir, provider, period, asTier(tier));
+          await deleteLocalPeriodFiles(ctx.dataDir, provider.name, period, asTier(tier));
         }
-        // Cascade the auto-prune into the rollup, once per unique daily month.
-        if (asTier(tier) === 'daily') {
+        // Cascade the auto-prune into the rollup, once per unique daily month —
+        // first provider only (the RollupStore is bound to it).
+        if (asTier(tier) === 'daily' && await isFirstProvider(provider)) {
           for (const month of changedRollupMonths(periods)) {
             await cascadeRollupForDeletedMonth(app, month);
           }

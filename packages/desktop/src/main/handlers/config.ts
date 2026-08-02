@@ -5,6 +5,7 @@ import type {
   Dimension,
   OrgNode,
 } from '@costgoblin/core';
+import { swapProviderCredentialsProfile } from '../config-upsert.js';
 import type { AppContext } from './context.js';
 
 export function registerConfigHandlers(app: AppContext): void {
@@ -52,27 +53,23 @@ export function registerConfigHandlers(app: AppContext): void {
     return [...orgTree.tree];
   });
 
-  // Surgical update: rewrite ONLY the first provider's credentialsProfile,
-  // leaving every other YAML field (buckets, retention, defaults, etc.)
-  // untouched. The full setup wizard already covers re-doing buckets too —
-  // this is the "I just want to swap to a profile with different IAM perms"
-  // shortcut. Drops the legacy nested `credentials` key when present so the
-  // file converges on the current shape.
-  ipcMain.handle('config:update-aws-profile', async (_event, profile: string): Promise<void> => {
+  // Surgical update: rewrite ONLY the targeted provider's credentialsProfile
+  // (exact-name lookup; defaults to the first provider when no name is
+  // given), leaving every other YAML field (buckets, retention, defaults,
+  // other providers, etc.) untouched. The full setup wizard already covers
+  // re-doing buckets too — this is the "I just want to swap to a profile
+  // with different IAM perms" shortcut. Drops the legacy nested
+  // `credentials` key on the targeted entry only, so the file converges on
+  // the current shape.
+  ipcMain.handle('config:update-aws-profile', async (_event, profile: string, providerName?: string): Promise<void> => {
     const fs = await import('node:fs/promises');
     const { stringify, parse: parseYaml } = await import('yaml');
     const raw = await fs.readFile(ctx.configPath, 'utf-8');
     const parsed: unknown = parseYaml(raw);
     if (!isStringRecord(parsed)) throw new Error('Config file is not a YAML object');
-    const providersRaw: unknown = parsed['providers'];
-    if (!Array.isArray(providersRaw) || providersRaw.length === 0) throw new Error('No providers configured');
-    const providers: unknown[] = providersRaw;
-    const first = providers[0];
-    if (!isStringRecord(first)) throw new Error('First provider entry is not an object');
-    const firstRest = Object.fromEntries(Object.entries(first).filter(([key]) => key !== 'credentials'));
-    const updated = { ...parsed, providers: [{ ...firstRest, credentialsProfile: profile }, ...providers.slice(1)] };
+    const updated = swapProviderCredentialsProfile(parsed, profile, providerName);
     await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
     invalidateConfig();
-    logger.info(`Updated AWS profile to ${profile}`);
+    logger.info(`Updated AWS profile to ${profile}${providerName === undefined ? '' : ` for provider ${providerName}`}`);
   });
 }

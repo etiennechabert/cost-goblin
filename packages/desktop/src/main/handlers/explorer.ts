@@ -155,6 +155,7 @@ function buildOrderBy(
  *  zero-filled result without bothering DuckDB. */
 interface QueryContext {
   readonly empty: boolean;
+  readonly providers: readonly ProviderSourceSpec[];
   readonly source: string;
   readonly whereStr: string;
   readonly startStr: string;
@@ -292,11 +293,12 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   const tier: 'daily' | 'hourly' = (startHour !== undefined && endHour !== undefined) ? 'hourly' : requestedTier;
 
   // Empty while onboarding (no provider configured) — falls into the same
-  // zero-period early return as "no months on disk".
+  // zero-period early return as "no months on disk". Months are resolved
+  // ACROSS providers: the union proceeds when any provider has data in
+  // range (buildSource intersects per provider).
   const providers = await getQueryProviders(tier);
-  const available = providers[0]?.availablePeriods ?? [];
   const required = computePeriodsInRange({ start: startStr, end: endStr });
-  const periods = required.filter(p => available.includes(p));
+  const periods = required.filter(m => providers.some(p => p.availablePeriods?.includes(m) ?? false));
 
   const dimensions = await getQueryDimensions();
   const accountMap = await getAccountMap();
@@ -306,7 +308,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     label: t.label,
   }));
   const tagIdSet = new Set(tagColumns.map(t => t.id));
-  const shared = { startStr, endStr, windowDays, tier, tagColumns, tagIdSet, dimensions, accountMap } as const;
+  const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagIdSet, dimensions, accountMap } as const;
 
   if (periods.length === 0) {
     return { empty: true, source: '', whereStr: '', ...shared };
@@ -483,7 +485,7 @@ export function registerExplorerHandlers(app: AppContext): void {
     // the metric/perspective or skips the scope must stay on raw. Detail/expand
     // rows still hit raw — they need resource_id/description, not in the grain.
     const rollupSource = overviewUsesRollup(params, qc.tier)
-      ? resolveRollupSource(rollupStore, { start: qc.startStr, end: qc.endStr }, 'daily', [
+      ? resolveRollupSource(rollupStore, qc.providers, { start: qc.startStr, end: qc.endStr }, 'daily', [
           'cost',
           ...overviewFilterColumns(params, qc.dimensions),
         ])

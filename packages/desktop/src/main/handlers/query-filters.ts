@@ -119,9 +119,10 @@ export function registerFilterHandlers(app: AppContext): void {
     // dimension — a renderer-supplied id must never reach the SQL verbatim.
     const { fieldExpr } = resolveField(asDimensionId(dimensionId), dimensions);
 
+    const providers = await getQueryProviders('daily');
     const matSource = dateRange === undefined
       ? undefined
-      : resolveRollupSource(rollupStore, dateRange, 'daily', [columnForDimension(dimensions, dimensionId), 'cost']);
+      : resolveRollupSource(rollupStore, providers, dateRange, 'daily', [columnForDimension(dimensions, dimensionId), 'cost']);
 
     const filterClauses = buildFilterWhereClauses(filterEntries, dimensions, accountReverseMap, qb);
     // Exclusions are baked into the rollup; only apply them on the raw path.
@@ -142,14 +143,19 @@ export function registerFilterHandlers(app: AppContext): void {
 
     let source: string;
     if (matSource === undefined) {
-      const providers = await getQueryProviders('daily');
-      // No provider configured yet (onboarding) — nothing on disk to scan.
-      if (providers.length === 0) return [];
+      // Providers with no data on disk are dropped — their wildcard glob
+      // would fail the whole union. No provider with data → empty result.
+      const active = providers.filter(p => (p.availablePeriods ?? []).length > 0);
+      if (active.length === 0) return [];
       const orgPath = await getOrgAccountsPath();
-      const periods = dateRange === undefined ? undefined : computePeriodsInRange(dateRange);
+      const required = dateRange === undefined ? undefined : computePeriodsInRange(dateRange);
       source = buildSource({
         dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath,
-        providers: providers.map(p => ({ name: p.name, periods, availableColumns: p.availableColumns })),
+        providers: active.map(p => ({
+          name: p.name,
+          periods: required?.filter(m => p.availablePeriods?.includes(m) ?? false),
+          availableColumns: p.availableColumns,
+        })),
         costMetric: 'unblended',
       });
     } else {

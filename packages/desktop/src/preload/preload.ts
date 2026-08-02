@@ -165,8 +165,8 @@ const api: CostApi = {
   getFilterValues(dimensionId: string, filters: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]> {
     return invoke<{ value: string; label: string; count: number }[]>('query:filter-values', dimensionId, filters, dateRange, opts, origin);
   },
-  getDataInventory(tier?: DataTier): Promise<DataInventoryResult> {
-    return invoke<DataInventoryResult>('data:inventory', tier);
+  getDataInventory(tier?: DataTier, providerName?: string): Promise<DataInventoryResult> {
+    return invoke<DataInventoryResult>('data:inventory', tier, providerName);
   },
   syncPeriods(files: readonly { key: string; contentHash: string; size: number }[], syncId?: string): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
     return invoke<{ filesDownloaded: number; rowsProcessed: number }>('data:sync-periods', files, syncId);
@@ -174,8 +174,8 @@ const api: CostApi = {
   cancelSync(syncId?: string): Promise<void> {
     return invoke<undefined>('data:cancel-sync', syncId).then(() => undefined);
   },
-  deleteLocalPeriod(period: string, tier?: DataTier): Promise<void> {
-    return invoke<undefined>('data:delete-period', period, tier).then(() => undefined);
+  deleteLocalPeriod(period: string, tier?: DataTier, providerName?: string): Promise<void> {
+    return invoke<undefined>('data:delete-period', period, tier, providerName).then(() => undefined);
   },
   openDataFolder(): Promise<void> {
     return invoke<undefined>('data:open-folder').then(() => undefined);
@@ -207,8 +207,8 @@ const api: CostApi = {
   writeConfig(config: { providerName: string; profile: string; dailyBucket: string; retentionDays?: number | undefined; hourlyBucket?: string | undefined; costOptBucket?: string | undefined; tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined }): Promise<void> {
     return invoke<undefined>('setup:write-config', config).then(() => undefined);
   },
-  updateAwsProfile(profile: string): Promise<void> {
-    return invoke<undefined>('config:update-aws-profile', profile).then(() => undefined);
+  updateAwsProfile(profile: string, providerName?: string): Promise<void> {
+    return invoke<undefined>('config:update-aws-profile', profile, providerName).then(() => undefined);
   },
   getSavingsPreferences(): Promise<SavingsPreferences> {
     return invoke<SavingsPreferences>('savings:get-preferences');
@@ -222,8 +222,8 @@ const api: CostApi = {
   saveUIPreferences(prefs: UIPreferences): Promise<void> {
     return invoke<undefined>('ui:save-preferences', prefs).then(() => undefined);
   },
-  syncOrgAccounts(profile: string): Promise<OrgSyncResult> {
-    return invoke<OrgSyncResult>('org:sync-accounts', profile);
+  syncOrgAccounts(profile: string, providerName?: string): Promise<OrgSyncResult> {
+    return invoke<OrgSyncResult>('org:sync-accounts', profile, providerName);
   },
   getOrgSyncResult(): Promise<OrgSyncResult | null> {
     return invoke<OrgSyncResult | null>('org:get-result');
