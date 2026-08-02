@@ -1,4 +1,5 @@
 import type { ConfigBundleSummary } from '@costgoblin/core/browser';
+import { isValidWorkspaceName } from '@costgoblin/core/browser';
 import { useState, useEffect } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
@@ -24,12 +25,23 @@ type WizardStep =
   | { step: 'confirm'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
 
 interface SetupWizardProps {
-  onComplete: () => void;
+  /** Called when setup finishes. Carries the workspace name the user chose on
+   *  the Welcome step when it differs from the initial one (first run only). */
+  onComplete: (result?: { workspaceName?: string }) => void;
   source?: DataSource | undefined;
   profile?: string | undefined;
+  /** Present only on the true first run of a fresh install: offers naming the
+   *  initial workspace on the Welcome step (prefilled with the current name). */
+  workspaceNaming?: { initialName: string } | undefined;
 }
 
-function WelcomeStep({ onNext, onImport }: Readonly<{ onNext: () => void; onImport: () => void }>) {
+interface WelcomeNaming {
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}
+
+function WelcomeStep({ onNext, onImport, naming }: Readonly<{ onNext: () => void; onImport: () => void; naming?: WelcomeNaming | undefined }>) {
+  const nameInvalid = naming !== undefined && !isValidWorkspaceName(naming.value);
   return (
     <div className="flex flex-col items-center gap-6 text-center">
       <div className="flex flex-col items-center gap-2">
@@ -39,9 +51,27 @@ function WelcomeStep({ onNext, onImport }: Readonly<{ onNext: () => void; onImpo
       <p className="text-text-muted text-sm max-w-md">
         Connect your AWS billing data to get started. CostGoblin syncs CUR (Cost and Usage Report) data from S3, stores it locally, and lets you slice costs by any dimension.
       </p>
+      {naming !== undefined && (
+        <div className="flex w-full max-w-xs flex-col gap-1 text-left">
+          <label htmlFor="workspace-name" className="text-xs font-medium text-text-secondary">Workspace name</label>
+          <input
+            id="workspace-name"
+            value={naming.value}
+            onChange={(e) => { naming.onChange(e.target.value); }}
+            spellCheck={false}
+            className="rounded-md border border-border bg-bg-primary px-3 py-1.5 text-sm text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          />
+          {nameInvalid ? (
+            <p className="text-xs text-negative">Use letters, digits, - or _, starting with a letter or digit (64 characters max).</p>
+          ) : (
+            <p className="text-xs text-text-muted">Keep &quot;default&quot;, or name it after a client or environment — more workspaces can be added later.</p>
+          )}
+        </div>
+      )}
       <div className="flex w-full max-w-xs flex-col gap-3">
         <Button
           onClick={onNext}
+          disabled={nameInvalid}
           className="bg-accent hover:bg-accent-hover text-white"
         >
           Get Started
@@ -51,7 +81,7 @@ function WelcomeStep({ onNext, onImport }: Readonly<{ onNext: () => void; onImpo
           <span>or</span>
           <span className="h-px flex-1 bg-border" />
         </div>
-        <Button variant="outline" onClick={onImport}>
+        <Button variant="outline" onClick={onImport} disabled={nameInvalid}>
           Import from a teammate
         </Button>
         <p className="text-text-muted text-xs">
@@ -491,9 +521,10 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: Readonly<
   );
 }
 
-export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile }: Readonly<SetupWizardProps>): React.JSX.Element {
+export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile, workspaceNaming }: Readonly<SetupWizardProps>): React.JSX.Element {
   const api = useCostApi();
   const isSourceMode = initialSource !== undefined && initialProfile !== undefined;
+  const [workspaceName, setWorkspaceName] = useState(workspaceNaming?.initialName ?? '');
   const [wizard, setWizard] = useState<WizardStep>(
     isSourceMode
       ? { step: 'bucket', profile: initialProfile, source: initialSource, buckets: [], loading: true, selected: '', error: '' }
@@ -502,6 +533,17 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   const [collectedPaths, setCollectedPaths] = useState({ daily: '', hourly: '', costOpt: '' });
   const [bucketsLoaded, setBucketsLoaded] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+
+  // Single completion funnel: every finish path reports the chosen workspace
+  // name (when the user changed it to something valid) so the host can claim
+  // it as part of the completion relaunch.
+  function finish(): void {
+    if (workspaceNaming !== undefined && workspaceName !== workspaceNaming.initialName && isValidWorkspaceName(workspaceName)) {
+      onComplete({ workspaceName });
+      return;
+    }
+    onComplete();
+  }
 
   useEffect(() => {
     if (isSourceMode && !bucketsLoaded) {
@@ -565,7 +607,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     setWizard({ ...wizard, applying: true, error: '' });
     api.applyConfigBundle({ content, profile }).then(result => {
       if (result.status === 'applied') {
-        onComplete();
+        finish();
       } else {
         setWizard(prev => prev.step === 'beacon' ? { ...prev, applying: false, error: result.message } : prev);
       }
@@ -676,8 +718,14 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
           <div className="flex justify-center mb-6">
             <img src="goblin.png" alt="CostGoblin" className="h-16 w-auto" />
           </div>
-          {wizard.step === 'welcome' && <WelcomeStep onNext={handleWelcomeNext} onImport={() => { setImportOpen(true); }} />}
-          {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={onComplete} onBack={handleBack} />}
+          {wizard.step === 'welcome' && (
+            <WelcomeStep
+              onNext={handleWelcomeNext}
+              onImport={() => { setImportOpen(true); }}
+              {...(workspaceNaming !== undefined ? { naming: { value: workspaceName, onChange: setWorkspaceName } } : {})}
+            />
+          )}
+          {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={finish} onBack={handleBack} />}
           {wizard.step === 'beacon' && (
             <BeaconStep
               state={wizard}
@@ -707,7 +755,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <ConfirmStep
               state={wizard}
               onRetentionChange={(days) => { setWizard(prev => prev.step === 'confirm' ? { ...prev, retentionDays: days } : prev); }}
-              onComplete={onComplete}
+              onComplete={finish}
               onBack={handleBack}
             />
           )}
@@ -716,7 +764,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       {importOpen && (
         <ImportConfigDialog
           onClose={() => { setImportOpen(false); }}
-          onApplied={onComplete}
+          onApplied={finish}
         />
       )}
     </div>

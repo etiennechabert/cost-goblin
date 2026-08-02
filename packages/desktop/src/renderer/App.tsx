@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef, Profiler } from 'react';
-import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId } from '@costgoblin/ui';
+import { CostTrends, MissingTags, Savings, Baselines, DataManagement, DimensionsView, CostScopeView, ExplorerView, CostApiProvider, useCostApi, SetupWizard, ErrorBoundary, CustomView, OVERVIEW_SEED_VIEW, ViewsEditor, UnsavedChangesProvider, useConfirmLeave, PaletteProvider, CommandPalette, CoinRainLoader, Dialog, DialogContent, DialogTitle, DialogDescription, DialogClose, Button, McpView, SharingActiveBanner, SettingsShell, SETTINGS_TABS, isSettingsTabId, WorkspacesView, WorkspaceChip, ConfirmModal } from '@costgoblin/ui';
 import type { NavItem, SettingsTabId } from '@costgoblin/ui';
-import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus } from '@costgoblin/core/browser';
+import type { CostApi, DataSharingStatus, Dimension, FilterMap, SyncStatus, ViewsConfig, ViewSpec, UpdateStatus, RollupStatus, BaselineRecomputeStatus, WorkspacesInfo } from '@costgoblin/core/browser';
 import { asDimensionId, asTagValue, DEFAULT_LAG_DAYS, tagDimColumn } from '@costgoblin/core/browser';
 import { Download, RefreshCw, TrendingUp, Lightbulb, Tag, Search, Gauge, Terminal, RotateCw, Settings, ArrowLeft, GitBranch, GitPullRequest } from 'lucide-react';
 import { DebugPanel, useDebugBadge } from './debug-panel.js';
@@ -504,6 +504,15 @@ function AppShell(): React.JSX.Element {
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [clearingCache, setClearingCache] = useState(false);
   const [reloadConfirmOpen, setReloadConfirmOpen] = useState(false);
+  const [workspacesInfo, setWorkspacesInfo] = useState<WorkspacesInfo | null>(null);
+  // Workspace a switch has been requested into (chip or palette) — non-null
+  // shows the restart confirm.
+  const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
+  // Name chosen in the setup wizard's welcome step, claimed at completion.
+  const pendingWorkspaceNameRef = useRef<string | null>(null);
+  // "Run setup again" re-enters the wizard on a configured workspace — the
+  // workspace-naming field is only for the true first run.
+  const setupRerunRef = useRef(false);
   const inFlightCount = useDebugBadge();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle' });
   const [rollupStatus, setRollupStatus] = useState<RollupStatus>({ state: 'idle' });
@@ -625,6 +634,10 @@ function AppShell(): React.JSX.Element {
         setView({ page: 'custom', viewId: defaultId });
       }
     }).catch(() => undefined);
+  }, [api]);
+
+  useEffect(() => {
+    api.getWorkspaces().then(setWorkspacesInfo).catch(() => undefined);
   }, [api]);
 
   const applyViews = useCallback((cfg: ViewsConfig): void => {
@@ -776,6 +789,11 @@ function AppShell(): React.JSX.Element {
   // global actions, falling through to ordinary view navigation.
   function handleCommand(id: string) {
     if (id === 'action:reload') { setReloadConfirmOpen(true); return; }
+    if (id === 'workspace:new') { enterSettings('workspaces'); return; }
+    if (id.startsWith('workspace:switch:')) {
+      setPendingSwitch(id.slice('workspace:switch:'.length));
+      return;
+    }
     if (id.startsWith('settings:')) {
       const tab = id.slice('settings:'.length);
       if (isSettingsTabId(tab)) enterSettings(tab);
@@ -800,6 +818,14 @@ function AppShell(): React.JSX.Element {
   // in-flight rollup rebuild and looks like a freeze). After relaunch, the normal
   // startup flow re-checks setup and materialises data.
   function handleSetupComplete() {
+    const chosenName = pendingWorkspaceNameRef.current;
+    if (chosenName !== null && workspacesInfo?.mode === 'workspace' && chosenName !== workspacesInfo.active) {
+      // Claims the chosen name for the initial workspace (dir renamed just
+      // before the restart), then relaunches with the post-setup flag. If the
+      // claim fails, fall back to a plain relaunch — setup itself succeeded.
+      api.completeSetup(chosenName).catch(() => { globalThis.costgoblinUpdate.relaunch(true); });
+      return;
+    }
     // postSetup=true → the next launch resumes on the data-sync screen.
     globalThis.costgoblinUpdate.relaunch(true);
   }
@@ -808,6 +834,7 @@ function AppShell(): React.JSX.Element {
   // funnels into the telemetry step and then back to the dashboard; existing
   // config is preserved (setup:write-config merges).
   function handleRerunSetup() {
+    setupRerunRef.current = true;
     setSettingsTab(null);
     setSetupCheck({ status: 'needs-setup' });
   }
@@ -821,14 +848,36 @@ function AppShell(): React.JSX.Element {
     ...ANALYTICAL_NAV.map(n => ({ id: n.id, label: n.label, group: 'Analysis' })),
     ...SETTINGS_TABS.map(t => ({ id: `settings:${t.id}`, label: t.label, group: 'Settings', keywords: [...t.keywords] })),
     { id: 'action:reload', label: 'Reload data', group: 'Actions', keywords: ['refresh', 'clear cache'] },
-  ], [customNav]);
+    ...(workspacesInfo?.mode === 'workspace'
+      ? [
+          ...workspacesInfo.workspaces
+            .filter(w => !w.active)
+            .map(w => ({ id: `workspace:switch:${w.name}`, label: `Switch to workspace: ${w.name}`, group: 'Workspaces', keywords: ['workspace', 'switch'] })),
+          { id: 'workspace:new', label: 'New workspace…', group: 'Workspaces', keywords: ['workspace', 'create'] },
+        ]
+      : []),
+  ], [customNav, workspacesInfo]);
 
   if (setupCheck.status === 'checking') {
     return <SplashScreen step={splashStep} />;
   }
 
   if (setupCheck.status === 'needs-setup') {
-    return <SetupWizard onComplete={() => { setSetupCheck({ status: 'telemetry' }); }} />;
+    // Offer the workspace-name field only on the true first run of a fresh
+    // install (initial 'default' workspace, not a settings-triggered re-run,
+    // never in pinned/e2e mode).
+    const allowNaming = !setupRerunRef.current
+      && workspacesInfo?.mode === 'workspace'
+      && workspacesInfo.active === 'default';
+    return (
+      <SetupWizard
+        {...(allowNaming ? { workspaceNaming: { initialName: 'default' } } : {})}
+        onComplete={(result) => {
+          pendingWorkspaceNameRef.current = result?.workspaceName ?? null;
+          setSetupCheck({ status: 'telemetry' });
+        }}
+      />
+    );
   }
 
   if (setupCheck.status === 'telemetry') {
@@ -883,6 +932,8 @@ function AppShell(): React.JSX.Element {
         );
       case 'data-sync':
         return <DataManagement />;
+      case 'workspaces':
+        return <WorkspacesView onChanged={setWorkspacesInfo} />;
       case 'cost-scope':
         return <CostScopeView />;
       case 'dimensions':
@@ -1023,7 +1074,16 @@ function AppShell(): React.JSX.Element {
             </div>
           )}
           <div className="flex flex-col items-center justify-center px-4">
-            <span className="text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold text-accent tracking-wider leading-tight">CostGoblin</span>
+              {workspacesInfo !== null && (
+                <WorkspaceChip
+                  info={workspacesInfo}
+                  onSwitch={(name) => { setPendingSwitch(name); }}
+                  onManage={() => { enterSettings('workspaces'); }}
+                />
+              )}
+            </div>
             <div className="flex items-center gap-1.5 text-[10px] text-text-muted">
               {renderBuildIndicator()}
               {isDev && memoryMB > 0 && <span>{formatMemory(memoryMB)}</span>}
@@ -1161,6 +1221,22 @@ function AppShell(): React.JSX.Element {
         )}
       </div>
       {debugOpen && <DebugPanel onClose={() => { setDebugOpen(false); }} topOffset={headerHeight} />}
+      {pendingSwitch !== null && (
+        <ConfirmModal
+          title="Switch workspace"
+          message={
+            `Switch to workspace "${pendingSwitch}"? CostGoblin will restart.` +
+            (syncActivity !== 'idle' ? ' A sync is currently running and will be interrupted.' : '')
+          }
+          confirmLabel="Switch & Restart"
+          onConfirm={() => {
+            const name = pendingSwitch;
+            setPendingSwitch(null);
+            api.switchWorkspace(name).catch(() => undefined);
+          }}
+          onCancel={() => { setPendingSwitch(null); }}
+        />
+      )}
       <ReleaseNotesModal open={releaseNotesOpen} onOpenChange={setReleaseNotesOpen} status={updateStatus} />
       <Dialog open={reloadConfirmOpen} onOpenChange={setReloadConfirmOpen}>
         <DialogContent>

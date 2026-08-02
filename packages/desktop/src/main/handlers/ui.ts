@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { parseJsonObject, isStringRecord } from '@costgoblin/core';
 import type { UIPreferences, PerformanceInfo, PerformanceSettings } from '@costgoblin/core';
+import { readAppStateSync } from '../workspace-env.js';
 import { type AppContext, prefsPath } from './context.js';
 import { updatePrefsFile } from './prefs-file.js';
 import {
@@ -35,7 +36,11 @@ function parsePerformance(parsed: Record<string, unknown> | null): PerformanceSe
 export function registerUIHandlers(app: AppContext): void {
   const { ctx } = app;
 
-  const uiPrefsPath = () => prefsPath(ctx.dataDir, 'ui-preferences');
+  const uiPrefsPath = () => prefsPath(ctx.stateDir, 'ui-preferences');
+  // Theme + chart palette are machine-level (shared across workspaces), stored
+  // in app-state.json. In pinned mode (env-overridden paths — dev/e2e) there is
+  // no app-state; they stay in the workspace's ui-preferences.json as before.
+  const appStatePath = ctx.workspaceEnv.mode === 'workspace' ? ctx.workspaceEnv.appStatePath : null;
 
   async function readPrefs(): Promise<Record<string, unknown> | null> {
     const fs = await import('node:fs/promises');
@@ -48,8 +53,15 @@ export function registerUIHandlers(app: AppContext): void {
 
   ipcMain.handle('ui:get-preferences', async (): Promise<UIPreferences> => {
     const parsed = await readPrefs();
-    const theme = parsed?.['theme'];
-    const palette = parsed?.['palette'];
+    let theme = parsed?.['theme'];
+    let palette = parsed?.['palette'];
+    if (appStatePath !== null) {
+      // Machine-level values win; the workspace file is only the fallback for
+      // a workspace migrated before its theme was copied to app-state.
+      const appState = readAppStateSync(appStatePath);
+      theme = appState.theme ?? theme;
+      palette = appState.palette ?? palette;
+    }
     const defaultViewId = parsed?.['defaultViewId'];
     return {
       theme: theme === 'light' || theme === 'dark' ? theme : 'dark',
@@ -63,6 +75,9 @@ export function registerUIHandlers(app: AppContext): void {
     // Serialized merge so saving (e.g.) theme never clobbers the separately-managed
     // `performance` / `telemetry` blocks written through the same file.
     await updatePrefsFile(await uiPrefsPath(), (existing) => ({ ...existing, ...prefs }));
+    if (appStatePath !== null) {
+      await updatePrefsFile(appStatePath, (existing) => ({ ...existing, theme: prefs.theme, palette: prefs.palette }));
+    }
   });
 
   ipcMain.handle('perf:get-info', async (): Promise<PerformanceInfo> => {

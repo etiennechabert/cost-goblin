@@ -458,6 +458,24 @@ const api: CostApi = {
   getTelemetryOutbox(): Promise<readonly TelemetryOutboxEntry[]> {
     return invoke<readonly TelemetryOutboxEntry[]>('telemetry:get-outbox');
   },
+  getWorkspaces() {
+    return invoke('workspaces:list');
+  },
+  createWorkspace(name, source, switchTo) {
+    return invoke('workspaces:create', name, source, switchTo);
+  },
+  renameWorkspace(from, to) {
+    return invoke('workspaces:rename', from, to);
+  },
+  deleteWorkspace(name) {
+    return invoke('workspaces:delete', name);
+  },
+  switchWorkspace(name) {
+    return invoke<undefined>('workspaces:switch', name).then(() => undefined);
+  },
+  completeSetup(workspaceName) {
+    return invoke<undefined>('workspaces:complete-setup', workspaceName).then(() => undefined);
+  },
 };
 
 contextBridge.exposeInMainWorld('costgoblin', api);

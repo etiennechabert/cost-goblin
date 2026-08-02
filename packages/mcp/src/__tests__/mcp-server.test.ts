@@ -206,6 +206,7 @@ describe('MCP server E2E', () => {
 
     const ctx: McpContext = {
       dataDir: SYNTHETIC_DIR,
+      stateDir: FIXTURES_DIR,
       runQuery: (sql) => queryAll(conn, sql),
       runPreparedQuery: (sql, params) => queryAll(conn, substituteParams(sql, params)),
       getConfig: () => Promise.resolve(config),

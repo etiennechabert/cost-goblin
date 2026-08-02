@@ -22,6 +22,8 @@ import { initAutoUpdater, checkForUpdates } from './update-manager.js';
 import { registerUpdateHandlers } from './handlers/update.js';
 import { validateUrl, SecurityError } from './url-validator.js';
 import { validateProfileLabel } from './validators/path-validator.js';
+import { resolveWorkspaceEnv } from './workspace-env.js';
+import type { WorkspaceEnv } from './workspace-env.js';
 
 // Log level: debug in dev (NODE_ENV=development or electron-vite serving
 // the renderer), or when COSTGOBLIN_LOG_LEVEL=debug. Otherwise info.
@@ -152,10 +154,9 @@ function installCSP(): void {
 /** Read the user's DuckDB performance overrides from ui-preferences.json (the
  *  same file the UI writes). Returns nulls ("auto") when absent/unreadable so
  *  the worker falls back to the computed defaults. */
-function readPerformanceOverrides(userDataPath: string): { memoryLimitGB: number | null; threads: number | null; rollupConcurrency: number | null } {
+function readPerformanceOverrides(stateDir: string): { memoryLimitGB: number | null; threads: number | null; rollupConcurrency: number | null } {
   try {
-    const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
-    const prefsFile = join(dirname(dataDir), 'ui-preferences.json');
+    const prefsFile = join(stateDir, 'ui-preferences.json');
     const parsed = parseJsonObject(readFileSync(prefsFile, 'utf-8'));
     const perf = parsed?.['performance'];
     if (isStringRecord(perf)) {
@@ -171,20 +172,18 @@ function readPerformanceOverrides(userDataPath: string): { memoryLimitGB: number
   return { memoryLimitGB: null, threads: null, rollupConcurrency: null };
 }
 
-async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConcurrency: number): Promise<void> {
-  const userDataPath = app.getPath('userData');
-  const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
-  const configBase = process.env['COSTGOBLIN_CONFIG_DIR'] ?? join(userDataPath, 'config');
-
+async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConcurrency: number, wsEnv: WorkspaceEnv): Promise<void> {
   const appContext = registerIpcHandlers({
     db,
     syncClient,
-    configPath: resolveConfigPath(configBase, 'costgoblin'),
-    dimensionsPath: resolveConfigPath(configBase, 'dimensions'),
-    orgTreePath: resolveConfigPath(configBase, 'org-tree'),
-    viewsPath: resolveConfigPath(configBase, 'views'),
-    costScopePath: resolveConfigPath(configBase, 'cost-scope'),
-    dataDir,
+    configPath: resolveConfigPath(wsEnv.configBase, 'costgoblin'),
+    dimensionsPath: resolveConfigPath(wsEnv.configBase, 'dimensions'),
+    orgTreePath: resolveConfigPath(wsEnv.configBase, 'org-tree'),
+    viewsPath: resolveConfigPath(wsEnv.configBase, 'views'),
+    costScopePath: resolveConfigPath(wsEnv.configBase, 'cost-scope'),
+    dataDir: wsEnv.dataDir,
+    stateDir: wsEnv.stateDir,
+    workspaceEnv: wsEnv,
   });
 
   // Apply the persisted rollup-build-parallelism override (perf:set updates it
@@ -250,17 +249,26 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConc
 }
 
 async function main(): Promise<void> {
+  // Redirect the whole userData tree first (e2e/workspace-mode tests) — must
+  // precede every app.getPath('userData') read, including the MCP token path.
+  const userDataOverride = process.env['COSTGOBLIN_USER_DATA_DIR'];
+  if (typeof userDataOverride === 'string' && userDataOverride.length > 0) {
+    app.setPath('userData', userDataOverride);
+  }
+  // Resolve the active workspace (or pinned env-override paths) once —
+  // everything downstream (telemetry, DuckDB temp, the IPC context) consumes
+  // this single resolution. Runs migration of a pre-workspace layout on first
+  // launch after upgrade.
+  const wsEnv = resolveWorkspaceEnv(app.getPath('userData'), process.env);
+
   // Telemetry is set up BEFORE app.whenReady(): @sentry/electron can only arm the
   // native crash handler before the 'ready' event, so the opt-in is decided here
   // from the saved preference. Toggling the channel in Settings saves the choice
   // and restarts the app to re-arm with the new state.
-  const userDataPath = app.getPath('userData');
-  const telemetryDataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? join(userDataPath, 'data');
-  const telemetryDir = dirname(telemetryDataDir);
-  telemetry.initialize(telemetryDir);
+  telemetry.initialize(wsEnv.stateDir);
   let telemetryPrefs = parseTelemetryPreferences(undefined);
   try {
-    const parsed = parseJsonObject(readFileSync(join(telemetryDir, 'ui-preferences.json'), 'utf-8'));
+    const parsed = parseJsonObject(readFileSync(join(wsEnv.stateDir, 'ui-preferences.json'), 'utf-8'));
     telemetryPrefs = parseTelemetryPreferences(parsed?.['telemetry']);
   } catch {
     /* no or invalid prefs file → telemetry stays dark */
@@ -276,9 +284,9 @@ async function main(): Promise<void> {
   // into out/worker/ to find them.
   const duckdbWorkerPath = join(__dirname, '..', 'worker', 'duckdb-worker.cjs');
   const db = await createDuckDBClient(duckdbWorkerPath);
-  const tempDir = join(userDataPath, 'temp');
+  const tempDir = wsEnv.tempDir;
   mkdirSync(tempDir, { recursive: true });
-  const perf = readPerformanceOverrides(userDataPath);
+  const perf = readPerformanceOverrides(wsEnv.stateDir);
   db.configure({
     tempDir,
     memoryGB: resolveMemoryGB(perf.memoryLimitGB),
@@ -303,11 +311,11 @@ async function main(): Promise<void> {
   registerUpdateHandlers();
 
   const startupRollupConcurrency = resolveRollupConcurrency(perf.rollupConcurrency);
-  await createWindow(db, syncClient, startupRollupConcurrency);
+  await createWindow(db, syncClient, startupRollupConcurrency, wsEnv);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow(db, syncClient, startupRollupConcurrency).catch(() => undefined);
+      createWindow(db, syncClient, startupRollupConcurrency, wsEnv).catch(() => undefined);
     }
   });
 }

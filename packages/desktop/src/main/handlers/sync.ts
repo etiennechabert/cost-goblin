@@ -361,7 +361,7 @@ export function registerSyncHandlers(app: AppContext): void {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
 
-    const rawDir = path.join(path.dirname(ctx.dataDir), 'raw');
+    const rawDir = path.join(ctx.stateDir, 'raw');
     let csvPath: string | null = null;
 
     try {

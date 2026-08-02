@@ -6,7 +6,7 @@ import { type AppContext, prefsPath } from './context.js';
 export function registerSavingsHandlers(app: AppContext): void {
   const { ctx } = app;
 
-  const savingsPrefsPath = () => prefsPath(ctx.dataDir, 'savings-preferences');
+  const savingsPrefsPath = () => prefsPath(ctx.stateDir, 'savings-preferences');
 
   ipcMain.handle('savings:get-preferences', async (): Promise<SavingsPreferences> => {
     const fs = await import('node:fs/promises');

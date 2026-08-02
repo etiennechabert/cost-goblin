@@ -125,6 +125,7 @@ const SETTINGS_ITEMS: Record<string, string> = {
   'Share': 'Share',
   'Import': 'Import',
   'Performance': 'Performance',
+  'Workspaces': 'Workspaces',
 };
 const NAV_ALIASES: Record<string, string> = { Views: 'Views Editor' };
 // Both top-bar <nav> elements have aria-labels — scope direct-nav lookups

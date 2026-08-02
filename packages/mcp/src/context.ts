@@ -8,6 +8,8 @@ export type RawRow = Readonly<Record<string, unknown>>;
 
 export interface McpContext {
   readonly dataDir: string;
+  /** Root for per-workspace state JSONs (baselines, org lookups). */
+  readonly stateDir: string;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   readonly runPreparedQuery: (sql: string, params: readonly unknown[]) => Promise<RawRow[]>;
   readonly getConfig: () => Promise<CostGoblinConfig>;

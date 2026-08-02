@@ -56,10 +56,20 @@ import {
   type TelemetryPreferences,
   type TelemetryStatus,
   type TelemetryOutboxEntry,
+  type CreateWorkspaceSource,
+  type WorkspacesInfo,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE, computeRollupEstimate } from '@costgoblin/core/browser';
 
 const MOCK_PEER_HOST = 'mock-peer.local';
+
+export const MOCK_WORKSPACES_INFO: WorkspacesInfo = {
+  mode: 'workspace',
+  active: 'default',
+  workspaces: [
+    { name: 'default', active: true, configured: true, sizeBytes: 128 * 1024 * 1024, lastUsedAt: '2026-06-11T09:00:00.000Z' },
+  ],
+};
 
 const costResult: CostResult = {
   rows: [
@@ -555,6 +565,20 @@ export class MockCostApi implements CostApi {
   removeSharedSource(): Promise<void> {
     return Promise.resolve();
   }
+  getWorkspaces(): Promise<WorkspacesInfo> {
+    return Promise.resolve(MOCK_WORKSPACES_INFO);
+  }
+  // Property-style so the declared type keeps the params (see checkConfigBeacon).
+  createWorkspace: (name: string, source: CreateWorkspaceSource, switchTo: boolean) => Promise<WorkspacesInfo> =
+    () => Promise.resolve(MOCK_WORKSPACES_INFO);
+  renameWorkspace: (from: string, to: string) => Promise<WorkspacesInfo> =
+    () => Promise.resolve(MOCK_WORKSPACES_INFO);
+  deleteWorkspace: (name: string) => Promise<WorkspacesInfo> =
+    () => Promise.resolve(MOCK_WORKSPACES_INFO);
+  switchWorkspace: (name: string) => Promise<void> =
+    () => Promise.resolve();
+  completeSetup: (workspaceName: string | null) => Promise<void> =
+    () => Promise.resolve();
 }
 
 export const MOCK_SHARED_SOURCE: SharedSourceInfo = {

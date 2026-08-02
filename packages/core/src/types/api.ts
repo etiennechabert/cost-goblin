@@ -96,6 +96,29 @@ export interface PerformanceInfo {
   readonly current: PerformanceSettings;
 }
 
+export interface WorkspaceSummary {
+  readonly name: string;
+  readonly active: boolean;
+  /** Whether setup has completed (the workspace's costgoblin.yaml exists). */
+  readonly configured: boolean;
+  /** Recursive on-disk size; null when it couldn't be computed. */
+  readonly sizeBytes: number | null;
+  readonly lastUsedAt: string | null;
+}
+
+export interface WorkspacesInfo {
+  /** 'pinned' when COSTGOBLIN_DATA_DIR/COSTGOBLIN_CONFIG_DIR pin the paths
+   *  (dev/e2e) — workspace management is unavailable and the list is empty. */
+  readonly mode: 'pinned' | 'workspace';
+  readonly active: string | null;
+  readonly workspaces: readonly WorkspaceSummary[];
+}
+
+export type CreateWorkspaceSource =
+  | { readonly kind: 'fresh' }
+  | { readonly kind: 'copy-config' }
+  | { readonly kind: 'bundle'; readonly content: string; readonly awsProfile: string };
+
 export interface OrgAccount {
   readonly id: string;
   readonly name: string;
@@ -405,6 +428,23 @@ export interface CostApi {
    *  transport — so the user can see exactly what left the machine. Most
    *  recent first. */
   getTelemetryOutbox(): Promise<readonly TelemetryOutboxEntry[]>;
+  // --- Workspaces ---
+  /** Enumerate workspaces and which one is active. */
+  getWorkspaces(): Promise<WorkspacesInfo>;
+  /** Create a workspace from the given source. `switchTo` relaunches into it
+   *  on success (the promise then never settles meaningfully). */
+  createWorkspace(name: string, source: CreateWorkspaceSource, switchTo: boolean): Promise<WorkspacesInfo>;
+  /** Rename a workspace. Renaming the active one relaunches the app. */
+  renameWorkspace(from: string, to: string): Promise<WorkspacesInfo>;
+  /** Delete a workspace and ALL its synced data/config. Rejects the active
+   *  workspace and the last remaining one. */
+  deleteWorkspace(name: string): Promise<WorkspacesInfo>;
+  /** Persist the workspace as last-used and relaunch into it. */
+  switchWorkspace(name: string): Promise<void>;
+  /** Finish the setup wizard: optionally claim a name for the initial
+   *  'default' workspace (renamed just before restart), then relaunch with
+   *  the post-setup flag. Pass null to keep the current name. */
+  completeSetup(workspaceName: string | null): Promise<void>;
 }
 
 export interface AccountMappingEntry {

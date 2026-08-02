@@ -9,6 +9,7 @@ import { loadOrCreateMcpToken, regenerateMcpToken as rotateTokenFile } from './m
 function adaptAppContext(app: AppContext): McpContext {
   return {
     dataDir: app.ctx.dataDir,
+    stateDir: app.ctx.stateDir,
     runQuery: (sql) => app.runQuery(sql),
     runPreparedQuery: (sql, params) => app.runPreparedQuery(sql, params),
     getConfig: () => app.getConfig(),

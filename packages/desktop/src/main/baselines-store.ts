@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import {
   asDateString,
   asDimensionId,
@@ -63,6 +63,7 @@ import { columnForDimension, resolveAvailablePeriods } from './handlers/query-ut
  *  store doesn't import the whole AppContext (avoids a cycle). */
 export interface BaselineEngineDeps {
   readonly dataDir: string;
+  readonly stateDir: string;
   readonly getQueryDimensions: () => Promise<DimensionsConfig>;
   readonly getCostScope: () => Promise<CostScopeConfig>;
   readonly getAccountMap: () => Promise<Map<string, string>>;
@@ -140,7 +141,7 @@ function todayUtc(): string {
 }
 
 export class BaselineStore {
-  private readonly dataDir: string;
+  private readonly stateDir: string;
   private readonly specs = new Map<string, BaselineSpec>();
   private readonly histories = new Map<string, readonly BaselineDailyPoint[]>();
   private readonly snapshots = new Map<string, readonly BaselineSnapshot[]>();
@@ -157,14 +158,14 @@ export class BaselineStore {
   private loaded = false;
   private recomputing = false;
 
-  constructor(dataDir: string) {
-    this.dataDir = dataDir;
+  constructor(stateDir: string) {
+    this.stateDir = stateDir;
   }
 
   // --- persistence ------------------------------------------------------------
 
-  private specsPath(): string { return join(dirname(this.dataDir), 'baselines.json'); }
-  private dataPath(): string { return join(dirname(this.dataDir), 'baselines-data.json'); }
+  private specsPath(): string { return join(this.stateDir, 'baselines.json'); }
+  private dataPath(): string { return join(this.stateDir, 'baselines-data.json'); }
 
   async load(deps: BaselineEngineDeps): Promise<void> {
     if (this.loaded) return;
@@ -844,7 +845,7 @@ export class BaselineStore {
   private cachedOrgDigest = '';
   async primeOrgDigest(deps: BaselineEngineDeps): Promise<void> {
     try {
-      const raw = await readFile(join(dirname(deps.dataDir), 'org-accounts.json'), 'utf-8');
+      const raw = await readFile(join(deps.stateDir, 'org-accounts.json'), 'utf-8');
       this.cachedOrgDigest = computeOrgAccountsDigest(raw);
     } catch { this.cachedOrgDigest = computeOrgAccountsDigest(''); }
   }

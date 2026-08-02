@@ -40,7 +40,7 @@ export function registerOrgHandlers(app: AppContext): void {
 
   async function orgResultPath(): Promise<string> {
     const path = await import('node:path');
-    return path.join(path.dirname(ctx.dataDir), 'org-accounts.json');
+    return path.join(ctx.stateDir, 'org-accounts.json');
   }
 
   ipcMain.handle('org:sync-accounts', async (_event, profile: string): Promise<OrgSyncResult> => {
@@ -51,7 +51,7 @@ export function registerOrgHandlers(app: AppContext): void {
       await fs.writeFile(await orgResultPath(), JSON.stringify(result, null, 2));
       const path = await import('node:path');
       const tagLookup = result.accounts.map(a => ({ id: a.id, tags: a.tags }));
-      await fs.writeFile(path.join(path.dirname(ctx.dataDir), 'org-account-tags.json'), JSON.stringify(tagLookup));
+      await fs.writeFile(path.join(ctx.stateDir, 'org-account-tags.json'), JSON.stringify(tagLookup));
 
       // Piggyback the SSM region-name sync onto the existing org-sync flow.
       // Failures here are non-fatal — region names are a display nicety and
@@ -61,7 +61,7 @@ export function registerOrgHandlers(app: AppContext): void {
       orgSyncProgress = { phase: 'regions', done: 0, total: 0 };
       try {
         const regionMap = await syncRegionNames(profile);
-        await fs.writeFile(path.join(path.dirname(ctx.dataDir), 'region-names.json'), JSON.stringify(regionMap, null, 2));
+        await fs.writeFile(path.join(ctx.stateDir, 'region-names.json'), JSON.stringify(regionMap, null, 2));
         lastRegionSyncError = null;
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -101,7 +101,7 @@ export function registerOrgHandlers(app: AppContext): void {
       const regionMap = await syncRegionNames(profile);
       const fs = await import('node:fs/promises');
       const path = await import('node:path');
-      await fs.writeFile(path.join(path.dirname(ctx.dataDir), 'region-names.json'), JSON.stringify(regionMap, null, 2));
+      await fs.writeFile(path.join(ctx.stateDir, 'region-names.json'), JSON.stringify(regionMap, null, 2));
       lastRegionSyncError = null;
       invalidateDimensions();
       orgSyncProgress = null;
@@ -121,7 +121,7 @@ export function registerOrgHandlers(app: AppContext): void {
     // doesn't error). The next sync re-creates whichever files succeed.
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const baseDir = path.dirname(ctx.dataDir);
+    const baseDir = ctx.stateDir;
     const files = ['org-accounts.json', 'org-account-tags.json', 'region-names.json'];
     for (const f of files) {
       try {
@@ -142,7 +142,7 @@ export function registerOrgHandlers(app: AppContext): void {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
     try {
-      const raw = await fs.readFile(path.join(path.dirname(ctx.dataDir), 'region-names.json'), 'utf-8');
+      const raw = await fs.readFile(path.join(ctx.stateDir, 'region-names.json'), 'utf-8');
       const parsed: unknown = JSON.parse(raw);
       if (!isStringRecord(parsed)) return null;
       const regions = parsed['regions'];

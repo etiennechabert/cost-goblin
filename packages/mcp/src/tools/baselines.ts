@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import {
   asDateString,
   asDollars,
@@ -77,7 +77,7 @@ function parseManualBand(v: unknown): ManualBand | undefined {
 }
 
 async function load(ctx: McpContext): Promise<Loaded> {
-  const base = dirname(ctx.dataDir);
+  const base = ctx.stateDir;
   let specsRaw: unknown;
   let dataRaw: unknown;
   try { specsRaw = JSON.parse(await readFile(join(base, 'baselines.json'), 'utf-8')); } catch { specsRaw = {}; }

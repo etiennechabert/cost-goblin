@@ -30,6 +30,8 @@ export { EntityPopup } from './components/entity-popup.js';
 export { ConfirmModal } from './components/confirm-modal.js';
 export { BundleSummaryCard, ImportConfigDialog, ShareConfigDialog, ImportConfigPanel, ShareConfigPanel } from './components/config-sharing.js';
 export { SharingActiveBanner } from './components/sharing-active-banner.js';
+export { WorkspaceChip } from './components/workspace-chip.js';
+export type { WorkspaceChipProps } from './components/workspace-chip.js';
 export { ProfilePicker, filterProfiles } from './components/profile-picker.js';
 export { SsoLoginButton } from './components/sso-login-button.js';
 export { CsvExport } from './components/csv-export.js';
@@ -69,6 +71,7 @@ export { CostScopeView } from './views/cost-scope.js';
 export { ExplorerView } from './views/explorer.js';
 export { SetupWizard } from './views/setup-wizard.js';
 export { McpView } from './views/mcp-view.js';
+export { WorkspacesView } from './views/workspaces.js';
 
 export { getDimensionId, isTagDimension, isEnvironmentDimension, isOwnerDimension, isProductDimension } from './lib/dimensions.js';
 

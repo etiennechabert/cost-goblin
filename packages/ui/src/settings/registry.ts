@@ -1,4 +1,4 @@
-import { Settings2, Database, Target, Tags, LayoutDashboard, Share2, FileDown, Sparkles, Gauge, ShieldCheck } from 'lucide-react';
+import { Settings2, Boxes, Database, Target, Tags, LayoutDashboard, Share2, FileDown, Sparkles, Gauge, ShieldCheck } from 'lucide-react';
 
 /** The settings surface is "setting mode": a full-canvas, tabbed workspace that
  *  is deliberately separate from "view mode" (looking at cost data). Every
@@ -10,6 +10,7 @@ import { Settings2, Database, Target, Tags, LayoutDashboard, Share2, FileDown, S
  *  means adding one entry here — not editing six hand-synced sites. */
 export type SettingsTabId =
   | 'general'
+  | 'workspaces'
   | 'data-sync'
   | 'cost-scope'
   | 'dimensions'
@@ -35,6 +36,12 @@ export const SETTINGS_TABS: readonly SettingsTabMeta[] = [
     label: 'General',
     Icon: Settings2,
     keywords: ['appearance', 'theme', 'dark mode', 'light mode', 'palette', 'colorblind', 'default dashboard', 'updates', 'version'],
+  },
+  {
+    id: 'workspaces',
+    label: 'Workspaces',
+    Icon: Boxes,
+    keywords: ['workspace', 'switch', 'client', 'environment', 'isolated', 'multiple', 'create', 'rename', 'delete'],
   },
   {
     id: 'data-sync',

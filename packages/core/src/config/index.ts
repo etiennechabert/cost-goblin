@@ -19,4 +19,12 @@ export {
 } from './sharing-bundle.js';
 export type { BuildConfigBundleInput, ParsedConfigBundle } from './sharing-bundle.js';
 export { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from './sharing-location.js';
+export {
+  WORKSPACE_NAME_PATTERN,
+  RESERVED_WORKSPACE_NAMES,
+  DEFAULT_WORKSPACE_NAME,
+  WorkspaceNameError,
+  isValidWorkspaceName,
+  parseWorkspaceName,
+} from './workspace-name.js';
 export { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, mergeBuiltInExclusionRules } from './cost-scope-seed.js';

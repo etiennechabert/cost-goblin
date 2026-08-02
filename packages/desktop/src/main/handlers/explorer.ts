@@ -397,7 +397,7 @@ function readOverviewDaily(result: PromiseSettledResult<RawRow[]>): readonly Exp
 export function registerExplorerHandlers(app: AppContext): void {
   const { ctx, runQuery, rollupStore, getAccountReverseMap } = app;
 
-  const explorerPrefsPath = () => prefsPath(ctx.dataDir, 'explorer-preferences');
+  const explorerPrefsPath = () => prefsPath(ctx.stateDir, 'explorer-preferences');
 
   ipcMain.handle('explorer:get-preferences', async (): Promise<ExplorerPreferences> => {
     const fs = await import('node:fs/promises');
