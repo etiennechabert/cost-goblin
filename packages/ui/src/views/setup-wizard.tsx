@@ -525,6 +525,16 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   const api = useCostApi();
   const isSourceMode = initialSource !== undefined && initialProfile !== undefined;
   const [workspaceName, setWorkspaceName] = useState(workspaceNaming?.initialName ?? '');
+  // `workspaceNaming` can arrive AFTER mount (the host learns the workspace
+  // mode from an IPC round-trip that races the setup check) — the useState
+  // initializer above won't re-run, so seed the field when the prop appears.
+  // Only an untouched (empty) field is seeded; user input is never clobbered.
+  const initialWorkspaceName = workspaceNaming?.initialName;
+  useEffect(() => {
+    if (initialWorkspaceName !== undefined) {
+      setWorkspaceName((current) => (current === '' ? initialWorkspaceName : current));
+    }
+  }, [initialWorkspaceName]);
   const [wizard, setWizard] = useState<WizardStep>(
     isSourceMode
       ? { step: 'bucket', profile: initialProfile, source: initialSource, buckets: [], loading: true, selected: '', error: '' }

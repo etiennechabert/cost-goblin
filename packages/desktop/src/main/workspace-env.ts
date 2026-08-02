@@ -36,6 +36,12 @@ export interface AppStateFile {
   lastUsed?: Record<string, string>; // name -> ISO timestamp
   theme?: 'dark' | 'light';
   palette?: 'standard' | 'colorblind';
+  /** A directory rename to perform on the next launch, before any file inside
+   *  the workspace is opened. Renaming the ACTIVE workspace in-process fails on
+   *  Windows (DuckDB holds its temp_directory and mmapped Parquet handles
+   *  inside the directory), so the handlers persist the request here and
+   *  relaunch; `resolveWorkspaceEnv` applies it first thing. */
+  pendingRename?: { from: string; to: string };
 }
 
 const APP_STATE_SCHEMA_VERSION = 1;
@@ -99,6 +105,12 @@ export function readAppStateSync(appStatePath: string): AppStateFile {
   if (theme === 'dark' || theme === 'light') state.theme = theme;
   const palette = parsed['palette'];
   if (palette === 'standard' || palette === 'colorblind') state.palette = palette;
+  const pendingRename = parsed['pendingRename'];
+  if (isStringRecord(pendingRename)) {
+    const from = pendingRename['from'];
+    const to = pendingRename['to'];
+    if (typeof from === 'string' && typeof to === 'string') state.pendingRename = { from, to };
+  }
   return state;
 }
 
@@ -204,6 +216,32 @@ function isNonEmptyString(value: string | undefined): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
+/** Applies a pendingRename queued by the previous process (see AppStateFile).
+ *  Runs before anything opens a handle inside the workspace, so the rename
+ *  succeeds on Windows too. Tolerant: an invalid name, a missing source, a
+ *  clashing target, or a failed rename just drops the request — the app then
+ *  boots into whatever `lastWorkspace`/most-recently-used resolves to. */
+function applyPendingRenameSync(workspacesRoot: string, appState: AppStateFile): AppStateFile {
+  const pending = appState.pendingRename;
+  if (pending === undefined) return appState;
+  const rest: AppStateFile = { ...appState };
+  delete rest.pendingRename;
+  if (!isValidWorkspaceName(pending.from) || !isValidWorkspaceName(pending.to)) return rest;
+  const fromPath = join(workspacesRoot, pending.from);
+  const toPath = join(workspacesRoot, pending.to);
+  if (!isDirectorySync(fromPath)) return rest; // already applied, or source gone
+  // A same-name-different-casing rename is legal even though the target "exists"
+  // on a case-insensitive filesystem (it is the same directory).
+  const sameDir = pending.from.toLowerCase() === pending.to.toLowerCase();
+  if (!sameDir && existsSync(toPath)) return rest; // clash appeared since queuing
+  try {
+    renameSync(fromPath, toPath);
+  } catch {
+    return rest;
+  }
+  return rest;
+}
+
 /** Resolves the four working paths for this launch. Pinned mode (either env
  *  override set) reproduces today's behavior byte-for-byte and touches nothing
  *  on disk; workspace mode picks/migrates/creates a workspace and writes
@@ -227,7 +265,7 @@ export function resolveWorkspaceEnv(userDataPath: string, env: NodeJS.ProcessEnv
 
   const workspacesRoot = join(userDataPath, 'workspaces');
   const appStatePath = join(userDataPath, 'app-state.json');
-  const appState = readAppStateSync(appStatePath);
+  const appState = applyPendingRenameSync(workspacesRoot, readAppStateSync(appStatePath));
 
   let name: WorkspaceName | null = null;
   const last = appState.lastWorkspace;
@@ -238,7 +276,15 @@ export function resolveWorkspaceEnv(userDataPath: string, env: NodeJS.ProcessEnv
   let migration: { theme?: 'dark' | 'light'; palette?: 'standard' | 'colorblind' } = {};
   if (name === null) {
     const existing = listWorkspaceNamesSync(workspacesRoot);
-    if (existing.length > 0) {
+    // app-state.json is written only after a fully successful resolution, so
+    // legacy files at the root WITHOUT it mean an interrupted migration (which
+    // itself creates workspaces/default/ before moving anything) — re-enter
+    // migration rather than mistaking the partial workspace for a real one.
+    const legacyPending = hasLegacyLayoutSync(userDataPath) && (existing.length === 0 || !existsSync(appStatePath));
+    if (legacyPending) {
+      migration = migrateLegacyLayoutSync(userDataPath);
+      name = DEFAULT_WORKSPACE_NAME;
+    } else if (existing.length > 0) {
       // Most recently used wins; ISO timestamps compare lexicographically.
       // `existing` is sorted alphabetically and the comparison is strict, so
       // ties (including entirely absent timestamps) break alphabetically.
@@ -251,9 +297,6 @@ export function resolveWorkspaceEnv(userDataPath: string, env: NodeJS.ProcessEnv
           bestTime = time;
         }
       }
-    } else if (hasLegacyLayoutSync(userDataPath)) {
-      migration = migrateLegacyLayoutSync(userDataPath);
-      name = DEFAULT_WORKSPACE_NAME;
     } else {
       name = DEFAULT_WORKSPACE_NAME; // fresh install
     }
@@ -318,16 +361,22 @@ export async function createWorkspaceDirs(workspacesRoot: string, name: Workspac
   return root;
 }
 
-/** Renames a workspace directory. Rejects when `to` collides case-insensitively
- *  with another existing entry (renaming a workspace to a different casing of
- *  its own name is allowed). */
-export async function renameWorkspaceDir(workspacesRoot: string, from: WorkspaceName, to: WorkspaceName): Promise<void> {
+/** Throws when `to` collides case-insensitively with an existing entry other
+ *  than `from` itself (renaming a workspace to a different casing of its own
+ *  name is allowed). Shared by the immediate rename and the deferred
+ *  pendingRename path so both give the same up-front feedback. */
+export async function assertRenameTargetFree(workspacesRoot: string, from: WorkspaceName, to: WorkspaceName): Promise<void> {
   const entries = await readdir(workspacesRoot);
   const toLower = to.toLowerCase();
   const clash = entries.find((entry) => entry !== from && entry.toLowerCase() === toLower);
   if (clash !== undefined) {
     throw new Error(`A workspace named "${clash}" already exists.`);
   }
+}
+
+/** Renames a workspace directory, rejecting case-insensitive collisions. */
+export async function renameWorkspaceDir(workspacesRoot: string, from: WorkspaceName, to: WorkspaceName): Promise<void> {
+  await assertRenameTargetFree(workspacesRoot, from, to);
   await rename(join(workspacesRoot, from), join(workspacesRoot, to));
 }
 

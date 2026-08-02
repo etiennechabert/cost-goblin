@@ -183,3 +183,38 @@ describe('SetupWizard window drag region', () => {
     expect(container.firstElementChild?.className).not.toContain('[-webkit-app-region:drag]');
   });
 });
+
+describe('SetupWizard workspace naming', () => {
+  it('seeds the name field from workspaceNaming present at mount', () => {
+    const api = new MockCostApi();
+    render(
+      <CostApiProvider value={api}>
+        <SetupWizard onComplete={vi.fn()} workspaceNaming={{ initialName: 'default' }} />
+      </CostApiProvider>,
+    );
+    expect(screen.getByLabelText('Workspace name')).toHaveProperty('value', 'default');
+  });
+
+  // The host learns the workspace mode from an IPC round-trip that races the
+  // setup check, so the prop routinely arrives only after the wizard mounted —
+  // the field must pick up the initial name instead of staying empty+invalid.
+  it('seeds the name field when workspaceNaming arrives after mount', async () => {
+    const api = new MockCostApi();
+    const onComplete = vi.fn();
+    const { rerender } = render(
+      <CostApiProvider value={api}>
+        <SetupWizard onComplete={onComplete} />
+      </CostApiProvider>,
+    );
+    expect(screen.queryByLabelText('Workspace name')).toBeNull();
+    rerender(
+      <CostApiProvider value={api}>
+        <SetupWizard onComplete={onComplete} workspaceNaming={{ initialName: 'default' }} />
+      </CostApiProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByLabelText('Workspace name')).toHaveProperty('value', 'default');
+    });
+    expect(screen.getByRole('button', { name: 'Get Started' }).hasAttribute('disabled')).toBe(false);
+  });
+});

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { isStringRecord, logger, parseWorkspaceName } from '@costgoblin/core';
 import type { CreateWorkspaceSource, WorkspaceName, WorkspacesInfo, WorkspaceSummary } from '@costgoblin/core';
 import {
+  assertRenameTargetFree,
   createWorkspaceDirs,
   deleteWorkspaceDir,
   listWorkspaceNames,
@@ -78,6 +79,28 @@ export function registerWorkspacesHandlers(app: AppContext): void {
     electronApp.quit();
   }
 
+  /** Queue the ACTIVE workspace's directory rename for the next launch and
+   *  restart into the new name. The physical rename cannot happen in-process:
+   *  the running app holds open handles inside the directory (DuckDB's
+   *  temp_directory, mmapped Parquet readers), which makes `fs.rename` fail
+   *  with EPERM on Windows. `resolveWorkspaceEnv` applies the queued rename on
+   *  the next boot, before anything is opened. */
+  async function deferRenameAndRelaunch(
+    appStatePath: string,
+    from: WorkspaceName,
+    to: WorkspaceName,
+    postSetup: boolean,
+  ): Promise<void> {
+    await updatePrefsFile(appStatePath, (current) => {
+      const moved = moveLastUsedKey(current, from, to);
+      const lastUsedRaw = moved['lastUsed'];
+      const lastUsed: Record<string, unknown> = isStringRecord(lastUsedRaw) ? { ...lastUsedRaw } : {};
+      lastUsed[to] = new Date().toISOString();
+      return { ...moved, lastWorkspace: to, lastUsed, pendingRename: { from, to } };
+    });
+    relaunch(postSetup);
+  }
+
   /** Persist `name` as last-used (stamping lastUsed) then restart into it. */
   async function relaunchInto(appStatePath: string, name: WorkspaceName, postSetup: boolean): Promise<void> {
     await updatePrefsFile(appStatePath, (current) => ({
@@ -143,14 +166,17 @@ export function registerWorkspacesHandlers(app: AppContext): void {
     const ws = requireWorkspaceMode();
     const from = parseWorkspaceName(typeof rawFrom === 'string' ? rawFrom : '');
     const to = parseWorkspaceName(typeof rawTo === 'string' ? rawTo : '');
+    if (from === ws.name) {
+      // Active workspace: defer the directory rename to the next launch (see
+      // deferRenameAndRelaunch), but surface a name clash to the UI now.
+      await assertRenameTargetFree(ws.workspacesRoot, from, to);
+      logger.info(`Workspace rename queued for next launch: ${from} -> ${to}`);
+      await deferRenameAndRelaunch(ws.appStatePath, from, to, false);
+      return buildInfo();
+    }
     await renameWorkspaceDir(ws.workspacesRoot, from, to);
     await updatePrefsFile(ws.appStatePath, (current) => moveLastUsedKey(current, from, to));
     logger.info(`Workspace renamed: ${from} -> ${to}`);
-    if (from === ws.name) {
-      // The running process's services still point at the old directory —
-      // restart into the renamed workspace immediately.
-      await relaunchInto(ws.appStatePath, to, false);
-    }
     return buildInfo();
   });
 
@@ -178,9 +204,9 @@ export function registerWorkspacesHandlers(app: AppContext): void {
   });
 
   // Setup-wizard completion. Optionally claims a user-chosen name for the
-  // initial workspace (directory renamed just before the restart the wizard
-  // already performs), then relaunches with the post-setup flag so the next
-  // launch resumes on the data-sync screen.
+  // initial workspace (directory renamed during the restart the wizard already
+  // performs — see deferRenameAndRelaunch), then relaunches with the
+  // post-setup flag so the next launch resumes on the data-sync screen.
   ipcMain.handle('workspaces:complete-setup', async (_event, rawName: unknown): Promise<void> => {
     if (env.mode !== 'workspace' || rawName === null) {
       relaunch(true);
@@ -191,10 +217,9 @@ export function registerWorkspacesHandlers(app: AppContext): void {
       relaunch(true);
       return;
     }
-    await renameWorkspaceDir(env.workspacesRoot, env.name, name);
-    await updatePrefsFile(env.appStatePath, (current) => moveLastUsedKey(current, env.name, name));
-    logger.info(`Workspace claimed name at setup completion: ${env.name} -> ${name}`);
-    await relaunchInto(env.appStatePath, name, true);
+    await assertRenameTargetFree(env.workspacesRoot, env.name, name);
+    logger.info(`Workspace name claim queued at setup completion: ${env.name} -> ${name}`);
+    await deferRenameAndRelaunch(env.appStatePath, env.name, name, true);
   });
 }
 

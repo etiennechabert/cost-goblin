@@ -55,13 +55,13 @@ describe('isValidWorkspaceName', () => {
   });
 
   it('rejects reserved Windows device names case-insensitively', () => {
-    for (const name of ['CON', 'con', 'Con', 'PRN', 'prn', 'AUX', 'aux', 'NUL', 'nul', 'COM1', 'com9', 'LPT1', 'lpt9']) {
+    for (const name of ['CON', 'con', 'Con', 'PRN', 'prn', 'AUX', 'aux', 'NUL', 'nul', 'COM0', 'COM1', 'com9', 'LPT0', 'LPT1', 'lpt9']) {
       expect(isValidWorkspaceName(name), name).toBe(false);
     }
   });
 
   it('accepts near-reserved names that are not actually reserved', () => {
-    for (const name of ['CON2', 'COM0', 'COM10', 'LPT0', 'console', 'auxiliary', 'nullable']) {
+    for (const name of ['CON2', 'COM10', 'LPT10', 'console', 'auxiliary', 'nullable']) {
       expect(isValidWorkspaceName(name), name).toBe(true);
     }
   });
@@ -106,7 +106,7 @@ describe('constants', () => {
   it('WORKSPACE_NAME_PATTERN and RESERVED_WORKSPACE_NAMES are exported for reuse', () => {
     expect(WORKSPACE_NAME_PATTERN.test('ok-name')).toBe(true);
     expect(RESERVED_WORKSPACE_NAMES).toContain('CON');
-    expect(RESERVED_WORKSPACE_NAMES).toHaveLength(22);
+    expect(RESERVED_WORKSPACE_NAMES).toHaveLength(24);
     // Reserved entries are stored uppercase — the case-insensitive check depends on it.
     for (const reserved of RESERVED_WORKSPACE_NAMES) {
       expect(reserved).toBe(reserved.toUpperCase());

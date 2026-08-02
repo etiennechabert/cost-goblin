@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseWorkspaceName } from '@costgoblin/core';
@@ -289,6 +289,103 @@ describe('resolveWorkspaceEnv — workspace pick order', () => {
   });
 });
 
+describe('resolveWorkspaceEnv — interrupted legacy migration', () => {
+  it('re-enters migration when workspaces/default exists but app-state.json was never written', async () => {
+    await seedLegacyLayout();
+    // Simulate a crash right after migration created the workspace skeleton
+    // but before anything moved: the directory exists, app-state.json does not.
+    await mkdir(join(userData, 'workspaces', 'default', 'state'), { recursive: true });
+    const env = expectWorkspaceMode(resolveWorkspaceEnv(userData, {}));
+    expect(env.name).toBe('default');
+    expect(existsSync(join(userData, 'data'))).toBe(false);
+    expect(existsSync(join(userData, 'config'))).toBe(false);
+    expect(existsSync(join(env.dataDir, 'aws', 'raw', '2026-01', 'part.parquet'))).toBe(true);
+    expect(existsSync(join(env.configBase, 'costgoblin.yaml'))).toBe(true);
+    expect(readAppStateSync(env.appStatePath).theme).toBe('light');
+  });
+
+  it('resumes migration after a crash that moved only some entries', async () => {
+    await seedLegacyLayout();
+    // data/ made it into the workspace before the crash; the rest did not.
+    await mkdir(join(userData, 'workspaces', 'default'), { recursive: true });
+    await rename(join(userData, 'data'), join(userData, 'workspaces', 'default', 'data'));
+    const env = expectWorkspaceMode(resolveWorkspaceEnv(userData, {}));
+    expect(env.name).toBe('default');
+    expect(existsSync(join(env.dataDir, 'aws', 'raw', '2026-01', 'part.parquet'))).toBe(true);
+    expect(existsSync(join(env.configBase, 'costgoblin.yaml'))).toBe(true);
+    expect(existsSync(join(env.stateDir, 'org-accounts.json'))).toBe(true);
+    expect(existsSync(join(userData, 'config'))).toBe(false);
+  });
+
+  it('leaves stray legacy files alone once app-state.json exists alongside real workspaces', async () => {
+    await createWorkspaceDirs(join(userData, 'workspaces'), ws('prod'));
+    writeAppStateSync(join(userData, 'app-state.json'), { schemaVersion: 1, lastWorkspace: 'gone' });
+    await writeFile(join(userData, 'org-accounts.json'), '{"accounts":[]}');
+    const env = expectWorkspaceMode(resolveWorkspaceEnv(userData, {}));
+    expect(env.name).toBe('prod');
+    expect(existsSync(join(userData, 'org-accounts.json'))).toBe(true);
+    expect(existsSync(join(userData, 'workspaces', 'default'))).toBe(false);
+  });
+});
+
+describe('resolveWorkspaceEnv — pendingRename', () => {
+  it('applies a queued rename before resolution and clears it from app-state', async () => {
+    await createWorkspaceDirs(join(userData, 'workspaces'), ws('default'));
+    await writeFile(join(userData, 'workspaces', 'default', 'config', 'costgoblin.yaml'), 'providers: []\n');
+    writeAppStateSync(join(userData, 'app-state.json'), {
+      schemaVersion: 1,
+      lastWorkspace: 'client-a',
+      lastUsed: { 'client-a': '2026-08-02T10:00:00.000Z' },
+      pendingRename: { from: 'default', to: 'client-a' },
+    });
+    const env = expectWorkspaceMode(resolveWorkspaceEnv(userData, {}));
+    expect(env.name).toBe('client-a');
+    expect(existsSync(join(userData, 'workspaces', 'default'))).toBe(false);
+    expect(existsSync(join(userData, 'workspaces', 'client-a', 'config', 'costgoblin.yaml'))).toBe(true);
+    expect(readAppStateSync(env.appStatePath).pendingRename).toBeUndefined();
+  });
+
+  it('drops the request instead of clobbering an existing target', async () => {
+    await createWorkspaceDirs(join(userData, 'workspaces'), ws('default'));
+    await createWorkspaceDirs(join(userData, 'workspaces'), ws('client-a'));
+    writeAppStateSync(join(userData, 'app-state.json'), {
+      schemaVersion: 1,
+      lastWorkspace: 'client-a',
+      pendingRename: { from: 'default', to: 'client-a' },
+    });
+    const env = expectWorkspaceMode(resolveWorkspaceEnv(userData, {}));
+    expect(existsSync(join(userData, 'workspaces', 'default'))).toBe(true);
+    expect(env.name).toBe('client-a');
+    expect(readAppStateSync(env.appStatePath).pendingRename).toBeUndefined();
+  });
+
+  it('is a no-op when the source is already gone (applied by a previous run)', async () => {
+    await createWorkspaceDirs(join(userData, 'workspaces'), ws('client-a'));
+    writeAppStateSync(join(userData, 'app-state.json'), {
+      schemaVersion: 1,
+      lastWorkspace: 'client-a',
+      pendingRename: { from: 'default', to: 'client-a' },
+    });
+    const env = expectWorkspaceMode(resolveWorkspaceEnv(userData, {}));
+    expect(env.name).toBe('client-a');
+    expect(readAppStateSync(env.appStatePath).pendingRename).toBeUndefined();
+  });
+
+  it('ignores a pendingRename with an invalid (path-traversal) target', async () => {
+    await createWorkspaceDirs(join(userData, 'workspaces'), ws('default'));
+    writeAppStateSync(join(userData, 'app-state.json'), {
+      schemaVersion: 1,
+      lastWorkspace: 'default',
+      pendingRename: { from: 'default', to: '../evil' },
+    });
+    const env = expectWorkspaceMode(resolveWorkspaceEnv(userData, {}));
+    expect(env.name).toBe('default');
+    expect(existsSync(join(userData, 'workspaces', 'default'))).toBe(true);
+    expect(existsSync(join(userData, 'evil'))).toBe(false);
+    expect(readAppStateSync(env.appStatePath).pendingRename).toBeUndefined();
+  });
+});
+
 describe('readAppStateSync', () => {
   it('returns {} for a missing file', () => {
     expect(readAppStateSync(join(userData, 'app-state.json'))).toEqual({});
@@ -322,6 +419,16 @@ describe('readAppStateSync', () => {
       lastUsed: { good: '2026-01-01T00:00:00.000Z' },
       palette: 'colorblind',
     });
+  });
+
+  it('parses a well-formed pendingRename and drops malformed ones', async () => {
+    const path = join(userData, 'app-state.json');
+    await writeFile(path, JSON.stringify({ pendingRename: { from: 'a', to: 'b' } }));
+    expect(readAppStateSync(path).pendingRename).toEqual({ from: 'a', to: 'b' });
+    await writeFile(path, JSON.stringify({ pendingRename: { from: 1, to: 'b' } }));
+    expect(readAppStateSync(path).pendingRename).toBeUndefined();
+    await writeFile(path, JSON.stringify({ pendingRename: 'default->client-a' }));
+    expect(readAppStateSync(path).pendingRename).toBeUndefined();
   });
 });
 
