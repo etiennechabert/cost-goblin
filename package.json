@@ -62,8 +62,8 @@
   },
   "overrides": {
     "tmp": "^0.2.7",
-    "electron-vite": { "vite": "7.3.5" },
-    "@tailwindcss/vite": { "vite": "7.3.5" },
-    "vitest": { "vite": "7.3.5" }
+    "electron-vite": { "vite": "7.3.6" },
+    "@tailwindcss/vite": { "vite": "7.3.6" },
+    "vitest": { "vite": "7.3.6" }
   }
 }
