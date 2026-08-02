@@ -233,7 +233,7 @@ export function registerSetupHandlers(app: AppContext): void {
       providers: [{
         name: wizardConfig.providerName,
         type: 'aws',
-        credentials: { profile: wizardConfig.profile },
+        credentialsProfile: wizardConfig.profile,
         sync,
       }],
       defaults: typeof existing['defaults'] === 'object' && existing['defaults'] !== null ? existing['defaults'] : { periodDays: 30, costMetric: 'UnblendedCost', lagDays: 2 },
@@ -320,8 +320,7 @@ export function registerSetupHandlers(app: AppContext): void {
 providers:
   - name: aws-main
     type: aws
-    credentials:
-      profile: default  # <- your AWS CLI profile name
+    credentialsProfile: default  # <- your AWS CLI profile name
     sync:
       daily:
         bucket: s3://your-bucket/path/to/cur/  # <- path containing data/ and metadata/

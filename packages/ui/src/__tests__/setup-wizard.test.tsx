@@ -109,7 +109,7 @@ describe('SetupWizard', () => {
 
     await user.click(screen.getByText('Use this configuration'));
     await waitFor(() => { expect(onComplete).toHaveBeenCalledOnce(); });
-    expect(applySpy).toHaveBeenCalledWith({ content: 'kind: costgoblin-config-bundle', profile: 'default' });
+    expect(applySpy).toHaveBeenCalledWith({ content: 'kind: costgoblin-config-bundle', credentialsProfile: 'default' });
   });
 
   it('lets the user decline the discovered configuration and set up manually', async () => {

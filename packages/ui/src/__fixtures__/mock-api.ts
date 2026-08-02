@@ -1,5 +1,6 @@
 import {
   asBucketPath,
+  asProviderName,
   asDimensionId,
   asDollars,
   asDateString,
@@ -203,9 +204,9 @@ const syncStatus: SyncStatus = { status: 'idle', lastSync: null };
 
 const config: CostGoblinConfig = {
   providers: [{
-    name: 'aws-main',
+    name: asProviderName('aws-main'),
     type: 'aws',
-    credentials: { profile: 'default' },
+    credentialsProfile: 'default',
     sync: { daily: { bucket: asBucketPath('costgoblin-cur-bucket/daily'), retentionDays: 90 }, intervalMinutes: 60 },
   }],
   defaults: { periodDays: 30, costMetric: 'UnblendedCost', lagDays: 2 },

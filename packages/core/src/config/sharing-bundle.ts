@@ -5,6 +5,7 @@ import type {
   DimensionsConfig,
   OrgNode,
   OrgTreeConfig,
+  ProviderConfig,
   SyncConfig,
 } from '../types/config.js';
 import type { BaselineSpec } from '../types/baseline.js';
@@ -15,6 +16,7 @@ import type {
   ConfigBundleSections,
   ConfigBundleSummary,
   SharedCostGoblinConfig,
+  SharedProviderConfig,
 } from '../types/sharing.js';
 import { CONFIG_BUNDLE_KIND, CONFIG_BUNDLE_SCHEMA_VERSION } from '../types/sharing.js';
 import type { ViewsConfig } from '../types/views.js';
@@ -49,9 +51,16 @@ function syncToYaml(sync: SyncConfig): Record<string, unknown> {
   };
 }
 
+/** Shared (credential-less) YAML shape for one provider. Single `aws` arm
+ *  today — when `SharedProviderConfig` grows arms (#517), the per-type
+ *  fields stop type-checking here and force a per-type dispatch. */
+function sharedProviderToYaml(p: SharedProviderConfig): Record<string, unknown> {
+  return { name: String(p.name), type: p.type, sync: syncToYaml(p.sync) };
+}
+
 function sharedConfigToYaml(config: SharedCostGoblinConfig): Record<string, unknown> {
   return {
-    providers: config.providers.map(p => ({ name: p.name, type: p.type, sync: syncToYaml(p.sync) })),
+    providers: config.providers.map(sharedProviderToYaml),
     defaults: {
       periodDays: config.defaults.periodDays,
       costMetric: config.defaults.costMetric,
@@ -60,16 +69,23 @@ function sharedConfigToYaml(config: SharedCostGoblinConfig): Record<string, unkn
   };
 }
 
+/** On-disk YAML shape for one provider, credentials included. Single `aws`
+ *  arm today — `credentialsProfile` is arm-specific, so a new provider type
+ *  breaks the build here until it gets its own serialization. */
+function providerToYaml(p: ProviderConfig): Record<string, unknown> {
+  return {
+    name: String(p.name),
+    type: p.type,
+    credentialsProfile: p.credentialsProfile,
+    sync: syncToYaml(p.sync),
+  };
+}
+
 /** YAML-ready shape for costgoblin.yaml — the on-disk form, credentials
  *  included. Used when an imported bundle is materialized to disk. */
 export function costGoblinConfigToYaml(config: CostGoblinConfig): Record<string, unknown> {
   return {
-    providers: config.providers.map(p => ({
-      name: p.name,
-      type: p.type,
-      credentials: { profile: p.credentials.profile },
-      sync: syncToYaml(p.sync),
-    })),
+    providers: config.providers.map(providerToYaml),
     defaults: {
       periodDays: config.defaults.periodDays,
       costMetric: config.defaults.costMetric,
@@ -125,13 +141,21 @@ export interface BuildConfigBundleInput {
   readonly exportedAt?: string | undefined;
 }
 
+/** The credential-less form of a provider for embedding in a bundle. Each
+ *  provider arm decides which of its fields are shareable — credentials can
+ *  never leak by construction. Single `aws` arm today; new arms (#517) stop
+ *  type-checking here until they get their own mapping. */
+function toSharedProvider(p: ProviderConfig): SharedProviderConfig {
+  return { name: p.name, type: p.type, sync: p.sync };
+}
+
 /** Assemble a shareable bundle from the local configuration. The AWS
  *  profile name is dropped here — `SharedProviderConfig` has no
  *  credentials field, so a bundle cannot leak it by construction. */
 export function buildConfigBundle(input: BuildConfigBundleInput): ConfigBundle {
   const sections: ConfigBundleSections = {
     config: {
-      providers: input.config.providers.map(p => ({ name: p.name, type: p.type, sync: p.sync })),
+      providers: input.config.providers.map(toSharedProvider),
       defaults: input.config.defaults,
     },
     dimensions: input.dimensions,
@@ -185,12 +209,12 @@ function validateSharedConfig(raw: unknown): SharedCostGoblinConfig {
       name: p['name'],
       type: p['type'],
       sync: p['sync'],
-      credentials: { profile: 'placeholder' },
+      credentialsProfile: 'placeholder',
     };
   });
   const validated = validateConfig({ providers: withPlaceholderCredentials, defaults: raw['defaults'] });
   return {
-    providers: validated.providers.map(p => ({ name: p.name, type: p.type, sync: p.sync })),
+    providers: validated.providers.map(toSharedProvider),
     defaults: validated.defaults,
   };
 }
@@ -298,13 +322,13 @@ export function summarizeConfigBundle(parsed: ParsedConfigBundle): ConfigBundleS
   };
 }
 
-/** Recombine a bundle's shared config with a locally-chosen AWS profile.
- *  The same profile is applied to every provider — multi-provider bundles
- *  with distinct credentials per provider can adjust afterwards in the
- *  app. */
-export function bundleConfigWithProfile(shared: SharedCostGoblinConfig, profile: string): CostGoblinConfig {
+/** Recombine a bundle's shared config with a locally-chosen AWS
+ *  credentials profile. The same profile is applied to every provider —
+ *  multi-provider bundles with distinct credentials per provider can
+ *  adjust afterwards in the app. */
+export function bundleConfigWithProfile(shared: SharedCostGoblinConfig, credentialsProfile: string): CostGoblinConfig {
   return {
-    providers: shared.providers.map(p => ({ name: p.name, type: p.type, credentials: { profile }, sync: p.sync })),
+    providers: shared.providers.map((p): ProviderConfig => ({ name: p.name, type: p.type, credentialsProfile, sync: p.sync })),
     defaults: shared.defaults,
   };
 }

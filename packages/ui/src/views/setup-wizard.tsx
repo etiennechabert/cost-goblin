@@ -714,7 +714,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     if (wizard.step !== 'beacon') return;
     const { content, profile } = wizard;
     setWizard({ ...wizard, applying: true, error: '' });
-    api.applyConfigBundle({ content, profile }).then(result => {
+    api.applyConfigBundle({ content, credentialsProfile: profile }).then(result => {
       if (result.status === 'applied') {
         finish();
       } else {

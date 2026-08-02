@@ -52,11 +52,12 @@ export function registerConfigHandlers(app: AppContext): void {
     return [...orgTree.tree];
   });
 
-  // Surgical update: rewrite ONLY the first provider's credentials.profile,
+  // Surgical update: rewrite ONLY the first provider's credentialsProfile,
   // leaving every other YAML field (buckets, retention, defaults, etc.)
   // untouched. The full setup wizard already covers re-doing buckets too —
   // this is the "I just want to swap to a profile with different IAM perms"
-  // shortcut.
+  // shortcut. Drops the legacy nested `credentials` key when present so the
+  // file converges on the current shape.
   ipcMain.handle('config:update-aws-profile', async (_event, profile: string): Promise<void> => {
     const fs = await import('node:fs/promises');
     const { stringify, parse: parseYaml } = await import('yaml');
@@ -68,8 +69,8 @@ export function registerConfigHandlers(app: AppContext): void {
     const providers: unknown[] = providersRaw;
     const first = providers[0];
     if (!isStringRecord(first)) throw new Error('First provider entry is not an object');
-    const credentials = isStringRecord(first['credentials']) ? first['credentials'] : {};
-    const updated = { ...parsed, providers: [{ ...first, credentials: { ...credentials, profile } }, ...providers.slice(1)] };
+    const firstRest = Object.fromEntries(Object.entries(first).filter(([key]) => key !== 'credentials'));
+    const updated = { ...parsed, providers: [{ ...firstRest, credentialsProfile: profile }, ...providers.slice(1)] };
     await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
     invalidateConfig();
     logger.info(`Updated AWS profile to ${profile}`);

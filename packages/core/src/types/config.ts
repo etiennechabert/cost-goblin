@@ -1,19 +1,25 @@
-import type { BucketPath, DimensionId } from './branded.js';
+import type { BucketPath, DimensionId, ProviderName } from './branded.js';
 
 export type NormalizationRule = 'lowercase' | 'uppercase' | 'lowercase-kebab' | 'lowercase-underscore' | 'camelCase';
 
 export type ConceptType = 'owner' | 'product' | 'environment' | 'unit';
 
-export interface ProviderConfig {
-  readonly name: string;
+/** One AWS billing source (a payer account's CUR 2.0 export). A profile can
+ *  configure several — e.g. two payer accounts — each identified by its
+ *  instance `name`, which keys the on-disk layout
+ *  (`{dataDir}/{name}/raw|rollup|meta`). `credentialsProfile` is the
+ *  `~/.aws/config` entry used for S3/Organizations/SSM access (named to
+ *  avoid colliding with the workspace/profile concept from #518). */
+export interface AwsProviderConfig {
+  readonly name: ProviderName;
   readonly type: 'aws';
-  readonly credentials: AwsCredentials;
+  readonly credentialsProfile: string;
   readonly sync: SyncConfig;
 }
 
-export interface AwsCredentials {
-  readonly profile: string;
-}
+/** Discriminated union on `type`. A single arm today — GCP lands in #517 —
+ *  but consumers must already switch on `type` rather than assume AWS. */
+export type ProviderConfig = AwsProviderConfig;
 
 export interface SyncConfig {
   readonly daily: SyncTierConfig;

@@ -55,12 +55,12 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           : tierBucket;
         let inv;
         try {
-          inv = await getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, asTier(tier));
+          inv = await getDataInventory(bucket, provider.credentialsProfile, ctx.dataDir, asTier(tier));
         } catch (err: unknown) {
           // Rewrite credential failures into the actionable "run aws sso login"
           // message so the scheduler surfaces it (instead of silently skipping)
           // and the toolbar shows why background sync stopped.
-          if (isCredentialError(err)) throw toUserFriendlyError(err, provider.credentials.profile);
+          if (isCredentialError(err)) throw toUserFriendlyError(err, provider.credentialsProfile);
           throw err;
         }
         return {
@@ -87,7 +87,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
         try {
           const result = await syncClient.syncPeriods({
             bucketPath: bucket,
-            profile: provider.credentials.profile,
+            profile: provider.credentialsProfile,
             dataDir: ctx.dataDir,
             tier: syncId,
             files,
@@ -123,7 +123,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           // Surface credential expiry / opaque `aws s3 sync` download failures as
           // the actionable "run aws sso login" message so the toolbar offers
           // one-click re-auth instead of a raw CLI error (mirrors getInventory).
-          const error = toUserFriendlyError(err, provider.credentials.profile);
+          const error = toUserFriendlyError(err, provider.credentialsProfile);
           state.syncStatuses[syncId] = { status: 'failed', error, lastSync: null };
           throw error;
         }

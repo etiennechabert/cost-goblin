@@ -257,7 +257,7 @@ export function DataManagement() {
   const hourlyRetention = provider?.sync.hourly?.retentionDays ?? null;
   const costOptBucket = provider?.sync.costOptimization?.bucket ?? null;
   const costOptRetention = provider?.sync.costOptimization?.retentionDays ?? null;
-  const awsProfile = provider?.credentials.profile ?? null;
+  const awsProfile = provider?.credentialsProfile ?? null;
 
   const costOptInventoryQuery = useQuery(
     () => {

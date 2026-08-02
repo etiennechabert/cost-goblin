@@ -356,7 +356,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
   async function resolveImportProfile(): Promise<string> {
     try {
       const config = await app.getConfig();
-      const profile = config.providers[0]?.credentials.profile;
+      const profile = config.providers[0]?.credentialsProfile;
       if (typeof profile === 'string' && profile.length > 0) return profile;
     } catch {
       // No config on disk yet — fall through to the default.

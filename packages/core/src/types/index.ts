@@ -7,6 +7,7 @@ export type {
   DateString,
   HourString,
   WorkspaceName,
+  ProviderName,
 } from './branded.js';
 export {
   asDimensionId,
@@ -17,6 +18,7 @@ export {
   asDateString,
   asHourString,
   asWorkspaceName,
+  asProviderName,
   tagColumnName,
   tagDimColumn,
 } from './branded.js';
@@ -25,7 +27,7 @@ export type {
   NormalizationRule,
   ConceptType,
   ProviderConfig,
-  AwsCredentials,
+  AwsProviderConfig,
   SyncConfig,
   SyncTierConfig,
   DefaultsConfig,

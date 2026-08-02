@@ -1,4 +1,5 @@
 import type { BaselineSpec } from './baseline.js';
+import type { ProviderName } from './branded.js';
 import type { CostScopeConfig } from './cost-scope.js';
 import type { DefaultsConfig, DimensionsConfig, OrgTreeConfig, SyncConfig } from './config.js';
 import type { ViewsConfig } from './views.js';
@@ -20,14 +21,17 @@ export const CONFIG_BUNDLE_SCHEMA_VERSION = 1;
 export const CONFIG_BEACON_KEY = 'costgoblin/org-config.yaml';
 
 /** A provider as it appears inside a bundle: identical to
- *  `ProviderConfig` minus `credentials`. Bundles structurally cannot
+ *  `ProviderConfig` minus `credentialsProfile`. Bundles structurally cannot
  *  carry an AWS profile name — it's machine-specific and the receiver
- *  picks their own on import. */
-export interface SharedProviderConfig {
-  readonly name: string;
+ *  picks their own on import. Mirrors the `ProviderConfig` discriminated
+ *  union: one arm per provider type. */
+export interface SharedAwsProviderConfig {
+  readonly name: ProviderName;
   readonly type: 'aws';
   readonly sync: SyncConfig;
 }
+
+export type SharedProviderConfig = SharedAwsProviderConfig;
 
 /** `CostGoblinConfig` with the machine-specific parts stripped. */
 export interface SharedCostGoblinConfig {
@@ -96,8 +100,10 @@ export interface ApplyConfigBundleParams {
   /** Raw bundle file content. Re-parsed and re-validated in the main
    *  process — the renderer is never trusted to have done so. */
   readonly content: string;
-  /** AWS profile to inject into every imported provider. */
-  readonly profile: string;
+  /** AWS credentials profile to inject into every imported provider.
+   *  Multi-provider bundles needing distinct credentials per provider can
+   *  adjust afterwards in the app. */
+  readonly credentialsProfile: string;
 }
 
 export type ApplyConfigBundleResult =

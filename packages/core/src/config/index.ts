@@ -27,4 +27,11 @@ export {
   isValidWorkspaceName,
   parseWorkspaceName,
 } from './workspace-name.js';
+export {
+  PROVIDER_NAME_PATTERN,
+  RESERVED_PROVIDER_NAMES,
+  ProviderNameError,
+  isValidProviderName,
+  parseProviderName,
+} from './provider-name.js';
 export { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, mergeBuiltInExclusionRules } from './cost-scope-seed.js';

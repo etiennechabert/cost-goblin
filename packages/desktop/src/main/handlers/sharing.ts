@@ -115,7 +115,7 @@ export function registerSharingHandlers(app: AppContext): void {
       // action. Default stays the configured sync profile.
       const profile = isStringRecord(raw) && typeof raw['profile'] === 'string' && raw['profile'].trim().length > 0
         ? raw['profile']
-        : provider.credentials.profile;
+        : provider.credentialsProfile;
       const client = new S3Client({
         region: 'eu-central-1',
         followRegionRedirects: true,

@@ -1,8 +1,7 @@
 providers:
   - name: aws-main
     type: aws
-    credentials:
-      profile: test-profile
+    credentialsProfile: test-profile
     sync:
       daily:
         bucket: s3://test-cur-bucket/daily/

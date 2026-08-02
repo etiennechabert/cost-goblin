@@ -194,14 +194,14 @@ export function registerSyncHandlers(app: AppContext): void {
     const t = tier ?? 'daily';
     const bucket = resolveBucketPath(config, t);
     try {
-      return await getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, t);
+      return await getDataInventory(bucket, provider.credentialsProfile, ctx.dataDir, t);
     } catch (err: unknown) {
       // Expired/invalid credentials on an install that has synced this tier from
       // S3 before (its etag file exists) is a real auth failure, not the
       // imported-snapshot case — surface it so the user re-authenticates instead
       // of silently showing stale local data as if everything were up to date.
       if (isCredentialError(err) && await hasSyncedTier(ctx.dataDir, t)) {
-        throw toUserFriendlyError(err, provider.credentials.profile);
+        throw toUserFriendlyError(err, provider.credentialsProfile);
       }
       // Otherwise fall back to a disk-only inventory so a consumer that imported
       // a shared snapshot (no S3 access) still sees the data it has.
@@ -210,7 +210,7 @@ export function registerSyncHandlers(app: AppContext): void {
         logger.info('S3 inventory unavailable — using local-only inventory', { tier: t });
         return local;
       }
-      throw toUserFriendlyError(err, provider.credentials.profile);
+      throw toUserFriendlyError(err, provider.credentialsProfile);
     }
   });
 
@@ -270,7 +270,7 @@ export function registerSyncHandlers(app: AppContext): void {
           attributes: { 'sync.tier': tier, 'sync.files_requested': fileEntries.length },
         },
         async (span) => {
-          const r = await runSync(ctx, provider.credentials.profile, bucketPath, tier, fileEntries, syncId, state);
+          const r = await runSync(ctx, provider.credentialsProfile, bucketPath, tier, fileEntries, syncId, state);
           span?.setAttribute('sync.files_downloaded', r.filesDownloaded);
           span?.setAttribute('sync.rows_processed', r.rowsProcessed);
           return r;
@@ -297,7 +297,7 @@ export function registerSyncHandlers(app: AppContext): void {
       return result;
     } catch (err: unknown) {
       syncWorkerIds.delete(syncId);
-      const error = handleSyncError(err, syncId, provider.credentials.profile, state);
+      const error = handleSyncError(err, syncId, provider.credentialsProfile, state);
       if (error.message === 'Download cancelled') {
         return { filesDownloaded: 0, rowsProcessed: 0 };
       }

@@ -563,7 +563,7 @@ export function ShareConfigPanel(): React.JSX.Element {
     api.listAwsProfiles().then(setProfiles).catch(() => undefined);
     api.getConfig().then(config => {
       const provider = config.providers[0];
-      const profile = provider?.credentials.profile ?? '';
+      const profile = provider?.credentialsProfile ?? '';
       setConfigProfile(profile);
       setPublishProfile(prev => prev.length > 0 ? prev : profile);
       const dailyBucket = provider?.sync.daily.bucket;
@@ -777,7 +777,7 @@ export function ImportConfigPanel({ onApplied, onClose, onBusyChange, onDoneChan
       const provider = config.providers[0];
       if (provider === undefined) return;
       if (!userPickedProfileRef.current) {
-        setFetchProfile(provider.credentials.profile);
+        setFetchProfile(provider.credentialsProfile);
       }
       setS3Location(prev => prev.length > 0 ? prev : suggestedConfigBeaconLocation(String(provider.sync.daily.bucket)));
     }).catch(() => undefined);
@@ -842,7 +842,7 @@ export function ImportConfigPanel({ onApplied, onClose, onBusyChange, onDoneChan
     if (state.phase !== 'preview' || state.applying) return;
     const { content, profile } = state;
     setState({ ...state, applying: true, error: null });
-    api.applyConfigBundle({ content, profile })
+    api.applyConfigBundle({ content, credentialsProfile: profile })
       .then(result => {
         if (result.status === 'applied') {
           setState({ phase: 'done', backupDir: result.backupDir });

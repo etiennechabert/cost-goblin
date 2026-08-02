@@ -178,11 +178,11 @@ describe('bundleConfigWithProfile', () => {
     const bundle = await buildFixtureBundle();
     const config = bundleConfigWithProfile(bundle.sections.config, 'my-local-profile');
     expect(config.providers).toHaveLength(1);
-    expect(config.providers[0]?.credentials.profile).toBe('my-local-profile');
+    expect(config.providers[0]?.credentialsProfile).toBe('my-local-profile');
     expect(String(config.providers[0]?.sync.daily.bucket)).toBe('s3://test-cur-bucket/daily/');
     // The on-disk YAML form passes the standard config validator.
     const revalidated = validateConfig(costGoblinConfigToYaml(config));
-    expect(revalidated.providers[0]?.credentials.profile).toBe('my-local-profile');
+    expect(revalidated.providers[0]?.credentialsProfile).toBe('my-local-profile');
   });
 });
 
