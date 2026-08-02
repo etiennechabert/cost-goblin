@@ -18,7 +18,8 @@
     "dev": "COSTGOBLIN_DATA_DIR=$PWD/data/processed COSTGOBLIN_CONFIG_DIR=$PWD/data/config npm run dev --workspace=packages/desktop",
     "dev:fixtures": "COSTGOBLIN_DATA_DIR=$PWD/packages/core/src/__fixtures__/synthetic COSTGOBLIN_CONFIG_DIR=$PWD/packages/core/src/__fixtures__/config npm run dev --workspace=packages/desktop",
     "build": "npm run build --workspaces",
-    "e2e": "npm run build --workspace=packages/desktop && npx playwright test e2e/views-core.test.ts e2e/views-config.test.ts e2e/views-defaults.test.ts e2e/stress.test.ts && npx tsx e2e/collect-coverage.ts",
+    "e2e": "npm run build --workspace=packages/desktop && npx playwright test e2e/views-core.test.ts e2e/views-config.test.ts e2e/views-defaults.test.ts e2e/stress.test.ts e2e/workspaces.test.ts && npx tsx e2e/collect-coverage.ts",
+    "e2e:workspaces": "npm run build --workspace=packages/desktop && npx playwright test e2e/workspaces.test.ts",
     "e2e:core": "npm run build --workspace=packages/desktop && npx playwright test e2e/views-core.test.ts && npx tsx e2e/collect-coverage.ts",
     "e2e:defaults": "npm run build --workspace=packages/desktop && npx playwright test e2e/views-defaults.test.ts && npx tsx e2e/collect-coverage.ts",
     "e2e:config": "npm run build --workspace=packages/desktop && npx playwright test e2e/views-config.test.ts && npx tsx e2e/collect-coverage.ts",
@@ -62,8 +63,18 @@
   },
   "overrides": {
     "tmp": "^0.2.7",
-    "electron-vite": { "vite": "7.3.6" },
-    "@tailwindcss/vite": { "vite": "7.3.6" },
-    "vitest": { "vite": "7.3.6" }
+    "electron-vite": {
+      "vite": "7.3.6"
+    },
+    "@tailwindcss/vite": {
+      "vite": "7.3.6"
+    },
+    "vitest": {
+      "vite": "7.3.6"
+    }
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "electron-winstaller@5.4.0": true
   }
 }

@@ -33,7 +33,7 @@ function computeSyncFraction(bytesDone: number, bytesTotal: number, filesDone: n
 export function registerAutoSyncHandlers(app: AppContext): void {
   const { ctx, state, getConfig } = app;
 
-  const autoSyncPrefsPath = () => prefsPath(ctx.dataDir, 'app-preferences');
+  const autoSyncPrefsPath = () => prefsPath(ctx.stateDir, 'app-preferences');
 
   function buildAutoSyncDeps(syncClient: SyncClient) {
     return {

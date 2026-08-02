@@ -11,7 +11,18 @@ import {
   viewsConfigToYaml,
 } from '@costgoblin/core';
 import type { BundleSectionId, ConfigBundle, ConfigBundleSections } from '@costgoblin/core';
-import type { AppContext, IpcContext } from './context.js';
+import type { AppContext } from './context.js';
+
+/** The five YAML config file paths of one workspace. `IpcContext` satisfies
+ *  this structurally for the active workspace; workspace creation builds one
+ *  for the target workspace's config dir. */
+export interface ConfigFilePaths {
+  readonly configPath: string;
+  readonly dimensionsPath: string;
+  readonly orgTreePath: string;
+  readonly viewsPath: string;
+  readonly costScopePath: string;
+}
 
 /** Assemble a bundle from whatever org config exists locally. Config and
  *  dimensions are mandatory; the optional files are skipped when missing or
@@ -27,7 +38,7 @@ export async function buildCurrentBundle(app: AppContext): Promise<ConfigBundle>
 
 /** Copy whichever org config files exist into config/backups/<timestamp>/ so
  *  an import is always one folder-copy away from being undone. */
-export async function backupExistingConfig(ctx: IpcContext): Promise<string | null> {
+export async function backupExistingConfig(ctx: ConfigFilePaths): Promise<string | null> {
   const fs = await import('node:fs/promises');
   const path = await import('node:path');
   const configDir = path.dirname(ctx.configPath);
@@ -61,7 +72,7 @@ export interface AppliedBundle {
  *  its sections to the config directory, backing up existing files first. The
  *  chosen AWS profile is injected into every provider. Does NOT clear caches —
  *  the caller decides when. */
-export async function applyBundleSectionsToDisk(ctx: IpcContext, content: string, profile: string): Promise<AppliedBundle> {
+export async function applyBundleSectionsToDisk(ctx: ConfigFilePaths, content: string, profile: string): Promise<AppliedBundle> {
   const parsed = parseConfigBundle(content);
   const { sections } = parsed.bundle;
 

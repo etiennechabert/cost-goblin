@@ -27,7 +27,7 @@ afterEach(cleanup);
 describe('SetupWizard', () => {
   it('get started button advances to profile step', async () => {
     const { user } = renderWizard();
-    await user.click(screen.getByText('Get Started'));
+    await user.click(screen.getByText('Set up from S3'));
     await waitFor(() => {
       expect(screen.getByText('default')).toBeDefined();
     });
@@ -46,7 +46,7 @@ describe('SetupWizard', () => {
         <SetupWizard onComplete={onComplete} />
       </CostApiProvider>,
     );
-    await user.click(screen.getByText('Get Started'));
+    await user.click(screen.getByText('Set up from S3'));
     expect(screen.getByText('Loading profiles...')).toBeDefined();
     resolveProfiles?.(['default']);
     await waitFor(() => {
@@ -64,7 +64,7 @@ describe('SetupWizard', () => {
   it('continues to manual browsing when the bucket has no published config', async () => {
     const { api, user } = renderWizard();
     const beaconSpy = vi.spyOn(api, 'checkConfigBeacon');
-    await user.click(screen.getByText('Get Started'));
+    await user.click(screen.getByText('Set up from S3'));
     await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
     await user.click(screen.getByText('default'));
     await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
@@ -98,7 +98,7 @@ describe('SetupWizard', () => {
     });
     const applySpy = vi.spyOn(api, 'applyConfigBundle');
 
-    await user.click(screen.getByText('Get Started'));
+    await user.click(screen.getByText('Set up from S3'));
     await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
     await user.click(screen.getByText('default'));
     await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
@@ -135,7 +135,7 @@ describe('SetupWizard', () => {
       },
     });
 
-    await user.click(screen.getByText('Get Started'));
+    await user.click(screen.getByText('Set up from S3'));
     await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
     await user.click(screen.getByText('default'));
     await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
@@ -152,17 +152,17 @@ describe('SetupWizard', () => {
     await waitFor(() => { expect(screen.getByText('Choose bundle file…')).toBeDefined(); });
   });
 
-  it('returns to the welcome screen from a wizard step via the close button', async () => {
+  it('returns to the start screen from a wizard step via the close button', async () => {
     const { user } = renderWizard();
-    await user.click(screen.getByText('Get Started'));
+    await user.click(screen.getByText('Set up from S3'));
     await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
-    await user.click(screen.getByLabelText('Back to welcome'));
+    await user.click(screen.getByLabelText('Back to start'));
     await waitFor(() => { expect(screen.getByText('Import from a teammate')).toBeDefined(); });
   });
 
-  it('does not show the close button on the welcome step', () => {
+  it('does not show the close button on the start screen', () => {
     renderWizard();
-    expect(screen.queryByLabelText('Back to welcome')).toBeNull();
+    expect(screen.queryByLabelText('Back to start')).toBeNull();
   });
 });
 
@@ -181,5 +181,107 @@ describe('SetupWizard window drag region', () => {
     const { container } = renderWizard({ source: 'daily', profile: 'default' });
     await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
     expect(container.firstElementChild?.className).not.toContain('[-webkit-app-region:drag]');
+  });
+});
+
+describe('SetupWizard workspace naming', () => {
+  it('starts on the naming step with the field prefilled when workspaceNaming is present', () => {
+    const api = new MockCostApi();
+    render(
+      <CostApiProvider value={api}>
+        <SetupWizard onComplete={vi.fn()} workspaceNaming={{ initialName: 'default' }} />
+      </CostApiProvider>,
+    );
+    expect(screen.getByLabelText('Workspace name')).toHaveProperty('value', 'default');
+    expect(screen.getByRole('button', { name: 'Continue' }).hasAttribute('disabled')).toBe(false);
+  });
+
+  it('Continue leads to the get-started hub showing the typed name', async () => {
+    const api = new MockCostApi();
+    const user = userEvent.setup();
+    render(
+      <CostApiProvider value={api}>
+        <SetupWizard onComplete={vi.fn()} workspaceNaming={{ initialName: 'default' }} />
+      </CostApiProvider>,
+    );
+    const input = screen.getByLabelText('Workspace name');
+    await user.clear(input);
+    await user.type(input, 'client-a');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => { expect(screen.getByText('How do you want to get started?')).toBeDefined(); });
+    expect(screen.getByText('client-a')).toBeDefined();
+    // The hub offers the way back to the naming step.
+    await user.click(screen.getByText('← Change workspace name'));
+    expect(screen.getByLabelText('Workspace name')).toHaveProperty('value', 'client-a');
+  });
+
+  it('disables Continue while the name is invalid', async () => {
+    const api = new MockCostApi();
+    const user = userEvent.setup();
+    render(
+      <CostApiProvider value={api}>
+        <SetupWizard onComplete={vi.fn()} workspaceNaming={{ initialName: 'default' }} />
+      </CostApiProvider>,
+    );
+    const input = screen.getByLabelText('Workspace name');
+    await user.clear(input);
+    await user.type(input, 'bad name!');
+    expect(screen.getByText(/letters, digits/)).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Continue' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  // Defense in depth: the host holds the wizard until the workspaces info is
+  // loaded, but if the prop ever arrives after mount anyway, the name state
+  // must still pick up the initial name instead of staying empty+invalid.
+  it('seeds the name state when workspaceNaming arrives after mount', async () => {
+    const api = new MockCostApi();
+    const onComplete = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <CostApiProvider value={api}>
+        <SetupWizard onComplete={onComplete} />
+      </CostApiProvider>,
+    );
+    expect(screen.queryByLabelText('Workspace name')).toBeNull();
+    rerender(
+      <CostApiProvider value={api}>
+        <SetupWizard onComplete={onComplete} workspaceNaming={{ initialName: 'default' }} />
+      </CostApiProvider>,
+    );
+    // The wizard stays on the hub (it mounted without a naming step), but the
+    // way back to naming appears and the field arrives seeded.
+    await user.click(await screen.findByText('← Change workspace name'));
+    await waitFor(() => {
+      expect(screen.getByLabelText('Workspace name')).toHaveProperty('value', 'default');
+    });
+    expect(screen.getByRole('button', { name: 'Continue' }).hasAttribute('disabled')).toBe(false);
+  });
+});
+
+describe('SetupWizard jump-back to existing workspaces', () => {
+  it('lists other workspaces and switches on click', async () => {
+    const api = new MockCostApi();
+    const switchSpy = vi.spyOn(api, 'switchWorkspace');
+    const user = userEvent.setup();
+    render(
+      <CostApiProvider value={api}>
+        <SetupWizard onComplete={vi.fn()} workspaceLabel="client-b" otherWorkspaces={['default', 'prod']} />
+      </CostApiProvider>,
+    );
+    expect(screen.getByText('Jump back into an existing workspace:')).toBeDefined();
+    expect(screen.getByText('client-b')).toBeDefined();
+    await user.click(screen.getByRole('button', { name: 'prod' }));
+    await waitFor(() => { expect(switchSpy).toHaveBeenCalledWith('prod'); });
+  });
+
+  it('shows no jump-back section without other workspaces', () => {
+    const api = new MockCostApi();
+    render(
+      <CostApiProvider value={api}>
+        <SetupWizard onComplete={vi.fn()} />
+      </CostApiProvider>,
+    );
+    expect(screen.queryByText('Jump back into an existing workspace:')).toBeNull();
   });
 });

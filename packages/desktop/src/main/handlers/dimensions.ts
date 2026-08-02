@@ -205,7 +205,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     let values = valueRows.map(r => ({ value: toStr(r['val']), cost: toNum(r['cost']) }));
 
     if (field === 'account_id' && opts?.useOrgAccounts === true) {
-      const orgMap = await loadOrgAccountsMap(ctx.dataDir, opts.accountNameFromTag);
+      const orgMap = await loadOrgAccountsMap(ctx.stateDir, opts.accountNameFromTag);
       if (orgMap.size > 0) {
         values = values.map(v => ({ value: orgMap.get(v.value) ?? v.value, cost: v.cost }));
       }
@@ -332,18 +332,18 @@ export function registerDimensionsHandlers(app: AppContext): void {
     }
 
     const suggestions = generateAliasSuggestions(values);
-    const dismissed = await loadDismissedSuggestions(ctx.dataDir);
+    const dismissed = await loadDismissedSuggestions(ctx.stateDir);
     return filterUncoveredSuggestions(suggestions, tag.aliases ?? {}, dismissed, tagName);
   });
 
   ipcMain.handle('dimensions:dismiss-suggestion', async (_event, tagName: string, canonical: string, aliases: string[]): Promise<void> => {
-    const state = await loadDismissedSuggestions(ctx.dataDir);
+    const state = await loadDismissedSuggestions(ctx.stateDir);
     if (isDismissed(state, tagName, canonical, aliases)) return;
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
     const updated = [...state, { tagName, canonical, aliases, dismissedAt: new Date().toISOString() }];
     await fs.writeFile(
-      path.join(path.dirname(ctx.dataDir), 'dismissed-suggestions.json'),
+      path.join(ctx.stateDir, 'dismissed-suggestions.json'),
       JSON.stringify({ dismissed: updated }, null, 2),
     );
   });
@@ -395,11 +395,11 @@ interface DismissedEntry {
   readonly dismissedAt: string;
 }
 
-async function loadDismissedSuggestions(dataDir: string): Promise<readonly DismissedEntry[]> {
+async function loadDismissedSuggestions(stateDir: string): Promise<readonly DismissedEntry[]> {
   const fs = await import('node:fs/promises');
   const path = await import('node:path');
   try {
-    const raw = await fs.readFile(path.join(path.dirname(dataDir), 'dismissed-suggestions.json'), 'utf-8');
+    const raw = await fs.readFile(path.join(stateDir, 'dismissed-suggestions.json'), 'utf-8');
     const parsed: unknown = JSON.parse(raw);
     if (!isStringRecord(parsed) || !Array.isArray(parsed['dismissed'])) return [];
     return parsed['dismissed'].filter((d: unknown): d is DismissedEntry =>

@@ -19,6 +19,7 @@ import { registerRollupHandlers } from './handlers/rollup.js';
 import { registerBaselinesHandlers } from './handlers/baselines.js';
 import { registerTelemetryHandlers } from './handlers/telemetry.js';
 import { registerSyncLogHandlers } from './handlers/sync-log.js';
+import { registerWorkspacesHandlers } from './handlers/workspaces.js';
 
 export type { AppContext, IpcContext } from './handlers/context.js';
 
@@ -44,6 +45,7 @@ export function registerIpcHandlers(ctx: IpcContext): AppContext {
   registerBaselinesHandlers(app);
   registerTelemetryHandlers(app);
   registerSyncLogHandlers();
+  registerWorkspacesHandlers(app);
 
   app.warmupBase();
 

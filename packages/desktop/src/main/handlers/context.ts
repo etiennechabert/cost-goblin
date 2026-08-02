@@ -114,6 +114,11 @@ export interface IpcContext {
   readonly viewsPath: string;
   readonly costScopePath: string;
   readonly dataDir: string;
+  /** Root for per-workspace state JSONs (prefs, org lookups, baselines, telemetry outbox). */
+  readonly stateDir: string;
+  /** How the workspace paths were resolved — workspace mode enables the
+   *  workspace-management IPC surface; pinned mode (env overrides) disables it. */
+  readonly workspaceEnv: import('../workspace-env.js').WorkspaceEnv;
 }
 
 export interface OrgTreeConfig {
@@ -319,14 +324,14 @@ export function createAppContext(ctx: IpcContext): AppContext {
     if (state.accountMap !== null) return state.accountMap;
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const baseDir = path.dirname(ctx.dataDir);
+    const baseDir = ctx.stateDir;
 
     const dimensions = await getDimensions();
     const accountDim = dimensions.builtIn.find(d => d.field === 'account_id');
     const preferOrg = accountDim?.useOrgAccounts === true;
     const tagKey = accountDim?.accountNameFromTag;
 
-    const fromOrg = () => loadOrgAccountsMap(ctx.dataDir, tagKey);
+    const fromOrg = () => loadOrgAccountsMap(ctx.stateDir, tagKey);
     const fromCsv = () => loadAccountCsv(path.join(baseDir, 'raw'), fs);
 
     const primary = preferOrg ? await fromOrg() : await fromCsv();
@@ -354,7 +359,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     if (state.orgAccountsPath !== null) return state.orgAccountsPath;
     const path = await import('node:path');
     const fs = await import('node:fs/promises');
-    const baseDir = path.dirname(ctx.dataDir);
+    const baseDir = ctx.stateDir;
     const flatPath = path.join(baseDir, 'org-account-tags.json');
     let result: string | undefined;
     try {
@@ -390,7 +395,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const path = await import('node:path');
     const map = new Map<string, RegionEnrichment>();
     try {
-      const raw = await fs.readFile(path.join(path.dirname(ctx.dataDir), 'region-names.json'), 'utf-8');
+      const raw = await fs.readFile(path.join(ctx.stateDir, 'region-names.json'), 'utf-8');
       const parsed: unknown = JSON.parse(raw);
       if (isStringRecord(parsed) && isStringRecord(parsed['regions'])) {
         parseRegionEntries(parsed['regions'], map);
@@ -546,7 +551,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const costScope = await getCostScope().catch(() => undefined);
     const availableColumns = await getAvailableColumns('daily');
     let orgRaw = '';
-    try { orgRaw = await fs.readFile(path.join(path.dirname(ctx.dataDir), 'org-accounts.json'), 'utf-8'); } catch { /* no org sync yet */ }
+    try { orgRaw = await fs.readFile(path.join(ctx.stateDir, 'org-accounts.json'), 'utf-8'); } catch { /* no org sync yet */ }
     return computeShapeSignature({
       dimensions,
       costMetric: costScope?.costMetric ?? 'unblended',
@@ -653,9 +658,10 @@ export function createAppContext(ctx: IpcContext): AppContext {
     rerollTimer = setTimeout(() => { rerollTimer = null; triggerWarmup(); }, ROLLUP_REROLL_DEBOUNCE_MS);
   }
 
-  const baselineStore = new BaselineStore(ctx.dataDir);
+  const baselineStore = new BaselineStore(ctx.stateDir);
   const baselineEngineDeps: BaselineEngineDeps = {
     dataDir: ctx.dataDir,
+    stateDir: ctx.stateDir,
     getQueryDimensions,
     getCostScope,
     getAccountMap,
@@ -743,12 +749,12 @@ function resolveAccountName(acct: Record<string, unknown>, tagKey: string | unde
   return undefined;
 }
 
-export async function loadOrgAccountsMap(dataDir: string, tagKey?: string): Promise<Map<string, string>> {
+export async function loadOrgAccountsMap(stateDir: string, tagKey?: string): Promise<Map<string, string>> {
   const fs = await import('node:fs/promises');
   const path = await import('node:path');
   const map = new Map<string, string>();
   try {
-    const raw = await fs.readFile(path.join(path.dirname(dataDir), 'org-accounts.json'), 'utf-8');
+    const raw = await fs.readFile(path.join(stateDir, 'org-accounts.json'), 'utf-8');
     const parsed: unknown = JSON.parse(raw);
     if (!isStringRecord(parsed) || !Array.isArray(parsed['accounts'])) return map;
     for (const acct of parsed['accounts']) {
@@ -762,9 +768,9 @@ export async function loadOrgAccountsMap(dataDir: string, tagKey?: string): Prom
   return map;
 }
 
-export async function prefsPath(dataDir: string, name: string): Promise<string> {
+export async function prefsPath(stateDir: string, name: string): Promise<string> {
   const path = await import('node:path');
-  return path.join(path.dirname(dataDir), `${name}.json`);
+  return path.join(stateDir, `${name}.json`);
 }
 
 // `isCredentialError` now lives in @costgoblin/core (next to the S3 client that

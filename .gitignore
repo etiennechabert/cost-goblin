@@ -34,3 +34,6 @@ e2e/*.txt
 .auto-claude-status
 .claude_settings.json
 project_index.json
+
+# macOS Finder metadata
+.DS_Store

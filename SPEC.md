@@ -260,30 +260,56 @@ The hourly and cost-optimization tiers are optional. Daily is mandatory.
 
 **Local storage layout:**
 
+Everything lives under Electron `userData`, organized into named **workspaces**
+(fully isolated config + data + state; see *Feature: Workspaces*):
+
 ```
-~/Library/Application Support/costgoblin/     # macOS
-%APPDATA%/costgoblin/                          # Windows
-  config/                   # YAML — organization-shared, versionable
-    costgoblin.yaml         # Providers, sync, defaults
-    dimensions.yaml         # Dimensions + concepts + aliases
-    org-tree.yaml           # Optional organizational hierarchy
-  state/                    # JSON — app-managed
-    sync-manifest.json      # S3 file hashes
-    org-sync-result.json    # AWS Org snapshot
-    preferences.json        # Per-user UI state (theme, palette, hidden cols, auto-sync toggle)
-  data/
-    aws/
-      raw/
-        daily-YYYY-MM/                  # One directory per billing period, downloaded as-is from S3
-          *.parquet
-        hourly-YYYY-MM/
-          *.parquet
-        cost-optimization-YYYY-MM/
-          usage_date=YYYY-MM-DD/data.parquet   # Cost-opt is split by export date during sync
-      sync-etags-daily.json             # Per-period file etags for diff
-      sync-etags-hourly.json
-      sync-etags-cost-optimization.json
+~/Library/Application Support/CostGoblin/      # macOS ({userData})
+%APPDATA%/CostGoblin/                          # Windows
+  app-state.json            # Machine-level: last-used workspace, per-workspace
+                            # last-used stamps, theme, chart palette
+  mcp-auth-token            # Machine-level MCP shared secret
+  workspaces/
+    <name>/                 # One fully isolated workspace
+      config/               # YAML — organization-shared, versionable
+        costgoblin.yaml     # Providers, sync, defaults
+        dimensions.yaml     # Dimensions + concepts + aliases
+        org-tree.yaml       # Optional organizational hierarchy
+        views.yaml          # Dashboards
+        cost-scope.yaml     # Cost scope rules
+        peer-*.json         # Peer-sharing identity/PSK (never copied between workspaces)
+        backups/            # Pre-import config backups
+      state/                # JSON — app-managed, per-workspace
+        ui-preferences.json         # defaultViewId, performance, telemetry consent
+        app-preferences.json        # auto-sync/auto-prune toggles
+        explorer-preferences.json   # Explorer column prefs
+        savings-preferences.json
+        org-accounts.json           # AWS Org snapshot (+ org-account-tags.json, region-names.json)
+        baselines.json / baselines-data.json
+        dismissed-suggestions.json
+        telemetry-outbox.jsonl
+        raw/                        # Optional account-mapping CSV drop-in
+      data/
+        aws/
+          raw/
+            daily-YYYY-MM/                  # One directory per billing period, downloaded as-is from S3
+              *.parquet
+            hourly-YYYY-MM/
+              *.parquet
+            cost-opt-YYYY-MM-DD/            # Cost-opt is split by export date during sync
+          rollup/                           # Pre-aggregated daily rollup + manifest
+        sync-etags*.json                    # Per-period file etags for diff
+        sync-timestamps.json
+      temp/                 # DuckDB spill directory
 ```
+
+When `COSTGOBLIN_DATA_DIR` / `COSTGOBLIN_CONFIG_DIR` are set (dev scripts, e2e,
+CI), the app runs in **pinned mode**: those paths are used directly (state root =
+parent of the data dir, exactly the pre-workspace layout), no migration runs, and
+workspace management is disabled. `COSTGOBLIN_USER_DATA_DIR` relocates the whole
+`userData` tree (workspace-mode e2e). On first launch after upgrade, a legacy
+`{userData}/data|config` layout is migrated automatically into
+`workspaces/default/` (idempotent, resumable; `app-state.json` is written last).
 
 **AWS Credentials:**
 
@@ -507,6 +533,36 @@ Lets one user hand their full working configuration to teammates — dimensions,
 - No credentials in bundles by construction; `credentials` keys smuggled into a hand-crafted bundle are discarded at parse time.
 - Bundles are untrusted input: every section runs through the same validators as the on-disk YAML before anything is written, and `applyConfigBundle` re-parses in the main process — it never trusts the renderer's preview.
 - Beacon absence, access-denied, and network errors silently fall back to manual setup (a beacon must never block the wizard); a published-but-invalid bundle surfaces an explanatory error.
+
+#### Feature: Workspaces (MVP)
+
+A **workspace** is a named, fully isolated bundle of config + synced data + app
+state under `{userData}/workspaces/<name>/` (see *Local storage layout*). One
+machine can hold several — a consultant with multiple clients, work vs personal,
+prod next to a demo workspace. Workspaces share nothing except the app binary
+and machine-level preferences (theme, chart palette) in `app-state.json`.
+
+- **Naming**: `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`, Windows reserved device names
+  rejected, uniqueness case-insensitive. Same rules will apply to provider
+  directory names later.
+- **First run**: the setup wizard opens with a naming step (prefilled
+  `default`, Continue) before the get-started hub ("Set up from S3" / "Import
+  from a teammate"); the directory is renamed when setup completes.
+- **Creating another workspace** (Settings → Workspaces, ⌘K): a name-only
+  prompt (listing existing workspaces), then the app restarts into the new
+  empty workspace — the same setup wizard takes over at the get-started hub,
+  with a jump-back list of the other configured workspaces as the escape
+  hatch.
+- **Lifecycle** (Settings → Workspaces): rename and delete (with destructive
+  confirmation; the active and last workspaces can't be deleted).
+- **Switching = relaunch**: the app persists the target as last-used and
+  restarts. Surfaces: a header chip (visible once ≥2 workspaces exist), the
+  ⌘K command palette, and the Workspaces settings tab.
+- **Isolation boundary**: the MCP server and peer data-sharing serve only the
+  active workspace; peer identity/PSK files are per-workspace and never copied
+  by config duplication. No cross-workspace queries.
+- **Pinned mode**: with `COSTGOBLIN_DATA_DIR`/`COSTGOBLIN_CONFIG_DIR` set,
+  workspace management is disabled and paths are used exactly as given.
 
 #### Feature: Cost Overview Page (MVP)
 

@@ -179,7 +179,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
   async function readEnrichment(): Promise<PackEnrichment> {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const base = path.dirname(ctx.dataDir);
+    const base = ctx.stateDir;
     const read = async (name: string): Promise<string | null> => {
       try {
         return await fs.readFile(path.join(base, name), 'utf-8');
@@ -197,7 +197,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
   async function writeEnrichment(enrichment: PackEnrichment): Promise<void> {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const base = path.dirname(ctx.dataDir);
+    const base = ctx.stateDir;
     await fs.mkdir(base, { recursive: true });
     const write = async (name: string, content: string | null): Promise<void> => {
       if (content !== null) await fs.writeFile(path.join(base, name), content, 'utf-8');

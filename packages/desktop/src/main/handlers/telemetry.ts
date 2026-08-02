@@ -13,7 +13,7 @@ import { telemetry } from '../telemetry/controller.js';
  */
 export function registerTelemetryHandlers(app: AppContext): void {
   const { ctx } = app;
-  const uiPrefsPath = (): Promise<string> => prefsPath(ctx.dataDir, 'ui-preferences');
+  const uiPrefsPath = (): Promise<string> => prefsPath(ctx.stateDir, 'ui-preferences');
 
   async function readPrefs(): Promise<Readonly<Record<string, unknown>> | null> {
     const fs = await import('node:fs/promises');

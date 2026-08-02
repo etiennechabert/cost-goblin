@@ -14,6 +14,14 @@ export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './config/views-seri
 export { ConfigValidationError } from './config/validator.js';
 export { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from './config/sharing-location.js';
 export { DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, BUILTIN_EXCLUSION_RULES } from './config/cost-scope-seed.js';
+export {
+  DEFAULT_WORKSPACE_NAME,
+  RESERVED_WORKSPACE_NAMES,
+  WORKSPACE_NAME_PATTERN,
+  WorkspaceNameError,
+  isValidWorkspaceName,
+  parseWorkspaceName,
+} from './config/workspace-name.js';
 export type {
   RollupGrainEstimate,
   RollupDimEstimate,
