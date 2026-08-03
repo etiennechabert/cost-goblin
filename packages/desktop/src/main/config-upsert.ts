@@ -100,3 +100,26 @@ export function swapProviderCredentialsProfile(
   const entry: Record<string, unknown> = { ...rest, credentialsProfile: profile };
   return { ...parsed, providers: providers.map((p, i) => (i === targetIndex ? entry : p)) };
 }
+
+/** Remove the provider entry with the given exact name. Throws when the
+ *  name doesn't match any entry (the UI should never offer a stale name)
+ *  or when it matches the LAST remaining provider — an empty providers list
+ *  is legal YAML but almost certainly a mistake from the removal flow; the
+ *  user can hand-edit the file for that. Everything else is preserved
+ *  verbatim. The provider's on-disk data tree is deliberately NOT touched
+ *  here — the caller decides whether to orphan or delete it. */
+export function removeProviderEntry(
+  existing: Readonly<Record<string, unknown>>,
+  providerName: string,
+): Record<string, unknown> {
+  const providersValue: unknown = existing['providers'];
+  const providers: readonly unknown[] = Array.isArray(providersValue) ? providersValue : [];
+  const index = providers.findIndex(entry => providerEntryName(entry) === providerName);
+  if (index === -1) {
+    throw new Error(`Unknown provider "${providerName}"`);
+  }
+  if (providers.length === 1) {
+    throw new Error('Cannot remove the last provider — the app needs at least one billing source.');
+  }
+  return { ...existing, providers: providers.filter((_, i) => i !== index) };
+}

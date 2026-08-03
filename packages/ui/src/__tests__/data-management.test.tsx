@@ -2,7 +2,7 @@ import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
-import { MockCostApi } from '../__fixtures__/mock-api.js';
+import { MOCK_MULTI_PROVIDER_CONFIG, MockCostApi } from '../__fixtures__/mock-api.js';
 import { DataManagement } from '../views/data-management.js';
 
 function renderDataManagement(api?: MockCostApi) {
@@ -191,6 +191,83 @@ describe('DataManagement', () => {
     // fans out to exactly one syncPeriods call.
     await waitFor(() => {
       expect(spy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('renders one section per provider with the two-provider config', async () => {
+    const api = new MockCostApi();
+    api.getConfig = () => Promise.resolve(MOCK_MULTI_PROVIDER_CONFIG);
+    renderDataManagement(api);
+    await waitFor(() => {
+      expect(screen.getByRole('region', { name: 'Provider aws-main' })).toBeDefined();
+      expect(screen.getByRole('region', { name: 'Provider aws-secondary' })).toBeDefined();
+    });
+    // Each provider section carries its own credentials profile chip and its
+    // own Change AWS Profile + Remove actions.
+    expect(screen.getByText('secondary')).toBeDefined();
+    expect(screen.getAllByText('Change AWS Profile')).toHaveLength(2);
+    expect(screen.getAllByText('Remove')).toHaveLength(2);
+  });
+
+  it('hides the Remove action when only one provider is configured', async () => {
+    renderDataManagement();
+    await waitFor(() => {
+      expect(screen.getByRole('region', { name: 'Provider aws-main' })).toBeDefined();
+    });
+    expect(screen.queryByText('Remove')).toBeNull();
+  });
+
+  it('polls sync status with composite provider:tier ids and per-provider inventory', async () => {
+    const api = new MockCostApi();
+    api.getConfig = () => Promise.resolve(MOCK_MULTI_PROVIDER_CONFIG);
+    const statusSpy = vi.spyOn(api, 'getSyncStatus');
+    const inventorySpy = vi.spyOn(api, 'getDataInventory');
+    renderDataManagement(api);
+    await waitFor(() => {
+      const statusIds = statusSpy.mock.calls.map(c => c[0]);
+      expect(statusIds).toContain('aws-main:daily');
+      expect(statusIds).toContain('aws-secondary:daily');
+      const inventoryCalls = inventorySpy.mock.calls.map(c => `${String(c[0])}|${String(c[1])}`);
+      expect(inventoryCalls).toContain('daily|aws-main');
+      expect(inventoryCalls).toContain('daily|aws-secondary');
+    });
+  });
+
+  it('remove flow confirms and calls removeProvider for that provider', async () => {
+    const api = new MockCostApi();
+    api.getConfig = () => Promise.resolve(MOCK_MULTI_PROVIDER_CONFIG);
+    const removeSpy = vi.spyOn(api, 'removeProvider');
+    const { user } = renderDataManagement(api);
+    await waitFor(() => {
+      expect(screen.getAllByText('Remove')).toHaveLength(2);
+    });
+    const removeButtons = screen.getAllByText('Remove');
+    const secondRemove = removeButtons[1];
+    expect(secondRemove).toBeDefined();
+    if (secondRemove === undefined) return;
+    await user.click(secondRemove);
+    await waitFor(() => {
+      expect(screen.getByText('Remove provider "aws-secondary"')).toBeDefined();
+    });
+    // The modal's confirm button is also labeled Remove — the last one on screen.
+    const confirmButtons = screen.getAllByRole('button', { name: 'Remove' });
+    const confirm = confirmButtons.at(-1);
+    if (confirm === undefined) return;
+    await user.click(confirm);
+    await waitFor(() => {
+      expect(removeSpy).toHaveBeenCalledWith('aws-secondary');
+    });
+  });
+
+  it('add provider opens the wizard in add mode', async () => {
+    const { user } = renderDataManagement();
+    await waitFor(() => {
+      expect(screen.getByText('Add Provider')).toBeDefined();
+    });
+    await user.click(screen.getByText('Add Provider'));
+    // Add-mode wizard starts at the get-started hub.
+    await waitFor(() => {
+      expect(screen.getByText('Set up from S3')).toBeDefined();
     });
   });
 });

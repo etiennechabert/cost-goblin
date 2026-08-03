@@ -1,5 +1,5 @@
 import type { ConfigBundleSummary } from '@costgoblin/core/browser';
-import { isValidWorkspaceName } from '@costgoblin/core/browser';
+import { isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
 import { useState, useEffect } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
@@ -31,6 +31,16 @@ interface SetupWizardProps {
   onComplete: (result?: { workspaceName?: string }) => void;
   source?: DataSource | undefined;
   profile?: string | undefined;
+  /** The provider being reconfigured (source mode). writeConfig is an UPSERT
+   *  by name, so per-tier Configure must target the provider it came from —
+   *  the name renders read-only. Omitted in source mode, the first
+   *  configured provider is targeted. */
+  providerName?: string | undefined;
+  /** 'add' opens the wizard to create an ADDITIONAL provider: the name field
+   *  starts empty, is required, and must not collide with an existing
+   *  provider (the upsert would silently overwrite it). Default: first-run
+   *  behavior (name prefilled with 'aws-main', editable). */
+  mode?: 'add' | undefined;
   /** Present only on the true first run of a fresh install: shows the naming
    *  step first (prefilled with the current name) before the get-started hub. */
   workspaceNaming?: { initialName: string } | undefined;
@@ -497,14 +507,42 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
   );
 }
 
-function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: Readonly<{
+/** Validation error for the provider-name field, or null when the name is
+ *  usable. `takenNames` is checked case-insensitively only when adding —
+ *  reconfiguring an existing provider legitimately reuses its name. */
+function providerNameError(name: string, checkTaken: boolean, takenNames: readonly string[]): string | null {
+  try {
+    parseProviderName(name);
+  } catch (err: unknown) {
+    return err instanceof Error ? err.message : String(err);
+  }
+  if (checkTaken && takenNames.some(n => n.toLowerCase() === name.toLowerCase())) {
+    return `A provider named "${name}" already exists — pick a different name.`;
+  }
+  return null;
+}
+
+interface ProviderNaming {
+  readonly value: string;
+  readonly fixed: boolean;
+  readonly checkTaken: boolean;
+  readonly takenNames: readonly string[];
+  readonly onChange: (value: string) => void;
+}
+
+function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onBack }: Readonly<{
   state: Extract<WizardStep, { step: 'confirm' }>;
+  providerNaming: ProviderNaming;
   onRetentionChange: (days: number) => void;
   onComplete: () => void;
   onBack: () => void;
 }>) {
   const [saving, setSaving] = useState(false);
   const api = useCostApi();
+
+  const nameError = providerNaming.fixed
+    ? null
+    : providerNameError(providerNaming.value, providerNaming.checkTaken, providerNaming.takenNames);
 
   const isDaily = state.s3Path.length > 0;
   const isHourlyOnly = !isDaily && state.hourlyPath.length > 0;
@@ -524,9 +562,10 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: Readonly<
       ];
 
   function handleSave() {
+    if (nameError !== null) return;
     setSaving(true);
     api.writeConfig({
-      providerName: 'aws-main',
+      providerName: providerNaming.value,
       profile: state.profile,
       dailyBucket: state.s3Path,
       retentionDays: isDaily ? state.retentionDays : undefined,
@@ -550,6 +589,30 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: Readonly<
       </div>
 
       <div className="flex flex-col gap-3">
+        <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
+          <p className="text-xs text-text-muted uppercase tracking-wider">Provider name</p>
+          {providerNaming.fixed ? (
+            <p className="text-sm font-mono text-text-primary mt-0.5">{providerNaming.value}</p>
+          ) : (
+            <>
+              <input
+                id="provider-name"
+                aria-label="Provider name"
+                value={providerNaming.value}
+                onChange={(e) => { providerNaming.onChange(e.target.value); }}
+                placeholder="e.g. aws-main"
+                spellCheck={false}
+                className="mt-1 w-full rounded-md border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              />
+              {nameError !== null && providerNaming.value.length > 0 ? (
+                <p className="text-xs text-negative mt-1">{nameError}</p>
+              ) : (
+                <p className="text-xs text-text-muted mt-1">Names this billing source — it becomes the data folder and the Provider dimension value.</p>
+              )}
+            </>
+          )}
+        </div>
+
         <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
           <p className="text-xs text-text-muted uppercase tracking-wider">AWS Profile</p>
           <p className="text-sm font-mono text-text-primary mt-0.5">{state.profile}</p>
@@ -589,7 +652,7 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: Readonly<
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
         <Button
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || nameError !== null}
           className="bg-accent hover:bg-accent-hover text-white px-8"
         >
           {saving ? 'Saving...' : 'Complete Setup'}
@@ -599,10 +662,27 @@ function ConfirmStep({ state, onRetentionChange, onComplete, onBack }: Readonly<
   );
 }
 
-export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile, workspaceNaming, workspaceLabel, otherWorkspaces }: Readonly<SetupWizardProps>): React.JSX.Element {
+export function SetupWizard({ onComplete, source: initialSource, profile: initialProfile, providerName: initialProviderName, mode, workspaceNaming, workspaceLabel, otherWorkspaces }: Readonly<SetupWizardProps>): React.JSX.Element {
   const api = useCostApi();
   const isSourceMode = initialSource !== undefined && initialProfile !== undefined;
   const [workspaceName, setWorkspaceName] = useState(workspaceNaming?.initialName ?? '');
+  // Provider identity: fixed when reconfiguring an existing provider (source
+  // mode), free-text when adding one, prefilled 'aws-main' on first run.
+  const [providerName, setProviderName] = useState(initialProviderName ?? (mode === 'add' ? '' : 'aws-main'));
+  const [existingProviders, setExistingProviders] = useState<readonly string[]>([]);
+  useEffect(() => {
+    api.getConfig().then(config => {
+      const names = config.providers.map(p => String(p.name));
+      setExistingProviders(names);
+      // Source mode without an explicit target: writeConfig upserts by name,
+      // so per-tier Configure must land on the provider it came from — the
+      // first configured one, matching the page that opened us.
+      if (initialProviderName === undefined && isSourceMode && names[0] !== undefined) {
+        setProviderName(names[0]);
+      }
+    }).catch(() => { /* onboarding: no config yet */ });
+  }, [api, initialProviderName, isSourceMode]);
+  const providerNameFixed = initialProviderName !== undefined || isSourceMode;
   // `workspaceNaming` can arrive AFTER mount (the host learns the workspace
   // mode from an IPC round-trip that races the setup check) — the useState
   // initializer above won't re-run, so seed the field when the prop appears.
@@ -872,6 +952,13 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
           {wizard.step === 'confirm' && (
             <ConfirmStep
               state={wizard}
+              providerNaming={{
+                value: providerName,
+                fixed: providerNameFixed,
+                checkTaken: mode === 'add',
+                takenNames: existingProviders,
+                onChange: setProviderName,
+              }}
               onRetentionChange={(days) => { setWizard(prev => prev.step === 'confirm' ? { ...prev, retentionDays: days } : prev); }}
               onComplete={finish}
               onBack={handleBack}

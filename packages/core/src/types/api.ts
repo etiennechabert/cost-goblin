@@ -325,6 +325,10 @@ export interface CostApi {
   /** Swap the AWS credentials profile of one provider (default: the first),
    *  leaving bucket paths and every other config field untouched. */
   updateAwsProfile(profile: string, providerName?: string): Promise<void>;
+  /** Remove a provider from the config by exact name. Its on-disk data tree
+   *  is left in place (never a data-loss operation); rejects removing the
+   *  last remaining provider. */
+  removeProvider(providerName: string): Promise<void>;
   getAliasSuggestions(tagName: string): Promise<AliasSuggestion[]>;
   dismissSuggestion(tagName: string, canonical: string, aliases: readonly string[]): Promise<void>;
   acceptSuggestion(tagName: string, canonical: string, aliases: readonly string[]): Promise<void>;

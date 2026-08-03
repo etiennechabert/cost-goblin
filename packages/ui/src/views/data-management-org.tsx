@@ -51,7 +51,7 @@ function SyncStatusBanner({ syncState }: Readonly<{ syncState: OrgSyncState }>):
   return null;
 }
 
-export function OrgAccountsSection({ profile }: Readonly<{ profile: string | null }>) {
+export function OrgAccountsSection({ profile, providerName }: Readonly<{ profile: string | null; providerName?: string | undefined }>) {
   const api = useCostApi();
   const [refreshKey, setRefreshKey] = useState(0);
   const orgQuery = useQuery(() => api.getOrgSyncResult(), [refreshKey]);
@@ -89,7 +89,7 @@ export function OrgAccountsSection({ profile }: Readonly<{ profile: string | nul
     }, 500);
 
     try {
-      const result = await api.syncOrgAccounts(profile);
+      const result = await api.syncOrgAccounts(profile, providerName);
       clearInterval(pollInterval);
       setSyncState({ status: 'done', count: result.accounts.length });
       // Force the org + region-names queries to re-fetch so the bullet list

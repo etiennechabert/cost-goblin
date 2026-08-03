@@ -5,7 +5,7 @@ import type {
   Dimension,
   OrgNode,
 } from '@costgoblin/core';
-import { swapProviderCredentialsProfile } from '../config-upsert.js';
+import { removeProviderEntry, swapProviderCredentialsProfile } from '../config-upsert.js';
 import type { AppContext } from './context.js';
 
 export function registerConfigHandlers(app: AppContext): void {
@@ -71,5 +71,20 @@ export function registerConfigHandlers(app: AppContext): void {
     await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
     invalidateConfig();
     logger.info(`Updated AWS profile to ${profile}${providerName === undefined ? '' : ` for provider ${providerName}`}`);
+  });
+
+  // Removes the provider from the CONFIG only. Its {dataDir}/{name}/ tree is
+  // left orphaned on disk — deliberate: config removal must never be a
+  // data-loss operation. The UI tells the user where the data still lives.
+  ipcMain.handle('config:remove-provider', async (_event, providerName: string): Promise<void> => {
+    const fs = await import('node:fs/promises');
+    const { stringify, parse: parseYaml } = await import('yaml');
+    const raw = await fs.readFile(ctx.configPath, 'utf-8');
+    const parsed: unknown = parseYaml(raw);
+    if (!isStringRecord(parsed)) throw new Error('Config file is not a YAML object');
+    const updated = removeProviderEntry(parsed, providerName);
+    await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
+    invalidateConfig();
+    logger.info(`Removed provider ${providerName} from config (data left on disk)`);
   });
 }

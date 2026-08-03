@@ -11,10 +11,12 @@ import {
   type CostResult,
   type DailyCostsResult,
   type DataInventoryResult,
+  type DataTier,
   type Dimension,
   type EntityDetailResult,
   type MissingTagsResult,
   type OrgNode,
+  type ProviderConfig,
   type PruneResult,
   type SavingsResult,
   type SyncStatus,
@@ -202,17 +204,36 @@ const entityDetailResult: EntityDetailResult = {
 
 const syncStatus: SyncStatus = { status: 'idle', lastSync: null };
 
+const awsMainProvider: ProviderConfig = {
+  name: asProviderName('aws-main'),
+  type: 'aws',
+  credentialsProfile: 'default',
+  sync: { daily: { bucket: asBucketPath('costgoblin-cur-bucket/daily'), retentionDays: 90 }, intervalMinutes: 60 },
+};
+
 const config: CostGoblinConfig = {
-  providers: [{
-    name: asProviderName('aws-main'),
-    type: 'aws',
-    credentialsProfile: 'default',
-    sync: { daily: { bucket: asBucketPath('costgoblin-cur-bucket/daily'), retentionDays: 90 }, intervalMinutes: 60 },
-  }],
+  providers: [awsMainProvider],
   defaults: { periodDays: 30, costMetric: 'UnblendedCost', lagDays: 2 },
 };
 
+/** Two providers with distinct names and credentials profiles — override
+ *  `getConfig` with this (e.g. `vi.spyOn(api, 'getConfig').mockResolvedValue(
+ *  MOCK_MULTI_PROVIDER_CONFIG)`) to exercise multi-provider UI states. */
+export const MOCK_MULTI_PROVIDER_CONFIG: CostGoblinConfig = {
+  ...config,
+  providers: [
+    awsMainProvider,
+    {
+      name: asProviderName('aws-secondary'),
+      type: 'aws',
+      credentialsProfile: 'secondary',
+      sync: { daily: { bucket: asBucketPath('costgoblin-secondary-bucket/daily'), retentionDays: 90 }, intervalMinutes: 60 },
+    },
+  ],
+};
+
 const mockDimensions: Dimension[] = [
+  { name: asDimensionId('provider'), label: 'Provider', field: 'provider' },
   { name: asDimensionId('account'), label: 'Account', field: 'line_item_usage_account_id', displayField: 'account_name' },
   { name: asDimensionId('service'), label: 'Service', field: 'product_service_name' },
   { name: asDimensionId('region'), label: 'Region', field: 'product_region' },
@@ -272,7 +293,11 @@ export class MockCostApi implements CostApi {
     });
   }
   queryEntityDetail(): Promise<EntityDetailResult> { return Promise.resolve(entityDetailResult); }
-  getSyncStatus(): Promise<SyncStatus> { return Promise.resolve(syncStatus); }
+  // Property-style so the declared type keeps the params (see checkConfigBeacon
+  // below): syncId addresses one (provider, tier) as '{providerName}:{tier}';
+  // the fixture ignores it and always reports the same status.
+  getSyncStatus: (syncId?: string) => Promise<SyncStatus> =
+    () => Promise.resolve(syncStatus);
   getSyncLog(): Promise<readonly SyncLogLine[]> { return Promise.resolve([]); }
   subscribeSyncLog(): () => void { return () => undefined; }
   appendSyncLog(): Promise<void> { return Promise.resolve(); }
@@ -281,9 +306,24 @@ export class MockCostApi implements CostApi {
   getDimensions(): Promise<Dimension[]> { return Promise.resolve(mockDimensions); }
   getOrgTree(): Promise<OrgNode[]> { return Promise.resolve(orgTree); }
   getFilterValues(): Promise<{ value: string; label: string; count: number }[]> { return Promise.resolve([]); }
-  getDataInventory(): Promise<DataInventoryResult> { return Promise.resolve({ periods: [], totalRemoteSize: 0, totalLocalPeriods: 0, totalRemotePeriods: 0, lastSync: null, local: { periods: [], diskBytes: 0, oldestPeriod: null, newestPeriod: null } }); }
-  syncPeriods(): Promise<{ filesDownloaded: number; rowsProcessed: number }> { return Promise.resolve({ filesDownloaded: 0, rowsProcessed: 0 }); }
-  cancelSync(): Promise<void> { return Promise.resolve(); }
+  /** Same empty fixture inventory for every tier, stamped with the requested
+   *  provider when one is addressed (mirrors the desktop handler). */
+  getDataInventory(_tier?: DataTier, providerName?: string): Promise<DataInventoryResult> {
+    return Promise.resolve({
+      ...(providerName === undefined ? {} : { provider: providerName }),
+      periods: [],
+      totalRemoteSize: 0,
+      totalLocalPeriods: 0,
+      totalRemotePeriods: 0,
+      lastSync: null,
+      local: { periods: [], diskBytes: 0, oldestPeriod: null, newestPeriod: null },
+    });
+  }
+  // Property-style so the declared types keep the params (see getSyncStatus).
+  syncPeriods: (files: readonly { key: string; contentHash: string; size: number }[], syncId?: string) => Promise<{ filesDownloaded: number; rowsProcessed: number }> =
+    () => Promise.resolve({ filesDownloaded: 0, rowsProcessed: 0 });
+  cancelSync: (syncId?: string) => Promise<void> =
+    () => Promise.resolve();
   deleteLocalPeriod(): Promise<void> { return Promise.resolve(); }
   openDataFolder(): Promise<void> { return Promise.resolve(); }
   ssoLogin(): Promise<void> { return Promise.resolve(); }
@@ -295,6 +335,7 @@ export class MockCostApi implements CostApi {
   browseS3(): Promise<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }> { return Promise.resolve({ prefixes: ['data', 'metadata'], isCurReport: true, detectedType: 'daily', missingColumns: [] }); }
   scaffoldConfig(): Promise<void> { return Promise.resolve(); }
   writeConfig(): Promise<void> { return Promise.resolve(); }
+  removeProvider(): Promise<void> { return Promise.resolve(); }
   updateAwsProfile(): Promise<void> { return Promise.resolve(); }
   getSavingsPreferences(): Promise<{ hiddenActionTypes: readonly string[] }> { return Promise.resolve({ hiddenActionTypes: [] }); }
   saveSavingsPreferences(): Promise<void> { return Promise.resolve(); }

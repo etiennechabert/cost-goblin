@@ -6,7 +6,7 @@ import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { SetupWizard } from '../views/setup-wizard.js';
 
-function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'; profile?: string }) {
+function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'; profile?: string; mode?: 'add' }) {
   const api = new MockCostApi();
   const onComplete = vi.fn();
   const user = userEvent.setup();
@@ -16,10 +16,24 @@ function renderWizard(props?: { source?: 'daily' | 'hourly' | 'costOptimization'
     user,
     ...render(
       <CostApiProvider value={api}>
-        <SetupWizard onComplete={onComplete} source={props?.source} profile={props?.profile} />
+        <SetupWizard onComplete={onComplete} source={props?.source} profile={props?.profile} mode={props?.mode} />
       </CostApiProvider>,
     ),
   };
+}
+
+/** Walk bucket → browse → confirm (the mock always offers my-cur-bucket and a
+ *  valid CUR folder; the beacon answers 'none'). */
+async function walkToConfirm(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
+  await userClickText(user, 'my-cur-bucket');
+  await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+  await userClickText(user, 'Use this location');
+  await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+}
+
+async function userClickText(user: ReturnType<typeof userEvent.setup>, text: string): Promise<void> {
+  await user.click(screen.getByText(text));
 }
 
 afterEach(cleanup);
@@ -283,5 +297,46 @@ describe('SetupWizard jump-back to existing workspaces', () => {
       </CostApiProvider>,
     );
     expect(screen.queryByText('Jump back into an existing workspace:')).toBeNull();
+  });
+
+  it('source mode targets the first configured provider with a fixed name', async () => {
+    const { api, user, onComplete } = renderWizard({ source: 'daily', profile: 'prod' });
+    const writeSpy = vi.spyOn(api, 'writeConfig');
+    await walkToConfirm(user);
+    // Name comes from the existing config (aws-main) and is not editable.
+    expect(screen.queryByLabelText('Provider name')).toBeNull();
+    expect(screen.getByText('aws-main')).toBeDefined();
+    await user.click(screen.getByText('Complete Setup'));
+    await waitFor(() => { expect(onComplete).toHaveBeenCalledOnce(); });
+    expect(writeSpy).toHaveBeenCalledWith(expect.objectContaining({ providerName: 'aws-main', profile: 'prod' }));
+  });
+
+  it('add mode requires a fresh provider name and rejects duplicates', async () => {
+    const { api, user, onComplete } = renderWizard({ mode: 'add' });
+    const writeSpy = vi.spyOn(api, 'writeConfig');
+    await user.click(screen.getByText('Set up from S3'));
+    await waitFor(() => { expect(screen.getByText('prod')).toBeDefined(); });
+    await user.click(screen.getByText('prod'));
+    await walkToConfirm(user);
+
+    const nameInput = screen.getByLabelText('Provider name');
+    // Empty name: cannot complete.
+    const completeButton = screen.getByText('Complete Setup').closest('button');
+    expect(completeButton?.disabled).toBe(true);
+
+    // The mock config already has a provider named aws-main — adding it again
+    // would silently overwrite it through the upsert, so it must be blocked.
+    await user.type(nameInput, 'aws-main');
+    await waitFor(() => {
+      expect(screen.getByText('A provider named "aws-main" already exists — pick a different name.')).toBeDefined();
+    });
+    expect(completeButton?.disabled).toBe(true);
+
+    await user.clear(nameInput);
+    await user.type(nameInput, 'payer-b');
+    await waitFor(() => { expect(completeButton?.disabled).toBe(false); });
+    await user.click(screen.getByText('Complete Setup'));
+    await waitFor(() => { expect(onComplete).toHaveBeenCalledOnce(); });
+    expect(writeSpy).toHaveBeenCalledWith(expect.objectContaining({ providerName: 'payer-b' }));
   });
 });

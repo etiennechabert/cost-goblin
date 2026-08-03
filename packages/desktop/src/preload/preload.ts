@@ -210,6 +210,9 @@ const api: CostApi = {
   updateAwsProfile(profile: string, providerName?: string): Promise<void> {
     return invoke<undefined>('config:update-aws-profile', profile, providerName).then(() => undefined);
   },
+  removeProvider(providerName: string): Promise<void> {
+    return invoke<undefined>('config:remove-provider', providerName).then(() => undefined);
+  },
   getSavingsPreferences(): Promise<SavingsPreferences> {
     return invoke<SavingsPreferences>('savings:get-preferences');
   },
