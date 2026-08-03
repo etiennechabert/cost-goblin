@@ -108,27 +108,27 @@ function validateBubbleWidget(raw: Record<string, unknown>, ctx: string, base: W
   };
 }
 
-function validateGroupByWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, type: 'pie' | 'stackedBar' | 'bubble' | 'treemap' | 'pareto'): WidgetSpec {
+function validateGroupByWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, type: 'pie' | 'stackedBar' | 'bubble' | 'treemap' | 'pareto', liveDimensionIds?: ReadonlySet<string>): WidgetSpec {
   assertString(raw['groupBy'], `${ctx}.groupBy`);
-  const groupBy = asDimensionId(migrateLegacyDimensionId(raw['groupBy']));
+  const groupBy = asDimensionId(migrateLegacyDimensionId(raw['groupBy'], liveDimensionIds));
   if (type === 'treemap') {
     const drillTo = raw['drillTo'] === undefined
       ? undefined
-      : (assertString(raw['drillTo'], `${ctx}.drillTo`), asDimensionId(migrateLegacyDimensionId(raw['drillTo'])));
+      : (assertString(raw['drillTo'], `${ctx}.drillTo`), asDimensionId(migrateLegacyDimensionId(raw['drillTo'], liveDimensionIds)));
     return { type, ...base, groupBy, ...(drillTo === undefined ? {} : { drillTo }) };
   }
   if (type === 'bubble') return validateBubbleWidget(raw, ctx, base, groupBy);
   return { type, ...base, groupBy };
 }
 
-function validateTopNWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, type: 'line' | 'topNBar' | 'heatmap' | 'waterfall' | 'priceVolume'): WidgetSpec {
+function validateTopNWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, type: 'line' | 'topNBar' | 'heatmap' | 'waterfall' | 'priceVolume', liveDimensionIds?: ReadonlySet<string>): WidgetSpec {
   assertString(raw['groupBy'], `${ctx}.groupBy`);
   let topN: number | undefined;
   if (raw['topN'] !== undefined) {
     assertNumber(raw['topN'], `${ctx}.topN`);
     topN = raw['topN'];
   }
-  return { type, ...base, groupBy: asDimensionId(migrateLegacyDimensionId(raw['groupBy'])), ...(topN === undefined ? {} : { topN }) };
+  return { type, ...base, groupBy: asDimensionId(migrateLegacyDimensionId(raw['groupBy'], liveDimensionIds)), ...(topN === undefined ? {} : { topN }) };
 }
 
 function validateBurndownWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase): WidgetSpec {
@@ -136,19 +136,19 @@ function validateBurndownWidget(raw: Record<string, unknown>, ctx: string, base:
   return { type: 'burndown', ...base, ...(budget === undefined ? {} : { budget }) };
 }
 
-function validateTableWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase): WidgetSpec {
+function validateTableWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, liveDimensionIds?: ReadonlySet<string>): WidgetSpec {
   let enabledColumns: string[] | undefined;
   if (raw['enabledColumns'] !== undefined) {
     assertArray(raw['enabledColumns'], `${ctx}.enabledColumns`);
     enabledColumns = raw['enabledColumns'].map((c, i) => {
       assertString(c, `${ctx}.enabledColumns[${String(i)}]`);
-      return migrateLegacyDimensionId(c);
+      return migrateLegacyDimensionId(c, liveDimensionIds);
     });
   }
   return { type: 'table', ...base, ...(enabledColumns === undefined ? {} : { enabledColumns }) };
 }
 
-function validateWidget(raw: unknown, ctx: string): WidgetSpec {
+function validateWidget(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<string>): WidgetSpec {
   assertObject(raw, ctx);
   const base = parseWidgetBase(raw, ctx);
   assertString(raw['type'], `${ctx}.type`);
@@ -162,17 +162,17 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
     case 'bubble':
     case 'treemap':
     case 'pareto':
-      return validateGroupByWidget(raw, ctx, base, type);
+      return validateGroupByWidget(raw, ctx, base, type, liveDimensionIds);
     case 'line':
     case 'topNBar':
     case 'heatmap':
     case 'waterfall':
     case 'priceVolume':
-      return validateTopNWidget(raw, ctx, base, type);
+      return validateTopNWidget(raw, ctx, base, type, liveDimensionIds);
     case 'burndown':
       return validateBurndownWidget(raw, ctx, base);
     case 'table':
-      return validateTableWidget(raw, ctx, base);
+      return validateTableWidget(raw, ctx, base, liveDimensionIds);
     case 'baseline': {
       const topN = raw['topN'] === undefined ? undefined : (assertNumber(raw['topN'], `${ctx}.topN`), raw['topN']);
       return { type: 'baseline', ...base, ...(topN === undefined ? {} : { topN }) };
@@ -180,7 +180,7 @@ function validateWidget(raw: unknown, ctx: string): WidgetSpec {
   }
 }
 
-function validateView(raw: unknown, ctx: string): ViewSpec {
+function validateView(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<string>): ViewSpec {
   assertObject(raw, ctx);
   assertString(raw['id'], `${ctx}.id`);
   assertString(raw['name'], `${ctx}.name`);
@@ -195,7 +195,7 @@ function validateView(raw: unknown, ctx: string): ViewSpec {
     assertObject(rowRaw, `${ctx}.rows[${String(i)}]`);
     assertArray(rowRaw['widgets'], `${ctx}.rows[${String(i)}].widgets`);
     const widgets = rowRaw['widgets'].map((w, j) =>
-      validateWidget(w, `${ctx}.rows[${String(i)}].widgets[${String(j)}]`),
+      validateWidget(w, `${ctx}.rows[${String(i)}].widgets[${String(j)}]`, liveDimensionIds),
     );
     return { widgets };
   });
@@ -219,10 +219,13 @@ function validateView(raw: unknown, ctx: string): ViewSpec {
   };
 }
 
-export function validateViews(raw: unknown): ViewsConfig {
+/** `liveDimensionIds` (when the caller has the current dimensions config in
+ *  scope) exempts current dimension ids from the CUR-era renames; see
+ *  migrateLegacyDimensionId. */
+export function validateViews(raw: unknown, liveDimensionIds?: ReadonlySet<string>): ViewsConfig {
   assertObject(raw, 'views config');
   assertArray(raw['views'], 'views');
-  const views = raw['views'].map((v, i) => validateView(v, `views[${String(i)}]`));
+  const views = raw['views'].map((v, i) => validateView(v, `views[${String(i)}]`, liveDimensionIds));
   const seenViewIds = new Set<string>();
   for (const v of views) {
     if (seenViewIds.has(v.id)) {

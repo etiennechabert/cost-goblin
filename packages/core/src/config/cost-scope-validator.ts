@@ -27,7 +27,7 @@ const LEGACY_METRIC_MIGRATIONS: Readonly<Record<string, CostMetric>> = {
   blended: 'effective',
 };
 
-function validateCondition(raw: unknown, ctx: string): ExclusionCondition {
+function validateCondition(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<string>): ExclusionCondition {
   assertObject(raw, ctx);
   assertString(raw['dimensionId'], `${ctx}.dimensionId`);
   assertArray(raw['values'], `${ctx}.values`);
@@ -43,10 +43,10 @@ function validateCondition(raw: unknown, ctx: string): ExclusionCondition {
   // rename, buildConditionSql silently drops the condition at query time:
   // a single-condition rule stops excluding, and a multi-condition rule
   // loses one AND-leg and excludes MORE than the user asked for.
-  return { dimensionId: asDimensionId(migrateLegacyDimensionId(raw['dimensionId'])), values };
+  return { dimensionId: asDimensionId(migrateLegacyDimensionId(raw['dimensionId'], liveDimensionIds)), values };
 }
 
-function validateRule(raw: unknown, ctx: string): ExclusionRule {
+function validateRule(raw: unknown, ctx: string, liveDimensionIds?: ReadonlySet<string>): ExclusionRule {
   assertObject(raw, ctx);
   assertString(raw['id'], `${ctx}.id`);
   assertString(raw['name'], `${ctx}.name`);
@@ -55,7 +55,7 @@ function validateRule(raw: unknown, ctx: string): ExclusionRule {
     throw new ConfigValidationError(`${ctx}.conditions must have at least one entry`);
   }
   const conditions = raw['conditions'].map((c, i) =>
-    validateCondition(c, `${ctx}.conditions[${String(i)}]`),
+    validateCondition(c, `${ctx}.conditions[${String(i)}]`, liveDimensionIds),
   );
   const description =
     raw['description'] === undefined
@@ -89,7 +89,12 @@ function validateMarketplaceRule(raw: unknown, ctx: string): MarketplaceAttribut
     throw new ConfigValidationError(`${ctx}.service must be a non-empty service code`);
   }
   let service: string = raw['service'];
-  const migratedService = LEGACY_MARKETPLACE_SERVICE_MIGRATIONS[service];
+  // Own-property guard: `service` comes from git-shareable config, so a key
+  // like "constructor" must not surface Object.prototype members (a Function
+  // here would crash sqlEscapeString in every query build).
+  const migratedService = Object.hasOwn(LEGACY_MARKETPLACE_SERVICE_MIGRATIONS, service)
+    ? LEGACY_MARKETPLACE_SERVICE_MIGRATIONS[service]
+    : undefined;
   if (migratedService !== undefined) {
     logger.warn(`${ctx}.service was "${service}" (CUR-era service code); migrating to "${migratedService}"`);
     service = migratedService;
@@ -119,11 +124,16 @@ function validateMarketplaceAttribution(raw: unknown): MarketplaceAttributionCon
   return { enabled, rules };
 }
 
-export function validateCostScope(raw: unknown): CostScopeConfig {
+/** `liveDimensionIds` (when the caller has the current dimensions config in
+ *  scope — save handlers, sharing bundles, baselines) exempts current
+ *  dimension ids from the CUR-era renames; see migrateLegacyDimensionId. */
+export function validateCostScope(raw: unknown, liveDimensionIds?: ReadonlySet<string>): CostScopeConfig {
   assertObject(raw, 'costScope');
   assertString(raw['costMetric'], 'costScope.costMetric');
   let costMetricRaw: string = raw['costMetric'];
-  const migrated = LEGACY_METRIC_MIGRATIONS[costMetricRaw];
+  const migrated = Object.hasOwn(LEGACY_METRIC_MIGRATIONS, costMetricRaw)
+    ? LEGACY_METRIC_MIGRATIONS[costMetricRaw]
+    : undefined;
   if (migrated !== undefined) {
     logger.warn(`costScope.costMetric was "${costMetricRaw}" (CUR-era, removed); migrating to "${migrated}"`);
     costMetricRaw = migrated;
@@ -148,7 +158,7 @@ export function validateCostScope(raw: unknown): CostScopeConfig {
   }
 
   assertArray(raw['rules'], 'costScope.rules');
-  const rules = raw['rules'].map((r, i) => validateRule(r, `costScope.rules[${String(i)}]`));
+  const rules = raw['rules'].map((r, i) => validateRule(r, `costScope.rules[${String(i)}]`, liveDimensionIds));
   const marketplaceAttribution = validateMarketplaceAttribution(raw['marketplaceAttribution']);
   return {
     costMetric: costMetricRaw,

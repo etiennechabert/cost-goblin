@@ -13,8 +13,9 @@ function sampleSpec(): BaselineSpec {
     source: 'discovered',
     scope: { kind: 'filter', filters: { [asDimensionId('service')]: [asTagValue('Amazon Relational Database Service')] } },
     // A real baseline snapshots the active cost scope, which always carries the
-    // marketplace-attribution default — mirror that so the bundle round-trips.
-    basis: { costMetric: 'billed', rules: [], marketplaceAttribution: DEFAULT_COST_SCOPE.marketplaceAttribution },
+    // marketplace-attribution default and the merged built-in rules (and
+    // validateBasis re-merges on load) — mirror that so the bundle round-trips.
+    basis: { costMetric: 'billed', rules: DEFAULT_COST_SCOPE.rules, marketplaceAttribution: DEFAULT_COST_SCOPE.marketplaceAttribution },
     basisSnapshotAt: '2026-06-01T00:00:00.000Z',
     createdAt: '2026-06-01T00:00:00.000Z',
     updatedAt: '2026-06-01T00:00:00.000Z',

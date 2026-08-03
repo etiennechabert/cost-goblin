@@ -596,3 +596,89 @@ describe('buildDailyCostsQuery with costScope', () => {
     expect(sql).toContain('BilledCost');
   });
 });
+
+describe('validateCostScope: hostile config values (prototype-named keys)', () => {
+  // Config files are git-shareable and reach validateCostScope from sharing
+  // bundles too — a key colliding with an Object.prototype member must never
+  // surface the inherited value (a Function here would crash sqlEscapeString
+  // in every query build).
+  it('keeps a marketplace target literally named "constructor" as the string', () => {
+    const result = validateCostScope({
+      costMetric: 'effective',
+      rules: [],
+      marketplaceAttribution: {
+        enabled: true,
+        rules: [{ service: 'constructor', operations: ['SomeOp'] }],
+      },
+    });
+    expect(result.marketplaceAttribution?.rules[0]?.service).toBe('constructor');
+    expect(typeof result.marketplaceAttribution?.rules[0]?.service).toBe('string');
+  });
+
+  it('keeps a marketplace target literally named "__proto__" as the string', () => {
+    const result = validateCostScope({
+      costMetric: 'effective',
+      rules: [],
+      marketplaceAttribution: {
+        enabled: true,
+        rules: [{ service: '__proto__', operations: ['SomeOp'] }],
+      },
+    });
+    expect(result.marketplaceAttribution?.rules[0]?.service).toBe('__proto__');
+  });
+
+  it('rejects a costMetric named after an Object.prototype member instead of surfacing it', () => {
+    expect(() => validateCostScope({ costMetric: 'hasOwnProperty', rules: [] }))
+      .toThrow(/costScope.costMetric must be one of/);
+  });
+
+  it('passes a dimensionId named after an Object.prototype member through unrenamed', () => {
+    const result = validateCostScope({
+      costMetric: 'effective',
+      rules: [{ id: 'r', name: 'r', enabled: true, conditions: [{ dimensionId: 'constructor', values: ['x'] }] }],
+    });
+    expect(result.rules[0]?.conditions[0]?.dimensionId).toBe('constructor');
+  });
+});
+
+describe('validateCostScope: live dimension ids gate the CUR-era renames', () => {
+  // A FOCUS-era tag key like `user:CostCenter` sanitizes to the dimension id
+  // `tag_user_CostCenter` — the same shape as a CUR-era leftover. Callers
+  // that know the current dimensions pass them so live ids are never
+  // misrenamed (which would fail every save via assertRuleDimensionsExist
+  // and silently drop the condition at query time).
+  it('preserves a live tag_user_* dimension id', () => {
+    const live = new Set(['tag_user_CostCenter']);
+    const result = validateCostScope({
+      costMetric: 'effective',
+      rules: [{ id: 'r', name: 'r', enabled: true, conditions: [{ dimensionId: 'tag_user_CostCenter', values: ['123'] }] }],
+    }, live);
+    expect(result.rules[0]?.conditions[0]?.dimensionId).toBe('tag_user_CostCenter');
+  });
+
+  it('still renames CUR-era tag_user_* ids absent from the live set', () => {
+    const live = new Set(['tag_user_CostCenter']);
+    const result = validateCostScope({
+      costMetric: 'effective',
+      rules: [{ id: 'r', name: 'r', enabled: true, conditions: [{ dimensionId: 'tag_user_team', values: ['platform'] }] }],
+    }, live);
+    expect(result.rules[0]?.conditions[0]?.dimensionId).toBe('tag_team');
+  });
+
+  it('exempts a live dimension whose id collides with a direct CUR rename', () => {
+    const live = new Set(['line_item_type']);
+    const result = validateCostScope({
+      costMetric: 'effective',
+      rules: [{ id: 'r', name: 'r', enabled: true, conditions: [{ dimensionId: 'line_item_type', values: ['Tax'] }] }],
+    }, live);
+    expect(result.rules[0]?.conditions[0]?.dimensionId).toBe('line_item_type');
+  });
+
+  it('renames as before when no live set is supplied', () => {
+    const result = validateCostScope({
+      costMetric: 'effective',
+      rules: [{ id: 'r', name: 'r', enabled: true, conditions: [{ dimensionId: 'tag_user_team', values: ['platform'] }] }],
+    });
+    expect(result.rules[0]?.conditions[0]?.dimensionId).toBe('tag_team');
+  });
+});

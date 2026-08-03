@@ -3,6 +3,7 @@ import { originStore } from '../query-log.js';
 import {
   asDimensionId,
   asDateString,
+  dimensionIdSet,
   migrateLegacyDimensionId,
   assertHourString,
   buildSource,
@@ -416,7 +417,7 @@ function readOverviewDaily(result: PromiseSettledResult<RawRow[]>): readonly Exp
 }
 
 export function registerExplorerHandlers(app: AppContext): void {
-  const { ctx, runQuery, rollupStore, getAccountReverseMap } = app;
+  const { ctx, runQuery, rollupStore, getAccountReverseMap, getQueryDimensions } = app;
 
   const explorerPrefsPath = () => prefsPath(ctx.stateDir, 'explorer-preferences');
 
@@ -431,12 +432,14 @@ export function registerExplorerHandlers(app: AppContext): void {
       const rawGranularity = obj?.['lastUsedGranularity'];
 
       // Persisted prefs may carry CUR-era column ids (#515) — rename them so
-      // saved layouts survive the FOCUS migration.
+      // saved layouts survive the FOCUS migration. Live dimension ids are
+      // exempt (a current tag key like `user:team` derives a `tag_user_*` id).
+      const liveIds = await getQueryDimensions().then(dimensionIdSet, () => undefined);
       const hiddenColumns = Array.isArray(rawHidden) && rawHidden.every((v): v is string => typeof v === 'string')
-        ? rawHidden.map(migrateLegacyDimensionId)
+        ? rawHidden.map(id => migrateLegacyDimensionId(id, liveIds))
         : [];
       const columnOrder = Array.isArray(rawOrder) && rawOrder.every((v): v is string => typeof v === 'string')
-        ? rawOrder.map(migrateLegacyDimensionId)
+        ? rawOrder.map(id => migrateLegacyDimensionId(id, liveIds))
         : [];
 
       const validDateRange =

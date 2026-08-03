@@ -12,6 +12,7 @@ import {
   applyRegionFriendlyNames,
   applyStripPatterns,
   DEFAULT_COST_METRIC,
+  dimensionIdSet,
   LEGACY_DIMENSION_ID_RENAMES,
   loadConfig,
   loadDimensions,
@@ -331,16 +332,23 @@ export function createAppContext(ctx: IpcContext): AppContext {
     return orgTree;
   }
 
+  // Current dimension ids exempt live `tag_user_*`-shaped dimensions from the
+  // CUR-era renames (see migrateLegacyDimensionId). Tolerates a missing/broken
+  // dimensions config (fresh install): ungated is the pre-#515 behavior.
+  async function getLiveDimensionIds(): Promise<ReadonlySet<string> | undefined> {
+    return getDimensions().then(dimensionIdSet, () => undefined);
+  }
+
   async function getViews(): Promise<ViewsConfig> {
     if (state.views !== null) return state.views;
-    const views = await loadViews(ctx.viewsPath);
+    const views = await loadViews(ctx.viewsPath, await getLiveDimensionIds());
     state.views = views;
     return views;
   }
 
   async function getCostScope(): Promise<CostScopeConfig> {
     if (state.costScope !== null) return state.costScope;
-    const loaded = await loadCostScope(ctx.costScopePath);
+    const loaded = await loadCostScope(ctx.costScopePath, await getLiveDimensionIds());
     const merged = mergeBuiltInExclusionRules(loaded);
     state.costScope = merged;
     return merged;

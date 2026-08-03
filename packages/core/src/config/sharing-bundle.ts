@@ -32,6 +32,7 @@ import {
   validateOrgTree,
 } from './validator.js';
 import { validateCostScope } from './cost-scope-validator.js';
+import { dimensionIdSet } from './legacy-renames.js';
 import { validateViews } from './views-validator.js';
 import { viewsConfigToYaml } from './views-serialize.js';
 import { validateBaselines } from './baselines-validator.js';
@@ -260,9 +261,12 @@ export function parseConfigBundle(content: string): ParsedConfigBundle {
 
   const config = validateSharedConfig(rawSections['config']);
   const dimensions: DimensionsConfig = validateDimensions(rawSections['dimensions']);
+  // The bundle carries its own dimensions — its cost scope and views
+  // reference THOSE ids, so they gate the CUR-era renames.
+  const liveDimensionIds = dimensionIdSet(dimensions);
   const orgTree: OrgTreeConfig | undefined = rawSections['orgTree'] === undefined ? undefined : validateOrgTree(rawSections['orgTree']);
-  const costScope: CostScopeConfig | undefined = rawSections['costScope'] === undefined ? undefined : validateCostScope(rawSections['costScope']);
-  const views: ViewsConfig | undefined = rawSections['views'] === undefined ? undefined : validateViews(rawSections['views']);
+  const costScope: CostScopeConfig | undefined = rawSections['costScope'] === undefined ? undefined : validateCostScope(rawSections['costScope'], liveDimensionIds);
+  const views: ViewsConfig | undefined = rawSections['views'] === undefined ? undefined : validateViews(rawSections['views'], liveDimensionIds);
   const baselines: readonly BaselineSpec[] | undefined = rawSections['baselines'] === undefined ? undefined : validateBaselines(rawSections['baselines'], dimensions);
 
   const sections: ConfigBundleSections = {

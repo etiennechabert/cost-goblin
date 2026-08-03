@@ -1,6 +1,8 @@
 import { ipcMain, shell } from 'electron';
-import { logger, parseS3Path, isStringRecord, parseJsonObject } from '@costgoblin/core';
+import { logger, parseS3Path, isStringRecord } from '@costgoblin/core';
 import { upsertWizardProvider } from '../config-upsert.js';
+import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
+import type { DetectedReportType } from '../setup-manifest.js';
 import type { AppContext } from './context.js';
 
 /** One-shot CLI flag the setup wizard's relaunch adds (see update.ts) so the
@@ -12,46 +14,6 @@ export const POST_SETUP_FLAG = '--post-setup';
 // reload (e.g. config import calls location.reload) can't re-fire the redirect —
 // the CLI flag stays in argv for the whole session, so argv alone isn't one-shot.
 let postSetupConsumed = false;
-
-// The FOCUS 1.2 columns the query layer reads (see buildSource). A candidate
-// export missing any of these can't back the app. Verified against a live
-// AWS FOCUS 1.2 Data Export's Manifest.json column list.
-const REQUIRED_FOCUS_COLUMNS = [
-  'ChargePeriodStart', 'SubAccountId', 'SubAccountName',
-  'BilledCost', 'EffectiveCost', 'ListCost', 'ContractedCost',
-  'ServiceName', 'x_ServiceCode', 'ServiceCategory', 'RegionId',
-  'ResourceId', 'ChargeCategory', 'PricingCategory',
-  'CommitmentDiscountStatus', 'ChargeDescription', 'ConsumedQuantity',
-  'SkuMeter', 'Tags', 'x_Operation',
-];
-
-type DetectedReportType = 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown';
-
-function classifyManifestColumns(columnNames: string[]): { detectedType: DetectedReportType; missingColumns: string[] } {
-  if (columnNames.includes('recommendation_id') || columnNames.includes('estimated_monthly_savings')) {
-    return { detectedType: 'cost-optimization', missingColumns: [] };
-  }
-  if (columnNames.includes('ChargePeriodStart')) {
-    return { detectedType: 'daily', missingColumns: REQUIRED_FOCUS_COLUMNS.filter(c => !columnNames.includes(c)) };
-  }
-  // CUR 2.0 Data Exports deliver the same data/ + metadata/ folder pair as
-  // FOCUS but their manifest lists line_item_*/bill_* columns. Surface that
-  // explicitly so the wizard can say "wrong table" instead of a dead-end
-  // "unknown" (sync would find nothing — CUR keys are invisible to it).
-  if (columnNames.some(c => c.startsWith('line_item_') || c.startsWith('bill_'))) {
-    return { detectedType: 'cur-legacy', missingColumns: [] };
-  }
-  return { detectedType: 'unknown', missingColumns: [] };
-}
-
-function parseManifestColumnNames(body: string): string[] {
-  const columns = parseJsonObject(body)?.['columns'];
-  if (!Array.isArray(columns)) return [];
-  return columns
-    .filter(isStringRecord)
-    .map(c => typeof c['name'] === 'string' ? c['name'] : '')
-    .filter(n => n.length > 0);
-}
 
 export function registerSetupHandlers(app: AppContext): void {
   const { ctx, invalidateConfig, invalidateDimensions } = app;
@@ -177,12 +139,7 @@ export function registerSetupHandlers(app: AppContext): void {
           const jsonKeys = (metaList.Contents ?? [])
             .map(c => c.Key)
             .filter((k): k is string => k !== undefined && k.endsWith('.json'));
-          // Prefer the columns manifest: FOCUS exports ALSO deliver a
-          // *-Manifest-FOCUS.json sidecar with a different shape
-          // (Schema.ColumnDefinition), and it sorts FIRST ('-' < '.') — so
-          // "first .json" would parse zero columns and misclassify a valid
-          // FOCUS export as unknown.
-          const manifestKey = jsonKeys.find(k => !k.endsWith('Manifest-FOCUS.json')) ?? jsonKeys[0];
+          const manifestKey = selectManifestKey(jsonKeys);
           if (manifestKey !== undefined) {
             const manifestResponse = await client.send(new GetObjectCommand({ Bucket: params.bucket, Key: manifestKey }));
             const body = await manifestResponse.Body?.transformToString();

@@ -6,6 +6,7 @@ import {
   DEFAULT_LAG_DAYS,
   ConfigValidationError,
   costScopeToYaml,
+  dimensionIdSet,
   validateCostScope,
   buildSource,
   buildRuleMatchExpr,
@@ -73,9 +74,7 @@ function logSettledError(label: string, result: PromiseSettledResult<unknown>): 
 // errors *every* query (exclusion clauses are threaded into all of them), so
 // catch it at save time rather than letting the whole app fail at query time.
 function assertRuleDimensionsExist(config: CostScopeConfig, dimensions: DimensionsConfig): void {
-  const knownIds = new Set<string>();
-  for (const d of dimensions.builtIn) knownIds.add(String(d.name));
-  for (const t of dimensions.tags) knownIds.add(tagDimColumn(t));
+  const knownIds = dimensionIdSet(dimensions);
   for (const rule of config.rules) {
     for (const cond of rule.conditions) {
       const id = String(cond.dimensionId);
@@ -112,15 +111,16 @@ export function registerCostScopeHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('cost-scope:save-config', async (_event, raw: unknown): Promise<void> => {
-    const validated = validateCostScope(raw);
     const dimensions = await getQueryDimensions();
+    const validated = validateCostScope(raw, dimensionIdSet(dimensions));
     assertRuleDimensionsExist(validated, dimensions);
     await writeFile(ctx.costScopePath, stringify(costScopeToYaml(validated)));
     invalidateCostScope();
   });
 
   ipcMain.handle('cost-scope:preview', async (_event, payload: unknown): Promise<CostScopePreviewResult> => {
-    const config = validateCostScope(payload);
+    const dimensions = await getQueryDimensions();
+    const config = validateCostScope(payload, dimensionIdSet(dimensions));
     const enabledRules = config.rules.filter(r => r.enabled);
 
     const windowDays = 30;
@@ -158,7 +158,6 @@ export function registerCostScopeHandlers(app: AppContext): void {
       .filter(b => b.periods.length > 0);
     if (branches.length === 0) return zero;
 
-    const dimensions = await getQueryDimensions();
     const orgPath = await getOrgAccountsPath();
 
     const source = buildSource({

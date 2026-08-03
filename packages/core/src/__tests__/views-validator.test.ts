@@ -162,3 +162,29 @@ describe('validateViews', () => {
     })).toThrow(ConfigValidationError);
   });
 });
+
+describe('validateViews: live dimension ids gate the CUR-era renames', () => {
+  it('preserves live tag_user_* ids in groupBy, drillTo and enabledColumns', () => {
+    // A FOCUS-era tag key like `user:CostCenter` sanitizes to the dimension
+    // id `tag_user_CostCenter` — the rename must not corrupt it on save.
+    const live = new Set(['tag_user_CostCenter', 'service']);
+    const cfg = validateViews({
+      views: [{
+        id: 'live-tags',
+        name: 'Live tags',
+        rows: [{
+          widgets: [
+            { id: 'w1', type: 'pie', size: 'medium', groupBy: 'tag_user_CostCenter' },
+            { id: 'w2', type: 'treemap', size: 'medium', groupBy: 'service', drillTo: 'tag_user_CostCenter' },
+            { id: 'w3', type: 'table', size: 'full', enabledColumns: ['cost', 'tag_user_CostCenter', 'tag_user_team'] },
+          ],
+        }],
+      }],
+    }, live);
+    const widgets = cfg.views[0]?.rows[0]?.widgets ?? [];
+    expect(widgets[0]).toMatchObject({ groupBy: 'tag_user_CostCenter' });
+    expect(widgets[1]).toMatchObject({ drillTo: 'tag_user_CostCenter' });
+    // tag_user_team is NOT live → still treated as a CUR-era leftover.
+    expect(widgets[2]).toMatchObject({ enabledColumns: ['cost', 'tag_user_CostCenter', 'tag_team'] });
+  });
+});
