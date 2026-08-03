@@ -22,7 +22,7 @@ type WizardStep =
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
-  | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[]; path: string[] }
+  | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; path: string[] }
   | { step: 'confirm'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
 
 interface SetupWizardProps {
@@ -425,7 +425,7 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
           </p>
         </div>
       )}
-      {state.isBillingExport && state.detectedType !== 'cost-optimization' && state.detectedType !== 'unknown' && state.source === 'costOptimization' && (
+      {state.isBillingExport && state.detectedType !== 'cost-optimization' && state.detectedType !== 'unknown' && state.detectedType !== 'cur-legacy' && state.source === 'costOptimization' && (
         <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3">
           <p className="text-sm font-medium text-warning">Data type mismatch</p>
           <p className="text-xs text-warning mt-0.5">
@@ -433,7 +433,21 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
           </p>
         </div>
       )}
-      {state.isBillingExport && !(state.detectedType === 'cost-optimization' && state.source !== 'costOptimization') && !(state.detectedType !== 'cost-optimization' && state.detectedType !== 'unknown' && state.source === 'costOptimization') && (
+      {state.detectedType === 'cur-legacy' && (
+        <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
+          <p className="text-sm font-medium text-negative">This is a CUR 2.0 export — CostGoblin reads FOCUS 1.2</p>
+          <p className="text-xs text-text-secondary mt-0.5">
+            The manifest here lists CUR 2.0 columns (<code className="text-text-primary">line_item_*</code>).
+            CostGoblin&apos;s data schema is FOCUS 1.2, so this export can&apos;t be ingested.
+          </p>
+          <p className="text-xs text-text-muted mt-1">
+            In the AWS console, open <span className="text-text-secondary">Billing and Cost Management → Data Exports → Create export</span>,
+            pick the <span className="text-text-secondary">FOCUS 1.2</span> table (not CUR 2.0), export as Parquet to a fresh prefix,
+            and point CostGoblin at that prefix instead.
+          </p>
+        </div>
+      )}
+      {state.isBillingExport && state.detectedType !== 'cur-legacy' && !(state.detectedType === 'cost-optimization' && state.source !== 'costOptimization') && !(state.detectedType !== 'cost-optimization' && state.detectedType !== 'unknown' && state.source === 'costOptimization') && (
         <div className="rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
           <p className="text-sm font-medium text-accent">
             {state.detectedType === 'cost-optimization' ? 'Cost Optimization report detected' : 'FOCUS billing export detected'}
@@ -496,10 +510,10 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
           )}
           <Button
             onClick={onConfirm}
-            disabled={!state.isBillingExport}
+            disabled={!state.isBillingExport || state.detectedType === 'cur-legacy'}
             className="bg-accent hover:bg-accent-hover text-white px-8"
           >
-            {state.isBillingExport ? 'Use this location' : 'Select an export folder'}
+            {state.detectedType === 'cur-legacy' ? 'CUR 2.0 not supported' : state.isBillingExport ? 'Use this location' : 'Select an export folder'}
           </Button>
         </div>
       </div>

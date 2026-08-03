@@ -157,7 +157,9 @@ async function profile(): Promise<void> {
   const tagResults: Record<string, { values: string[]; missingPercent: number }> = {};
   for (const tag of tagDefs) {
     // FOCUS Tags map keys are the raw tag keys — no CUR-style user_ prefix.
-    const tagKey = tag.tagName;
+    // Escaped for SQL-literal position: tagName comes from the (shareable)
+    // dimensions.yaml config, so it is untrusted — same rule as builder.ts.
+    const tagKey = tag.tagName.replaceAll("'", "''");
     const concept = tag.concept ?? tag.tagName;
     const valRows = await queryAll(conn, `SELECT DISTINCT element_at(Tags, '${tagKey}')[1] as v FROM ${src} WHERE element_at(Tags, '${tagKey}') IS NOT NULL LIMIT 30`);
     const values = valRows.map(r => String(r['v'])).filter(v => v !== '' && v !== 'null');

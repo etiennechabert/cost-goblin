@@ -11,6 +11,7 @@ import type {
 } from '../types/cost-scope.js';
 import { COST_METRICS } from '../types/cost-scope.js';
 import { DEFAULT_MARKETPLACE_ATTRIBUTION } from './cost-scope-seed.js';
+import { migrateLegacyDimensionId } from './legacy-renames.js';
 
 function isCostMetric(v: string): v is CostMetric {
   return (COST_METRICS as readonly string[]).includes(v);
@@ -37,7 +38,12 @@ function validateCondition(raw: unknown, ctx: string): ExclusionCondition {
   if (values.length === 0) {
     throw new ConfigValidationError(`${ctx}.values must have at least one entry`);
   }
-  return { dimensionId: asDimensionId(raw['dimensionId']), values };
+  // Persisted rules (cost-scope.yaml and every baseline basis routed through
+  // validateCostScope) may reference CUR-era dimension ids. Without the
+  // rename, buildConditionSql silently drops the condition at query time:
+  // a single-condition rule stops excluding, and a multi-condition rule
+  // loses one AND-leg and excludes MORE than the user asked for.
+  return { dimensionId: asDimensionId(migrateLegacyDimensionId(raw['dimensionId'])), values };
 }
 
 function validateRule(raw: unknown, ctx: string): ExclusionRule {
@@ -67,11 +73,26 @@ function validateRule(raw: unknown, ctx: string): ExclusionRule {
   };
 }
 
+/** CUR-era marketplace re-attribution targets → FOCUS ServiceName values.
+ *  The `service` column now carries display names, so the old shipped
+ *  default 'AmazonBedrock' (a service code, round-tripped into every
+ *  persisted cost-scope.yaml by the serializer) would bucket re-attributed
+ *  rows separately from first-party 'Amazon Bedrock' rows. */
+const LEGACY_MARKETPLACE_SERVICE_MIGRATIONS: Readonly<Record<string, string>> = {
+  AmazonBedrock: 'Amazon Bedrock',
+};
+
 function validateMarketplaceRule(raw: unknown, ctx: string): MarketplaceAttributionRule {
   assertObject(raw, ctx);
   assertString(raw['service'], `${ctx}.service`);
   if (raw['service'].length === 0) {
     throw new ConfigValidationError(`${ctx}.service must be a non-empty service code`);
+  }
+  let service: string = raw['service'];
+  const migratedService = LEGACY_MARKETPLACE_SERVICE_MIGRATIONS[service];
+  if (migratedService !== undefined) {
+    logger.warn(`${ctx}.service was "${service}" (CUR-era service code); migrating to "${migratedService}"`);
+    service = migratedService;
   }
   assertArray(raw['operations'], `${ctx}.operations`);
   const operations = raw['operations'].map((o, i) => {
@@ -81,7 +102,7 @@ function validateMarketplaceRule(raw: unknown, ctx: string): MarketplaceAttribut
   if (operations.length === 0) {
     throw new ConfigValidationError(`${ctx}.operations must have at least one entry`);
   }
-  return { service: raw['service'], operations };
+  return { service, operations };
 }
 
 /** Parse the optional `marketplaceAttribution` block. Absent → the shipped

@@ -25,7 +25,7 @@ const REQUIRED_FOCUS_COLUMNS = [
   'SkuMeter', 'Tags', 'x_Operation',
 ];
 
-type DetectedReportType = 'daily' | 'hourly' | 'cost-optimization' | 'unknown';
+type DetectedReportType = 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown';
 
 function classifyManifestColumns(columnNames: string[]): { detectedType: DetectedReportType; missingColumns: string[] } {
   if (columnNames.includes('recommendation_id') || columnNames.includes('estimated_monthly_savings')) {
@@ -33,6 +33,13 @@ function classifyManifestColumns(columnNames: string[]): { detectedType: Detecte
   }
   if (columnNames.includes('ChargePeriodStart')) {
     return { detectedType: 'daily', missingColumns: REQUIRED_FOCUS_COLUMNS.filter(c => !columnNames.includes(c)) };
+  }
+  // CUR 2.0 Data Exports deliver the same data/ + metadata/ folder pair as
+  // FOCUS but their manifest lists line_item_*/bill_* columns. Surface that
+  // explicitly so the wizard can say "wrong table" instead of a dead-end
+  // "unknown" (sync would find nothing — CUR keys are invisible to it).
+  if (columnNames.some(c => c.startsWith('line_item_') || c.startsWith('bill_'))) {
+    return { detectedType: 'cur-legacy', missingColumns: [] };
   }
   return { detectedType: 'unknown', missingColumns: [] };
 }
@@ -131,7 +138,7 @@ export function registerSetupHandlers(app: AppContext): void {
     }
   });
 
-  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }> => {
+  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: DetectedReportType; missingColumns: string[] }> => {
     try {
       const { S3Client, ListObjectsV2Command, GetObjectCommand } = await import('@aws-sdk/client-s3');
       const client = new S3Client({
@@ -157,7 +164,7 @@ export function registerSetupHandlers(app: AppContext): void {
 
       const isBillingExport = prefixes.includes('data') && prefixes.includes('metadata');
 
-      let detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown' = 'unknown';
+      let detectedType: DetectedReportType = 'unknown';
       let missingColumns: string[] = [];
 
       if (isBillingExport) {
@@ -167,7 +174,15 @@ export function registerSetupHandlers(app: AppContext): void {
             Prefix: `${params.prefix}metadata/`,
             MaxKeys: 10,
           }));
-          const manifestKey = (metaList.Contents ?? []).find(c => c.Key?.endsWith('.json'))?.Key;
+          const jsonKeys = (metaList.Contents ?? [])
+            .map(c => c.Key)
+            .filter((k): k is string => k !== undefined && k.endsWith('.json'));
+          // Prefer the columns manifest: FOCUS exports ALSO deliver a
+          // *-Manifest-FOCUS.json sidecar with a different shape
+          // (Schema.ColumnDefinition), and it sorts FIRST ('-' < '.') — so
+          // "first .json" would parse zero columns and misclassify a valid
+          // FOCUS export as unknown.
+          const manifestKey = jsonKeys.find(k => !k.endsWith('Manifest-FOCUS.json')) ?? jsonKeys[0];
           if (manifestKey !== undefined) {
             const manifestResponse = await client.send(new GetObjectCommand({ Bucket: params.bucket, Key: manifestKey }));
             const body = await manifestResponse.Body?.transformToString();

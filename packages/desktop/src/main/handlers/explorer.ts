@@ -493,9 +493,9 @@ export function registerExplorerHandlers(app: AppContext): void {
     // SUM(line_items) reproduce the raw totals without the ~900MB-1GB raw
     // Parquet scan that is the single biggest source of dashboard contention.
     // Only when this request uses the GLOBAL cost scope (the dashboard Table
-    // widget): the rollup bakes the global metric/perspective and drops
+    // widget): the rollup bakes the global metric and drops
     // exclusion rows at build time, so an Explorer-style request that overrides
-    // the metric/perspective or skips the scope must stay on raw. Detail/expand
+    // the metric or skips the scope must stay on raw. Detail/expand
     // rows still hit raw — they need resource_id/description, not in the grain.
     const rollupSource = overviewUsesRollup(params, qc.tier)
       ? resolveRollupSource(rollupStore, qc.providers, { start: qc.startStr, end: qc.endStr }, 'daily', [

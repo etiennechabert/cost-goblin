@@ -11,6 +11,8 @@ import {
   applyNormalizationRule,
   applyRegionFriendlyNames,
   applyStripPatterns,
+  DEFAULT_COST_METRIC,
+  LEGACY_DIMENSION_ID_RENAMES,
   loadConfig,
   loadDimensions,
   loadOrgTree,
@@ -84,12 +86,11 @@ const LEGACY_LABEL_RENAMES: Record<string, { from: string; to: string }> = {
  *  migration (#515). A loaded config still carrying one would emit SQL
  *  against a nonexistent column and binder-error every query, so they are
  *  dropped at merge time; their FOCUS replacements arrive via
- *  DEFAULT_BUILT_INS (`missing` below). */
-const RETIRED_BUILTIN_DIM_NAMES: ReadonlySet<string> = new Set([
-  'service_family',
-  'line_item_type',
-  'usage_type',
-]);
+ *  DEFAULT_BUILT_INS (`missing` below). Derived from the legacy rename map
+ *  so the two can't drift: every renamed id is exactly a retired column. */
+const RETIRED_BUILTIN_DIM_NAMES: ReadonlySet<string> = new Set(
+  Object.keys(LEGACY_DIMENSION_ID_RENAMES),
+);
 
 function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
   const defaultsByName = new Map(DEFAULT_BUILT_INS.map(d => [d.name, d]));
@@ -539,7 +540,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     try { orgRaw = await fs.readFile(path.join(ctx.stateDir, 'org-accounts.json'), 'utf-8'); } catch { /* no org sync yet */ }
     return computeShapeSignature({
       dimensions,
-      costMetric: costScope?.costMetric ?? 'effective',
+      costMetric: costScope?.costMetric ?? DEFAULT_COST_METRIC,
       rules: costScope?.rules ?? [],
       marketplaceAttribution: costScope?.marketplaceAttribution,
       orgAccountsDigest: computeOrgAccountsDigest(orgRaw),

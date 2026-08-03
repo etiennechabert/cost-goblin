@@ -259,7 +259,7 @@ describe('exclusion clauses', () => {
 });
 
 describe('mergeBuiltInExclusionRules', () => {
-  it('refreshes surviving built-in rules whose persisted conditions are CUR-era', () => {
+  it('repairs surviving built-in rules whose persisted conditions are exactly the CUR-era seed', () => {
     const staleTax: ExclusionRule = {
       id: 'builtin:tax',
       name: 'Tax (renamed by user)',
@@ -272,7 +272,10 @@ describe('mergeBuiltInExclusionRules', () => {
       name: 'AWS Premium Support',
       enabled: false,
       builtIn: true,
-      conditions: [{ dimensionId: asDimensionId('service'), values: ['AWSSupportEnterprise'] }],
+      conditions: [{
+        dimensionId: asDimensionId('service'),
+        values: ['AWSSupportEnterprise', 'AWSSupportBusiness', 'AWSSupportDeveloper'],
+      }],
     };
     const merged = mergeBuiltInExclusionRules({ costMetric: 'effective', rules: [staleTax, staleSupport] });
     const tax = merged.rules.find(r => r.id === 'builtin:tax');
@@ -285,6 +288,33 @@ describe('mergeBuiltInExclusionRules', () => {
       { dimensionId: 'service_code', values: ['AWSSupportEnterprise', 'AWSSupportBusiness', 'AWSSupportDeveloper'] },
     ]);
     expect(support?.enabled).toBe(false);
+  });
+
+  it('preserves user-edited built-in rule conditions (only exact legacy seed shapes are repaired)', () => {
+    // The Cost Scope UI lets users edit built-in conditions (with its own
+    // Reset affordance) — the merge must not clobber a deliberate edit.
+    const narrowedSupport: ExclusionRule = {
+      id: 'builtin:aws-premium-support',
+      name: 'AWS Premium Support',
+      enabled: true,
+      builtIn: true,
+      conditions: [{ dimensionId: asDimensionId('service'), values: ['AWSSupportEnterprise'] }],
+    };
+    const editedTax: ExclusionRule = {
+      id: 'builtin:tax',
+      name: 'Tax',
+      enabled: true,
+      builtIn: true,
+      conditions: [
+        { dimensionId: asDimensionId('charge_category'), values: ['Tax'] },
+        { dimensionId: asDimensionId('account'), values: ['111111111111'] },
+      ],
+    };
+    const merged = mergeBuiltInExclusionRules({ costMetric: 'effective', rules: [narrowedSupport, editedTax] });
+    expect(merged.rules.find(r => r.id === 'builtin:aws-premium-support')?.conditions)
+      .toEqual(narrowedSupport.conditions);
+    expect(merged.rules.find(r => r.id === 'builtin:tax')?.conditions)
+      .toEqual(editedTax.conditions);
   });
 
   function retiredRiSpRule(enabled: boolean): ExclusionRule {
@@ -438,6 +468,52 @@ describe('validateCostScope: legacy metric migration', () => {
     const result = validateCostScope({ costMetric: 'effective', costPerspective: 'net', rules: [] });
     expect(result.costMetric).toBe('effective');
     expect(Object.keys(result)).not.toContain('costPerspective');
+  });
+
+  it('migrates CUR-era dimension ids in rule conditions (user rules included)', () => {
+    // Without the rename a user rule on a retired dim silently no-ops at
+    // query time — or, in a multi-condition rule, drops one AND-leg and
+    // excludes MORE than the user asked for.
+    const result = validateCostScope({
+      costMetric: 'effective',
+      rules: [{
+        id: 'my-rule', name: 'Exclude EC2 credits', enabled: true,
+        conditions: [
+          { dimensionId: 'line_item_type', values: ['Credit'] },
+          { dimensionId: 'service_family', values: ['Compute'] },
+          { dimensionId: 'usage_type', values: ['BoxUsage'] },
+          { dimensionId: 'tag_user_team', values: ['platform'] },
+          { dimensionId: 'service', values: ['Amazon EC2'] },
+        ],
+      }],
+    });
+    expect(result.rules[0]?.conditions.map(c => c.dimensionId)).toEqual([
+      'charge_category', 'service_category', 'sku_meter', 'tag_team', 'service',
+    ]);
+  });
+
+  it('migrates the CUR-era marketplace attribution target AmazonBedrock to the ServiceName value', () => {
+    const result = validateCostScope({
+      costMetric: 'effective',
+      rules: [],
+      marketplaceAttribution: {
+        enabled: true,
+        rules: [{ service: 'AmazonBedrock', operations: ['InvokeModelInference'] }],
+      },
+    });
+    expect(result.marketplaceAttribution?.rules[0]?.service).toBe('Amazon Bedrock');
+  });
+
+  it('leaves non-legacy marketplace attribution targets untouched', () => {
+    const result = validateCostScope({
+      costMetric: 'effective',
+      rules: [],
+      marketplaceAttribution: {
+        enabled: true,
+        rules: [{ service: 'My Private Marketplace Thing', operations: ['SomeOp'] }],
+      },
+    });
+    expect(result.marketplaceAttribution?.rules[0]?.service).toBe('My Private Marketplace Thing');
   });
 });
 

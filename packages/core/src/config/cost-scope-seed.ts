@@ -38,6 +38,26 @@ export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
  *  Loaded configs may still carry them; the merge step drops them silently and
  *  may migrate other fields (see mergeBuiltInExclusionRules) to preserve the
  *  spirit of the user's prior choice. */
+/** The exact CUR-era seed conditions of surviving built-in rules
+ *  (JSON-serialized for shape equality). Persisted conditions matching one
+ *  of these are provably the untouched old default — safe to swap for the
+ *  new seed's conditions. Anything else on a built-in rule is a user edit
+ *  and is kept. Each entry may list several spellings: the raw on-disk
+ *  CUR-era form and the form after validateCostScope's dimension-id
+ *  migration (builtin:tax's migrated form equals the new seed, so only its
+ *  raw form appears; the premium-support `service` id is unrenamed, so its
+ *  two forms coincide). */
+const LEGACY_SEED_CONDITIONS: Readonly<Record<string, readonly string[]>> = {
+  'builtin:aws-premium-support': [
+    JSON.stringify([
+      { dimensionId: 'service', values: ['AWSSupportEnterprise', 'AWSSupportBusiness', 'AWSSupportDeveloper'] },
+    ]),
+  ],
+  'builtin:tax': [
+    JSON.stringify([{ dimensionId: 'line_item_type', values: ['Tax'] }]),
+  ],
+};
+
 const RETIRED_BUILTIN_RULE_IDS: ReadonlySet<string> = new Set([
   // Subsumed by the `list` cost metric — when that metric is selected, the
   // query layer auto-filters to usage rows the same way this rule used to.
@@ -84,12 +104,14 @@ export const DEFAULT_COST_SCOPE: CostScopeConfig = {
  *  metric is rewritten to `list` so the spirit of their choice (exclude
  *  commitment purchase rows) is preserved with the new coherent model.
  *
- *  Built-in rules' CONDITIONS are refreshed from the shipped seed: a
- *  pre-FOCUS config persists e.g. Tax as `line_item_type IN ('Tax')` — a
- *  dimension that no longer exists — which would silently no-op every
- *  query the rule should filter. Conditions are app-defined for built-ins
- *  (the toggle and name/description are the user-owned parts), so adopting
- *  the seed's conditions is a repair, not an overwrite. */
+ *  Built-in rules' CONDITIONS are repaired when they still carry the exact
+ *  CUR-era seed shape: the FOCUS migration moved premium support from the
+ *  `service` dim (now ServiceName display names, where the AWSSupport* codes
+ *  match nothing) to `service_code`, so the untouched old shape would
+ *  silently no-op every query the rule should filter. The repair matches
+ *  the legacy shape EXACTLY — user-edited conditions differ from it and are
+ *  preserved (the Cost Scope UI supports editing built-in conditions and
+ *  offers its own Reset-to-default affordance). */
 export function mergeBuiltInExclusionRules(loaded: CostScopeConfig): CostScopeConfig {
   const retiredRiSpPurchasesEnabled = loaded.rules.some(
     r => r.id === 'builtin:ri-sp-purchases' && r.enabled,
@@ -100,8 +122,9 @@ export function mergeBuiltInExclusionRules(loaded: CostScopeConfig): CostScopeCo
   const survivingRules = surviving.map(r => {
     const seed = seedById.get(r.id);
     if (seed === undefined) return r;
-    const sameConditions = JSON.stringify(r.conditions) === JSON.stringify(seed.conditions);
-    return sameConditions ? r : { ...r, conditions: seed.conditions };
+    const legacyShapes = LEGACY_SEED_CONDITIONS[r.id];
+    if (legacyShapes === undefined || !legacyShapes.includes(JSON.stringify(r.conditions))) return r;
+    return { ...r, conditions: seed.conditions };
   });
   const refreshedAny = survivingRules.some((r, i) => r !== surviving[i]);
   const survivingIds = new Set(survivingRules.map(r => r.id));

@@ -162,6 +162,28 @@ describe('SetupWizard error states', () => {
     expect(screen.getByText('ConsumedQuantity, ListCost')).toBeDefined();
   });
 
+  it('shows a clear error and disables confirm when the folder is a CUR 2.0 export', async () => {
+    const { api, user } = renderWizard();
+    vi.spyOn(api, 'browseS3').mockResolvedValue({
+      prefixes: ['data', 'metadata'],
+      isBillingExport: true,
+      detectedType: 'cur-legacy',
+      missingColumns: [],
+    });
+
+    await user.click(screen.getByText('Set up from S3'));
+    await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
+    await user.click(screen.getByText('default'));
+    await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
+    await user.click(screen.getByText('my-cur-bucket'));
+
+    await waitFor(() => {
+      expect(screen.getByText('This is a CUR 2.0 export — CostGoblin reads FOCUS 1.2')).toBeDefined();
+    });
+    const confirmButton = screen.getByText('CUR 2.0 not supported').closest('button');
+    expect(confirmButton?.disabled).toBe(true);
+  });
+
   it('disables confirm button when folder is not a billing export', async () => {
     const { api, user } = renderWizard();
     vi.spyOn(api, 'browseS3').mockResolvedValue({

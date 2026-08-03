@@ -82,7 +82,7 @@ export interface ExplorerTagColumn {
 }
 
 /** The "static" slice of the Explorer result — daily histogram + totals.
- *  Driven only by filters/range/scope/metric/perspective, so it doesn't
+ *  Driven only by filters/range/scope/metric, so it doesn't
  *  refresh when the user changes the table sort. Paired with
  *  ExplorerRowsResult which handles the sortable rows. */
 export interface ExplorerOverviewResult {
@@ -90,7 +90,7 @@ export interface ExplorerOverviewResult {
   readonly startDate: string;
   readonly endDate: string;
   readonly dailyTotals: readonly ExplorerDailyRow[];
-  /** Underlying CUR line-item count matching the filters (before the
+  /** Underlying charge-row count matching the filters (before the
    *  rows sample cap). The UI shows "N of M rows" honestly. */
   readonly totalRows: number;
   readonly totalCost: number;

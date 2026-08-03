@@ -66,6 +66,24 @@ describe('validateViews', () => {
     expect(widgets[3]).toMatchObject({ enabledColumns: ['cost', 'sku_meter', 'charge_category'] });
   });
 
+  it('migrates CUR-era tag_user_* dimension ids (the validator strips user_ from tagNames)', () => {
+    const cfg = validateViews({
+      views: [{
+        id: 'legacy-tags',
+        name: 'Legacy tags',
+        rows: [{
+          widgets: [
+            { id: 'w1', type: 'pie', size: 'medium', groupBy: 'tag_user_team' },
+            { id: 'w2', type: 'table', size: 'full', enabledColumns: ['cost', 'tag_user_environment'] },
+          ],
+        }],
+      }],
+    });
+    const widgets = cfg.views[0]?.rows[0]?.widgets ?? [];
+    expect(widgets[0]).toMatchObject({ groupBy: 'tag_team' });
+    expect(widgets[1]).toMatchObject({ enabledColumns: ['cost', 'tag_environment'] });
+  });
+
   it('rejects an unknown widget type', () => {
     expect(() => validateViews({
       views: [{

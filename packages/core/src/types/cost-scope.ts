@@ -32,6 +32,15 @@ export type CostMetric = 'billed' | 'effective' | 'list' | 'contracted';
 
 export const COST_METRICS: readonly CostMetric[] = ['billed', 'effective', 'list', 'contracted'] as const;
 
+/** The metric every query layer falls back to when no Cost Scope is
+ *  configured (or fails to load). One constant rather than scattered
+ *  'effective' literals: the rollup shape signature and the rollup build
+ *  must agree on the fallback, or a signature mismatch would silently serve
+ *  partitions built under a different metric. (The Explorer's raw-inspection
+ *  default of 'billed' is a deliberate, separate choice — see
+ *  resolveScopeMetric in the desktop explorer handlers.) */
+export const DEFAULT_COST_METRIC: CostMetric = 'effective';
+
 /** One AND-ed condition inside an exclusion rule. Matches when the row's
  *  value for `dimensionId` is in `values` (OR within values). Empty `values`
  *  is invalid — reject it in the validator. */

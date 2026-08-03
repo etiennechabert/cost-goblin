@@ -5,6 +5,7 @@ import type { DimensionId, ProviderName } from '../types/branded.js';
 import { tagDimColumn } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 import type { CostMetric, CostScopeConfig, ExclusionRule, MarketplaceAttributionConfig, MarketplaceAttributionRule } from '../types/cost-scope.js';
+import { DEFAULT_COST_METRIC } from '../types/cost-scope.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor, LIST_METRIC_CHARGE_CATEGORIES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
@@ -409,7 +410,7 @@ function marketplaceServiceExpr(
  *  gives these rows — for matched rows. No-op when the predicate is null. */
 function marketplaceListFallback(prefix: string, base: string, matchPredicate: string | null): string {
   if (matchPredicate === null) return base;
-  return `CASE WHEN ${matchPredicate} THEN COALESCE(${prefix}BilledCost, 0) ELSE ${base} END`;
+  return `CASE WHEN ${matchPredicate} THEN ${costExprFor('billed', prefix)} ELSE ${base} END`;
 }
 
 function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
@@ -462,7 +463,7 @@ function buildFromClause(
 }
 
 export function buildSource(opts: BuildSourceOptions): string {
-  const { dataDir, tier, dimensions, orgAccountsPath, providers, costMetric = 'effective', includeRawTags, slim } = opts;
+  const { dataDir, tier, dimensions, orgAccountsPath, providers, costMetric = DEFAULT_COST_METRIC, includeRawTags, slim } = opts;
   if (providers.length === 0) {
     throw new SecurityError('buildSource requires at least one provider branch');
   }
@@ -495,7 +496,7 @@ export function buildSource(opts: BuildSourceOptions): string {
 
   const listCostExpr = marketplaceListFallback(
     tablePrefix,
-    `COALESCE(${tablePrefix}ListCost, 0)`,
+    costExprFor('list', tablePrefix),
     mktMatch,
   );
   const flexColumns = slim === true ? '' : `
@@ -649,7 +650,7 @@ function setupQuery(
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope, materializedSource } = opts;
   const qb = new QueryBuilder();
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
-  const costMetric = costScope?.costMetric ?? 'effective';
+  const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
   // The materialized base table is built at daily tier and lacks usage_hour,
   // so it can't satisfy hour-bounded queries. Fall through to a fresh hourly
@@ -734,7 +735,7 @@ export function buildTrendQuery(
   const qb = new QueryBuilder();
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
-  const costMetric = costScope?.costMetric ?? 'effective';
+  const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
   const startDate = params.dateRange.start;
   const endDate = params.dateRange.end;
@@ -1202,7 +1203,7 @@ export function buildMaterializeBaseQuery(
       exclusionClauses.push(`NOT (${matchExpr})`);
     }
   }
-  const costMetric = costScope?.costMetric ?? 'effective';
+  const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
   const branches = resolveProviderBranches(providers, computePeriodsInRange(dateRange));
   const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, providers: branches, costMetric, marketplaceAttribution: costScope?.marketplaceAttribution, includeRawTags: true, slim: true });
 
@@ -1230,7 +1231,7 @@ function periodUpperBound(period: string): string {
 /** Build the DDL that materializes ONE month's PRE-AGGREGATED rollup partition
  *  to Parquet. Grain = usage_date + enabled dimension columns (see
  *  `rollupGrainColumns`); measures = SUM(cost) + COUNT(*) AS line_items. The
- *  active cost metric/perspective are baked into `cost`, exclusion rows are
+ *  active cost metric is baked into `cost`, exclusion rows are
  *  dropped at build time, and ALL days are ingested (lagDays stays a query-time
  *  filter). Dimension values are stored RAW — aliasing remains query-time.
  *
@@ -1252,7 +1253,7 @@ export function buildRollupPartitionQuery(
   }
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
   const grain = rollupGrainColumns(dimensions);
-  const costMetric = costScope?.costMetric ?? 'effective';
+  const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
   // Rollup partitions are built per provider: the caller passes exactly the
   // provider whose store is being (re)built, with the explicit period.
@@ -1326,7 +1327,7 @@ export function buildGrainProbeQuery(
     throw new SecurityError(`Invalid probe period "${period}" — expected YYYY-MM.`);
   }
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
-  const costMetric = costScope?.costMetric ?? 'effective';
+  const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
   const source = buildSource({
     dataDir, tier: 'daily', dimensions, orgAccountsPath,
