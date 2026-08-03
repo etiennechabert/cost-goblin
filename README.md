@@ -57,112 +57,75 @@ npm install
 make dev
 ```
 
-On first launch, the setup wizard guides you through connecting to your AWS CUR data.
+On first launch, the setup wizard guides you through connecting to your AWS billing data.
 
 ## Prerequisites
 
 - **Node.js** 24+
-- **AWS CUR 2.0** report exported as Parquet to S3
+- **AWS FOCUS 1.2** Data Export delivered as Parquet to S3
 
-### Setting Up a CUR Report
+### Setting Up a FOCUS 1.2 Export
 
-CostGoblin reads **CUR 2.0 via AWS Data Exports** (not legacy CUR). To create one:
+CostGoblin reads the **FOCUS 1.2** table via AWS Data Exports. To create one:
 
 1. In the AWS console, open **Billing and Cost Management**.
 2. In the left navigation, choose **Data Exports** ([direct console link](https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports)).
-3. Click **Create export** and select **CUR 2.0** as the data table, with the settings below.
+3. Click **Create export** and select **FOCUS 1.2** as the data table (`FOCUS_1_2_AWS`), with the settings below.
 
-> ⚠️ Don't create the report from the legacy **Cost & Usage Reports** page — that produces legacy CUR: `.csv.gz` files next to a `*-Manifest.json`, which CostGoblin can't read. A correct CUR 2.0 export delivers Parquet files under `data/` and `metadata/` folders. If you see the former in your bucket, delete that report and recreate it in [Data Exports](https://docs.aws.amazon.com/cur/latest/userguide/what-is-data-exports.html).
+> ⚠️ Don't create the report from the legacy **Cost & Usage Reports** page, and don't pick the CUR 2.0 table — CostGoblin's schema is FOCUS 1.2. A correct export delivers Parquet files under `data/` and `metadata/` folders, partitioned by `billing_period=`.
 
 **Export settings:**
 
 | Setting | Value |
 |---------|-------|
-| Export type | **Standard data export** (table: `COST_AND_USAGE_REPORT`) |
-| Time granularity | Daily |
+| Export type | **Standard data export** (table: `FOCUS_1_2_AWS`) |
+| Time granularity | Daily (create an optional second export with Hourly for intraday drill-down) |
+| Column selection | **All columns** |
 | Format | Parquet |
 | Compression | Snappy |
 | Overwrite | Overwrite existing data export file |
 
-> CUR 2.0 Data Exports does **not** have "Include resource IDs" / "Include net columns" checkboxes — those are legacy CUR. In Data Exports you pick the columns explicitly in the SQL editor (see below).
+#### Columns CostGoblin requires
 
-#### Columns to select
+Keeping **all columns** enabled is the simplest way to stay valid — the extras cost little in Parquet, and narrowing the export later leaves holes you can't backfill. For reference, these are the columns the app actually reads (a candidate export missing any of them is rejected by the setup wizard):
 
-Paste this into the **SQL query** field when creating the export. It's the full set of columns CostGoblin can read — extras you don't paste become inline "Degraded" warnings in Cost Scope but never break queries.
-
-```sql
-SELECT
-  -- Required: app won't function without these
-  line_item_usage_start_date,
-  line_item_usage_account_id,
-  line_item_usage_account_name,
-  line_item_line_item_type,
-  line_item_line_item_description,
-  line_item_operation,
-  line_item_usage_type,
-  line_item_usage_amount,
-  line_item_resource_id,
-  line_item_unblended_cost,
-  product_servicecode,
-  product_product_family,
-  product_region_code,
-  resource_tags,
-  -- Recommended: each unlocks one metric option in Cost Scope
-  pricing_public_on_demand_cost,            -- "On-demand list price" metric
-  reservation_effective_cost,               -- "Amortized" metric (RI portion)
-  savings_plan_savings_plan_effective_cost, -- "Amortized" metric (SP portion)
-  -- Optional: enables the "Net" perspective (credits/refunds applied)
-  line_item_net_unblended_cost,
-  reservation_net_effective_cost,
-  savings_plan_net_savings_plan_effective_cost
-FROM COST_AND_USAGE_REPORT
+```
+ChargePeriodStart, SubAccountId, SubAccountName,
+BilledCost, EffectiveCost, ListCost, ContractedCost,
+ServiceName, x_ServiceCode, ServiceCategory, RegionId, ResourceId,
+ChargeCategory, PricingCategory, CommitmentDiscountStatus,
+ChargeDescription, ConsumedQuantity, SkuMeter, Tags, x_Operation
 ```
 
-> The doubled prefix on `savings_plan_savings_plan_effective_cost` is AWS's snake_case conversion of `savingsPlan/SavingsPlanEffectiveCost` — not a typo. Same for the `_net_` variant.
-
-> **Why no `line_item_blended_cost`?** CostGoblin intentionally doesn't ship AWS's "Blended" metric. It was designed to distribute classic RI discounts fairly across linked accounts when commitments sat in a central payer account — but AWS never extended the math to Savings Plans, and SPs are how virtually all modern fleets buy commitment-based discounts. On an SP-based fleet, Blended is nearly indistinguishable from Unblended and provides none of the chargeback fairness it was originally invented for. We use **Amortized** for chargeback (it spreads SP/RI fees correctly across covered usage) and **On-demand list price** for fair per-team cost views when commitment allocation is uneven. If your config still has `costMetric: "blended"` it's silently migrated to `amortized` at load time. Skipping this column also keeps your CUR export lighter.
-
-#### What each tier unlocks
-
-| Tier | If you skip these |
-|------|-------------------|
-| **Required** | App won't ingest the export at all |
-| **Recommended** | The matching metric in Cost Scope shows "Degraded — falls back to Unblended"; numbers are still correct under the Unblended metric |
-| **Optional (Net)** | The Net perspective toggle silently falls back to Gross |
-
-The app probes your parquet schema once at startup and shows the warning inline next to each affected metric. Queries never error on a missing column — they fall through to the next available one.
-
-#### Already have an export running with fewer columns?
-
-CUR 2.0 exports are immutable, so you can't add columns to an existing export. Create a new one with the full SQL above, point it at a fresh S3 prefix, wait one billing cycle for the first partition to land, then update CostGoblin's S3 prefix in the setup wizard.
+All four FOCUS cost columns are always present in the export, so every cost metric is always available — there is no per-column "degraded metric" probing.
 
 <details>
-<summary><strong>Reference: which column wires up which metric × perspective</strong></summary>
+<summary><strong>Reference: which column backs which cost metric</strong></summary>
 
-For each metric / perspective combo, the app reads the **first available** column in priority order, falling back down the chain when a column isn't in the export:
+| Metric | Reads from | Meaning |
+|--------|-----------|---------|
+| Billed | `BilledCost` | The invoiced amount. Commitment-covered usage rows carry `0`; the invoiced fee sits on `ChargeCategory='Purchase'` rows. Use for invoice reconciliation. |
+| Effective (amortized) | `EffectiveCost` | Amortized cost, including the **unused** portion of commitments (`CommitmentDiscountStatus='Unused'` rows). Matches Cost Explorer's amortized view. The default. |
+| List price | `ListCost` | Hypothetical on-demand list price, restricted to `ChargeCategory='Usage'` rows (purchases/tax/credits have no list price). |
+| Contracted | `ContractedCost` | Price after negotiated (e.g. EDP) discounts, before commitment discounts. `List − Contracted` is what your negotiated discount is worth. |
 
-| Selection | Reads from |
-|-----------|------------|
-| Unblended · Gross | `line_item_unblended_cost` |
-| Unblended · Net | `line_item_net_unblended_cost` → `line_item_unblended_cost` |
-| Amortized · Gross | `CASE` on `line_item_line_item_type`: `DiscountedUsage` → `reservation_effective_cost`; `SavingsPlanCoveredUsage` → `savings_plan_savings_plan_effective_cost`; RI/SP fee rows → `0`; everything else → `line_item_unblended_cost` |
-| Amortized · Net | Same `CASE`, but using the `_net_` variants of each column and `line_item_net_unblended_cost` as the fallback |
-| On-demand list price | `pricing_public_on_demand_cost` → `line_item_unblended_cost` |
-
-The Amortized expression uses a `CASE` on `line_item_type` rather than a plain `COALESCE` because AWS populates `reservation_effective_cost` and `savings_plan_savings_plan_effective_cost` with `0` (not `NULL`) for non-applicable rows — a `COALESCE` chain would silently zero out every Usage / Tax / Credit row.
+> **What happened to Unblended / Amortized / Net?** Those were CUR-era names: configs are migrated automatically (`unblended` → `billed`, `amortized`/`blended` → `effective`). The Net perspective is gone — FOCUS has no net cost columns; negotiated discounts are already netted into `BilledCost`/`ContractedCost`, with per-row detail in the `x_Discounts` map.
 
 </details>
 
 The S3 export should look like:
 ```
-s3://bucket/prefix/
+s3://bucket/prefix/<export-name>/
   data/
-    BILLING_PERIOD=YYYY-MM/
-      *.snappy.parquet
+    billing_period=YYYY-MM/
+      <export-name>-00001.snappy.parquet
   metadata/
-    BILLING_PERIOD=YYYY-MM/
-      manifest.json
+    billing_period=YYYY-MM/
+      <export-name>-Manifest.json
+      <export-name>-Manifest-FOCUS.json
 ```
+
+> **Historical data:** a new export only includes data from creation day onward. Open an AWS Support case to request a backfill for the export — AWS can typically reload up to 12 months.
 
 ### AWS Credentials
 
@@ -177,15 +140,15 @@ aws sso login --profile your-profile-name
 ```
 
 **Without giving the app S3 access:**
-Skip the wizard and download CUR data manually:
+Skip the wizard and download the export data manually:
 ```bash
-aws s3 sync s3://your-bucket/path/to/cur/ ~/Library/Application\ Support/@costgoblin/desktop/data/raw/
+aws s3 sync s3://your-bucket/path/to/focus-export/ ~/Library/Application\ Support/@costgoblin/desktop/data/raw/
 ```
-Then use the Data tab to repartition the downloaded files.
+Then use the Data tab to register the downloaded files.
 
 ## Features
 
-- **S3 billing sync** — downloads CUR parquet files into daily Hive partitions
+- **S3 billing sync** — downloads FOCUS 1.2 parquet files into per-month partitions
 - **Interactive dashboard** — pie charts, stacked bar charts, treemaps, and more, with drill-down into any dimension
 - **Trends** — period-over-period comparison with bubble chart visualization, filterable by dimension with configurable thresholds
 - **Findings** — surfaces AWS cost optimization recommendations (rightsize, delete unused, purchase SPs/RIs) with effort estimates and savings projections
@@ -195,7 +158,7 @@ Then use the Data tab to repartition the downloaded files.
 - **Custom dimensions** — map any AWS tag to a first-class cost allocation dimension
 - **Tag normalization** — aliases applied at query time, fix messy tags without re-processing
 - **Composable views** — drag-and-drop widget builder with 9 widget types (pie, bar, stacked bar, line, treemap, heatmap, bubble, table, summary)
-- **Cost Scope** — configure cost metrics (amortized, on-demand list price, unblended) and exclusion rules
+- **Cost Scope** — configure cost metrics (effective, billed, list price, contracted) and exclusion rules
 - **Vault encryption** — optional AES-256-GCM at-rest encryption for local billing data, with system keychain integration
 - **MCP server** — Model Context Protocol integration for querying cost data from AI assistants
 - **Dark/light mode** — theme toggle with two chart color palettes (standard + Okabe-Ito colorblind-safe)

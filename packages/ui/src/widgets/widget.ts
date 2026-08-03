@@ -17,11 +17,11 @@ import { getDimensionId, getDimensionLabel } from '../lib/dimensions.js';
 import { daysBetween } from '../lib/dates.js';
 
 const DIMENSION_FALLBACK_CHAINS: ReadonlyMap<DimensionId, readonly DimensionId[]> = new Map([
-  [asDimensionId('service'), [asDimensionId('service_family'), asDimensionId('usage_type')]],
-  [asDimensionId('service_family'), [asDimensionId('service'), asDimensionId('usage_type')]],
+  [asDimensionId('service'), [asDimensionId('service_category'), asDimensionId('sku_meter')]],
+  [asDimensionId('service_category'), [asDimensionId('service'), asDimensionId('sku_meter')]],
 ]);
 
-// Fallback candidates are built-in CUR columns — always queryable regardless of enabled state.
+// Fallback candidates are built-in canonical columns — always queryable regardless of enabled state.
 export function getDimensionFallbacks(dimId: DimensionId): readonly DimensionId[] {
   return DIMENSION_FALLBACK_CHAINS.get(dimId) ?? [];
 }

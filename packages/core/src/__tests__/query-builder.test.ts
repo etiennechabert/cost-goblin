@@ -130,8 +130,9 @@ describe('buildSource narrowed paths', () => {
     expect(sql).not.toContain("daily-*/*.parquet");
     // Every branch projects its provider name as the leading constant column.
     expect(sql).toContain("'aws' AS provider,");
-    // union_by_name tolerates CUR schema drift between months (older exports
-    // lack the effective-cost columns the amortized expression references).
+    // union_by_name tolerates schema drift between months (AWS adds x_
+    // extension columns over time, so multi-month reads can span two FOCUS
+    // export revisions).
     expect(sql).toContain('union_by_name=true');
   });
 
@@ -179,8 +180,11 @@ describe('buildTrendQuery with fallback-bearing tag dim', () => {
       },
       { dataDir: '/data', dimensions: dims, orgAccountsPath: '/org.json', providers },
     );
-    // The COALESCE / missingValueTemplate expression lives in the source subquery.
-    expect(sql).toContain("COALESCE(NULLIF(element_at(cur.resource_tags, 'user_sb_system')[1], '')");
+    // The COALESCE / missingValueTemplate expression lives in the source
+    // subquery. FOCUS Tags map keys are raw (the configured tagName is used
+    // verbatim — no CUR-style user_ prefixing), and the org-join table alias
+    // is `src`.
+    expect(sql).toContain("COALESCE(NULLIF(element_at(src.Tags, 'user_sb_system')[1], '')");
     expect(sql).toContain("'unknown-' || acct_tags.fallback_tag_user_sb_system || ''");
     // The OUTER group-by references the bare column name (not the COALESCE), so
     // the alias CASE doesn't repeat the full expression for every WHEN.
@@ -235,7 +239,9 @@ describe('buildMissingTagsQuery', () => {
 
   it('filters to resource-bound Usage lines (excludes Tax / Support / empty resource_id)', () => {
     const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions, providers });
-    expect(result.sql).toContain("line_item_type IN ('Usage', 'DiscountedUsage')");
+    // FOCUS: commitment-covered usage stays ChargeCategory='Usage', so a
+    // single equality replaces the CUR-era Usage/DiscountedUsage IN-list.
+    expect(result.sql).toContain("charge_category = 'Usage'");
     expect(result.sql).toContain("resource_id IS NOT NULL AND resource_id != ''");
     expect(result.sql).toContain('usage_date BETWEEN');
     // Verify date parameters
@@ -310,9 +316,9 @@ describe('buildNonResourceCostQuery', () => {
       },
       { dataDir: '/data', dimensions, providers },
     );
-    expect(result.sql).toContain("line_item_type NOT IN ('Usage', 'DiscountedUsage')");
+    expect(result.sql).toContain("charge_category != 'Usage'");
     expect(result.sql).toContain("OR resource_id IS NULL OR resource_id = ''");
-    expect(result.sql).toContain('GROUP BY service, service_family, line_item_type');
+    expect(result.sql).toContain('GROUP BY service, service_category, charge_category');
     expect(result.sql).toContain('usage_date BETWEEN');
     // Verify date parameters
     expect(result.params).toContain('2026-01-01');
@@ -384,8 +390,8 @@ describe('buildSource with account tag fallback', () => {
     // Column name derives from "ou_path" since no tagName was provided.
     expect(sql).toContain('acct_tags.fallback_tag_ou_path AS tag_ou_path');
     expect(sql).toContain('ouPath AS fallback_tag_ou_path');
-    // No resource-tag COALESCE — there is no resource tag to read.
-    expect(sql).not.toContain('element_at(cur.resource_tags');
+    // No resource-tag map read — there is no resource tag to read.
+    expect(sql).not.toContain('element_at(src.Tags');
   });
 
   it('wraps the resolved value with split_part when pathSegment is set', () => {
@@ -399,7 +405,7 @@ describe('buildSource with account tag fallback', () => {
       }],
     };
     const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
-    expect(sql).toContain("split_part(COALESCE(NULLIF(element_at(cur.resource_tags, 'user_department')[1], ''), acct_tags.fallback_tag_department), ' / ', 1)");
+    expect(sql).toContain("split_part(COALESCE(NULLIF(element_at(src.Tags, 'department')[1], ''), acct_tags.fallback_tag_department), ' / ', 1)");
     expect(sql).toContain('AS tag_department');
   });
 

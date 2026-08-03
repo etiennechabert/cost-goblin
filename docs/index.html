@@ -1921,7 +1921,7 @@
         <div class="compare-row">
           <div class="compare-cell compare-label">Data pipeline</div>
           <div class="compare-cell compare-them">Proprietary collector &amp; schema</div>
-          <div class="compare-cell compare-us">Native AWS CUR &amp; Cost Optimization Hub</div>
+          <div class="compare-cell compare-us">Native AWS FOCUS 1.2 &amp; Cost Optimization Hub</div>
         </div>
 
         <div class="compare-row">
@@ -1937,7 +1937,7 @@
         <span class="stack-divider">·</span>
         <span class="stack-item">Apache Parquet storage</span>
         <span class="stack-divider">·</span>
-        <span class="stack-item">Native AWS CUR</span>
+        <span class="stack-item">Native AWS FOCUS 1.2</span>
         <span class="stack-divider">·</span>
         <span class="stack-item">Offline-capable</span>
       </div>
@@ -2060,7 +2060,7 @@
             <div class="showcase-text">
               <div class="section-label">Explorer</div>
               <h3>Drill into every line item</h3>
-              <p>Filter, sort, and explore the raw CUR dataset. See daily totals at a glance, slice by any dimension, and click any cell to drill deeper. Thousands of line items queried in milliseconds.</p>
+              <p>Filter, sort, and explore the raw FOCUS dataset. See daily totals at a glance, slice by any dimension, and click any cell to drill deeper. Thousands of line items queried in milliseconds.</p>
             </div>
             <div class="showcase-img">
               <a href="screenshots/explorer.png" data-lightbox><img src="screenshots/explorer.png" alt="CostGoblin explorer view showing filterable data table with daily cost bar chart" width="1440" height="900" loading="lazy"></a>
@@ -2164,7 +2164,7 @@
         </div>
         <div class="next-step-body">
           <div class="next-step-title">Set up your AWS data exports</div>
-          <div class="next-step-sub">5-minute walkthrough — cost allocation tags, CUR exports, Cost Optimization Hub.</div>
+          <div class="next-step-sub">5-minute walkthrough — cost allocation tags, FOCUS 1.2 exports, Cost Optimization Hub.</div>
         </div>
         <svg class="next-step-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
       </a>
@@ -2184,7 +2184,7 @@
             <h4>Activate your cost allocation tags</h4>
           </div>
           <p>Before setting up any exports, make sure the tags you want to slice costs by are activated in the AWS Billing Console &rarr; <strong>Cost Allocation Tags</strong>.</p>
-          <p>Activate any user-defined tag you plan to use as a dimension in CostGoblin (e.g. <em>team</em>, <em>environment</em>, <em>service</em>). Tags that aren't activated here won't appear in the CUR exports, no matter how they're configured.</p>
+          <p>Activate any user-defined tag you plan to use as a dimension in CostGoblin (e.g. <em>team</em>, <em>environment</em>, <em>service</em>). Tags that aren't activated here won't appear in the FOCUS exports, no matter how they're configured.</p>
           <div class="step-note">Newly activated tags only appear in data generated <strong>after</strong> activation &mdash; they are not backfilled. Activate them as early as possible.</div>
         </div>
 
@@ -2196,8 +2196,8 @@
           <p>Pick a dedicated bucket (or prefix) for all CostGoblin data. We recommend this structure so each export lands in its own namespace:</p>
           <div class="code-block">
 <span class="code-dir">s3://your-company-billing/</span>
-├── <span class="code-dir">cur_daily/</span>         <span class="code-comment"># Daily Cost &amp; Usage Report — required</span>
-├── <span class="code-dir">cur_hourly/</span>        <span class="code-comment"># Hourly Cost &amp; Usage Report — optional</span>
+├── <span class="code-dir">focus_daily/</span>       <span class="code-comment"># Daily FOCUS 1.2 export — required</span>
+├── <span class="code-dir">focus_hourly/</span>      <span class="code-comment"># Hourly FOCUS 1.2 export — optional</span>
 └── <span class="code-dir">cost_optimization/</span> <span class="code-comment"># Cost Optimization Hub export</span>
           </div>
           <div class="step-note">Use any bucket name. The three prefixes are what matters.</div>
@@ -2206,20 +2206,16 @@
         <div class="step" data-animate>
           <div class="step-header">
             <span class="step-num">2</span>
-            <h4>Create the CUR exports</h4>
+            <h4>Create the FOCUS exports</h4>
           </div>
-          <p>From <strong>Billing and Cost Management</strong>, open <a href="https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports" target="_blank" rel="noopener"><strong>Data Exports</strong></a> in the left navigation, then click <strong>Create export</strong>. Select <strong>CUR 2.0</strong> as the data table. Only the <strong>daily</strong> export is required. You can optionally create a second, <strong>hourly</strong> export &mdash; helpful to understand how costs distribute within a day (intraday drill-down and incident analysis). Configure each as follows:</p>
-          <div class="step-note">Use <strong>Data Exports</strong>, not the legacy <strong>Cost &amp; Usage Reports</strong> page &mdash; legacy reports deliver <em>.csv.gz</em> files with a <em>Manifest.json</em>, which CostGoblin can't read. A correct CUR 2.0 export lands as Parquet under <em>data/</em> and <em>metadata/</em> folders.</div>
+          <p>From <strong>Billing and Cost Management</strong>, open <a href="https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports" target="_blank" rel="noopener"><strong>Data Exports</strong></a> in the left navigation, then click <strong>Create export</strong>. Choose <strong>Standard data export</strong> and select <strong>FOCUS 1.2</strong> as the data table (<em>FOCUS_1_2_AWS</em>). Only the <strong>daily</strong> export is required. You can optionally create a second, <strong>hourly</strong> export &mdash; helpful to understand how costs distribute within a day (intraday drill-down and incident analysis). Configure each as follows:</p>
+          <div class="step-note">Use <strong>Data Exports</strong>, not the legacy <strong>Cost &amp; Usage Reports</strong> page &mdash; and pick the <strong>FOCUS 1.2</strong> table, not CUR 2.0. A correct FOCUS 1.2 export lands as Parquet under <em>data/</em> and <em>metadata/</em> folders, partitioned by billing period.</div>
           <div class="code-block">
 <span class="code-comment">Data table content settings</span>
 <span class="code-comment">─────────────────────────────────────</span>
+Data table:          <span class="code-file">FOCUS 1.2</span>  <span class="code-comment">(FOCUS_1_2_AWS)</span>
+Column selection:    <span class="code-file">All columns</span>  <span class="code-comment">(see the list below)</span>
 Time granularity:    <span class="code-file">Daily</span>  <span class="code-comment">(or Hourly for the optional second export)</span>
-
-Additional export content:
- <span class="code-file">&#x2713;</span> Include resource IDs                             <span class="code-comment">on by default</span>
- <span class="code-file">&#x2713;</span> Split cost allocation data                       <span class="code-comment">ECS/EKS shared costs</span>
- <span class="code-comment">&#x2717;</span> Include caller identity (IAM principal)           <span class="code-comment">not needed</span>
- <span class="code-comment">&#x2717;</span> Include capacity reservation columns              <span class="code-comment">not needed</span>
 
 <span class="code-comment">Data export delivery options</span>
 <span class="code-comment">─────────────────────────────────────</span>
@@ -2229,42 +2225,42 @@ Data export overwriting: <span class="code-file">Overwrite existing data export 
 <span class="code-comment">Data export storage settings</span>
 <span class="code-comment">─────────────────────────────────────</span>
 S3 bucket:       <span class="code-dir">your-company-billing</span>
-S3 path prefix:  <span class="code-dir">cur_daily</span>  <span class="code-comment">(or cur_hourly for the optional hourly export)</span>
+S3 path prefix:  <span class="code-dir">focus_daily</span>  <span class="code-comment">(or focus_hourly for the optional hourly export)</span>
           </div>
-          <p>Under <strong>Column selection</strong>, enable these and disable the rest to keep file sizes small:</p>
+          <p>Under <strong>Column selection</strong>, keep <strong>all columns</strong> enabled. These are the ones CostGoblin requires:</p>
           <div class="code-block">
 <span class="code-comment"># Identity &amp; time</span>
- &bull; <span class="code-file">line_item_usage_start_date</span>                    <span class="code-comment">usage timestamp</span>
- &bull; <span class="code-file">line_item_usage_account_id</span>                    <span class="code-comment">AWS account ID</span>
- &bull; <span class="code-file">line_item_usage_account_name</span>                  <span class="code-comment">account display name</span>
+ &bull; <span class="code-file">ChargePeriodStart</span>           <span class="code-comment">usage timestamp</span>
+ &bull; <span class="code-file">SubAccountId</span>                <span class="code-comment">AWS account ID</span>
+ &bull; <span class="code-file">SubAccountName</span>              <span class="code-comment">account display name</span>
 
 <span class="code-comment"># What was used</span>
- &bull; <span class="code-file">product_servicecode</span>                           <span class="code-comment">service (EC2, RDS, S3…)</span>
- &bull; <span class="code-file">product_product_family</span>                        <span class="code-comment">family (Compute, Storage…)</span>
- &bull; <span class="code-file">product_region_code</span>                           <span class="code-comment">region</span>
- &bull; <span class="code-file">line_item_resource_id</span>                         <span class="code-comment">resource ARN</span>
- &bull; <span class="code-file">line_item_operation</span>                           <span class="code-comment">API operation</span>
- &bull; <span class="code-file">line_item_usage_type</span>                          <span class="code-comment">usage type</span>
- &bull; <span class="code-file">line_item_usage_amount</span>                        <span class="code-comment">usage quantity</span>
- &bull; <span class="code-file">line_item_line_item_type</span>                      <span class="code-comment">Usage, Tax, Credit…</span>
- &bull; <span class="code-file">line_item_line_item_description</span>               <span class="code-comment">line item description</span>
+ &bull; <span class="code-file">ServiceName</span>                 <span class="code-comment">service display name (Amazon EC2, Amazon S3…)</span>
+ &bull; <span class="code-file">x_ServiceCode</span>               <span class="code-comment">service code (AmazonEC2, AmazonS3…)</span>
+ &bull; <span class="code-file">ServiceCategory</span>             <span class="code-comment">cross-cloud category (Compute, Storage…)</span>
+ &bull; <span class="code-file">RegionId</span>                    <span class="code-comment">region</span>
+ &bull; <span class="code-file">ResourceId</span>                  <span class="code-comment">resource ARN</span>
+ &bull; <span class="code-file">x_Operation</span>                 <span class="code-comment">API operation</span>
+ &bull; <span class="code-file">SkuMeter</span>                    <span class="code-comment">usage meter (replaces CUR's usage type)</span>
+ &bull; <span class="code-file">ConsumedQuantity</span>            <span class="code-comment">usage quantity</span>
+ &bull; <span class="code-file">ChargeDescription</span>           <span class="code-comment">line item description</span>
+
+<span class="code-comment"># Charge classification</span>
+ &bull; <span class="code-file">ChargeCategory</span>              <span class="code-comment">Usage, Purchase, Tax, Credit…</span>
+ &bull; <span class="code-file">PricingCategory</span>             <span class="code-comment">On-Demand, Committed…</span>
+ &bull; <span class="code-file">CommitmentDiscountStatus</span>    <span class="code-comment">Used / Unused commitment</span>
 
 <span class="code-comment"># Cost columns</span>
- &bull; <span class="code-file">line_item_unblended_cost</span>                      <span class="code-comment">raw cost</span>
- &bull; <span class="code-file">line_item_net_unblended_cost</span>                  <span class="code-comment">cost after discounts</span>
- &bull; <span class="code-file">pricing_public_on_demand_cost</span>                 <span class="code-comment">on-demand list price</span>
-
-<span class="code-comment"># RI &amp; Savings Plan amortization</span>
- &bull; <span class="code-file">reservation_effective_cost</span>                    <span class="code-comment">RI amortized cost</span>
- &bull; <span class="code-file">reservation_net_effective_cost</span>                <span class="code-comment">RI net amortized cost</span>
- &bull; <span class="code-file">savings_plan_savings_plan_effective_cost</span>      <span class="code-comment">SP amortized cost</span>
- &bull; <span class="code-file">savings_plan_net_savings_plan_effective_cost</span>  <span class="code-comment">SP net amortized cost</span>
+ &bull; <span class="code-file">BilledCost</span>                  <span class="code-comment">invoiced cost</span>
+ &bull; <span class="code-file">EffectiveCost</span>               <span class="code-comment">amortized cost — the default metric</span>
+ &bull; <span class="code-file">ListCost</span>                    <span class="code-comment">public on-demand price</span>
+ &bull; <span class="code-file">ContractedCost</span>              <span class="code-comment">after negotiated discounts</span>
 
 <span class="code-comment"># Tags</span>
- &bull; <span class="code-file">resource_tags</span>                                 <span class="code-comment">your cost allocation tags</span>
+ &bull; <span class="code-file">Tags</span>                        <span class="code-comment">your cost allocation tags</span>
           </div>
-          <div class="step-note">CostGoblin auto-detects available columns — missing optional ones are silently skipped. But including them all unlocks amortized views, net cost perspectives, and resource-level drill-down.</div>
-          <div class="step-callout"><strong>Pro tip:</strong> New CUR exports only include data from the day they're created. To get historical data, open an AWS Support case requesting a backfill for your export &mdash; AWS can typically reload up to 12 months of past billing data into your S3 bucket.</div>
+          <div class="step-note">CostGoblin validates an export against the columns above and rejects it if any are missing &mdash; keeping every column enabled is the simplest way to stay valid, and the extra columns cost little in Parquet.</div>
+          <div class="step-callout"><strong>Pro tip:</strong> New data exports only include data from the day they're created. To get historical data, open an AWS Support case requesting a backfill for your export &mdash; AWS can typically reload up to 12 months of past billing data into your S3 bucket.</div>
         </div>
 
         <div class="step" data-animate>

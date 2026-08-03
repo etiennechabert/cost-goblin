@@ -19,7 +19,6 @@ export interface McpContext {
   readonly getAccountMap: () => Promise<Map<string, string>>;
   readonly getAccountReverseMap: () => Promise<Map<string, readonly string[]>>;
   readonly getOrgAccountsPath: () => Promise<string | undefined>;
-  readonly getAvailableColumns: (tier: 'daily' | 'hourly') => Promise<ReadonlySet<string>>;
   readonly materializedBase: { getSource(dateRange: { readonly start: string; readonly end: string }, tier: string): string | undefined };
   readonly warmup: () => Promise<void>;
 }

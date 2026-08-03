@@ -79,39 +79,9 @@ export async function getFirstProviderName(ctx: McpContext): Promise<ProviderNam
   return config?.providers[0]?.name ?? null;
 }
 
-// Latest-month column set per (provider, tier), probed once per process —
-// payer accounts can export different CUR column sets, and a branch whose
-// cost expression references a column its files lack binder-errors the whole
-// union. Mirrors desktop's per-provider probe.
-const columnProbeCache = new Map<string, Promise<ReadonlySet<string>>>();
-
-async function probeProviderColumns(ctx: McpContext, provider: ProviderName, tier: 'daily' | 'hourly'): Promise<ReadonlySet<string>> {
-  const key = `${String(provider)}:${tier}`;
-  const cached = columnProbeCache.get(key);
-  if (cached !== undefined) return cached;
-  const fetch = (async (): Promise<ReadonlySet<string>> => {
-    const months = await listLocalMonths(ctx.dataDir, provider, tier);
-    const latest = months.at(-1);
-    if (latest === undefined) return new Set<string>();
-    try {
-      const rows = await ctx.runQuery(`DESCRIBE SELECT * FROM read_parquet('${ctx.dataDir}/${String(provider)}/raw/${tier}-${latest}/*.parquet') LIMIT 0`);
-      const cols = new Set<string>();
-      for (const r of rows) {
-        const name = r['column_name'];
-        if (typeof name === 'string') cols.add(name);
-      }
-      return cols;
-    } catch {
-      return new Set<string>();
-    }
-  })();
-  columnProbeCache.set(key, fetch);
-  return fetch;
-}
-
 /** ProviderSourceSpec list for QueryContextOptions: EVERY configured
- *  provider with its own on-disk months and probed columns (mirrors desktop
- *  getQueryProviders), or [] when none is configured. */
+ *  provider with its own on-disk months (mirrors desktop getQueryProviders),
+ *  or [] when none is configured. */
 export async function getQueryProviders(
   ctx: McpContext,
   tier: 'daily' | 'hourly',
@@ -119,11 +89,8 @@ export async function getQueryProviders(
   const config = await ctx.getConfig().catch(() => null);
   if (config === null) return [];
   return Promise.all(config.providers.map(async provider => {
-    const [availablePeriods, availableColumns] = await Promise.all([
-      listLocalMonths(ctx.dataDir, provider.name, tier),
-      probeProviderColumns(ctx, provider.name, tier),
-    ]);
-    return { name: provider.name, availablePeriods, availableColumns };
+    const availablePeriods = await listLocalMonths(ctx.dataDir, provider.name, tier);
+    return { name: provider.name, availablePeriods };
   }));
 }
 
@@ -248,7 +215,7 @@ export async function computeDataCoverage(
     const glob = `${ctx.dataDir}/${String(provider)}/raw/daily-${latestMonth}/*.parquet`;
     try {
       const rows = await ctx.runQuery(
-        `SELECT MAX(line_item_usage_start_date::DATE)::VARCHAR AS d FROM read_parquet('${glob}')`,
+        `SELECT MAX(ChargePeriodStart::DATE)::VARCHAR AS d FROM read_parquet('${glob}')`,
       );
       const v = rows[0]?.['d'];
       if (typeof v === 'string' && v.length >= 10) latestDay = v.slice(0, 10);

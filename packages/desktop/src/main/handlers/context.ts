@@ -11,6 +11,9 @@ import {
   applyNormalizationRule,
   applyRegionFriendlyNames,
   applyStripPatterns,
+  DEFAULT_COST_METRIC,
+  dimensionIdSet,
+  LEGACY_DIMENSION_ID_RENAMES,
   loadConfig,
   loadDimensions,
   loadOrgTree,
@@ -56,10 +59,16 @@ const DEFAULT_BUILT_INS: readonly BuiltInDimension[] = [
   // they'd just mirror the Region dim.
   { name: asDimensionId('region_country'), label: 'Country', field: 'region', description: 'ISO country code derived from the region (DE, US, IE). Useful for data-residency and geo chargeback.', enabled: false },
   { name: asDimensionId('region_continent'), label: 'Continent', field: 'region', description: 'AWS geographic bucket (EU, NA, AS) derived from the region. Useful for continent-level summaries.', enabled: false },
-  { name: asDimensionId('service'), label: 'AWS Service', field: 'service', description: 'AWS service code (EC2, S3, RDS, etc.) — the broadest "what cost me this?" view.' },
-  { name: asDimensionId('service_family'), label: 'Service Category', field: 'service_family', description: 'Higher-level product category (Compute, Storage, Database). Good for exec summaries.' },
-  { name: asDimensionId('line_item_type'), label: 'Line Item Type', field: 'line_item_type', description: 'Usage vs Tax vs Credit vs Discount. Filter this to isolate real usage from billing adjustments.' },
-  { name: asDimensionId('usage_type'), label: 'Usage Type', field: 'usage_type', description: 'Fine-grained usage string like USE2-BoxUsage:t3.medium. Use for instance/storage-tier breakdowns.', enabled: false },
+  { name: asDimensionId('service'), label: 'Service', field: 'service', description: 'Service the cost came from (FOCUS ServiceName, e.g. "Amazon Simple Storage Service") — the broadest "what cost me this?" view.' },
+  // Exact provider service code (x_ServiceCode, e.g. AmazonS3). Off by
+  // default — the display-name Service dim covers browsing; this one exists
+  // for exact-code filters and the built-in premium-support exclusion rule.
+  { name: asDimensionId('service_code'), label: 'Service Code', field: 'service_code', description: 'Exact AWS service code (AmazonEC2, AmazonS3). Use for precise filters where display names are ambiguous.', enabled: false },
+  { name: asDimensionId('service_category'), label: 'Service Category', field: 'service_category', description: 'Standardized FOCUS category (Compute, Storage, Databases — ~13 values, identical across cloud providers). Good for exec summaries.' },
+  { name: asDimensionId('charge_category'), label: 'Charge Category', field: 'charge_category', description: 'Usage vs Purchase vs Tax vs Credit vs Adjustment. Filter this to isolate real usage from billing events.' },
+  { name: asDimensionId('pricing_category'), label: 'Pricing Category', field: 'pricing_category', description: 'How the usage was priced: Standard (on-demand), Committed (RI/SP-covered), Dynamic (spot). Spot commitment coverage at a glance.', enabled: false },
+  { name: asDimensionId('commitment_status'), label: 'Commitment Status', field: 'commitment_status', description: 'Used vs Unused commitment (RI/SP) cost. Filter to Unused to see commitment waste.', enabled: false },
+  { name: asDimensionId('sku_meter'), label: 'SKU Meter', field: 'sku_meter', description: 'Fine-grained usage meter like EUC1-Requests-Tier2 (the CUR usage-type equivalent). Use for instance/storage-tier breakdowns.', enabled: false },
   { name: asDimensionId('operation'), label: 'Operation', field: 'operation', description: 'API operation billed for (RunInstances, GetObject). Useful for API-level cost attribution.', enabled: false },
   // Very high cardinality — disabled by default so the normal filter/nav
   // pickers stay scannable. The Explorer references it directly so
@@ -71,9 +80,18 @@ const DEFAULT_BUILT_INS: readonly BuiltInDimension[] = [
  *  label when it still matches the previous default — if the user had typed
  *  their own label we leave it alone. */
 const LEGACY_LABEL_RENAMES: Record<string, { from: string; to: string }> = {
-  service: { from: 'Service', to: 'AWS Service' },
-  service_family: { from: 'Service Family', to: 'Service Category' },
+  service: { from: 'AWS Service', to: 'Service' },
 };
+
+/** Built-in dims whose backing canonical column was removed by the FOCUS 1.2
+ *  migration (#515). A loaded config still carrying one would emit SQL
+ *  against a nonexistent column and binder-error every query, so they are
+ *  dropped at merge time; their FOCUS replacements arrive via
+ *  DEFAULT_BUILT_INS (`missing` below). Derived from the legacy rename map
+ *  so the two can't drift: every renamed id is exactly a retired column. */
+const RETIRED_BUILTIN_DIM_NAMES: ReadonlySet<string> = new Set(
+  Object.keys(LEGACY_DIMENSION_ID_RENAMES),
+);
 
 function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
   const defaultsByName = new Map(DEFAULT_BUILT_INS.map(d => [d.name, d]));
@@ -83,7 +101,8 @@ function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
   // Also backfill useRegionNames=true on the Region dim so pre-existing
   // configs don't regress from friendly names back to raw codes now that the
   // alias injection is gated on this flag.
-  const backfilled = loaded.builtIn.map(d => {
+  const surviving = loaded.builtIn.filter(d => !RETIRED_BUILTIN_DIM_NAMES.has(String(d.name)));
+  const backfilled = surviving.map(d => {
     let next = d;
     const rename = LEGACY_LABEL_RENAMES[d.name];
     if (rename?.from === next.label) {
@@ -103,7 +122,8 @@ function mergeDefaultBuiltIns(loaded: DimensionsConfig): DimensionsConfig {
   });
   const have = new Set(backfilled.map(d => d.name));
   const missing = DEFAULT_BUILT_INS.filter(d => !have.has(d.name));
-  const changed = backfilled.some((d, i) => d !== loaded.builtIn[i]);
+  const changed = surviving.length !== loaded.builtIn.length
+    || backfilled.some((d, i) => d !== surviving[i]);
   if (missing.length === 0 && !changed) return loaded;
   return {
     builtIn: [...backfilled, ...missing],
@@ -168,16 +188,9 @@ export interface AppContext {
    *  lands. */
   readonly getFirstProviderName: () => Promise<ProviderName | null>;
   /** ProviderSourceSpec list for QueryContextOptions: each configured
-   *  provider with its on-disk months for `tier` and probed CUR columns.
+   *  provider with its on-disk months for `tier`.
    *  Empty while onboarding. */
   readonly getQueryProviders: (tier: 'daily' | 'hourly') => Promise<readonly ProviderSourceSpec[]>;
-  /** Columns present in the user's CUR parquet files for the given tier.
-   *  CUR exports vary by version and by "Include Resource IDs" / "Include
-   *  Net Columns" settings — not every export has
-   *  reservation_effective_cost, savings_plan_savings_plan_effective_cost,
-   *  or line_item_net_*. Cached per-tier for the session; invalidated on
-   *  explicit reset via invalidateColumnCache. */
-  readonly getAvailableColumns: (tier: 'daily' | 'hourly') => Promise<ReadonlySet<string>>;
   /** Build-affecting shape signature for a dimensions config — compare against
    *  rollupStore.getBuiltSignature() to tell if the built rollup matches a grain. */
   readonly signatureForDimensions: (dims: DimensionsConfig) => Promise<string>;
@@ -197,7 +210,6 @@ export interface AppContext {
   readonly invalidateDimensions: () => void;
   readonly invalidateViews: () => void;
   readonly invalidateCostScope: () => void;
-  readonly invalidateColumnCache: () => void;
   readonly warmupBase: () => void;
   /** Re-roll the rollup partitions for the periods a sync changed. */
   readonly maintainRollup: (changedPeriods: readonly string[]) => void;
@@ -320,16 +332,23 @@ export function createAppContext(ctx: IpcContext): AppContext {
     return orgTree;
   }
 
+  // Current dimension ids exempt live `tag_user_*`-shaped dimensions from the
+  // CUR-era renames (see migrateLegacyDimensionId). Tolerates a missing/broken
+  // dimensions config (fresh install): ungated is the pre-#515 behavior.
+  async function getLiveDimensionIds(): Promise<ReadonlySet<string> | undefined> {
+    return getDimensions().then(dimensionIdSet, () => undefined);
+  }
+
   async function getViews(): Promise<ViewsConfig> {
     if (state.views !== null) return state.views;
-    const views = await loadViews(ctx.viewsPath);
+    const views = await loadViews(ctx.viewsPath, await getLiveDimensionIds());
     state.views = views;
     return views;
   }
 
   async function getCostScope(): Promise<CostScopeConfig> {
     if (state.costScope !== null) return state.costScope;
-    const loaded = await loadCostScope(ctx.costScopePath);
+    const loaded = await loadCostScope(ctx.costScopePath, await getLiveDimensionIds());
     const merged = mergeBuiltInExclusionRules(loaded);
     state.costScope = merged;
     return merged;
@@ -426,15 +445,6 @@ export function createAppContext(ctx: IpcContext): AppContext {
     return applyRegionFriendlyNames(dims, regionMap);
   }
 
-  // Probe parquet columns once per tier and cache. Used to gate
-  // optional cost columns (reservation_effective_cost,
-  // savings_plan_savings_plan_effective_cost, etc.) that ship only
-  // when the user's CUR has "Include Resource IDs" enabled. Without
-  // the probe, every query that references those columns errors out
-  // for CURs that omit them — even though we could degrade to
-  // unblended.
-  const columnCache = new Map<string, Promise<ReadonlySet<string>>>();
-
   // First configured provider, or null during onboarding. Cached via
   // getConfig's own cache.
   async function getFirstProviderName(): Promise<ProviderName | null> {
@@ -442,96 +452,17 @@ export function createAppContext(ctx: IpcContext): AppContext {
     return config?.providers[0]?.name ?? null;
   }
 
-  // DESCRIBE one month's parquet → its column set. Errors degrade to the empty
-  // set (downstream reads that as "no optional columns" and uses the unblended
-  // fallback) rather than blocking the probe.
-  async function probeColumns(provider: ProviderName, tier: string, month: string): Promise<ReadonlySet<string>> {
-    try {
-      const glob = `${ctx.dataDir}/${String(provider)}/raw/${tier}-${month}/*.parquet`;
-      const rows = await ctx.db.runQuery(`DESCRIBE SELECT * FROM read_parquet('${glob}') LIMIT 0`);
-      const cols = new Set<string>();
-      for (const r of rows) {
-        const name = r['column_name'];
-        if (typeof name === 'string') cols.add(name);
-      }
-      return cols;
-    } catch (err: unknown) {
-      logger.warn(`column-probe: failed — ${err instanceof Error ? err.message : String(err)}`, { tier, month });
-      return new Set<string>();
-    }
-  }
-
-  // Latest-month column set for ONE provider's tier. Cached per
-  // (provider, tier); empty set when the provider has no data on disk.
-  async function getAvailableColumnsFor(provider: ProviderName, tier: 'daily' | 'hourly'): Promise<ReadonlySet<string>> {
-    const key = `${String(provider)}:${tier}:latest`;
-    const cached = columnCache.get(key);
-    if (cached !== undefined) return cached;
-    const fetch = (async (): Promise<ReadonlySet<string>> => {
-      const months = await listLocalMonths(ctx.dataDir, provider, tier);
-      if (months.length === 0) {
-        // No data on disk for this tier — log loudly because the silent
-        // fallback used to surface as misleading "Degraded" warnings in
-        // Cost Scope when capability checks interpreted the empty set as
-        // "all columns missing."
-        logger.warn('column-probe: no months on disk', { tier, provider: String(provider), dataDir: ctx.dataDir });
-        return new Set<string>();
-      }
-      // Latest month = current capability: newly enabled optional columns
-      // (reservation_effective_cost, the SP/net families) show up here first.
-      // Used for the shape signature and the Cost Scope capability checks. The
-      // rollup BUILD must instead probe per-period — see getColumnsForPeriod.
-      const month = months.at(-1);
-      return probeColumns(provider, tier, String(month));
-    })();
-    columnCache.set(key, fetch);
-    return fetch;
-  }
-
-  // The FIRST provider's latest-month columns. Feeds the rollup shape
-  // signature and the Cost Scope capability checks — both single-provider
-  // concerns (the rollup only routes with exactly one provider configured).
-  async function getAvailableColumns(tier: 'daily' | 'hourly'): Promise<ReadonlySet<string>> {
-    const provider = await getFirstProviderName();
-    if (provider === null) {
-      logger.warn('column-probe: no provider configured', { tier });
-      return new Set<string>();
-    }
-    return getAvailableColumnsFor(provider, tier);
-  }
-
   // ProviderSourceSpec list for QueryContextOptions: EVERY configured
-  // provider with its own on-disk months and probed columns, in config
-  // order. [] while onboarding (queries against an empty list throw in
-  // buildSource, but every handler already early-returns on empty period
-  // availability).
+  // provider with its own on-disk months, in config order. [] while
+  // onboarding (queries against an empty list throw in buildSource, but
+  // every handler already early-returns on empty period availability).
   async function getQueryProviders(tier: 'daily' | 'hourly'): Promise<readonly ProviderSourceSpec[]> {
     const config = await getConfig().catch(() => null);
     if (config === null) return [];
     return Promise.all(config.providers.map(async provider => {
-      const [availablePeriods, availableColumns] = await Promise.all([
-        listLocalMonths(ctx.dataDir, provider.name, tier),
-        getAvailableColumnsFor(provider.name, tier),
-      ]);
-      return { name: provider.name, availablePeriods, availableColumns };
+      const availablePeriods = await listLocalMonths(ctx.dataDir, provider.name, tier);
+      return { name: provider.name, availablePeriods };
     }));
-  }
-
-  // Columns present in ONE specific month's parquet. Months drift: a CUR only
-  // carries the optional cost columns from the billing period the user enabled
-  // them, so an older month has fewer columns than the latest. The rollup
-  // builds one month at a time over a single-month read, so it must reference
-  // only that month's columns — otherwise DuckDB throws a Binder Error on the
-  // absent column and the partition never builds. Cached per (tier, period).
-  async function getColumnsForPeriod(tier: 'daily' | 'hourly', period: string): Promise<ReadonlySet<string>> {
-    const provider = await getFirstProviderName();
-    if (provider === null) return new Set<string>();
-    const key = `${String(provider)}:${tier}:${period}`;
-    const cached = columnCache.get(key);
-    if (cached !== undefined) return cached;
-    const fetch = probeColumns(provider, tier, period);
-    columnCache.set(key, fetch);
-    return fetch;
   }
 
   // Static span options, hoisted out of the per-call closures so a query/build
@@ -613,25 +544,21 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
     const costScope = await getCostScope().catch(() => undefined);
-    const availableColumns = await getAvailableColumns('daily');
     let orgRaw = '';
     try { orgRaw = await fs.readFile(path.join(ctx.stateDir, 'org-accounts.json'), 'utf-8'); } catch { /* no org sync yet */ }
     return computeShapeSignature({
       dimensions,
-      costMetric: costScope?.costMetric ?? 'unblended',
-      costPerspective: costScope?.costPerspective ?? 'gross',
+      costMetric: costScope?.costMetric ?? DEFAULT_COST_METRIC,
       rules: costScope?.rules ?? [],
       marketplaceAttribution: costScope?.marketplaceAttribution,
       orgAccountsDigest: computeOrgAccountsDigest(orgRaw),
-      availableColumns: [...availableColumns],
     });
   }
 
   async function getRollupShape(): Promise<RollupShape> {
     const dimensions = await getQueryDimensions();
     const signature = await signatureForDimensions(dimensions);
-    const availableColumns = await getAvailableColumns('daily');
-    return { signature, grainDimensions: rollupGrainColumns(dimensions), availableColumns: [...availableColumns] };
+    return { signature, grainDimensions: rollupGrainColumns(dimensions) };
   }
 
   async function getEtagsByPeriod(): Promise<Record<string, Record<string, string>>> {
@@ -651,17 +578,10 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const costScope = await getCostScope().catch(() => undefined);
     const provider = await getFirstProviderName();
     if (provider === null) throw new Error('No provider configured');
-    return async (period, outPath) => {
-      // Probe THIS period's columns, not the latest month's: an older month may
-      // lack optional cost columns the latest has, and a single-month build
-      // referencing an absent column throws a Binder Error (Issue: cold rebuild
-      // over mixed-schema months).
-      const availableColumns = await getColumnsForPeriod('daily', period);
-      return buildRollupPartitionQuery(period, 'daily', outPath, {
-        dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, accountReverseMap, costScope,
-        providers: [{ name: provider, availableColumns }],
-      });
-    };
+    return (period, outPath) => Promise.resolve(buildRollupPartitionQuery(period, 'daily', outPath, {
+      dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, accountReverseMap, costScope,
+      providers: [{ name: provider }],
+    }));
   }
 
   // Warm-load the persisted rollup: validate the manifest against the current
@@ -741,7 +661,6 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getAccountMap,
     getAccountReverseMap,
     getOrgTreeConfig,
-    getAvailableColumns,
     runPreparedQuery,
     rollupStore,
   };
@@ -761,7 +680,6 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getOrgAccountsPath,
     getFirstProviderName,
     getQueryProviders,
-    getAvailableColumns,
     signatureForDimensions,
     queryLog,
     rollupStore,
@@ -779,7 +697,6 @@ export function createAppContext(ctx: IpcContext): AppContext {
       state.costScope = null;
       void rollupStore.invalidate().then(() => { resultCache.clear(); triggerWarmup(); });
     },
-    invalidateColumnCache: () => { columnCache.clear(); },
     warmupBase: () => { resultCache.clear(); triggerWarmup(); },
     maintainRollup: (changedPeriods: readonly string[]) => { void maintainRollupForPeriods(changedPeriods); },
     baselineStore,
@@ -799,7 +716,6 @@ export function createAppContext(ctx: IpcContext): AppContext {
       state.orgAccountsPath = null;
       state.views = null;
       state.costScope = null;
-      columnCache.clear();
       inflightQueries.clear();
       await rollupStore.invalidate();
       resultCache.clear();

@@ -43,8 +43,8 @@ const dimensions: DimensionsConfig = {
   ],
   tags: [{ tagName: 'team', label: 'Team', concept: 'owner', normalize: 'lowercase-kebab' }],
 };
-const costScope: CostScopeConfig = { costMetric: 'unblended', costPerspective: 'gross', rules: [] };
-const shape: RollupShape = { signature: 'SIG-1', grainDimensions: rollupGrainColumns(dimensions), availableColumns: ['account_id', 'service'] };
+const costScope: CostScopeConfig = { costMetric: 'billed', rules: [] };
+const shape: RollupShape = { signature: 'SIG-1', grainDimensions: rollupGrainColumns(dimensions) };
 const etags = { '2026-01': { 'f1': 'h1' }, '2026-02': { 'f2': 'h2' } };
 
 describe('RollupStore', () => {

@@ -11,14 +11,20 @@ builtIn:
       multi-region sprawl.
     useRegionNames: true
   - name: service
-    label: AWS Service
+    label: Service
     field: service
-    description: AWS service code (EC2, S3, RDS, etc.) — the broadest "what cost me
-      this?" view.
-  - name: service_family
+    description: Service the cost came from (FOCUS ServiceName) — the broadest "what
+      cost me this?" view.
+  - name: service_code
+    label: Service Code
+    field: service_code
+    description: Exact AWS service code (AmazonEC2, AmazonS3). Use for precise filters
+      where display names are ambiguous.
+    enabled: false
+  - name: service_category
     label: Service Category
-    field: service_family
-    description: Higher-level product category (Compute, Storage, Database). Good
+    field: service_category
+    description: Standardized FOCUS category (Compute, Storage, Databases). Good
       for exec summaries.
   - name: region_country
     label: Country
@@ -32,15 +38,27 @@ builtIn:
     description: AWS geographic bucket (EU, NA, AS) derived from the region. Useful
       for continent-level summaries.
     enabled: false
-  - name: line_item_type
-    label: Line Item Type
-    field: line_item_type
-    description: Usage vs Tax vs Credit vs Discount. Filter this to isolate real
-      usage from billing adjustments.
-  - name: usage_type
-    label: Usage Type
-    field: usage_type
-    description: Fine-grained usage string like USE2-BoxUsage:t3.medium. Use for
+  - name: charge_category
+    label: Charge Category
+    field: charge_category
+    description: Usage vs Purchase vs Tax vs Credit vs Adjustment. Filter this to
+      isolate real usage from billing events.
+  - name: pricing_category
+    label: Pricing Category
+    field: pricing_category
+    description: How the usage was priced — Standard (on-demand), Committed (RI/SP-covered),
+      Dynamic (spot).
+    enabled: false
+  - name: commitment_status
+    label: Commitment Status
+    field: commitment_status
+    description: Used vs Unused commitment (RI/SP) cost. Filter to Unused to see
+      commitment waste.
+    enabled: false
+  - name: sku_meter
+    label: SKU Meter
+    field: sku_meter
+    description: Fine-grained usage meter like EUC1-Requests-Tier2. Use for
       instance/storage-tier breakdowns.
   - name: operation
     label: Operation
@@ -91,9 +109,9 @@ order:
   - builtin:account
   - builtin:region
   - builtin:service
-  - builtin:service_family
-  - builtin:line_item_type
-  - builtin:usage_type
+  - builtin:service_category
+  - builtin:charge_category
+  - builtin:sku_meter
   - builtin:resource_id
   - tag:team
   - tag:system

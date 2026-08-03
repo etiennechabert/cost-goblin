@@ -13,10 +13,11 @@ export class SecurityError extends Error {
 }
 
 /**
- * Standard CUR column names that are always safe to reference.
- * Includes both raw CUR fields and derived columns created in buildSource.
+ * Standard column names that are always safe to reference. Includes the
+ * canonical columns created in buildSource's projection and the raw
+ * FOCUS 1.2 fields the projection reads.
  */
-const ALLOWED_CUR_COLUMNS = new Set([
+const ALLOWED_COLUMNS = new Set([
   // Date/time columns (computed in buildSource)
   'usage_date',
   'usage_hour',
@@ -30,7 +31,8 @@ const ALLOWED_CUR_COLUMNS = new Set([
   'account_name',
   'region',
   'service',
-  'service_family',
+  'service_code',
+  'service_category',
 
   // Cost columns
   'cost',
@@ -40,28 +42,47 @@ const ALLOWED_CUR_COLUMNS = new Set([
   'description',
   'resource_id',
   'usage_amount',
-  'line_item_type',
+  'charge_category',
+  'pricing_category',
+  'commitment_status',
   'operation',
-  'usage_type',
+  'sku_meter',
 
-  // Raw CUR fields that may appear in queries
-  'line_item_usage_account_id',
-  'line_item_usage_account_name',
-  'product_region_code',
-  'product_servicecode',
-  'product_product_family',
-  'line_item_line_item_description',
-  'line_item_resource_id',
-  'line_item_usage_amount',
-  'line_item_unblended_cost',
-  'pricing_public_on_demand_cost',
-  'line_item_line_item_type',
-  'line_item_operation',
-  'line_item_usage_type',
-  'line_item_usage_start_date',
-  'savings_plan_savings_plan_effective_cost',
-  'reservation_effective_cost',
-  'resource_tags',
+  // Raw FOCUS 1.2 fields that may appear in queries
+  'ChargePeriodStart',
+  'ChargePeriodEnd',
+  'BillingPeriodStart',
+  'SubAccountId',
+  'SubAccountName',
+  'RegionId',
+  'RegionName',
+  'ServiceName',
+  'ServiceCategory',
+  'ServiceSubcategory',
+  'ChargeDescription',
+  'ChargeCategory',
+  'ChargeClass',
+  'PricingCategory',
+  'CommitmentDiscountStatus',
+  'CommitmentDiscountId',
+  'CommitmentDiscountName',
+  'CommitmentDiscountType',
+  'ConsumedQuantity',
+  'ConsumedUnit',
+  'ResourceId',
+  'ResourceName',
+  'ResourceType',
+  'BilledCost',
+  'EffectiveCost',
+  'ListCost',
+  'ContractedCost',
+  'PublisherName',
+  'InvoiceIssuerName',
+  'SkuMeter',
+  'Tags',
+  'x_Operation',
+  'x_ServiceCode',
+  'x_Discounts',
 
   // Aggregate and computed columns that appear in CTEs
   'entity',
@@ -85,7 +106,7 @@ const ALLOWED_CUR_COLUMNS = new Set([
  * Includes built-in dimension fields, tag columns, and standard CUR columns.
  */
 function buildAllowedColumns(dimensions: DimensionsConfig): ReadonlySet<string> {
-  const allowed = new Set(ALLOWED_CUR_COLUMNS);
+  const allowed = new Set(ALLOWED_COLUMNS);
 
   // Add built-in dimension fields
   for (const dim of dimensions.builtIn) {
@@ -134,7 +155,7 @@ export function validateColumnName(columnName: string, dimensions: DimensionsCon
  * identifier position. A config can arrive from another user (shared bundle /
  * imported snapshot), so these strings are untrusted: anything not matching
  * this shape is rejected. A character-shape check (rather than a fixed column
- * allow-list) stays airtight without rejecting legitimately-named CUR columns.
+ * allow-list) stays airtight without rejecting legitimately-named columns.
  */
 const SAFE_COLUMN_IDENTIFIER = /^[A-Za-z_]\w*$/;
 
@@ -144,7 +165,7 @@ export function isSafeColumnIdentifier(name: string): boolean {
 }
 
 /**
- * Valid table path tiers (CUR data organization levels).
+ * Valid table path tiers (billing-data organization levels).
  */
 const ALLOWED_TIERS = new Set(['daily', 'hourly', 'cost-optimization']);
 

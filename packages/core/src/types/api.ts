@@ -15,7 +15,7 @@ import type {
 import type { RollupGrainEstimate } from '../rollup/estimator.js';
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
-import type { CostScopeCapabilities, CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
+import type { CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
 import type { TelemetryPreferences, TelemetryStatus, TelemetryOutboxEntry } from '../telemetry/types.js';
 import type {
   ApplyConfigBundleParams,
@@ -230,7 +230,7 @@ export interface CostApi {
   testConnection(params: { profile: string; bucket: string }): Promise<{ ok: boolean; error?: string | undefined }>;
   listAwsProfiles(): Promise<string[]>;
   listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }>;
-  browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }>;
+  browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }>;
   scaffoldConfig(): Promise<void>;
   getSavingsPreferences(): Promise<SavingsPreferences>;
   saveSavingsPreferences(prefs: SavingsPreferences): Promise<void>;
@@ -255,9 +255,6 @@ export interface CostApi {
   getCostScope(): Promise<CostScopeConfig>;
   saveCostScope(config: CostScopeConfig): Promise<void>;
   previewCostScope(config: CostScopeConfig): Promise<CostScopePreviewResult>;
-  /** Which optional CUR columns exist — drives UI warnings (e.g.
-   *  degraded Amortized when effective-cost columns are missing). */
-  getCostScopeCapabilities(): Promise<CostScopeCapabilities>;
   revealCostScopeFolder(): Promise<void>;
   /** Daily histogram + aggregate totals for the Explorer. Independent of
    *  sort so the histogram doesn't re-fetch when the user reorders a
@@ -353,7 +350,7 @@ export interface CostApi {
   applyConfigBundle(params: ApplyConfigBundleParams): Promise<ApplyConfigBundleResult>;
   /** Publish the current config as a bundle to S3. Defaults to the
    *  well-known beacon key (`costgoblin/org-config.yaml`) at the root of
-   *  the daily CUR bucket, where teammates' setup wizards discover it;
+   *  the daily billing-export bucket, where teammates' setup wizards discover it;
    *  `location` overrides the destination (custom keys publish fine but
    *  are not auto-discovered). `profile` overrides the AWS profile for
    *  just this action (publishing needs s3:PutObject, which day-to-day

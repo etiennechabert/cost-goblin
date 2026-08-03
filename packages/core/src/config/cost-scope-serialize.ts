@@ -16,7 +16,6 @@ interface YamlMarketplaceAttribution { enabled: boolean; rules: YamlMarketplaceR
 
 export interface YamlCostScope {
   costMetric: string;
-  costPerspective?: string;
   lagDays?: number;
   rules: YamlRule[];
   marketplaceAttribution?: YamlMarketplaceAttribution;
@@ -41,11 +40,6 @@ export function costScopeToYaml(cfg: CostScopeConfig): YamlCostScope {
   const lagDays = cfg.lagDays ?? DEFAULT_LAG_DAYS;
   return {
     costMetric: cfg.costMetric,
-    // Only emit when non-default — keeps legacy YAMLs from churning
-    // when the serializer round-trips them.
-    ...(cfg.costPerspective === undefined || cfg.costPerspective === 'gross'
-      ? {}
-      : { costPerspective: cfg.costPerspective }),
     ...(lagDays === DEFAULT_LAG_DAYS ? {} : { lagDays }),
     rules: cfg.rules.map(ruleToYaml),
     ...(cfg.marketplaceAttribution === undefined

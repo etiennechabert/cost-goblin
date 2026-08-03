@@ -141,13 +141,13 @@ describe('SetupWizard error states', () => {
     });
   });
 
-  it('shows missing columns warning when CUR report lacks required columns', async () => {
+  it('shows missing columns warning when the export lacks required columns', async () => {
     const { api, user } = renderWizard();
     vi.spyOn(api, 'browseS3').mockResolvedValue({
       prefixes: ['data', 'metadata'],
-      isCurReport: true,
+      isBillingExport: true,
       detectedType: 'daily',
-      missingColumns: ['line_item_usage_amount', 'pricing_public_on_demand_cost'],
+      missingColumns: ['ConsumedQuantity', 'ListCost'],
     });
 
     await user.click(screen.getByText('Set up from S3'));
@@ -159,14 +159,36 @@ describe('SetupWizard error states', () => {
     await waitFor(() => {
       expect(screen.getByText('Missing required columns')).toBeDefined();
     });
-    expect(screen.getByText('line_item_usage_amount, pricing_public_on_demand_cost')).toBeDefined();
+    expect(screen.getByText('ConsumedQuantity, ListCost')).toBeDefined();
   });
 
-  it('disables confirm button when folder is not a CUR report', async () => {
+  it('shows a clear error and disables confirm when the folder is a CUR 2.0 export', async () => {
+    const { api, user } = renderWizard();
+    vi.spyOn(api, 'browseS3').mockResolvedValue({
+      prefixes: ['data', 'metadata'],
+      isBillingExport: true,
+      detectedType: 'cur-legacy',
+      missingColumns: [],
+    });
+
+    await user.click(screen.getByText('Set up from S3'));
+    await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
+    await user.click(screen.getByText('default'));
+    await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
+    await user.click(screen.getByText('my-cur-bucket'));
+
+    await waitFor(() => {
+      expect(screen.getByText('This is a CUR 2.0 export — CostGoblin reads FOCUS 1.2')).toBeDefined();
+    });
+    const confirmButton = screen.getByText('CUR 2.0 not supported').closest('button');
+    expect(confirmButton?.disabled).toBe(true);
+  });
+
+  it('disables confirm button when folder is not a billing export', async () => {
     const { api, user } = renderWizard();
     vi.spyOn(api, 'browseS3').mockResolvedValue({
       prefixes: ['some-folder'],
-      isCurReport: false,
+      isBillingExport: false,
       detectedType: 'unknown',
       missingColumns: [],
     });
@@ -178,9 +200,9 @@ describe('SetupWizard error states', () => {
     await user.click(screen.getByText('my-cur-bucket'));
 
     await waitFor(() => {
-      expect(screen.getByText('Select a CUR folder')).toBeDefined();
+      expect(screen.getByText('Select an export folder')).toBeDefined();
     });
-    const confirmButton = screen.getByText('Select a CUR folder').closest('button');
+    const confirmButton = screen.getByText('Select an export folder').closest('button');
     expect(confirmButton?.disabled).toBe(true);
   });
 

@@ -14,8 +14,8 @@ function baseDims(): DimensionsConfig {
   return {
     builtIn: [
       { name: asDimensionId('account'), label: 'Account', field: 'account_id' },
-      { name: asDimensionId('service'), label: 'AWS Service', field: 'service' },
-      { name: asDimensionId('usage_type'), label: 'Usage Type', field: 'usage_type', enabled: false },
+      { name: asDimensionId('service'), label: 'Service', field: 'service' },
+      { name: asDimensionId('sku_meter'), label: 'SKU Meter', field: 'sku_meter', enabled: false },
       { name: asDimensionId('region'), label: 'Region', field: 'region', enabled: false },
     ],
     tags: [
@@ -36,10 +36,8 @@ const sig = (over: Partial<Parameters<typeof computeShapeSignature>[0]> = {}) =>
   computeShapeSignature({
     dimensions: baseDims(),
     costMetric: 'list',
-    costPerspective: 'gross',
     rules: rulesOnService(),
     orgAccountsDigest: 'orgX',
-    availableColumns: ['account_id', 'service', 'usage_type', 'pricing_public_on_demand_cost'],
     ...over,
   });
 
@@ -50,16 +48,14 @@ describe('computeShapeSignature', () => {
     expect(sig({ rules: twoVals(['a', 'b']) })).toBe(sig({ rules: twoVals(['b', 'a']) }));
   });
 
-  it('CHANGES when a disabled dim (usage_type) is enabled', () => {
-    const d: DimensionsConfig = { ...baseDims(), builtIn: baseDims().builtIn.map(b => b.name === 'usage_type' ? { ...b, enabled: true } : b) };
+  it('CHANGES when a disabled dim (sku_meter) is enabled', () => {
+    const d: DimensionsConfig = { ...baseDims(), builtIn: baseDims().builtIn.map(b => b.name === 'sku_meter' ? { ...b, enabled: true } : b) };
     expect(sig({ dimensions: d })).not.toBe(sig());
   });
 
-  it('CHANGES on metric, perspective, org-accounts, available columns, and added enabled rule', () => {
-    expect(sig({ costMetric: 'amortized' })).not.toBe(sig());
-    expect(sig({ costPerspective: 'net' })).not.toBe(sig());
+  it('CHANGES on metric, org-accounts, and added enabled rule', () => {
+    expect(sig({ costMetric: 'effective' })).not.toBe(sig());
     expect(sig({ orgAccountsDigest: 'orgY' })).not.toBe(sig());
-    expect(sig({ availableColumns: ['account_id', 'service'] })).not.toBe(sig());
     expect(sig({ rules: [...rulesOnService(), { id: 'r2', name: 'x', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('region'), values: ['eu'] }] }] })).not.toBe(sig());
   });
 
@@ -80,7 +76,7 @@ describe('computeShapeSignature', () => {
   });
 
   describe('marketplace attribution', () => {
-    const bedrock = { enabled: true, rules: [{ service: 'AmazonBedrock', operations: ['InvokeModelInference', 'InvokeModelStreamingInference'] }] };
+    const bedrock = { enabled: true, rules: [{ service: 'Amazon Bedrock', operations: ['InvokeModelInference', 'InvokeModelStreamingInference'] }] };
 
     it('CHANGES when enabled (rewrites service/cost bytes)', () => {
       expect(sig({ marketplaceAttribution: bedrock })).not.toBe(sig());
@@ -92,12 +88,12 @@ describe('computeShapeSignature', () => {
     });
 
     it('ignores operation order within a rule', () => {
-      const reversed = { enabled: true, rules: [{ service: 'AmazonBedrock', operations: ['InvokeModelStreamingInference', 'InvokeModelInference'] }] };
+      const reversed = { enabled: true, rules: [{ service: 'Amazon Bedrock', operations: ['InvokeModelStreamingInference', 'InvokeModelInference'] }] };
       expect(sig({ marketplaceAttribution: bedrock })).toBe(sig({ marketplaceAttribution: reversed }));
     });
 
     it('CHANGES when the target service differs', () => {
-      const other = { enabled: true, rules: [{ service: 'AmazonSageMaker', operations: ['InvokeModelInference', 'InvokeModelStreamingInference'] }] };
+      const other = { enabled: true, rules: [{ service: 'Amazon SageMaker', operations: ['InvokeModelInference', 'InvokeModelStreamingInference'] }] };
       expect(sig({ marketplaceAttribution: bedrock })).not.toBe(sig({ marketplaceAttribution: other }));
     });
   });
@@ -132,7 +128,6 @@ describe('validateManifest', () => {
     shapeSignature: 'SIG',
     builtAt: '2026-06-23T00:00:00Z',
     grainDimensions: ['account_id', 'service'],
-    availableColumns: ['account_id', 'service'],
     partitions: {
       '2026-05': { rawEtagHash: computePartitionEtagHash(etags['2026-05']), rows: 10, bytes: 100 },
       '2026-06': { rawEtagHash: computePartitionEtagHash(etags['2026-06']), rows: 20, bytes: 200 },

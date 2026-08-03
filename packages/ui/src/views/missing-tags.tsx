@@ -26,7 +26,7 @@ function buildColumns(showRatio: boolean, dimLabel: string): readonly TableColum
     { id: 'accountName', header: 'Account', dimId: 'account', clickable: true, accessorFn: r => r.accountName },
     { id: 'resourceId', header: 'Resource', dimId: 'resource_id', clickable: true, accessorFn: r => r.resourceId, mono: true, truncate: true },
     { id: 'service', header: 'Service', dimId: 'service', clickable: true, accessorFn: r => r.service },
-    { id: 'serviceFamily', header: 'Family', dimId: 'service_family', clickable: true, accessorFn: r => r.serviceFamily },
+    { id: 'serviceCategory', header: 'Service Category', dimId: 'service_category', clickable: true, accessorFn: r => r.serviceCategory },
     {
       id: 'cost', header: 'Cost', align: 'right', mono: true,
       accessorFn: r => r.cost,
@@ -46,8 +46,8 @@ function buildColumns(showRatio: boolean, dimLabel: string): readonly TableColum
 
 const NON_RESOURCE_COLUMNS: readonly TableColumn<NonResourceCostRow>[] = [
   { id: 'service', header: 'Service', dimId: 'service', clickable: true, accessorFn: r => r.service },
-  { id: 'serviceFamily', header: 'Family', dimId: 'service_family', clickable: true, accessorFn: r => r.serviceFamily },
-  { id: 'lineItemType', header: 'Line item type', accessorFn: r => r.lineItemType },
+  { id: 'serviceCategory', header: 'Service Category', dimId: 'service_category', clickable: true, accessorFn: r => r.serviceCategory },
+  { id: 'chargeCategory', header: 'Charge Category', accessorFn: r => r.chargeCategory },
   {
     id: 'cost', header: 'Cost', align: 'right', mono: true,
     accessorFn: r => r.cost,
@@ -75,8 +75,8 @@ function ExpandedRow({ row }: Readonly<{ row: MissingTagRow }>) {
         <span className="text-text-primary truncate">{row.service}</span>
       </div>
       <div className="flex gap-1.5 py-0.5 min-w-0">
-        <span className="text-text-muted shrink-0">Family</span>
-        <span className="text-text-primary truncate">{row.serviceFamily}</span>
+        <span className="text-text-muted shrink-0">Service Category</span>
+        <span className="text-text-primary truncate">{row.serviceCategory}</span>
       </div>
       <div className="flex gap-1.5 py-0.5 min-w-0">
         <span className="text-text-muted shrink-0">Cost</span>

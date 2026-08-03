@@ -6,6 +6,7 @@ import {
   DEFAULT_LAG_DAYS,
   ConfigValidationError,
   costScopeToYaml,
+  dimensionIdSet,
   validateCostScope,
   buildSource,
   buildRuleMatchExpr,
@@ -14,7 +15,6 @@ import {
   tagDimColumn,
 } from '@costgoblin/core';
 import type {
-  CostScopeCapabilities,
   CostScopeConfig,
   CostScopeDailyRow,
   CostScopePreviewResult,
@@ -49,10 +49,10 @@ function mapSampleRow(
     accountName: toStr(r['account_name']),
     region: toStr(r['region']),
     service: toStr(r['service']),
-    serviceFamily: toStr(r['service_family']),
-    lineItemType: toStr(r['line_item_type']),
+    serviceCategory: toStr(r['service_category']),
+    chargeCategory: toStr(r['charge_category']),
     operation: toStr(r['operation']),
-    usageType: toStr(r['usage_type']),
+    skuMeter: toStr(r['sku_meter']),
     description: toStr(r['description']),
     resourceId: toStr(r['resource_id']),
     usageAmount: toNum(r['usage_amount']),
@@ -74,9 +74,7 @@ function logSettledError(label: string, result: PromiseSettledResult<unknown>): 
 // errors *every* query (exclusion clauses are threaded into all of them), so
 // catch it at save time rather than letting the whole app fail at query time.
 function assertRuleDimensionsExist(config: CostScopeConfig, dimensions: DimensionsConfig): void {
-  const knownIds = new Set<string>();
-  for (const d of dimensions.builtIn) knownIds.add(String(d.name));
-  for (const t of dimensions.tags) knownIds.add(tagDimColumn(t));
+  const knownIds = dimensionIdSet(dimensions);
   for (const rule of config.rules) {
     for (const cond of rule.conditions) {
       const id = String(cond.dimensionId);
@@ -96,7 +94,7 @@ function isEnoent(err: unknown): boolean {
 }
 
 export function registerCostScopeHandlers(app: AppContext): void {
-  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, getAvailableColumns, getQueryProviders, runQuery } = app;
+  const { ctx, getCostScope, invalidateCostScope, getQueryDimensions, getOrgAccountsPath, getQueryProviders, runQuery } = app;
 
   ipcMain.handle('cost-scope:get-config', async (): Promise<CostScopeConfig> => {
     try {
@@ -113,15 +111,16 @@ export function registerCostScopeHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('cost-scope:save-config', async (_event, raw: unknown): Promise<void> => {
-    const validated = validateCostScope(raw);
     const dimensions = await getQueryDimensions();
+    const validated = validateCostScope(raw, dimensionIdSet(dimensions));
     assertRuleDimensionsExist(validated, dimensions);
     await writeFile(ctx.costScopePath, stringify(costScopeToYaml(validated)));
     invalidateCostScope();
   });
 
   ipcMain.handle('cost-scope:preview', async (_event, payload: unknown): Promise<CostScopePreviewResult> => {
-    const config = validateCostScope(payload);
+    const dimensions = await getQueryDimensions();
+    const config = validateCostScope(payload, dimensionIdSet(dimensions));
     const enabledRules = config.rules.filter(r => r.enabled);
 
     const windowDays = 30;
@@ -155,18 +154,16 @@ export function registerCostScopeHandlers(app: AppContext): void {
       .map(p => ({
         name: p.name,
         periods: required.filter(m => p.availablePeriods?.includes(m) ?? false),
-        availableColumns: p.availableColumns,
       }))
       .filter(b => b.periods.length > 0);
     if (branches.length === 0) return zero;
 
-    const dimensions = await getQueryDimensions();
     const orgPath = await getOrgAccountsPath();
 
     const source = buildSource({
       dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath,
       providers: branches,
-      costMetric: config.costMetric, costPerspective: config.costPerspective,
+      costMetric: config.costMetric,
     });
 
     // Pre-compute each rule's positive match expression once — used to
@@ -222,7 +219,7 @@ export function registerCostScopeHandlers(app: AppContext): void {
     `.trim();
 
     // === Query 3: top-|cost| sample rows (separate because ORDER BY LIMIT) ===
-    // CAST numerics to DOUBLE inside the CTE so DECIMAL-typed CUR columns
+    // CAST numerics to DOUBLE inside the CTE so DECIMAL-typed columns
     // come back as plain numbers — bare source.cost would return a
     // DuckDBDecimalValue object and toNum would yield 0 for every row.
     // Partition-rank the rows so we always return up to SAMPLE_ROW_LIMIT
@@ -237,8 +234,8 @@ export function registerCostScopeHandlers(app: AppContext): void {
       WITH scoped AS (
         SELECT
           usage_date,
-          account_id, account_name, region, service, service_family,
-          line_item_type, operation, usage_type, description, resource_id,
+          account_id, account_name, region, service, service_category,
+          charge_category, operation, sku_meter, description, resource_id,
           CAST(usage_amount AS DOUBLE) AS usage_amount,
           CAST(cost AS DOUBLE) AS cost,
           CAST(list_cost AS DOUBLE) AS list_cost,
@@ -253,8 +250,8 @@ export function registerCostScopeHandlers(app: AppContext): void {
       )
       SELECT
         usage_date::VARCHAR AS usage_date,
-        account_id, account_name, region, service, service_family,
-        line_item_type, operation, usage_type, description, resource_id,
+        account_id, account_name, region, service, service_category,
+        charge_category, operation, sku_meter, description, resource_id,
         usage_amount, cost, list_cost, excluded${tagSelectSql === null ? '' : ',\n        ' + tagColumns.map(t => t.id).join(', ')}
       FROM ranked
       WHERE rn <= ${String(SAMPLE_ROW_LIMIT)}
@@ -328,16 +325,6 @@ export function registerCostScopeHandlers(app: AppContext): void {
       sampleRows,
       sampleTotalRowCount,
       tagColumns,
-    };
-  });
-
-  ipcMain.handle('cost-scope:get-capabilities', async (): Promise<CostScopeCapabilities> => {
-    const cols = await getAvailableColumns('daily');
-    return {
-      hasEffectiveCostColumns:
-        cols.has('reservation_effective_cost') && cols.has('savings_plan_savings_plan_effective_cost'),
-      hasNetColumns: cols.has('line_item_net_unblended_cost'),
-      hasListPriceColumn: cols.has('pricing_public_on_demand_cost'),
     };
   });
 

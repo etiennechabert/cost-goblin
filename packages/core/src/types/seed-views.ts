@@ -38,7 +38,7 @@ export const OVERVIEW_SEED_VIEW: ViewSpec = {
 
 /** One ready-made dashboard per widget type, so every widget has a default home
  *  the user can open, study, and clone. All group-bys use built-in dimensions
- *  (service / account / region / service_family) so the dashboards populate on
+ *  (service / account / region / service_category) so the dashboards populate on
  *  any dataset regardless of which tag dimensions are configured. Marked
  *  built-in (see SEED_VIEWS_CONFIG) so the editor's "Reset built-ins" restores
  *  them — that reset only re-adds seed views flagged builtIn, leaving the
@@ -92,7 +92,7 @@ const WIDGET_SHOWCASE_VIEWS: readonly Omit<ViewSpec, 'builtIn'>[] = [
       {
         widgets: [
           { id: 'topn-account', type: 'topNBar', size: 'medium', groupBy: asDimensionId('account'), topN: 12 },
-          { id: 'topn-family', type: 'topNBar', size: 'medium', groupBy: asDimensionId('service_family'), topN: 12 },
+          { id: 'topn-family', type: 'topNBar', size: 'medium', groupBy: asDimensionId('service_category'), topN: 12 },
         ],
       },
     ],
@@ -110,7 +110,7 @@ const WIDGET_SHOWCASE_VIEWS: readonly Omit<ViewSpec, 'builtIn'>[] = [
       {
         widgets: [
           { id: 'dist-service', type: 'pie', size: 'medium', groupBy: asDimensionId('service') },
-          { id: 'dist-family', type: 'pie', size: 'medium', groupBy: asDimensionId('service_family') },
+          { id: 'dist-family', type: 'pie', size: 'medium', groupBy: asDimensionId('service_category') },
         ],
       },
     ],
@@ -213,7 +213,7 @@ const WIDGET_SHOWCASE_VIEWS: readonly Omit<ViewSpec, 'builtIn'>[] = [
       },
       {
         widgets: [
-          { id: 'pv-family', type: 'priceVolume', size: 'full', groupBy: asDimensionId('service_family'), topN: 8 },
+          { id: 'pv-family', type: 'priceVolume', size: 'full', groupBy: asDimensionId('service_category'), topN: 8 },
         ],
       },
     ],

@@ -1,12 +1,12 @@
 import { ipcMain, shell } from 'electron';
 import { writeFile } from 'node:fs/promises';
 import { stringify } from 'yaml';
-import { SEED_VIEWS_CONFIG, validateViews, viewsConfigToYaml } from '@costgoblin/core';
+import { dimensionIdSet, SEED_VIEWS_CONFIG, validateViews, viewsConfigToYaml } from '@costgoblin/core';
 import type { ViewsConfig } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 
 export function registerViewsHandlers(app: AppContext): void {
-  const { ctx, getViews, invalidateViews } = app;
+  const { ctx, getViews, getQueryDimensions, invalidateViews } = app;
 
   ipcMain.handle('views:get-config', async (): Promise<ViewsConfig> => {
     try {
@@ -21,7 +21,10 @@ export function registerViewsHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('views:save-config', async (_event, raw: unknown): Promise<void> => {
-    const validated = validateViews(raw);
+    // Live dimension ids exempt current `tag_user_*`-shaped dimensions from
+    // the CUR-era renames — otherwise saving a view grouped by one would
+    // silently persist a corrupted id.
+    const validated = validateViews(raw, dimensionIdSet(await getQueryDimensions()));
     await writeFile(ctx.viewsPath, stringify(viewsConfigToYaml(validated)));
     invalidateViews();
   });

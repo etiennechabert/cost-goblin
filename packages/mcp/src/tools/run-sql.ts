@@ -133,6 +133,8 @@ export async function runSql(
 
   const dimensions = await ctx.getQueryDimensions();
   const orgPath = await ctx.getOrgAccountsPath();
+  // Mirror the dashboards: the active Cost Scope's metric backs `cost`.
+  const scopeMetric = await ctx.getCostScope().then(cs => cs.costMetric).catch(() => 'effective' as const);
 
   let dateRange: { start: string; end: string };
   if (params.dateRange !== undefined) {
@@ -163,7 +165,6 @@ export async function runSql(
       .map(pr => ({
         name: pr.name,
         periods: required.filter(m => pr.availablePeriods?.includes(m) ?? false),
-        availableColumns: pr.availableColumns,
       }))
       .filter(b => b.periods.length > 0);
     if (branches.length === 0) {
@@ -175,7 +176,7 @@ export async function runSql(
       dimensions,
       orgAccountsPath: orgPath,
       providers: branches,
-      costMetric: 'unblended',
+      costMetric: scopeMetric,
     });
     costsCte = `costs AS (SELECT * FROM ${source} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
   }

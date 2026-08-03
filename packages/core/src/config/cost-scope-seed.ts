@@ -11,13 +11,12 @@ export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
     builtIn: true,
     conditions: [
       {
-        // Match by service code, not service_family. `Support` as a
-        // product_family groups in things some users don't consider
-        // premium support (e.g. some training / API-call support lines),
-        // and isn't populated consistently across CUR revisions. The
-        // three AWSSupport* service codes are the authoritative
+        // Match by exact service code (x_ServiceCode), not ServiceName or
+        // ServiceCategory: display names vary across AWS revisions and the
+        // standardized categories group support with other management
+        // charges. The three AWSSupport* codes are the authoritative
         // premium-support line items.
-        dimensionId: asDimensionId('service'),
+        dimensionId: asDimensionId('service_code'),
         values: ['AWSSupportEnterprise', 'AWSSupportBusiness', 'AWSSupportDeveloper'],
       },
     ],
@@ -30,29 +29,7 @@ export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
     enabled: false,
     builtIn: true,
     conditions: [
-      { dimensionId: asDimensionId('line_item_type'), values: ['Tax'] },
-    ],
-  },
-  {
-    id: 'builtin:edp-discount',
-    name: 'EDP discount',
-    description:
-      'Negative line items from the AWS Enterprise Discount Program (contractual volume discount). Toggle on to view gross / pre-negotiation cost; leave off to see the effective bill after the EDP credit.',
-    enabled: false,
-    builtIn: true,
-    conditions: [
-      { dimensionId: asDimensionId('line_item_type'), values: ['EdpDiscount'] },
-    ],
-  },
-  {
-    id: 'builtin:bundled-discount',
-    name: 'Bundled discount',
-    description:
-      'Negative discount line items applied automatically by AWS bundle pricing rules (e.g. support-tier bundle credits). Like EDP, standalone — not paired with a specific usage row. Toggle on to see pre-bundle cost.',
-    enabled: false,
-    builtIn: true,
-    conditions: [
-      { dimensionId: asDimensionId('line_item_type'), values: ['BundledDiscount'] },
+      { dimensionId: asDimensionId('charge_category'), values: ['Tax'] },
     ],
   },
 ];
@@ -61,32 +38,59 @@ export const BUILTIN_EXCLUSION_RULES: readonly ExclusionRule[] = [
  *  Loaded configs may still carry them; the merge step drops them silently and
  *  may migrate other fields (see mergeBuiltInExclusionRules) to preserve the
  *  spirit of the user's prior choice. */
+/** The exact CUR-era seed conditions of surviving built-in rules
+ *  (JSON-serialized for shape equality). Persisted conditions matching one
+ *  of these are provably the untouched old default — safe to swap for the
+ *  new seed's conditions. Anything else on a built-in rule is a user edit
+ *  and is kept. Each entry may list several spellings: the raw on-disk
+ *  CUR-era form and the form after validateCostScope's dimension-id
+ *  migration (builtin:tax's migrated form equals the new seed, so only its
+ *  raw form appears; the premium-support `service` id is unrenamed, so its
+ *  two forms coincide). */
+const LEGACY_SEED_CONDITIONS: Readonly<Record<string, readonly string[]>> = {
+  'builtin:aws-premium-support': [
+    JSON.stringify([
+      { dimensionId: 'service', values: ['AWSSupportEnterprise', 'AWSSupportBusiness', 'AWSSupportDeveloper'] },
+    ]),
+  ],
+  'builtin:tax': [
+    JSON.stringify([{ dimensionId: 'line_item_type', values: ['Tax'] }]),
+  ],
+};
+
 const RETIRED_BUILTIN_RULE_IDS: ReadonlySet<string> = new Set([
   // Subsumed by the `list` cost metric — when that metric is selected, the
-  // query layer auto-filters the same line item types this rule used to.
+  // query layer auto-filters to usage rows the same way this rule used to.
   'builtin:ri-sp-purchases',
   // Removed entirely: this was a savings-sizing tool, not a coherent
   // cost-scope toggle. Belongs in a dedicated commitment-coverage view.
   'builtin:commitment-covered-usage',
+  // Retired with the FOCUS 1.2 migration: CUR's EdpDiscount/BundledDiscount
+  // line item types have no FOCUS row equivalent — negotiated discounts are
+  // netted into BilledCost/ContractedCost (with per-row detail in the
+  // x_Discounts map) rather than appearing as standalone negative rows. Use
+  // the `list` vs `contracted` metrics to see pre- vs post-negotiation cost.
+  'builtin:edp-discount',
+  'builtin:bundled-discount',
 ]);
 
 /** Shipped Marketplace re-attribution. Bedrock third-party model inference is
- *  the one AWS "service" that consistently arrives as a blank-product_servicecode
- *  Marketplace row with real cost only in unblended; Tax and RI/SP fees are the
+ *  the one AWS "service" that consistently arrives as a blank-x_ServiceCode
+ *  Marketplace row with no list price; Tax and commitment purchases are the
  *  other blank-servicecode populations and are intentionally NOT here (they're
- *  not per-service usage and the `list` metric already filters fee rows out). */
+ *  not per-service usage and the `list` metric already filters them out). */
 export const DEFAULT_MARKETPLACE_ATTRIBUTION: MarketplaceAttributionConfig = {
   enabled: true,
   rules: [
     {
-      service: 'AmazonBedrock',
+      service: 'Amazon Bedrock',
       operations: ['InvokeModelInference', 'InvokeModelStreamingInference'],
     },
   ],
 };
 
 export const DEFAULT_COST_SCOPE: CostScopeConfig = {
-  costMetric: 'unblended',
+  costMetric: 'effective',
   rules: BUILTIN_EXCLUSION_RULES,
   marketplaceAttribution: DEFAULT_MARKETPLACE_ATTRIBUTION,
 };
@@ -95,22 +99,39 @@ export const DEFAULT_COST_SCOPE: CostScopeConfig = {
  *  mergeDefaultBuiltIns for dimensions: preserve user edits on existing
  *  built-ins, add any that are missing. User rules are untouched.
  *
- *  Also drops retired built-in rules (RETIRED_BUILTIN_RULE_IDS) silently —
- *  these were superseded by the `list` cost metric. If the user had the
- *  retired `builtin:ri-sp-purchases` rule enabled, the metric is rewritten
- *  to `list` so the spirit of their choice (exclude RI/SP fee rows) is
- *  preserved with the new coherent model. */
+ *  Also drops retired built-in rules (RETIRED_BUILTIN_RULE_IDS) silently.
+ *  If the user had the retired `builtin:ri-sp-purchases` rule enabled, the
+ *  metric is rewritten to `list` so the spirit of their choice (exclude
+ *  commitment purchase rows) is preserved with the new coherent model.
+ *
+ *  Built-in rules' CONDITIONS are repaired when they still carry the exact
+ *  CUR-era seed shape: the FOCUS migration moved premium support from the
+ *  `service` dim (now ServiceName display names, where the AWSSupport* codes
+ *  match nothing) to `service_code`, so the untouched old shape would
+ *  silently no-op every query the rule should filter. The repair matches
+ *  the legacy shape EXACTLY — user-edited conditions differ from it and are
+ *  preserved (the Cost Scope UI supports editing built-in conditions and
+ *  offers its own Reset-to-default affordance). */
 export function mergeBuiltInExclusionRules(loaded: CostScopeConfig): CostScopeConfig {
   const retiredRiSpPurchasesEnabled = loaded.rules.some(
     r => r.id === 'builtin:ri-sp-purchases' && r.enabled,
   );
 
-  const survivingRules = loaded.rules.filter(r => !RETIRED_BUILTIN_RULE_IDS.has(r.id));
+  const seedById = new Map(BUILTIN_EXCLUSION_RULES.map(b => [b.id, b]));
+  const surviving = loaded.rules.filter(r => !RETIRED_BUILTIN_RULE_IDS.has(r.id));
+  const survivingRules = surviving.map(r => {
+    const seed = seedById.get(r.id);
+    if (seed === undefined) return r;
+    const legacyShapes = LEGACY_SEED_CONDITIONS[r.id];
+    if (legacyShapes === undefined || !legacyShapes.includes(JSON.stringify(r.conditions))) return r;
+    return { ...r, conditions: seed.conditions };
+  });
+  const refreshedAny = survivingRules.some((r, i) => r !== surviving[i]);
   const survivingIds = new Set(survivingRules.map(r => r.id));
   const missingBuiltins = BUILTIN_EXCLUSION_RULES.filter(b => !survivingIds.has(b.id));
 
-  const droppedAny = survivingRules.length !== loaded.rules.length;
-  if (!droppedAny && missingBuiltins.length === 0 && !retiredRiSpPurchasesEnabled) {
+  const droppedAny = surviving.length !== loaded.rules.length;
+  if (!droppedAny && missingBuiltins.length === 0 && !retiredRiSpPurchasesEnabled && !refreshedAny) {
     return loaded;
   }
 

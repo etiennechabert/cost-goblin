@@ -68,15 +68,21 @@ export async function listLocalMonths(dataDir: string, provider: ProviderName, t
   }
 }
 
+// AWS Data Exports partition the delivery by billing period. FOCUS 1.2
+// exports use lowercase `billing_period=YYYY-MM`. The match is deliberately
+// case-SENSITIVE: CUR 2.0 used uppercase `BILLING_PERIOD=`, and a bucket
+// still holding a leftover CUR subtree next to the FOCUS export must not
+// have both grouped into one period (that would sync mixed-schema files
+// into the same local dir). CUR-era keys are simply invisible.
 export function extractPeriod(key: string): string {
-  const billingMatch = /BILLING_PERIOD=(\d{4}-\d{2})/.exec(key);
+  const billingMatch = /billing_period=(\d{4}-\d{2})/.exec(key);
   if (billingMatch?.[1] !== undefined) return billingMatch[1];
   const dateMatch = /date=(\d{4}-\d{2})-\d{2}/.exec(key);
   return dateMatch?.[1] ?? 'unknown';
 }
 
 export function extractPeriodPrefix(key: string): string {
-  const billingMatch = /^(.*BILLING_PERIOD=\d{4}-\d{2}\/)/.exec(key);
+  const billingMatch = /^(.*billing_period=\d{4}-\d{2}\/)/.exec(key);
   if (billingMatch?.[1] !== undefined) return billingMatch[1];
   const dateMatch = /^(.*date=\d{4}-\d{2}-\d{2}\/)/.exec(key);
   return dateMatch?.[1] ?? '';

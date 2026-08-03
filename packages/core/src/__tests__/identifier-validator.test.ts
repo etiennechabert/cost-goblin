@@ -41,11 +41,12 @@ const testDimensions: DimensionsConfig = {
 };
 
 describe('validateColumnName', () => {
-  it('accepts standard CUR columns', () => {
+  it('accepts standard canonical and raw FOCUS columns', () => {
     expect(() => { validateColumnName('usage_date', testDimensions); }).not.toThrow();
     expect(() => { validateColumnName('cost', testDimensions); }).not.toThrow();
     expect(() => { validateColumnName('account_id', testDimensions); }).not.toThrow();
-    expect(() => { validateColumnName('line_item_usage_account_id', testDimensions); }).not.toThrow();
+    expect(() => { validateColumnName('SubAccountId', testDimensions); }).not.toThrow();
+    expect(() => { validateColumnName('ChargeCategory', testDimensions); }).not.toThrow();
   });
 
   it('accepts built-in dimension fields', () => {
@@ -73,6 +74,13 @@ describe('validateColumnName', () => {
   it('rejects unknown column names', () => {
     expect(() => { validateColumnName('malicious_column', testDimensions); })
       .toThrow(SecurityError);
+    // Legacy CUR-era columns removed by the FOCUS 1.2 migration
+    expect(() => { validateColumnName('line_item_usage_account_id', testDimensions); })
+      .toThrow(SecurityError);
+    expect(() => { validateColumnName('line_item_type', testDimensions); })
+      .toThrow(SecurityError);
+    expect(() => { validateColumnName('service_family', testDimensions); })
+      .toThrow(SecurityError);
     expect(() => { validateColumnName('DROP TABLE users', testDimensions); })
       .toThrow(SecurityError);
     expect(() => { validateColumnName('1=1; DROP TABLE--', testDimensions); })
@@ -87,7 +95,7 @@ describe('validateColumnName', () => {
 
 describe('isSafeColumnIdentifier', () => {
   it('accepts bare snake_case column identifiers', () => {
-    for (const col of ['account_id', 'region', 'service_family', 'line_item_type', 'product_service_name', '_internal', 'col123']) {
+    for (const col of ['account_id', 'region', 'service_category', 'charge_category', 'commitment_status', '_internal', 'col123']) {
       expect(isSafeColumnIdentifier(col)).toBe(true);
     }
   });

@@ -18,7 +18,7 @@ function configWithProfile(profile: string): MockCostApi['getConfig'] {
       credentialsProfile: profile,
       sync: { daily: { bucket: asBucketPath('costgoblin-cur-bucket/daily'), retentionDays: 90 }, intervalMinutes: 60 },
     }],
-    defaults: { periodDays: 30, costMetric: 'unblended', lagDays: 2 },
+    defaults: { periodDays: 30, costMetric: 'effective', lagDays: 2 },
   });
 }
 
@@ -58,7 +58,7 @@ describe('ShareConfigDialog', () => {
     expect(exportSpy).toHaveBeenCalledOnce();
   });
 
-  it('prefills the publish destination from the daily CUR bucket root', async () => {
+  it('prefills the publish destination from the daily sync bucket root', async () => {
     renderWithApi(new MockCostApi(), <ShareConfigDialog onClose={() => undefined} />);
     const input = await screen.findByLabelText('Destination');
     await waitFor(() => {
@@ -388,7 +388,8 @@ describe('ImportConfigDialog — pull from a teammate', () => {
 
     await user.type(screen.getByLabelText('Sharing key from a teammate'), 'CGSHARE1-teammate');
     await user.click(screen.getByText('Continue'));
-    await waitFor(() => { expect(screen.getByText('Daily CUR')).toBeDefined(); });
+    // Preview resolves to the tier picker (asserted via the tier we toggle next).
+    await waitFor(() => { expect(screen.getByText('Cost optimization')).toBeDefined(); });
     // Drop the cost-optimization tier, keep the rest, and pull.
     await user.click(screen.getByText('Cost optimization'));
     await user.click(screen.getByText('Pull'));

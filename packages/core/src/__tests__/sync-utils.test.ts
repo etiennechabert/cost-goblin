@@ -12,8 +12,12 @@ import type { ManifestFileEntry } from '../sync/manifest.js';
 const file = (key: string, hash = 'h', size = 1): ManifestFileEntry => ({ key, contentHash: hash, size });
 
 describe('extractPeriod', () => {
-  it('extracts BILLING_PERIOD from CUR keys', () => {
-    expect(extractPeriod('cur/data/BILLING_PERIOD=2026-03/file.parquet')).toBe('2026-03');
+  it('extracts billing_period from FOCUS export keys', () => {
+    expect(extractPeriod('focus/daily/data/billing_period=2026-03/daily-00001.snappy.parquet')).toBe('2026-03');
+  });
+
+  it('ignores CUR-era uppercase BILLING_PERIOD keys (leftover CUR data must stay invisible)', () => {
+    expect(extractPeriod('cur/data/BILLING_PERIOD=2026-03/file.parquet')).toBe('unknown');
   });
 
   it('extracts year-month from date= keys (cost optimization)', () => {
@@ -26,9 +30,13 @@ describe('extractPeriod', () => {
 });
 
 describe('extractPeriodPrefix', () => {
-  it('extracts the path up to and including BILLING_PERIOD=', () => {
-    expect(extractPeriodPrefix('cur/data/BILLING_PERIOD=2026-03/file.parquet'))
-      .toBe('cur/data/BILLING_PERIOD=2026-03/');
+  it('extracts the path up to and including billing_period=', () => {
+    expect(extractPeriodPrefix('focus/daily/data/billing_period=2026-03/daily-00001.snappy.parquet'))
+      .toBe('focus/daily/data/billing_period=2026-03/');
+  });
+
+  it('returns empty string for CUR-era uppercase BILLING_PERIOD keys', () => {
+    expect(extractPeriodPrefix('cur/data/BILLING_PERIOD=2026-03/file.parquet')).toBe('');
   });
 
   it('extracts the path up to and including date= for cost optimization', () => {
@@ -47,16 +55,16 @@ describe('extractDate', () => {
   });
 
   it('returns undefined when no date marker found', () => {
-    expect(extractDate('cur/BILLING_PERIOD=2026-03/file.parquet')).toBeUndefined();
+    expect(extractDate('focus/daily/data/billing_period=2026-03/file.parquet')).toBeUndefined();
   });
 });
 
 describe('groupByPeriod', () => {
   it('groups files by their billing period', () => {
     const files = [
-      file('cur/BILLING_PERIOD=2026-01/a.parquet'),
-      file('cur/BILLING_PERIOD=2026-01/b.parquet'),
-      file('cur/BILLING_PERIOD=2026-02/c.parquet'),
+      file('focus/daily/data/billing_period=2026-01/a.parquet'),
+      file('focus/daily/data/billing_period=2026-01/b.parquet'),
+      file('focus/daily/data/billing_period=2026-02/c.parquet'),
     ];
     const groups = groupByPeriod(files);
     expect(groups.size).toBe(2);

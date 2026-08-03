@@ -650,15 +650,15 @@ test.describe('Performance Benchmarks', () => {
     });
 
     test('switch metric', async () => {
-      const amortizedRadio = page.locator('input[type="radio"][value="amortized"]');
-      if (!await amortizedRadio.isVisible().catch(() => false)) return;
-      await measure(page, 'Cost Scope → switch to amortized', async () => {
-        await amortizedRadio.click();
+      const billedRadio = page.locator('input[type="radio"][value="billed"]');
+      if (!await billedRadio.isVisible().catch(() => false)) return;
+      await measure(page, 'Cost Scope → switch to billed', async () => {
+        await billedRadio.click();
         await waitForCostScopePreview(page);
       });
       // revert
-      const unblendedRadio = page.locator('input[type="radio"][value="unblended"]');
-      await unblendedRadio.click();
+      const effectiveRadio = page.locator('input[type="radio"][value="effective"]');
+      await effectiveRadio.click();
       const cancelBtn2 = page.getByRole('button', { name: 'Cancel' });
       if (await cancelBtn2.isVisible().catch(() => false)) {
         await cancelBtn2.click();

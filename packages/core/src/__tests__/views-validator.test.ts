@@ -40,6 +40,50 @@ describe('validateViews', () => {
     expect(v?.rows).toHaveLength(2);
   });
 
+  it('migrates CUR-era dimension ids in persisted views (groupBy, drillTo, enabledColumns)', () => {
+    const cfg = validateViews({
+      views: [
+        {
+          id: 'legacy',
+          name: 'Legacy',
+          rows: [
+            {
+              widgets: [
+                { id: 'w1', type: 'pie', size: 'medium', groupBy: 'service_family' },
+                { id: 'w2', type: 'topNBar', size: 'medium', groupBy: 'line_item_type', topN: 5 },
+                { id: 'w3', type: 'treemap', size: 'medium', groupBy: 'usage_type', drillTo: 'service_family' },
+                { id: 'w4', type: 'table', size: 'full', enabledColumns: ['cost', 'usage_type', 'line_item_type'] },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const widgets = cfg.views[0]?.rows[0]?.widgets ?? [];
+    expect(widgets[0]).toMatchObject({ groupBy: 'service_category' });
+    expect(widgets[1]).toMatchObject({ groupBy: 'charge_category' });
+    expect(widgets[2]).toMatchObject({ groupBy: 'sku_meter', drillTo: 'service_category' });
+    expect(widgets[3]).toMatchObject({ enabledColumns: ['cost', 'sku_meter', 'charge_category'] });
+  });
+
+  it('migrates CUR-era tag_user_* dimension ids (the validator strips user_ from tagNames)', () => {
+    const cfg = validateViews({
+      views: [{
+        id: 'legacy-tags',
+        name: 'Legacy tags',
+        rows: [{
+          widgets: [
+            { id: 'w1', type: 'pie', size: 'medium', groupBy: 'tag_user_team' },
+            { id: 'w2', type: 'table', size: 'full', enabledColumns: ['cost', 'tag_user_environment'] },
+          ],
+        }],
+      }],
+    });
+    const widgets = cfg.views[0]?.rows[0]?.widgets ?? [];
+    expect(widgets[0]).toMatchObject({ groupBy: 'tag_team' });
+    expect(widgets[1]).toMatchObject({ enabledColumns: ['cost', 'tag_environment'] });
+  });
+
   it('rejects an unknown widget type', () => {
     expect(() => validateViews({
       views: [{
@@ -116,5 +160,31 @@ describe('validateViews', () => {
         ] }],
       }],
     })).toThrow(ConfigValidationError);
+  });
+});
+
+describe('validateViews: live dimension ids gate the CUR-era renames', () => {
+  it('preserves live tag_user_* ids in groupBy, drillTo and enabledColumns', () => {
+    // A FOCUS-era tag key like `user:CostCenter` sanitizes to the dimension
+    // id `tag_user_CostCenter` — the rename must not corrupt it on save.
+    const live = new Set(['tag_user_CostCenter', 'service']);
+    const cfg = validateViews({
+      views: [{
+        id: 'live-tags',
+        name: 'Live tags',
+        rows: [{
+          widgets: [
+            { id: 'w1', type: 'pie', size: 'medium', groupBy: 'tag_user_CostCenter' },
+            { id: 'w2', type: 'treemap', size: 'medium', groupBy: 'service', drillTo: 'tag_user_CostCenter' },
+            { id: 'w3', type: 'table', size: 'full', enabledColumns: ['cost', 'tag_user_CostCenter', 'tag_user_team'] },
+          ],
+        }],
+      }],
+    }, live);
+    const widgets = cfg.views[0]?.rows[0]?.widgets ?? [];
+    expect(widgets[0]).toMatchObject({ groupBy: 'tag_user_CostCenter' });
+    expect(widgets[1]).toMatchObject({ drillTo: 'tag_user_CostCenter' });
+    // tag_user_team is NOT live → still treated as a CUR-era leftover.
+    expect(widgets[2]).toMatchObject({ enabledColumns: ['cost', 'tag_user_CostCenter', 'tag_team'] });
   });
 });

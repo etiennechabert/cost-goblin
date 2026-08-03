@@ -20,11 +20,12 @@ export function ListMetricBanner(): React.JSX.Element | null {
     <div className="flex items-start gap-3 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
       <span aria-hidden="true" className="mt-0.5 text-warning">⚠</span>
       <div className="flex flex-col gap-0.5">
-        <span className="font-medium text-text-primary">Showing on-demand list price &mdash; not money spent</span>
+        <span className="font-medium text-text-primary">Showing list price &mdash; not money spent</span>
         <span className="text-text-secondary">
-          The active cost metric is <strong className="text-text-primary">On-demand list price</strong>.
-          Numbers reflect what usage would have cost at AWS retail rates with no RI/SP discounts.
-          Change in Cost Scope &rarr; Cost metric to see actual billed cost.
+          The active cost metric is <strong className="text-text-primary">List price</strong>.
+          Numbers reflect the hypothetical on-demand list price of usage rows &mdash; before negotiated
+          and commitment discounts &mdash; and non-usage charges are excluded.
+          Change in Cost Scope &rarr; Cost metric to see actual spend.
         </span>
       </div>
     </div>
