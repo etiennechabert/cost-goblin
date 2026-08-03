@@ -91,16 +91,21 @@ describe('migrateProviderLayoutSync', () => {
     expect(existsSync(join(dataDir, 'sync-etags.json'))).toBe(false);
   });
 
-  it('never touches the legacy dir when the provider dir also exists', () => {
+  it('touches NOTHING when both the legacy and the provider dir exist — including the root sidecars', () => {
     writeFileSync(configPath, CONFIG_WITH('aws-main'));
     seedLegacyTree();
     mkdirSync(join(dataDir, 'aws-main', 'raw'), { recursive: true });
     writeFileSync(join(dataDir, 'aws-main', 'raw', 'existing.txt'), 'keep');
 
-    migrateProviderLayoutSync(dataDir, configPath);
+    expect(migrateProviderLayoutSync(dataDir, configPath)).toBe(false);
 
     expect(existsSync(join(dataDir, 'aws', 'raw', 'daily-2026-01', 'data.parquet'))).toBe(true);
     expect(readFileSync(join(dataDir, 'aws-main', 'raw', 'existing.txt'), 'utf-8')).toBe('keep');
+    // The root sidecars describe the LEGACY tree — moving them under the
+    // provider dir would misattribute its sync metadata.
+    expect(existsSync(join(dataDir, 'sync-etags.json'))).toBe(true);
+    expect(existsSync(join(dataDir, 'sync-timestamps.json'))).toBe(true);
+    expect(existsSync(join(dataDir, 'aws-main', 'meta'))).toBe(false);
   });
 
   it('prefers an existing meta sidecar over the stale root copy', () => {

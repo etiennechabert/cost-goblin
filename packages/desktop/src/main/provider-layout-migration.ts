@@ -68,14 +68,18 @@ export function migrateProviderLayoutSync(dataDir: string, configPath: string): 
 
   if (name !== 'aws' && existsSync(legacyRoot)) {
     if (existsSync(providerRoot)) {
+      // Ambiguous: the root sidecars describe the LEGACY tree, so moving
+      // them under the provider dir would misattribute its sync metadata
+      // (skipped downloads for the provider, lost history for the legacy
+      // data). Touch nothing at all and leave the resolution to the user.
       logger.warn(
-        `provider-layout migration: both ${legacyRoot} and ${providerRoot} exist — leaving the legacy dir untouched`,
+        `provider-layout migration: both ${legacyRoot} and ${providerRoot} exist — leaving everything untouched`,
       );
-    } else {
-      renameSync(legacyRoot, providerRoot);
-      logger.info(`provider-layout migration: renamed data/aws → data/${name}`);
-      migrated = true;
+      return migrated;
     }
+    renameSync(legacyRoot, providerRoot);
+    logger.info(`provider-layout migration: renamed data/aws → data/${name}`);
+    migrated = true;
   }
 
   const metaDir = join(providerRoot, 'meta');
