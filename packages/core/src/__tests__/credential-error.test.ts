@@ -1,5 +1,31 @@
 import { describe, it, expect } from 'vitest';
 import { isCredentialError, isS3SyncDownloadFailure } from '../sync/s3-client.js';
+import { isGcloudDownloadFailure, isGcpCredentialError } from '../sync/gcs-client.js';
+
+/** Every AWS message the suite asserts on, reused as cross-negatives for the
+ *  GCP classifiers (and vice versa). The two provider paths share one error
+ *  channel, so a message that classifies as both would send the user to the
+ *  wrong sign-in command. */
+const AWS_CREDENTIAL_MESSAGES = [
+  'Token is expired',
+  'The SSO session associated with this profile has expired',
+  'Could not load credentials from any providers',
+  'AWS credentials expired for profile "prod". Run: aws sso login --profile prod',
+  'aws s3 sync failed (exit 1): Error loading SSO Token: Token for solaris does not exist',
+  'aws s3 sync failed (exit 1): Token has expired and refresh failed',
+  'aws s3 sync failed (exit 255): An error occurred (ExpiredToken) when calling GetObject',
+  'aws s3 sync failed (exit 1): InvalidGrantException',
+  'aws s3 sync failed (exit 1): Unable to locate credentials',
+];
+
+const GCP_CREDENTIAL_MESSAGES = [
+  'Could not load the default credentials. Browse to https://cloud.google.com/docs/authentication/getting-started',
+  'Could not refresh access token: invalid_grant',
+  'GCP credentials are missing or expired. Run: gcloud auth application-default login',
+  'gcloud storage rsync failed (exit 1): Your credentials are invalid. Please run $ gcloud auth login',
+  'Token has been expired or revoked.',
+  'Reauthentication failed. cannot prompt during non-interactive execution.',
+];
 
 describe('isCredentialError', () => {
   it('detects credential / token provider errors by name', () => {
@@ -39,6 +65,57 @@ describe('isCredentialError', () => {
     expect(isCredentialError('a string')).toBe(false);
     expect(isCredentialError(null)).toBe(false);
     expect(isCredentialError(undefined)).toBe(false);
+  });
+
+  it('does not claim GCP credential failures', () => {
+    // Before #517 a bare `msg.includes('credentials')` matched Google's
+    // "Could not load the default credentials", so every GCP auth failure was
+    // rewritten into "run aws sso login --profile undefined".
+    for (const msg of GCP_CREDENTIAL_MESSAGES) {
+      expect(isCredentialError(new Error(msg)), msg).toBe(false);
+    }
+  });
+});
+
+describe('isGcpCredentialError', () => {
+  it('detects google-auth-library and gcloud CLI credential failures', () => {
+    for (const msg of GCP_CREDENTIAL_MESSAGES) {
+      expect(isGcpCredentialError(new Error(msg)), msg).toBe(true);
+    }
+  });
+
+  it('does not claim AWS credential failures', () => {
+    for (const msg of AWS_CREDENTIAL_MESSAGES) {
+      expect(isGcpCredentialError(new Error(msg)), msg).toBe(false);
+    }
+  });
+
+  it('does not flag permission errors, unrelated errors, or non-errors', () => {
+    // A 403 from an authenticated principal is an IAM grant the user fixes in
+    // the console — re-authenticating would not help, so it must not be
+    // classified as a credential error.
+    expect(isGcpCredentialError(new Error('storage.objects.list access to the Google Cloud Storage object is denied (403)'))).toBe(false);
+    expect(isGcpCredentialError(new Error('NetworkError: request timed out'))).toBe(false);
+    expect(isGcpCredentialError('a string')).toBe(false);
+    expect(isGcpCredentialError(null)).toBe(false);
+    expect(isGcpCredentialError(undefined)).toBe(false);
+  });
+});
+
+describe('isGcloudDownloadFailure', () => {
+  it('detects opaque gcloud retry / connection download failures', () => {
+    expect(isGcloudDownloadFailure(new Error('gcloud storage rsync failed (exit 1): Max retries exceeded'))).toBe(true);
+    expect(isGcloudDownloadFailure(new Error('gcloud storage rsync failed (exit 1): Connection reset by peer'))).toBe(true);
+    expect(isGcloudDownloadFailure(new Error('gcloud storage rsync failed (exit 1): ServiceUnavailable'))).toBe(true);
+  });
+
+  it('is scoped to gcloud storage rsync failures only', () => {
+    expect(isGcloudDownloadFailure(new Error('Max retries exceeded'))).toBe(false);
+    expect(isGcloudDownloadFailure(new Error('gcloud storage rsync failed (exit 1): 403 does not have storage.objects.list access'))).toBe(false);
+    // The AWS sibling's messages never cross over.
+    expect(isGcloudDownloadFailure(new Error('aws s3 sync failed (exit 1): download failed: s3://b/k Max Retries Exceeded'))).toBe(false);
+    expect(isGcloudDownloadFailure('a string')).toBe(false);
+    expect(isGcloudDownloadFailure(null)).toBe(false);
   });
 });
 

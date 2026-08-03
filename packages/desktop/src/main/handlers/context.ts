@@ -29,7 +29,10 @@ import {
   listLocalMonths,
   logger,
   isStringRecord,
+  GCLOUD_ADC_LOGIN_COMMAND,
   isCredentialError,
+  isGcloudDownloadFailure,
+  isGcpCredentialError,
   isS3SyncDownloadFailure,
 } from '@costgoblin/core';
 import { buildAccountReverseMap } from './query-utils.js';
@@ -39,6 +42,7 @@ import type {
   CostScopeConfig,
   DimensionsConfig,
   OrgNode,
+  ProviderAuth,
   ProviderName,
   ProviderSourceSpec,
   RegionEnrichment,
@@ -770,7 +774,28 @@ export async function prefsPath(stateDir: string, name: string): Promise<string>
 // for the handlers that already import it from this module.
 export { isCredentialError };
 
-export function toUserFriendlyError(err: unknown, profile: string): Error {
+/** Rewrite a raw sync/listing failure into a message the UI can act on.
+ *
+ *  Both provider arms produce a message ending in a `Run: <command>` clause —
+ *  `error-boundary.tsx` splits on that literal separator to render the
+ *  command — and each carries a provider-identifying marker the toolbar
+ *  sniffs to decide which sign-in button to offer (`AWS credentials` /
+ *  `GCP credentials`). Neither wording may drift without updating those
+ *  sniffs.
+ *
+ *  Anything that isn't a credential or session failure is returned unchanged:
+ *  an IAM permission error must not be dressed up as "log in again". */
+export function toUserFriendlyError(err: unknown, auth: ProviderAuth): Error {
+  if (auth.kind === 'gcp') {
+    if (isGcpCredentialError(err)) {
+      return new Error(`GCP credentials are missing or expired. Run: ${GCLOUD_ADC_LOGIN_COMMAND}`);
+    }
+    if (isGcloudDownloadFailure(err)) {
+      return new Error(`Download from Cloud Storage failed — your GCP session may have expired. Run: ${GCLOUD_ADC_LOGIN_COMMAND} and retry. If it persists, check your network/VPN connection.`);
+    }
+    return err instanceof Error ? err : new Error(String(err));
+  }
+  const profile = auth.profile;
   if (isCredentialError(err)) {
     return new Error(`AWS credentials expired for profile "${profile}". Run: aws sso login --profile ${profile}`);
   }
@@ -778,4 +803,11 @@ export function toUserFriendlyError(err: unknown, profile: string): Error {
     return new Error(`Download from S3 failed — your AWS session may have expired. Run: aws sso login --profile ${profile} and retry. If it persists, check your network/VPN connection.`);
   }
   return err instanceof Error ? err : new Error(String(err));
+}
+
+/** Whether an error from either provider indicates credentials the user must
+ *  refresh. Used where the arm isn't known up front (the auto-sync
+ *  scheduler's shared catch). */
+export function isAnyCredentialError(err: unknown): boolean {
+  return isCredentialError(err) || isGcpCredentialError(err);
 }

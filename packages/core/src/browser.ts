@@ -12,6 +12,7 @@ export { QUERY_CANCELLED_MESSAGE } from './query/cancellation.js';
 export { validateViews } from './config/views-validator.js';
 export { widgetToYaml, viewToYaml, viewsConfigToYaml } from './config/views-serialize.js';
 export { ConfigValidationError } from './config/validator.js';
+export { AWS_SSO_LOGIN_COMMAND_PREFIX, GCLOUD_ADC_LOGIN_COMMAND } from './config/credential-commands.js';
 export { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from './config/sharing-location.js';
 export { DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, BUILTIN_EXCLUSION_RULES } from './config/cost-scope-seed.js';
 export {

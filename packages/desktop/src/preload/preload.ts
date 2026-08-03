@@ -182,6 +182,9 @@ const api: CostApi = {
   ssoLogin(profile: string): Promise<void> {
     return invoke<undefined>('data:sso-login', profile).then(() => undefined);
   },
+  gcloudLogin(): Promise<void> {
+    return invoke<undefined>('data:gcloud-login').then(() => undefined);
+  },
   getAccountMapping(): Promise<AccountMappingStatus> {
     return invoke<AccountMappingStatus>('data:account-mapping');
   },

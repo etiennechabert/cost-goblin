@@ -24,6 +24,14 @@ function providerB(): Record<string, unknown> {
   };
 }
 
+function providerGcp(): Record<string, unknown> {
+  return {
+    name: 'gcp-main',
+    type: 'gcp',
+    sync: { daily: { bucket: 'gs://billing-export/focus/', retentionDays: 365 }, intervalMinutes: 60 },
+  };
+}
+
 function providers(config: Record<string, unknown>): unknown[] {
   const value = config['providers'];
   if (!Array.isArray(value)) throw new Error('expected providers array');
@@ -218,5 +226,71 @@ describe('swapProviderCredentialsProfile', () => {
 
   it('throws when the targeted entry is not an object', () => {
     expect(() => swapProviderCredentialsProfile({ providers: ['bogus'] }, 'p')).toThrow('Provider entry is not an object');
+  });
+
+  it('refuses to stamp an AWS profile onto a gcp provider', () => {
+    expect(() => swapProviderCredentialsProfile({ providers: [providerGcp()] }, 'p', 'gcp-main'))
+      .toThrow(/GCP provider/);
+    // Also when it is the implicit first-provider target.
+    expect(() => swapProviderCredentialsProfile({ providers: [providerGcp()] }, 'p'))
+      .toThrow(/GCP provider/);
+  });
+});
+
+describe('upsertWizardProvider — gcp arm', () => {
+  it('writes a gcp entry with no credentialsProfile and no non-daily tiers', () => {
+    const result = upsertWizardProvider({}, {
+      providerName: 'gcp-main',
+      type: 'gcp',
+      profile: '',
+      dailyBucket: 'gs://billing-export/focus/',
+      retentionDays: 365,
+      // Supplied by the shared wizard payload but meaningless for GCP — they
+      // must not reach the file.
+      hourlyBucket: 'gs://billing-export/hourly/',
+      costOptBucket: 'gs://billing-export/cost-opt/',
+    });
+    expect(providers(result)[0]).toEqual({
+      name: 'gcp-main',
+      type: 'gcp',
+      sync: { intervalMinutes: 60, daily: { bucket: 'gs://billing-export/focus/', retentionDays: 365 } },
+    });
+  });
+
+  it('keeps an explicit key file and omits it when blank', () => {
+    const withKey = upsertWizardProvider({}, {
+      providerName: 'gcp-main', type: 'gcp', profile: '',
+      dailyBucket: 'gs://b/focus', keyFile: '/home/me/sa.json',
+    });
+    expect(providers(withKey)[0]).toMatchObject({ keyFile: '/home/me/sa.json' });
+
+    const blank = upsertWizardProvider({}, {
+      providerName: 'gcp-main', type: 'gcp', profile: '',
+      dailyBucket: 'gs://b/focus', keyFile: '',
+    });
+    const entry = providers(blank)[0];
+    expect(entry).not.toHaveProperty('keyFile');
+  });
+
+  it('drops a stale hourly block when an aws entry is re-run as gcp under the same name', () => {
+    // Inheriting the previous sync block (correct for aws) would write an
+    // `hourly:` key that validateGcpSync rejects — the config would then fail
+    // to load at all on the next launch.
+    const result = upsertWizardProvider({ providers: [providerA()] }, {
+      providerName: 'aws-main', type: 'gcp', profile: '',
+      dailyBucket: 'gs://b/focus',
+    });
+    expect(providers(result)[0]).toEqual({
+      name: 'aws-main',
+      type: 'gcp',
+      sync: { intervalMinutes: 60, daily: { bucket: 'gs://b/focus', retentionDays: 365 } },
+    });
+  });
+
+  it('still writes an aws entry when type is omitted', () => {
+    const result = upsertWizardProvider({}, {
+      providerName: 'aws-main', profile: 'main-profile', dailyBucket: 's3://b/daily',
+    });
+    expect(providers(result)[0]).toMatchObject({ type: 'aws', credentialsProfile: 'main-profile' });
   });
 });

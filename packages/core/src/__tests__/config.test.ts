@@ -2,8 +2,22 @@ import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
 import { loadConfig, loadDimensions, loadOrgTree, ConfigValidationError } from '../config/index.js';
 import { validateConfig, validateDimensions, validateOrgTree } from '../config/validator.js';
+import type { AwsProviderConfig, GcpProviderConfig, ProviderConfig } from '../types/config.js';
 
 const fixturesDir = join(import.meta.dirname, '..', '__fixtures__', 'config');
+
+/** Narrow a validated provider to the `aws` arm — `credentialsProfile` only
+ *  exists there, so every assertion on it goes through this. Throws (failing
+ *  the test loudly) when the arm is wrong. */
+function awsArm(p: ProviderConfig | undefined): AwsProviderConfig {
+  if (p?.type !== 'aws') throw new Error(`expected an 'aws' provider, got ${String(p?.type)}`);
+  return p;
+}
+
+function gcpArm(p: ProviderConfig | undefined): GcpProviderConfig {
+  if (p?.type !== 'gcp') throw new Error(`expected a 'gcp' provider, got ${String(p?.type)}`);
+  return p;
+}
 
 describe('loadConfig', () => {
   it('loads and validates costgoblin.yaml', async () => {
@@ -11,7 +25,7 @@ describe('loadConfig', () => {
     expect(config.providers).toHaveLength(1);
     expect(config.providers[0]?.type).toBe('aws');
     expect(config.providers[0]?.name).toBe('aws-main');
-    expect(config.providers[0]?.credentialsProfile).toBe('test-profile');
+    expect(awsArm(config.providers[0]).credentialsProfile).toBe('test-profile');
     expect(config.providers[0]?.sync.daily.retentionDays).toBe(365);
     expect(config.providers[0]?.sync.hourly?.retentionDays).toBe(30);
     expect(config.defaults.periodDays).toBe(30);
@@ -74,7 +88,7 @@ describe('validateConfig', () => {
       }],
       defaults: { periodDays: 30, costMetric: 'unblended_cost', lagDays: 1 },
     });
-    expect(config.providers[0]?.credentialsProfile).toBe('billing-a');
+    expect(awsArm(config.providers[0]).credentialsProfile).toBe('billing-a');
   });
 
   it('accepts the legacy nested credentials.profile shape and migrates it', () => {
@@ -85,7 +99,7 @@ describe('validateConfig', () => {
       }],
       defaults: { periodDays: 30, costMetric: 'unblended_cost', lagDays: 1 },
     });
-    expect(config.providers[0]?.credentialsProfile).toBe('legacy-profile');
+    expect(awsArm(config.providers[0]).credentialsProfile).toBe('legacy-profile');
   });
 
   it('rejects a provider name that is not filesystem/SQL-safe', () => {
@@ -135,6 +149,91 @@ describe('validateConfig', () => {
     expect(() => validateConfig(withBucket('s3://my-cur-bucket/daily/'))).not.toThrow();
     expect(() => validateConfig(withBucket('my-cur-bucket/daily'))).not.toThrow();
     expect(() => validateConfig(withBucket('s3://my-bucket/cur/BILLING_PERIOD=2026-06/'))).not.toThrow();
+  });
+});
+
+describe('validateConfig — gcp provider arm', () => {
+  const gcp = (overrides: Record<string, unknown> = {}): unknown => ({
+    providers: [{
+      name: 'gcp-main',
+      type: 'gcp',
+      sync: { daily: { bucket: 'gs://billing-export/focus', retentionDays: 365 }, intervalMinutes: 60 },
+      ...overrides,
+    }],
+    defaults: { periodDays: 30, costMetric: 'effective', lagDays: 1 },
+  });
+
+  it('accepts a minimal gcp provider and defaults to Application Default Credentials', () => {
+    const provider = gcpArm(validateConfig(gcp()).providers[0]);
+    expect(provider.type).toBe('gcp');
+    expect(String(provider.sync.daily.bucket)).toBe('gs://billing-export/focus');
+    expect(provider.sync.daily.retentionDays).toBe(365);
+    expect(provider.sync.intervalMinutes).toBe(60);
+    // Absent rather than an explicit undefined value — the key must not be
+    // written back to YAML on a round-trip.
+    expect('keyFile' in provider).toBe(false);
+  });
+
+  it('keeps an explicit service-account key file', () => {
+    const provider = gcpArm(validateConfig(gcp({ keyFile: '/home/me/sa-key.json' })).providers[0]);
+    expect(provider.keyFile).toBe('/home/me/sa-key.json');
+  });
+
+  it('rejects an empty or control-character keyFile', () => {
+    expect(() => validateConfig(gcp({ keyFile: '' }))).toThrow(ConfigValidationError);
+    expect(() => validateConfig(gcp({ keyFile: 'key\n.json' }))).toThrow(ConfigValidationError);
+    expect(() => validateConfig(gcp({ keyFile: 42 }))).toThrow(ConfigValidationError);
+  });
+
+  it('accepts a bare bucket/prefix as well as a gs:// URL, and rejects an s3:// one', () => {
+    const withBucket = (bucket: string): unknown =>
+      gcp({ sync: { daily: { bucket, retentionDays: 365 }, intervalMinutes: 60 } });
+    expect(() => validateConfig(withBucket('gs://billing-export/focus/'))).not.toThrow();
+    expect(() => validateConfig(withBucket('billing-export/focus'))).not.toThrow();
+    // The exporter writes lowercase Hive folders — those characters must pass.
+    expect(() => validateConfig(withBucket('gs://b/focus/billing_period=2026-07/'))).not.toThrow();
+    // Pasting the AWS bucket into the GCP form is a real mistake; catch it at
+    // load time rather than as a silently empty listing.
+    expect(() => validateConfig(withBucket('s3://my-cur-bucket/daily'))).toThrow(ConfigValidationError);
+    expect(() => validateConfig(withBucket('-rf'))).toThrow(ConfigValidationError);
+    expect(() => validateConfig(withBucket('b/../../etc'))).toThrow(ConfigValidationError);
+  });
+
+  it('rejects tiers GCP does not deliver instead of silently ignoring them', () => {
+    const withTier = (tier: string): unknown => gcp({
+      sync: {
+        daily: { bucket: 'gs://b/focus', retentionDays: 365 },
+        [tier]: { bucket: 'gs://b/other', retentionDays: 30 },
+        intervalMinutes: 60,
+      },
+    });
+    expect(() => validateConfig(withTier('hourly'))).toThrow(ConfigValidationError);
+    expect(() => validateConfig(withTier('costOptimization'))).toThrow(ConfigValidationError);
+  });
+
+  it('does not require credentialsProfile on the gcp arm, and still requires it on aws', () => {
+    expect(() => validateConfig(gcp())).not.toThrow();
+    expect(() => validateConfig({
+      providers: [{ name: 'payer-a', type: 'aws', sync: { daily: { bucket: 's3://b/d', retentionDays: 30 }, intervalMinutes: 60 } }],
+      defaults: { periodDays: 30, costMetric: 'effective', lagDays: 1 },
+    })).toThrow(ConfigValidationError);
+  });
+
+  it('still rejects an unknown provider type', () => {
+    expect(() => validateConfig({
+      providers: [{ name: 'azure-main', type: 'azure', sync: { daily: { bucket: 'b/d', retentionDays: 30 }, intervalMinutes: 60 } }],
+      defaults: { periodDays: 30, costMetric: 'effective', lagDays: 1 },
+    })).toThrow(/must be 'aws' or 'gcp'/);
+  });
+
+  it('applies the shared name rules across arms — a gcp name collides with an aws one', () => {
+    expect(() => validateConfig({
+      providers: [
+        { name: 'payer-a', type: 'aws', credentialsProfile: 'p', sync: { daily: { bucket: 's3://b/d', retentionDays: 30 }, intervalMinutes: 60 } },
+        { name: 'Payer-A', type: 'gcp', sync: { daily: { bucket: 'gs://b/f', retentionDays: 30 }, intervalMinutes: 60 } },
+      ],
+      defaults: { periodDays: 30, costMetric: 'effective', lagDays: 1 },
+    })).toThrow(ConfigValidationError);
   });
 });
 

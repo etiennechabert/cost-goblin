@@ -52,9 +52,10 @@ function syncToYaml(sync: SyncConfig): Record<string, unknown> {
   };
 }
 
-/** Shared (credential-less) YAML shape for one provider. Single `aws` arm
- *  today — when `SharedProviderConfig` grows arms (#517), the per-type
- *  fields stop type-checking here and force a per-type dispatch. */
+/** Shared (credential-less) YAML shape for one provider. Every arm shares
+ *  the same three shareable fields, so no per-type dispatch is needed here
+ *  — the credential field each arm adds locally is exactly what a bundle
+ *  must not carry. */
 function sharedProviderToYaml(p: SharedProviderConfig): Record<string, unknown> {
   return { name: String(p.name), type: p.type, sync: syncToYaml(p.sync) };
 }
@@ -70,13 +71,23 @@ function sharedConfigToYaml(config: SharedCostGoblinConfig): Record<string, unkn
   };
 }
 
-/** On-disk YAML shape for one provider, credentials included. Single `aws`
- *  arm today — `credentialsProfile` is arm-specific, so a new provider type
- *  breaks the build here until it gets its own serialization. */
+/** On-disk YAML shape for one provider, credentials included. The
+ *  credential field is arm-specific, so this dispatches on `type` — a new
+ *  provider arm breaks the build here until it gets its own serialization.
+ *  A `gcp` provider with no `keyFile` omits the key entirely (Application
+ *  Default Credentials), rather than writing an explicit `null`. */
 function providerToYaml(p: ProviderConfig): Record<string, unknown> {
+  if (p.type === 'gcp') {
+    return {
+      name: String(p.name),
+      type: 'gcp',
+      ...(p.keyFile === undefined ? {} : { keyFile: p.keyFile }),
+      sync: syncToYaml(p.sync),
+    };
+  }
   return {
     name: String(p.name),
-    type: p.type,
+    type: 'aws',
     credentialsProfile: p.credentialsProfile,
     sync: syncToYaml(p.sync),
   };
@@ -147,7 +158,11 @@ export interface BuildConfigBundleInput {
  *  never leak by construction. Single `aws` arm today; new arms (#517) stop
  *  type-checking here until they get their own mapping. */
 function toSharedProvider(p: ProviderConfig): SharedProviderConfig {
-  return { name: p.name, type: p.type, sync: p.sync };
+  // Dispatched rather than spread: TypeScript can't correlate the `type`
+  // discriminant with the arm-specific `sync` type across a single object
+  // literal, so each arm is built explicitly.
+  if (p.type === 'gcp') return { name: p.name, type: 'gcp', sync: p.sync };
+  return { name: p.name, type: 'aws', sync: p.sync };
 }
 
 /** Assemble a shareable bundle from the local configuration. The AWS
@@ -327,12 +342,18 @@ export function summarizeConfigBundle(parsed: ParsedConfigBundle): ConfigBundleS
 }
 
 /** Recombine a bundle's shared config with a locally-chosen AWS
- *  credentials profile. The same profile is applied to every provider —
- *  multi-provider bundles with distinct credentials per provider can
- *  adjust afterwards in the app. */
+ *  credentials profile. The same profile is applied to every `aws`
+ *  provider — multi-provider bundles with distinct credentials per provider
+ *  can adjust afterwards in the app. `gcp` providers get no credential at
+ *  all: they land on Application Default Credentials, which is the
+ *  zero-configuration path and the one the setup guide recommends. */
 export function bundleConfigWithProfile(shared: SharedCostGoblinConfig, credentialsProfile: string): CostGoblinConfig {
   return {
-    providers: shared.providers.map((p): ProviderConfig => ({ name: p.name, type: p.type, credentialsProfile, sync: p.sync })),
+    providers: shared.providers.map((p): ProviderConfig => (
+      p.type === 'gcp'
+        ? { name: p.name, type: 'gcp', sync: p.sync }
+        : { name: p.name, type: 'aws', credentialsProfile, sync: p.sync }
+    )),
     defaults: shared.defaults,
   };
 }

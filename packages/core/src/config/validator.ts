@@ -8,6 +8,7 @@ import type {
   CostGoblinConfig,
   DefaultsConfig,
   DimensionsConfig,
+  GcpSyncConfig,
   NormalizationRule,
   OrgNode,
   OrgTreeConfig,
@@ -67,11 +68,16 @@ function hasControlChar(value: string): boolean {
  *  would corrupt logs / the argument). S3 keys legitimately contain `=`, `+`,
  *  `:`, spaces, etc. (e.g. Hive partition dirs like `billing_period=…`), so
  *  the key charset is intentionally left unrestricted — over-restricting it
- *  would reject valid existing configs on load. */
-function validateBucketPath(raw: unknown, context: string): BucketPath {
+ *  would reject valid existing configs on load.
+ *
+ *  The same rules hold for a GCS location: it reaches the Cloud Storage JSON
+ *  API as a bucket + prefix pair rather than a shell argument, and GCS object
+ *  names carry the same permissive charset. `store` only selects the wording
+ *  of the rejection message. */
+function validateBucketPath(raw: unknown, context: string, store: 'S3' | 'GCS' = 'S3'): BucketPath {
   assertString(raw, context);
   if (raw.length === 0 || raw.startsWith('-') || raw.includes('..') || hasControlChar(raw)) {
-    throw new ConfigValidationError(`${context} is not a valid S3 bucket location`);
+    throw new ConfigValidationError(`${context} is not a valid ${store} bucket location`);
   }
   return asBucketPath(raw);
 }
@@ -84,6 +90,54 @@ function validateSyncTier(raw: unknown, context: string): SyncTierConfig {
     bucket,
     retentionDays: raw['retentionDays'],
   };
+}
+
+/** A `gcp` provider's daily tier. The bucket is a `gs://bucket/prefix`
+ *  location (the scheme is optional, matching how the AWS arm tolerates a
+ *  bare `bucket/prefix`), but an `s3://` URL is rejected outright: it is a
+ *  copy-paste mistake that would otherwise surface much later as an empty
+ *  listing with no explanation. */
+function validateGcsSyncTier(raw: unknown, context: string): SyncTierConfig {
+  assertObject(raw, context);
+  const bucketRaw: unknown = raw['bucket'];
+  if (typeof bucketRaw === 'string' && bucketRaw.startsWith('s3://')) {
+    throw new ConfigValidationError(`${context}.bucket is an S3 URL — a 'gcp' provider needs a gs:// bucket location`);
+  }
+  const bucket = validateBucketPath(bucketRaw, `${context}.bucket`, 'GCS');
+  assertNumber(raw['retentionDays'], `${context}.retentionDays`);
+  return {
+    bucket,
+    retentionDays: raw['retentionDays'],
+  };
+}
+
+/** GCP syncs the daily tier only. An `hourly` or `costOptimization` block is
+ *  rejected rather than ignored — silently dropping a tier the user
+ *  configured would look like a sync bug, and there is no GCP delivery
+ *  behind either name. */
+function validateGcpSync(raw: unknown): GcpSyncConfig {
+  assertObject(raw, 'sync');
+  const daily = validateGcsSyncTier(raw['daily'], 'sync.daily');
+  for (const tier of ['hourly', 'costOptimization'] as const) {
+    if (raw[tier] !== undefined) {
+      throw new ConfigValidationError(`sync.${tier} is not supported for a 'gcp' provider — GCP syncs the daily tier only`);
+    }
+  }
+  assertNumber(raw['intervalMinutes'], 'sync.intervalMinutes');
+  return { daily, intervalMinutes: raw['intervalMinutes'] };
+}
+
+/** Optional path to a service-account JSON key. Absent means Application
+ *  Default Credentials — the documented default — so an explicitly empty
+ *  string is rejected rather than silently treated as "use ADC": it almost
+ *  always means a UI field was left blank by accident. */
+function validateGcpKeyFile(raw: unknown, ctx: string): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  assertString(raw, `${ctx}.keyFile`);
+  if (raw.length === 0 || hasControlChar(raw)) {
+    throw new ConfigValidationError(`${ctx}.keyFile must be a path to a service-account JSON key, or omitted to use Application Default Credentials`);
+  }
+  return raw;
 }
 
 function validateSync(raw: unknown): SyncConfig {
@@ -126,8 +180,18 @@ function validateProvider(raw: unknown, index: number): ProviderConfig {
     throw new ConfigValidationError(`${ctx}.name: ${message}`);
   }
   assertString(raw['type'], `${ctx}.type`);
+  if (raw['type'] === 'gcp') {
+    const keyFile = validateGcpKeyFile(raw['keyFile'], ctx);
+    const sync = validateGcpSync(raw['sync']);
+    return {
+      name,
+      type: 'gcp',
+      ...(keyFile === undefined ? {} : { keyFile }),
+      sync,
+    };
+  }
   if (raw['type'] !== 'aws') {
-    throw new ConfigValidationError(`${ctx}.type must be 'aws'`);
+    throw new ConfigValidationError(`${ctx}.type must be 'aws' or 'gcp'`);
   }
   const credentialsProfile = resolveCredentialsProfile(raw, ctx);
   const sync = validateSync(raw['sync']);

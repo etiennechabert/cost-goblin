@@ -13,8 +13,8 @@ import {
   providerRawDir,
   readTierLastSync,
   writeTierLastSync,
-  isCredentialError,
   logger,
+  providerAuth,
 } from '@costgoblin/core';
 import type {
   DataInventoryResult,
@@ -22,6 +22,7 @@ import type {
   ManifestFileEntry,
   AccountMappingStatus,
   AccountMappingEntry,
+  ProviderAuth,
   ProviderConfig,
   ProviderName,
   PruneResult,
@@ -31,6 +32,7 @@ import {
   type AppContext,
   type AppState,
   type IpcContext,
+  isAnyCredentialError,
   toUserFriendlyError,
 } from './context.js';
 import { triggerAutoSyncNow } from '../auto-sync.js';
@@ -46,9 +48,21 @@ function resolveDataType(syncId: string): ExpectedDataType {
   return parseSyncId(syncId).tier;
 }
 
-/** S3 bucket for one provider's tier. Shared with the auto-sync deps wiring so
- *  manual and background sync resolve buckets identically. */
+/** Bucket location for one provider's tier. Shared with the auto-sync deps
+ *  wiring so manual and background sync resolve buckets identically.
+ *
+ *  The `gcp` arm is checked first and rejects anything but `daily`: GCP has
+ *  no hourly delivery and no Cost-Optimization-Hub analogue, and the AWS
+ *  fallback below (`hourly ?? daily`) would otherwise hand back the daily
+ *  bucket for an hourly request — quietly syncing daily data into
+ *  `raw/hourly-*`, which is worse than an error. */
 export function resolveBucketPath(provider: ProviderConfig, tier: ExpectedDataType): string {
+  if (provider.type === 'gcp') {
+    if (tier !== 'daily') {
+      throw new Error(`Provider "${provider.name}" is a GCP billing export, which delivers the daily tier only — ${tier} is not available`);
+    }
+    return provider.sync.daily.bucket;
+  }
   if (tier === 'hourly') {
     return provider.sync.hourly?.bucket ?? provider.sync.daily.bucket;
   }
@@ -203,15 +217,15 @@ export function registerSyncHandlers(app: AppContext): void {
     const t = tier ?? 'daily';
     const bucket = resolveBucketPath(provider, t);
     try {
-      const inv = await getDataInventory(bucket, provider.credentialsProfile, ctx.dataDir, provider.name, t);
+      const inv = await getDataInventory(bucket, providerAuth(provider), ctx.dataDir, provider.name, t);
       return { ...inv, provider: provider.name };
     } catch (err: unknown) {
       // Expired/invalid credentials on an install that has synced this tier from
       // S3 before (its etag file exists) is a real auth failure, not the
       // imported-snapshot case — surface it so the user re-authenticates instead
       // of silently showing stale local data as if everything were up to date.
-      if (isCredentialError(err) && await hasSyncedTier(ctx.dataDir, provider.name, t)) {
-        throw toUserFriendlyError(err, provider.credentialsProfile);
+      if (isAnyCredentialError(err) && await hasSyncedTier(ctx.dataDir, provider.name, t)) {
+        throw toUserFriendlyError(err, providerAuth(provider));
       }
       // Otherwise fall back to a disk-only inventory so a consumer that imported
       // a shared snapshot (no S3 access) still sees the data it has.
@@ -220,7 +234,7 @@ export function registerSyncHandlers(app: AppContext): void {
         logger.info('S3 inventory unavailable — using local-only inventory', { tier: t, provider: provider.name });
         return { ...local, provider: provider.name };
       }
-      throw toUserFriendlyError(err, provider.credentialsProfile);
+      throw toUserFriendlyError(err, providerAuth(provider));
     }
   });
 
@@ -293,7 +307,7 @@ export function registerSyncHandlers(app: AppContext): void {
           attributes: { 'sync.tier': tier, 'sync.provider': provider.name, 'sync.files_requested': fileEntries.length },
         },
         async (span) => {
-          const r = await runSync(ctx, provider.credentialsProfile, provider.name, bucketPath, tier, fileEntries, key, state);
+          const r = await runSync(ctx, providerAuth(provider), provider.name, bucketPath, tier, fileEntries, key, state);
           span?.setAttribute('sync.files_downloaded', r.filesDownloaded);
           span?.setAttribute('sync.rows_processed', r.rowsProcessed);
           return r;
@@ -327,7 +341,7 @@ export function registerSyncHandlers(app: AppContext): void {
       return result;
     } catch (err: unknown) {
       syncWorkerIds.delete(key);
-      const error = handleSyncError(err, key, provider.credentialsProfile, state);
+      const error = handleSyncError(err, key, providerAuth(provider), state);
       if (error.message === 'Download cancelled') {
         return { filesDownloaded: 0, rowsProcessed: 0 };
       }
@@ -391,6 +405,43 @@ export function registerSyncHandlers(app: AppContext): void {
     });
   });
 
+  // Sibling channel rather than an extra argument on `data:sso-login`: that
+  // handler's `(profile: string)` arity is frozen across CostApi, the preload
+  // bridge and the SSO button, and GCP's ADC login takes no profile at all.
+  ipcMain.handle('data:gcloud-login', async (): Promise<void> => {
+    const { spawn } = await import('node:child_process');
+    const { delimiter } = await import('node:path');
+    const currentPath = process.env['PATH'] ?? '';
+    const extraPaths = process.platform === 'win32'
+      ? []
+      : ['/usr/local/bin', '/opt/homebrew/bin', '/usr/bin'];
+    const fullPath = [...new Set([...currentPath.split(delimiter), ...extraPaths])].join(delimiter);
+    return new Promise<void>((resolve, reject) => {
+      const child = spawn('gcloud', ['auth', 'application-default', 'login'], {
+        stdio: 'ignore',
+        detached: true,
+        shell: process.platform === 'win32',
+        env: { ...process.env, PATH: fullPath },
+      });
+      child.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'ENOENT') {
+          reject(new Error('GCLOUD_CLI_NOT_FOUND'));
+        } else {
+          reject(err);
+        }
+      });
+      child.on('spawn', () => {
+        child.unref();
+        resolve();
+      });
+      // Mirrors the SSO path: resolve as soon as the browser is opening, then
+      // kick a sync once the CLI exits cleanly so data refreshes immediately.
+      child.on('exit', (code) => {
+        if (code === 0) triggerAutoSyncNow();
+      });
+    });
+  });
+
   ipcMain.handle('data:account-mapping', async (): Promise<AccountMappingStatus> => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
@@ -436,7 +487,7 @@ export function registerSyncHandlers(app: AppContext): void {
 
 async function runSync(
   ctx: IpcContext,
-  profile: string,
+  auth: ProviderAuth,
   providerName: ProviderName,
   bucketPath: string,
   tier: ExpectedDataType,
@@ -446,7 +497,7 @@ async function runSync(
 ): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
   return ctx.syncClient.syncPeriods({
     bucketPath,
-    profile,
+    auth,
     providerName,
     dataDir: ctx.dataDir,
     tier,
@@ -472,7 +523,7 @@ async function runSync(
 function handleSyncError(
   err: unknown,
   statusKey: string,
-  profile: string,
+  auth: ProviderAuth,
   state: AppState,
 ): Error {
   const raw = err instanceof Error ? err : new Error(String(err));
@@ -480,7 +531,7 @@ function handleSyncError(
     state.syncStatuses[statusKey] = { status: 'idle', lastSync: null };
     return raw;
   }
-  const error = toUserFriendlyError(err, profile);
+  const error = toUserFriendlyError(err, auth);
   logger.error(`Selective sync '${statusKey}' failed: ${error.message}`);
   recordSyncLog('error', `Sync '${statusKey}' failed: ${error.message}`);
   state.syncStatuses[statusKey] = { status: 'failed', error, lastSync: null };

@@ -215,6 +215,22 @@ const config: CostGoblinConfig = {
   defaults: { periodDays: 30, costMetric: 'effective', lagDays: 2 },
 };
 
+/** A GCP provider on Application Default Credentials: no `credentialsProfile`,
+ *  and the daily tier only. Use it (or MOCK_MIXED_PROVIDER_CONFIG) to exercise
+ *  the provider-type-dependent UI. */
+export const MOCK_GCP_PROVIDER: ProviderConfig = {
+  name: asProviderName('gcp-main'),
+  type: 'gcp',
+  sync: { daily: { bucket: asBucketPath('gs://costgoblin-focus-export/focus'), retentionDays: 365 }, intervalMinutes: 60 },
+};
+
+/** One AWS and one GCP provider — the shape that exercises every arm-specific
+ *  branch at once (badge, credentials chip, hidden hourly/cost-opt tiers). */
+export const MOCK_MIXED_PROVIDER_CONFIG: CostGoblinConfig = {
+  ...config,
+  providers: [awsMainProvider, MOCK_GCP_PROVIDER],
+};
+
 /** Two providers with distinct names and credentials profiles — override
  *  `getConfig` with this (e.g. `vi.spyOn(api, 'getConfig').mockResolvedValue(
  *  MOCK_MULTI_PROVIDER_CONFIG)`) to exercise multi-provider UI states. */
@@ -326,6 +342,7 @@ export class MockCostApi implements CostApi {
   deleteLocalPeriod(): Promise<void> { return Promise.resolve(); }
   openDataFolder(): Promise<void> { return Promise.resolve(); }
   ssoLogin(): Promise<void> { return Promise.resolve(); }
+  gcloudLogin(): Promise<void> { return Promise.resolve(); }
   getAccountMapping(): Promise<AccountMappingStatus> { return Promise.resolve({ status: 'missing' }); }
   getSetupStatus(): Promise<{ configured: boolean; postSetup: boolean }> { return Promise.resolve({ configured: true, postSetup: false }); }
   testConnection(): Promise<{ ok: boolean; error?: string | undefined }> { return Promise.resolve({ ok: true }); }

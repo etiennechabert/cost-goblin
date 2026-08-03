@@ -1,8 +1,9 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createS3Handle, parseS3Path } from './s3-client.js';
-import type { S3Handle } from './s3-client.js';
+import { createObjectStoreHandle, parseObjectPath } from './object-store.js';
+import type { ObjectStoreHandle, ProviderAuth } from './object-store.js';
 import type { ManifestFileEntry } from './manifest.js';
+import { logger } from '../logger/logger.js';
 import type { DataTier } from '../types/api.js';
 import type { ProviderName } from '../types/branded.js';
 import { providerEtagPath, providerRawDir } from './provider-paths.js';
@@ -149,26 +150,39 @@ export async function getLocalDataInventory(dataDir: string, provider: ProviderN
 
 export async function getDataInventory(
   bucketPath: string,
-  credentialsProfile: string,
+  auth: ProviderAuth,
   dataDir: string,
   provider: ProviderName,
   tier: DataTier = 'daily',
-  s3Override?: S3Handle,
+  storeOverride?: ObjectStoreHandle,
 ): Promise<DataInventory> {
-  const s3Path = parseS3Path(bucketPath);
-  const s3 = s3Override ?? await createS3Handle(credentialsProfile);
-  const remoteFiles = await s3.listFiles(s3Path.bucket, s3Path.prefix);
+  const storePath = parseObjectPath(auth, bucketPath);
+  const store = storeOverride ?? await createObjectStoreHandle(auth);
+  const remoteFiles = await store.listFiles(storePath.bucket, storePath.prefix);
 
   const periodMap = new Map<string, ManifestFileEntry[]>();
+  let skippedKeys = 0;
   for (const file of remoteFiles) {
     const period = extractPeriod(file.key);
-    if (period === 'unknown') continue;
+    if (period === 'unknown') {
+      skippedKeys++;
+      continue;
+    }
     const existing = periodMap.get(period);
     if (existing === undefined) {
       periodMap.set(period, [file]);
     } else {
       existing.push(file);
     }
+  }
+  // Silently dropping every key is indistinguishable from an empty bucket,
+  // and it is the failure mode of an export that writes uppercase
+  // `BILLING_PERIOD=` (CUR-era) or flat, unpartitioned keys. Say so once.
+  if (skippedKeys > 0 && periodMap.size === 0) {
+    logger.warn(
+      `Listed ${String(skippedKeys)} Parquet file(s) under ${bucketPath} but none carry a lowercase billing_period=YYYY-MM (or date=YYYY-MM-DD) path segment — nothing to sync`,
+      { provider: String(provider), tier },
+    );
   }
 
   const rawDir = providerRawDir(dataDir, provider);

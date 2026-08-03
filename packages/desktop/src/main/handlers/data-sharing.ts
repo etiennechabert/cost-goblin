@@ -376,11 +376,13 @@ export function registerDataSharingHandlers(app: AppContext): void {
 
   /** Profile to stamp onto an imported config. The bundle never carries one,
    *  so reuse this machine's configured profile; fall back to 'default' on a
-   *  fresh install where no config exists yet (the no-AWS peer-import case). */
+   *  fresh install where no config exists yet (the no-AWS peer-import case).
+   *  Scans for the first AWS provider rather than reading `providers[0]` —
+   *  since #517 that slot may hold a GCP provider, which has no profile. */
   async function resolveImportProfile(): Promise<string> {
     try {
       const config = await app.getConfig();
-      const profile = config.providers[0]?.credentialsProfile;
+      const profile = config.providers.find(p => p.type === 'aws')?.credentialsProfile;
       if (typeof profile === 'string' && profile.length > 0) return profile;
     } catch {
       // No config on disk yet — fall through to the default.

@@ -36,3 +36,4 @@ export {
   parseProviderName,
 } from './provider-name.js';
 export { BUILTIN_EXCLUSION_RULES, DEFAULT_COST_SCOPE, mergeBuiltInExclusionRules } from './cost-scope-seed.js';
+export { AWS_SSO_LOGIN_COMMAND_PREFIX, GCLOUD_ADC_LOGIN_COMMAND } from './credential-commands.js';

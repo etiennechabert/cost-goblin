@@ -222,6 +222,12 @@ export interface CostApi {
   deleteLocalPeriod(period: string, tier?: DataTier, providerName?: string): Promise<void>;
   openDataFolder(): Promise<void>;
   ssoLogin(profile: string): Promise<void>;
+  /** Establish GCP Application Default Credentials by spawning
+   *  `gcloud auth application-default login`. Takes no profile: ADC is a
+   *  single machine-wide credential, which is why this is its own method
+   *  rather than an argument on `ssoLogin`. Rejects with a message
+   *  containing `GCLOUD_CLI_NOT_FOUND` when the CLI is not installed. */
+  gcloudLogin(): Promise<void>;
   getAccountMapping(): Promise<AccountMappingStatus>;
   /** `postSetup` is true only on the launch immediately following the setup
    *  wizard (carried across the wizard's relaunch), so the UI can land the user
@@ -312,7 +318,13 @@ export interface CostApi {
    *  configured providers are preserved). */
   writeConfig(config: {
     providerName: string;
+    /** Provider arm to write. Omitted means `'aws'`, so pre-#517 callers
+     *  keep their behaviour. `profile` is read only by the aws arm and
+     *  `keyFile` only by the gcp one; `hourlyBucket`/`costOptBucket` are
+     *  ignored for gcp, which delivers the daily tier only. */
+    type?: 'aws' | 'gcp' | undefined;
     profile: string;
+    keyFile?: string | undefined;
     dailyBucket: string;
     retentionDays?: number | undefined;
     hourlyBucket?: string | undefined;

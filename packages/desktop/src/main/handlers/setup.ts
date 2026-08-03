@@ -163,7 +163,9 @@ export function registerSetupHandlers(app: AppContext): void {
 
   ipcMain.handle('setup:write-config', async (_event, wizardConfig: {
     providerName: string;
+    type?: 'aws' | 'gcp' | undefined;
     profile: string;
+    keyFile?: string | undefined;
     dailyBucket: string;
     retentionDays?: number | undefined;
     hourlyBucket?: string | undefined;

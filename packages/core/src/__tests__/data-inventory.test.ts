@@ -3,13 +3,18 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { getDataInventory } from '../sync/data-inventory.js';
-import type { S3Handle } from '../sync/s3-client.js';
+import type { ObjectStoreHandle, ProviderAuth } from '../sync/object-store.js';
 import type { ManifestFileEntry } from '../sync/manifest.js';
 import { asProviderName } from '../types/branded.js';
 
 const provider = asProviderName('aws');
 
-function createMockS3Handle(files: ManifestFileEntry[]): S3Handle {
+/** Every case here is an AWS provider: this suite is the regression proof
+ *  that routing the inventory through the #517 object-store factory left AWS
+ *  behaviour byte-identical, so only the credentials argument changed shape. */
+const AWS_AUTH: ProviderAuth = { kind: 'aws-profile', profile: 'default' };
+
+function createMockObjectStore(files: ManifestFileEntry[]): ObjectStoreHandle {
   return {
     listFiles(): Promise<ManifestFileEntry[]> {
       return Promise.resolve(files);
@@ -44,10 +49,10 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('returns empty inventory when S3 has no files', async () => {
-    const mock = createMockS3Handle([]);
+    const mock = createMockObjectStore([]);
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -65,7 +70,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('lists remote periods with all missing local status', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       file('cur/data/billing_period=2026-01/file2.parquet', 'hash2', 3000),
       file('cur/data/billing_period=2026-02/file3.parquet', 'hash3', 7000),
@@ -73,7 +78,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -100,7 +105,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('detects repartitioned status when local period exists and hashes match', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       file('cur/data/billing_period=2026-01/file2.parquet', 'hash2', 3000),
     ]);
@@ -123,7 +128,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -141,7 +146,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('detects stale status when local period exists but hash differs', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cur/data/billing_period=2026-01/file1.parquet', 'new-hash', 5000),
     ]);
 
@@ -162,7 +167,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -174,7 +179,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('handles mixed period statuses correctly', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       file('cur/data/billing_period=2026-02/file2.parquet', 'new-hash2', 3000),
       file('cur/data/billing_period=2026-03/file3.parquet', 'hash3', 7000),
@@ -199,7 +204,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -219,7 +224,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('extracts periods from date= format (cost-optimization)', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cost-opt/date=2026-03-15/file1.parquet', 'hash1', 2000),
       file('cost-opt/date=2026-03-20/file2.parquet', 'hash2', 3000),
       file('cost-opt/date=2026-04-01/file3.parquet', 'hash3', 1000),
@@ -227,7 +232,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cost-opt/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'cost-optimization',
@@ -244,7 +249,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('sorts periods in descending order (newest first)', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 1000),
       file('cur/data/billing_period=2026-03/file2.parquet', 'hash2', 1000),
       file('cur/data/billing_period=2026-02/file3.parquet', 'hash3', 1000),
@@ -252,7 +257,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -264,7 +269,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('handles hourly tier with correct etag file', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
     ]);
 
@@ -281,7 +286,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'hourly',
@@ -294,7 +299,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('handles cost-optimization tier with correct etag file and directory prefix', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cost-opt/date=2026-03-15/file1.parquet', 'hash1', 5000),
     ]);
 
@@ -311,7 +316,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cost-opt/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'cost-optimization',
@@ -325,7 +330,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('treats period as stale when etag file is missing', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
     ]);
 
@@ -338,7 +343,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -353,7 +358,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('detects stale when etag file exists but has no entry for period', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
     ]);
 
@@ -371,7 +376,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -386,7 +391,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('detects stale when etag file is missing entries for some remote files', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       file('cur/data/billing_period=2026-01/file2.parquet', 'hash2', 3000),
       file('cur/data/billing_period=2026-01/file3.parquet', 'hash3', 2000),
@@ -410,7 +415,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -424,7 +429,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('detects stale when one file hash differs among multiple files', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cur/data/billing_period=2026-01/file1.parquet', 'new-hash1', 5000),
       file('cur/data/billing_period=2026-01/file2.parquet', 'hash2', 3000),
       file('cur/data/billing_period=2026-01/file3.parquet', 'hash3', 2000),
@@ -448,7 +453,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -461,7 +466,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('detects stale when only one file is tracked and it differs', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cur/data/billing_period=2026-01/file1.parquet', 'new-hash', 5000),
       file('cur/data/billing_period=2026-01/file2.parquet', 'hash2', 3000),
     ]);
@@ -482,7 +487,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -495,7 +500,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('handles local period without corresponding remote files', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cur/data/billing_period=2026-02/file1.parquet', 'hash1', 5000),
     ]);
 
@@ -508,7 +513,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -526,7 +531,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('skips files without recognizable period markers', async () => {
-    const mock = createMockS3Handle([
+    const mock = createMockObjectStore([
       file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       file('cur/data/random-path/file2.parquet', 'hash2', 3000),
       file('cur/metadata.parquet', 'hash3', 1000),
@@ -534,7 +539,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -550,7 +555,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('calculates local disk bytes correctly across multiple periods', async () => {
-    const mock = createMockS3Handle([]);
+    const mock = createMockObjectStore([]);
 
     const rawDir = join(tempDir, 'aws', 'raw');
     await mkdir(join(rawDir, 'daily-2026-01'), { recursive: true });
@@ -563,7 +568,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -574,7 +579,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('handles nested directory structures when calculating disk bytes', async () => {
-    const mock = createMockS3Handle([]);
+    const mock = createMockObjectStore([]);
 
     const rawDir = join(tempDir, 'aws', 'raw');
     const periodDir = join(rawDir, 'daily-2026-01');
@@ -586,7 +591,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -597,7 +602,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('sets oldest and newest period correctly', async () => {
-    const mock = createMockS3Handle([]);
+    const mock = createMockObjectStore([]);
 
     const rawDir = join(tempDir, 'aws', 'raw');
     await mkdir(join(rawDir, 'daily-2026-01'), { recursive: true });
@@ -609,7 +614,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const inventory = await getDataInventory(
       's3://test-bucket/cur/',
-      'default',
+      AWS_AUTH,
       tempDir,
       provider,
       'daily',
@@ -621,7 +626,7 @@ describe('getDataInventory with mocked S3', () => {
   });
 
   it('handles tier-specific directory prefixes correctly', async () => {
-    const mock = createMockS3Handle([]);
+    const mock = createMockObjectStore([]);
 
     const rawDir = join(tempDir, 'aws', 'raw');
 
@@ -643,7 +648,7 @@ describe('getDataInventory with mocked S3', () => {
     for (const { tier, periods, bytes } of expected) {
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
-        'default',
+        AWS_AUTH,
         tempDir,
         provider,
         tier,
@@ -657,7 +662,7 @@ describe('getDataInventory with mocked S3', () => {
 
   describe('incremental sync validation', () => {
     it('marks period as repartitioned when all tracked files have matching etags (skip sync)', async () => {
-      const mock = createMockS3Handle([
+      const mock = createMockObjectStore([
         file('cur/data/billing_period=2026-01/file1.parquet', 'etag-abc', 5000),
         file('cur/data/billing_period=2026-01/file2.parquet', 'etag-def', 3000),
         file('cur/data/billing_period=2026-01/file3.parquet', 'etag-ghi', 2000),
@@ -681,7 +686,7 @@ describe('getDataInventory with mocked S3', () => {
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
-        'default',
+        AWS_AUTH,
         tempDir,
         provider,
         'daily',
@@ -694,7 +699,7 @@ describe('getDataInventory with mocked S3', () => {
     });
 
     it('marks period as stale when any tracked file has mismatched etag (must re-sync entire period)', async () => {
-      const mock = createMockS3Handle([
+      const mock = createMockObjectStore([
         file('cur/data/billing_period=2026-01/file1.parquet', 'etag-abc', 5000),
         file('cur/data/billing_period=2026-01/file2.parquet', 'etag-xyz-NEW', 3000),
         file('cur/data/billing_period=2026-01/file3.parquet', 'etag-ghi', 2000),
@@ -718,7 +723,7 @@ describe('getDataInventory with mocked S3', () => {
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
-        'default',
+        AWS_AUTH,
         tempDir,
         provider,
         'daily',
@@ -731,7 +736,7 @@ describe('getDataInventory with mocked S3', () => {
     });
 
     it('marks period as stale when remote has new files not yet in etag cache', async () => {
-      const mock = createMockS3Handle([
+      const mock = createMockObjectStore([
         file('cur/data/billing_period=2026-01/file1.parquet', 'etag-abc', 5000),
         file('cur/data/billing_period=2026-01/file2.parquet', 'etag-def', 3000),
         file('cur/data/billing_period=2026-01/file3-NEW.parquet', 'etag-new', 1000),
@@ -755,7 +760,7 @@ describe('getDataInventory with mocked S3', () => {
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
-        'default',
+        AWS_AUTH,
         tempDir,
         provider,
         'daily',
@@ -769,7 +774,7 @@ describe('getDataInventory with mocked S3', () => {
     });
 
     it('validates etag-based skip decision across all three status values', async () => {
-      const mock = createMockS3Handle([
+      const mock = createMockObjectStore([
         // Period 1: repartitioned (skip)
         file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 1000),
         // Period 2: stale (re-download)
@@ -793,7 +798,7 @@ describe('getDataInventory with mocked S3', () => {
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
-        'default',
+        AWS_AUTH,
         tempDir,
         provider,
         'daily',
@@ -819,7 +824,7 @@ describe('getDataInventory with mocked S3', () => {
       const remoteFiles = Array.from({ length: 53 }, (_, i) =>
         file(`hourly/billing_period=2026-04/data-${String(i).padStart(5, '0')}.parquet`, `etag-${String(i)}`, 1000),
       );
-      const mock = createMockS3Handle(remoteFiles);
+      const mock = createMockObjectStore(remoteFiles);
 
       const rawDir = join(tempDir, 'aws', 'raw');
       const periodDir = join(rawDir, 'hourly-2026-04');
@@ -837,7 +842,7 @@ describe('getDataInventory with mocked S3', () => {
 
       const inventory = await getDataInventory(
         's3://test-bucket/hourly/',
-        'default',
+        AWS_AUTH,
         tempDir,
         provider,
         'hourly',
@@ -849,7 +854,7 @@ describe('getDataInventory with mocked S3', () => {
     });
 
     it('marks period as stale when etag file is empty', async () => {
-      const mock = createMockS3Handle([
+      const mock = createMockObjectStore([
         file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       ]);
 
@@ -866,7 +871,7 @@ describe('getDataInventory with mocked S3', () => {
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
-        'default',
+        AWS_AUTH,
         tempDir,
         provider,
         'daily',
@@ -882,7 +887,7 @@ describe('getDataInventory with mocked S3', () => {
 
   describe('corrupted manifest JSON handling', () => {
     it('handles invalid JSON syntax gracefully', async () => {
-      const mock = createMockS3Handle([
+      const mock = createMockObjectStore([
         file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       ]);
 
@@ -897,7 +902,7 @@ describe('getDataInventory with mocked S3', () => {
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
-        'default',
+        AWS_AUTH,
         tempDir,
         provider,
         'daily',
@@ -912,7 +917,7 @@ describe('getDataInventory with mocked S3', () => {
     });
 
     it('handles JSON array instead of object', async () => {
-      const mock = createMockS3Handle([
+      const mock = createMockObjectStore([
         file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       ]);
 
@@ -927,7 +932,7 @@ describe('getDataInventory with mocked S3', () => {
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
-        'default',
+        AWS_AUTH,
         tempDir,
         provider,
         'daily',
@@ -940,7 +945,7 @@ describe('getDataInventory with mocked S3', () => {
     });
 
     it('handles JSON null instead of object', async () => {
-      const mock = createMockS3Handle([
+      const mock = createMockObjectStore([
         file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       ]);
 
@@ -954,7 +959,7 @@ describe('getDataInventory with mocked S3', () => {
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
-        'default',
+        AWS_AUTH,
         tempDir,
         provider,
         'daily',
@@ -966,7 +971,7 @@ describe('getDataInventory with mocked S3', () => {
     });
 
     it('handles JSON string instead of object', async () => {
-      const mock = createMockS3Handle([
+      const mock = createMockObjectStore([
         file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       ]);
 
@@ -980,7 +985,7 @@ describe('getDataInventory with mocked S3', () => {
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
-        'default',
+        AWS_AUTH,
         tempDir,
         provider,
         'daily',
@@ -992,7 +997,7 @@ describe('getDataInventory with mocked S3', () => {
     });
 
     it('skips period entries that are not objects', async () => {
-      const mock = createMockS3Handle([
+      const mock = createMockObjectStore([
         file('cur/data/billing_period=2026-01/file1.parquet', 'new-hash1', 5000),
         file('cur/data/billing_period=2026-02/file2.parquet', 'new-hash2', 3000),
       ]);
@@ -1013,7 +1018,7 @@ describe('getDataInventory with mocked S3', () => {
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
-        'default',
+        AWS_AUTH,
         tempDir,
         provider,
         'daily',
@@ -1031,7 +1036,7 @@ describe('getDataInventory with mocked S3', () => {
     });
 
     it('drops non-string hash values within a period', async () => {
-      const mock = createMockS3Handle([
+      const mock = createMockObjectStore([
         file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
         file('cur/data/billing_period=2026-01/file2.parquet', 'hash2', 3000),
         file('cur/data/billing_period=2026-01/file3.parquet', 'hash3', 2000),
@@ -1055,7 +1060,7 @@ describe('getDataInventory with mocked S3', () => {
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
-        'default',
+        AWS_AUTH,
         tempDir,
         provider,
         'daily',
@@ -1069,7 +1074,7 @@ describe('getDataInventory with mocked S3', () => {
     });
 
     it('detects stale when valid hash differs despite other corrupted entries', async () => {
-      const mock = createMockS3Handle([
+      const mock = createMockObjectStore([
         file('cur/data/billing_period=2026-01/file1.parquet', 'new-hash1', 5000),
         file('cur/data/billing_period=2026-01/file2.parquet', 'hash2', 3000),
       ]);
@@ -1091,7 +1096,7 @@ describe('getDataInventory with mocked S3', () => {
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
-        'default',
+        AWS_AUTH,
         tempDir,
         provider,
         'daily',

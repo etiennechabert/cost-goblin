@@ -1,7 +1,10 @@
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { isStringRecord } from '../utils/json.js';
 import { logger } from '../logger/logger.js';
 import type { ProviderName } from '../types/branded.js';
 import type { ManifestFileEntry } from './manifest.js';
+import { providerMetaDir } from './provider-paths.js';
 
 export type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
 
@@ -161,4 +164,39 @@ export function parseEtagsJson(raw: string): Record<string, Record<string, strin
     result[period] = stringEtags;
   }
   return result;
+}
+
+/**
+ * Record the content hashes of one period's remote files, so the next
+ * inventory can tell an up-to-date period from a stale one. Merges into the
+ * existing sidecar — other periods' entries are preserved.
+ *
+ * Shared by both provider sync paths (#517): the sidecar format and the
+ * "written only once the period is actually installed" contract are
+ * transport-neutral, and a second copy would be a second thing to keep in
+ * step with `getPeriodStatus`.
+ */
+export async function saveEtags(
+  dataDir: string,
+  providerName: ProviderName,
+  tier: string,
+  period: string,
+  periodFiles: readonly ManifestFileEntry[],
+): Promise<void> {
+  const metaDir = providerMetaDir(dataDir, providerName);
+  await mkdir(metaDir, { recursive: true });
+  const etagPath = join(metaDir, getEtagFileName(tier));
+  let savedEtags: Record<string, Record<string, string>> = {};
+  try {
+    const raw = await readFile(etagPath, 'utf-8');
+    savedEtags = parseEtagsJson(raw);
+  } catch {
+    // first time
+  }
+  const periodEtags: Record<string, string> = {};
+  for (const f of periodFiles) {
+    periodEtags[f.key] = f.contentHash;
+  }
+  savedEtags[period] = periodEtags;
+  await writeFile(etagPath, JSON.stringify(savedEtags, null, 2));
 }

@@ -19,6 +19,23 @@ export {
 } from './s3-client.js';
 
 export {
+  type DownloadOptions,
+  type ObjectStoreHandle,
+  type ProviderAuth,
+  createObjectStoreHandle,
+  isProviderAuth,
+  parseObjectPath,
+  providerAuth,
+} from './object-store.js';
+
+export {
+  createGcsHandle,
+  isGcloudDownloadFailure,
+  isGcpCredentialError,
+  parseGcsPath,
+} from './gcs-client.js';
+
+export {
   type BillingPeriod,
   type DataInventory,
   getDataInventory,
@@ -36,6 +53,22 @@ export {
   type SelectiveSyncOptions,
   syncSelectedFiles,
 } from './selective-sync.js';
+
+export {
+  type GcpSelectiveSyncOptions,
+  parseGcloudCompletedBytes,
+  syncGcpSelectedFiles,
+} from './gcp-selective-sync.js';
+
+export {
+  type CanonicalizeConnection,
+  type CanonicalizeOptions,
+  type CanonicalizeResult,
+  GcpCanonicalizeError,
+  canonicalizeGcpPeriod,
+} from './gcp-canonicalize.js';
+
+export { REQUIRED_FOCUS_COLUMNS } from './focus-contract.js';
 
 export {
   type TierRetention,
@@ -62,4 +95,5 @@ export {
   groupByPeriod,
   listLocalMonths,
   parseEtagsJson,
+  saveEtags,
 } from './sync-utils.js';

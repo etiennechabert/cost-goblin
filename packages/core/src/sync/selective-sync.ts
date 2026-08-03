@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile, rm, readdir } from 'node:fs/promises';
+import { mkdir, rm, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
@@ -27,7 +27,7 @@ function findAwsCli(): string {
 }
 import { logger } from '../logger/logger.js';
 import type { ProviderName } from '../types/branded.js';
-import { providerMetaDir, providerRawDir, providerRoot } from './provider-paths.js';
+import { providerRawDir, providerRoot } from './provider-paths.js';
 import { parseS3Path } from './s3-client.js';
 import type { ProgressCallback } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
@@ -35,10 +35,9 @@ import type { ExpectedDataType } from './sync-utils.js';
 import {
   extractDate,
   extractPeriodPrefix,
-  getEtagFileName,
   groupByPeriod,
   parseAwsCompletedBytes,
-  parseEtagsJson,
+  saveEtags,
 } from './sync-utils.js';
 
 export type { ExpectedDataType } from './sync-utils.js';
@@ -126,31 +125,6 @@ function runAwsS3Sync(options: {
       }
     });
   });
-}
-
-async function saveEtags(
-  dataDir: string,
-  providerName: ProviderName,
-  tier: string,
-  period: string,
-  periodFiles: readonly ManifestFileEntry[],
-): Promise<void> {
-  const metaDir = providerMetaDir(dataDir, providerName);
-  await mkdir(metaDir, { recursive: true });
-  const etagPath = join(metaDir, getEtagFileName(tier));
-  let savedEtags: Record<string, Record<string, string>> = {};
-  try {
-    const raw = await readFile(etagPath, 'utf-8');
-    savedEtags = parseEtagsJson(raw);
-  } catch {
-    // first time
-  }
-  const periodEtags: Record<string, string> = {};
-  for (const f of periodFiles) {
-    periodEtags[f.key] = f.contentHash;
-  }
-  savedEtags[period] = periodEtags;
-  await writeFile(etagPath, JSON.stringify(savedEtags, null, 2));
 }
 
 /**
