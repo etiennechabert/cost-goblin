@@ -289,7 +289,7 @@ function Body({ detail, onChanged, onNext, onPrev, position, triageMode }: Reado
   const dirty = bandDirty || note.length > 0;
 
   const maxCost = Math.max(...costs, autoUpper, 1);
-  // Percentile-mode band edges resolve over the amortized run-rate, windowed by the
+  // Percentile-mode band edges resolve over the effective-cost run-rate, windowed by the
   // SAME window the server used (detail.windowDays), so the preview matches the band
   // that will be persisted — not a window re-derived from the clamped current.days.
   const bandCosts = useMemo(() => runRateSeries(dailyHistory, windowDays).map((p) => p.cost), [dailyHistory, windowDays]);

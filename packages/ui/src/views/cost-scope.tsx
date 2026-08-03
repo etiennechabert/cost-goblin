@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type {
   CostMetric,
-  CostPerspective,
-  CostScopeCapabilities,
   CostScopeConfig,
   MarketplaceAttributionConfig,
   CostScopeDailyRow,
@@ -30,29 +28,35 @@ interface MetricMeta {
 }
 
 const METRIC_LABELS: Record<CostMetric, MetricMeta> = {
-  amortized: {
-    label: 'Amortized',
+  effective: {
+    label: 'Effective (amortized)',
     tag: { text: 'Recommended', tone: 'recommended' },
     description:
-      'Spreads RI/SP purchases evenly across the commitment term and charges each covered hour at its effective amortized rate. What AWS Cost Explorer shows by default. Use this for run-rate, forecasting, team chargeback, and almost any "what did this cost?" question.',
+      'Amortized cost: spreads commitment purchases (RIs/SPs) across the usage they cover and includes the unused portion of commitments. Matches Cost Explorer\'s amortized view. Use this for run-rate, forecasting, team chargeback, and almost any "what did this cost?" question.',
   },
-  list: {
-    label: 'On-demand list price',
-    tag: { text: 'Fair chargeback & sizing', tone: 'specific' },
-    description:
-      'What your usage would have cost at AWS retail rates with no commitments — hypothetical, NOT money spent. The fair view for per-team chargeback when RIs/SPs are bought at the org level: AWS allocates commitment discounts unevenly across teams, so two teams running identical workloads can have very different Amortized/Unblended bills. List price values every hour at the same retail rate. Also useful for sizing future RI/SP purchases and comparing to vendor list rates. RI/SP fee rows are filtered out automatically.',
-  },
-  unblended: {
-    label: 'Unblended',
+  billed: {
+    label: 'Billed',
     tag: { text: 'Recommended for reconciliation', tone: 'recommended' },
     description:
-      'Matches your AWS invoice line by line. Upfront RI/SP fees appear as one-day spikes in the month bought; covered usage shows the discounted rate. Use this when reconciling with finance, auditing a specific charge, or trying to answer "what did AWS actually bill on day X?".',
+      'The invoiced amount — matches your invoice line by line. Commitment purchases land as Purchase rows (one-day spikes in the month bought); covered usage shows $0. Use this when reconciling with finance, auditing a specific charge, or trying to answer "what was actually billed on day X?".',
+  },
+  list: {
+    label: 'List price',
+    tag: { text: 'Fair chargeback & sizing', tone: 'specific' },
+    description:
+      'What your usage would have cost at on-demand list rates with no discounts — hypothetical, NOT money spent. The fair view for per-team chargeback when commitments are bought at the org level: commitment discounts land unevenly across teams, so two teams running identical workloads can have very different Billed/Effective bills. List price values every hour at the same list rate. Also useful for sizing future commitment purchases and comparing to vendor list rates. Restricted to usage rows because purchase/tax/credit rows have no list price.',
+  },
+  contracted: {
+    label: 'Contracted',
+    tag: { text: 'Negotiated-discount view', tone: 'specific' },
+    description:
+      'Cost after negotiated discounts (e.g. EDP) but before commitment discounts. Compare against List price — the difference (list − contracted) is what your negotiated discounts are worth.',
   },
 };
 
 /** Display order, top to bottom. Independent from COST_METRICS (the type
  *  enum's order) so the picker can lead with the recommended choice. */
-const METRIC_DISPLAY_ORDER: readonly CostMetric[] = ['amortized', 'list', 'unblended'];
+const METRIC_DISPLAY_ORDER: readonly CostMetric[] = ['effective', 'billed', 'list', 'contracted'];
 
 const TAG_TONE_CLASSES: Record<MetricTone, string> = {
   recommended: 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30',
@@ -111,7 +115,7 @@ function ConditionRow({ condition, dimensions, suggestions, onUpdate, onRemove, 
   // `enabled=false` is a UX preference for hiding a dim from normal
   // group-by / filter pickers; exclusion rules should still be able to
   // target its column (critical for the built-ins that reference
-  // line_item_type even when the user has hidden that dim). Disabled dims
+  // charge_category even when the user has hidden that dim). Disabled dims
   // get a "(hidden)" suffix so it's clear they're not in normal rotation.
   const currentDimId = String(condition.dimensionId);
   const inputBorder = invalid ? 'border-negative' : 'border-border';
@@ -501,9 +505,9 @@ function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loa
           {/* Column order prioritises what the user is scanning for:
               Date → Cost → List (the two $$ fields sit together and stay on
               screen without horizontal scroll) → Service & Account (the
-              two main "who/what" anchors) → Line type → then the long-tail
-              metadata (region, family, usage type, operation, usage,
-              tags, resource id, description) */}
+              two main "who/what" anchors) → Charge category → then the
+              long-tail metadata (region, service category, SKU meter,
+              operation, usage, tags, resource id, description) */}
           <thead className="sticky top-0 z-10 bg-bg-tertiary/95 backdrop-blur-sm">
             <tr className="text-left text-text-secondary">
               <Th>Date</Th>
@@ -511,10 +515,10 @@ function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loa
               <Th align="right">List</Th>
               <Th>Service</Th>
               <Th>Account</Th>
-              <Th>Line type</Th>
+              <Th>Charge category</Th>
               <Th>Region</Th>
-              <Th>Family</Th>
-              <Th>Usage type</Th>
+              <Th>Service category</Th>
+              <Th>SKU meter</Th>
               <Th>Operation</Th>
               <Th align="right">Usage</Th>
               {tagColumns.map(t => <Th key={t.id}>{t.label}</Th>)}
@@ -533,10 +537,10 @@ function SampleRowsTable({ rows, tagColumns, totalRowCount, hasEnabledRules, loa
                 <Td align="right" mono>{formatSignedDollars(r.listCost)}</Td>
                 <Td>{r.service}</Td>
                 <Td title={r.accountId}>{r.accountName.length > 0 ? r.accountName : r.accountId}</Td>
-                <Td>{r.lineItemType}</Td>
+                <Td>{r.chargeCategory}</Td>
                 <Td mono>{r.region}</Td>
-                <Td>{r.serviceFamily}</Td>
-                <Td mono>{r.usageType}</Td>
+                <Td>{r.serviceCategory}</Td>
+                <Td mono>{r.skuMeter}</Td>
                 <Td>{r.operation}</Td>
                 <Td align="right" mono>{r.usageAmount === 0 ? '' : r.usageAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}</Td>
                 {tagColumns.map(t => <Td key={t.id}>{r.tags[t.id] ?? ''}</Td>)}
@@ -594,37 +598,6 @@ function describeDraftError(draft: CostScopeConfig): string | null {
   return null;
 }
 
-function PerspectiveToggle({ current, netDisabled, onChange }: Readonly<{
-  current: CostPerspective;
-  netDisabled: boolean;
-  onChange: (p: CostPerspective) => void;
-}>): React.JSX.Element {
-  return (
-    <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary/30 p-0.5 shrink-0">
-      {(['gross', 'net'] as const).map(perspective => {
-        const disabled = perspective === 'net' && netDisabled;
-        const active = current === perspective;
-        return (
-          <button
-            key={perspective}
-            type="button"
-            disabled={disabled}
-            onClick={() => { onChange(perspective); }}
-            className={[
-              'px-3 py-1 text-xs rounded-md transition-colors capitalize',
-              active ? 'bg-accent text-bg-primary' : 'text-text-secondary hover:text-text-primary',
-              disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer',
-            ].join(' ')}
-            title={disabled ? 'Requires line_item_net_unblended_cost — enable "Include Net Columns" on the CUR report.' : undefined}
-          >
-            {perspective}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 export function CostScopeView(): React.JSX.Element {
   const api = useCostApi();
   const [draft, setDraft] = useState(DEFAULT_COST_SCOPE);
@@ -634,7 +607,6 @@ export function CostScopeView(): React.JSX.Element {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [suggestionsByDim, setSuggestionsByDim] = useState(new Map<string, readonly string[]>());
-  const [capabilities, setCapabilities] = useState<CostScopeCapabilities | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
@@ -648,11 +620,6 @@ export function CostScopeView(): React.JSX.Element {
       setSaved(cfg);
     }).catch(() => undefined);
     api.getDimensions().then(setDimensions).catch(() => undefined);
-    api.getCostScopeCapabilities().then(setCapabilities).catch(() => {
-      // capabilities are advisory — if the probe fails, assume
-      // everything is present (matches legacy behaviour).
-      setCapabilities({ hasEffectiveCostColumns: true, hasNetColumns: true, hasListPriceColumn: true });
-    });
   }, [api]);
 
   // Pre-fetch filter-value suggestions once per enabled dim so every
@@ -707,19 +674,6 @@ export function CostScopeView(): React.JSX.Element {
     updateDraft({ ...draft, costMetric: metric });
   }
 
-  function handlePerspectiveChange(perspective: CostPerspective) {
-    // Rebuild the config without `costPerspective` when the user picks
-    // the default ('gross') so the serializer writes clean YAML.
-    // exactOptionalPropertyTypes forbids writing `undefined`, so we
-    // enumerate the retained fields instead of spreading + overwriting.
-    const base: CostScopeConfig = {
-      costMetric: draft.costMetric,
-      rules: draft.rules,
-      ...(draft.marketplaceAttribution === undefined ? {} : { marketplaceAttribution: draft.marketplaceAttribution }),
-    };
-    updateDraft(perspective === 'gross' ? base : { ...base, costPerspective: perspective });
-  }
-
   function handleLagDaysChange(value: number) {
     const clamped = Math.max(0, Math.round(value));
     // Rebuild without lagDays when it matches the default so the
@@ -727,7 +681,6 @@ export function CostScopeView(): React.JSX.Element {
     // writing `undefined`, so enumerate retained fields.
     const next: CostScopeConfig = {
       costMetric: draft.costMetric,
-      ...(draft.costPerspective === undefined ? {} : { costPerspective: draft.costPerspective }),
       ...(clamped === DEFAULT_LAG_DAYS ? {} : { lagDays: clamped }),
       rules: draft.rules,
       ...(draft.marketplaceAttribution === undefined ? {} : { marketplaceAttribution: draft.marketplaceAttribution }),
@@ -885,57 +838,16 @@ export function CostScopeView(): React.JSX.Element {
                       </span>
                     </div>
                     <p className="mt-1 text-xs text-text-muted leading-relaxed">{METRIC_LABELS[metric].description}</p>
-                    {metric === 'amortized' && capabilities !== null && !capabilities.hasEffectiveCostColumns && (
+                    {metric === 'list' && (
                       <div className="mt-1 text-xs text-warning">
-                        Degraded &mdash; falls back to Unblended because your CUR export doesn&apos;t include{' '}
-                        <code className="mx-1 text-[11px]">reservation_effective_cost</code>{' '}
-                        /{' '}
-                        <code className="mx-1 text-[11px]">savings_plan_savings_plan_effective_cost</code>.{' '}
-                        Enable <em>Include Resource IDs</em> on your CUR report in AWS Billing to get
-                        an accurate amortized view (takes one billing cycle to land).
-                      </div>
-                    )}
-                    {metric === 'list' && capabilities !== null && !capabilities.hasListPriceColumn && (
-                      <div className="mt-1 text-xs text-warning">
-                        Degraded &mdash; falls back to Unblended because your CUR export doesn&apos;t include{' '}
-                        <code className="mx-1 text-[11px]">pricing_public_on_demand_cost</code>.
-                      </div>
-                    )}
-                    {metric === 'list' && (capabilities === null || capabilities.hasListPriceColumn) && (
-                      <div className="mt-1 text-xs text-warning">
-                        Hypothetical &mdash; this is not money you actually paid. Queries are restricted to usage rows ({' '}
-                        <code className="text-[11px]">Usage</code>, <code className="text-[11px]">SavingsPlanCoveredUsage</code>, <code className="text-[11px]">DiscountedUsage</code>) because RI/SP fee rows have no list price.
+                        Hypothetical &mdash; this is not money you actually paid. Queries are restricted to{' '}
+                        <code className="text-[11px]">Usage</code> charge-category rows because purchase, tax,
+                        and credit rows have no list price.
                       </div>
                     )}
                   </div>
                 </label>
               ))}
-
-              {/* Gross vs Net toggle — orthogonal to the metric axis.
-                  Disabled when the net columns aren't available, with a
-                  warning explaining the CUR-side fix. */}
-              <div className="pt-2 mt-2 border-t border-border">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-medium text-text-primary">Perspective</div>
-                    <div className="text-xs text-text-muted mt-0.5">
-                      Net applies credits, refunds, and promotional discounts on top of the chosen metric.
-                    </div>
-                  </div>
-                  <PerspectiveToggle
-                    current={draft.costPerspective ?? 'gross'}
-                    netDisabled={capabilities !== null && !capabilities.hasNetColumns}
-                    onChange={handlePerspectiveChange}
-                  />
-                </div>
-                {(draft.costPerspective ?? 'gross') === 'net' && capabilities !== null && !capabilities.hasNetColumns && (
-                  <div className="mt-2 text-xs text-warning">
-                    Degraded &mdash; falls back to Gross because your CUR export doesn&apos;t include{' '}
-                    <code className="mx-1 text-[11px]">line_item_net_unblended_cost</code>.{' '}
-                    Enable <em>Include Net Columns</em> on your CUR report in AWS Billing.
-                  </div>
-                )}
-              </div>
 
               {/* Data freshness lag */}
               <div className="pt-2 mt-2 border-t border-border">
@@ -943,7 +855,7 @@ export function CostScopeView(): React.JSX.Element {
                   <div>
                     <div className="text-sm font-medium text-text-primary">Data freshness</div>
                     <div className="text-xs text-text-muted mt-0.5">
-                      Exclude the most recent N days from all date ranges. AWS billing data
+                      Exclude the most recent N days from all date ranges. Billing data
                       typically lags 1–2 days before it is fully consolidated.
                     </div>
                   </div>
@@ -961,19 +873,19 @@ export function CostScopeView(): React.JSX.Element {
                 </div>
               </div>
 
-              {/* Marketplace attribution — re-attributes empty-product_servicecode
+              {/* Marketplace attribution — re-attributes empty-service_code
                   AWS Marketplace rows (Bedrock third-party models, etc.) to a
-                  real service. Deliberately rewrites the as-billed product code,
-                  so it's a toggle. */}
+                  real service. Deliberately rewrites the as-billed service
+                  attribution, so it's a toggle. */}
               <div className="pt-2 mt-2 border-t border-border">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-sm font-medium text-text-primary">Marketplace attribution</div>
                     <div className="text-xs text-text-muted mt-0.5">
                       AWS bills third-party Marketplace usage (e.g. Bedrock foundation models)
-                      with no service code and a $0 on-demand price &mdash; so it lands under a
-                      blank service and reads as free on the List metric. Re-attribute it to a
-                      real service using its billing operation.
+                      with no service code and no list price &mdash; so it lands under a
+                      blank service and reads as free on the List price metric. Re-attribute it
+                      to a real service (e.g. Amazon Bedrock) using its billing operation.
                     </div>
                   </div>
                   <label className="flex items-center gap-2 shrink-0 cursor-pointer">

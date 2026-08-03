@@ -99,17 +99,17 @@ export function registerDimensionsHandlers(app: AppContext): void {
       : `read_parquet('${providerRoot}/daily-*/*.parquet')`;
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-    const totalSql = `SELECT COUNT(*) AS total FROM ${rawParquet} WHERE line_item_usage_start_date >= '${thirtyDaysAgo}'`;
+    const totalSql = `SELECT COUNT(*) AS total FROM ${rawParquet} WHERE ChargePeriodStart >= '${thirtyDaysAgo}'`;
     const totalRows = await runQuery(totalSql);
     const totalRowCount = totalRows[0] === undefined ? 0 : toNum(totalRows[0]['total']);
 
     const sql = `
       WITH tags AS (
-        SELECT unnest(map_keys(resource_tags)) AS tag_key,
-               unnest(map_values(resource_tags)) AS tag_val
+        SELECT unnest(map_keys(Tags)) AS tag_key,
+               unnest(map_values(Tags)) AS tag_val
         FROM ${rawParquet}
-        WHERE resource_tags IS NOT NULL
-          AND line_item_usage_start_date >= '${thirtyDaysAgo}'
+        WHERE Tags IS NOT NULL
+          AND ChargePeriodStart >= '${thirtyDaysAgo}'
       ),
       grouped AS (
         SELECT tag_key, tag_val, COUNT(*) AS val_cnt
@@ -165,7 +165,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
     // Whitelist columns we know are safe to embed in SQL. These match the
     // aliases emitted by buildSource so the query plans identically to what
     // the rest of the app does.
-    const ALLOWED = new Set(['account_id', 'account_name', 'region', 'service', 'service_family', 'line_item_type', 'operation', 'usage_type']);
+    const ALLOWED = new Set(['account_id', 'account_name', 'region', 'service', 'service_code', 'service_category', 'charge_category', 'pricing_category', 'commitment_status', 'operation', 'sku_meter']);
     if (!ALLOWED.has(field)) return { values: [], distinctCount: 0, period: '' };
 
     const providers = await getQueryProviders('daily');
@@ -184,7 +184,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
 
     // Query through buildSource — the same projection the Explorer and rollup
     // use — so the preview sees aliased columns AND the marketplace
-    // re-attribution (Bedrock etc.), instead of raw product_servicecode. `field`
+    // re-attribution (Bedrock etc.), instead of raw x_ServiceCode. `field`
     // is already a buildSource output alias (validated against ALLOWED above).
     const period = latest.replace(/^daily-/, '');
     const costScope = await getCostScope().catch(() => undefined);
@@ -196,8 +196,8 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const source = buildSource({
       dataDir: ctx.dataDir, tier: 'daily', dimensions: await getQueryDimensions(),
       orgAccountsPath,
-      providers: [{ name: firstProvider.name, periods: [period], availableColumns: firstProvider.availableColumns }],
-      costMetric: 'unblended',
+      providers: [{ name: firstProvider.name, periods: [period] }],
+      costMetric: 'billed',
       marketplaceAttribution: costScope?.marketplaceAttribution,
     });
 
@@ -331,10 +331,10 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const source = `read_parquet('${ctx.dataDir}/${String(provider)}/raw/${latest}/*.parquet')`;
     const rows = await runQuery(`
       WITH tags AS (
-        SELECT unnest(map_keys(resource_tags)) AS tag_key,
-               unnest(map_values(resource_tags)) AS tag_val
+        SELECT unnest(map_keys(Tags)) AS tag_key,
+               unnest(map_values(Tags)) AS tag_val
         FROM ${source}
-        WHERE resource_tags IS NOT NULL
+        WHERE Tags IS NOT NULL
       )
       SELECT DISTINCT tag_val
       FROM tags

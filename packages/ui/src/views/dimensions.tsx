@@ -24,11 +24,11 @@ function tagOrderKey(t: { tagName?: string | undefined; accountTagFallback?: str
   return `tag:@${src}:${t.label}`;
 }
 
-// Core dimensions that cannot be disabled — service and service_family anchor
-// the widget fallback chain. usage_type stays a fallback candidate (queried
+// Core dimensions that cannot be disabled — service and service_category anchor
+// the widget fallback chain. sku_meter stays a fallback candidate (queried
 // from the raw column regardless of enabled state) but is now toggleable, so a
-// heavy usage_type grain can be dropped from the rollup to keep dashboards fast.
-const LOCKED_DIMENSIONS = new Set([asDimensionId('service'), asDimensionId('service_family')]);
+// heavy sku_meter grain can be dropped from the rollup to keep dashboards fast.
+const LOCKED_DIMENSIONS = new Set([asDimensionId('service'), asDimensionId('service_category')]);
 
 function migrateLocked(cfg: DimensionsConfig): { config: DimensionsConfig; changed: boolean } {
   const needsFix = cfg.builtIn.some(d => LOCKED_DIMENSIONS.has(d.name) && d.enabled === false);
@@ -258,7 +258,7 @@ interface EditingBuiltIn {
   defaultFilterValues: readonly string[];
 }
 
-const TRANSFORM_FREE_FIELDS = new Set(['service', 'service_family']);
+const TRANSFORM_FREE_FIELDS = new Set(['service', 'service_category']);
 
 function buildDiscoverOptions(
   dim: { name: string; field: string },
@@ -475,7 +475,7 @@ function BuiltInEditor({ dim, onSave, onCancel, accountTagKeys }: Readonly<{
         onChange={e => { setState(s => ({ ...s, aliases: e.target.value })); }}
         rows={3}
         className="rounded border border-border bg-bg-primary px-3 py-1.5 text-sm font-mono text-text-primary outline-none focus:border-accent"
-        placeholder="EC2: AmazonEC2, EC2-Instance"
+        placeholder="S3: Amazon Simple Storage Service"
       />
     </label>
   );
@@ -1089,7 +1089,6 @@ function TagEditor({ tag, onSave, onCancel, onRemove, availableTags, discoveredT
             onChange={e => {
               const name = e.target.value;
               const label = name
-                .replace(/^user_/i, '')
                 .replaceAll('_', ' ')
                 .replaceAll('-', ' ')
                 .replaceAll(/\b\w/g, c => c.toUpperCase());
@@ -1922,7 +1921,7 @@ export function DimensionsView(): React.JSX.Element {
       .filter((n): n is string => n !== undefined && n.length > 0),
   );
 
-  // CUR resource tags for the primary dropdown — same order as table, exclude hidden columns
+  // Discovered resource tags for the primary dropdown — same order as table, exclude hidden columns
   const unmappedTagKeys = discoveredTags
     .map(t => t.key)
     .filter(k => !mappedTagNames.has(k) && !hiddenResourceCols.has(k));
@@ -2453,7 +2452,7 @@ export function DimensionsView(): React.JSX.Element {
           <DebugPanel
             title="Resource Tags"
             subtitle={(() => {
-              if (tagsQuery.status !== 'success' || tagsQuery.data === null) return 'Tag keys discovered by scanning the latest CUR period';
+              if (tagsQuery.status !== 'success' || tagsQuery.data === null) return 'Tag keys discovered by scanning the latest billing period';
               const suffix = tagsQuery.data.samplePeriod.length > 0 ? ` · sampled from ${tagsQuery.data.samplePeriod}` : '';
               return `${String(tagsQuery.data.tags.length)} keys${suffix}`;
             })()}

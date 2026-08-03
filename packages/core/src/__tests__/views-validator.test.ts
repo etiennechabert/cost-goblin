@@ -40,6 +40,32 @@ describe('validateViews', () => {
     expect(v?.rows).toHaveLength(2);
   });
 
+  it('migrates CUR-era dimension ids in persisted views (groupBy, drillTo, enabledColumns)', () => {
+    const cfg = validateViews({
+      views: [
+        {
+          id: 'legacy',
+          name: 'Legacy',
+          rows: [
+            {
+              widgets: [
+                { id: 'w1', type: 'pie', size: 'medium', groupBy: 'service_family' },
+                { id: 'w2', type: 'topNBar', size: 'medium', groupBy: 'line_item_type', topN: 5 },
+                { id: 'w3', type: 'treemap', size: 'medium', groupBy: 'usage_type', drillTo: 'service_family' },
+                { id: 'w4', type: 'table', size: 'full', enabledColumns: ['cost', 'usage_type', 'line_item_type'] },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const widgets = cfg.views[0]?.rows[0]?.widgets ?? [];
+    expect(widgets[0]).toMatchObject({ groupBy: 'service_category' });
+    expect(widgets[1]).toMatchObject({ groupBy: 'charge_category' });
+    expect(widgets[2]).toMatchObject({ groupBy: 'sku_meter', drillTo: 'service_category' });
+    expect(widgets[3]).toMatchObject({ enabledColumns: ['cost', 'sku_meter', 'charge_category'] });
+  });
+
   it('rejects an unknown widget type', () => {
     expect(() => validateViews({
       views: [{

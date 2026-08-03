@@ -21,7 +21,7 @@ describe('loadConfig', () => {
 describe('loadDimensions', () => {
   it('loads built-in and tag dimensions', async () => {
     const dims = await loadDimensions(join(fixturesDir, 'dimensions.yaml'));
-    expect(dims.builtIn).toHaveLength(10);
+    expect(dims.builtIn).toHaveLength(13);
     expect(dims.builtIn[0]?.name).toBe('account');
     expect(dims.builtIn[0]?.displayField).toBe('account_name');
     expect(dims.tags).toHaveLength(4);
@@ -144,6 +144,14 @@ describe('validateDimensions', () => {
       builtIn: [],
       tags: [{ tagName: 'x', label: 'X', normalize: 'invalid' }],
     })).toThrow(ConfigValidationError);
+  });
+
+  it('strips the CUR-era user_ prefix from persisted tagNames (FOCUS Tags keys carry none)', () => {
+    const dims = validateDimensions({
+      builtIn: [],
+      tags: [{ tagName: 'user_team', label: 'Team' }],
+    });
+    expect(dims.tags[0]?.tagName).toBe('team');
   });
 
   it('accepts a legitimately-named built-in column', () => {

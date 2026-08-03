@@ -101,7 +101,7 @@ export const DEFAULT_PLACEHOLDER_PATTERNS: readonly string[] = [
 
 /**
  * Classification of an untagged resource line:
- *   - 'actionable'          → other resources in the same (service, service_family)
+ *   - 'actionable'          → other resources in the same (service, service_category)
  *                             category ARE tagged, so this one is taggable and
  *                             missing. The work queue.
  *   - 'likely-untaggable'   → no resource in the same category has ever been
@@ -115,23 +115,23 @@ export interface MissingTagRow {
   readonly accountName: string;
   readonly resourceId: string;
   readonly service: string;
-  readonly serviceFamily: string;
+  readonly serviceCategory: string;
   readonly cost: Dollars;
   readonly closestOwner: EntityRef | null;
   readonly bucket: MissingTagBucket;
-  /** Fraction of this resource's category (service, service_family) that IS
+  /** Fraction of this resource's category (service, service_category) that IS
    *  tagged, by cost. 0 for likely-untaggable, >0 for actionable. */
   readonly categoryTaggedRatio: number;
 }
 
-/** A single service/family slice of cost that is not attributable to a
- *  resource — tax, support, credits, savings-plan fees, and usage lines with
+/** A single service/category slice of cost that is not attributable to a
+ *  resource — tax, commitment purchases, credits, and usage lines with
  *  no resource_id (e.g. inter-AZ data transfer). Reconciles the missing-tag
  *  totals against the overall cost. */
 export interface NonResourceCostRow {
   readonly service: string;
-  readonly serviceFamily: string;
-  readonly lineItemType: string;
+  readonly serviceCategory: string;
+  readonly chargeCategory: string;
   readonly cost: Dollars;
 }
 

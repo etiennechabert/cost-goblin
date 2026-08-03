@@ -4,6 +4,7 @@ import type { BaselineCostBasis, BaselineScope, BaselineSource, BaselineSpec, Ma
 import type { DimensionsConfig } from '../types/config.js';
 import { assertArray, assertNumber, assertObject, assertString, ConfigValidationError } from './validator.js';
 import { validateCostScope } from './cost-scope-validator.js';
+import { migrateLegacyDimensionId } from './legacy-renames.js';
 
 function validateScope(raw: unknown, builtInIds: ReadonlySet<string>, ctx: string): BaselineScope {
   assertObject(raw, ctx);
@@ -16,7 +17,9 @@ function validateScope(raw: unknown, builtInIds: ReadonlySet<string>, ctx: strin
   }
   assertObject(raw['filters'], `${ctx}.filters`);
   const filters: Partial<Record<DimensionId, readonly TagValue[]>> = {};
-  for (const [key, arr] of Object.entries(raw['filters'])) {
+  for (const [rawKey, arr] of Object.entries(raw['filters'])) {
+    // Persisted baselines may reference CUR-era dimension ids (#515).
+    const key = migrateLegacyDimensionId(rawKey);
     if (!builtInIds.has(key)) {
       throw new ConfigValidationError(
         `${ctx}.filters: "${key}" is not a built-in dimension. ` +
@@ -49,10 +52,12 @@ function validateManualBand(raw: unknown, ctx: string): ManualBand {
 }
 
 function validateBasis(raw: unknown): BaselineCostBasis {
+  // Routed through validateCostScope so persisted bases pick up the same
+  // CUR-era migrations as cost-scope.yaml (legacy metric names remapped,
+  // the removed costPerspective key dropped).
   const cs = validateCostScope(raw);
   return {
     costMetric: cs.costMetric,
-    costPerspective: cs.costPerspective ?? 'gross',
     rules: cs.rules,
     ...(cs.marketplaceAttribution === undefined ? {} : { marketplaceAttribution: cs.marketplaceAttribution }),
     ...(cs.lagDays === undefined ? {} : { lagDays: cs.lagDays }),

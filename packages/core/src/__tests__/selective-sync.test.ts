@@ -80,8 +80,8 @@ describe('syncSelectedFiles', () => {
     mockSpawn.mockReturnValue(proc);
 
     const files = [
-      file('cur/data/BILLING_PERIOD=2026-03/file1.parquet', 'hash1'),
-      file('cur/data/BILLING_PERIOD=2026-03/file2.parquet', 'hash2'),
+      file('cur/data/billing_period=2026-03/file1.parquet', 'hash1'),
+      file('cur/data/billing_period=2026-03/file2.parquet', 'hash2'),
     ];
 
     const dataDir = join('/tmp', 'test');
@@ -99,7 +99,7 @@ describe('syncSelectedFiles', () => {
     expect(result.filesDownloaded).toBe(2);
     expect(mockSpawn).toHaveBeenCalledWith(
       expect.stringContaining('aws'),
-      ['s3', 'sync', 's3://test-bucket/cur/data/BILLING_PERIOD=2026-03/', expectedDest, '--profile', 'test-profile'],
+      ['s3', 'sync', 's3://test-bucket/cur/data/billing_period=2026-03/', expectedDest, '--profile', 'test-profile'],
       { stdio: ['ignore', 'pipe', 'pipe'] }
     );
   });
@@ -130,9 +130,9 @@ describe('syncSelectedFiles', () => {
     mockSpawn.mockImplementation(() => createSuccessfulSpawn());
 
     const files = [
-      file('cur/BILLING_PERIOD=2026-01/a.parquet', 'h1'),
-      file('cur/BILLING_PERIOD=2026-03/b.parquet', 'h2'),
-      file('cur/BILLING_PERIOD=2026-02/c.parquet', 'h3'),
+      file('cur/billing_period=2026-01/a.parquet', 'h1'),
+      file('cur/billing_period=2026-03/b.parquet', 'h2'),
+      file('cur/billing_period=2026-02/c.parquet', 'h3'),
     ];
 
     await syncSelectedFiles({
@@ -159,7 +159,7 @@ describe('syncSelectedFiles', () => {
       proc.stdout.emit('data', Buffer.from('Completed 1.5 MB/2.0 MB\n'));
     }, 5);
 
-    const files = [file('cur/BILLING_PERIOD=2026-03/file1.parquet')];
+    const files = [file('cur/billing_period=2026-03/file1.parquet')];
     const progressEvents: SyncProgress[] = [];
 
     await syncSelectedFiles({
@@ -184,7 +184,7 @@ describe('syncSelectedFiles', () => {
       proc.stdout.emit('data', Buffer.from('download: s3://bucket/file.parquet to /tmp/local/file.parquet\n'));
     }, 5);
 
-    const files = [file('cur/BILLING_PERIOD=2026-03/file.parquet')];
+    const files = [file('cur/billing_period=2026-03/file.parquet')];
     const downloadedPaths: string[] = [];
 
     await syncSelectedFiles({
@@ -210,7 +210,7 @@ describe('syncSelectedFiles', () => {
         profile: 'test',
         providerName,
         dataDir: '/tmp',
-        files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
+        files: [file('cur/billing_period=2026-03/file.parquet')],
       })
     ).rejects.toThrow('AWS CLI not found');
   });
@@ -234,7 +234,7 @@ describe('syncSelectedFiles', () => {
         profile: 'test',
         providerName,
         dataDir: '/tmp',
-        files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
+        files: [file('cur/billing_period=2026-03/file.parquet')],
       })
     ).rejects.toThrow(expectedMessage);
   });
@@ -248,7 +248,7 @@ describe('syncSelectedFiles', () => {
       profile: 'test',
       providerName,
       dataDir: '/tmp',
-      files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
+      files: [file('cur/billing_period=2026-03/file.parquet')],
       signal: controller.signal,
     });
 
@@ -269,7 +269,7 @@ describe('syncSelectedFiles', () => {
         profile: 'test',
         providerName,
         dataDir: '/tmp',
-        files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
+        files: [file('cur/billing_period=2026-03/file.parquet')],
         signal: controller.signal,
       })
     ).rejects.toThrow('Download cancelled');
@@ -300,9 +300,9 @@ describe('syncSelectedFiles', () => {
         providerName,
         dataDir: '/tmp',
         files: [
-          file('cur/BILLING_PERIOD=2026-01/a.parquet'),
-          file('cur/BILLING_PERIOD=2026-02/b.parquet'),
-          file('cur/BILLING_PERIOD=2026-03/c.parquet'),
+          file('cur/billing_period=2026-01/a.parquet'),
+          file('cur/billing_period=2026-02/b.parquet'),
+          file('cur/billing_period=2026-03/c.parquet'),
         ],
         signal: controller.signal,
         onProgress: (progress) => {
@@ -322,7 +322,7 @@ describe('syncSelectedFiles', () => {
       JSON.stringify({ '2026-01': { 'old-file.parquet': 'old-hash' } })
     );
 
-    const files = [file('cur/BILLING_PERIOD=2026-02/new-file.parquet', 'new-hash')];
+    const files = [file('cur/billing_period=2026-02/new-file.parquet', 'new-hash')];
     const dataDir = '/tmp';
     const expectedEtagFile = join(dataDir, 'aws', 'meta', 'sync-etags.json');
 
@@ -346,8 +346,8 @@ describe('syncSelectedFiles', () => {
       mockReaddir.mockResolvedValue(['file1.parquet', 'file2.parquet', 'stale-old-part.parquet']);
 
       const files = [
-        file('cur/data/BILLING_PERIOD=2026-03/file1.parquet', 'h1'),
-        file('cur/data/BILLING_PERIOD=2026-03/file2.parquet', 'h2'),
+        file('cur/data/billing_period=2026-03/file1.parquet', 'h1'),
+        file('cur/data/billing_period=2026-03/file2.parquet', 'h2'),
       ];
       const dataDir = join('/tmp', 'prune-test');
       const dest = join(dataDir, 'aws', 'raw', 'daily-2026-03');
@@ -377,8 +377,8 @@ describe('syncSelectedFiles', () => {
         dataDir: '/tmp/prune-clean',
         expectedDataType: 'daily',
         files: [
-          file('cur/data/BILLING_PERIOD=2026-03/file1.parquet'),
-          file('cur/data/BILLING_PERIOD=2026-03/file2.parquet'),
+          file('cur/data/billing_period=2026-03/file1.parquet'),
+          file('cur/data/billing_period=2026-03/file2.parquet'),
         ],
       });
 
@@ -396,7 +396,7 @@ describe('syncSelectedFiles', () => {
         providerName,
         dataDir: '/tmp/prune-temp',
         expectedDataType: 'daily',
-        files: [file('cur/data/BILLING_PERIOD=2026-03/file1.parquet')],
+        files: [file('cur/data/billing_period=2026-03/file1.parquet')],
       });
 
       expect(mockRm).toHaveBeenCalledWith(join(dest, 'stale.parquet'), { force: true });
@@ -417,7 +417,7 @@ describe('syncSelectedFiles', () => {
         providerName,
         dataDir,
         expectedDataType: 'daily',
-        files: [file('cur/data/BILLING_PERIOD=2026-03/file1.parquet')],
+        files: [file('cur/data/billing_period=2026-03/file1.parquet')],
       });
 
       // Download succeeded and etags were still persisted despite the prune error.
@@ -436,7 +436,7 @@ describe('syncSelectedFiles', () => {
           providerName,
           dataDir: '/tmp/prune-fail',
           expectedDataType: 'daily',
-          files: [file('cur/data/BILLING_PERIOD=2026-03/file1.parquet')],
+          files: [file('cur/data/billing_period=2026-03/file1.parquet')],
         })
       ).rejects.toThrow('Access Denied');
 
@@ -468,7 +468,7 @@ describe('syncSelectedFiles', () => {
       profile: 'test',
       providerName,
       dataDir,
-      files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
+      files: [file('cur/billing_period=2026-03/file.parquet')],
     });
 
     expect(mockMkdir).toHaveBeenCalledWith(
@@ -492,9 +492,9 @@ describe('syncSelectedFiles', () => {
         providerName,
         dataDir: '/tmp',
         files: [
-          file('cur/BILLING_PERIOD=2026-01/a.parquet'),
-          file('cur/BILLING_PERIOD=2026-02/b.parquet'),
-          file('cur/BILLING_PERIOD=2026-03/c.parquet'),
+          file('cur/billing_period=2026-01/a.parquet'),
+          file('cur/billing_period=2026-02/b.parquet'),
+          file('cur/billing_period=2026-03/c.parquet'),
         ],
       })
     ).rejects.toThrow('Connection timed out');
@@ -532,18 +532,18 @@ describe('syncSelectedFiles', () => {
         providerName,
         dataDir: '/tmp',
         files: [
-          file('cur/BILLING_PERIOD=2026-01/a.parquet', 'hash-jan'),
-          file('cur/BILLING_PERIOD=2026-02/b.parquet', 'hash-feb'),
-          file('cur/BILLING_PERIOD=2026-03/c.parquet', 'hash-mar'),
+          file('cur/billing_period=2026-01/a.parquet', 'hash-jan'),
+          file('cur/billing_period=2026-02/b.parquet', 'hash-feb'),
+          file('cur/billing_period=2026-03/c.parquet', 'hash-mar'),
         ],
       });
 
       expect(mockWriteFile).toHaveBeenCalledTimes(3);
 
       const saved = JSON.parse(getLastWritten());
-      expect(saved['2026-01']?.['cur/BILLING_PERIOD=2026-01/a.parquet']).toBe('hash-jan');
-      expect(saved['2026-02']?.['cur/BILLING_PERIOD=2026-02/b.parquet']).toBe('hash-feb');
-      expect(saved['2026-03']?.['cur/BILLING_PERIOD=2026-03/c.parquet']).toBe('hash-mar');
+      expect(saved['2026-01']?.['cur/billing_period=2026-01/a.parquet']).toBe('hash-jan');
+      expect(saved['2026-02']?.['cur/billing_period=2026-02/b.parquet']).toBe('hash-feb');
+      expect(saved['2026-03']?.['cur/billing_period=2026-03/c.parquet']).toBe('hash-mar');
     });
 
     it('processes periods sequentially', async () => {
@@ -551,7 +551,7 @@ describe('syncSelectedFiles', () => {
 
       mockSpawn.mockImplementation((_cmd: unknown, rawArgs: unknown) => {
         const args = rawArgs as string[];
-        const period = args.find((arg) => arg.includes('BILLING_PERIOD='))?.match(/2026-\d{2}/)?.[0];
+        const period = args.find((arg) => arg.includes('billing_period='))?.match(/2026-\d{2}/)?.[0];
         if (period !== undefined) spawnOrder.push(period);
 
         const proc = new MockChildProcess();
@@ -565,9 +565,9 @@ describe('syncSelectedFiles', () => {
         providerName,
         dataDir: '/tmp',
         files: [
-          file('cur/BILLING_PERIOD=2026-01/a.parquet'),
-          file('cur/BILLING_PERIOD=2026-02/b.parquet'),
-          file('cur/BILLING_PERIOD=2026-03/c.parquet'),
+          file('cur/billing_period=2026-01/a.parquet'),
+          file('cur/billing_period=2026-02/b.parquet'),
+          file('cur/billing_period=2026-03/c.parquet'),
         ],
       });
 
@@ -589,9 +589,9 @@ describe('syncSelectedFiles', () => {
           providerName,
           dataDir: '/tmp',
           files: [
-            file('cur/BILLING_PERIOD=2026-01/a.parquet'),
-            file('cur/BILLING_PERIOD=2026-02/b.parquet'),
-            file('cur/BILLING_PERIOD=2026-03/c.parquet'),
+            file('cur/billing_period=2026-01/a.parquet'),
+            file('cur/billing_period=2026-02/b.parquet'),
+            file('cur/billing_period=2026-03/c.parquet'),
           ],
         })
       ).rejects.toThrow('Access Denied for period 2');
@@ -622,10 +622,10 @@ describe('syncSelectedFiles', () => {
         providerName,
         dataDir: '/tmp',
         files: [
-          file('cur/BILLING_PERIOD=2026-01/a.parquet'),
-          file('cur/BILLING_PERIOD=2026-01/b.parquet'),
-          file('cur/BILLING_PERIOD=2026-02/c.parquet'),
-          file('cur/BILLING_PERIOD=2026-02/d.parquet'),
+          file('cur/billing_period=2026-01/a.parquet'),
+          file('cur/billing_period=2026-01/b.parquet'),
+          file('cur/billing_period=2026-02/c.parquet'),
+          file('cur/billing_period=2026-02/d.parquet'),
         ],
         onProgress: (progress) => { progressEvents.push(progress); },
       });
@@ -656,12 +656,12 @@ describe('syncSelectedFiles', () => {
         profile: 'test',
         providerName,
         dataDir: '/tmp',
-        files: [file('cur/BILLING_PERIOD=2026-01/new-file.parquet', 'new-hash-1')],
+        files: [file('cur/billing_period=2026-01/new-file.parquet', 'new-hash-1')],
       });
 
       const saved = JSON.parse(getLastWritten());
       expect(saved['2025-12']?.['old-file.parquet']).toBe('old-hash');
-      expect(saved['2026-01']?.['cur/BILLING_PERIOD=2026-01/new-file.parquet']).toBe('new-hash-1');
+      expect(saved['2026-01']?.['cur/billing_period=2026-01/new-file.parquet']).toBe('new-hash-1');
     });
 
     it('handles abort between periods — saves completed period ETags only', async () => {
@@ -694,9 +694,9 @@ describe('syncSelectedFiles', () => {
         providerName,
         dataDir: '/tmp',
         files: [
-          file('cur/BILLING_PERIOD=2026-01/a.parquet'),
-          file('cur/BILLING_PERIOD=2026-02/b.parquet'),
-          file('cur/BILLING_PERIOD=2026-03/c.parquet'),
+          file('cur/billing_period=2026-01/a.parquet'),
+          file('cur/billing_period=2026-02/b.parquet'),
+          file('cur/billing_period=2026-03/c.parquet'),
         ],
         signal: controller.signal,
       });
@@ -882,7 +882,7 @@ describe('syncSelectedFiles', () => {
           profile: 'test',
           providerName,
           dataDir: '/tmp',
-          files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
+          files: [file('cur/billing_period=2026-03/file.parquet')],
         })
       ).rejects.toThrow('ENOSPC');
     });
@@ -896,7 +896,7 @@ describe('syncSelectedFiles', () => {
           profile: 'test',
           providerName,
           dataDir: '/tmp',
-          files: [file('cur/BILLING_PERIOD=2026-03/file.parquet')],
+          files: [file('cur/billing_period=2026-03/file.parquet')],
         })
       ).rejects.toThrow('ENOSPC: no space left on device');
     });
@@ -928,14 +928,14 @@ describe('syncSelectedFiles', () => {
           providerName,
           dataDir: '/tmp',
           files: [
-            file('cur/BILLING_PERIOD=2026-01/a.parquet', 'hash-jan'),
-            file('cur/BILLING_PERIOD=2026-02/b.parquet', 'hash-feb'),
+            file('cur/billing_period=2026-01/a.parquet', 'hash-jan'),
+            file('cur/billing_period=2026-02/b.parquet', 'hash-feb'),
           ],
         })
       ).rejects.toThrow('ENOSPC');
 
       const saved = JSON.parse(savedRaw);
-      expect(saved['2026-01']?.['cur/BILLING_PERIOD=2026-01/a.parquet']).toBe('hash-jan');
+      expect(saved['2026-01']?.['cur/billing_period=2026-01/a.parquet']).toBe('hash-jan');
       expect(saved['2026-02']).toBeUndefined();
     });
   });

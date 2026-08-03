@@ -22,7 +22,7 @@ const dimensions: DimensionsConfig = {
   ],
   tags: [{ tagName: 'team', label: 'Team', concept: 'owner', normalize: 'lowercase-kebab' }],
 };
-const costScope: CostScopeConfig = { costMetric: 'unblended', costPerspective: 'gross', rules: [] };
+const costScope: CostScopeConfig = { costMetric: 'effective', rules: [] };
 
 interface Row { [k: string]: unknown }
 async function queryAll(conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>['connect']>>, sql: string): Promise<Row[]> {
@@ -61,7 +61,7 @@ describe('rollup multi-month glob == raw over the window', () => {
   afterAll(async () => { await rm(rollupDir, { recursive: true, force: true }); });
 
   const window = `usage_date >= '2026-01-01' AND usage_date < '2026-03-01'`;
-  const rawSrc = () => buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: MONTHS }], costMetric: 'unblended' });
+  const rawSrc = () => buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: MONTHS }], costMetric: 'effective' });
 
   it('total matches across the 2-month window', async () => {
     const raw = Number((await queryAll(conn, `SELECT CAST(SUM(cost) AS DOUBLE) t FROM ${rawSrc()} WHERE ${window}`))[0]?.['t']);

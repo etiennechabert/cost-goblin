@@ -349,17 +349,18 @@ test.describe('Cost Scope', () => {
     await expect(page.getByText(/Define what counts as cost/)).toBeVisible();
   });
 
-  test('cost metric picker lists Amortized, List, Unblended (Blended retired)', async () => {
+  test('cost metric picker lists the four FOCUS metrics (CUR-era names retired)', async () => {
     await expect(page.getByRole('heading', { name: 'Cost metric' })).toBeVisible();
     // Check the actual radio values, which are unique — the labels repeat
     // in adjacent description copy so role/name queries are ambiguous.
-    await expect(page.locator('input[type="radio"][value="amortized"]')).toBeVisible();
+    await expect(page.locator('input[type="radio"][value="effective"]')).toBeVisible();
+    await expect(page.locator('input[type="radio"][value="billed"]')).toBeVisible();
     await expect(page.locator('input[type="radio"][value="list"]')).toBeVisible();
-    await expect(page.locator('input[type="radio"][value="unblended"]')).toBeVisible();
-    // Blended was removed; AWS never extended it to Savings Plans and on an
-    // SP-based fleet it barely differs from Unblended. Legacy configs with
-    // costMetric: 'blended' are migrated to 'amortized' at load time.
-    await expect(page.locator('input[type="radio"][value="blended"]')).toHaveCount(0);
+    await expect(page.locator('input[type="radio"][value="contracted"]')).toBeVisible();
+    // CUR-era metric names are gone; legacy configs are migrated at load
+    // time (unblended → billed, amortized/blended → effective).
+    await expect(page.locator('input[type="radio"][value="unblended"]')).toHaveCount(0);
+    await expect(page.locator('input[type="radio"][value="amortized"]')).toHaveCount(0);
 
     // Exactly one metric radio is selected — the specific one depends on
     // what the user has saved to cost-scope.yaml, so we don't assume a

@@ -13,10 +13,16 @@ export const POST_SETUP_FLAG = '--post-setup';
 // the CLI flag stays in argv for the whole session, so argv alone isn't one-shot.
 let postSetupConsumed = false;
 
-const REQUIRED_CUR_COLUMNS = [
-  'line_item_usage_start_date', 'line_item_usage_account_id',
-  'line_item_unblended_cost', 'product_servicecode',
-  'product_product_family', 'product_region_code', 'resource_tags',
+// The FOCUS 1.2 columns the query layer reads (see buildSource). A candidate
+// export missing any of these can't back the app. Verified against a live
+// AWS FOCUS 1.2 Data Export's Manifest.json column list.
+const REQUIRED_FOCUS_COLUMNS = [
+  'ChargePeriodStart', 'SubAccountId', 'SubAccountName',
+  'BilledCost', 'EffectiveCost', 'ListCost', 'ContractedCost',
+  'ServiceName', 'x_ServiceCode', 'ServiceCategory', 'RegionId',
+  'ResourceId', 'ChargeCategory', 'PricingCategory',
+  'CommitmentDiscountStatus', 'ChargeDescription', 'ConsumedQuantity',
+  'SkuMeter', 'Tags', 'x_Operation',
 ];
 
 type DetectedReportType = 'daily' | 'hourly' | 'cost-optimization' | 'unknown';
@@ -25,8 +31,8 @@ function classifyManifestColumns(columnNames: string[]): { detectedType: Detecte
   if (columnNames.includes('recommendation_id') || columnNames.includes('estimated_monthly_savings')) {
     return { detectedType: 'cost-optimization', missingColumns: [] };
   }
-  if (columnNames.includes('line_item_usage_start_date')) {
-    return { detectedType: 'daily', missingColumns: REQUIRED_CUR_COLUMNS.filter(c => !columnNames.includes(c)) };
+  if (columnNames.includes('ChargePeriodStart')) {
+    return { detectedType: 'daily', missingColumns: REQUIRED_FOCUS_COLUMNS.filter(c => !columnNames.includes(c)) };
   }
   return { detectedType: 'unknown', missingColumns: [] };
 }
@@ -125,7 +131,7 @@ export function registerSetupHandlers(app: AppContext): void {
     }
   });
 
-  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }> => {
+  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }> => {
     try {
       const { S3Client, ListObjectsV2Command, GetObjectCommand } = await import('@aws-sdk/client-s3');
       const client = new S3Client({
@@ -149,12 +155,12 @@ export function registerSetupHandlers(app: AppContext): void {
         })
         .filter(p => p.length > 0);
 
-      const isCurReport = prefixes.includes('data') && prefixes.includes('metadata');
+      const isBillingExport = prefixes.includes('data') && prefixes.includes('metadata');
 
       let detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown' = 'unknown';
       let missingColumns: string[] = [];
 
-      if (isCurReport) {
+      if (isBillingExport) {
         try {
           const metaList = await client.send(new ListObjectsV2Command({
             Bucket: params.bucket,
@@ -177,9 +183,9 @@ export function registerSetupHandlers(app: AppContext): void {
         }
       }
 
-      return { prefixes, isCurReport, detectedType, missingColumns };
+      return { prefixes, isBillingExport, detectedType, missingColumns };
     } catch {
-      return { prefixes: [], isCurReport: false, detectedType: 'unknown', missingColumns: [] };
+      return { prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [] };
     }
   });
 
@@ -237,25 +243,25 @@ export function registerSetupHandlers(app: AppContext): void {
         name: 'service',
         label: 'Service',
         field: 'service',
-        description: "AWS service code (EC2, S3, RDS, etc.) — the broadest \"what cost me this?\" view.",
+        description: 'Service the cost came from (FOCUS ServiceName, e.g. "Amazon Simple Storage Service") — the broadest "what cost me this?" view.',
       },
       {
-        name: 'service_family',
-        label: 'Service Family',
-        field: 'service_family',
-        description: 'Higher-level product category (Compute, Storage, Database). Good for exec summaries.',
+        name: 'service_category',
+        label: 'Service Category',
+        field: 'service_category',
+        description: 'Standardized FOCUS category (Compute, Storage, Databases). Good for exec summaries.',
       },
       {
-        name: 'line_item_type',
-        label: 'Line Item Type',
-        field: 'line_item_type',
-        description: 'Usage vs Tax vs Credit vs Discount. Filter this to isolate real usage from billing adjustments.',
+        name: 'charge_category',
+        label: 'Charge Category',
+        field: 'charge_category',
+        description: 'Usage vs Purchase vs Tax vs Credit vs Adjustment. Filter this to isolate real usage from billing events.',
       },
       {
-        name: 'usage_type',
-        label: 'Usage Type',
-        field: 'usage_type',
-        description: 'Fine-grained usage string like USE2-BoxUsage:t3.medium. Use for instance/storage-tier breakdowns.',
+        name: 'sku_meter',
+        label: 'SKU Meter',
+        field: 'sku_meter',
+        description: 'Fine-grained usage meter like EUC1-Requests-Tier2. Use for instance/storage-tier breakdowns.',
       },
       {
         name: 'operation',
@@ -307,18 +313,19 @@ providers:
     credentialsProfile: default  # <- your AWS CLI profile name
     sync:
       daily:
-        bucket: s3://your-bucket/path/to/cur/  # <- path containing data/ and metadata/
+        bucket: s3://your-bucket/path/to/focus-export/  # <- path containing data/ and metadata/
         retentionDays: 365
       intervalMinutes: 60
 
 defaults:
   periodDays: 30
-  costMetric: UnblendedCost
+  costMetric: effective
   lagDays: 2
 `;
 
     const dimensionsTemplate = `# Dimension configuration
-# Built-in dimensions are always available. Add tag dimensions to map your CUR tags.
+# Built-in dimensions are always available. Add tag dimensions to map your
+# resource tags (the FOCUS Tags map).
 
 builtIn:
   - name: account
@@ -331,12 +338,12 @@ builtIn:
   - name: service
     label: Service
     field: service
-  - name: service_family
-    label: Service Family
-    field: service_family
+  - name: service_category
+    label: Service Category
+    field: service_category
 
-# Map your CUR resource tags below.
-# tagName: the tag key in your CUR (with or without the "user_" prefix)
+# Map your resource tags below.
+# tagName: the tag key exactly as it appears in the FOCUS Tags map
 # concept: owner | product | environment (enables special UI features)
 tags: []
   # Example:

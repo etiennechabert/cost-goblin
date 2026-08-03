@@ -104,10 +104,9 @@ the partitions are trusted as-is. If not, they're stale → re-roll.
 **In the signature** (changing these changes stored bytes):
 - the set of enabled dimension columns + their projection
   (`tagName` / `accountTagFallback` / `missingValueTemplate` / `pathSegment`)
-- `costMetric`, `costPerspective`
+- `costMetric`
 - the enabled exclusion-rule set
 - a digest of `org-accounts.json` content (feeds the account-fallback join)
-- the available-columns probe result
 
 **Excluded** (query-time — see §7): value aliases, normalize, `lagDays`,
 dimension `label` / `order` / `defaultFilterValues` / `enabled`-cosmetic, region
@@ -197,7 +196,7 @@ When the user toggles a dimension, show the impact **before** committing the
 - Single-writer queue + epoch tokens for all rollup mutations (kills the
   `drop()`-vs-in-flight-`materialize()` resurrection + concurrent-rebuild races).
 - **Fix the Table-widget bug**: it runs on the Explorer handlers inside the
-  dashboard and silently defaults to `unblended` — pass it the global scope.
+  dashboard and silently defaults to the base metric — pass it the global scope.
 
 **Phase 2 — per-period maintainer.**
 Thread the changed-period set (already computed by `auto-sync`) into a

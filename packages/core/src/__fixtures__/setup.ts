@@ -4,48 +4,14 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { FIXTURE_PROVIDER_NAME } from './layout.js';
+import { buildSyntheticTable, pick, seededRandom, weightedPick } from './focus-fixture.js';
+import type { FocusFixtureConfig } from './focus-fixture.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, 'synthetic');
 const MARKER = join(SYNTHETIC_DIR, '.generated');
 
-function seededRandom(seed: number): () => number {
-  let s = seed;
-  return () => {
-    s = (s * 1664525 + 1013904223) & 0x7fffffff;
-    return s / 0x7fffffff;
-  };
-}
-
-function pick<T>(arr: readonly T[], rand: () => number): T {
-  const idx = Math.floor(rand() * arr.length);
-  const item = arr[idx];
-  if (item === undefined) throw new Error(`pick: empty array`);
-  return item;
-}
-
-function weightedPick<T extends { costShare: number }>(arr: readonly T[], rand: () => number): T {
-  const r = rand();
-  let cumulative = 0;
-  for (const item of arr) {
-    cumulative += item.costShare;
-    if (r <= cumulative) return item;
-  }
-  const last = arr.at(-1);
-  if (last === undefined) throw new Error(`weightedPick: empty array`);
-  return last;
-}
-
-import { SERVICE_META, DEFAULT_META } from './service-meta.js';
-
-interface FixtureConfig {
-  services: { name: string; costShare: number }[];
-  accounts: { id: string; name: string; costShare: number }[];
-  regions: string[];
-  owners: string[];
-  products: string[];
-  envs: string[];
-}
+type FixtureConfig = FocusFixtureConfig;
 
 function generateDailyDates(): string[] {
   const dates: string[] = [];
@@ -56,30 +22,6 @@ function generateDailyDates(): string[] {
     }
   }
   return dates;
-}
-
-function generateFixtureRow(date: string, cfg: FixtureConfig, rand: () => number): string {
-  const service = weightedPick(cfg.services, rand);
-  const account = weightedPick(cfg.accounts, rand);
-  const region = pick(cfg.regions, rand);
-  const owner = rand() < 0.08 ? null : pick(cfg.owners, rand);
-  const product = rand() < 0.12 ? null : pick(cfg.products, rand);
-  const env = rand() < 0.03 ? null : pick(cfg.envs, rand);
-  const cost = Math.round(Math.exp(rand() * 6 - 2) * service.costShare * 10 * 100) / 100;
-  const listCost = Math.round(cost * (1 + rand() * 0.3) * 100) / 100;
-  const usageAmount = Math.round(rand() * 1000 * 100) / 100;
-  const resourceId = `arn:aws:${service.name.toLowerCase()}:${region}:${account.id}:resource/${String(Math.floor(rand() * 10000))}`;
-
-  const meta = SERVICE_META[service.name] ?? DEFAULT_META;
-  const operation = pick(meta.operations, rand);
-
-  const tagEntries: string[] = [];
-  if (owner !== null) tagEntries.push(`'user_team': '${owner}'`);
-  if (product !== null) tagEntries.push(`'user_system': '${product}'`);
-  if (env !== null) tagEntries.push(`'user_environment': '${env}'`);
-
-  const netCost = Math.round(cost * 0.97 * 100) / 100;
-  return `(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', '${meta.family}', '${operation}', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(netCost)}, ${String(listCost)}, NULL, NULL, NULL, NULL, 'Usage', '${operation}', 'Usage', MAP {${tagEntries.join(', ')}})`;
 }
 
 interface ActionType {
@@ -163,20 +105,20 @@ export async function setup(): Promise<void> {
 
   const cfg: FixtureConfig = {
     services: [
-      { name: 'AmazonEC2', costShare: 0.25 },
-      { name: 'AmazonRDS', costShare: 0.2 },
-      { name: 'AmazonS3', costShare: 0.1 },
-      { name: 'AWSLambda', costShare: 0.08 },
-      { name: 'AmazonCloudWatch', costShare: 0.07 },
-      { name: 'AmazonDynamoDB', costShare: 0.06 },
-      { name: 'AmazonVPC', costShare: 0.05 },
-      { name: 'AWSBackup', costShare: 0.05 },
-      { name: 'AmazonECR', costShare: 0.04 },
-      { name: 'AmazonSNS', costShare: 0.03 },
-      { name: 'AmazonSQS', costShare: 0.02 },
-      { name: 'AWSCloudTrail', costShare: 0.02 },
-      { name: 'AmazonRoute53', costShare: 0.015 },
-      { name: 'AmazonEFS', costShare: 0.015 },
+      { code: 'AmazonEC2', costShare: 0.25 },
+      { code: 'AmazonRDS', costShare: 0.2 },
+      { code: 'AmazonS3', costShare: 0.1 },
+      { code: 'AWSLambda', costShare: 0.08 },
+      { code: 'AmazonCloudWatch', costShare: 0.07 },
+      { code: 'AmazonDynamoDB', costShare: 0.06 },
+      { code: 'AmazonVPC', costShare: 0.05 },
+      { code: 'AWSBackup', costShare: 0.05 },
+      { code: 'AmazonECR', costShare: 0.04 },
+      { code: 'AmazonSNS', costShare: 0.03 },
+      { code: 'AmazonSQS', costShare: 0.02 },
+      { code: 'AWSCloudTrail', costShare: 0.02 },
+      { code: 'AmazonRoute53', costShare: 0.015 },
+      { code: 'AmazonEFS', costShare: 0.015 },
     ],
     accounts: [
       { id: '100000000000', name: 'Acme Corp Main', costShare: 0.3 },
@@ -196,56 +138,20 @@ export async function setup(): Promise<void> {
 
   const dailyDates = generateDailyDates();
 
-  const rows: string[] = [];
-  for (const date of dailyDates) {
-    for (let i = 0; i < 50; i++) {
-      rows.push(generateFixtureRow(date, cfg, rand));
-    }
-  }
-
-  await conn.run(`
-    CREATE TABLE synthetic (
-      line_item_usage_start_date TIMESTAMP,
-      line_item_usage_account_id VARCHAR,
-      line_item_usage_account_name VARCHAR,
-      product_region_code VARCHAR,
-      product_servicecode VARCHAR,
-      product_product_family VARCHAR,
-      line_item_line_item_description VARCHAR,
-      line_item_resource_id VARCHAR,
-      line_item_usage_amount DOUBLE,
-      line_item_unblended_cost DOUBLE,
-      line_item_net_unblended_cost DOUBLE,
-      pricing_public_on_demand_cost DOUBLE,
-      reservation_effective_cost DOUBLE,
-      reservation_net_effective_cost DOUBLE,
-      savings_plan_savings_plan_effective_cost DOUBLE,
-      savings_plan_net_savings_plan_effective_cost DOUBLE,
-      line_item_line_item_type VARCHAR,
-      line_item_operation VARCHAR,
-      line_item_usage_type VARCHAR,
-      resource_tags MAP(VARCHAR, VARCHAR)
-    )
-  `);
-
-  const BATCH_SIZE = 500;
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const batch = rows.slice(i, i + BATCH_SIZE);
-    await conn.run(`INSERT INTO synthetic VALUES ${batch.join(',')}`);
-  }
+  await buildSyntheticTable(conn, dailyDates, cfg, rand);
 
   const rawDir = join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw');
   const months = [...new Set(dailyDates.map(d => d.slice(0, 7)))];
   for (const month of months) {
     const monthDir = join(rawDir, `daily-${month}`);
     await mkdir(monthDir, { recursive: true });
-    await conn.run(`COPY (SELECT * FROM synthetic WHERE line_item_usage_start_date::DATE::VARCHAR LIKE '${month}%') TO '${join(monthDir, 'data.parquet')}' (FORMAT PARQUET)`);
+    await conn.run(`COPY (SELECT * FROM synthetic WHERE ChargePeriodStart::DATE::VARCHAR LIKE '${month}%') TO '${join(monthDir, 'data.parquet')}' (FORMAT PARQUET)`);
   }
 
   const hourlyDir = join(rawDir, 'hourly-2026-02');
   await mkdir(hourlyDir, { recursive: true });
   const hourlyDates = dailyDates.slice(-7);
-  const hourlyWhere = hourlyDates.map(d => `line_item_usage_start_date::DATE = '${d}'`).join(' OR ');
+  const hourlyWhere = hourlyDates.map(d => `ChargePeriodStart::DATE = '${d}'`).join(' OR ');
   await conn.run(`COPY (SELECT * FROM synthetic WHERE ${hourlyWhere}) TO '${join(hourlyDir, 'data.parquet')}' (FORMAT PARQUET)`);
 
   // --- Cost optimization recommendations ---

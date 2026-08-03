@@ -53,7 +53,7 @@ export const SETTINGS_TABS: readonly SettingsTabMeta[] = [
     id: 'cost-scope',
     label: 'Cost Scope',
     Icon: Target,
-    keywords: ['metric', 'amortized', 'unblended', 'on-demand', 'perspective', 'net', 'gross', 'exclusions', 'lag'],
+    keywords: ['metric', 'billed', 'effective', 'amortized', 'list price', 'on-demand', 'contracted', 'exclusions', 'lag'],
   },
   {
     id: 'dimensions',

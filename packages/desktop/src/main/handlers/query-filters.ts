@@ -158,9 +158,8 @@ export function registerFilterHandlers(app: AppContext): void {
         providers: active.map(p => ({
           name: p.name,
           periods: required?.filter(m => p.availablePeriods?.includes(m) ?? false),
-          availableColumns: p.availableColumns,
         })),
-        costMetric: 'unblended',
+        costMetric: 'billed',
       });
     } else {
       source = matSource;

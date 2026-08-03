@@ -143,7 +143,7 @@ describe('upsertWizardProvider', () => {
 
   it('adds the standard defaults block when none exists', () => {
     const result = upsertWizardProvider({}, { providerName: 'aws-main', profile: 'p', dailyBucket: 's3://b/' });
-    expect(result['defaults']).toEqual({ periodDays: 30, costMetric: 'UnblendedCost', lagDays: 2 });
+    expect(result['defaults']).toEqual({ periodDays: 30, costMetric: 'effective', lagDays: 2 });
   });
 
   it('drops a legacy nested credentials key when rewriting the targeted provider', () => {

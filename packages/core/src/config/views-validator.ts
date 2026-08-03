@@ -1,4 +1,5 @@
 import { asDimensionId } from '../types/branded.js';
+import { migrateLegacyDimensionId } from './legacy-renames.js';
 import type {
   SummaryMetric,
   ViewSpec,
@@ -109,11 +110,11 @@ function validateBubbleWidget(raw: Record<string, unknown>, ctx: string, base: W
 
 function validateGroupByWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase, type: 'pie' | 'stackedBar' | 'bubble' | 'treemap' | 'pareto'): WidgetSpec {
   assertString(raw['groupBy'], `${ctx}.groupBy`);
-  const groupBy = asDimensionId(raw['groupBy']);
+  const groupBy = asDimensionId(migrateLegacyDimensionId(raw['groupBy']));
   if (type === 'treemap') {
     const drillTo = raw['drillTo'] === undefined
       ? undefined
-      : (assertString(raw['drillTo'], `${ctx}.drillTo`), asDimensionId(raw['drillTo']));
+      : (assertString(raw['drillTo'], `${ctx}.drillTo`), asDimensionId(migrateLegacyDimensionId(raw['drillTo'])));
     return { type, ...base, groupBy, ...(drillTo === undefined ? {} : { drillTo }) };
   }
   if (type === 'bubble') return validateBubbleWidget(raw, ctx, base, groupBy);
@@ -127,7 +128,7 @@ function validateTopNWidget(raw: Record<string, unknown>, ctx: string, base: Wid
     assertNumber(raw['topN'], `${ctx}.topN`);
     topN = raw['topN'];
   }
-  return { type, ...base, groupBy: asDimensionId(raw['groupBy']), ...(topN === undefined ? {} : { topN }) };
+  return { type, ...base, groupBy: asDimensionId(migrateLegacyDimensionId(raw['groupBy'])), ...(topN === undefined ? {} : { topN }) };
 }
 
 function validateBurndownWidget(raw: Record<string, unknown>, ctx: string, base: WidgetBase): WidgetSpec {
@@ -141,7 +142,7 @@ function validateTableWidget(raw: Record<string, unknown>, ctx: string, base: Wi
     assertArray(raw['enabledColumns'], `${ctx}.enabledColumns`);
     enabledColumns = raw['enabledColumns'].map((c, i) => {
       assertString(c, `${ctx}.enabledColumns[${String(i)}]`);
-      return c;
+      return migrateLegacyDimensionId(c);
     });
   }
   return { type: 'table', ...base, ...(enabledColumns === undefined ? {} : { enabledColumns }) };

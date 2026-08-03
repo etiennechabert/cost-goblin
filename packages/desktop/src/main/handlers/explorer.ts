@@ -3,6 +3,7 @@ import { originStore } from '../query-log.js';
 import {
   asDimensionId,
   asDateString,
+  migrateLegacyDimensionId,
   assertHourString,
   buildSource,
   buildRuleMatchExpr,
@@ -38,7 +39,7 @@ import type {
 import type { RawRow } from '../duckdb-client.js';
 import { type AppContext, prefsPath } from './context.js';
 import { buildAccountReverseMap, columnForDimension, resolveRollupSource, toNum, toStr } from './query-utils.js';
-import { resolveScopeMetric, resolveScopePerspective } from './explorer-scope.js';
+import { resolveScopeMetric } from './explorer-scope.js';
 
 const DEFAULT_WINDOW_DAYS = 30;
 const MAX_ROW_LIMIT = 1000;
@@ -100,10 +101,13 @@ const SORTABLE_SCALAR_COLUMNS: ReadonlySet<string> = new Set([
   'account_name',
   'region',
   'service',
-  'service_family',
-  'line_item_type',
+  'service_code',
+  'service_category',
+  'charge_category',
+  'pricing_category',
+  'commitment_status',
   'operation',
-  'usage_type',
+  'sku_meter',
   'description',
   'resource_id',
   'usage_amount',
@@ -243,9 +247,8 @@ interface BuildFreshSourceOptions {
 
 async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source: string; whereStr: string }> {
   const { app, params, startStr, endStr, startHour, endHour, tier, periods, providers, dimensions, filterPredicate, accountReverseMap } = opts;
-  const { ctx, getCostScope, getOrgAccountsPath, getAvailableColumns } = app;
+  const { ctx, getCostScope, getOrgAccountsPath } = app;
   const orgPath = await getOrgAccountsPath();
-  const availableColumns = await getAvailableColumns(tier);
   const applyCostScope = params.applyCostScope === true;
   // Marketplace re-attribution fixes which service a cost belongs to (a data
   // quality fix, not an exclusion), so it follows its own toggle and applies
@@ -253,12 +256,10 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
   // its filter dropdowns would disagree with the dashboard on Bedrock spend.
   const fullScope = await getCostScope().catch(() => undefined);
   const scopeForExclusions = applyCostScope ? fullScope : undefined;
-  // When the caller applies the cost scope but doesn't override the metric /
-  // perspective (every dashboard widget — only the Explorer view sets them
-  // explicitly), inherit them from the global scope instead of silently
-  // defaulting to unblended/gross. Both stay capability-gated.
-  const metric = resolveScopeMetric(params.costMetric, applyCostScope, scopeForExclusions, availableColumns);
-  const perspective = resolveScopePerspective(params.costPerspective, applyCostScope, scopeForExclusions, availableColumns);
+  // When the caller applies the cost scope but doesn't override the metric
+  // (every dashboard widget — only the Explorer view sets it explicitly),
+  // inherit it from the global scope instead of silently defaulting.
+  const metric = resolveScopeMetric(params.costMetric, applyCostScope, scopeForExclusions);
 
   // Per-provider month intersection: a shared list would hand providers
   // globs for months they don't have on disk, and one zero-match glob fails
@@ -268,13 +269,12 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
     .map(p => ({
       name: p.name,
       periods: periods.filter(m => p.availablePeriods?.includes(m) ?? false),
-      availableColumns: p.availableColumns,
     }))
     .filter(b => b.periods.length > 0);
   const source = buildSource({
     dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath,
     providers: branches,
-    costMetric: metric, costPerspective: perspective, marketplaceAttribution: fullScope?.marketplaceAttribution,
+    costMetric: metric, marketplaceAttribution: fullScope?.marketplaceAttribution,
   });
   const exclusions = buildExclusionClauses(scopeForExclusions, dimensions, accountReverseMap);
 
@@ -378,13 +378,12 @@ function resolveAggregatedSort(sort: ExplorerSort | undefined, groupByColumns: r
 }
 
 /** The dashboard Table widget hits the overview with the GLOBAL cost scope and
- *  no metric/perspective override — only then does the pre-aggregated daily
- *  rollup reproduce the raw totals, so gate the rollup route on exactly that. */
+ *  no metric override — only then does the pre-aggregated daily rollup
+ *  reproduce the raw totals, so gate the rollup route on exactly that. */
 function overviewUsesRollup(params: ExplorerOverviewParams, tier: 'daily' | 'hourly'): boolean {
   return tier === 'daily'
     && params.applyCostScope === true
-    && params.costMetric === undefined
-    && params.costPerspective === undefined;
+    && params.costMetric === undefined;
 }
 
 function overviewFilterColumns(params: ExplorerOverviewParams, dimensions: DimensionsConfig): string[] {
@@ -431,11 +430,13 @@ export function registerExplorerHandlers(app: AppContext): void {
       const rawDateRange = obj?.['lastUsedDateRange'];
       const rawGranularity = obj?.['lastUsedGranularity'];
 
+      // Persisted prefs may carry CUR-era column ids (#515) — rename them so
+      // saved layouts survive the FOCUS migration.
       const hiddenColumns = Array.isArray(rawHidden) && rawHidden.every((v): v is string => typeof v === 'string')
-        ? rawHidden
+        ? rawHidden.map(migrateLegacyDimensionId)
         : [];
       const columnOrder = Array.isArray(rawOrder) && rawOrder.every((v): v is string => typeof v === 'string')
-        ? rawOrder
+        ? rawOrder.map(migrateLegacyDimensionId)
         : [];
 
       const validDateRange =
@@ -512,7 +513,7 @@ export function registerExplorerHandlers(app: AppContext): void {
       whereStr = qc.whereStr;
       rowsExpr = 'COUNT(*)';
       // Bucket width matches the queried tier — daily rows group per day,
-      // hourly rows group per hour. CUR line items like SavingsPlanFee, RIFee,
+      // hourly rows group per hour. Monthly-frequency line items (fees, Tax)
       // Refund and Tax carry a precise mid-hour timestamp; we shift by 30
       // minutes before truncating so a fee at 11:56:32 lands in the 12:00
       // bucket instead of either getting its own bar (no truncation) or being
@@ -589,8 +590,8 @@ export function registerExplorerHandlers(app: AppContext): void {
       SELECT
         usage_date::VARCHAR AS usage_date,
         ${hourSelect},
-        account_id, account_name, region, service, service_family,
-        line_item_type, operation, usage_type, description, resource_id,
+        account_id, account_name, region, service, service_category,
+        charge_category, operation, sku_meter, description, resource_id,
         CAST(usage_amount AS DOUBLE) AS usage_amount,
         CAST(cost AS DOUBLE) AS cost,
         CAST(list_cost AS DOUBLE) AS list_cost${tagSelectSql === null ? '' : `,\n        ${tagSelectSql}`}
@@ -616,10 +617,10 @@ export function registerExplorerHandlers(app: AppContext): void {
           accountName: toStr(r['account_name']),
           region: toStr(r['region']),
           service: toStr(r['service']),
-          serviceFamily: toStr(r['service_family']),
-          lineItemType: toStr(r['line_item_type']),
+          serviceCategory: toStr(r['service_category']),
+          chargeCategory: toStr(r['charge_category']),
           operation: toStr(r['operation']),
-          usageType: toStr(r['usage_type']),
+          skuMeter: toStr(r['sku_meter']),
           description: toStr(r['description']),
           resourceId: toStr(r['resource_id']),
           usageAmount: toNum(r['usage_amount']),

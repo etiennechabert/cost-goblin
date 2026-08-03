@@ -180,16 +180,18 @@ Main Process
 
 ### Source: Cloud Billing Exports
 
-MVP targets **AWS Cost and Usage Reports (CUR 2.0)**, exported as Parquet to S3.
-
-The architecture supports future providers via a normalization layer:
+The core schema is **FOCUS 1.2** (the FinOps Foundation's vendor-neutral
+billing spec — to cloud billing what OTEL is to telemetry). The AWS source is
+the **FOCUS 1.2 Data Export** (`FOCUS_1_2_AWS` table, GA Nov 2025), delivered
+as Parquet to S3. Additional providers become *receivers* feeding the same
+schema:
 
 | Provider | Export Format | Storage | Status |
 |----------|-------------|---------|--------|
-| AWS | CUR 2.0 (Parquet) | S3 | MVP |
+| AWS | FOCUS 1.2 Data Export (Parquet) | S3 | MVP |
 | AWS | Cost Optimization Hub recommendations (Parquet) | S3 | MVP |
-| GCP | BigQuery billing export | BigQuery → Parquet | Maybe Later |
-| Azure | Cost Management export | Blob Storage (Parquet/CSV) | Maybe Later |
+| GCP | BigQuery billing export → FOCUS | BigQuery → Parquet | #517 |
+| Azure | Cost Management FOCUS export | Blob Storage (Parquet/CSV) | Maybe Later |
 
 **Providers are first-class (#516).** A workspace configures N provider
 *instances* — including N of the same type, e.g. two AWS payer accounts. Each
@@ -201,56 +203,74 @@ timestamps, failure state — one payer's expired credentials never block the
 others) and queries UNION one SELECT branch per provider, each with its own
 Parquet globs and cost expression, plus an injected constant `provider`
 column. The *ingest contract*: a provider adapter's only job is keeping its
-`raw/` populated with valid Parquet in the shared schema (CUR 2.0 today;
-FOCUS 1.2 after #515). Everything above `raw/` is provider-agnostic.
+`raw/{tier}-{YYYY-MM}/` dirs populated with valid FOCUS 1.2 Parquet carrying
+the required columns below. Everything above `raw/` is provider-agnostic.
 Multi-provider caveats (v1): the pre-aggregated rollup accelerates only
 single-provider workspaces (multi-provider queries read raw via the union);
-mixing billing currencies is not yet handled (relevant only after #515).
+mixing billing currencies is not yet handled.
 
-### CUR 2.0 Report Configuration
+### Data schema: FOCUS 1.2 (AWS Data Export configuration)
 
-When creating the CUR report in the AWS Console (Cost and Usage Reports → Create report), use these settings:
+When creating the export in the AWS Console (Billing and Cost Management →
+Data Exports → Create export), use these settings:
 
 | Setting | Value |
 |---------|-------|
-| Table name | `CUR 2.0` |
-| Time granularity | `Daily` (or `Hourly` for hourly tier) |
-| Additional content | `Include resource IDs` |
-| Billing view | `Primary View` |
+| Export type | `Standard data export` |
+| Data table | `FOCUS 1.2` (`FOCUS_1_2_AWS`) |
+| Time granularity | `Daily` (or `Hourly` for the hourly tier's second export) |
+| Column selection | `All columns` (recommended) |
 | Format | `Parquet` |
 | Compression | `Snappy` (default) |
+| Overwrite | `Overwrite existing data export file` |
 
-**Required columns:**
+**Required columns** (the subset the app actually reads; the setup wizard
+rejects a candidate export missing any of them):
 
 | Column | Type | Purpose |
 |--------|------|---------|
-| `line_item_usage_start_date` | Timestamp | Date partitioning key |
-| `line_item_usage_account_id` | String | Account dimension |
-| `line_item_usage_account_name` | String | Account display name |
-| `line_item_unblended_cost` | Number | Primary cost metric |
-| `line_item_line_item_type` | String | Charge type |
-| `line_item_line_item_description` | String | Line item description |
-| `line_item_operation` | String | AWS operation |
-| `line_item_usage_type` | String | Usage details |
-| `line_item_usage_amount` | Number | Usage quantity |
-| `line_item_resource_id` | String | Resource ARN |
-| `product_servicecode` | String | AWS service |
-| `product_product_family` | String | Service family |
-| `product_region_code` | String | AWS region |
-| `pricing_public_on_demand_cost` | Number | List price |
-| `resource_tags` | Map | Tag key-value pairs |
+| `ChargePeriodStart` | Timestamp | Date/hour partitioning key (`usage_date`/`usage_hour`) |
+| `SubAccountId` | String | Account dimension |
+| `SubAccountName` | String | Account display name |
+| `BilledCost` | Number | `billed` metric (invoice basis) |
+| `EffectiveCost` | Number | `effective` metric (amortized — the default) |
+| `ListCost` | Number | `list` metric |
+| `ContractedCost` | Number | `contracted` metric |
+| `ServiceName` | String | Service dimension (display names) |
+| `x_ServiceCode` | String | Exact service code dimension |
+| `ServiceCategory` | String | Standardized cross-cloud category (~13 values) |
+| `RegionId` | String | Region dimension |
+| `ResourceId` | String | Resource ARN |
+| `ChargeCategory` | String | Usage / Purchase / Tax / Credit / Adjustment |
+| `PricingCategory` | String | Standard / Committed / Dynamic |
+| `CommitmentDiscountStatus` | String | Used / Unused commitment |
+| `ChargeDescription` | String | Line item description |
+| `ConsumedQuantity` | Number | Usage quantity |
+| `SkuMeter` | String | Usage meter (the CUR usage-type equivalent; `x_UsageType` does not exist in `FOCUS_1_2_AWS`) |
+| `Tags` | Map | Tag key-value pairs (raw keys — no CUR-style `user_` prefix) |
+| `x_Operation` | String | AWS operation |
 
-CUR export structure in S3:
+Export structure in S3 (per export; note the lowercase `billing_period=`):
 
 ```
-s3://bucket/prefix/
+s3://bucket/prefix/<export-name>/
   data/
-    BILLING_PERIOD=YYYY-MM/
-      *.snappy.parquet
+    billing_period=YYYY-MM/
+      <export-name>-00001.snappy.parquet
   metadata/
-    BILLING_PERIOD=YYYY-MM/
-      manifest.json
+    billing_period=YYYY-MM/
+      <export-name>-Manifest.json
+      <export-name>-Manifest-FOCUS.json
 ```
+
+The export runs with `OVERWRITE_REPORT` semantics — AWS rewrites the same
+filenames on every refresh (several times a day for the current month), so
+sync change-detection keys on per-file ETags, not filenames. Granularity
+semantics (verified against a live export): the hourly export delivers clean
+1-hour charge periods; the daily export merges identical-dimension rows
+per day with `ChargePeriodStart` = the first usage hour (NOT day-aligned);
+monthly-frequency charges (Tax, commitment purchase fees) span the whole
+month in both exports and land on day 1 at daily grain.
 
 ### S3 Sync
 
@@ -272,7 +292,7 @@ The hourly and cost-optimization tiers are optional. Daily is mandatory.
 - Download is delegated to `aws s3 sync` (subprocess), which handles concurrency, retries, and partial-file resume natively.
 - Files land directly in `{providerName}/raw/{tier}-{period}/` — **no repartitioning**, no DuckDB-side rewrite. The downloaded Parquet is the queried Parquet.
 - Per-period etag manifests (`{providerName}/meta/sync-etags-{tier}.json`) record what's locally present so re-sync can skip unchanged files.
-- Tag columns are NOT pre-flattened at sync time. Queries extract from `resource_tags` map and apply aliases via SQL CASE expressions at query time.
+- Tag columns are NOT pre-flattened at sync time. Queries extract from the FOCUS `Tags` map and apply aliases via SQL CASE expressions at query time.
 
 **Local storage layout:**
 
@@ -341,28 +361,45 @@ No credentials are stored by the app — it delegates to the AWS SDK.
 
 ### Internal Schema
 
-DuckDB queries run against a normalized internal schema. The normalizer maps provider-specific columns at sync time.
+DuckDB queries run against a canonical projection over the raw FOCUS 1.2
+Parquet, built at query time by `buildSource` (no sync-time rewrite). Each
+canonical column is a trivial rename/cast of a FOCUS column:
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `usage_date` | `DATE` | Day of usage |
-| `usage_hour` | `TIMESTAMP` | Hour of usage (hourly tier only) |
-| `account_id` | `VARCHAR` | Cloud account/project/subscription ID |
-| `account_name` | `VARCHAR` | Friendly account name |
-| `region` | `VARCHAR` | Cloud region |
-| `service` | `VARCHAR` | Cloud service |
-| `service_family` | `VARCHAR` | Service sub-category |
-| `description` | `VARCHAR` | Line item description |
-| `resource_id` | `VARCHAR` | ARN or resource identifier |
-| `usage_amount` | `DOUBLE` | Quantity of usage |
-| `cost` | `DOUBLE` | Primary cost metric |
-| `list_cost` | `DOUBLE` | Public on-demand price |
-| `line_item_type` | `VARCHAR` | Billing line item type |
-| `usage_type` | `VARCHAR` | Usage type code |
-| `operation` | `VARCHAR` | Operation type |
-| `tag_{name}` | `VARCHAR` | One column per configured tag dimension |
+| Column | Type | FOCUS source | Description |
+|--------|------|-------------|-------------|
+| `usage_date` | `DATE` | `ChargePeriodStart::DATE` | Day of usage |
+| `usage_hour` | `TIMESTAMP` | `ChargePeriodStart` | Hour of usage (hourly tier only) |
+| `account_id` | `VARCHAR` | `SubAccountId` | Cloud account/project/subscription ID |
+| `account_name` | `VARCHAR` | `SubAccountName` | Friendly account name |
+| `region` | `VARCHAR` | `RegionId` | Cloud region |
+| `service` | `VARCHAR` | `ServiceName` | Service display name (with marketplace re-attribution) |
+| `service_code` | `VARCHAR` | `x_ServiceCode` | Exact provider service code |
+| `service_category` | `VARCHAR` | `ServiceCategory` | Standardized cross-cloud category |
+| `description` | `VARCHAR` | `ChargeDescription` | Line item description |
+| `resource_id` | `VARCHAR` | `ResourceId` | ARN or resource identifier |
+| `usage_amount` | `DOUBLE` | `ConsumedQuantity` | Quantity of usage |
+| `cost` | `DOUBLE` | metric column | Active cost metric (see Cost Scope) |
+| `list_cost` | `DOUBLE` | `ListCost` | Public list price (marketplace fallback to `BilledCost`) |
+| `charge_category` | `VARCHAR` | `ChargeCategory` | Usage / Purchase / Tax / Credit / Adjustment |
+| `pricing_category` | `VARCHAR` | `PricingCategory` | Standard / Committed / Dynamic |
+| `commitment_status` | `VARCHAR` | `CommitmentDiscountStatus` | Used / Unused commitment |
+| `sku_meter` | `VARCHAR` | `SkuMeter` | Usage meter (usage-type equivalent) |
+| `operation` | `VARCHAR` | `x_Operation` | Operation type |
+| `provider` | `VARCHAR` | (injected) | Which configured provider branch the row came from |
+| `tag_{name}` | `VARCHAR` | `Tags` map | One column per configured tag dimension |
 
-Tags are flattened into top-level columns during normalization. **Aliases and normalization rules are applied at query time in SQL** — see Resolved Design Decisions.
+Cost metrics are direct column reads: `billed` ← `BilledCost`, `effective` ←
+`EffectiveCost` (the default; amortized, including unused commitment),
+`list` ← `ListCost` (queries restricted to `ChargeCategory='Usage'`),
+`contracted` ← `ContractedCost`. All four columns are always present in a
+FOCUS export, so there is no column probing or degraded-metric fallback. The
+CUR-era `net` perspective is gone — FOCUS has no net cost columns. Legacy
+config values migrate at load time (`unblended`→`billed`,
+`amortized`/`blended`→`effective`; `costPerspective` is dropped).
+
+Tags are extracted from the FOCUS `Tags` map at query time (raw keys — no
+`user_` prefix). **Aliases and normalization rules are applied at query time
+in SQL** — see Resolved Design Decisions.
 
 ---
 
@@ -393,7 +430,7 @@ providers:
 
 defaults:
   periodDays: 30
-  costMetric: unblended_cost
+  costMetric: effective
   lagDays: 1
 
 cache:
@@ -522,8 +559,8 @@ First-run experience that guides the user through initial configuration.
 
 **Flow:**
 1. **AWS profile selection** — list profiles from `~/.aws/credentials`. User picks one. The welcome step also offers "import a configuration file" for users handed a bundle by a teammate (see Configuration Sharing).
-2. **S3 bucket discovery** — list buckets accessible to the selected profile. User picks the CUR bucket. If the bucket contains a published team configuration (`costgoblin/org-config.yaml`), the wizard offers one-click setup from it instead of manual browsing.
-3. **Prefix browsing** — browse the bucket's prefixes. The app inspects each prefix and detects whether it looks like a CUR 2.0 export (presence of `manifest.json`, required columns in the Parquet schema). Detected type is shown: `daily`, `hourly`, `cost-optimization`, or `unknown`.
+2. **S3 bucket discovery** — list buckets accessible to the selected profile. User picks the billing-export bucket. If the bucket contains a published team configuration (`costgoblin/org-config.yaml`), the wizard offers one-click setup from it instead of manual browsing.
+3. **Prefix browsing** — browse the bucket's prefixes. The app inspects each prefix and detects whether it looks like a FOCUS 1.2 Data Export (presence of `data/` + `metadata/`, required columns in the export manifest). Detected type is shown: `daily`, `hourly`, `cost-optimization`, or `unknown`.
 4. **Tier selection** — user assigns each detected prefix to a tier (daily required; hourly and cost-optimization optional).
 5. **Tag discovery (optional)** — sample a Parquet file to list available tag keys with their coverage. User picks which to track and assigns labels.
 6. **Initial sync** — full download with progress bar. Periods download in parallel within a configurable limit.
@@ -543,9 +580,9 @@ Lets one user hand their full working configuration to teammates — dimensions,
 - Before an import overwrites anything, existing config files are copied to `config/backups/<timestamp>/`; the backup location is reported in the UI.
 - After a successful import all caches are invalidated; in a configured app the renderer reloads.
 
-**S3 beacon.** "Publish" writes the bundle to S3. The destination is shown in the share dialog as an editable field, prefilled with the well-known beacon key at the root of the daily CUR bucket: `s3://<bucket>/costgoblin/org-config.yaml` (orgs with write-locked CUR buckets can point it at a sibling config bucket). The publish profile is also selectable per-action — it defaults to the configured sync profile, but publishing needs `s3:PutObject`, which day-to-day read-only profiles often lack, so an elevated profile can be chosen for just this operation without touching the sync config. When a new user's setup wizard selects a bucket, the app probes `costgoblin/org-config.yaml` at that bucket's root; when found, the wizard shows "Team configuration found" with the same summary preview and offers one-click setup. Custom destinations publish fine but are not auto-discovered — the dialog says so and the location must be shared manually. Access control rides on the IAM permissions the user must already hold: anyone who can read the billing data can read the config.
+**S3 beacon.** "Publish" writes the bundle to S3. The destination is shown in the share dialog as an editable field, prefilled with the well-known beacon key at the root of the daily export bucket: `s3://<bucket>/costgoblin/org-config.yaml` (orgs with write-locked billing buckets can point it at a sibling config bucket). The publish profile is also selectable per-action — it defaults to the configured sync profile, but publishing needs `s3:PutObject`, which day-to-day read-only profiles often lack, so an elevated profile can be chosen for just this operation without touching the sync config. When a new user's setup wizard selects a bucket, the app probes `costgoblin/org-config.yaml` at that bucket's root; when found, the wizard shows "Team configuration found" with the same summary preview and offers one-click setup. Custom destinations publish fine but are not auto-discovered — the dialog says so and the location must be shared manually. Access control rides on the IAM permissions the user must already hold: anyone who can read the billing data can read the config.
 
-**Profile defaults.** Every sharing flow that needs an AWS profile (the import dialog's S3 fetch, the apply step, the publish action) defaults to the app's configured sync profile — the one known to reach the CUR bucket — never to the alphabetically-first profile from `~/.aws`. In the unconfigured setup wizard, where no sync profile exists yet, the first available profile is used.
+**Profile defaults.** Every sharing flow that needs an AWS profile (the import dialog's S3 fetch, the apply step, the publish action) defaults to the app's configured sync profile — the one known to reach the billing bucket — never to the alphabetically-first profile from `~/.aws`. In the unconfigured setup wizard, where no sync profile exists yet, the first available profile is used.
 
 **Security model.**
 - No credentials in bundles by construction; `credentials` keys smuggled into a hand-crafted bundle are discarded at parse time.
@@ -696,7 +733,7 @@ Pulls account/OU/tag metadata from the AWS Organizations API. Used for:
 
 #### Feature: Auto-Sync (MVP)
 
-Background CUR sync while the app is open.
+Background billing-data sync while the app is open.
 
 **Behavior:**
 - Toggleable from the top menu (left side), alongside auto-prune and the shared schedule interval; persisted in `preferences.json`.
@@ -920,10 +957,10 @@ const PALETTE_COLORBLIND = [  // Okabe-Ito
 
 Before using CostGoblin:
 
-1. **AWS CUR export configured** — CUR 2.0, Parquet format, exported to S3.
+1. **AWS FOCUS 1.2 Data Export configured** — Parquet format, exported to S3.
 2. **Cost allocation tags activated** — in AWS Billing → Cost Allocation Tags.
 3. **IAM permissions** — the AWS profile needs:
-   - `s3:ListBucket`, `s3:GetObject` on the CUR bucket(s)
+   - `s3:ListBucket`, `s3:GetObject` on the export bucket(s)
    - For AWS Organizations sync (optional but recommended): `organizations:List*`, `organizations:Describe*` on the management or delegated-admin account
    - For Cost Optimization Hub sync (optional): `cost-optimization-hub:List*` (or use the exported Parquet via S3)
 4. **Install CostGoblin** — download the app, run the setup wizard, point it at the bucket.
@@ -1176,13 +1213,13 @@ Aliases and normalization rules are applied in SQL WHERE clauses and GROUP BY ex
 
 ### Sync Layout: Per-Period, No Repartitioning
 
-CostGoblin downloads CUR Parquet directly into `{providerName}/raw/{tier}-{period}/` and queries them as-is via `read_parquet('.../raw/daily-*/*.parquet')` glob patterns (one glob list per provider, unioned). No staging, no DuckDB-side rewrite.
+CostGoblin downloads the export's Parquet directly into `{providerName}/raw/{tier}-{period}/` and queries them as-is via `read_parquet('.../raw/daily-*/*.parquet')` glob patterns (one glob list per provider, unioned). No staging, no DuckDB-side rewrite.
 
 **Why no repartitioning:**
 - DuckDB pushes date filters down to row groups within Parquet files via column statistics. For typical monthly files (~1GB), filtering "last 7 days" still reads only the relevant row groups, not the full file.
 - Downloading raw avoids a CPU-heavy repartition step that would otherwise stall the UI on every sync.
 - `aws s3 sync` (subprocess) handles concurrency, retries, partial-file resume, and etag-based incremental updates natively — much better than a hand-rolled S3 client.
-- Tag columns are extracted at query time from `resource_tags` (a Map column), with normalization rules and aliases applied in SQL CASE expressions.
+- Tag columns are extracted at query time from the FOCUS `Tags` map, with normalization rules and aliases applied in SQL CASE expressions.
 
 ### Configuration: App is the Sole Writer
 

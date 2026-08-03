@@ -33,10 +33,10 @@ export const BASE_COLUMNS: readonly ColumnSpec[] = [
   { key: 'list_cost', label: 'List', dimId: null, align: 'right', mono: true },
   { key: 'service', label: 'Service', dimId: 'service', align: 'left' },
   { key: 'account_name', label: 'Account', dimId: 'account', align: 'left' },
-  { key: 'line_item_type', label: 'Line type', dimId: 'line_item_type', align: 'left' },
+  { key: 'charge_category', label: 'Charge category', dimId: 'charge_category', align: 'left' },
   { key: 'region', label: 'Region', dimId: 'region', align: 'left', mono: true },
-  { key: 'service_family', label: 'Family', dimId: 'service_family', align: 'left' },
-  { key: 'usage_type', label: 'Usage type', dimId: 'usage_type', align: 'left', mono: true },
+  { key: 'service_category', label: 'Service category', dimId: 'service_category', align: 'left' },
+  { key: 'sku_meter', label: 'SKU meter', dimId: 'sku_meter', align: 'left', mono: true },
   { key: 'operation', label: 'Operation', dimId: 'operation', align: 'left' },
   { key: 'usage_amount', label: 'Usage', dimId: null, align: 'right', mono: true },
 ];

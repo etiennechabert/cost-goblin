@@ -26,7 +26,7 @@ describe('CostScopeView — marketplace attribution toggle', () => {
   it('renders the section On by default and lists the Bedrock rule', async () => {
     renderView();
     await waitFor(() => { expect(screen.getByText('Marketplace attribution')).toBeDefined(); });
-    expect(screen.getByText('AmazonBedrock')).toBeDefined();
+    expect(screen.getByText('Amazon Bedrock')).toBeDefined();
     expect(screen.getByText(/^On$/)).toBeDefined();
   });
 

@@ -15,7 +15,7 @@ import type { PriceVolumeDecomp } from '../lib/price-volume.js';
 // a group present in one cap but not the other is treated as zero on the
 // missing side, which can fabricate a spurious volume spike. Keep the cap well
 // above the distinct-group count of realistic price-volume dimensions
-// (service, usage_type, tags) so that boundary only ever falls on negligible
+// (service, sku_meter, tags) so that boundary only ever falls on negligible
 // long-tail groups.
 const ROW_LIMIT = 500;
 

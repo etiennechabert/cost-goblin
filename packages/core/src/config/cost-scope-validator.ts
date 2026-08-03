@@ -3,23 +3,28 @@ import { asDimensionId } from '../types/branded.js';
 import { logger } from '../logger/logger.js';
 import type {
   CostMetric,
-  CostPerspective,
   CostScopeConfig,
   ExclusionCondition,
   ExclusionRule,
   MarketplaceAttributionConfig,
   MarketplaceAttributionRule,
 } from '../types/cost-scope.js';
-import { COST_METRICS, COST_PERSPECTIVES } from '../types/cost-scope.js';
+import { COST_METRICS } from '../types/cost-scope.js';
 import { DEFAULT_MARKETPLACE_ATTRIBUTION } from './cost-scope-seed.js';
 
 function isCostMetric(v: string): v is CostMetric {
   return (COST_METRICS as readonly string[]).includes(v);
 }
 
-function isCostPerspective(v: string): v is CostPerspective {
-  return (COST_PERSPECTIVES as readonly string[]).includes(v);
-}
+/** CUR-era metric names → FOCUS metric names. Configs written before the
+ *  FOCUS 1.2 migration carry these on disk (cost-scope.yaml, and every
+ *  persisted baseline basis routed through validateCostScope). `blended`
+ *  predates even the CUR-era set. */
+const LEGACY_METRIC_MIGRATIONS: Readonly<Record<string, CostMetric>> = {
+  unblended: 'billed',
+  amortized: 'effective',
+  blended: 'effective',
+};
 
 function validateCondition(raw: unknown, ctx: string): ExclusionCondition {
   assertObject(raw, ctx);
@@ -96,31 +101,21 @@ function validateMarketplaceAttribution(raw: unknown): MarketplaceAttributionCon
 export function validateCostScope(raw: unknown): CostScopeConfig {
   assertObject(raw, 'costScope');
   assertString(raw['costMetric'], 'costScope.costMetric');
-  // 'blended' was removed: AWS never extended blended math to Savings Plans,
-  // so on SP-based fleets it barely differs from unblended and provides none
-  // of the chargeback fairness it was originally designed for. Silently
-  // migrate legacy configs to 'amortized' (the recommended chargeback metric).
   let costMetricRaw: string = raw['costMetric'];
-  if (costMetricRaw === 'blended') {
-    logger.warn('costScope.costMetric was "blended" (removed); migrating to "amortized"');
-    costMetricRaw = 'amortized';
+  const migrated = LEGACY_METRIC_MIGRATIONS[costMetricRaw];
+  if (migrated !== undefined) {
+    logger.warn(`costScope.costMetric was "${costMetricRaw}" (CUR-era, removed); migrating to "${migrated}"`);
+    costMetricRaw = migrated;
   }
   if (!isCostMetric(costMetricRaw)) {
     throw new ConfigValidationError(
       `costScope.costMetric must be one of: ${COST_METRICS.join(', ')}`,
     );
   }
-  // costPerspective is optional — missing key defaults to 'gross' so older
-  // on-disk configs keep working unchanged.
-  let costPerspective: CostPerspective | undefined;
+  // The CUR-era `costPerspective` axis (gross/net) is gone — FOCUS has no
+  // net cost columns. Tolerate and drop the key from older configs.
   if (raw['costPerspective'] !== undefined) {
-    assertString(raw['costPerspective'], 'costScope.costPerspective');
-    if (!isCostPerspective(raw['costPerspective'])) {
-      throw new ConfigValidationError(
-        `costScope.costPerspective must be one of: ${COST_PERSPECTIVES.join(', ')}`,
-      );
-    }
-    costPerspective = raw['costPerspective'];
+    logger.warn('costScope.costPerspective is no longer supported (FOCUS has no net columns); ignoring');
   }
   let lagDays: number | undefined;
   if (raw['lagDays'] !== undefined) {
@@ -136,7 +131,6 @@ export function validateCostScope(raw: unknown): CostScopeConfig {
   const marketplaceAttribution = validateMarketplaceAttribution(raw['marketplaceAttribution']);
   return {
     costMetric: costMetricRaw,
-    ...(costPerspective === undefined ? {} : { costPerspective }),
     ...(lagDays === undefined ? {} : { lagDays }),
     rules,
     marketplaceAttribution,

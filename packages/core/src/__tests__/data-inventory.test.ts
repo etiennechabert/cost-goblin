@@ -66,9 +66,9 @@ describe('getDataInventory with mocked S3', () => {
 
   it('lists remote periods with all missing local status', async () => {
     const mock = createMockS3Handle([
-      file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
-      file('cur/data/BILLING_PERIOD=2026-01/file2.parquet', 'hash2', 3000),
-      file('cur/data/BILLING_PERIOD=2026-02/file3.parquet', 'hash3', 7000),
+      file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
+      file('cur/data/billing_period=2026-01/file2.parquet', 'hash2', 3000),
+      file('cur/data/billing_period=2026-02/file3.parquet', 'hash3', 7000),
     ]);
 
     const inventory = await getDataInventory(
@@ -101,8 +101,8 @@ describe('getDataInventory with mocked S3', () => {
 
   it('detects repartitioned status when local period exists and hashes match', async () => {
     const mock = createMockS3Handle([
-      file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
-      file('cur/data/BILLING_PERIOD=2026-01/file2.parquet', 'hash2', 3000),
+      file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
+      file('cur/data/billing_period=2026-01/file2.parquet', 'hash2', 3000),
     ]);
 
     // Create local raw period directory
@@ -115,8 +115,8 @@ describe('getDataInventory with mocked S3', () => {
     const etagFile = join(metaDir, 'sync-etags.json');
     const etags = {
       '2026-01': {
-        'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'hash1',
-        'cur/data/BILLING_PERIOD=2026-01/file2.parquet': 'hash2',
+        'cur/data/billing_period=2026-01/file1.parquet': 'hash1',
+        'cur/data/billing_period=2026-01/file2.parquet': 'hash2',
       },
     };
     await writeFile(etagFile, JSON.stringify(etags));
@@ -142,7 +142,7 @@ describe('getDataInventory with mocked S3', () => {
 
   it('detects stale status when local period exists but hash differs', async () => {
     const mock = createMockS3Handle([
-      file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'new-hash', 5000),
+      file('cur/data/billing_period=2026-01/file1.parquet', 'new-hash', 5000),
     ]);
 
     // Create local raw period directory
@@ -155,7 +155,7 @@ describe('getDataInventory with mocked S3', () => {
     const etagFile = join(metaDir, 'sync-etags.json');
     const etags = {
       '2026-01': {
-        'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'old-hash',
+        'cur/data/billing_period=2026-01/file1.parquet': 'old-hash',
       },
     };
     await writeFile(etagFile, JSON.stringify(etags));
@@ -175,9 +175,9 @@ describe('getDataInventory with mocked S3', () => {
 
   it('handles mixed period statuses correctly', async () => {
     const mock = createMockS3Handle([
-      file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
-      file('cur/data/BILLING_PERIOD=2026-02/file2.parquet', 'new-hash2', 3000),
-      file('cur/data/BILLING_PERIOD=2026-03/file3.parquet', 'hash3', 7000),
+      file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
+      file('cur/data/billing_period=2026-02/file2.parquet', 'new-hash2', 3000),
+      file('cur/data/billing_period=2026-03/file3.parquet', 'hash3', 7000),
     ]);
 
     // Create local periods for 2026-01 and 2026-02
@@ -192,8 +192,8 @@ describe('getDataInventory with mocked S3', () => {
     // 2026-03: no local (missing)
     const etagFile = join(metaDir, 'sync-etags.json');
     const etags = {
-      '2026-01': { 'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'hash1' },
-      '2026-02': { 'cur/data/BILLING_PERIOD=2026-02/file2.parquet': 'old-hash2' },
+      '2026-01': { 'cur/data/billing_period=2026-01/file1.parquet': 'hash1' },
+      '2026-02': { 'cur/data/billing_period=2026-02/file2.parquet': 'old-hash2' },
     };
     await writeFile(etagFile, JSON.stringify(etags));
 
@@ -245,9 +245,9 @@ describe('getDataInventory with mocked S3', () => {
 
   it('sorts periods in descending order (newest first)', async () => {
     const mock = createMockS3Handle([
-      file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 1000),
-      file('cur/data/BILLING_PERIOD=2026-03/file2.parquet', 'hash2', 1000),
-      file('cur/data/BILLING_PERIOD=2026-02/file3.parquet', 'hash3', 1000),
+      file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 1000),
+      file('cur/data/billing_period=2026-03/file2.parquet', 'hash2', 1000),
+      file('cur/data/billing_period=2026-02/file3.parquet', 'hash3', 1000),
     ]);
 
     const inventory = await getDataInventory(
@@ -265,7 +265,7 @@ describe('getDataInventory with mocked S3', () => {
 
   it('handles hourly tier with correct etag file', async () => {
     const mock = createMockS3Handle([
-      file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
+      file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
     ]);
 
     const rawDir = join(tempDir, 'aws', 'raw');
@@ -275,7 +275,7 @@ describe('getDataInventory with mocked S3', () => {
 
     const etagFile = join(metaDir, 'sync-etags-hourly.json');
     const etags = {
-      '2026-01': { 'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'hash1' },
+      '2026-01': { 'cur/data/billing_period=2026-01/file1.parquet': 'hash1' },
     };
     await writeFile(etagFile, JSON.stringify(etags));
 
@@ -326,7 +326,7 @@ describe('getDataInventory with mocked S3', () => {
 
   it('treats period as stale when etag file is missing', async () => {
     const mock = createMockS3Handle([
-      file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
+      file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
     ]);
 
     const rawDir = join(tempDir, 'aws', 'raw');
@@ -354,7 +354,7 @@ describe('getDataInventory with mocked S3', () => {
 
   it('detects stale when etag file exists but has no entry for period', async () => {
     const mock = createMockS3Handle([
-      file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
+      file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
     ]);
 
     const rawDir = join(tempDir, 'aws', 'raw');
@@ -365,7 +365,7 @@ describe('getDataInventory with mocked S3', () => {
     // Create etag file but without entry for 2026-01
     const etagFile = join(metaDir, 'sync-etags.json');
     const etags = {
-      '2026-02': { 'cur/data/BILLING_PERIOD=2026-02/file1.parquet': 'hash2' },
+      '2026-02': { 'cur/data/billing_period=2026-02/file1.parquet': 'hash2' },
     };
     await writeFile(etagFile, JSON.stringify(etags));
 
@@ -387,9 +387,9 @@ describe('getDataInventory with mocked S3', () => {
 
   it('detects stale when etag file is missing entries for some remote files', async () => {
     const mock = createMockS3Handle([
-      file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
-      file('cur/data/BILLING_PERIOD=2026-01/file2.parquet', 'hash2', 3000),
-      file('cur/data/BILLING_PERIOD=2026-01/file3.parquet', 'hash3', 2000),
+      file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
+      file('cur/data/billing_period=2026-01/file2.parquet', 'hash2', 3000),
+      file('cur/data/billing_period=2026-01/file3.parquet', 'hash3', 2000),
     ]);
 
     const rawDir = join(tempDir, 'aws', 'raw');
@@ -401,8 +401,8 @@ describe('getDataInventory with mocked S3', () => {
     const etagFile = join(metaDir, 'sync-etags.json');
     const etags = {
       '2026-01': {
-        'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'hash1',
-        'cur/data/BILLING_PERIOD=2026-01/file2.parquet': 'hash2',
+        'cur/data/billing_period=2026-01/file1.parquet': 'hash1',
+        'cur/data/billing_period=2026-01/file2.parquet': 'hash2',
         // file3 not in etags — appeared on remote since the last sync
       },
     };
@@ -425,9 +425,9 @@ describe('getDataInventory with mocked S3', () => {
 
   it('detects stale when one file hash differs among multiple files', async () => {
     const mock = createMockS3Handle([
-      file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'new-hash1', 5000),
-      file('cur/data/BILLING_PERIOD=2026-01/file2.parquet', 'hash2', 3000),
-      file('cur/data/BILLING_PERIOD=2026-01/file3.parquet', 'hash3', 2000),
+      file('cur/data/billing_period=2026-01/file1.parquet', 'new-hash1', 5000),
+      file('cur/data/billing_period=2026-01/file2.parquet', 'hash2', 3000),
+      file('cur/data/billing_period=2026-01/file3.parquet', 'hash3', 2000),
     ]);
 
     const rawDir = join(tempDir, 'aws', 'raw');
@@ -439,9 +439,9 @@ describe('getDataInventory with mocked S3', () => {
     const etagFile = join(metaDir, 'sync-etags.json');
     const etags = {
       '2026-01': {
-        'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'old-hash1',
-        'cur/data/BILLING_PERIOD=2026-01/file2.parquet': 'hash2',
-        'cur/data/BILLING_PERIOD=2026-01/file3.parquet': 'hash3',
+        'cur/data/billing_period=2026-01/file1.parquet': 'old-hash1',
+        'cur/data/billing_period=2026-01/file2.parquet': 'hash2',
+        'cur/data/billing_period=2026-01/file3.parquet': 'hash3',
       },
     };
     await writeFile(etagFile, JSON.stringify(etags));
@@ -462,8 +462,8 @@ describe('getDataInventory with mocked S3', () => {
 
   it('detects stale when only one file is tracked and it differs', async () => {
     const mock = createMockS3Handle([
-      file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'new-hash', 5000),
-      file('cur/data/BILLING_PERIOD=2026-01/file2.parquet', 'hash2', 3000),
+      file('cur/data/billing_period=2026-01/file1.parquet', 'new-hash', 5000),
+      file('cur/data/billing_period=2026-01/file2.parquet', 'hash2', 3000),
     ]);
 
     const rawDir = join(tempDir, 'aws', 'raw');
@@ -475,7 +475,7 @@ describe('getDataInventory with mocked S3', () => {
     const etagFile = join(metaDir, 'sync-etags.json');
     const etags = {
       '2026-01': {
-        'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'old-hash',
+        'cur/data/billing_period=2026-01/file1.parquet': 'old-hash',
       },
     };
     await writeFile(etagFile, JSON.stringify(etags));
@@ -496,7 +496,7 @@ describe('getDataInventory with mocked S3', () => {
 
   it('handles local period without corresponding remote files', async () => {
     const mock = createMockS3Handle([
-      file('cur/data/BILLING_PERIOD=2026-02/file1.parquet', 'hash1', 5000),
+      file('cur/data/billing_period=2026-02/file1.parquet', 'hash1', 5000),
     ]);
 
     // Create local period for 2026-01 that doesn't exist remotely
@@ -527,7 +527,7 @@ describe('getDataInventory with mocked S3', () => {
 
   it('skips files without recognizable period markers', async () => {
     const mock = createMockS3Handle([
-      file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
+      file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       file('cur/data/random-path/file2.parquet', 'hash2', 3000),
       file('cur/metadata.parquet', 'hash3', 1000),
     ]);
@@ -658,9 +658,9 @@ describe('getDataInventory with mocked S3', () => {
   describe('incremental sync validation', () => {
     it('marks period as repartitioned when all tracked files have matching etags (skip sync)', async () => {
       const mock = createMockS3Handle([
-        file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'etag-abc', 5000),
-        file('cur/data/BILLING_PERIOD=2026-01/file2.parquet', 'etag-def', 3000),
-        file('cur/data/BILLING_PERIOD=2026-01/file3.parquet', 'etag-ghi', 2000),
+        file('cur/data/billing_period=2026-01/file1.parquet', 'etag-abc', 5000),
+        file('cur/data/billing_period=2026-01/file2.parquet', 'etag-def', 3000),
+        file('cur/data/billing_period=2026-01/file3.parquet', 'etag-ghi', 2000),
       ]);
 
       const rawDir = join(tempDir, 'aws', 'raw');
@@ -672,9 +672,9 @@ describe('getDataInventory with mocked S3', () => {
       const etagFile = join(metaDir, 'sync-etags.json');
       const etags = {
         '2026-01': {
-          'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'etag-abc',
-          'cur/data/BILLING_PERIOD=2026-01/file2.parquet': 'etag-def',
-          'cur/data/BILLING_PERIOD=2026-01/file3.parquet': 'etag-ghi',
+          'cur/data/billing_period=2026-01/file1.parquet': 'etag-abc',
+          'cur/data/billing_period=2026-01/file2.parquet': 'etag-def',
+          'cur/data/billing_period=2026-01/file3.parquet': 'etag-ghi',
         },
       };
       await writeFile(etagFile, JSON.stringify(etags));
@@ -695,9 +695,9 @@ describe('getDataInventory with mocked S3', () => {
 
     it('marks period as stale when any tracked file has mismatched etag (must re-sync entire period)', async () => {
       const mock = createMockS3Handle([
-        file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'etag-abc', 5000),
-        file('cur/data/BILLING_PERIOD=2026-01/file2.parquet', 'etag-xyz-NEW', 3000),
-        file('cur/data/BILLING_PERIOD=2026-01/file3.parquet', 'etag-ghi', 2000),
+        file('cur/data/billing_period=2026-01/file1.parquet', 'etag-abc', 5000),
+        file('cur/data/billing_period=2026-01/file2.parquet', 'etag-xyz-NEW', 3000),
+        file('cur/data/billing_period=2026-01/file3.parquet', 'etag-ghi', 2000),
       ]);
 
       const rawDir = join(tempDir, 'aws', 'raw');
@@ -709,9 +709,9 @@ describe('getDataInventory with mocked S3', () => {
       const etagFile = join(metaDir, 'sync-etags.json');
       const etags = {
         '2026-01': {
-          'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'etag-abc',
-          'cur/data/BILLING_PERIOD=2026-01/file2.parquet': 'etag-def',
-          'cur/data/BILLING_PERIOD=2026-01/file3.parquet': 'etag-ghi',
+          'cur/data/billing_period=2026-01/file1.parquet': 'etag-abc',
+          'cur/data/billing_period=2026-01/file2.parquet': 'etag-def',
+          'cur/data/billing_period=2026-01/file3.parquet': 'etag-ghi',
         },
       };
       await writeFile(etagFile, JSON.stringify(etags));
@@ -732,9 +732,9 @@ describe('getDataInventory with mocked S3', () => {
 
     it('marks period as stale when remote has new files not yet in etag cache', async () => {
       const mock = createMockS3Handle([
-        file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'etag-abc', 5000),
-        file('cur/data/BILLING_PERIOD=2026-01/file2.parquet', 'etag-def', 3000),
-        file('cur/data/BILLING_PERIOD=2026-01/file3-NEW.parquet', 'etag-new', 1000),
+        file('cur/data/billing_period=2026-01/file1.parquet', 'etag-abc', 5000),
+        file('cur/data/billing_period=2026-01/file2.parquet', 'etag-def', 3000),
+        file('cur/data/billing_period=2026-01/file3-NEW.parquet', 'etag-new', 1000),
       ]);
 
       const rawDir = join(tempDir, 'aws', 'raw');
@@ -746,8 +746,8 @@ describe('getDataInventory with mocked S3', () => {
       const etagFile = join(metaDir, 'sync-etags.json');
       const etags = {
         '2026-01': {
-          'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'etag-abc',
-          'cur/data/BILLING_PERIOD=2026-01/file2.parquet': 'etag-def',
+          'cur/data/billing_period=2026-01/file1.parquet': 'etag-abc',
+          'cur/data/billing_period=2026-01/file2.parquet': 'etag-def',
           // file3-NEW not in cache
         },
       };
@@ -771,11 +771,11 @@ describe('getDataInventory with mocked S3', () => {
     it('validates etag-based skip decision across all three status values', async () => {
       const mock = createMockS3Handle([
         // Period 1: repartitioned (skip)
-        file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 1000),
+        file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 1000),
         // Period 2: stale (re-download)
-        file('cur/data/BILLING_PERIOD=2026-02/file2.parquet', 'new-hash2', 2000),
+        file('cur/data/billing_period=2026-02/file2.parquet', 'new-hash2', 2000),
         // Period 3: missing (download)
-        file('cur/data/BILLING_PERIOD=2026-03/file3.parquet', 'hash3', 3000),
+        file('cur/data/billing_period=2026-03/file3.parquet', 'hash3', 3000),
       ]);
 
       const rawDir = join(tempDir, 'aws', 'raw');
@@ -786,8 +786,8 @@ describe('getDataInventory with mocked S3', () => {
 
       const etagFile = join(metaDir, 'sync-etags.json');
       const etags = {
-        '2026-01': { 'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'hash1' },
-        '2026-02': { 'cur/data/BILLING_PERIOD=2026-02/file2.parquet': 'old-hash2' },
+        '2026-01': { 'cur/data/billing_period=2026-01/file1.parquet': 'hash1' },
+        '2026-02': { 'cur/data/billing_period=2026-02/file2.parquet': 'old-hash2' },
       };
       await writeFile(etagFile, JSON.stringify(etags));
 
@@ -817,7 +817,7 @@ describe('getDataInventory with mocked S3', () => {
       // 0 entries for the period in sync-etags-hourly.json. The UI badge
       // showed "Downloaded" instead of "stale" — chart silently empty.
       const remoteFiles = Array.from({ length: 53 }, (_, i) =>
-        file(`hourly/BILLING_PERIOD=2026-04/data-${String(i).padStart(5, '0')}.parquet`, `etag-${String(i)}`, 1000),
+        file(`hourly/billing_period=2026-04/data-${String(i).padStart(5, '0')}.parquet`, `etag-${String(i)}`, 1000),
       );
       const mock = createMockS3Handle(remoteFiles);
 
@@ -832,7 +832,7 @@ describe('getDataInventory with mocked S3', () => {
       // Etag file exists for some other period entirely — 2026-04 is absent.
       const etagFile = join(metaDir, 'sync-etags-hourly.json');
       await writeFile(etagFile, JSON.stringify({
-        '2026-03': { 'hourly/BILLING_PERIOD=2026-03/data-00000.parquet': 'etag-march' },
+        '2026-03': { 'hourly/billing_period=2026-03/data-00000.parquet': 'etag-march' },
       }));
 
       const inventory = await getDataInventory(
@@ -850,7 +850,7 @@ describe('getDataInventory with mocked S3', () => {
 
     it('marks period as stale when etag file is empty', async () => {
       const mock = createMockS3Handle([
-        file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
+        file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       ]);
 
       const rawDir = join(tempDir, 'aws', 'raw');
@@ -883,7 +883,7 @@ describe('getDataInventory with mocked S3', () => {
   describe('corrupted manifest JSON handling', () => {
     it('handles invalid JSON syntax gracefully', async () => {
       const mock = createMockS3Handle([
-        file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
+        file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       ]);
 
       const rawDir = join(tempDir, 'aws', 'raw');
@@ -913,7 +913,7 @@ describe('getDataInventory with mocked S3', () => {
 
     it('handles JSON array instead of object', async () => {
       const mock = createMockS3Handle([
-        file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
+        file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       ]);
 
       const rawDir = join(tempDir, 'aws', 'raw');
@@ -941,7 +941,7 @@ describe('getDataInventory with mocked S3', () => {
 
     it('handles JSON null instead of object', async () => {
       const mock = createMockS3Handle([
-        file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
+        file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       ]);
 
       const rawDir = join(tempDir, 'aws', 'raw');
@@ -967,7 +967,7 @@ describe('getDataInventory with mocked S3', () => {
 
     it('handles JSON string instead of object', async () => {
       const mock = createMockS3Handle([
-        file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
+        file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
       ]);
 
       const rawDir = join(tempDir, 'aws', 'raw');
@@ -993,8 +993,8 @@ describe('getDataInventory with mocked S3', () => {
 
     it('skips period entries that are not objects', async () => {
       const mock = createMockS3Handle([
-        file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'new-hash1', 5000),
-        file('cur/data/BILLING_PERIOD=2026-02/file2.parquet', 'new-hash2', 3000),
+        file('cur/data/billing_period=2026-01/file1.parquet', 'new-hash1', 5000),
+        file('cur/data/billing_period=2026-02/file2.parquet', 'new-hash2', 3000),
       ]);
 
       const rawDir = join(tempDir, 'aws', 'raw');
@@ -1007,7 +1007,7 @@ describe('getDataInventory with mocked S3', () => {
       const etagFile = join(metaDir, 'sync-etags.json');
       const corruptedEtags = {
         '2026-01': 'not-an-object',
-        '2026-02': { 'cur/data/BILLING_PERIOD=2026-02/file2.parquet': 'new-hash2' },
+        '2026-02': { 'cur/data/billing_period=2026-02/file2.parquet': 'new-hash2' },
       };
       await writeFile(etagFile, JSON.stringify(corruptedEtags));
 
@@ -1032,9 +1032,9 @@ describe('getDataInventory with mocked S3', () => {
 
     it('drops non-string hash values within a period', async () => {
       const mock = createMockS3Handle([
-        file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'hash1', 5000),
-        file('cur/data/BILLING_PERIOD=2026-01/file2.parquet', 'hash2', 3000),
-        file('cur/data/BILLING_PERIOD=2026-01/file3.parquet', 'hash3', 2000),
+        file('cur/data/billing_period=2026-01/file1.parquet', 'hash1', 5000),
+        file('cur/data/billing_period=2026-01/file2.parquet', 'hash2', 3000),
+        file('cur/data/billing_period=2026-01/file3.parquet', 'hash3', 2000),
       ]);
 
       const rawDir = join(tempDir, 'aws', 'raw');
@@ -1046,9 +1046,9 @@ describe('getDataInventory with mocked S3', () => {
       const etagFile = join(metaDir, 'sync-etags.json');
       const corruptedEtags = {
         '2026-01': {
-          'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'hash1',
-          'cur/data/BILLING_PERIOD=2026-01/file2.parquet': 42, // number
-          'cur/data/BILLING_PERIOD=2026-01/file3.parquet': null, // null
+          'cur/data/billing_period=2026-01/file1.parquet': 'hash1',
+          'cur/data/billing_period=2026-01/file2.parquet': 42, // number
+          'cur/data/billing_period=2026-01/file3.parquet': null, // null
         },
       };
       await writeFile(etagFile, JSON.stringify(corruptedEtags));
@@ -1070,8 +1070,8 @@ describe('getDataInventory with mocked S3', () => {
 
     it('detects stale when valid hash differs despite other corrupted entries', async () => {
       const mock = createMockS3Handle([
-        file('cur/data/BILLING_PERIOD=2026-01/file1.parquet', 'new-hash1', 5000),
-        file('cur/data/BILLING_PERIOD=2026-01/file2.parquet', 'hash2', 3000),
+        file('cur/data/billing_period=2026-01/file1.parquet', 'new-hash1', 5000),
+        file('cur/data/billing_period=2026-01/file2.parquet', 'hash2', 3000),
       ]);
 
       const rawDir = join(tempDir, 'aws', 'raw');
@@ -1083,8 +1083,8 @@ describe('getDataInventory with mocked S3', () => {
       const etagFile = join(metaDir, 'sync-etags.json');
       const corruptedEtags = {
         '2026-01': {
-          'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'old-hash1',
-          'cur/data/BILLING_PERIOD=2026-01/file2.parquet': false, // boolean
+          'cur/data/billing_period=2026-01/file1.parquet': 'old-hash1',
+          'cur/data/billing_period=2026-01/file2.parquet': false, // boolean
         },
       };
       await writeFile(etagFile, JSON.stringify(corruptedEtags));

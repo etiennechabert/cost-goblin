@@ -102,7 +102,7 @@ export function registerSharingHandlers(app: AppContext): void {
       if (provider === undefined) {
         return { status: 'error', message: 'No provider configured — complete setup before publishing' };
       }
-      // Caller may override the destination (e.g. write-locked CUR bucket →
+      // Caller may override the destination (e.g. write-locked billing bucket →
       // sibling config bucket). Default is the discoverable beacon key at
       // the daily bucket's root.
       const requested = isStringRecord(raw) && typeof raw['location'] === 'string' && raw['location'].trim().length > 0

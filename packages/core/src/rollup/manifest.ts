@@ -17,8 +17,6 @@ export interface RollupManifest {
   readonly builtAt: string;
   /** Grain dimension columns baked into these partitions (sorted). */
   readonly grainDimensions: readonly string[];
-  /** Column-probe set the partitions were built against. */
-  readonly availableColumns: readonly string[];
   readonly partitions: Readonly<Record<string, RollupPartitionMeta>>;
 }
 

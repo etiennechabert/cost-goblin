@@ -11,10 +11,10 @@ function sampleSpec(): BaselineSpec {
     id: 'bl-1',
     name: 'RDS baseline',
     source: 'discovered',
-    scope: { kind: 'filter', filters: { [asDimensionId('service')]: [asTagValue('AmazonRDS')] } },
+    scope: { kind: 'filter', filters: { [asDimensionId('service')]: [asTagValue('Amazon Relational Database Service')] } },
     // A real baseline snapshots the active cost scope, which always carries the
     // marketplace-attribution default — mirror that so the bundle round-trips.
-    basis: { costMetric: 'amortized', costPerspective: 'gross', rules: [], marketplaceAttribution: DEFAULT_COST_SCOPE.marketplaceAttribution },
+    basis: { costMetric: 'billed', rules: [], marketplaceAttribution: DEFAULT_COST_SCOPE.marketplaceAttribution },
     basisSnapshotAt: '2026-06-01T00:00:00.000Z',
     createdAt: '2026-06-01T00:00:00.000Z',
     updatedAt: '2026-06-01T00:00:00.000Z',
@@ -42,8 +42,8 @@ describe('baselines bundle section', () => {
     expect(out?.id).toBe('bl-1');
     expect(out?.name).toBe('RDS baseline');
     expect(out?.source).toBe('discovered');
-    expect(out?.scope).toEqual({ kind: 'filter', filters: { service: ['AmazonRDS'] } });
-    expect(out?.basis.costMetric).toBe('amortized');
+    expect(out?.scope).toEqual({ kind: 'filter', filters: { service: ['Amazon Relational Database Service'] } });
+    expect(out?.basis.costMetric).toBe('billed');
   });
 
   it('omits the baselines section when empty', async () => {
@@ -63,7 +63,7 @@ describe('baselines bundle section', () => {
           id: 'x',
           source: 'manual',
           scope: { kind: 'filter', filters: { team: ['core'] } },
-          basis: { costMetric: 'unblended', rules: [] },
+          basis: { costMetric: 'effective', rules: [] },
           basisSnapshotAt: 't',
           createdAt: 't',
           updatedAt: 't',
