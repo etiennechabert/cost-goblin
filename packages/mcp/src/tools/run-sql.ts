@@ -3,7 +3,6 @@ import {
   buildSource,
   computePeriodsInRange,
   DEFAULT_LAG_DAYS,
-  listLocalMonths,
   logger,
 } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
@@ -11,7 +10,7 @@ import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
   computeDataCoverage,
   emptyRangeResult,
-  getFirstProviderName,
+  getQueryProviders,
   resolveFormat,
   structuredToolResult,
   toStr,
@@ -134,7 +133,6 @@ export async function runSql(
 
   const dimensions = await ctx.getQueryDimensions();
   const orgPath = await ctx.getOrgAccountsPath();
-  const availableColumns = await ctx.getAvailableColumns('daily');
 
   let dateRange: { start: string; end: string };
   if (params.dateRange !== undefined) {
@@ -157,11 +155,18 @@ export async function runSql(
   if (matSource !== undefined) {
     costsCte = `costs AS (SELECT * FROM ${matSource} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
   } else {
-    const provider = await getFirstProviderName(ctx);
-    const available = provider === null ? [] : await listLocalMonths(ctx.dataDir, provider, 'daily');
+    const allProviders = await getQueryProviders(ctx, 'daily');
     const required = computePeriodsInRange(dateRange);
-    const periods = required.filter(p => available.includes(p));
-    if (provider === null || periods.length === 0) {
+    // Per-provider month intersection; providers with nothing in range are
+    // dropped (a zero-match glob fails the whole union).
+    const branches = allProviders
+      .map(pr => ({
+        name: pr.name,
+        periods: required.filter(m => pr.availablePeriods?.includes(m) ?? false),
+        availableColumns: pr.availableColumns,
+      }))
+      .filter(b => b.periods.length > 0);
+    if (branches.length === 0) {
       return emptyRangeResult(ctx, dateRange, format, `Query Result`);
     }
     const source = buildSource({
@@ -169,7 +174,7 @@ export async function runSql(
       tier: 'daily',
       dimensions,
       orgAccountsPath: orgPath,
-      providers: [{ name: provider, periods, availableColumns }],
+      providers: branches,
       costMetric: 'unblended',
     });
     costsCte = `costs AS (SELECT * FROM ${source} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;

@@ -141,9 +141,15 @@ export function DataManagement() {
   const isNotConfigured = configQuery.status === 'error'
     || (configQuery.status === 'success' && providers.length === 0);
 
-  const syncableTotal = [...counts.values()].reduce((sum, c) => sum + c.syncable, 0);
-  const prunableTotal = [...counts.values()].reduce((sum, c) => sum + c.prunableCount, 0);
-  const anySyncing = syncAllRunning || [...counts.values()].some(c => c.syncing);
+  // Sum ONLY over currently-configured providers — a removed provider's last
+  // report would otherwise linger in the map as phantom counts (or hold the
+  // Sync button disabled forever if it was mid-sync when removed).
+  const liveCounts = providers
+    .map(p => counts.get(String(p.name)))
+    .filter((c): c is ProviderCounts => c !== undefined);
+  const syncableTotal = liveCounts.reduce((sum, c) => sum + c.syncable, 0);
+  const prunableTotal = liveCounts.reduce((sum, c) => sum + c.prunableCount, 0);
+  const anySyncing = syncAllRunning || liveCounts.some(c => c.syncing);
 
   function bumpAll(): void {
     setRefreshSignal(k => k + 1);
@@ -352,6 +358,7 @@ export function DataManagement() {
           refreshSignal={refreshSignal}
           onCounts={onCounts}
           onConfigChanged={onConfigChanged}
+          onOrgDataChanged={bumpAll}
         />
       ))}
 
@@ -410,9 +417,11 @@ interface ProviderSectionProps {
   readonly refreshSignal: number;
   readonly onCounts: (provider: string, counts: ProviderCounts) => void;
   readonly onConfigChanged: () => void;
+  /** Org sync/clear changed the SHARED merged lookups — refresh siblings. */
+  readonly onOrgDataChanged: () => void;
 }
 
-function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onConfigChanged }: ProviderSectionProps) {
+function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onConfigChanged, onOrgDataChanged }: ProviderSectionProps) {
   const api = useCostApi();
   const name = String(provider.name);
   const awsProfile = provider.credentialsProfile;
@@ -647,8 +656,9 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
       </div>
 
       {/* Account mapping — per provider: each payer account syncs its own AWS
-          Organization; the lookups are merged across providers. */}
-      <OrgAccountsSection profile={awsProfile} providerName={name} />
+          Organization; the lookups are merged across providers, so a change
+          in any section refreshes them all (via the shared refresh signal). */}
+      <OrgAccountsSection profile={awsProfile} providerName={name} refreshToken={refreshSignal} onDataChanged={onOrgDataChanged} />
 
       {inventoryQuery.status === 'loading' && !anySyncing && (
         <div className="rounded-xl border border-border bg-bg-secondary/50 p-12 text-center text-text-secondary">

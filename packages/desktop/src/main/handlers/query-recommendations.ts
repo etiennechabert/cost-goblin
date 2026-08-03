@@ -14,7 +14,7 @@ import type {
 import type { AppContext } from './context.js';
 import {
   buildMissingTagsResult,
-  resolveAvailablePeriods,
+  providersEmptyForRange,
   resolveEntityName,
   toEffort,
   toNum,
@@ -34,9 +34,7 @@ export function registerRecommendationHandlers(app: AppContext): void {
     logger.info('query:missing-tags', { tagDimension: params.tagDimension });
 
     const providers = await getQueryProviders('daily');
-    const firstProvider = providers[0];
-    const empty = firstProvider === undefined
-      || (await resolveAvailablePeriods(ctx.dataDir, firstProvider.name, 'daily', params.dateRange)).empty;
+    const empty = providersEmptyForRange(providers, params.dateRange);
     if (empty) {
       return {
         rows: [],
@@ -74,8 +72,23 @@ export function registerRecommendationHandlers(app: AppContext): void {
 
   ipcMain.handle('query:savings', (): Promise<SavingsResult> => originStore.run('savings', async () => {
     const config = await getConfig();
-    const provider = config.providers[0];
-    if (provider?.sync.costOptimization === undefined) {
+    // Every provider with a cost-optimization tier AND data on disk
+    // contributes to the recommendations — one glob per provider; a provider
+    // with a configured tier but nothing synced yet is skipped so its
+    // zero-match glob can't fail the read.
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const globs: string[] = [];
+    for (const provider of config.providers) {
+      if (provider.sync.costOptimization === undefined) continue;
+      const rawDir = path.join(ctx.dataDir, String(provider.name), 'raw');
+      let hasData = false;
+      try {
+        hasData = (await fs.readdir(rawDir)).some(d => d.startsWith('cost-opt-'));
+      } catch { /* no raw dir yet */ }
+      if (hasData) globs.push(`'${ctx.dataDir}/${String(provider.name)}/raw/cost-opt-*/*.parquet'`);
+    }
+    if (globs.length === 0) {
       return { recommendations: [], totalMonthlySavings: asDollars(0) };
     }
 
@@ -100,7 +113,7 @@ export function registerRecommendationHandlers(app: AppContext): void {
           COALESCE(restart_needed, false) AS restart_needed,
           COALESCE(rollback_possible, false) AS rollback_possible,
           COALESCE(recommendation_source, '') AS recommendation_source
-        FROM read_parquet('${ctx.dataDir}/${String(provider.name)}/raw/cost-opt-*/*.parquet', filename=true)
+        FROM read_parquet([${globs.join(', ')}], union_by_name=true, filename=true)
         QUALIFY ROW_NUMBER() OVER (PARTITION BY recommendation_id ORDER BY filename DESC) = 1
         ORDER BY monthly_savings DESC
       `);

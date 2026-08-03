@@ -15,7 +15,7 @@ import {
   buildTrendResult,
   columnForDimension,
   mergeTrendRowsByEntity,
-  resolveAvailablePeriods,
+  providersEmptyForRange,
   resolveEntityName,
   resolveRollupSource,
 } from './query-utils.js';
@@ -31,9 +31,7 @@ export function registerTrendHandlers(app: AppContext): void {
     const orgPath = await getOrgAccountsPath();
     const costScope = await getCostScope().catch(() => undefined);
     const providers = await getQueryProviders('daily');
-    const firstProvider = providers[0];
-    const empty = firstProvider === undefined
-      || (await resolveAvailablePeriods(ctx.dataDir, firstProvider.name, 'daily', params.dateRange)).empty;
+    const empty = providersEmptyForRange(providers, params.dateRange);
     if (empty) return { increases: [], savings: [], totalIncrease: asDollars(0), totalSavings: asDollars(0) };
 
     // Compute the full date range (current + previous period) to check if
@@ -46,7 +44,11 @@ export function registerTrendHandlers(app: AppContext): void {
     const fullRange = { start: prevStart, end: params.dateRange.end };
     // Coverage must include the previous-period span (fullRange), or trends
     // under-reports previous_cost. resolveRollupSource checks every touched month.
-    const matSource = resolveRollupSource(rollupStore, providers, fullRange, 'daily', [columnForDimension(dimensions, params.groupBy), 'cost']);
+    const matSource = resolveRollupSource(rollupStore, providers, fullRange, 'daily', [
+      // Filtered dims are WHEREd too — anything not in the grain gates to raw.
+      ...Object.keys(params.filters).map(k => columnForDimension(dimensions, k)),
+      columnForDimension(dimensions, params.groupBy), 'cost',
+    ]);
     const isMat = matSource !== undefined;
 
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };

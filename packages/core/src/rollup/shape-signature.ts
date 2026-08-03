@@ -77,6 +77,11 @@ export function computeShapeSignature(input: ShapeSignatureInput): string {
 
   const builtinDims = dimensions.builtIn
     .filter(isEnabled)
+    // The injected `provider` dimension never enters the stored grain (see
+    // rollupGrainColumns) — including it here would spuriously invalidate
+    // every existing rollup the moment the dimension appears (#516 upgrade)
+    // or is toggled, forcing a full re-roll that changes nothing.
+    .filter(d => d.field !== 'provider')
     .map(d => ({ kind: 'builtin', name: d.name, field: d.field }))
     .sort((a, b) => a.name.localeCompare(b.name));
 

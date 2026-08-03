@@ -9,7 +9,7 @@ import { removeProviderEntry, swapProviderCredentialsProfile } from '../config-u
 import type { AppContext } from './context.js';
 
 export function registerConfigHandlers(app: AppContext): void {
-  const { ctx, getConfig, getDimensions, getOrgTreeConfig, invalidateConfig } = app;
+  const { ctx, getConfig, getDimensions, getOrgTreeConfig, invalidateConfig, clearAllCaches } = app;
 
   ipcMain.handle('config:get', async (): Promise<CostGoblinConfig> => {
     return getConfig();
@@ -84,7 +84,11 @@ export function registerConfigHandlers(app: AppContext): void {
     if (!isStringRecord(parsed)) throw new Error('Config file is not a YAML object');
     const updated = removeProviderEntry(parsed, providerName);
     await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
-    invalidateConfig();
+    // Removal can change which provider is FIRST — and the RollupStore's
+    // paths and in-memory manifest are bound to the first provider's tree.
+    // A full cache clear invalidates the store and re-warms it against the
+    // new first provider instead of serving stale partitions.
+    await clearAllCaches();
     logger.info(`Removed provider ${providerName} from config (data left on disk)`);
   });
 }

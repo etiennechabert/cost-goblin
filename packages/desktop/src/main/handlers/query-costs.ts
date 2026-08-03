@@ -27,7 +27,7 @@ import {
   columnForDimension,
   isOwnerGroupBy,
   mergeCostRowsByEntity,
-  resolveAvailablePeriods,
+  providersEmptyForRange,
   resolveEntityName,
   resolveRollupSource,
 } from './query-utils.js';
@@ -53,11 +53,14 @@ export function registerCostHandlers(app: AppContext): void {
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const providers = await getQueryProviders(tier);
-    const firstProvider = providers[0];
-    const empty = firstProvider === undefined
-      || (await resolveAvailablePeriods(ctx.dataDir, firstProvider.name, tier, params.dateRange)).empty;
+    const empty = providersEmptyForRange(providers, params.dateRange);
     if (empty) return { rows: [], totalCost: asDollars(0), topServices: [], dateRange: params.dateRange };
-    const matSource = resolveRollupSource(rollupStore, providers, params.dateRange, tier, [columnForDimension(dimensions, params.groupBy), 'service', 'cost']);
+    const matSource = resolveRollupSource(rollupStore, providers, params.dateRange, tier, [
+      // Filters are applied in the WHERE too — a filtered dimension missing
+      // from the rollup grain (e.g. the injected `provider`) must gate to raw.
+      ...Object.keys(params.filters).map(k => columnForDimension(dimensions, k)),
+      columnForDimension(dimensions, params.groupBy), 'service', 'cost',
+    ]);
     const isMat = matSource !== undefined;
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };
     const { sql, params: queryParams } = buildCostQuery(params, qcOpts);
@@ -90,11 +93,12 @@ export function registerCostHandlers(app: AppContext): void {
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const providers = await getQueryProviders(tier);
-    const firstProvider = providers[0];
-    const empty = firstProvider === undefined
-      || (await resolveAvailablePeriods(ctx.dataDir, firstProvider.name, tier, params.dateRange)).empty;
+    const empty = providersEmptyForRange(providers, params.dateRange);
     if (empty) return { days: [], groups: [], totalCost: asDollars(0) };
-    const matSource = resolveRollupSource(rollupStore, providers, params.dateRange, tier, [columnForDimension(dimensions, params.groupBy), 'cost']);
+    const matSource = resolveRollupSource(rollupStore, providers, params.dateRange, tier, [
+      ...Object.keys(params.filters).map(k => columnForDimension(dimensions, k)),
+      columnForDimension(dimensions, params.groupBy), 'cost',
+    ]);
     const isMat = matSource !== undefined;
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };
     const { sql, params: queryParams } = buildDailyCostsQuery(params, qcOpts);
@@ -146,9 +150,7 @@ export function registerCostHandlers(app: AppContext): void {
     const costScope = await getCostScope().catch(() => undefined);
     const tier = params.granularity === 'hourly' ? 'hourly' : 'daily';
     const providers = await getQueryProviders(tier);
-    const firstProvider = providers[0];
-    const empty = firstProvider === undefined
-      || (await resolveAvailablePeriods(ctx.dataDir, firstProvider.name, tier, params.dateRange)).empty;
+    const empty = providersEmptyForRange(providers, params.dateRange);
     if (empty) {
       return {
         entity: params.entity,
@@ -161,7 +163,10 @@ export function registerCostHandlers(app: AppContext): void {
         bySubEntity: [],
       };
     }
-    const matSource = resolveRollupSource(rollupStore, providers, params.dateRange, tier, [columnForDimension(dimensions, params.dimension), 'service', 'account_id', 'account_name', 'cost']);
+    const matSource = resolveRollupSource(rollupStore, providers, params.dateRange, tier, [
+      ...Object.keys(params.filters).map(k => columnForDimension(dimensions, k)),
+      columnForDimension(dimensions, params.dimension), 'service', 'account_id', 'account_name', 'cost',
+    ]);
     const isMat = matSource !== undefined;
     const qcOpts: QueryContextOptions = { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope, materializedSource: matSource };
     const { sql, params: queryParams } = buildEntityDetailQuery(params, qcOpts);

@@ -277,7 +277,14 @@ export function registerSetupHandlers(app: AppContext): void {
       tags: tagDimensions,
     };
 
-    await fs.writeFile(ctx.dimensionsPath, stringify(dimensionsYaml), 'utf-8');
+    // Only (re)write dimensions.yaml when the wizard actually collected tag
+    // choices or no file exists yet (true first run). A re-run that skipped
+    // the tag step — per-tier Configure, Add Provider — must not wipe the
+    // user's curated dimensions with the defaults.
+    const dimensionsExist = await fs.access(ctx.dimensionsPath).then(() => true, () => false);
+    if (!dimensionsExist || wizardConfig.tags !== undefined) {
+      await fs.writeFile(ctx.dimensionsPath, stringify(dimensionsYaml), 'utf-8');
+    }
 
     invalidateConfig();
     invalidateDimensions();

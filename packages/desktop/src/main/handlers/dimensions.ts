@@ -189,10 +189,14 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const period = latest.replace(/^daily-/, '');
     const costScope = await getCostScope().catch(() => undefined);
     const orgAccountsPath = await getOrgAccountsPath();
+    // Probe ONLY the provider whose latest month was just listed — handing
+    // the same period to every provider's branch would emit zero-match globs
+    // for providers without that month (DuckDB fails the whole union). A
+    // single-provider preview is the deliberate fast path.
     const source = buildSource({
       dataDir: ctx.dataDir, tier: 'daily', dimensions: await getQueryDimensions(),
       orgAccountsPath,
-      providers: providers.map(p => ({ name: p.name, periods: [period], availableColumns: p.availableColumns })),
+      providers: [{ name: firstProvider.name, periods: [period], availableColumns: firstProvider.availableColumns }],
       costMetric: 'unblended',
       marketplaceAttribution: costScope?.marketplaceAttribution,
     });
@@ -264,8 +268,11 @@ export function registerDimensionsHandlers(app: AppContext): void {
     const costScope = await getCostScope().catch(() => undefined);
     const orgAccountsPath = await getOrgAccountsPath();
     const accountReverseMap = await getAccountReverseMap();
+    // Probe the first provider only — its latest month was listed above, and
+    // the rollup this estimates is itself bound to the first provider.
     const sql = buildGrainProbeQuery(period, grainColumns, {
-      dataDir: ctx.dataDir, dimensions: candidate, orgAccountsPath, accountReverseMap, costScope, providers,
+      dataDir: ctx.dataDir, dimensions: candidate, orgAccountsPath, accountReverseMap, costScope,
+      providers: [firstProvider],
     });
     const rows = await runQuery(sql);
     const row = rows[0];

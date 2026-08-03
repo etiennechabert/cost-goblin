@@ -51,11 +51,19 @@ function SyncStatusBanner({ syncState }: Readonly<{ syncState: OrgSyncState }>):
   return null;
 }
 
-export function OrgAccountsSection({ profile, providerName }: Readonly<{ profile: string | null; providerName?: string | undefined }>) {
+export function OrgAccountsSection({ profile, providerName, refreshToken = 0, onDataChanged }: Readonly<{
+  profile: string | null;
+  providerName?: string | undefined;
+  /** Bumped by the host when ANOTHER section changed the (merged) org data —
+   *  the org lookups are shared across providers, so a sync or clear in one
+   *  section must refresh the others. */
+  refreshToken?: number | undefined;
+  onDataChanged?: (() => void) | undefined;
+}>) {
   const api = useCostApi();
   const [refreshKey, setRefreshKey] = useState(0);
-  const orgQuery = useQuery(() => api.getOrgSyncResult(), [refreshKey]);
-  const regionInfoQuery = useQuery(() => api.getRegionNamesInfo(), [refreshKey]);
+  const orgQuery = useQuery(() => api.getOrgSyncResult(), [refreshKey, refreshToken]);
+  const regionInfoQuery = useQuery(() => api.getRegionNamesInfo(), [refreshKey, refreshToken]);
   const [expanded, setExpanded] = useState(false);
   const [syncState, setSyncState] = useState<OrgSyncState>({ status: 'idle' });
   const [accountSearch, setAccountSearch] = useState('');
@@ -71,6 +79,7 @@ export function OrgAccountsSection({ profile, providerName }: Readonly<{ profile
     setExpanded(false);
     await api.clearOrgData();
     setRefreshKey(k => k + 1);
+    onDataChanged?.();
   }
   const selectedAccount = orgData === null || selectedAccountId === null
     ? null
@@ -96,6 +105,7 @@ export function OrgAccountsSection({ profile, providerName }: Readonly<{ profile
       // reflects the new data without waiting for the user to navigate away
       // and back.
       setRefreshKey(k => k + 1);
+      onDataChanged?.();
     } catch (err: unknown) {
       clearInterval(pollInterval);
       setSyncState({ status: 'error', message: err instanceof Error ? err.message : String(err) });

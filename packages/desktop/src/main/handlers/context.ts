@@ -735,6 +735,7 @@ export function createAppContext(ctx: IpcContext): AppContext {
     dataDir: ctx.dataDir,
     stateDir: ctx.stateDir,
     getFirstProviderName,
+    getQueryProviders,
     getQueryDimensions,
     getCostScope,
     getAccountMap,

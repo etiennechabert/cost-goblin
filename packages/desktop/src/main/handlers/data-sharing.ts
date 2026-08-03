@@ -413,6 +413,15 @@ export function registerDataSharingHandlers(app: AppContext): void {
 
       const fs = await import('node:fs/promises');
       const path = await import('node:path');
+      // Apply the config bundle BEFORE resolving where data lands: the bundle
+      // can rename/define the provider (a consumer with no config yet gets its
+      // whole provider list from it), and files must land under the
+      // POST-import provider directory — resolving first would orphan every
+      // pulled file under a stale name.
+      if (wantConfig && signed.manifest.configBundle !== null) {
+        await applyBundleSectionsToDisk(ctx, signed.manifest.configBundle, await resolveImportProfile());
+        app.invalidateConfig();
+      }
       // Every incoming provider segment (v2 real names, v1 'aws') maps onto
       // the first LOCAL provider's directory — single-provider semantics.
       const localProvider = await app.getFirstProviderName();
@@ -447,9 +456,6 @@ export function registerDataSharingHandlers(app: AppContext): void {
       }
 
       pullProgress = { active: true, phase: 'importing', filesDone: done, filesTotal: total, currentPeriod: null, bytesDone, bytesTotal, error: null };
-      if (wantConfig && signed.manifest.configBundle !== null) {
-        await applyBundleSectionsToDisk(ctx, signed.manifest.configBundle, await resolveImportProfile());
-      }
       // Enrichment (account/region names) is reference data that makes the
       // pulled rows readable, so it always lands regardless of the config toggle.
       await writeEnrichment(signed.manifest.enrichment);

@@ -146,19 +146,26 @@ export function registerCostScopeHandlers(app: AppContext): void {
     };
 
     // Empty while onboarding (no provider configured) — same zero-period
-    // early return as "no months on disk".
+    // early return as "no months on disk". Months are intersected PER
+    // provider: a shared list would hand a provider globs for months it
+    // doesn't have, and one zero-match glob fails the whole union.
     const providers = await getQueryProviders('daily');
-    const available = providers[0]?.availablePeriods ?? [];
     const required = computePeriodsInRange({ start: startStr, end: endStr });
-    const periods = required.filter(p => available.includes(p));
-    if (periods.length === 0) return zero;
+    const branches = providers
+      .map(p => ({
+        name: p.name,
+        periods: required.filter(m => p.availablePeriods?.includes(m) ?? false),
+        availableColumns: p.availableColumns,
+      }))
+      .filter(b => b.periods.length > 0);
+    if (branches.length === 0) return zero;
 
     const dimensions = await getQueryDimensions();
     const orgPath = await getOrgAccountsPath();
 
     const source = buildSource({
       dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath,
-      providers: providers.map(p => ({ name: p.name, periods, availableColumns: p.availableColumns })),
+      providers: branches,
       costMetric: config.costMetric, costPerspective: config.costPerspective,
     });
 

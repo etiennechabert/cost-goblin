@@ -2,7 +2,6 @@ import {
   asDimensionId,
   buildSource,
   computePeriodsInRange,
-  listLocalMonths,
   QueryBuilder,
   resolveField,
   logger,
@@ -14,7 +13,7 @@ import {
   computeDataCoverage,
   defaultDateRange,
   emptyRangeResult,
-  getFirstProviderName,
+  getQueryProviders,
   lookupDimension,
   resolveEntityName,
   resolveFormat,
@@ -49,7 +48,6 @@ export async function getFilterValues(
 
   const accountMap = await ctx.getAccountMap();
   const orgPath = await ctx.getOrgAccountsPath();
-  const availableColumns = await ctx.getAvailableColumns('daily');
 
   // lookupDimension above already rejected unknown ids with a friendly error;
   // resolveField still throws SecurityError as defense in depth so the id can
@@ -60,11 +58,18 @@ export async function getFilterValues(
   const startParam = qb.addParam(dateRange.start);
   const endParam = qb.addParam(dateRange.end);
 
-  const provider = await getFirstProviderName(ctx);
-  const available = provider === null ? [] : await listLocalMonths(ctx.dataDir, provider, 'daily');
+  const allProviders = await getQueryProviders(ctx, 'daily');
   const required = computePeriodsInRange(dateRange);
-  const periods = required.filter(p => available.includes(p));
-  if (provider === null || periods.length === 0) {
+  // Per-provider month intersection; providers with nothing in range are
+  // dropped (a zero-match glob fails the whole union).
+  const branches = allProviders
+    .map(pr => ({
+      name: pr.name,
+      periods: required.filter(m => pr.availablePeriods?.includes(m) ?? false),
+      availableColumns: pr.availableColumns,
+    }))
+    .filter(b => b.periods.length > 0);
+  if (branches.length === 0) {
     return emptyRangeResult(ctx, dateRange, format, `${dimLabel} Values (${dateRange.start} to ${dateRange.end})`);
   }
   const source = buildSource({
@@ -72,7 +77,7 @@ export async function getFilterValues(
     tier: 'daily',
     dimensions,
     orgAccountsPath: orgPath,
-    providers: [{ name: provider, periods, availableColumns }],
+    providers: branches,
     costMetric: 'unblended',
   });
 

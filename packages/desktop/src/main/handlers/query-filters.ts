@@ -122,7 +122,11 @@ export function registerFilterHandlers(app: AppContext): void {
     const providers = await getQueryProviders('daily');
     const matSource = dateRange === undefined
       ? undefined
-      : resolveRollupSource(rollupStore, providers, dateRange, 'daily', [columnForDimension(dimensions, dimensionId), 'cost']);
+      : resolveRollupSource(rollupStore, providers, dateRange, 'daily', [
+          // The other active filters are WHEREd against the same source.
+          ...Object.keys(filterEntries).map(k => columnForDimension(dimensions, k)),
+          columnForDimension(dimensions, dimensionId), 'cost',
+        ]);
 
     const filterClauses = buildFilterWhereClauses(filterEntries, dimensions, accountReverseMap, qb);
     // Exclusions are baked into the rollup; only apply them on the raw path.

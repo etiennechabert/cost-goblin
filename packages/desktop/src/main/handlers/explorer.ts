@@ -260,9 +260,20 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
   const metric = resolveScopeMetric(params.costMetric, applyCostScope, scopeForExclusions, availableColumns);
   const perspective = resolveScopePerspective(params.costPerspective, applyCostScope, scopeForExclusions, availableColumns);
 
+  // Per-provider month intersection: a shared list would hand providers
+  // globs for months they don't have on disk, and one zero-match glob fails
+  // the whole union (DuckDB IO error). Providers with nothing in range are
+  // dropped; the caller already early-returned when NO provider has months.
+  const branches = providers
+    .map(p => ({
+      name: p.name,
+      periods: periods.filter(m => p.availablePeriods?.includes(m) ?? false),
+      availableColumns: p.availableColumns,
+    }))
+    .filter(b => b.periods.length > 0);
   const source = buildSource({
     dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath,
-    providers: providers.map(p => ({ name: p.name, periods, availableColumns: p.availableColumns })),
+    providers: branches,
     costMetric: metric, costPerspective: perspective, marketplaceAttribution: fullScope?.marketplaceAttribution,
   });
   const exclusions = buildExclusionClauses(scopeForExclusions, dimensions, accountReverseMap);
@@ -294,8 +305,9 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
 
   // Empty while onboarding (no provider configured) — falls into the same
   // zero-period early return as "no months on disk". Months are resolved
-  // ACROSS providers: the union proceeds when any provider has data in
-  // range (buildSource intersects per provider).
+  // ACROSS providers (the union proceeds when any provider has data in
+  // range); buildFreshSource re-intersects per provider before building
+  // globs.
   const providers = await getQueryProviders(tier);
   const required = computePeriodsInRange({ start: startStr, end: endStr });
   const periods = required.filter(m => providers.some(p => p.availablePeriods?.includes(m) ?? false));
