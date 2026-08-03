@@ -5,12 +5,14 @@ import { fileURLToPath } from 'node:url';
 import { buildGrainProbeQuery } from '../query/builder.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 import { computeRollupEstimate } from '../rollup/estimator.js';
+import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
-import { asDimensionId } from '../types/branded.js';
+import { asDimensionId, asProviderName } from '../types/branded.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
+const PROVIDER = asProviderName(FIXTURE_PROVIDER_NAME);
 const PERIOD = '2026-01';
 
 const scope: CostScopeConfig = { costMetric: 'unblended', costPerspective: 'gross', rules: [] };
@@ -71,7 +73,7 @@ async function probe(
 ): Promise<{ lineItems: number; grainRows: number; cards: Map<string, number>; loo: Map<string, number> }> {
   const grain = rollupGrainColumns(dimensions);
   const grainDims = rollupGrainDimensions(dimensions);
-  const sql = buildGrainProbeQuery(PERIOD, grain, { dataDir: SYNTHETIC_DIR, dimensions, costScope: scope });
+  const sql = buildGrainProbeQuery(PERIOD, grain, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }], costScope: scope });
   const row = (await queryAll(conn, sql))[0];
   const cards = new Map<string, number>();
   const loo = new Map<string, number>();

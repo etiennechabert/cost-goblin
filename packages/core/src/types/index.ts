@@ -7,6 +7,7 @@ export type {
   DateString,
   HourString,
   WorkspaceName,
+  ProviderName,
 } from './branded.js';
 export {
   asDimensionId,
@@ -17,6 +18,7 @@ export {
   asDateString,
   asHourString,
   asWorkspaceName,
+  asProviderName,
   tagColumnName,
   tagDimColumn,
 } from './branded.js';
@@ -25,7 +27,7 @@ export type {
   NormalizationRule,
   ConceptType,
   ProviderConfig,
-  AwsCredentials,
+  AwsProviderConfig,
   SyncConfig,
   SyncTierConfig,
   DefaultsConfig,
@@ -70,7 +72,7 @@ export type {
 } from './query.js';
 export { DEFAULT_PLACEHOLDER_PATTERNS } from './query.js';
 
-export type { Dimension, CostApi, DataInventoryResult, DataTier, PruneResult, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, PerformanceSettings, PerformanceInfo, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateLogEntry, UpdateStage, UpdateStatus, UpdateApi, RollupStatus, RollupApi, RollupStats, BaselinesApi, WorkspaceSummary, WorkspacesInfo, CreateWorkspaceSource } from './api.js';
+export type { Dimension, CostApi, DataInventoryResult, DataTier, PruneResult, ProviderSyncError, AccountMappingStatus, AccountMappingEntry, SavingsPreferences, UIPreferences, PerformanceSettings, PerformanceInfo, AutoSyncStatus, OrgAccount, OrgSyncResult, OrgSyncProgress, UpdateInfo, UpdateLogEntry, UpdateStage, UpdateStatus, UpdateApi, RollupStatus, RollupApi, RollupStats, BaselinesApi, WorkspaceSummary, WorkspacesInfo, CreateWorkspaceSource } from './api.js';
 
 export type {
   WidgetSize,

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { type DimensionsConfig, asDimensionId } from '@costgoblin/core';
-import { columnForDimension, resolveRollupSource } from '../main/handlers/query-utils.js';
+import { type DimensionsConfig, asDimensionId, asProviderName } from '@costgoblin/core';
+import { columnForDimension, providersEmptyForRange, resolveRollupSource } from '../main/handlers/query-utils.js';
 import { RollupStore } from '../main/rollup-store.js';
 
 const dims: DimensionsConfig = {
@@ -23,8 +23,30 @@ describe('columnForDimension', () => {
 });
 
 describe('resolveRollupSource', () => {
+  const oneProvider = [{ name: asProviderName('aws') }];
   it('returns undefined when the store has no valid partitions (falls back to raw)', () => {
-    const store = new RollupStore({ dataDir: '/tmp/none', runQuery: () => Promise.resolve([]) });
-    expect(resolveRollupSource(store, { start: '2026-01-01', end: '2026-01-31' }, 'daily', ['service', 'cost'])).toBeUndefined();
+    const store = new RollupStore({ dataDir: '/tmp/none', providerName: () => asProviderName('aws'), runQuery: () => Promise.resolve([]) });
+    expect(resolveRollupSource(store, oneProvider, { start: '2026-01-01', end: '2026-01-31' }, 'daily', ['service', 'cost'])).toBeUndefined();
+  });
+  it('never routes a multi-provider query through the single-provider store', () => {
+    const store = new RollupStore({ dataDir: '/tmp/none', providerName: () => asProviderName('aws'), runQuery: () => Promise.resolve([]) });
+    const two = [{ name: asProviderName('aws') }, { name: asProviderName('aws-b') }];
+    expect(resolveRollupSource(store, two, { start: '2026-01-01', end: '2026-01-31' }, 'daily', ['service', 'cost'])).toBeUndefined();
   });
 });
+
+describe('providersEmptyForRange', () => {
+  const range = { start: '2026-06-01', end: '2026-06-30' };
+  it('is NOT empty when any provider has a month in range — even if the first does not', () => {
+    const providers = [
+      { name: asProviderName('stale-payer'), availablePeriods: ['2025-01', '2025-02'] },
+      { name: asProviderName('active-payer'), availablePeriods: ['2026-06'] },
+    ];
+    expect(providersEmptyForRange(providers, range)).toBe(false);
+  });
+  it('is empty when no provider intersects the range, and for an empty provider list', () => {
+    expect(providersEmptyForRange([{ name: asProviderName('a'), availablePeriods: ['2025-01'] }], range)).toBe(true);
+    expect(providersEmptyForRange([], range)).toBe(true);
+  });
+});
+

@@ -8,6 +8,11 @@ export type Dollars = Brand<number, 'Dollars'>;
 export type DateString = Brand<string, 'DateString'>;
 export type HourString = Brand<string, 'HourString'>;
 export type WorkspaceName = Brand<string, 'WorkspaceName'>;
+/** A provider instance's name. Doubles as the on-disk directory segment
+ *  (`{dataDir}/{providerName}/raw|rollup|meta`) and appears inside
+ *  single-quoted SQL glob paths — always construct via `parseProviderName`
+ *  (config/provider-name.ts) so the charset stays path- and SQL-safe. */
+export type ProviderName = Brand<string, 'ProviderName'>;
 
 export function asDimensionId(value: string): DimensionId {
   return value as DimensionId;
@@ -39,6 +44,10 @@ export function asHourString(value: string): HourString {
 
 export function asWorkspaceName(value: string): WorkspaceName {
   return value as WorkspaceName;
+}
+
+export function asProviderName(value: string): ProviderName {
+  return value as ProviderName;
 }
 
 export function tagColumnName(tagName: string): string {

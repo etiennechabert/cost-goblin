@@ -5,6 +5,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { getDataInventory } from '../sync/data-inventory.js';
 import type { S3Handle } from '../sync/s3-client.js';
 import type { ManifestFileEntry } from '../sync/manifest.js';
+import { asProviderName } from '../types/branded.js';
+
+const provider = asProviderName('aws');
 
 function createMockS3Handle(files: ManifestFileEntry[]): S3Handle {
   return {
@@ -23,10 +26,13 @@ function file(key: string, hash = 'etag-hash', size = 1000): ManifestFileEntry {
 
 describe('getDataInventory with mocked S3', () => {
   let tempDir: string;
+  /** Etag sidecars live in {dataDir}/{provider}/meta/ since #516. */
+  let metaDir: string;
 
   beforeEach(async () => {
     tempDir = join(tmpdir(), `costgoblin-test-${String(Date.now())}-${Math.random().toString(36).slice(2)}`);
-    await mkdir(tempDir, { recursive: true });
+    metaDir = join(tempDir, 'aws', 'meta');
+    await mkdir(metaDir, { recursive: true });
   });
 
   afterEach(async () => {
@@ -43,6 +49,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -68,6 +75,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -104,7 +112,7 @@ describe('getDataInventory with mocked S3', () => {
     await writeFile(join(periodDir, 'data.parquet'), 'dummy data');
 
     // Create etag file with matching hashes
-    const etagFile = join(tempDir, 'sync-etags.json');
+    const etagFile = join(metaDir, 'sync-etags.json');
     const etags = {
       '2026-01': {
         'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'hash1',
@@ -117,6 +125,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -143,7 +152,7 @@ describe('getDataInventory with mocked S3', () => {
     await writeFile(join(periodDir, 'data.parquet'), 'old data');
 
     // Create etag file with old hash
-    const etagFile = join(tempDir, 'sync-etags.json');
+    const etagFile = join(metaDir, 'sync-etags.json');
     const etags = {
       '2026-01': {
         'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'old-hash',
@@ -155,6 +164,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -180,7 +190,7 @@ describe('getDataInventory with mocked S3', () => {
     // 2026-01: matching hash (repartitioned)
     // 2026-02: different hash (stale)
     // 2026-03: no local (missing)
-    const etagFile = join(tempDir, 'sync-etags.json');
+    const etagFile = join(metaDir, 'sync-etags.json');
     const etags = {
       '2026-01': { 'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'hash1' },
       '2026-02': { 'cur/data/BILLING_PERIOD=2026-02/file2.parquet': 'old-hash2' },
@@ -191,6 +201,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -218,6 +229,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cost-opt/',
       'default',
       tempDir,
+      provider,
       'cost-optimization',
       mock,
     );
@@ -242,6 +254,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -260,7 +273,7 @@ describe('getDataInventory with mocked S3', () => {
     await mkdir(periodDir, { recursive: true });
     await writeFile(join(periodDir, 'data.parquet'), 'hourly data');
 
-    const etagFile = join(tempDir, 'sync-etags-hourly.json');
+    const etagFile = join(metaDir, 'sync-etags-hourly.json');
     const etags = {
       '2026-01': { 'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'hash1' },
     };
@@ -270,6 +283,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'hourly',
       mock,
     );
@@ -289,7 +303,7 @@ describe('getDataInventory with mocked S3', () => {
     await mkdir(periodDir, { recursive: true });
     await writeFile(join(periodDir, 'data.parquet'), 'cost-opt data');
 
-    const etagFile = join(tempDir, 'sync-etags-cost-optimization.json');
+    const etagFile = join(metaDir, 'sync-etags-cost-optimization.json');
     const etags = {
       '2026-03': { 'cost-opt/date=2026-03-15/file1.parquet': 'hash1' },
     };
@@ -299,6 +313,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cost-opt/',
       'default',
       tempDir,
+      provider,
       'cost-optimization',
       mock,
     );
@@ -325,6 +340,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -347,7 +363,7 @@ describe('getDataInventory with mocked S3', () => {
     await writeFile(join(periodDir, 'data.parquet'), 'data');
 
     // Create etag file but without entry for 2026-01
-    const etagFile = join(tempDir, 'sync-etags.json');
+    const etagFile = join(metaDir, 'sync-etags.json');
     const etags = {
       '2026-02': { 'cur/data/BILLING_PERIOD=2026-02/file1.parquet': 'hash2' },
     };
@@ -357,6 +373,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -381,7 +398,7 @@ describe('getDataInventory with mocked S3', () => {
     await writeFile(join(periodDir, 'data.parquet'), 'data');
 
     // Etag file only has entries for file1 and file2, not file3
-    const etagFile = join(tempDir, 'sync-etags.json');
+    const etagFile = join(metaDir, 'sync-etags.json');
     const etags = {
       '2026-01': {
         'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'hash1',
@@ -395,6 +412,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -418,7 +436,7 @@ describe('getDataInventory with mocked S3', () => {
     await writeFile(join(periodDir, 'data.parquet'), 'data');
 
     // file1 has changed hash, file2 and file3 match
-    const etagFile = join(tempDir, 'sync-etags.json');
+    const etagFile = join(metaDir, 'sync-etags.json');
     const etags = {
       '2026-01': {
         'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'old-hash1',
@@ -432,6 +450,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -453,7 +472,7 @@ describe('getDataInventory with mocked S3', () => {
     await writeFile(join(periodDir, 'data.parquet'), 'data');
 
     // Only file1 is in etags and it differs, file2 is not tracked
-    const etagFile = join(tempDir, 'sync-etags.json');
+    const etagFile = join(metaDir, 'sync-etags.json');
     const etags = {
       '2026-01': {
         'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'old-hash',
@@ -465,6 +484,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -490,6 +510,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -515,6 +536,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -543,6 +565,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -565,6 +588,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -587,6 +611,7 @@ describe('getDataInventory with mocked S3', () => {
       's3://test-bucket/cur/',
       'default',
       tempDir,
+      provider,
       'daily',
       mock,
     );
@@ -620,6 +645,7 @@ describe('getDataInventory with mocked S3', () => {
         's3://test-bucket/cur/',
         'default',
         tempDir,
+        provider,
         tier,
         mock,
       );
@@ -643,7 +669,7 @@ describe('getDataInventory with mocked S3', () => {
       await writeFile(join(periodDir, 'data.parquet'), 'local data');
 
       // All three files have matching etags
-      const etagFile = join(tempDir, 'sync-etags.json');
+      const etagFile = join(metaDir, 'sync-etags.json');
       const etags = {
         '2026-01': {
           'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'etag-abc',
@@ -657,6 +683,7 @@ describe('getDataInventory with mocked S3', () => {
         's3://test-bucket/cur/',
         'default',
         tempDir,
+        provider,
         'daily',
         mock,
       );
@@ -679,7 +706,7 @@ describe('getDataInventory with mocked S3', () => {
       await writeFile(join(periodDir, 'data.parquet'), 'local data');
 
       // file2 has changed etag (was etag-def, now etag-xyz-NEW)
-      const etagFile = join(tempDir, 'sync-etags.json');
+      const etagFile = join(metaDir, 'sync-etags.json');
       const etags = {
         '2026-01': {
           'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'etag-abc',
@@ -693,6 +720,7 @@ describe('getDataInventory with mocked S3', () => {
         's3://test-bucket/cur/',
         'default',
         tempDir,
+        provider,
         'daily',
         mock,
       );
@@ -715,7 +743,7 @@ describe('getDataInventory with mocked S3', () => {
       await writeFile(join(periodDir, 'data.parquet'), 'local data');
 
       // Etag cache only has file1 and file2, file3-NEW is a new remote file
-      const etagFile = join(tempDir, 'sync-etags.json');
+      const etagFile = join(metaDir, 'sync-etags.json');
       const etags = {
         '2026-01': {
           'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'etag-abc',
@@ -729,6 +757,7 @@ describe('getDataInventory with mocked S3', () => {
         's3://test-bucket/cur/',
         'default',
         tempDir,
+        provider,
         'daily',
         mock,
       );
@@ -755,7 +784,7 @@ describe('getDataInventory with mocked S3', () => {
       await writeFile(join(rawDir, 'daily-2026-01', 'data.parquet'), 'data1');
       await writeFile(join(rawDir, 'daily-2026-02', 'data.parquet'), 'data2');
 
-      const etagFile = join(tempDir, 'sync-etags.json');
+      const etagFile = join(metaDir, 'sync-etags.json');
       const etags = {
         '2026-01': { 'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'hash1' },
         '2026-02': { 'cur/data/BILLING_PERIOD=2026-02/file2.parquet': 'old-hash2' },
@@ -766,6 +795,7 @@ describe('getDataInventory with mocked S3', () => {
         's3://test-bucket/cur/',
         'default',
         tempDir,
+        provider,
         'daily',
         mock,
       );
@@ -800,7 +830,7 @@ describe('getDataInventory with mocked S3', () => {
       }
 
       // Etag file exists for some other period entirely — 2026-04 is absent.
-      const etagFile = join(tempDir, 'sync-etags-hourly.json');
+      const etagFile = join(metaDir, 'sync-etags-hourly.json');
       await writeFile(etagFile, JSON.stringify({
         '2026-03': { 'hourly/BILLING_PERIOD=2026-03/data-00000.parquet': 'etag-march' },
       }));
@@ -809,6 +839,7 @@ describe('getDataInventory with mocked S3', () => {
         's3://test-bucket/hourly/',
         'default',
         tempDir,
+        provider,
         'hourly',
         mock,
       );
@@ -830,13 +861,14 @@ describe('getDataInventory with mocked S3', () => {
       // Etag file exists but is empty (first sync after etag feature deployed,
       // or local data carried over from an older sync version that didn't
       // write etags).
-      const etagFile = join(tempDir, 'sync-etags.json');
+      const etagFile = join(metaDir, 'sync-etags.json');
       await writeFile(etagFile, JSON.stringify({}));
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
         'default',
         tempDir,
+        provider,
         'daily',
         mock,
       );
@@ -860,13 +892,14 @@ describe('getDataInventory with mocked S3', () => {
       await writeFile(join(periodDir, 'data.parquet'), 'data');
 
       // Write invalid JSON to etag file
-      const etagFile = join(tempDir, 'sync-etags.json');
+      const etagFile = join(metaDir, 'sync-etags.json');
       await writeFile(etagFile, 'not valid json {{{');
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
         'default',
         tempDir,
+        provider,
         'daily',
         mock,
       );
@@ -889,13 +922,14 @@ describe('getDataInventory with mocked S3', () => {
       await writeFile(join(periodDir, 'data.parquet'), 'data');
 
       // Write JSON array instead of object
-      const etagFile = join(tempDir, 'sync-etags.json');
+      const etagFile = join(metaDir, 'sync-etags.json');
       await writeFile(etagFile, JSON.stringify(['not', 'an', 'object']));
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
         'default',
         tempDir,
+        provider,
         'daily',
         mock,
       );
@@ -915,13 +949,14 @@ describe('getDataInventory with mocked S3', () => {
       await mkdir(periodDir, { recursive: true });
       await writeFile(join(periodDir, 'data.parquet'), 'data');
 
-      const etagFile = join(tempDir, 'sync-etags.json');
+      const etagFile = join(metaDir, 'sync-etags.json');
       await writeFile(etagFile, 'null');
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
         'default',
         tempDir,
+        provider,
         'daily',
         mock,
       );
@@ -940,13 +975,14 @@ describe('getDataInventory with mocked S3', () => {
       await mkdir(periodDir, { recursive: true });
       await writeFile(join(periodDir, 'data.parquet'), 'data');
 
-      const etagFile = join(tempDir, 'sync-etags.json');
+      const etagFile = join(metaDir, 'sync-etags.json');
       await writeFile(etagFile, JSON.stringify('string value'));
 
       const inventory = await getDataInventory(
         's3://test-bucket/cur/',
         'default',
         tempDir,
+        provider,
         'daily',
         mock,
       );
@@ -968,7 +1004,7 @@ describe('getDataInventory with mocked S3', () => {
       await writeFile(join(rawDir, 'daily-2026-02', 'data.parquet'), 'data2');
 
       // 2026-01 is a string instead of object, 2026-02 is valid
-      const etagFile = join(tempDir, 'sync-etags.json');
+      const etagFile = join(metaDir, 'sync-etags.json');
       const corruptedEtags = {
         '2026-01': 'not-an-object',
         '2026-02': { 'cur/data/BILLING_PERIOD=2026-02/file2.parquet': 'new-hash2' },
@@ -979,6 +1015,7 @@ describe('getDataInventory with mocked S3', () => {
         's3://test-bucket/cur/',
         'default',
         tempDir,
+        provider,
         'daily',
         mock,
       );
@@ -1006,7 +1043,7 @@ describe('getDataInventory with mocked S3', () => {
       await writeFile(join(periodDir, 'data.parquet'), 'data');
 
       // Mix of valid and invalid hash types
-      const etagFile = join(tempDir, 'sync-etags.json');
+      const etagFile = join(metaDir, 'sync-etags.json');
       const corruptedEtags = {
         '2026-01': {
           'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'hash1',
@@ -1020,6 +1057,7 @@ describe('getDataInventory with mocked S3', () => {
         's3://test-bucket/cur/',
         'default',
         tempDir,
+        provider,
         'daily',
         mock,
       );
@@ -1042,7 +1080,7 @@ describe('getDataInventory with mocked S3', () => {
       await writeFile(join(periodDir, 'data.parquet'), 'data');
 
       // file1 has valid but stale hash, file2 has corrupted hash value
-      const etagFile = join(tempDir, 'sync-etags.json');
+      const etagFile = join(metaDir, 'sync-etags.json');
       const corruptedEtags = {
         '2026-01': {
           'cur/data/BILLING_PERIOD=2026-01/file1.parquet': 'old-hash1',
@@ -1055,6 +1093,7 @@ describe('getDataInventory with mocked S3', () => {
         's3://test-bucket/cur/',
         'default',
         tempDir,
+        provider,
         'daily',
         mock,
       );

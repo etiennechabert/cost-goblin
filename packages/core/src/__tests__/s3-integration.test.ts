@@ -6,6 +6,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createS3Handle } from '../sync/s3-client.js';
 import type { S3Handle, S3EndpointOptions } from '../sync/s3-client.js';
 import { getDataInventory } from '../sync/data-inventory.js';
+import { asProviderName } from '../types/branded.js';
+import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 
 const MINIO_ENDPOINT = process.env['MINIO_ENDPOINT'] ?? 'http://localhost:9000';
 const BUCKET = 'costgoblin-test';
@@ -17,7 +19,7 @@ const ENDPOINT_OPTIONS: S3EndpointOptions = {
   credentials: CREDENTIALS,
 };
 
-const FIXTURES_DIR = join(import.meta.dirname, '..', '__fixtures__', 'synthetic', 'aws', 'raw');
+const FIXTURES_DIR = join(import.meta.dirname, '..', '__fixtures__', 'synthetic', FIXTURE_PROVIDER_NAME, 'raw');
 
 async function isMinioAvailable(): Promise<boolean> {
   try {
@@ -142,6 +144,7 @@ describe.skipIf(!available)('S3 integration (MinIO)', () => {
       `s3://${BUCKET}/${PREFIX}data/`,
       'default',
       tempDir,
+      asProviderName(FIXTURE_PROVIDER_NAME),
       'daily',
       s3,
     );

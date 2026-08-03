@@ -1,5 +1,6 @@
 import { ipcMain, shell } from 'electron';
 import { logger, parseS3Path, isStringRecord, parseJsonObject } from '@costgoblin/core';
+import { upsertWizardProvider } from '../config-upsert.js';
 import type { AppContext } from './context.js';
 
 /** One-shot CLI flag the setup wizard's relaunch adds (see update.ts) so the
@@ -209,35 +210,11 @@ export function registerSetupHandlers(app: AppContext): void {
       // no existing config
     }
 
-    const existingProviders: Readonly<Record<string, unknown>>[] = Array.isArray(existing['providers'])
-      ? existing['providers'].filter(isStringRecord)
-      : [];
-    const existingProvider = existingProviders[0] ?? {};
-    const rawSync = existingProvider['sync'];
-    const existingSync: Readonly<Record<string, unknown>> = isStringRecord(rawSync) ? rawSync : {};
-
-    const sync: Record<string, unknown> = { ...existingSync, intervalMinutes: 60 };
-
-    if (wizardConfig.dailyBucket.length > 0) {
-      sync['daily'] = { bucket: wizardConfig.dailyBucket, retentionDays: wizardConfig.retentionDays ?? 365 };
-    }
-    if (wizardConfig.hourlyBucket !== undefined && wizardConfig.hourlyBucket.length > 0) {
-      sync['hourly'] = { bucket: wizardConfig.hourlyBucket, retentionDays: 30 };
-    }
-    if (wizardConfig.costOptBucket !== undefined && wizardConfig.costOptBucket.length > 0) {
-      sync['costOptimization'] = { bucket: wizardConfig.costOptBucket, retentionDays: 30 };
-    }
-
-    const costgoblinYaml = {
-      ...existing,
-      providers: [{
-        name: wizardConfig.providerName,
-        type: 'aws',
-        credentials: { profile: wizardConfig.profile },
-        sync,
-      }],
-      defaults: typeof existing['defaults'] === 'object' && existing['defaults'] !== null ? existing['defaults'] : { periodDays: 30, costMetric: 'UnblendedCost', lagDays: 2 },
-    };
+    // UPSERT by provider name: replace the matching entry in place, append a
+    // new one otherwise; other providers and unknown top-level keys are
+    // preserved verbatim. Throws ProviderNameError (friendly message,
+    // surfaced to the wizard) on an invalid name.
+    const costgoblinYaml = upsertWizardProvider(existing, wizardConfig);
 
     await fs.writeFile(ctx.configPath, stringify(costgoblinYaml), 'utf-8');
 
@@ -300,7 +277,14 @@ export function registerSetupHandlers(app: AppContext): void {
       tags: tagDimensions,
     };
 
-    await fs.writeFile(ctx.dimensionsPath, stringify(dimensionsYaml), 'utf-8');
+    // Only (re)write dimensions.yaml when the wizard actually collected tag
+    // choices or no file exists yet (true first run). A re-run that skipped
+    // the tag step — per-tier Configure, Add Provider — must not wipe the
+    // user's curated dimensions with the defaults.
+    const dimensionsExist = await fs.access(ctx.dimensionsPath).then(() => true, () => false);
+    if (!dimensionsExist || wizardConfig.tags !== undefined) {
+      await fs.writeFile(ctx.dimensionsPath, stringify(dimensionsYaml), 'utf-8');
+    }
 
     invalidateConfig();
     invalidateDimensions();
@@ -320,8 +304,7 @@ export function registerSetupHandlers(app: AppContext): void {
 providers:
   - name: aws-main
     type: aws
-    credentials:
-      profile: default  # <- your AWS CLI profile name
+    credentialsProfile: default  # <- your AWS CLI profile name
     sync:
       daily:
         bucket: s3://your-bucket/path/to/cur/  # <- path containing data/ and metadata/

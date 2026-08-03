@@ -45,6 +45,14 @@ export {
 } from './retention.js';
 
 export {
+  providerEtagPath,
+  providerMetaDir,
+  providerRawDir,
+  providerRollupDir,
+  providerRoot,
+} from './provider-paths.js';
+
+export {
   type ExpectedDataType,
   extractDate,
   extractPeriod,

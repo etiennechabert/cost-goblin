@@ -22,7 +22,7 @@ import {
   computeOrgAccountsDigest,
   rollupGrainColumns,
   parseEtagsJson,
-  getEtagFileName,
+  providerEtagPath,
   listLocalMonths,
   logger,
   isStringRecord,
@@ -36,12 +36,18 @@ import type {
   CostScopeConfig,
   DimensionsConfig,
   OrgNode,
+  ProviderName,
+  ProviderSourceSpec,
   RegionEnrichment,
   SyncStatus,
   ViewsConfig,
 } from '@costgoblin/core';
 
 const DEFAULT_BUILT_INS: readonly BuiltInDimension[] = [
+  // Injected at read time by buildSource (constant column per provider
+  // branch) — never stored in Parquet. With several same-type providers this
+  // is the payer/billing-source axis.
+  { name: asDimensionId('provider'), label: 'Provider', field: 'provider', description: 'Which configured billing source the cost came from. With multiple payer accounts, this is the payer axis.' },
   { name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name', description: 'AWS account the cost was charged to. Main axis for org/team-level rollups.', useOrgAccounts: true },
   { name: asDimensionId('region'), label: 'Region', field: 'region', description: 'AWS region where the resource ran. Useful for spotting unintended multi-region sprawl.', useRegionNames: true },
   // Two pure-enrichment dims derived from the same `region` column: Country
@@ -156,6 +162,15 @@ export interface AppContext {
   readonly getAccountReverseMap: () => Promise<Map<string, readonly string[]>>;
   readonly getRegionMap: () => Promise<Map<string, RegionEnrichment>>;
   readonly getOrgAccountsPath: () => Promise<string | undefined>;
+  /** First configured provider's name, or null while onboarding (no config /
+   *  empty providers). #516 phase-2 keeps single-provider semantics — every
+   *  data-path consumer keys off this until multi-provider orchestration
+   *  lands. */
+  readonly getFirstProviderName: () => Promise<ProviderName | null>;
+  /** ProviderSourceSpec list for QueryContextOptions: each configured
+   *  provider with its on-disk months for `tier` and probed CUR columns.
+   *  Empty while onboarding. */
+  readonly getQueryProviders: (tier: 'daily' | 'hourly') => Promise<readonly ProviderSourceSpec[]>;
   /** Columns present in the user's CUR parquet files for the given tier.
    *  CUR exports vary by version and by "Include Resource IDs" / "Include
    *  Net Columns" settings — not every export has
@@ -420,12 +435,19 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // unblended.
   const columnCache = new Map<string, Promise<ReadonlySet<string>>>();
 
+  // First configured provider, or null during onboarding. Cached via
+  // getConfig's own cache.
+  async function getFirstProviderName(): Promise<ProviderName | null> {
+    const config = await getConfig().catch(() => null);
+    return config?.providers[0]?.name ?? null;
+  }
+
   // DESCRIBE one month's parquet → its column set. Errors degrade to the empty
   // set (downstream reads that as "no optional columns" and uses the unblended
   // fallback) rather than blocking the probe.
-  async function probeColumns(tier: string, month: string): Promise<ReadonlySet<string>> {
+  async function probeColumns(provider: ProviderName, tier: string, month: string): Promise<ReadonlySet<string>> {
     try {
-      const glob = `${ctx.dataDir}/aws/raw/${tier}-${month}/*.parquet`;
+      const glob = `${ctx.dataDir}/${String(provider)}/raw/${tier}-${month}/*.parquet`;
       const rows = await ctx.db.runQuery(`DESCRIBE SELECT * FROM read_parquet('${glob}') LIMIT 0`);
       const cols = new Set<string>();
       for (const r of rows) {
@@ -439,17 +461,20 @@ export function createAppContext(ctx: IpcContext): AppContext {
     }
   }
 
-  async function getAvailableColumns(tier: 'daily' | 'hourly'): Promise<ReadonlySet<string>> {
-    const cached = columnCache.get(tier);
+  // Latest-month column set for ONE provider's tier. Cached per
+  // (provider, tier); empty set when the provider has no data on disk.
+  async function getAvailableColumnsFor(provider: ProviderName, tier: 'daily' | 'hourly'): Promise<ReadonlySet<string>> {
+    const key = `${String(provider)}:${tier}:latest`;
+    const cached = columnCache.get(key);
     if (cached !== undefined) return cached;
     const fetch = (async (): Promise<ReadonlySet<string>> => {
-      const months = await listLocalMonths(ctx.dataDir, tier);
+      const months = await listLocalMonths(ctx.dataDir, provider, tier);
       if (months.length === 0) {
         // No data on disk for this tier — log loudly because the silent
         // fallback used to surface as misleading "Degraded" warnings in
         // Cost Scope when capability checks interpreted the empty set as
         // "all columns missing."
-        logger.warn('column-probe: no months on disk', { tier, dataDir: ctx.dataDir });
+        logger.warn('column-probe: no months on disk', { tier, provider: String(provider), dataDir: ctx.dataDir });
         return new Set<string>();
       }
       // Latest month = current capability: newly enabled optional columns
@@ -457,10 +482,39 @@ export function createAppContext(ctx: IpcContext): AppContext {
       // Used for the shape signature and the Cost Scope capability checks. The
       // rollup BUILD must instead probe per-period — see getColumnsForPeriod.
       const month = months.at(-1);
-      return probeColumns(tier, String(month));
+      return probeColumns(provider, tier, String(month));
     })();
-    columnCache.set(tier, fetch);
+    columnCache.set(key, fetch);
     return fetch;
+  }
+
+  // The FIRST provider's latest-month columns. Feeds the rollup shape
+  // signature and the Cost Scope capability checks — both single-provider
+  // concerns (the rollup only routes with exactly one provider configured).
+  async function getAvailableColumns(tier: 'daily' | 'hourly'): Promise<ReadonlySet<string>> {
+    const provider = await getFirstProviderName();
+    if (provider === null) {
+      logger.warn('column-probe: no provider configured', { tier });
+      return new Set<string>();
+    }
+    return getAvailableColumnsFor(provider, tier);
+  }
+
+  // ProviderSourceSpec list for QueryContextOptions: EVERY configured
+  // provider with its own on-disk months and probed columns, in config
+  // order. [] while onboarding (queries against an empty list throw in
+  // buildSource, but every handler already early-returns on empty period
+  // availability).
+  async function getQueryProviders(tier: 'daily' | 'hourly'): Promise<readonly ProviderSourceSpec[]> {
+    const config = await getConfig().catch(() => null);
+    if (config === null) return [];
+    return Promise.all(config.providers.map(async provider => {
+      const [availablePeriods, availableColumns] = await Promise.all([
+        listLocalMonths(ctx.dataDir, provider.name, tier),
+        getAvailableColumnsFor(provider.name, tier),
+      ]);
+      return { name: provider.name, availablePeriods, availableColumns };
+    }));
   }
 
   // Columns present in ONE specific month's parquet. Months drift: a CUR only
@@ -470,10 +524,12 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // only that month's columns — otherwise DuckDB throws a Binder Error on the
   // absent column and the partition never builds. Cached per (tier, period).
   async function getColumnsForPeriod(tier: 'daily' | 'hourly', period: string): Promise<ReadonlySet<string>> {
-    const key = `${tier}:${period}`;
+    const provider = await getFirstProviderName();
+    if (provider === null) return new Set<string>();
+    const key = `${String(provider)}:${tier}:${period}`;
     const cached = columnCache.get(key);
     if (cached !== undefined) return cached;
-    const fetch = probeColumns(tier, period);
+    const fetch = probeColumns(provider, tier, period);
     columnCache.set(key, fetch);
     return fetch;
   }
@@ -487,6 +543,14 @@ export function createAppContext(ctx: IpcContext): AppContext {
   const queryLog = new QueryLog();
   const rollupStore = new RollupStore({
     dataDir: ctx.dataDir,
+    // Sync closure over the config cache: every store entry point runs after
+    // an awaited getConfig() (via provider-aware probes/month listings), so
+    // the throw is a programming-error guard, not a user-visible state.
+    providerName: () => {
+      const name = state.config?.providers[0]?.name;
+      if (name === undefined) throw new Error('No provider configured');
+      return name;
+    },
     runQuery: (sql) => ctx.db.runQuery(sql),
     // Partition builds run on a fresh, disposable connection (flat per-build
     // time) and fan out up to buildConcurrency at a time. Defaults to 2 (kept
@@ -572,9 +636,10 @@ export function createAppContext(ctx: IpcContext): AppContext {
 
   async function getEtagsByPeriod(): Promise<Record<string, Record<string, string>>> {
     const fs = await import('node:fs/promises');
-    const path = await import('node:path');
+    const provider = await getFirstProviderName();
+    if (provider === null) return {};
     try {
-      const raw = await fs.readFile(path.join(ctx.dataDir, getEtagFileName('daily')), 'utf-8');
+      const raw = await fs.readFile(providerEtagPath(ctx.dataDir, provider, 'daily'), 'utf-8');
       return parseEtagsJson(raw);
     } catch { return {}; }
   }
@@ -584,6 +649,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
     const orgPath = await getOrgAccountsPath();
     const accountReverseMap = await getAccountReverseMap();
     const costScope = await getCostScope().catch(() => undefined);
+    const provider = await getFirstProviderName();
+    if (provider === null) throw new Error('No provider configured');
     return async (period, outPath) => {
       // Probe THIS period's columns, not the latest month's: an older month may
       // lack optional cost columns the latest has, and a single-month build
@@ -591,7 +658,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
       // over mixed-schema months).
       const availableColumns = await getColumnsForPeriod('daily', period);
       return buildRollupPartitionQuery(period, 'daily', outPath, {
-        dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, accountReverseMap, costScope, availableColumns,
+        dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, accountReverseMap, costScope,
+        providers: [{ name: provider, availableColumns }],
       });
     };
   }
@@ -601,10 +669,12 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // or stale daily partitions (recent months first). Never blocks the app.
   async function warmupRollup(): Promise<void> {
     try {
+      const provider = await getFirstProviderName();
+      if (provider === null) { rollupStore.markSettled(); return; }
       const shape = await getRollupShape();
       const etags = await getEtagsByPeriod();
       const validation = await rollupStore.loadAndValidate(shape, etags);
-      const available = await listLocalMonths(ctx.dataDir, 'daily');
+      const available = await listLocalMonths(ctx.dataDir, provider, 'daily');
       const toBuild = available.filter(p => !validation.validPeriods.has(p)).sort((a, b) => b.localeCompare(a));
       if (toBuild.length === 0) { rollupStore.markSettled(); return; }
       const buildSql = await buildRollupSqlFor();
@@ -625,7 +695,9 @@ export function createAppContext(ctx: IpcContext): AppContext {
   // results so dashboards re-render from the fresh partitions.
   async function maintainRollupForPeriods(changed: readonly string[]): Promise<void> {
     try {
-      const available = await listLocalMonths(ctx.dataDir, 'daily');
+      const provider = await getFirstProviderName();
+      if (provider === null) return;
+      const available = await listLocalMonths(ctx.dataDir, provider, 'daily');
       const periods = changed.filter(p => available.includes(p));
       if (periods.length === 0) return;
       const shape = await getRollupShape();
@@ -662,6 +734,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
   const baselineEngineDeps: BaselineEngineDeps = {
     dataDir: ctx.dataDir,
     stateDir: ctx.stateDir,
+    getFirstProviderName,
+    getQueryProviders,
     getQueryDimensions,
     getCostScope,
     getAccountMap,
@@ -685,6 +759,8 @@ export function createAppContext(ctx: IpcContext): AppContext {
     getAccountReverseMap,
     getRegionMap,
     getOrgAccountsPath,
+    getFirstProviderName,
+    getQueryProviders,
     getAvailableColumns,
     signatureForDimensions,
     queryLog,

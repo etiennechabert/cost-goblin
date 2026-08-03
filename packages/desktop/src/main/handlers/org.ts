@@ -1,34 +1,16 @@
 import { ipcMain } from 'electron';
 import { isStringRecord, logger } from '@costgoblin/core';
-import type { OrgSyncResult, OrgSyncProgress, OrgAccount } from '@costgoblin/core';
+import type { OrgSyncResult, OrgSyncProgress, ProviderConfig } from '@costgoblin/core';
 import { syncOrgAccounts } from '../aws-org-client.js';
 import { syncRegionNames } from '../aws-ssm-client.js';
+import {
+  MERGED_ORG_FILE,
+  buildFlatOrgTags,
+  clearMergedAndSidecars,
+  decodeOrgSyncResult,
+  writeProviderOrgResult,
+} from '../org-merge.js';
 import type { AppContext } from './context.js';
-
-function isOrgAccount(v: unknown): v is OrgAccount {
-  if (!isStringRecord(v)) return false;
-  return (
-    typeof v['id'] === 'string' &&
-    typeof v['name'] === 'string' &&
-    typeof v['email'] === 'string' &&
-    typeof v['status'] === 'string' &&
-    typeof v['joinedTimestamp'] === 'string' &&
-    typeof v['ouPath'] === 'string' &&
-    isStringRecord(v['tags'])
-  );
-}
-
-function decodeOrgSyncResult(raw: string): OrgSyncResult | null {
-  let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { return null; }
-  if (!isStringRecord(parsed)) return null;
-  const accounts = parsed['accounts'];
-  const orgId = parsed['orgId'];
-  const syncedAt = parsed['syncedAt'];
-  if (!Array.isArray(accounts) || typeof orgId !== 'string' || typeof syncedAt !== 'string') return null;
-  if (!accounts.every(isOrgAccount)) return null;
-  return { accounts, orgId, syncedAt };
-}
 
 export function registerOrgHandlers(app: AppContext): void {
   const { ctx, invalidateDimensions } = app;
@@ -40,24 +22,56 @@ export function registerOrgHandlers(app: AppContext): void {
 
   async function orgResultPath(): Promise<string> {
     const path = await import('node:path');
-    return path.join(ctx.stateDir, 'org-accounts.json');
+    return path.join(ctx.stateDir, MERGED_ORG_FILE);
   }
 
-  ipcMain.handle('org:sync-accounts', async (_event, profile: string): Promise<OrgSyncResult> => {
+  /** The provider this sync targets: exact name lookup when the renderer
+   *  names one (unknown name → throw), else the FIRST configured provider,
+   *  else null (mid-onboarding, no config / empty providers). */
+  async function resolveProvider(providerName: string | undefined): Promise<{
+    provider: ProviderConfig | null;
+    firstProviderName: string | null;
+  }> {
+    const config = await app.getConfig().catch(() => null);
+    const providers = config?.providers ?? [];
+    const first = providers[0] ?? null;
+    if (providerName === undefined) {
+      return { provider: first, firstProviderName: first === null ? null : String(first.name) };
+    }
+    const provider = providers.find(p => String(p.name) === providerName) ?? null;
+    if (provider === null) throw new Error(`Unknown provider "${providerName}"`);
+    return { provider, firstProviderName: first === null ? null : String(first.name) };
+  }
+
+  ipcMain.handle('org:sync-accounts', async (_event, profile: string, providerName?: string): Promise<OrgSyncResult> => {
+    const { provider, firstProviderName } = await resolveProvider(providerName);
     orgSyncProgress = { phase: 'accounts', done: 0, total: 0 };
     try {
       const result = await syncOrgAccounts(profile, (p) => { orgSyncProgress = p; });
       const fs = await import('node:fs/promises');
-      await fs.writeFile(await orgResultPath(), JSON.stringify(result, null, 2));
       const path = await import('node:path');
-      const tagLookup = result.accounts.map(a => ({ id: a.id, tags: a.tags }));
-      await fs.writeFile(path.join(ctx.stateDir, 'org-account-tags.json'), JSON.stringify(tagLookup));
+
+      // Per-provider sidecar + merged view (#516). While no provider is
+      // configured yet (mid-onboarding) fall back to the legacy single-file
+      // write — the first per-provider sync adopts it as a sidecar later.
+      let flatSource: OrgSyncResult = result;
+      if (provider === null || firstProviderName === null) {
+        await fs.writeFile(await orgResultPath(), JSON.stringify(result, null, 2));
+      } else {
+        flatSource = await writeProviderOrgResult(
+          ctx.stateDir, String(provider.name), firstProviderName, result,
+        );
+      }
+      // Flat account→tags lookup regenerates from the MERGED accounts after
+      // every merge, so the account-tag fallback covers all providers.
+      await fs.writeFile(path.join(ctx.stateDir, 'org-account-tags.json'), buildFlatOrgTags(flatSource.accounts));
 
       // Piggyback the SSM region-name sync onto the existing org-sync flow.
       // Failures here are non-fatal — region names are a display nicety and
       // the user has already paid the auth cost for the org sync. Capture
       // the error so the UI can hint at the cause (most often: profile
-      // lacks ssm:GetParametersByPath).
+      // lacks ssm:GetParametersByPath). Region data is global — one file,
+      // whichever provider synced last wins.
       orgSyncProgress = { phase: 'regions', done: 0, total: 0 };
       try {
         const regionMap = await syncRegionNames(profile);
@@ -115,21 +129,23 @@ export function registerOrgHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('org:clear-data', async (): Promise<void> => {
-    // Wipes everything the org sync produced — accounts, the flat tag
-    // lookup used for resource-tag fallback, and the SSM region-name cache.
-    // Each unlink swallows ENOENT so the call is idempotent (clicking twice
-    // doesn't error). The next sync re-creates whichever files succeed.
+    // Wipes everything the org sync produced — the merged accounts file plus
+    // every per-provider sidecar, the flat tag lookup used for resource-tag
+    // fallback, and the SSM region-name cache. ENOENT is swallowed so the
+    // call is idempotent (clicking twice doesn't error). The next sync
+    // re-creates whichever files succeed.
+    const orgFiles = await clearMergedAndSidecars(ctx.stateDir);
+    for (const f of orgFiles.deleted) logger.info(`Cleared ${f}`);
+    for (const f of orgFiles.failed) logger.info(`Failed to clear ${f.file}: ${f.message}`);
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const baseDir = ctx.stateDir;
-    const files = ['org-accounts.json', 'org-account-tags.json', 'region-names.json'];
-    for (const f of files) {
+    for (const f of ['org-account-tags.json', 'region-names.json']) {
       try {
-        await fs.unlink(path.join(baseDir, f));
+        await fs.unlink(path.join(ctx.stateDir, f));
         logger.info(`Cleared ${f}`);
       } catch (err: unknown) {
-        const e = err as { code?: string };
-        if (e.code !== 'ENOENT') logger.info(`Failed to clear ${f}: ${String(err)}`);
+        const code = typeof err === 'object' && err !== null && 'code' in err ? err.code : undefined;
+        if (code !== 'ENOENT') logger.info(`Failed to clear ${f}: ${String(err)}`);
       }
     }
     lastRegionSyncError = null;

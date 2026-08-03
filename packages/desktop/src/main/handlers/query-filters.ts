@@ -104,7 +104,7 @@ function mergeAccountRows(
 }
 
 export function registerFilterHandlers(app: AppContext): void {
-  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getAvailableColumns, runPreparedQuery, rollupStore } = app;
+  const { ctx, getQueryDimensions: getDimensions, getAccountMap, getAccountReverseMap, getOrgAccountsPath, getCostScope, getQueryProviders, runPreparedQuery, rollupStore } = app;
 
   ipcMain.handle('query:filter-values', (_event, dimensionId: string, filterEntries: Record<string, readonly string[]>, dateRange?: { start: string; end: string }, opts?: { bypassCostScope?: boolean }, origin?: string): Promise<{ value: string; label: string; count: number }[]> => originStore.run(origin ?? null, async () => {
     const dimensions = await getDimensions();
@@ -119,9 +119,14 @@ export function registerFilterHandlers(app: AppContext): void {
     // dimension — a renderer-supplied id must never reach the SQL verbatim.
     const { fieldExpr } = resolveField(asDimensionId(dimensionId), dimensions);
 
+    const providers = await getQueryProviders('daily');
     const matSource = dateRange === undefined
       ? undefined
-      : resolveRollupSource(rollupStore, dateRange, 'daily', [columnForDimension(dimensions, dimensionId), 'cost']);
+      : resolveRollupSource(rollupStore, providers, dateRange, 'daily', [
+          // The other active filters are WHEREd against the same source.
+          ...Object.keys(filterEntries).map(k => columnForDimension(dimensions, k)),
+          columnForDimension(dimensions, dimensionId), 'cost',
+        ]);
 
     const filterClauses = buildFilterWhereClauses(filterEntries, dimensions, accountReverseMap, qb);
     // Exclusions are baked into the rollup; only apply them on the raw path.
@@ -142,10 +147,21 @@ export function registerFilterHandlers(app: AppContext): void {
 
     let source: string;
     if (matSource === undefined) {
+      // Providers with no data on disk are dropped — their wildcard glob
+      // would fail the whole union. No provider with data → empty result.
+      const active = providers.filter(p => (p.availablePeriods ?? []).length > 0);
+      if (active.length === 0) return [];
       const orgPath = await getOrgAccountsPath();
-      const periods = dateRange === undefined ? undefined : computePeriodsInRange(dateRange);
-      const availableColumns = await getAvailableColumns('daily');
-      source = buildSource({ dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath, periods, costMetric: 'unblended', availableColumns });
+      const required = dateRange === undefined ? undefined : computePeriodsInRange(dateRange);
+      source = buildSource({
+        dataDir: ctx.dataDir, tier: 'daily', dimensions, orgAccountsPath: orgPath,
+        providers: active.map(p => ({
+          name: p.name,
+          periods: required?.filter(m => p.availablePeriods?.includes(m) ?? false),
+          availableColumns: p.availableColumns,
+        })),
+        costMetric: 'unblended',
+      });
     } else {
       source = matSource;
     }

@@ -23,7 +23,9 @@ import type {
   DailyCost,
   DistributionSlice,
   OrgNode,
+  ProviderName,
 } from '@costgoblin/core';
+import type { ProviderSourceSpec } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import type { RollupStore } from '../rollup-store.js';
 
@@ -42,16 +44,33 @@ export function columnForDimension(dimensions: DimensionsConfig, dimId: string):
 
 /** Resolve the rollup source for a dashboard query, or undefined to use raw.
  *  Gates on the RollupStore (daily tier, every touched period valid, every
- *  needed column in-grain). The caller still applies its own date-range WHERE —
- *  the rollup glob spans all months, so it is NOT pre-windowed like the old
- *  in-memory base. */
+ *  needed column in-grain) AND on exactly one configured provider — the
+ *  store is bound to the first provider's tree, so a multi-provider query
+ *  routed through it would silently drop every other provider's spend.
+ *  Multi-provider queries read raw via the per-provider union instead.
+ *  The caller still applies its own date-range WHERE — the rollup glob
+ *  spans all months, so it is NOT pre-windowed like the old in-memory
+ *  base. */
 export function resolveRollupSource(
   rollupStore: RollupStore,
+  providers: readonly ProviderSourceSpec[],
   dateRange: { readonly start: string; readonly end: string },
   tier: 'daily' | 'hourly',
   neededColumns: readonly string[],
 ): string | undefined {
+  if (providers.length !== 1) return undefined;
   return rollupStore.resolveSource({ requiredPeriods: computePeriodsInRange(dateRange), tier, neededColumns });
+}
+
+/** True when NO configured provider has a month on disk intersecting the
+ *  range — the multi-provider replacement for the old single-provider
+ *  "resolveAvailablePeriods(...).empty" early-return. */
+export function providersEmptyForRange(
+  providers: readonly ProviderSourceSpec[],
+  dateRange: { readonly start: string; readonly end: string },
+): boolean {
+  const required = computePeriodsInRange(dateRange);
+  return !providers.some(p => p.availablePeriods === undefined || required.some(m => p.availablePeriods?.includes(m)));
 }
 
 const EFFORT_LEVELS = new Set<string>(['VeryLow', 'Low', 'Medium', 'High']);
@@ -101,10 +120,11 @@ export function buildAccountReverseMap(accountMap: Map<string, string>): Map<str
 
 export async function resolveAvailablePeriods(
   dataDir: string,
+  provider: ProviderName,
   tier: 'daily' | 'hourly',
   dateRange: { readonly start: string; readonly end: string },
 ): Promise<{ available: string[]; empty: boolean }> {
-  const available = await listLocalMonths(dataDir, tier);
+  const available = await listLocalMonths(dataDir, provider, tier);
   const required = computePeriodsInRange(dateRange);
   const usePeriods = required.filter(p => available.includes(p));
   if (usePeriods.length === 0) {

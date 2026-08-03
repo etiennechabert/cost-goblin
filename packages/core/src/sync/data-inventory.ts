@@ -4,7 +4,9 @@ import { createS3Handle, parseS3Path } from './s3-client.js';
 import type { S3Handle } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
 import type { DataTier } from '../types/api.js';
-import { extractPeriod, getEtagFileName, getRawDirPrefix, parseEtagsJson } from './sync-utils.js';
+import type { ProviderName } from '../types/branded.js';
+import { providerEtagPath, providerRawDir } from './provider-paths.js';
+import { extractPeriod, getRawDirPrefix, parseEtagsJson } from './sync-utils.js';
 import { readTierLastSync } from './sync-timestamps.js';
 
 export type PeriodStatus = 'missing' | 'repartitioned' | 'stale';
@@ -105,9 +107,9 @@ async function getRawPeriodSizes(rawDir: string, tierPrefix: string): Promise<Ma
  *  imported snapshot has raw Parquet on disk but no etag file, so this cleanly
  *  separates "AWS configured and synced before" from "imported, no AWS" — the
  *  former should surface credential errors, the latter falls back silently. */
-export async function hasSyncedTier(dataDir: string, tier: DataTier = 'daily'): Promise<boolean> {
+export async function hasSyncedTier(dataDir: string, provider: ProviderName, tier: DataTier = 'daily'): Promise<boolean> {
   try {
-    await stat(join(dataDir, getEtagFileName(tier)));
+    await stat(providerEtagPath(dataDir, provider, tier));
     return true;
   } catch {
     return false;
@@ -118,13 +120,13 @@ export async function hasSyncedTier(dataDir: string, tier: DataTier = 'daily'): 
  *  consumer that pulled a shared snapshot and has no AWS credentials at all:
  *  every local period is reported as present so the Sync view renders, and
  *  there is no remote to compare against (auto-sync treats it as "imported").  */
-export async function getLocalDataInventory(dataDir: string, tier: DataTier = 'daily'): Promise<DataInventory> {
-  const rawDir = join(dataDir, 'aws', 'raw');
+export async function getLocalDataInventory(dataDir: string, provider: ProviderName, tier: DataTier = 'daily'): Promise<DataInventory> {
+  const rawDir = providerRawDir(dataDir, provider);
   const tierPrefix = getRawDirPrefix(tier);
   const periodSizes = await getRawPeriodSizes(rawDir, tierPrefix);
   const localPeriodList = [...periodSizes.keys()].sort((a, b) => a.localeCompare(b));
   const diskBytes = [...periodSizes.values()].reduce((sum, size) => sum + size, 0);
-  const lastSync = await readTierLastSync(dataDir, tier);
+  const lastSync = await readTierLastSync(dataDir, provider, tier);
 
   const periods: BillingPeriod[] = [...localPeriodList]
     .sort((a, b) => b.localeCompare(a))
@@ -147,13 +149,14 @@ export async function getLocalDataInventory(dataDir: string, tier: DataTier = 'd
 
 export async function getDataInventory(
   bucketPath: string,
-  profile: string,
+  credentialsProfile: string,
   dataDir: string,
+  provider: ProviderName,
   tier: DataTier = 'daily',
   s3Override?: S3Handle,
 ): Promise<DataInventory> {
   const s3Path = parseS3Path(bucketPath);
-  const s3 = s3Override ?? await createS3Handle(profile);
+  const s3 = s3Override ?? await createS3Handle(credentialsProfile);
   const remoteFiles = await s3.listFiles(s3Path.bucket, s3Path.prefix);
 
   const periodMap = new Map<string, ManifestFileEntry[]>();
@@ -168,16 +171,16 @@ export async function getDataInventory(
     }
   }
 
-  const rawDir = join(dataDir, 'aws', 'raw');
+  const rawDir = providerRawDir(dataDir, provider);
   const tierPrefix = getRawDirPrefix(tier);
   const localPeriodList = await listRawPeriods(rawDir, tierPrefix);
   const diskBytes = await getRawTierSize(rawDir, tierPrefix);
-  const lastSync = await readTierLastSync(dataDir, tier);
+  const lastSync = await readTierLastSync(dataDir, provider, tier);
   const localPeriods = new Set(localPeriodList);
 
   let savedEtags: Record<string, Record<string, string>> = {};
   try {
-    const raw = await readFile(join(dataDir, getEtagFileName(tier)), 'utf-8');
+    const raw = await readFile(providerEtagPath(dataDir, provider, tier), 'utf-8');
     savedEtags = parseEtagsJson(raw);
   } catch {
     // no saved etags yet

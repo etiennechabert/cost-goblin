@@ -94,7 +94,7 @@ window, not a bare browser tab.
 
 The app loads the user's real synced data from the Electron `userData` path
 (not `data/` in the repo) — no fixture flag needed to see a populated dashboard.
-A fixture dataset can be forced with the `--fixture-mode` flag (used by E2E).
+A fixture dataset can be forced with the `COSTGOBLIN_DATA_DIR` / `COSTGOBLIN_CONFIG_DIR` env vars (used by E2E — see `e2e/helpers.ts`).
 
 ### Benign startup noise (not failures)
 

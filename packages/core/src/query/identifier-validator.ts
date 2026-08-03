@@ -21,6 +21,10 @@ const ALLOWED_CUR_COLUMNS = new Set([
   'usage_date',
   'usage_hour',
 
+  // Injected at read time: which configured provider a row came from
+  // (constant column per provider branch — see buildSource).
+  'provider',
+
   // Core identity columns
   'account_id',
   'account_name',
@@ -151,14 +155,6 @@ const ALLOWED_TIERS = new Set(['daily', 'hourly', 'cost-optimization']);
 const BILLING_PERIOD_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 /**
- * Validate a table path for Parquet file reads.
- * Accepts paths in the format: {dataDir}/aws/raw/{tier}-{period}/*.parquet
- * or the wildcard format: {dataDir}/aws/raw/{tier}-*\/*.parquet
- *
- * @param tablePath - The table path to validate
- * @throws {SecurityError} If the table path does not match the expected pattern
- */
-/**
  * Pattern for valid YYYY-MM-DD date strings.
  */
 const DATE_STRING_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -196,12 +192,26 @@ export function assertHourString(value: string): void {
   }
 }
 
-export function validateTablePath(tablePath: string): void {
-  // Extract the tier and period from the path
+/**
+ * Validate a table path for Parquet file reads.
+ * Accepts paths in the format: {dataDir}/{providerName}/raw/{tier}-{period}/*.parquet
+ * or the wildcard format: {dataDir}/{providerName}/raw/{tier}-*\/*.parquet
+ *
+ * The provider segment is validated against `allowedProviders` — the
+ * configured provider names, which are themselves branded/validated. A path
+ * naming any other provider directory is rejected: config files are
+ * git-shareable, so the allow-list is the trust boundary.
+ *
+ * @param tablePath - The table path to validate
+ * @param allowedProviders - Configured provider names (the only valid provider segments)
+ * @throws {SecurityError} If the table path does not match the expected pattern
+ */
+export function validateTablePath(tablePath: string, allowedProviders: readonly string[]): void {
+  // Extract the provider, tier, and period from the path
   // Expected formats:
-  // 1. {dataDir}/aws/raw/daily-2026-03/*.parquet
-  // 2. {dataDir}/aws/raw/daily-*\/*.parquet
-  // 3. read_parquet('{dataDir}/aws/raw/daily-2026-03/*.parquet')
+  // 1. {dataDir}/{provider}/raw/daily-2026-03/*.parquet
+  // 2. {dataDir}/{provider}/raw/daily-*\/*.parquet
+  // 3. read_parquet('{dataDir}/{provider}/raw/daily-2026-03/*.parquet')
   // 4. read_parquet(['{path1}', '{path2}'])
 
   // Strip read_parquet wrapper if present
@@ -215,21 +225,30 @@ export function validateTablePath(tablePath: string): void {
     .replace(/^['"]/, '')
     .replace(/['"]$/, '');
 
-  // Match the tier and period pattern
-  // Pattern: {anything}/aws/raw/{tier}-{period}/*.parquet
-  const tierPattern = /\/aws\/raw\/([a-z]+(?:-[a-z]+)*)-([^/]+)\/\*\.parquet/;
+  // Match the provider, tier, and period pattern
+  // Pattern: {anything}/{provider}/raw/{tier}-{period}/*.parquet
+  const tierPattern = /\/([A-Za-z0-9][A-Za-z0-9_-]*)\/raw\/([a-z]+(?:-[a-z]+)*)-([^/]+)\/\*\.parquet/;
   const match = tierPattern.exec(cleanPath);
 
   if (match === null) {
     throw new SecurityError(
       `Invalid table path "${tablePath}" - must match pattern ` +
-      `"{dataDir}/aws/raw/{tier}-{period}/*.parquet" or "{dataDir}/aws/raw/{tier}-*/*.parquet". ` +
+      `"{dataDir}/{provider}/raw/{tier}-{period}/*.parquet" or "{dataDir}/{provider}/raw/{tier}-*/*.parquet". ` +
       `This prevents SQL injection via untrusted file paths.`
     );
   }
 
-  const tier = match[1];
-  const period = match[2];
+  const provider = match[1];
+  const tier = match[2];
+  const period = match[3];
+
+  if (provider === undefined || !allowedProviders.includes(provider)) {
+    throw new SecurityError(
+      `Invalid provider "${String(provider)}" in table path "${tablePath}" - ` +
+      `not a configured provider name. ` +
+      `This prevents SQL injection via untrusted file paths.`
+    );
+  }
 
   // Validate tier is in allow-list
   if (tier === undefined || !ALLOWED_TIERS.has(tier)) {

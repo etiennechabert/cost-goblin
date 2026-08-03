@@ -1,6 +1,19 @@
 import { logger, parseJsonObject, configuredTierRetentions, periodsOutsideRetention, retentionCutoffPeriod, isCredentialError } from '@costgoblin/core';
-import type { AutoSyncStatus, SyncLogLevel } from '@costgoblin/core';
+import type { AutoSyncStatus, ProviderSyncError, SyncLogLevel } from '@costgoblin/core';
 import { updatePrefsFile } from './handlers/prefs-file.js';
+
+/** Structural view of one configured provider — just enough for the scheduler
+ *  (identity + per-tier retention). The dep closures resolve the rest
+ *  (credentials, buckets) from the full config by name on every call, so
+ *  config edits between passes are picked up. */
+export interface AutoSyncProvider {
+  readonly name: string;
+  readonly sync: {
+    readonly daily: { readonly retentionDays?: number | undefined };
+    readonly hourly?: { readonly retentionDays?: number | undefined } | undefined;
+    readonly costOptimization?: { readonly retentionDays?: number | undefined } | undefined;
+  };
+}
 
 export interface AutoSyncDeps {
   /** Optional sink for the Data & Sync activity log. The actual downloads
@@ -8,17 +21,14 @@ export interface AutoSyncDeps {
    *  breadcrumbs (checking / nothing-to-sync / prune) that never hit it. */
   onLog?: (level: SyncLogLevel, message: string) => void;
   getPrefsPath: () => Promise<string>;
-  getConfig: () => Promise<{ providers: { sync: {
-    daily: { retentionDays?: number | undefined };
-    hourly?: { retentionDays?: number | undefined } | undefined;
-    costOptimization?: { retentionDays?: number | undefined } | undefined;
-  } }[] }>;
-  getInventory: (tier: string) => Promise<{ periods: { period: string; localStatus: string; files: { key: string; contentHash: string; size: number }[] }[] }>;
-  syncPeriods: (files: { key: string; contentHash: string; size: number }[], tier: string) => Promise<{ filesDownloaded: number }>;
-  /** On-disk billing periods (YYYY-MM) for a tier — drives the auto-prune pass. */
-  getLocalPeriods: (tier: string) => Promise<string[]>;
-  /** Delete the given local periods for a tier (auto-prune). */
-  deletePeriods: (periods: readonly string[], tier: string) => Promise<void>;
+  /** All configured providers, in config order — synced sequentially. */
+  getConfig: () => Promise<{ providers: readonly AutoSyncProvider[] }>;
+  getInventory: (providerName: string, tier: string) => Promise<{ periods: { period: string; localStatus: string; files: { key: string; contentHash: string; size: number }[] }[] }>;
+  syncPeriods: (providerName: string, files: { key: string; contentHash: string; size: number }[], tier: string) => Promise<{ filesDownloaded: number }>;
+  /** On-disk billing periods (YYYY-MM) for a provider's tier — drives the auto-prune pass. */
+  getLocalPeriods: (providerName: string, tier: string) => Promise<string[]>;
+  /** Delete the given local periods for a provider's tier (auto-prune). */
+  deletePeriods: (providerName: string, periods: readonly string[], tier: string) => Promise<void>;
 }
 
 let status: AutoSyncStatus = { state: 'disabled' };
@@ -101,6 +111,10 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function asError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err));
+}
+
 // Log a scheduler breadcrumb: keep the existing stdout line (always info, as
 // before) and additionally feed the Data & Sync activity log at the given
 // level so failures stand out there.
@@ -109,24 +123,29 @@ function note(deps: AutoSyncDeps, level: SyncLogLevel, message: string): void {
   deps.onLog?.(level, message);
 }
 
+/** Sync one tier of one provider. Returns 'ok' | 'skip'; THROWS on a hard
+ *  failure (credential-blocked inventory or a failed download) so runOnce can
+ *  record a ProviderSyncError for this provider and move on to the next one.
+ *  Transient inventory failures stay a silent skip as before. */
 async function syncTier(
   deps: AutoSyncDeps,
+  providerName: string,
   tier: { name: string; retention: number },
-): Promise<'ok' | 'skip' | 'error'> {
+): Promise<'ok' | 'skip'> {
   const cutoff = retentionCutoffPeriod(tier.retention);
   let inventory: Awaited<ReturnType<typeof deps.getInventory>>;
   try {
-    inventory = await deps.getInventory(tier.name);
+    inventory = await deps.getInventory(providerName, tier.name);
   } catch (err: unknown) {
-    // Credentials expired/invalid is a real failure worth surfacing — set the
-    // error status so the toolbar flags that background sync is blocked. Other
-    // (transient) inventory failures stay a silent skip as before.
+    // Credentials expired/invalid is a real failure worth surfacing — throw so
+    // the pass records it against this provider and the toolbar flags that its
+    // background sync is blocked. Other (transient) inventory failures stay a
+    // silent skip as before.
     if (isCredentialError(err)) {
-      note(deps, 'warn', `Auto-sync: ${tier.name} inventory failed (credentials) — ${errorMessage(err)}`);
-      status = { state: 'error', message: errorMessage(err), lastRun: new Date().toISOString() };
-      return 'error';
+      note(deps, 'warn', `Auto-sync: ${providerName}/${tier.name} inventory failed (credentials) — ${errorMessage(err)}`);
+      throw asError(err);
     }
-    note(deps, 'warn', `Auto-sync: failed to get ${tier.name} inventory — ${errorMessage(err)}`);
+    note(deps, 'warn', `Auto-sync: failed to get ${providerName}/${tier.name} inventory — ${errorMessage(err)}`);
     return 'skip';
   }
 
@@ -134,52 +153,55 @@ async function syncTier(
     .filter(p => (p.localStatus === 'missing' || p.localStatus === 'stale') && p.period >= cutoff);
 
   if (missing.length === 0) {
-    note(deps, 'info', `Auto-sync: ${tier.name} — nothing to sync`);
+    note(deps, 'info', `Auto-sync: ${providerName}/${tier.name} — nothing to sync`);
     return 'skip';
   }
 
   const files = missing.flatMap(p => [...p.files]);
-  note(deps, 'info', `Auto-sync: ${tier.name} — syncing ${String(missing.length)} periods (${String(files.length)} files)`);
-  status = { state: 'syncing', tier: tier.name, filesDone: 0, filesTotal: files.length };
+  note(deps, 'info', `Auto-sync: ${providerName}/${tier.name} — syncing ${String(missing.length)} periods (${String(files.length)} files)`);
+  status = { state: 'syncing', tier: tier.name, filesDone: 0, filesTotal: files.length, provider: providerName };
 
   try {
-    const result = await deps.syncPeriods(files, tier.name);
-    note(deps, 'info', `Auto-sync: ${tier.name} — synced ${String(result.filesDownloaded)} files`);
+    const result = await deps.syncPeriods(providerName, files, tier.name);
+    note(deps, 'info', `Auto-sync: ${providerName}/${tier.name} — synced ${String(result.filesDownloaded)} files`);
     return 'ok';
   } catch (err: unknown) {
-    note(deps, 'warn', `Auto-sync: ${tier.name} — sync failed: ${errorMessage(err)}`);
-    status = { state: 'error', message: errorMessage(err), lastRun: new Date().toISOString() };
-    return 'error';
+    note(deps, 'warn', `Auto-sync: ${providerName}/${tier.name} — sync failed: ${errorMessage(err)}`);
+    throw asError(err);
   }
 }
 
-/** Delete out-of-retention local data for every configured tier. Local-only
- *  and best-effort: per-tier read/delete failures are logged and skipped so one
- *  bad tier never aborts the whole pass. */
-async function prunePass(
-  deps: AutoSyncDeps,
-  provider: { sync: Parameters<typeof configuredTierRetentions>[0] },
-): Promise<void> {
+/** Delete one provider's out-of-retention local data for every configured
+ *  tier. Local-only and best-effort: per-tier read/delete failures are logged
+ *  and skipped so one bad tier never aborts the whole pass. */
+async function prunePass(deps: AutoSyncDeps, provider: AutoSyncProvider): Promise<void> {
   for (const { tier, retentionDays } of configuredTierRetentions(provider.sync)) {
     let local: string[];
     try {
-      local = await deps.getLocalPeriods(tier);
+      local = await deps.getLocalPeriods(provider.name, tier);
     } catch (err: unknown) {
-      note(deps, 'warn', `Auto-prune: failed to read ${tier} local data — ${errorMessage(err)}`);
+      note(deps, 'warn', `Auto-prune: failed to read ${provider.name}/${tier} local data — ${errorMessage(err)}`);
       continue;
     }
     const expired = periodsOutsideRetention(local, retentionDays);
     if (expired.length === 0) continue;
-    note(deps, 'info', `Auto-prune: ${tier} — removing ${String(expired.length)} period(s) outside ${String(retentionDays)}d retention: ${expired.join(', ')}`);
+    note(deps, 'info', `Auto-prune: ${provider.name}/${tier} — removing ${String(expired.length)} period(s) outside ${String(retentionDays)}d retention: ${expired.join(', ')}`);
     try {
-      await deps.deletePeriods(expired, tier);
+      await deps.deletePeriods(provider.name, expired, tier);
     } catch (err: unknown) {
-      note(deps, 'warn', `Auto-prune: ${tier} — delete failed: ${errorMessage(err)}`);
+      note(deps, 'warn', `Auto-prune: ${provider.name}/${tier} — delete failed: ${errorMessage(err)}`);
     }
   }
 }
 
-async function runOnce(deps: AutoSyncDeps): Promise<void> {
+/** One full scheduler pass over every configured provider, sequentially
+ *  (bandwidth / rate-limit safety). One provider's failure must never abort or
+ *  hide another provider's sync: each provider's tier loop is isolated, its
+ *  failure collected as a ProviderSyncError, and the pass keeps going. All
+ *  providers failed → 'error'; some failed → 'idle' with providerErrors.
+ *  Exported for unit tests — production goes through startAutoSync /
+ *  triggerAutoSyncNow. */
+export async function runOnce(deps: AutoSyncDeps): Promise<void> {
   if (running) return;
   running = true;
 
@@ -197,37 +219,53 @@ async function runOnce(deps: AutoSyncDeps): Promise<void> {
     note(deps, 'info', 'Auto-sync: checking');
 
     const config = await deps.getConfig();
-    const provider = config.providers[0];
-    if (provider === undefined) {
+    if (config.providers.length === 0) {
       status = { state: 'idle', lastRun: new Date().toISOString(), nextRun: null };
       running = false;
       return;
     }
 
     // Prune first — it's local-only, so it still frees space even when S3 is
-    // unreachable and the download pass below would fail.
+    // unreachable and the download pass below would fail. Same providers ×
+    // configuredTierRetentions loop as the download pass and manual data:prune
+    // so the three retention consumers can't drift.
     if (pruneEnabled) {
-      await prunePass(deps, provider);
+      for (const provider of config.providers) {
+        status = { state: 'checking', provider: provider.name };
+        await prunePass(deps, provider);
+      }
     }
 
+    const providerErrors: ProviderSyncError[] = [];
     if (syncEnabled) {
-      // Same tier+retention set as the auto-prune pass so sync and prune stay in
-      // lockstep — this is what pulls cost-optimization too, which the old
-      // hand-rolled daily+hourly list silently skipped (leaving it "Never").
-      const tiers = configuredTierRetentions(provider.sync)
-        .map(t => ({ name: t.tier, retention: t.retentionDays }));
-
-      for (const tier of tiers) {
-        const tierResult = await syncTier(deps, tier);
-        if (tierResult === 'error') {
-          running = false;
-          return;
+      for (const provider of config.providers) {
+        status = { state: 'checking', provider: provider.name };
+        // Same tier+retention set as the auto-prune pass so sync and prune stay
+        // in lockstep — this is what pulls cost-optimization too, which the old
+        // hand-rolled daily+hourly list silently skipped (leaving it "Never").
+        const tiers = configuredTierRetentions(provider.sync)
+          .map(t => ({ name: t.tier, retention: t.retentionDays }));
+        try {
+          for (const tier of tiers) {
+            await syncTier(deps, provider.name, tier);
+          }
+        } catch (err: unknown) {
+          providerErrors.push({ provider: provider.name, message: errorMessage(err) });
         }
       }
     }
 
     const now = new Date().toISOString();
-    status = { state: 'idle', lastRun: now, nextRun: new Date(Date.now() + currentIntervalMs).toISOString() };
+    const nextRun = new Date(Date.now() + currentIntervalMs).toISOString();
+    const firstError = providerErrors[0];
+    if (firstError !== undefined && providerErrors.length === config.providers.length) {
+      // Every provider failed — the whole pass is blocked.
+      status = { state: 'error', message: firstError.message, lastRun: now, providerErrors };
+    } else if (firstError !== undefined) {
+      status = { state: 'idle', lastRun: now, nextRun, providerErrors };
+    } else {
+      status = { state: 'idle', lastRun: now, nextRun };
+    }
   } catch (err: unknown) {
     status = { state: 'error', message: errorMessage(err), lastRun: new Date().toISOString() };
   }

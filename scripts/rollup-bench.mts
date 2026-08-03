@@ -22,7 +22,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { buildSource, buildRollupPartitionQuery, buildCostQuery, buildDailyCostsQuery, computePeriodsInRange, buildRuleMatchExpr } from '../packages/core/src/query/builder.js';
-import { loadDimensions, loadCostScope } from '../packages/core/src/config/loader.js';
+import { loadConfig, loadDimensions, loadCostScope } from '../packages/core/src/config/loader.js';
+import { asProviderName } from '../packages/core/src/types/branded.js';
 import { listLocalMonths } from '../packages/core/src/sync/sync-utils.js';
 
 const DATA = process.env['COSTGOBLIN_DATA_DIR'] ?? 'C:/Users/etien/Desktop/cost-goblin/data/processed';
@@ -59,14 +60,17 @@ async function timeQuery(sql: string, params: readonly unknown[], runsN: number)
 
 // ---- setup ----
 const dims = await loadDimensions(`${CONFIG}/dimensions.yaml`);
+// Provider dir under DATA (#516 layout: {dataDir}/{providerName}/raw). Falls
+// back to the legacy 'aws' dir when the config can't be read.
+const PROVIDER = await loadConfig(`${CONFIG}/costgoblin.yaml`).then(c => c.providers[0]?.name ?? asProviderName('aws')).catch(() => asProviderName('aws'));
 const cs = await loadCostScope(`${CONFIG}/cost-scope.yaml`);
 const acct = JSON.parse(await readFile(`${ORG_DIR}/org-accounts.json`, 'utf-8')) as { accounts: { id?: string; name?: string }[] };
 const arm = new Map<string, string[]>();
 for (const a of acct.accounts) if (typeof a.id === 'string' && typeof a.name === 'string') { const ids = arm.get(a.name) ?? []; ids.push(a.id); arm.set(a.name, ids); }
-const allMonths = await listLocalMonths(DATA, 'daily');
+const allMonths = await listLocalMonths(DATA, PROVIDER, 'daily');
 const months = allMonths.slice(-12);
 const latest = allMonths[allMonths.length - 1]!;
-const desc = await rows(`DESCRIBE SELECT * FROM read_parquet('${DATA}/aws/raw/daily-${latest}/*.parquet')`);
+const desc = await rows(`DESCRIBE SELECT * FROM read_parquet('${DATA}/aws-main/raw/daily-${latest}/*.parquet')`);
 const cols = new Set(desc.map(r => String(r['column_name'])));
 const orgTags = `${ORG_DIR}/org-account-tags.json`;
 const lag = cs.lagDays ?? 2;
@@ -78,7 +82,7 @@ console.log(`daily months on disk: ${allMonths.length}; benchmarking last ${mont
 
 // ---- (1) BUILD ----
 const rollupDir = await mkdtemp(join(tmpdir(), 'cg-rollup-bench-'));
-const optsBuild = { dataDir: DATA, dimensions: dims, orgAccountsPath: orgTags, accountReverseMap: arm, costScope: cs, availableColumns: cols };
+const optsBuild = { dataDir: DATA, dimensions: dims, orgAccountsPath: orgTags, accountReverseMap: arm, costScope: cs, providers: [{ name: PROVIDER, availableColumns: cols }] };
 console.log(`\n--- (1) build per-period partitions (cold) ---`);
 const buildTimes: number[] = []; let rollupBytes = 0; let rollupRows = 0;
 for (const m of months) {
@@ -95,14 +99,14 @@ console.log(`  rollup rows: ${rollupRows.toLocaleString()}, size: ${mb(rollupByt
 
 // raw size for the same months
 let rawBytes = 0;
-for (const m of months) { const d = `${DATA}/aws/raw/daily-${m}`; for (const f of await readdir(d)) if (f.endsWith('.parquet')) rawBytes += (await stat(`${d}/${f}`)).size; }
+for (const m of months) { const d = `${DATA}/${PROVIDER}/raw/daily-${m}`; for (const f of await readdir(d)) if (f.endsWith('.parquet')) rawBytes += (await stat(`${d}/${f}`)).size; }
 console.log(`  raw parquet (same ${months.length} months): ${(rawBytes / 1e9).toFixed(1)} GB → rollup is ${(rollupBytes / rawBytes * 100).toFixed(1)}% of raw`);
 
 const glob = `read_parquet('${join(rollupDir, 'daily-*', 'rollup.parquet').replaceAll('\\', '/')}')`;
 
 // ---- (2) CORRECTNESS gate ----
 const fullStart = `${months[0]}-01`;
-const rawSrcFull = buildSource({ dataDir: DATA, tier: 'daily', dimensions: dims, orgAccountsPath: orgTags, periods: months, costMetric: cs.costMetric ?? 'unblended', availableColumns: cols, costPerspective: cs.costPerspective ?? 'gross', includeRawTags: false, slim: true });
+const rawSrcFull = buildSource({ dataDir: DATA, tier: 'daily', dimensions: dims, orgAccountsPath: orgTags, providers: [{ name: PROVIDER, periods: months, availableColumns: cols }], costMetric: cs.costMetric ?? 'unblended', costPerspective: cs.costPerspective ?? 'gross', includeRawTags: false, slim: true });
 const excl = cs.rules.filter(r => r.enabled).map(r => buildRuleMatchExpr(r, dims, arm)).filter((e): e is string => e !== null).map(e => `NOT (${e})`);
 const fullW = `usage_date >= '${fullStart}' AND usage_date <= '${iso(end)}'`;
 const rawTotal = Number((await rows(`SELECT SUM(cost) t FROM ${rawSrcFull} WHERE ${fullW}${excl.length ? ' AND ' + excl.join(' AND ') : ''}`))[0]!['t']);
@@ -118,7 +122,7 @@ for (const w of windows) {
   const start = iso(new Date(end.getTime() - (w.days - 1) * 86_400_000));
   const dr = { start, end: iso(end) };
   const periods = computePeriodsInRange(dr).filter(p => allMonths.includes(p));
-  const rawOpts = { dataDir: DATA, dimensions: dims, orgAccountsPath: orgTags, availablePeriods: periods, accountReverseMap: arm, costScope: cs, availableColumns: cols };
+  const rawOpts = { dataDir: DATA, dimensions: dims, orgAccountsPath: orgTags, accountReverseMap: arm, costScope: cs, providers: [{ name: PROVIDER, availablePeriods: periods, availableColumns: cols }] };
   const matOpts = { ...rawOpts, materializedSource: glob };
   const queries: { name: string; raw: { sql: string; params: readonly unknown[] }; mat: { sql: string; params: readonly unknown[] } }[] = [
     { name: 'cost by service', raw: buildCostQuery({ groupBy: 'service', dateRange: dr, filters: {}, granularity: 'daily' } as any, rawOpts), mat: buildCostQuery({ groupBy: 'service', dateRange: dr, filters: {}, granularity: 'daily' } as any, matOpts) },

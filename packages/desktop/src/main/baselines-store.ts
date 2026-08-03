@@ -53,10 +53,12 @@ import type {
   FilterMap,
   ManualBand,
   OrgNode,
+  ProviderName,
+  ProviderSourceSpec,
   TagValue,
 } from '@costgoblin/core';
 import type { RawRow } from './duckdb-client.js';
-import { columnForDimension, resolveAvailablePeriods } from './handlers/query-utils.js';
+import { columnForDimension, providersEmptyForRange } from './handlers/query-utils.js';
 
 /** The query/config capabilities the store needs to recompute. Mirrors the
  *  pieces the cost-query handlers pull off AppContext, kept structural so the
@@ -64,6 +66,10 @@ import { columnForDimension, resolveAvailablePeriods } from './handlers/query-ut
 export interface BaselineEngineDeps {
   readonly dataDir: string;
   readonly stateDir: string;
+  /** First configured provider, or null while onboarding — queries are
+   *  provider-scoped (#516 phase-2 single-provider semantics). */
+  readonly getFirstProviderName: () => Promise<ProviderName | null>;
+  readonly getQueryProviders: (tier: 'daily' | 'hourly') => Promise<readonly ProviderSourceSpec[]>;
   readonly getQueryDimensions: () => Promise<DimensionsConfig>;
   readonly getCostScope: () => Promise<CostScopeConfig>;
   readonly getAccountMap: () => Promise<Map<string, string>>;
@@ -560,16 +566,15 @@ export class BaselineStore {
     const end = dateNDaysAgo(todayUtc(), costScope.lagDays ?? 2);
     const start = dateNDaysAgo(end, cfg.lookbackDays);
     const dateRange = { start: asDateString(start), end: asDateString(end) };
-    const { available, empty } = await resolveAvailablePeriods(deps.dataDir, 'daily', dateRange);
-    if (empty) { logger.info('baselines: discovery skipped — no data in range'); return; }
-
+    const providers = await deps.getQueryProviders('daily');
+    if (providers.length === 0) { logger.info('baselines: discovery skipped — no provider configured'); return; }
+    if (providersEmptyForRange(providers, dateRange)) { logger.info('baselines: discovery skipped — no data in range'); return; }
     const opts = {
       dataDir: deps.dataDir,
       dimensions,
-      availablePeriods: available,
+      providers,
       accountReverseMap: await deps.getAccountReverseMap(),
       costScope,
-      availableColumns,
     };
 
     // 1) Probe cardinality of the enabled built-ins to drop high-card dims.
@@ -608,7 +613,7 @@ export class BaselineStore {
 
     // Both discovery queries hit the same source/columns — resolve the rollup
     // once (computeShapeSignature isn't free).
-    const mat = this.matSource(deps, costScope, dimensions, availableColumns, dateRange, [...grainCols, 'cost']);
+    const mat = this.matSource(deps, providers.length, costScope, dimensions, availableColumns, dateRange, [...grainCols, 'cost']);
 
     // 2) Cheap totals query — ONE row per tuple. Enumerates every scope without
     //    the per-day fan-out, so "discover everything" stays fast even on a big
@@ -695,8 +700,8 @@ export class BaselineStore {
     const end = dateNDaysAgo(todayUtc(), spec.basis.lagDays ?? 2);
     const start = dateNDaysAgo(end, cfg.lookbackDays);
     const dateRange = { start: asDateString(start), end: asDateString(end) };
-    const { available, empty } = await resolveAvailablePeriods(deps.dataDir, 'daily', dateRange);
-    if (empty) { this.histories.set(spec.id, []); this.finalizeFromHistory(spec); return; }
+    const providers = await deps.getQueryProviders('daily');
+    if (providers.length === 0 || providersEmptyForRange(providers, dateRange)) { this.histories.set(spec.id, []); this.finalizeFromHistory(spec); return; }
     const basisScope = basisToCostScope(spec.basis);
     const groupBy = primaryGroupBy(spec.scope);
     // The query filters on the FULL scope, so the rollup-fit check must require
@@ -709,14 +714,13 @@ export class BaselineStore {
         'cost',
       ]),
     ];
-    const mat = this.matSource(deps, basisScope, dimensions, availableColumns, dateRange, neededColumns);
+    const mat = this.matSource(deps, providers.length, basisScope, dimensions, availableColumns, dateRange, neededColumns);
     const opts = {
       dataDir: deps.dataDir,
       dimensions,
-      availablePeriods: available,
+      providers,
       accountReverseMap: await deps.getAccountReverseMap(),
       costScope: basisScope,
-      availableColumns,
       ...(mat === undefined ? {} : { materializedSource: mat }),
     };
     const query = buildDailyCostsQuery(
@@ -781,17 +785,20 @@ export class BaselineStore {
     const bandStart = dateNDaysAgo(end, Math.max(0, cfg.lookbackDays - 1));
     const child = asDimensionId(childDimension);
     const accountReverseMap = await deps.getAccountReverseMap();
+    const providers = await deps.getQueryProviders('daily');
 
     const windowByChild = async (winStart: string): Promise<Map<string, number>> => {
+      if (providers.length === 0) return new Map<string, number>();
       const range = { start: asDateString(winStart), end: asDateString(end) };
-      const { available, empty } = await resolveAvailablePeriods(deps.dataDir, 'daily', range);
-      if (empty) return new Map<string, number>();
-      const mat = this.matSource(deps, basisScope, dimensions, availableColumns, range, [columnForDimension(dimensions, childDimension), 'cost']);
+      if (providersEmptyForRange(providers, range)) return new Map<string, number>();
+      const mat = this.matSource(deps, providers.length, basisScope, dimensions, availableColumns, range, [columnForDimension(dimensions, childDimension), 'cost']);
       const q = buildDailyCostsQuery(
         { dateRange: range, filters: scopeFilters(spec.scope), groupBy: child },
         {
-          dataDir: deps.dataDir, dimensions, availablePeriods: available, accountReverseMap,
-          costScope: basisScope, availableColumns,
+          dataDir: deps.dataDir, dimensions,
+          providers,
+          accountReverseMap,
+          costScope: basisScope,
           ...(mat === undefined ? {} : { materializedSource: mat }),
         },
       );
@@ -819,12 +826,17 @@ export class BaselineStore {
 
   private matSource(
     deps: BaselineEngineDeps,
+    providerCount: number,
     costScope: CostScopeConfig,
     dimensions: DimensionsConfig,
     availableColumns: ReadonlySet<string>,
     dateRange: { start: string; end: string },
     neededColumns: readonly string[],
   ): string | undefined {
+    // The rollup store is bound to the FIRST provider's tree — a
+    // multi-provider baseline routed through it would drop every other
+    // provider's spend. Multi-provider recomputes read raw via the union.
+    if (providerCount !== 1) return undefined;
     // Only use the rollup when the requested cost basis matches what the rollup
     // was built for — otherwise the pre-aggregated cost column is wrong.
     const built = deps.rollupStore.getBuiltSignature();

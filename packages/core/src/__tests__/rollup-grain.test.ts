@@ -6,12 +6,14 @@ import { tmpdir } from 'node:os';
 import { rm } from 'node:fs/promises';
 import { buildSource, buildRollupPartitionQuery } from '../query/builder.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
+import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { CostScopeConfig } from '../types/cost-scope.js';
-import { asDimensionId } from '../types/branded.js';
+import { asDimensionId, asProviderName } from '../types/branded.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
+const PROVIDER = asProviderName(FIXTURE_PROVIDER_NAME);
 const PERIOD = '2026-01';
 
 const dimensions: DimensionsConfig = {
@@ -55,7 +57,7 @@ function scope(rules: CostScopeConfig['rules']): CostScopeConfig {
 }
 
 function rawSourceJan(): string {
-  return buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, periods: [PERIOD], costMetric: 'unblended' });
+  return buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: [PERIOD] }], costMetric: 'unblended' });
 }
 
 describe('rollupGrainDimensions', () => {
@@ -70,6 +72,19 @@ describe('rollupGrainDimensions', () => {
     expect(dims.find(d => d.column === 'tag_team')?.columns).toEqual(['tag_team']);
     // Built-ins first, then tags; one entry per enabled dimension.
     expect(dims.map(d => d.column)).toEqual(['account_id', 'service', 'region', 'tag_team', 'tag_environment']);
+  });
+
+  it('skips the provider built-in — injected at read time, never stored in the grain', () => {
+    const withProvider: DimensionsConfig = {
+      ...dimensions,
+      builtIn: [{ name: asDimensionId('provider'), label: 'Provider', field: 'provider' }, ...dimensions.builtIn],
+    };
+    // Even enabled, `field === 'provider'` must not enter the stored grain:
+    // the column is a per-branch constant injected by buildSource at read time.
+    expect(rollupGrainColumns(withProvider)).toEqual(rollupGrainColumns(dimensions));
+    expect(rollupGrainColumns(withProvider)).not.toContain('provider');
+    expect(rollupGrainDimensions(withProvider)).toEqual(rollupGrainDimensions(dimensions));
+    expect(rollupGrainDimensions(withProvider).some(d => d.column === 'provider')).toBe(false);
   });
 
   it('collapses derived dimensions that share one physical column to a single entry', () => {
@@ -102,7 +117,7 @@ describe('buildRollupPartitionQuery', () => {
   afterAll(async () => { await rm(outPath, { force: true }); });
 
   it('writes a partition whose columns are exactly the grain + cost + line_items', async () => {
-    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, availablePeriods: [PERIOD], costScope: scope([]) }));
+    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, availablePeriods: [PERIOD] }], costScope: scope([]) }));
     const desc = await queryAll(conn, `DESCRIBE SELECT * FROM ${glob}`);
     const cols = desc.map(r => String(r['column_name'])).sort((a, b) => a.localeCompare(b));
     const expected = [...rollupGrainColumns(dimensions), 'cost', 'line_items'].sort((a, b) => a.localeCompare(b));
@@ -113,7 +128,7 @@ describe('buildRollupPartitionQuery', () => {
   });
 
   it('pre-aggregation is lossless: rollup SUM(cost) == raw SUM(cost) for the month, overall and per-service', async () => {
-    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, availablePeriods: [PERIOD], costScope: scope([]) }));
+    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, availablePeriods: [PERIOD] }], costScope: scope([]) }));
 
     const rawWhere = `WHERE usage_date >= '${PERIOD}-01' AND usage_date < '2026-02-01'`;
     const rawTotal = Number((await queryAll(conn, `SELECT CAST(SUM(cost) AS DOUBLE) t FROM ${rawSourceJan()} ${rawWhere}`))[0]?.['t']);
@@ -134,7 +149,7 @@ describe('buildRollupPartitionQuery', () => {
     // The Table widget's overview routes through the rollup (SUM(cost) /
     // SUM(line_items) per usage_date). For total_rows to match the raw path's
     // COUNT(*), the per-grain line_items must sum back to the raw row count.
-    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, availablePeriods: [PERIOD], costScope: scope([]) }));
+    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, availablePeriods: [PERIOD] }], costScope: scope([]) }));
     const rawWhere = `WHERE usage_date >= '${PERIOD}-01' AND usage_date < '2026-02-01'`;
     const rawCount = Number((await queryAll(conn, `SELECT CAST(COUNT(*) AS BIGINT) n FROM ${rawSourceJan()} ${rawWhere}`))[0]?.['n']);
     const rollCount = Number((await queryAll(conn, `SELECT CAST(SUM(line_items) AS BIGINT) n FROM ${glob}`))[0]?.['n']);
@@ -150,7 +165,7 @@ describe('buildRollupPartitionQuery', () => {
     const rawTotal = Number((await queryAll(conn, `SELECT CAST(SUM(cost) AS DOUBLE) t FROM ${rawSourceJan()} ${rawWhere}`))[0]?.['t']);
 
     const rule = { id: 'x', name: 'exclude top service', enabled: true, builtIn: false, conditions: [{ dimensionId: asDimensionId('service'), values: [excludedService] }] };
-    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, availablePeriods: [PERIOD], costScope: scope([rule]) }));
+    await conn.run(buildRollupPartitionQuery(PERIOD, 'daily', outPath, { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, availablePeriods: [PERIOD] }], costScope: scope([rule]) }));
 
     const rollTotal = Number((await queryAll(conn, `SELECT CAST(SUM(cost) AS DOUBLE) t FROM ${glob}`))[0]?.['t']);
     expect(rollTotal).toBeCloseTo(rawTotal - excludedCost, 2);

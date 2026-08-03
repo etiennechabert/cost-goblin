@@ -131,7 +131,7 @@ Components tested against `MockCostApi` (implements `CostApi` interface with fix
 No Electron, no DuckDB, no file system.
 
 ### Layer 4: Electron E2E (Playwright)
-Full app launch with `--fixture-mode` flag pointing at fixture data directory.
+Full app launch pinned to fixture data via `COSTGOBLIN_DATA_DIR` / `COSTGOBLIN_CONFIG_DIR` env vars (see `e2e/helpers.ts`).
 Slow (seconds). Run before commits, always in CI.
 
 ### Fixture Data

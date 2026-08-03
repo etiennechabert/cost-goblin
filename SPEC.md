@@ -191,6 +191,22 @@ The architecture supports future providers via a normalization layer:
 | GCP | BigQuery billing export | BigQuery → Parquet | Maybe Later |
 | Azure | Cost Management export | Blob Storage (Parquet/CSV) | Maybe Later |
 
+**Providers are first-class (#516).** A workspace configures N provider
+*instances* — including N of the same type, e.g. two AWS payer accounts. Each
+instance has a validated `name` (same rules as workspace names, reserved:
+`raw`/`rollup`/`meta`) that keys its on-disk tree
+`{dataDir}/{providerName}/{raw,rollup,meta}` and appears as the value of the
+built-in `provider` dimension. Providers sync independently (own etags,
+timestamps, failure state — one payer's expired credentials never block the
+others) and queries UNION one SELECT branch per provider, each with its own
+Parquet globs and cost expression, plus an injected constant `provider`
+column. The *ingest contract*: a provider adapter's only job is keeping its
+`raw/` populated with valid Parquet in the shared schema (CUR 2.0 today;
+FOCUS 1.2 after #515). Everything above `raw/` is provider-agnostic.
+Multi-provider caveats (v1): the pre-aggregated rollup accelerates only
+single-provider workspaces (multi-provider queries read raw via the union);
+mixing billing currencies is not yet handled (relevant only after #515).
+
 ### CUR 2.0 Report Configuration
 
 When creating the CUR report in the AWS Console (Cost and Usage Reports → Create report), use these settings:
@@ -254,8 +270,8 @@ The hourly and cost-optimization tiers are optional. Daily is mandatory.
 - The Sync view computes a per-month inventory from S3 listings (file key + size + content hash).
 - For each missing or stale period, the user (or auto-sync) triggers a per-period download via `syncPeriods()`.
 - Download is delegated to `aws s3 sync` (subprocess), which handles concurrency, retries, and partial-file resume natively.
-- Files land directly in `aws/raw/{tier}-{period}/` — **no repartitioning**, no DuckDB-side rewrite. The downloaded Parquet is the queried Parquet.
-- Per-period etag manifests (`sync-etags-{tier}.json`) record what's locally present so re-sync can skip unchanged files.
+- Files land directly in `{providerName}/raw/{tier}-{period}/` — **no repartitioning**, no DuckDB-side rewrite. The downloaded Parquet is the queried Parquet.
+- Per-period etag manifests (`{providerName}/meta/sync-etags-{tier}.json`) record what's locally present so re-sync can skip unchanged files.
 - Tag columns are NOT pre-flattened at sync time. Queries extract from `resource_tags` map and apply aliases via SQL CASE expressions at query time.
 
 **Local storage layout:**
@@ -284,13 +300,15 @@ Everything lives under Electron `userData`, organized into named **workspaces**
         app-preferences.json        # auto-sync/auto-prune toggles
         explorer-preferences.json   # Explorer column prefs
         savings-preferences.json
-        org-accounts.json           # AWS Org snapshot (+ org-account-tags.json, region-names.json)
+        org-accounts.json           # Merged AWS Org snapshot across providers
+                                    # (+ org-accounts.<provider>.json sidecars,
+                                    #  org-account-tags.json, region-names.json)
         baselines.json / baselines-data.json
         dismissed-suggestions.json
         telemetry-outbox.jsonl
         raw/                        # Optional account-mapping CSV drop-in
       data/
-        aws/
+        <providerName>/     # One tree per configured provider (e.g. aws-main)
           raw/
             daily-YYYY-MM/                  # One directory per billing period, downloaded as-is from S3
               *.parquet
@@ -298,8 +316,9 @@ Everything lives under Electron `userData`, organized into named **workspaces**
               *.parquet
             cost-opt-YYYY-MM-DD/            # Cost-opt is split by export date during sync
           rollup/                           # Pre-aggregated daily rollup + manifest
-        sync-etags*.json                    # Per-period file etags for diff
-        sync-timestamps.json
+          meta/
+            sync-etags*.json                # Per-period file etags for diff
+            sync-timestamps.json
       temp/                 # DuckDB spill directory
 ```
 
@@ -359,10 +378,9 @@ Lives in `config/`. Edited from the app's Dimensions Editor (see Features). Atom
 
 ```yaml
 providers:
-  - name: aws-main
-    type: aws
-    credentials:
-      profile: my-aws-profile
+  - name: aws-main            # instance name -> {dataDir}/aws-main/... ; also the `provider` dimension value
+    type: aws                 # discriminates the config shape + sync adapter
+    credentialsProfile: my-aws-profile
     sync:
       daily:
         bucket: s3://my-cur-bucket/daily/
@@ -543,7 +561,7 @@ prod next to a demo workspace. Workspaces share nothing except the app binary
 and machine-level preferences (theme, chart palette) in `app-state.json`.
 
 - **Naming**: `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`, Windows reserved device names
-  rejected, uniqueness case-insensitive. Same rules will apply to provider
+  rejected, uniqueness case-insensitive. The same rules apply to provider
   directory names later.
 - **First run**: the setup wizard opens with a naming step (prefilled
   `default`, Continue) before the get-started hub ("Set up from S3" / "Import
@@ -1095,7 +1113,7 @@ const sql = `
     SUM(cost) AS total_cost,
     SUM(CASE WHEN service = 'AmazonEC2' THEN cost ELSE 0 END) AS ec2_cost,
     SUM(CASE WHEN service = 'AmazonRDS' THEN cost ELSE 0 END) AS rds_cost
-  FROM read_parquet('${dataDir}/aws/raw/daily-*/*.parquet')
+  FROM read_parquet('${dataDir}/${providerName}/raw/daily-*/*.parquet')
   WHERE usage_date BETWEEN ? AND ?
   GROUP BY tag_team
   ORDER BY total_cost DESC
@@ -1158,7 +1176,7 @@ Aliases and normalization rules are applied in SQL WHERE clauses and GROUP BY ex
 
 ### Sync Layout: Per-Period, No Repartitioning
 
-CostGoblin downloads CUR Parquet directly into `aws/raw/{tier}-{period}/` and queries them as-is via `read_parquet('.../raw/daily-*/*.parquet')` glob patterns. No staging, no DuckDB-side rewrite.
+CostGoblin downloads CUR Parquet directly into `{providerName}/raw/{tier}-{period}/` and queries them as-is via `read_parquet('.../raw/daily-*/*.parquet')` glob patterns (one glob list per provider, unioned). No staging, no DuckDB-side rewrite.
 
 **Why no repartitioning:**
 - DuckDB pushes date filters down to row groups within Parquet files via column statistics. For typical monthly files (~1GB), filtering "last 7 days" still reads only the relevant row groups, not the full file.

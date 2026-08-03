@@ -1,4 +1,4 @@
-import { asBucketPath } from '@costgoblin/core/browser';
+import { asBucketPath, asProviderName } from '@costgoblin/core/browser';
 import type { DataSharingStatus } from '@costgoblin/core/browser';
 import { render, screen, waitFor } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
@@ -13,9 +13,9 @@ import { CostApiProvider } from '../hooks/use-cost-api.js';
 function configWithProfile(profile: string): MockCostApi['getConfig'] {
   return () => Promise.resolve({
     providers: [{
-      name: 'aws-main',
+      name: asProviderName('aws-main'),
       type: 'aws',
-      credentials: { profile },
+      credentialsProfile: profile,
       sync: { daily: { bucket: asBucketPath('costgoblin-cur-bucket/daily'), retentionDays: 90 }, intervalMinutes: 60 },
     }],
     defaults: { periodDays: 30, costMetric: 'unblended', lagDays: 2 },
@@ -197,7 +197,7 @@ describe('ImportConfigDialog', () => {
     await waitFor(() => {
       expect(screen.getByText('Configuration applied.')).toBeDefined();
     });
-    expect(applySpy).toHaveBeenCalledWith({ content: 'kind: costgoblin-config-bundle', profile: 'prod' });
+    expect(applySpy).toHaveBeenCalledWith({ content: 'kind: costgoblin-config-bundle', credentialsProfile: 'prod' });
 
     await user.click(screen.getByText('Done'));
     expect(onApplied).toHaveBeenCalledOnce();
@@ -250,7 +250,7 @@ describe('ImportConfigDialog', () => {
     await waitFor(() => {
       expect(screen.getByText('Configuration applied.')).toBeDefined();
     });
-    expect(applySpy).toHaveBeenCalledWith({ content: 'kind: costgoblin-config-bundle', profile: 'default' });
+    expect(applySpy).toHaveBeenCalledWith({ content: 'kind: costgoblin-config-bundle', credentialsProfile: 'default' });
   });
 
   it('fetches from an edited S3 location with the chosen profile', async () => {

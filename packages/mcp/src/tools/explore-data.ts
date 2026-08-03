@@ -1,7 +1,6 @@
 import {
   buildSource,
   computePeriodsInRange,
-  listLocalMonths,
   logger,
 } from '@costgoblin/core';
 import type { DateRange } from '@costgoblin/core';
@@ -11,6 +10,7 @@ import {
   computeDataCoverage,
   defaultDateRange,
   emptyRangeResult,
+  getQueryProviders,
   resolveFormat,
   structuredToolResult,
   toDateRange,
@@ -48,10 +48,18 @@ export async function exploreData(
   const dimensions = await ctx.getQueryDimensions();
   const orgPath = await ctx.getOrgAccountsPath();
   const availableColumns = await ctx.getAvailableColumns('daily');
-  const available = await listLocalMonths(ctx.dataDir, 'daily');
+  const allProviders = await getQueryProviders(ctx, 'daily');
   const required = computePeriodsInRange(dateRange);
-  const periods = required.filter(p => available.includes(p));
-  if (periods.length === 0) return emptyRangeResult(ctx, dateRange, format, `Explore Data (${dateRange.start} to ${dateRange.end})`);
+  // Per-provider month intersection; providers with nothing in range are
+  // dropped (a zero-match glob fails the whole union).
+  const branches = allProviders
+    .map(p => ({
+      name: p.name,
+      periods: required.filter(m => p.availablePeriods?.includes(m) ?? false),
+      availableColumns: p.availableColumns,
+    }))
+    .filter(b => b.periods.length > 0);
+  if (branches.length === 0) return emptyRangeResult(ctx, dateRange, format, `Explore Data (${dateRange.start} to ${dateRange.end})`);
 
   const matSource = ctx.materializedBase.getSource(dateRange, 'daily');
   const source = matSource ?? buildSource({
@@ -59,9 +67,8 @@ export async function exploreData(
     tier: 'daily',
     dimensions,
     orgAccountsPath: orgPath,
-    periods,
+    providers: branches,
     costMetric: 'unblended',
-    availableColumns,
   });
 
   const whereClause = `WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}'`;

@@ -10,7 +10,8 @@ describe('loadConfig', () => {
     const config = await loadConfig(join(fixturesDir, 'costgoblin.yaml'));
     expect(config.providers).toHaveLength(1);
     expect(config.providers[0]?.type).toBe('aws');
-    expect(config.providers[0]?.credentials.profile).toBe('test-profile');
+    expect(config.providers[0]?.name).toBe('aws-main');
+    expect(config.providers[0]?.credentialsProfile).toBe('test-profile');
     expect(config.providers[0]?.sync.daily.retentionDays).toBe(365);
     expect(config.providers[0]?.sync.hourly?.retentionDays).toBe(30);
     expect(config.defaults.periodDays).toBe(30);
@@ -65,10 +66,61 @@ describe('validateConfig', () => {
     })).toThrow(ConfigValidationError);
   });
 
+  it('accepts the flattened credentialsProfile field', () => {
+    const config = validateConfig({
+      providers: [{
+        name: 'payer-a', type: 'aws', credentialsProfile: 'billing-a',
+        sync: { daily: { bucket: 's3://b/daily', retentionDays: 30 }, intervalMinutes: 60 },
+      }],
+      defaults: { periodDays: 30, costMetric: 'unblended_cost', lagDays: 1 },
+    });
+    expect(config.providers[0]?.credentialsProfile).toBe('billing-a');
+  });
+
+  it('accepts the legacy nested credentials.profile shape and migrates it', () => {
+    const config = validateConfig({
+      providers: [{
+        name: 'payer-a', type: 'aws', credentials: { profile: 'legacy-profile' },
+        sync: { daily: { bucket: 's3://b/daily', retentionDays: 30 }, intervalMinutes: 60 },
+      }],
+      defaults: { periodDays: 30, costMetric: 'unblended_cost', lagDays: 1 },
+    });
+    expect(config.providers[0]?.credentialsProfile).toBe('legacy-profile');
+  });
+
+  it('rejects a provider name that is not filesystem/SQL-safe', () => {
+    const withName = (name: string): unknown => ({
+      providers: [{
+        name, type: 'aws', credentialsProfile: 'p',
+        sync: { daily: { bucket: 's3://b/daily', retentionDays: 30 }, intervalMinutes: 60 },
+      }],
+      defaults: { periodDays: 30, costMetric: 'unblended_cost', lagDays: 1 },
+    });
+    expect(() => validateConfig(withName('../escape'))).toThrow(ConfigValidationError);
+    expect(() => validateConfig(withName("payer'; DROP"))).toThrow(ConfigValidationError);
+    expect(() => validateConfig(withName('raw'))).toThrow(ConfigValidationError);
+    expect(() => validateConfig(withName('ok-name'))).not.toThrow();
+  });
+
+  it('rejects duplicate provider names case-insensitively', () => {
+    const provider = (name: string): unknown => ({
+      name, type: 'aws', credentialsProfile: 'p',
+      sync: { daily: { bucket: 's3://b/daily', retentionDays: 30 }, intervalMinutes: 60 },
+    });
+    expect(() => validateConfig({
+      providers: [provider('payer-a'), provider('Payer-A')],
+      defaults: { periodDays: 30, costMetric: 'unblended_cost', lagDays: 1 },
+    })).toThrow(ConfigValidationError);
+    expect(() => validateConfig({
+      providers: [provider('payer-a'), provider('payer-b')],
+      defaults: { periodDays: 30, costMetric: 'unblended_cost', lagDays: 1 },
+    })).not.toThrow();
+  });
+
   it('rejects a sync bucket that is not a plausible S3 location', () => {
     const withBucket = (bucket: string): unknown => ({
       providers: [{
-        name: 'aws', type: 'aws', credentials: { profile: 'p' },
+        name: 'aws', type: 'aws', credentialsProfile: 'p',
         sync: { daily: { bucket, retentionDays: 30 }, intervalMinutes: 60 },
       }],
       defaults: { periodDays: 30, costMetric: 'unblended_cost', lagDays: 1 },

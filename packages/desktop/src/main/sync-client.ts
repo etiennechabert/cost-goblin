@@ -8,6 +8,11 @@ export type SyncLogSink = (level: SyncLogLevel, message: string, ts: number) => 
 export interface SyncOptions {
   readonly bucketPath: string;
   readonly profile: string;
+  /** Which configured provider's tree (`{dataDir}/{providerName}/…`) the
+   *  download lands in. Crosses the worker-thread boundary as a plain string;
+   *  the worker re-validates it with `parseProviderName` before it touches
+   *  any path. Main passes `provider.name` from config. */
+  readonly providerName: string;
   readonly dataDir: string;
   readonly tier?: 'daily' | 'hourly' | 'cost-optimization' | undefined;
   readonly files: readonly ManifestFileEntry[];
@@ -144,6 +149,7 @@ export async function createSyncClient(workerPath: string, onLog?: SyncLogSink):
           id,
           bucketPath: options.bucketPath,
           profile: options.profile,
+          providerName: options.providerName,
           dataDir: options.dataDir,
           tier: options.tier ?? 'daily',
           files: options.files,

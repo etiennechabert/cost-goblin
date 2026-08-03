@@ -11,6 +11,7 @@ import {
   parseConfigBundle,
   parseSharingKey,
   parseSignedManifest,
+  providerRawDir,
   publicKeyFingerprint,
   readFileWithinRoot,
   serializeConfigBundle,
@@ -33,6 +34,7 @@ import type {
   PackManifest,
   PeerEndpoint,
   PreviewSharedSourceResult,
+  ProviderName,
   PullSharedSourceResult,
   SharedDataTier,
   SharedPullProgress,
@@ -80,6 +82,19 @@ function lanHosts(): string[] {
 
 function extractPeriodFromPath(path: string): string | null {
   return classifyPackPath(path)?.period ?? null;
+}
+
+/** Rewrite a pack path's leading provider segment — the publisher's provider
+ *  name in a v2 pack, or the fixed `aws` of a legacy v1 pack — onto THIS
+ *  machine's first configured provider, so imported data lands in the local
+ *  `{dataDir}/{provider}/raw/…` tree whatever the publisher called theirs.
+ *  Paths are isSafePackPath-validated at manifest parse (anchored grammar, no
+ *  `..`), so slicing at the first `/` cannot escape the data tree. With no
+ *  local provider yet (fresh no-AWS install) the incoming segment is kept:
+ *  the config bundle imported alongside names that same provider. */
+function remapPackPath(packPath: string, localProvider: ProviderName | null): string {
+  if (localProvider === null) return packPath;
+  return `${String(localProvider)}${packPath.slice(packPath.indexOf('/'))}`;
 }
 
 /** Trailing window over which serving throughput is averaged for the banner. */
@@ -213,30 +228,36 @@ export function registerDataSharingHandlers(app: AppContext): void {
   async function buildLocalManifest(identity: IdentityKeyPair, label: string): Promise<PackManifest> {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const rawDir = path.join(ctx.dataDir, 'aws', 'raw');
+    // Single-provider semantics (#516 phase 2): the export root is the FIRST
+    // configured provider's raw tree, and its (real) name is the leading
+    // segment of every v2 pack path. No provider yet → nothing to serve.
+    const provider = await app.getFirstProviderName();
     const files: PackFileEntry[] = [];
-    let dirs: Dirent[] = [];
-    try {
-      dirs = await fs.readdir(rawDir, { withFileTypes: true });
-    } catch {
-      dirs = [];
-    }
-    for (const dir of dirs) {
-      // isDirectory() is false for a symlink entry, so symlinked period dirs
-      // are skipped — we never serve through a link out of the data tree.
-      if (!dir.isDirectory()) continue;
-      let entries: Dirent[] = [];
+    if (provider !== null) {
+      const rawDir = providerRawDir(ctx.dataDir, provider);
+      let dirs: Dirent[] = [];
       try {
-        entries = await fs.readdir(path.join(rawDir, dir.name), { withFileTypes: true });
+        dirs = await fs.readdir(rawDir, { withFileTypes: true });
       } catch {
-        continue;
+        dirs = [];
       }
-      for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith('.parquet')) continue;
-        const rel = `aws/raw/${dir.name}/${entry.name}`;
-        if (!isSafePackPath(rel)) continue;
-        const buf = await fs.readFile(path.join(rawDir, dir.name, entry.name));
-        files.push({ path: rel, size: buf.length, sha256: sha256Hex(buf) });
+      for (const dir of dirs) {
+        // isDirectory() is false for a symlink entry, so symlinked period dirs
+        // are skipped — we never serve through a link out of the data tree.
+        if (!dir.isDirectory()) continue;
+        let entries: Dirent[] = [];
+        try {
+          entries = await fs.readdir(path.join(rawDir, dir.name), { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const entry of entries) {
+          if (!entry.isFile() || !entry.name.endsWith('.parquet')) continue;
+          const rel = `${String(provider)}/raw/${dir.name}/${entry.name}`;
+          if (!isSafePackPath(rel)) continue;
+          const buf = await fs.readFile(path.join(rawDir, dir.name, entry.name));
+          files.push({ path: rel, size: buf.length, sha256: sha256Hex(buf) });
+        }
       }
     }
     return {
@@ -297,8 +318,11 @@ export function registerDataSharingHandlers(app: AppContext): void {
           const path = await import('node:path');
           // `p` is already string-validated by isSafePackPath, but a symlink in
           // the data tree could still redirect the read off-tree — confine the
-          // resolved path to aws/raw.
-          const rawRoot = path.join(ctx.dataDir, 'aws', 'raw');
+          // resolved path to the first provider's raw tree (the only root the
+          // manifest advertises; a `p` under any other segment fails here).
+          const provider = await app.getFirstProviderName();
+          if (provider === null) throw new Error('No provider configured');
+          const rawRoot = providerRawDir(ctx.dataDir, provider);
           return readFileWithinRoot(rawRoot, path.join(ctx.dataDir, p));
         },
       },
@@ -356,7 +380,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
   async function resolveImportProfile(): Promise<string> {
     try {
       const config = await app.getConfig();
-      const profile = config.providers[0]?.credentials.profile;
+      const profile = config.providers[0]?.credentialsProfile;
       if (typeof profile === 'string' && profile.length > 0) return profile;
     } catch {
       // No config on disk yet — fall through to the default.
@@ -389,6 +413,18 @@ export function registerDataSharingHandlers(app: AppContext): void {
 
       const fs = await import('node:fs/promises');
       const path = await import('node:path');
+      // Apply the config bundle BEFORE resolving where data lands: the bundle
+      // can rename/define the provider (a consumer with no config yet gets its
+      // whole provider list from it), and files must land under the
+      // POST-import provider directory — resolving first would orphan every
+      // pulled file under a stale name.
+      if (wantConfig && signed.manifest.configBundle !== null) {
+        await applyBundleSectionsToDisk(ctx, signed.manifest.configBundle, await resolveImportProfile());
+        app.invalidateConfig();
+      }
+      // Every incoming provider segment (v2 real names, v1 'aws') maps onto
+      // the first LOCAL provider's directory — single-provider semantics.
+      const localProvider = await app.getFirstProviderName();
       const total = files.length;
       const bytesTotal = files.reduce((n, f) => n + f.size, 0);
       pullProgress = { active: true, phase: 'downloading', filesDone: 0, filesTotal: total, currentPeriod: null, bytesDone: 0, bytesTotal, error: null };
@@ -397,7 +433,7 @@ export function registerDataSharingHandlers(app: AppContext): void {
       let bytesDone = 0;
       for (const entry of files) {
         pullProgress = { active: true, phase: 'downloading', filesDone: done, filesTotal: total, currentPeriod: extractPeriodFromPath(entry.path), bytesDone, bytesTotal, error: null };
-        const dest = path.join(ctx.dataDir, entry.path);
+        const dest = path.join(ctx.dataDir, remapPackPath(entry.path, localProvider));
         try {
           const existing = await fs.readFile(dest);
           if (existing.length === entry.size && sha256Hex(existing) === entry.sha256) {
@@ -420,9 +456,6 @@ export function registerDataSharingHandlers(app: AppContext): void {
       }
 
       pullProgress = { active: true, phase: 'importing', filesDone: done, filesTotal: total, currentPeriod: null, bytesDone, bytesTotal, error: null };
-      if (wantConfig && signed.manifest.configBundle !== null) {
-        await applyBundleSectionsToDisk(ctx, signed.manifest.configBundle, await resolveImportProfile());
-      }
       // Enrichment (account/region names) is reference data that makes the
       // pulled rows readable, so it always lands regardless of the config toggle.
       await writeEnrichment(signed.manifest.enrichment);

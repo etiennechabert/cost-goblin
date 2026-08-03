@@ -3,7 +3,6 @@ import {
   buildSource,
   computePeriodsInRange,
   DEFAULT_LAG_DAYS,
-  listLocalMonths,
   logger,
 } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
@@ -11,6 +10,7 @@ import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
   computeDataCoverage,
   emptyRangeResult,
+  getQueryProviders,
   resolveFormat,
   structuredToolResult,
   toStr,
@@ -133,7 +133,6 @@ export async function runSql(
 
   const dimensions = await ctx.getQueryDimensions();
   const orgPath = await ctx.getOrgAccountsPath();
-  const availableColumns = await ctx.getAvailableColumns('daily');
 
   let dateRange: { start: string; end: string };
   if (params.dateRange !== undefined) {
@@ -156,10 +155,18 @@ export async function runSql(
   if (matSource !== undefined) {
     costsCte = `costs AS (SELECT * FROM ${matSource} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
   } else {
-    const available = await listLocalMonths(ctx.dataDir, 'daily');
+    const allProviders = await getQueryProviders(ctx, 'daily');
     const required = computePeriodsInRange(dateRange);
-    const periods = required.filter(p => available.includes(p));
-    if (periods.length === 0) {
+    // Per-provider month intersection; providers with nothing in range are
+    // dropped (a zero-match glob fails the whole union).
+    const branches = allProviders
+      .map(pr => ({
+        name: pr.name,
+        periods: required.filter(m => pr.availablePeriods?.includes(m) ?? false),
+        availableColumns: pr.availableColumns,
+      }))
+      .filter(b => b.periods.length > 0);
+    if (branches.length === 0) {
       return emptyRangeResult(ctx, dateRange, format, `Query Result`);
     }
     const source = buildSource({
@@ -167,9 +174,8 @@ export async function runSql(
       tier: 'daily',
       dimensions,
       orgAccountsPath: orgPath,
-      periods,
+      providers: branches,
       costMetric: 'unblended',
-      availableColumns,
     });
     costsCte = `costs AS (SELECT * FROM ${source} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
   }

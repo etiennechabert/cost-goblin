@@ -75,13 +75,18 @@ export function registerSharingHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('sharing:apply-bundle', async (_event, raw: unknown): Promise<ApplyConfigBundleResult> => {
-    if (!isStringRecord(raw) || typeof raw['content'] !== 'string' || typeof raw['profile'] !== 'string' || raw['profile'].length === 0) {
+    // The field was renamed profile → credentialsProfile with #516; accept
+    // the legacy key too so a stale renderer bundle can't brick imports.
+    const credentialsProfile = isStringRecord(raw)
+      ? (typeof raw['credentialsProfile'] === 'string' ? raw['credentialsProfile'] : (typeof raw['profile'] === 'string' ? raw['profile'] : ''))
+      : '';
+    if (!isStringRecord(raw) || typeof raw['content'] !== 'string' || credentialsProfile.length === 0) {
       return { status: 'error', message: 'Invalid import parameters' };
     }
     try {
       // Never trust the renderer's earlier preview — applyBundleSectionsToDisk
       // re-parses and re-validates in the process that writes the files.
-      const { sectionIds, backupDir } = await applyBundleSectionsToDisk(ctx, raw['content'], raw['profile']);
+      const { sectionIds, backupDir } = await applyBundleSectionsToDisk(ctx, raw['content'], credentialsProfile);
       await clearAllCaches();
       logger.info('Applied configuration bundle', { sections: sectionIds.join(','), backupDir: backupDir ?? 'none' });
       return { status: 'applied', sections: sectionIds, backupDir };
@@ -115,7 +120,7 @@ export function registerSharingHandlers(app: AppContext): void {
       // action. Default stays the configured sync profile.
       const profile = isStringRecord(raw) && typeof raw['profile'] === 'string' && raw['profile'].trim().length > 0
         ? raw['profile']
-        : provider.credentials.profile;
+        : provider.credentialsProfile;
       const client = new S3Client({
         region: 'eu-central-1',
         followRegionRedirects: true,

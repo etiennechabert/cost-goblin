@@ -22,6 +22,13 @@ export {
   isValidWorkspaceName,
   parseWorkspaceName,
 } from './config/workspace-name.js';
+export {
+  PROVIDER_NAME_PATTERN,
+  RESERVED_PROVIDER_NAMES,
+  ProviderNameError,
+  isValidProviderName,
+  parseProviderName,
+} from './config/provider-name.js';
 export type {
   RollupGrainEstimate,
   RollupDimEstimate,

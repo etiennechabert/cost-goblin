@@ -15,6 +15,8 @@ import type {
   DimensionsConfig,
   Dollars,
   FilterMap,
+  ProviderName,
+  ProviderSourceSpec,
   QueryContextOptions,
   TagValue,
 } from '@costgoblin/core';
@@ -70,19 +72,59 @@ export function toDollars(n: number): Dollars {
   return asDollars(n);
 }
 
-export async function resolveAvailablePeriods(
-  dataDir: string,
+/** First configured provider's name, or null while onboarding (no readable
+ *  config / empty provider list). Mirrors desktop getFirstProviderName. */
+export async function getFirstProviderName(ctx: McpContext): Promise<ProviderName | null> {
+  const config = await ctx.getConfig().catch(() => null);
+  return config?.providers[0]?.name ?? null;
+}
+
+// Latest-month column set per (provider, tier), probed once per process —
+// payer accounts can export different CUR column sets, and a branch whose
+// cost expression references a column its files lack binder-errors the whole
+// union. Mirrors desktop's per-provider probe.
+const columnProbeCache = new Map<string, Promise<ReadonlySet<string>>>();
+
+async function probeProviderColumns(ctx: McpContext, provider: ProviderName, tier: 'daily' | 'hourly'): Promise<ReadonlySet<string>> {
+  const key = `${String(provider)}:${tier}`;
+  const cached = columnProbeCache.get(key);
+  if (cached !== undefined) return cached;
+  const fetch = (async (): Promise<ReadonlySet<string>> => {
+    const months = await listLocalMonths(ctx.dataDir, provider, tier);
+    const latest = months.at(-1);
+    if (latest === undefined) return new Set<string>();
+    try {
+      const rows = await ctx.runQuery(`DESCRIBE SELECT * FROM read_parquet('${ctx.dataDir}/${String(provider)}/raw/${tier}-${latest}/*.parquet') LIMIT 0`);
+      const cols = new Set<string>();
+      for (const r of rows) {
+        const name = r['column_name'];
+        if (typeof name === 'string') cols.add(name);
+      }
+      return cols;
+    } catch {
+      return new Set<string>();
+    }
+  })();
+  columnProbeCache.set(key, fetch);
+  return fetch;
+}
+
+/** ProviderSourceSpec list for QueryContextOptions: EVERY configured
+ *  provider with its own on-disk months and probed columns (mirrors desktop
+ *  getQueryProviders), or [] when none is configured. */
+export async function getQueryProviders(
+  ctx: McpContext,
   tier: 'daily' | 'hourly',
-  dateRange: { readonly start: string; readonly end: string },
-): Promise<{ available: string[]; empty: boolean }> {
-  const available = await listLocalMonths(dataDir, tier);
-  const required = computePeriodsInRange(dateRange);
-  const usePeriods = required.filter(p => available.includes(p));
-  if (usePeriods.length === 0) {
-    logger.debug('query:plan', { tier, mode: 'empty', requestedMonths: required.length, availableMonths: available.length });
-    return { available, empty: true };
-  }
-  return { available, empty: false };
+): Promise<readonly ProviderSourceSpec[]> {
+  const config = await ctx.getConfig().catch(() => null);
+  if (config === null) return [];
+  return Promise.all(config.providers.map(async provider => {
+    const [availablePeriods, availableColumns] = await Promise.all([
+      listLocalMonths(ctx.dataDir, provider.name, tier),
+      probeProviderColumns(ctx, provider.name, tier),
+    ]);
+    return { name: provider.name, availablePeriods, availableColumns };
+  }));
 }
 
 export async function buildQueryContextOpts(
@@ -94,12 +136,16 @@ export async function buildQueryContextOpts(
   const accountReverseMap = await ctx.getAccountReverseMap();
   const orgPath = await ctx.getOrgAccountsPath();
   const costScope = await ctx.getCostScope().catch(() => undefined);
-  const availableColumns = await ctx.getAvailableColumns(tier);
-  const { available, empty } = await resolveAvailablePeriods(ctx.dataDir, tier, dateRange);
+  const providers = await getQueryProviders(ctx, tier);
 
-  if (empty) {
+  // Empty only when NO provider has a month intersecting the range.
+  const required = computePeriodsInRange(dateRange);
+  const anyData = providers.some(p => required.some(m => p.availablePeriods?.includes(m) ?? false));
+
+  if (!anyData) {
+    logger.debug('query:plan', { tier, mode: 'empty', requestedMonths: required.length, providers: providers.length });
     return {
-      opts: { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, availablePeriods: available, accountReverseMap, costScope, availableColumns },
+      opts: { dataDir: ctx.dataDir, dimensions, orgAccountsPath: orgPath, providers, accountReverseMap, costScope },
       empty: true,
     };
   }
@@ -109,10 +155,9 @@ export async function buildQueryContextOpts(
     dataDir: ctx.dataDir,
     dimensions,
     orgAccountsPath: orgPath,
-    availablePeriods: available,
+    providers,
     accountReverseMap,
     costScope,
-    availableColumns,
     materializedSource: matSource,
   };
   return { opts, empty: false };
@@ -183,8 +228,9 @@ export async function computeDataCoverage(
   dateRange?: { readonly start: string; readonly end: string },
 ): Promise<DataCoverage> {
   const { listLocalMonths, computePeriodsInRange } = await import('@costgoblin/core');
-  const available = await listLocalMonths(ctx.dataDir, 'daily');
-  if (available.length === 0) {
+  const provider = await getFirstProviderName(ctx);
+  const available = provider === null ? [] : await listLocalMonths(ctx.dataDir, provider, 'daily');
+  if (provider === null || available.length === 0) {
     return {
       availableMonths: [],
       latestDay: null,
@@ -199,7 +245,7 @@ export async function computeDataCoverage(
   const latestMonth = available[available.length - 1];
   let latestDay: string | null = null;
   if (latestMonth !== undefined) {
-    const glob = `${ctx.dataDir}/aws/raw/daily-${latestMonth}/*.parquet`;
+    const glob = `${ctx.dataDir}/${String(provider)}/raw/daily-${latestMonth}/*.parquet`;
     try {
       const rows = await ctx.runQuery(
         `SELECT MAX(line_item_usage_start_date::DATE)::VARCHAR AS d FROM read_parquet('${glob}')`,

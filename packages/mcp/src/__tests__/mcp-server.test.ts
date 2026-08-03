@@ -199,8 +199,11 @@ describe('MCP server E2E', () => {
       }
     }
 
-    const available = await listLocalMonths(SYNTHETIC_DIR, 'daily');
-    const glob = `${SYNTHETIC_DIR}/aws/raw/daily-${String(available.at(-1))}/*.parquet`;
+    const providerName = config.providers[0]?.name;
+    if (providerName === undefined) throw new Error('fixture config has no providers');
+
+    const available = await listLocalMonths(SYNTHETIC_DIR, providerName, 'daily');
+    const glob = `${SYNTHETIC_DIR}/aws-main/raw/daily-${String(available.at(-1))}/*.parquet`;
     const colRows = await queryAll(conn, `DESCRIBE SELECT * FROM read_parquet('${glob}') LIMIT 0`);
     const columns = new Set(colRows.map(r => String(r['column_name'])));
 

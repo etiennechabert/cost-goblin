@@ -1,7 +1,6 @@
 import {
   asDimensionId,
   buildCostQuery,
-  listLocalMonths,
   logger,
 } from '@costgoblin/core';
 import type { McpContext } from '../context.js';
@@ -11,6 +10,7 @@ import {
   computeDataCoverage,
   defaultDateRange,
   emptyRangeResult,
+  getQueryProviders,
   resolveFormat,
   structuredToolResult,
   toDateRange,
@@ -29,8 +29,9 @@ export async function getCostOverview(
     ? toDateRange(params.dateRange)
     : defaultDateRange();
 
-  const months = await listLocalMonths(ctx.dataDir, 'daily');
-  if (months.length === 0) {
+  const allProviders = await getQueryProviders(ctx, 'daily');
+  const anyData = allProviders.some(p => (p.availablePeriods ?? []).length > 0);
+  if (!anyData) {
     return toolError('No data found. Ensure COSTGOBLIN_DATA_DIR points to a directory with synced Parquet data.');
   }
 

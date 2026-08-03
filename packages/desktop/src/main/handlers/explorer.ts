@@ -10,7 +10,6 @@ import {
   DEFAULT_LAG_DAYS,
   isStringRecord,
   logger,
-  listLocalMonths,
   parseJsonObject,
   resolveField,
   tagDimColumn,
@@ -31,6 +30,7 @@ import type {
   ExplorerDailyRow,
   ExplorerTagColumn,
   DimensionsConfig,
+  ProviderSourceSpec,
   AggregatedTableParams,
   AggregatedTableRow,
   AggregatedTableResult,
@@ -155,6 +155,7 @@ function buildOrderBy(
  *  zero-filled result without bothering DuckDB. */
 interface QueryContext {
   readonly empty: boolean;
+  readonly providers: readonly ProviderSourceSpec[];
   readonly source: string;
   readonly whereStr: string;
   readonly startStr: string;
@@ -234,13 +235,14 @@ interface BuildFreshSourceOptions {
   readonly endHour?: string;
   readonly tier: 'daily' | 'hourly';
   readonly periods: readonly string[];
+  readonly providers: readonly ProviderSourceSpec[];
   readonly dimensions: DimensionsConfig;
   readonly filterPredicate: string | null;
   readonly accountReverseMap: ReadonlyMap<string, readonly string[]>;
 }
 
 async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source: string; whereStr: string }> {
-  const { app, params, startStr, endStr, startHour, endHour, tier, periods, dimensions, filterPredicate, accountReverseMap } = opts;
+  const { app, params, startStr, endStr, startHour, endHour, tier, periods, providers, dimensions, filterPredicate, accountReverseMap } = opts;
   const { ctx, getCostScope, getOrgAccountsPath, getAvailableColumns } = app;
   const orgPath = await getOrgAccountsPath();
   const availableColumns = await getAvailableColumns(tier);
@@ -258,7 +260,22 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
   const metric = resolveScopeMetric(params.costMetric, applyCostScope, scopeForExclusions, availableColumns);
   const perspective = resolveScopePerspective(params.costPerspective, applyCostScope, scopeForExclusions, availableColumns);
 
-  const source = buildSource({ dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath, periods, costMetric: metric, availableColumns, costPerspective: perspective, marketplaceAttribution: fullScope?.marketplaceAttribution });
+  // Per-provider month intersection: a shared list would hand providers
+  // globs for months they don't have on disk, and one zero-match glob fails
+  // the whole union (DuckDB IO error). Providers with nothing in range are
+  // dropped; the caller already early-returned when NO provider has months.
+  const branches = providers
+    .map(p => ({
+      name: p.name,
+      periods: periods.filter(m => p.availablePeriods?.includes(m) ?? false),
+      availableColumns: p.availableColumns,
+    }))
+    .filter(b => b.periods.length > 0);
+  const source = buildSource({
+    dataDir: ctx.dataDir, tier, dimensions, orgAccountsPath: orgPath,
+    providers: branches,
+    costMetric: metric, costPerspective: perspective, marketplaceAttribution: fullScope?.marketplaceAttribution,
+  });
   const exclusions = buildExclusionClauses(scopeForExclusions, dimensions, accountReverseMap);
 
   // When the histogram drag-zoom emits hour bounds, swap the day-level
@@ -278,7 +295,7 @@ async function buildFreshSource(opts: BuildFreshSourceOptions): Promise<{ source
 }
 
 async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams): Promise<QueryContext> {
-  const { ctx, getQueryDimensions, getAccountMap } = app;
+  const { getQueryDimensions, getAccountMap, getQueryProviders } = app;
   const { startStr, endStr, windowDays, startHour, endHour } = resolveDateRange(params.dateRange);
   // Hour bounds (sub-day drag-zoom) require the hourly tier — that's where
   // usage_hour lives. Promote tier when present, regardless of what
@@ -286,9 +303,14 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
   const requestedTier: 'daily' | 'hourly' = params.granularity === 'hourly' ? 'hourly' : 'daily';
   const tier: 'daily' | 'hourly' = (startHour !== undefined && endHour !== undefined) ? 'hourly' : requestedTier;
 
-  const available = await listLocalMonths(ctx.dataDir, tier);
+  // Empty while onboarding (no provider configured) — falls into the same
+  // zero-period early return as "no months on disk". Months are resolved
+  // ACROSS providers (the union proceeds when any provider has data in
+  // range); buildFreshSource re-intersects per provider before building
+  // globs.
+  const providers = await getQueryProviders(tier);
   const required = computePeriodsInRange({ start: startStr, end: endStr });
-  const periods = required.filter(p => available.includes(p));
+  const periods = required.filter(m => providers.some(p => p.availablePeriods?.includes(m) ?? false));
 
   const dimensions = await getQueryDimensions();
   const accountMap = await getAccountMap();
@@ -298,7 +320,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     label: t.label,
   }));
   const tagIdSet = new Set(tagColumns.map(t => t.id));
-  const shared = { startStr, endStr, windowDays, tier, tagColumns, tagIdSet, dimensions, accountMap } as const;
+  const shared = { providers, startStr, endStr, windowDays, tier, tagColumns, tagIdSet, dimensions, accountMap } as const;
 
   if (periods.length === 0) {
     return { empty: true, source: '', whereStr: '', ...shared };
@@ -314,7 +336,7 @@ async function prepareQueryContext(app: AppContext, params: ExplorerBaseParams):
     app, params, startStr, endStr,
     ...(startHour === undefined ? {} : { startHour }),
     ...(endHour === undefined ? {} : { endHour }),
-    tier, periods, dimensions, filterPredicate, accountReverseMap,
+    tier, periods, providers, dimensions, filterPredicate, accountReverseMap,
   });
   return { empty: false, source, whereStr, ...shared };
 }
@@ -475,7 +497,7 @@ export function registerExplorerHandlers(app: AppContext): void {
     // the metric/perspective or skips the scope must stay on raw. Detail/expand
     // rows still hit raw — they need resource_id/description, not in the grain.
     const rollupSource = overviewUsesRollup(params, qc.tier)
-      ? resolveRollupSource(rollupStore, { start: qc.startStr, end: qc.endStr }, 'daily', [
+      ? resolveRollupSource(rollupStore, qc.providers, { start: qc.startStr, end: qc.endStr }, 'daily', [
           'cost',
           ...overviewFilterColumns(params, qc.dimensions),
         ])

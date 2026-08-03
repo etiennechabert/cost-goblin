@@ -15,6 +15,10 @@ export function rollupGrainColumns(dims: DimensionsConfig): string[] {
   const cols = new Set<string>();
   for (const d of dims.builtIn) {
     if (!isEnabled(d)) continue;
+    // `provider` is injected at read time (constant per provider branch /
+    // per rollup store) — it is never stored in rollup Parquet, so it must
+    // not enter the grain even when the provider dimension is enabled.
+    if (d.field === 'provider') continue;
     cols.add(d.field);
     if (d.displayField !== undefined && d.displayField.length > 0) cols.add(d.displayField);
   }
@@ -47,6 +51,8 @@ export function rollupGrainDimensions(dims: DimensionsConfig): { column: string;
   };
   for (const d of dims.builtIn) {
     if (!isEnabled(d)) continue;
+    // Injected at read time, never stored — see rollupGrainColumns.
+    if (d.field === 'provider') continue;
     const columns = [d.field];
     if (d.displayField !== undefined && d.displayField.length > 0) columns.push(d.displayField);
     add(d.field, columns);

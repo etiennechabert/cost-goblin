@@ -62,6 +62,7 @@ describe('Sync Worker', () => {
       id,
       bucketPath: 's3://test-bucket/test',
       profile: 'default',
+      providerName: 'aws',
       dataDir: testDataDir,
       tier: 'daily',
       files: [],

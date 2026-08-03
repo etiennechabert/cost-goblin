@@ -1,7 +1,7 @@
 import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
 import type { CostQueryParams, DailyCostsParams, DateRange, FilterMap, TrendQueryParams, MissingTagsParams, EntityDetailParams } from '../types/query.js';
 import { DEFAULT_PLACEHOLDER_PATTERNS } from '../types/query.js';
-import type { DimensionId } from '../types/branded.js';
+import type { DimensionId, ProviderName } from '../types/branded.js';
 import { tagDimColumn } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule, MarketplaceAttributionConfig, MarketplaceAttributionRule } from '../types/cost-scope.js';
@@ -328,14 +328,36 @@ function applyPathSegment(expr: string, pathSegment: { separator: string; index:
   return `NULLIF(split_part(${expr}, '${sep}', ${String(pathSegment.index)}), '')`;
 }
 
+/** One provider's contribution to a query source. `periods` follows the
+ *  pre-#516 single-provider contract: an explicit list produces per-month
+ *  globs, an empty list the tier wildcard (see `buildParquetSource`).
+ *  `availableColumns` is per provider — two payer accounts can export
+ *  different CUR column sets, so cost expressions are evaluated per branch. */
+export interface ProviderSourceBranch {
+  readonly name: ProviderName;
+  readonly periods?: readonly string[] | undefined;
+  readonly availableColumns?: ReadonlySet<string> | undefined;
+}
+
+/** One provider's query-time context: what's on disk (per the queried tier)
+ *  and which CUR columns its latest export carries. The month intersection
+ *  with a query's date range happens per provider — DuckDB errors on globs
+ *  matching zero files, and providers sync independently. */
+export interface ProviderSourceSpec {
+  readonly name: ProviderName;
+  readonly availablePeriods?: readonly string[] | undefined;
+  readonly availableColumns?: ReadonlySet<string> | undefined;
+}
+
 export interface BuildSourceOptions {
   readonly dataDir: string;
   readonly tier: string;
   readonly dimensions: DimensionsConfig;
   readonly orgAccountsPath?: string | undefined;
-  readonly periods?: readonly string[] | undefined;
+  /** Every configured provider contributing to this source, in config order.
+   *  One branch per provider; multiple branches are UNION ALLed. */
+  readonly providers: readonly ProviderSourceBranch[];
   readonly costMetric?: CostMetric | undefined;
-  readonly availableColumns?: ReadonlySet<string> | undefined;
   readonly costPerspective?: CostPerspective | undefined;
   /** When true, tags with accountTagFallback also emit a raw_<col> column
    *  containing the resource-level value before COALESCE fallback. Used by
@@ -409,7 +431,7 @@ function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
   return selects;
 }
 
-function buildParquetSource(dataDir: string, tier: string, periods: readonly string[] | undefined): string {
+function buildParquetSource(dataDir: string, provider: ProviderName, tier: string, periods: readonly string[] | undefined): string {
   // union_by_name unifies columns by name across files, filling absent columns
   // with NULL. Required because CUR schema drifts between months: older exports
   // lack reservation_effective_cost / savings_plan_savings_plan_effective_cost
@@ -418,11 +440,12 @@ function buildParquetSource(dataDir: string, tier: string, periods: readonly str
   // union_by_name DuckDB throws a Binder Error on any read spanning a month
   // that omits them. The now-NULL column makes amortizedExpr's COALESCE fall
   // through to unblended for the old rows — the correct degradation.
+  const rawRoot = `${dataDir}/${String(provider)}/raw`;
   if (periods !== undefined && periods.length > 0) {
-    const paths = periods.map(p => `'${dataDir}/aws/raw/${tier}-${p}/*.parquet'`).join(', ');
+    const paths = periods.map(p => `'${rawRoot}/${tier}-${p}/*.parquet'`).join(', ');
     return `read_parquet([${paths}], union_by_name=true)`;
   }
-  return `read_parquet('${dataDir}/aws/raw/${tier}-*/*.parquet', union_by_name=true)`;
+  return `read_parquet('${rawRoot}/${tier}-*/*.parquet', union_by_name=true)`;
 }
 
 function buildFromClause(
@@ -449,7 +472,10 @@ function buildFromClause(
 }
 
 export function buildSource(opts: BuildSourceOptions): string {
-  const { dataDir, tier, dimensions, orgAccountsPath, periods, costMetric = 'unblended', availableColumns, costPerspective, includeRawTags, slim } = opts;
+  const { dataDir, tier, dimensions, orgAccountsPath, providers, costMetric = 'unblended', costPerspective, includeRawTags, slim } = opts;
+  if (providers.length === 0) {
+    throw new SecurityError('buildSource requires at least one provider branch');
+  }
   const hasFallbacks = dimensions.tags.some(t => t.accountTagFallback !== undefined);
   const needsOrgJoin = hasFallbacks && orgAccountsPath !== undefined;
 
@@ -463,10 +489,6 @@ export function buildSource(opts: BuildSourceOptions): string {
     ? 'line_item_usage_start_date::DATE AS usage_date,\n      line_item_usage_start_date::TIMESTAMP AS usage_hour'
     : 'line_item_usage_start_date::DATE AS usage_date';
 
-  const parquetSource = buildParquetSource(dataDir, tier, periods);
-  const fromClause = hasFallbacks && orgAccountsPath !== undefined
-    ? buildFromClause(parquetSource, dimensions, orgAccountsPath)
-    : parquetSource;
   const tablePrefix = needsOrgJoin ? 'cur.' : '';
 
   // Marketplace re-attribution: matched rows get a real service code, and on
@@ -474,11 +496,6 @@ export function buildSource(opts: BuildSourceOptions): string {
   // unblended cost (see marketplaceListFallback).
   const mktRules = activeMarketplaceRules(opts.marketplaceAttribution);
   const mktMatch = marketplaceMatchPredicate(tablePrefix, mktRules);
-
-  const baseCostExpr = costExprFor(costMetric, tablePrefix, costPerspective, availableColumns);
-  const costExpr = costMetric === 'list'
-    ? marketplaceListFallback(tablePrefix, baseCostExpr, mktMatch)
-    : baseCostExpr;
 
   const serviceExpr = marketplaceServiceExpr(
     tablePrefix,
@@ -506,8 +523,25 @@ export function buildSource(opts: BuildSourceOptions): string {
     ? `\n    WHERE COALESCE(${tablePrefix}line_item_line_item_type, '') IN (${listTypeLiterals})`
     : '';
 
-  return `(
-    SELECT
+  // One SELECT branch per provider. Branches differ in three ways only: the
+  // Parquet glob, the injected constant `provider` column, and the cost
+  // expression (per-provider availableColumns — payer accounts can export
+  // different CUR column sets). The provider name is a validated
+  // `ProviderName` (path- and quote-safe); escaping is defense in depth.
+  const orgJoinPath = needsOrgJoin ? orgAccountsPath : undefined;
+  const branches = providers.map(branch => {
+    const parquetSource = buildParquetSource(dataDir, branch.name, tier, branch.periods);
+    const fromClause = orgJoinPath !== undefined
+      ? buildFromClause(parquetSource, dimensions, orgJoinPath)
+      : parquetSource;
+
+    const baseCostExpr = costExprFor(costMetric, tablePrefix, costPerspective, branch.availableColumns);
+    const costExpr = costMetric === 'list'
+      ? marketplaceListFallback(tablePrefix, baseCostExpr, mktMatch)
+      : baseCostExpr;
+
+    return `SELECT
+      '${sqlEscapeString(String(branch.name))}' AS provider,
       ${dateExpr},
       ${tablePrefix}line_item_usage_account_id AS account_id,
       COALESCE(${tablePrefix}line_item_usage_account_name, '') AS account_name,
@@ -519,24 +553,42 @@ export function buildSource(opts: BuildSourceOptions): string {
       COALESCE(${tablePrefix}line_item_line_item_type, '') AS line_item_type,
       COALESCE(${tablePrefix}line_item_operation, '') AS operation,
       COALESCE(${tablePrefix}line_item_usage_type, '') AS usage_type${tagClause}
-    FROM ${fromClause}${metricWhere}
+    FROM ${fromClause}${metricWhere}`;
+  });
+
+  return `(
+    ${branches.join('\n    UNION ALL\n    ')}
   )`;
 }
 
-/**
- * Compute the Parquet glob periods for a query. Intersects the months the
- * query's date range touches with the months actually on disk — DuckDB errors
- * on glob patterns that match zero files, so the caller must pre-filter. When
- * `availablePeriods` is omitted (tests, filter-values without date range),
- * falls back to all required periods. An empty result means "use the wildcard".
- */
-function resolveQueryPeriods(
-  dateRange: { readonly start: string; readonly end: string },
-  availablePeriods?: readonly string[],
-): string[] {
-  const required = computePeriodsInRange(dateRange);
-  if (availablePeriods === undefined) return required;
-  return required.filter(p => availablePeriods.includes(p));
+/** Resolve which providers contribute to a query and with which month globs.
+ *  Per provider: intersect the required months with what that provider has
+ *  on disk (`availablePeriods`), preserving the single-provider contract —
+ *  an undefined `availablePeriods` passes the required months through, and
+ *  an empty intersection over a non-empty disk falls back to the wildcard
+ *  glob (empty `periods`). Providers with NO data on disk for the tier are
+ *  dropped so their zero-match wildcard can't fail the whole union — unless
+ *  every provider is dropped, in which case all are kept so the query fails
+ *  (or wildcard-scans) exactly like the pre-#516 single-provider code. */
+function resolveProviderBranches(
+  providers: readonly ProviderSourceSpec[],
+  requiredPeriods: readonly string[],
+): ProviderSourceBranch[] {
+  const branches = providers.map((p): { branch: ProviderSourceBranch; hasData: boolean } => {
+    const periods = p.availablePeriods === undefined
+      ? [...requiredPeriods]
+      : requiredPeriods.filter(m => p.availablePeriods?.includes(m));
+    return {
+      branch: {
+        name: p.name,
+        periods,
+        ...(p.availableColumns === undefined ? {} : { availableColumns: p.availableColumns }),
+      },
+      hasData: p.availablePeriods === undefined || p.availablePeriods.length > 0,
+    };
+  });
+  const withData = branches.filter(b => b.hasData);
+  return (withData.length > 0 ? withData : branches).map(b => b.branch);
 }
 
 interface DateRangeLike {
@@ -594,10 +646,11 @@ export interface QueryContextOptions {
   readonly dataDir: string;
   readonly dimensions: DimensionsConfig;
   readonly orgAccountsPath?: string | undefined;
-  readonly availablePeriods?: readonly string[] | undefined;
+  /** Configured providers contributing to queries, in config order. Each
+   *  carries its own on-disk months and probed CUR columns. */
+  readonly providers: readonly ProviderSourceSpec[];
   readonly accountReverseMap?: ReadonlyMap<string, readonly string[]> | undefined;
   readonly costScope?: CostScopeConfig | undefined;
-  readonly availableColumns?: ReadonlySet<string> | undefined;
   readonly materializedSource?: string | undefined;
 }
 
@@ -607,7 +660,7 @@ function setupQuery(
   opts: QueryContextOptions,
   extraSourceOpts?: Partial<BuildSourceOptions>,
 ): CommonQuerySetup {
-  const { dataDir, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns, materializedSource } = opts;
+  const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope, materializedSource } = opts;
   const qb = new QueryBuilder();
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
   const costMetric = costScope?.costMetric ?? 'unblended';
@@ -621,9 +674,9 @@ function setupQuery(
 
   const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
   const costPerspective = costScope?.costPerspective ?? 'gross';
-  const periods = resolveQueryPeriods(params.dateRange, availablePeriods);
+  const branches = resolveProviderBranches(providers, computePeriodsInRange(params.dateRange));
   const resolvedTier = effectiveTier(tier, params.dateRange);
-  const source = buildSource({ dataDir, tier: resolvedTier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution, ...extraSourceOpts });
+  const source = buildSource({ dataDir, tier: resolvedTier, dimensions, orgAccountsPath, providers: branches, costMetric, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution, ...extraSourceOpts });
   return { qb, filterClauses, exclusionClauses, source, costMetric };
 }
 
@@ -691,7 +744,7 @@ export function buildTrendQuery(
   params: TrendQueryParams,
   opts: QueryContextOptions,
 ): ParameterizedQuery {
-  const { dataDir, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns, materializedSource } = opts;
+  const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope, materializedSource } = opts;
   assertFiniteNumber(Number(params.deltaThreshold), 'deltaThreshold');
   const qb = new QueryBuilder();
   const groupByResolved = resolveField(params.groupBy, dimensions);
@@ -719,8 +772,8 @@ export function buildTrendQuery(
     const prevStartIso = new Date(startMs - durationDays * dayMs).toISOString().slice(0, 10);
     const previousPeriods = computePeriodsInRange({ start: prevStartIso, end: prevEndIso });
     const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
-    const periods = availablePeriods === undefined ? required : required.filter(p => availablePeriods.includes(p));
-    source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution });
+    const branches = resolveProviderBranches(providers, required);
+    source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, providers: branches, costMetric, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution });
   } else {
     source = materializedSource;
     exclusionClauses = [];
@@ -1152,7 +1205,7 @@ export function buildMaterializeBaseQuery(
   dateRange: { readonly start: string; readonly end: string },
   opts: QueryContextOptions,
 ): string {
-  const { dataDir, dimensions, orgAccountsPath, availablePeriods, accountReverseMap, costScope, availableColumns } = opts;
+  const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
   const exclusionClauses: string[] = [];
   if (costScope !== undefined) {
     for (const rule of costScope.rules) {
@@ -1164,8 +1217,8 @@ export function buildMaterializeBaseQuery(
   }
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
-  const periods = resolveQueryPeriods(dateRange, availablePeriods);
-  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, periods, costMetric, availableColumns, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution, includeRawTags: true, slim: true });
+  const branches = resolveProviderBranches(providers, computePeriodsInRange(dateRange));
+  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, providers: branches, costMetric, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution, includeRawTags: true, slim: true });
 
   assertDateString(dateRange.start);
   assertDateString(dateRange.end);
@@ -1211,14 +1264,21 @@ export function buildRollupPartitionQuery(
   if (!/^\d{4}-\d{2}$/.test(period)) {
     throw new SecurityError(`Invalid rollup period "${period}" — expected YYYY-MM.`);
   }
-  const { dataDir, dimensions, orgAccountsPath, accountReverseMap, costScope, availableColumns } = opts;
+  const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
   const grain = rollupGrainColumns(dimensions);
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
 
+  // Rollup partitions are built per provider: the caller passes exactly the
+  // provider whose store is being (re)built, with the explicit period.
   const source = buildSource({
-    dataDir, tier, dimensions, orgAccountsPath, periods: [period],
-    costMetric, availableColumns, costPerspective,
+    dataDir, tier, dimensions, orgAccountsPath,
+    providers: providers.map(pr => ({
+      name: pr.name,
+      periods: [period],
+      ...(pr.availableColumns === undefined ? {} : { availableColumns: pr.availableColumns }),
+    })),
+    costMetric, costPerspective,
     marketplaceAttribution: costScope?.marketplaceAttribution,
     includeRawTags: false, slim: true,
   });
@@ -1284,13 +1344,18 @@ export function buildGrainProbeQuery(
   if (!/^\d{4}-\d{2}$/.test(period)) {
     throw new SecurityError(`Invalid probe period "${period}" — expected YYYY-MM.`);
   }
-  const { dataDir, dimensions, orgAccountsPath, accountReverseMap, costScope, availableColumns } = opts;
+  const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
   const costMetric = costScope?.costMetric ?? 'unblended';
   const costPerspective = costScope?.costPerspective ?? 'gross';
 
   const source = buildSource({
-    dataDir, tier: 'daily', dimensions, orgAccountsPath, periods: [period],
-    costMetric, availableColumns, costPerspective,
+    dataDir, tier: 'daily', dimensions, orgAccountsPath,
+    providers: providers.map(pr => ({
+      name: pr.name,
+      periods: [period],
+      ...(pr.availableColumns === undefined ? {} : { availableColumns: pr.availableColumns }),
+    })),
+    costMetric, costPerspective,
     marketplaceAttribution: costScope?.marketplaceAttribution,
     includeRawTags: false, slim: true,
   });

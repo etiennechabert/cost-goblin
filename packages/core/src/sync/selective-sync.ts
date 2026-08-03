@@ -26,6 +26,8 @@ function findAwsCli(): string {
   return cachedAwsPath;
 }
 import { logger } from '../logger/logger.js';
+import type { ProviderName } from '../types/branded.js';
+import { providerMetaDir, providerRawDir, providerRoot } from './provider-paths.js';
 import { parseS3Path } from './s3-client.js';
 import type { ProgressCallback } from './s3-client.js';
 import type { ManifestFileEntry } from './manifest.js';
@@ -45,6 +47,9 @@ export interface SelectiveSyncOptions {
   readonly bucketPath: string;
   readonly profile: string;
   readonly dataDir: string;
+  /** Which provider's tree (`{dataDir}/{providerName}/raw|meta`) receives
+   *  the download. Always a validated `ProviderName` from config. */
+  readonly providerName: ProviderName;
   readonly expectedDataType?: ExpectedDataType | undefined;
   readonly files: readonly ManifestFileEntry[];
   readonly onProgress?: ProgressCallback | undefined;
@@ -125,11 +130,14 @@ function runAwsS3Sync(options: {
 
 async function saveEtags(
   dataDir: string,
+  providerName: ProviderName,
   tier: string,
   period: string,
   periodFiles: readonly ManifestFileEntry[],
 ): Promise<void> {
-  const etagPath = join(dataDir, getEtagFileName(tier));
+  const metaDir = providerMetaDir(dataDir, providerName);
+  await mkdir(metaDir, { recursive: true });
+  const etagPath = join(metaDir, getEtagFileName(tier));
   let savedEtags: Record<string, Record<string, string>> = {};
   try {
     const raw = await readFile(etagPath, 'utf-8');
@@ -236,21 +244,22 @@ interface SyncDateGroupOptions {
   readonly dateFiles: readonly ManifestFileEntry[];
   readonly s3Bucket: string;
   readonly dataDir: string;
+  readonly providerName: ProviderName;
   readonly profile: string;
   readonly signal: AbortSignal | undefined;
   readonly onLine: (line: string) => void;
 }
 
 async function syncDateGroup(opts: SyncDateGroupOptions): Promise<number> {
-  const { date, dateFiles, s3Bucket, dataDir, profile, signal, onLine } = opts;
+  const { date, dateFiles, s3Bucket, dataDir, providerName, profile, signal, onLine } = opts;
   const firstFile = dateFiles[0];
   if (firstFile === undefined) return 0;
 
   const datePrefix = extractPeriodPrefix(firstFile.key);
   const s3Source = `s3://${s3Bucket}/${datePrefix}`;
   // This raw dir is the copy the Savings query actually reads
-  // (query-recommendations reads aws/raw/cost-opt-*/*.parquet).
-  const destDir = join(dataDir, 'aws', 'raw', `cost-opt-${date}`);
+  // (query-recommendations reads {providerName}/raw/cost-opt-*/*.parquet).
+  const destDir = join(providerRawDir(dataDir, providerName), `cost-opt-${date}`);
   await mkdir(destDir, { recursive: true });
 
   await runAwsS3Sync({ source: s3Source, dest: destDir, profile, signal, onLine });
@@ -260,15 +269,15 @@ async function syncDateGroup(opts: SyncDateGroupOptions): Promise<number> {
 }
 
 async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
-  const { bucketPath, profile, dataDir, files, onProgress } = options;
+  const { bucketPath, profile, dataDir, providerName, files, onProgress } = options;
   const s3Path = parseS3Path(bucketPath);
 
-  // Cost-optimization data is read straight from aws/raw/cost-opt-*/ (see
-  // query-recommendations). An earlier version also copied each day into a
-  // Hive-partitioned aws/cost-optimization/usage_date=*/ tree that nothing ever
+  // Cost-optimization data is read straight from {provider}/raw/cost-opt-*/
+  // (see query-recommendations). An earlier version also copied each day into
+  // a Hive-partitioned cost-optimization/usage_date=*/ tree that nothing ever
   // read and prune never cleaned — so it leaked unbounded. Stop writing it and
   // drop any legacy copy left behind (best-effort: cosmetic, never fail a sync).
-  await rm(join(dataDir, 'aws', 'cost-optimization'), { recursive: true, force: true })
+  await rm(join(providerRoot(dataDir, providerName), 'cost-optimization'), { recursive: true, force: true })
     .catch(() => { /* legacy dir may not exist */ });
 
   const periods = groupByPeriod(files);
@@ -287,7 +296,7 @@ async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ fi
     for (const [date, dateFiles] of dateGroups) {
       if (options.signal?.aborted) break;
       totalFilesDownloaded += await syncDateGroup({
-        date, dateFiles, s3Bucket: s3Path.bucket, dataDir, profile,
+        date, dateFiles, s3Bucket: s3Path.bucket, dataDir, providerName, profile,
         signal: options.signal, onLine: makeLineHandler(onProgress, totalFiles, counter, bytes),
       });
     }
@@ -296,7 +305,7 @@ async function syncCostOptimization(options: SelectiveSyncOptions): Promise<{ fi
       onProgress({ phase: 'repartitioning', filesTotal: 1, filesDone: 1 });
     }
 
-    await saveEtags(dataDir, 'cost-optimization', period, periodFiles);
+    await saveEtags(dataDir, providerName, 'cost-optimization', period, periodFiles);
   }
 
   if (onProgress !== undefined) {
@@ -314,7 +323,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     return syncCostOptimization(options);
   }
 
-  const { bucketPath, profile, dataDir, files, onProgress } = options;
+  const { bucketPath, profile, dataDir, providerName, files, onProgress } = options;
   const s3Path = parseS3Path(bucketPath);
 
   const periods = groupByPeriod(files);
@@ -335,7 +344,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
 
     const periodPrefix = extractPeriodPrefix(firstFile.key);
     const s3Source = `s3://${s3Path.bucket}/${periodPrefix}`;
-    const stagingDir = join(dataDir, 'aws', 'raw', `${tier}-${period}`);
+    const stagingDir = join(providerRawDir(dataDir, providerName), `${tier}-${period}`);
     await mkdir(stagingDir, { recursive: true });
 
     // Phase 1: Download using aws s3 sync
@@ -382,7 +391,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     totalFilesDownloaded += periodFiles.length;
 
     await pruneStaleFiles(stagingDir, periodFiles);
-    await saveEtags(dataDir, tier, period, periodFiles);
+    await saveEtags(dataDir, providerName, tier, period, periodFiles);
   }
 
   if (onProgress !== undefined) {

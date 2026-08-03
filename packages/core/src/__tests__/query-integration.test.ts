@@ -4,11 +4,13 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildCostQuery, buildDailyCostsQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource } from '../query/builder.js';
 import { buildSource as rebuildSource } from '../query/builder.js';
+import { FIXTURE_PROVIDER_NAME } from '../__fixtures__/layout.js';
 import type { DimensionsConfig } from '../types/config.js';
-import { asDimensionId, asDateString, asDollars, asEntityRef, asTagValue } from '../types/branded.js';
+import { asDimensionId, asDateString, asDollars, asEntityRef, asProviderName, asTagValue } from '../types/branded.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
+const PROVIDER = asProviderName(FIXTURE_PROVIDER_NAME);
 
 const dimensions: DimensionsConfig = {
   builtIn: [
@@ -99,15 +101,15 @@ describe('DuckDB query integration', () => {
   });
 
   it('reads fixture parquet files', async () => {
-    const source = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions });
+    const source = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER }] });
     const rows = await queryAll(conn, `SELECT COUNT(*) as cnt FROM ${source}`);
     expect(Number(rows[0]?.['cnt'])).toBeGreaterThan(0);
   });
 
   it('narrowed source with specific months reads the same data as the wildcard', async () => {
     // Synthetic fixtures: daily-2026-01/ and daily-2026-02/.
-    const wide = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions });
-    const narrow = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, periods: ['2026-01', '2026-02'] });
+    const wide = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER }] });
+    const narrow = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: ['2026-01', '2026-02'] }] });
     const [[wideRow], [narrowRow]] = await Promise.all([
       queryAll(conn, `SELECT COUNT(*) as cnt, SUM(cost) as total FROM ${wide}`),
       queryAll(conn, `SELECT COUNT(*) as cnt, SUM(cost) as total FROM ${narrow}`),
@@ -121,7 +123,7 @@ describe('DuckDB query integration', () => {
     // matches zero files, even when other patterns in the list match. Callers
     // must intersect required periods with what's actually on disk BEFORE
     // passing to buildSource. The query handlers do this via listLocalMonths.
-    const source = rebuildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, periods: ['2025-11'] });
+    const source = rebuildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: ['2025-11'] }] });
     await expect(queryAll(conn, `SELECT COUNT(*) as cnt FROM ${source}`))
       .rejects.toThrow(/No files found/);
   });
@@ -133,7 +135,7 @@ describe('DuckDB query integration', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
       },
-      { dataDir: SYNTHETIC_DIR, dimensions },
+      { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }] },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
@@ -149,7 +151,7 @@ describe('DuckDB query integration', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
       },
-      { dataDir: SYNTHETIC_DIR, dimensions },
+      { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }] },
     );
     const resultFiltered = buildCostQuery(
       {
@@ -157,7 +159,7 @@ describe('DuckDB query integration', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: { [asDimensionId('region')]: [asTagValue('eu-central-1')] },
       },
-      { dataDir: SYNTHETIC_DIR, dimensions },
+      { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }] },
     );
     const allRows = await queryAllPrepared(conn, `SELECT SUM(total_cost) as t FROM (${resultAll.sql})`, resultAll.params);
     const filteredRows = await queryAllPrepared(conn, `SELECT SUM(total_cost) as t FROM (${resultFiltered.sql})`, resultFiltered.params);
@@ -172,7 +174,7 @@ describe('DuckDB query integration', () => {
         minCost: asDollars(0),
         tagDimension: asDimensionId('tag_team'),
       },
-      { dataDir: SYNTHETIC_DIR, dimensions },
+      { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }] },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
@@ -189,7 +191,7 @@ describe('DuckDB query integration', () => {
         minCost: asDollars(0),
         tagDimension: asDimensionId('tag_team'),
       },
-      { dataDir: SYNTHETIC_DIR, dimensions },
+      { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }] },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
@@ -218,7 +220,7 @@ describe('DuckDB query integration', () => {
         minCost: asDollars(0),
         tagDimension: asDimensionId('tag_team'),
       },
-      { dataDir: SYNTHETIC_DIR, dimensions },
+      { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }] },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     // Fixture may have zero non-Usage lines; just verify the query is valid
@@ -238,20 +240,20 @@ describe('DuckDB query integration', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-02-28') },
         filters: {},
       },
-      { dataDir: SYNTHETIC_DIR, dimensions },
+      { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }] },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
   });
 
   it('reads hourly raw files', async () => {
-    const source = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'hourly', dimensions });
+    const source = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'hourly', dimensions, providers: [{ name: PROVIDER }] });
     const rows = await queryAll(conn, `SELECT COUNT(*) as cnt FROM ${source}`);
     expect(Number(rows[0]?.['cnt'])).toBeGreaterThan(0);
   });
 
   it('hourly tier exposes both usage_date (DATE) and usage_hour (TIMESTAMP)', async () => {
-    const source = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'hourly', dimensions });
+    const source = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'hourly', dimensions, providers: [{ name: PROVIDER }] });
     const rows = await queryAll(conn, `
       SELECT typeof(usage_date) AS d_type, typeof(usage_hour) AS h_type
       FROM ${source} LIMIT 1
@@ -271,7 +273,7 @@ describe('DuckDB query integration', () => {
         filters: {},
         granularity: 'hourly',
       },
-      { dataDir: SYNTHETIC_DIR, dimensions },
+      { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }] },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
@@ -282,12 +284,12 @@ describe('DuckDB query integration', () => {
     const range = { start: asDateString('2026-02-01'), end: asDateString('2026-02-28') } as const;
     const result = buildCostQuery(
       { groupBy: asDimensionId('service'), dateRange: range, filters: {}, granularity: 'hourly' },
-      { dataDir: SYNTHETIC_DIR, dimensions },
+      { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }] },
     );
     const queryTotalRows = await queryAllPrepared(conn, `SELECT SUM(total_cost) AS t FROM (${result.sql})`, result.params);
     const queryTotal = Number(queryTotalRows[0]?.['t'] ?? 0);
 
-    const source = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'hourly', dimensions });
+    const source = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'hourly', dimensions, providers: [{ name: PROVIDER }] });
     const rawRows = await queryAll(conn, `
       SELECT SUM(cost) AS t FROM ${source}
       WHERE usage_date BETWEEN '${range.start}' AND '${range.end}'
@@ -306,7 +308,7 @@ describe('DuckDB query integration', () => {
         filters: {},
         granularity: 'hourly',
       },
-      { dataDir: SYNTHETIC_DIR, dimensions },
+      { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }] },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);
@@ -326,7 +328,7 @@ describe('DuckDB query integration', () => {
         filters: {},
         granularity: 'daily',
       },
-      { dataDir: SYNTHETIC_DIR, dimensions },
+      { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }] },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
     expect(rows.length).toBeGreaterThan(0);

@@ -12,6 +12,8 @@ import type { Cell, Column, StructuredResult } from '../formatters/result.js';
 import {
   computeDataCoverage,
   defaultDateRange,
+  emptyRangeResult,
+  getQueryProviders,
   lookupDimension,
   resolveEntityName,
   resolveFormat,
@@ -46,7 +48,6 @@ export async function getFilterValues(
 
   const accountMap = await ctx.getAccountMap();
   const orgPath = await ctx.getOrgAccountsPath();
-  const availableColumns = await ctx.getAvailableColumns('daily');
 
   // lookupDimension above already rejected unknown ids with a friendly error;
   // resolveField still throws SecurityError as defense in depth so the id can
@@ -57,15 +58,27 @@ export async function getFilterValues(
   const startParam = qb.addParam(dateRange.start);
   const endParam = qb.addParam(dateRange.end);
 
-  const periods = computePeriodsInRange(dateRange);
+  const allProviders = await getQueryProviders(ctx, 'daily');
+  const required = computePeriodsInRange(dateRange);
+  // Per-provider month intersection; providers with nothing in range are
+  // dropped (a zero-match glob fails the whole union).
+  const branches = allProviders
+    .map(pr => ({
+      name: pr.name,
+      periods: required.filter(m => pr.availablePeriods?.includes(m) ?? false),
+      availableColumns: pr.availableColumns,
+    }))
+    .filter(b => b.periods.length > 0);
+  if (branches.length === 0) {
+    return emptyRangeResult(ctx, dateRange, format, `${dimLabel} Values (${dateRange.start} to ${dateRange.end})`);
+  }
   const source = buildSource({
     dataDir: ctx.dataDir,
     tier: 'daily',
     dimensions,
     orgAccountsPath: orgPath,
-    periods,
+    providers: branches,
     costMetric: 'unblended',
-    availableColumns,
   });
 
   const sql = `

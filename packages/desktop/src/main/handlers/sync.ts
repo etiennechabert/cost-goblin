@@ -3,25 +3,27 @@ import {
   getDataInventory,
   getLocalDataInventory,
   hasSyncedTier,
-  getEtagFileName,
   getRawDirPrefix,
   parseEtagsJson,
   extractPeriod,
   listLocalMonths,
   configuredTierRetentions,
   periodsOutsideRetention,
+  providerEtagPath,
+  providerRawDir,
   readTierLastSync,
   writeTierLastSync,
   isCredentialError,
   logger,
 } from '@costgoblin/core';
 import type {
-  CostGoblinConfig,
-  DataInventory,
+  DataInventoryResult,
   DataTier,
   ManifestFileEntry,
   AccountMappingStatus,
   AccountMappingEntry,
+  ProviderConfig,
+  ProviderName,
   PruneResult,
   SyncStatus,
 } from '@costgoblin/core';
@@ -32,24 +34,25 @@ import {
   toUserFriendlyError,
 } from './context.js';
 import { triggerAutoSyncNow } from '../auto-sync.js';
+import { parseSyncId, resolveProvider, resolveSyncId } from '../sync-id.js';
 import { recordSyncLog } from '../sync-log.js';
 import { traceSpan, SPAN_OP } from '../telemetry/tracing.js';
 
 type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
 
+/** Tier addressed by a (legacy or composite) syncId — legacy mapping:
+ *  'default' and any unrecognized tier-only id mean the daily tier. */
 function resolveDataType(syncId: string): ExpectedDataType {
-  if (syncId === 'hourly') return 'hourly';
-  if (syncId === 'cost-optimization') return 'cost-optimization';
-  return 'daily';
+  return parseSyncId(syncId).tier;
 }
 
-function resolveBucketPath(config: CostGoblinConfig, syncId: string): string {
-  const provider = config.providers[0];
-  if (provider === undefined) throw new Error('No provider configured');
-  if (syncId === 'hourly') {
+/** S3 bucket for one provider's tier. Shared with the auto-sync deps wiring so
+ *  manual and background sync resolve buckets identically. */
+export function resolveBucketPath(provider: ProviderConfig, tier: ExpectedDataType): string {
+  if (tier === 'hourly') {
     return provider.sync.hourly?.bucket ?? provider.sync.daily.bucket;
   }
-  if (syncId === 'cost-optimization') {
+  if (tier === 'cost-optimization') {
     const costOptBucket = provider.sync.costOptimization?.bucket;
     if (costOptBucket === undefined) throw new Error('Cost optimization not configured');
     return costOptBucket;
@@ -124,6 +127,7 @@ const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?$/;
  *  they all delete data identically. Returns whether any files were removed. */
 export async function deleteLocalPeriodFiles(
   dataDir: string,
+  provider: ProviderName,
   period: string,
   tier: ExpectedDataType,
 ): Promise<boolean> {
@@ -134,7 +138,7 @@ export async function deleteLocalPeriodFiles(
   const path = await import('node:path');
 
   const prefix = getRawDirPrefix(tier);
-  const rawDir = path.join(dataDir, 'aws', 'raw');
+  const rawDir = providerRawDir(dataDir, provider);
 
   const removedAny = await removeMatchingDirs(rawDir, prefix, period, fs, path);
   if (removedAny) {
@@ -142,7 +146,7 @@ export async function deleteLocalPeriodFiles(
     recordSyncLog('info', `Deleted local data (${tier}): ${prefix}-${period}`);
   }
 
-  await pruneEtagFile(path.join(dataDir, getEtagFileName(tier)), period, fs);
+  await pruneEtagFile(providerEtagPath(dataDir, provider, tier), period, fs);
 
   if (!removedAny) {
     logger.info(`Delete (${tier}) for ${period}: nothing matched ${prefix}-${period}*`);
@@ -155,7 +159,9 @@ export async function deleteLocalPeriodFiles(
  *  tier only — hourly / cost-opt don't feed the daily rollup. Shared by the
  *  manual delete/prune handlers and auto-prune. */
 export async function cascadeRollupForDeletedMonth(app: AppContext, month: string): Promise<void> {
-  const monthsLeft = await listLocalMonths(app.ctx.dataDir, 'daily');
+  const provider = await app.getFirstProviderName();
+  if (provider === null) return;
+  const monthsLeft = await listLocalMonths(app.ctx.dataDir, provider, 'daily');
   if (monthsLeft.includes(month)) app.maintainRollup([month]);
   else await app.rollupStore.deletePeriod(month);
 }
@@ -172,73 +178,92 @@ export function registerSyncHandlers(app: AppContext): void {
   let nextWorkerId = 0;
 
   ipcMain.handle('sync:status', async (_event, syncId: string = 'default'): Promise<SyncStatus> => {
-    const current = state.syncStatuses[syncId];
+    // While onboarding (no config / no providers) nothing was ever synced.
+    const config = await getConfig().catch(() => null);
+    if (config === null || config.providers.length === 0) return { status: 'idle', lastSync: null };
+    const { provider, tier, key } = resolveSyncId(syncId, config.providers);
+    const current = state.syncStatuses[key];
     if (current === undefined) {
-      const iso = await readTierLastSync(ctx.dataDir, syncId);
+      const iso = await readTierLastSync(ctx.dataDir, provider.name, tier);
       return { status: 'idle', lastSync: iso === null ? null : new Date(iso) };
     }
     // The in-memory lastSync resets to null on every launch; backfill it from the
     // durable timestamp file so the toolbar can show "Synced <time>" after a
-    // restart for tiers that aren't mid-sync.
+    // restart for (provider, tier) pairs that aren't mid-sync.
     if ((current.status === 'idle' || current.status === 'failed') && current.lastSync === null) {
-      const iso = await readTierLastSync(ctx.dataDir, syncId);
+      const iso = await readTierLastSync(ctx.dataDir, provider.name, tier);
       if (iso !== null) return { ...current, lastSync: new Date(iso) };
     }
     return current;
   });
 
-  ipcMain.handle('data:inventory', async (_event, tier?: ExpectedDataType): Promise<DataInventory> => {
+  ipcMain.handle('data:inventory', async (_event, tier?: ExpectedDataType, providerName?: string): Promise<DataInventoryResult> => {
     const config = await getConfig();
-    const provider = config.providers[0];
-    if (provider === undefined) throw new Error('No provider configured');
+    const provider = resolveProvider(config.providers, providerName);
     const t = tier ?? 'daily';
-    const bucket = resolveBucketPath(config, t);
+    const bucket = resolveBucketPath(provider, t);
     try {
-      return await getDataInventory(bucket, provider.credentials.profile, ctx.dataDir, t);
+      const inv = await getDataInventory(bucket, provider.credentialsProfile, ctx.dataDir, provider.name, t);
+      return { ...inv, provider: provider.name };
     } catch (err: unknown) {
       // Expired/invalid credentials on an install that has synced this tier from
       // S3 before (its etag file exists) is a real auth failure, not the
       // imported-snapshot case — surface it so the user re-authenticates instead
       // of silently showing stale local data as if everything were up to date.
-      if (isCredentialError(err) && await hasSyncedTier(ctx.dataDir, t)) {
-        throw toUserFriendlyError(err, provider.credentials.profile);
+      if (isCredentialError(err) && await hasSyncedTier(ctx.dataDir, provider.name, t)) {
+        throw toUserFriendlyError(err, provider.credentialsProfile);
       }
       // Otherwise fall back to a disk-only inventory so a consumer that imported
       // a shared snapshot (no S3 access) still sees the data it has.
-      const local = await getLocalDataInventory(ctx.dataDir, t);
+      const local = await getLocalDataInventory(ctx.dataDir, provider.name, t);
       if (local.totalLocalPeriods > 0) {
-        logger.info('S3 inventory unavailable — using local-only inventory', { tier: t });
-        return local;
+        logger.info('S3 inventory unavailable — using local-only inventory', { tier: t, provider: provider.name });
+        return { ...local, provider: provider.name };
       }
-      throw toUserFriendlyError(err, provider.credentials.profile);
+      throw toUserFriendlyError(err, provider.credentialsProfile);
     }
   });
 
-  ipcMain.handle('data:delete-period', async (_event, period: string, tier: ExpectedDataType = 'daily'): Promise<void> => {
-    await deleteLocalPeriodFiles(ctx.dataDir, period, tier);
-    if (tier === 'daily') await cascadeRollupForDeletedMonth(app, period.slice(0, 7));
+  ipcMain.handle('data:delete-period', async (_event, period: string, tier: ExpectedDataType = 'daily', providerName?: string): Promise<void> => {
+    const config = await getConfig();
+    const provider = resolveProvider(config.providers, providerName);
+    await deleteLocalPeriodFiles(ctx.dataDir, provider.name, period, tier);
+    // The RollupStore is bound to the FIRST provider — cascade only its daily
+    // deletes; other providers' queries read raw.
+    if (tier === 'daily' && provider.name === config.providers[0]?.name) {
+      await cascadeRollupForDeletedMonth(app, period.slice(0, 7));
+    }
   });
 
   // Manual prune: drop every local period that has fallen outside its tier's
-  // retention window, across all configured tiers. Local-only — derives the
-  // on-disk period list from getLocalDataInventory, so it works without any S3
-  // access. Returns what was removed so the UI can report it.
+  // retention window, across ALL configured providers × their configured tiers
+  // (the same providers × configuredTierRetentions loop as the auto-prune pass
+  // and the auto-sync download cutoff, so the three can't drift). Local-only —
+  // derives the on-disk period list from getLocalDataInventory, so it works
+  // without any S3 access. Returns what was removed so the UI can report it.
   ipcMain.handle('data:prune', async (): Promise<PruneResult> => {
     const config = await getConfig();
-    const provider = config.providers[0];
-    if (provider === undefined) throw new Error('No provider configured');
+    const first = config.providers[0];
+    if (first === undefined) throw new Error('No provider configured');
 
-    const deleted: { tier: DataTier; period: string }[] = [];
-    for (const { tier, retentionDays } of configuredTierRetentions(provider.sync)) {
-      const local = await getLocalDataInventory(ctx.dataDir, tier);
-      const expired = periodsOutsideRetention(local.local.periods, retentionDays);
-      for (const period of expired) {
-        const removed = await deleteLocalPeriodFiles(ctx.dataDir, period, tier);
-        if (removed) deleted.push({ tier, period });
+    const deleted: { tier: DataTier; period: string; provider: string }[] = [];
+    for (const provider of config.providers) {
+      for (const { tier, retentionDays } of configuredTierRetentions(provider.sync)) {
+        const local = await getLocalDataInventory(ctx.dataDir, provider.name, tier);
+        const expired = periodsOutsideRetention(local.local.periods, retentionDays);
+        for (const period of expired) {
+          const removed = await deleteLocalPeriodFiles(ctx.dataDir, provider.name, period, tier);
+          if (removed) deleted.push({ tier, period, provider: provider.name });
+        }
       }
     }
-    // Cascade the prune into the rollup, once per unique daily month removed.
-    for (const month of changedRollupMonths(deleted.filter(d => d.tier === 'daily').map(d => d.period))) {
+    // Cascade the prune into the rollup, once per unique daily month removed —
+    // FIRST provider only (the RollupStore is bound to it; other providers'
+    // queries read raw).
+    const firstDailyMonths = deleted
+      .filter(d => d.provider === first.name && d.tier === 'daily')
+      .map(d => d.period);
+    for (const month of changedRollupMonths(firstDailyMonths)) {
       await cascadeRollupForDeletedMonth(app, month);
     }
     if (deleted.length > 0) {
@@ -250,16 +275,14 @@ export function registerSyncHandlers(app: AppContext): void {
 
   ipcMain.handle('data:sync-periods', async (_event, fileEntries: ManifestFileEntry[], syncId: string = 'default'): Promise<{ filesDownloaded: number; rowsProcessed: number }> => {
     const config = await getConfig();
-    const provider = config.providers[0];
-    if (provider === undefined) throw new Error('No provider configured');
+    const { provider, tier, key } = resolveSyncId(syncId, config.providers);
 
-    const bucketPath = resolveBucketPath(config, syncId);
+    const bucketPath = resolveBucketPath(provider, tier);
     const workerId = nextWorkerId++;
-    syncWorkerIds.set(syncId, workerId);
-    state.syncStatuses[syncId] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0, bytesTotal: 0, bytesDone: 0, message: '' };
+    syncWorkerIds.set(key, workerId);
+    state.syncStatuses[key] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0, bytesTotal: 0, bytesDone: 0, message: '' };
 
-    const tier = resolveDataType(syncId);
-    recordSyncLog('info', `Sync started: ${tier} (${String(fileEntries.length)} file(s))`);
+    recordSyncLog('info', `Sync started: ${provider.name}/${tier} (${String(fileEntries.length)} file(s))`);
 
     try {
       const result = await traceSpan(
@@ -267,27 +290,34 @@ export function registerSyncHandlers(app: AppContext): void {
           name: 'sync.s3',
           op: SPAN_OP.sync,
           forceTransaction: true,
-          attributes: { 'sync.tier': tier, 'sync.files_requested': fileEntries.length },
+          attributes: { 'sync.tier': tier, 'sync.provider': provider.name, 'sync.files_requested': fileEntries.length },
         },
         async (span) => {
-          const r = await runSync(ctx, provider.credentials.profile, bucketPath, tier, fileEntries, syncId, state);
+          const r = await runSync(ctx, provider.credentialsProfile, provider.name, bucketPath, tier, fileEntries, key, state);
           span?.setAttribute('sync.files_downloaded', r.filesDownloaded);
           span?.setAttribute('sync.rows_processed', r.rowsProcessed);
           return r;
         },
       );
-      syncWorkerIds.delete(syncId);
+      syncWorkerIds.delete(key);
 
       const now = new Date();
-      state.syncStatuses[syncId] = { status: 'completed', lastSync: now, filesDownloaded: result.filesDownloaded };
+      state.syncStatuses[key] = { status: 'completed', lastSync: now, filesDownloaded: result.filesDownloaded };
       // Best-effort: the persisted timestamp is cosmetic and self-heals on the
       // next sync, so a write failure must never fail the (successful) sync.
-      await writeTierLastSync(ctx.dataDir, tier, now.toISOString()).catch(() => { /* cosmetic */ });
+      await writeTierLastSync(ctx.dataDir, provider.name, tier, now.toISOString()).catch(() => { /* cosmetic */ });
       if (result.filesDownloaded > 0) {
         if (tier === 'daily') {
-          // Re-roll only the daily partitions this sync touched (file replace).
-          app.maintainRollup(changedRollupMonths(fileEntries.map(e => extractPeriod(e.key))));
-          // Then re-discover + recompute baselines against the refreshed data.
+          if (provider.name === config.providers[0]?.name) {
+            // Re-roll only the daily partitions this sync touched (file replace).
+            // FIRST provider only — the RollupStore is bound to its tree; other
+            // providers' daily data is queried raw.
+            app.maintainRollup(changedRollupMonths(fileEntries.map(e => extractPeriod(e.key))));
+          } else {
+            app.warmupBase();
+          }
+          // Then re-discover + recompute baselines against the refreshed data —
+          // baselines read ALL providers, so every daily sync recomputes.
           app.recomputeBaselines();
         } else {
           // Hourly / cost-opt don't feed the daily rollup; just refresh caches.
@@ -296,8 +326,8 @@ export function registerSyncHandlers(app: AppContext): void {
       }
       return result;
     } catch (err: unknown) {
-      syncWorkerIds.delete(syncId);
-      const error = handleSyncError(err, syncId, provider.credentials.profile, state);
+      syncWorkerIds.delete(key);
+      const error = handleSyncError(err, key, provider.credentialsProfile, state);
       if (error.message === 'Download cancelled') {
         return { filesDownloaded: 0, rowsProcessed: 0 };
       }
@@ -305,12 +335,16 @@ export function registerSyncHandlers(app: AppContext): void {
     }
   });
 
-  ipcMain.handle('data:cancel-sync', (_event, syncId: string = 'default'): void => {
-    const workerId = syncWorkerIds.get(syncId);
+  ipcMain.handle('data:cancel-sync', async (_event, syncId: string = 'default'): Promise<void> => {
+    const config = await getConfig().catch(() => null);
+    const providers = config?.providers ?? [];
+    if (providers.length === 0) return; // nothing configured → nothing running
+    const { key } = resolveSyncId(syncId, providers);
+    const workerId = syncWorkerIds.get(key);
     if (workerId !== undefined) {
       ctx.syncClient.cancelSync(workerId);
-      logger.info(`Sync '${syncId}' cancelled by user`);
-      recordSyncLog('warn', `Sync '${syncId}' cancelled by user`);
+      logger.info(`Sync '${key}' cancelled by user`);
+      recordSyncLog('warn', `Sync '${key}' cancelled by user`);
     }
   });
 
@@ -403,15 +437,17 @@ export function registerSyncHandlers(app: AppContext): void {
 async function runSync(
   ctx: IpcContext,
   profile: string,
+  providerName: ProviderName,
   bucketPath: string,
   tier: ExpectedDataType,
   fileEntries: readonly ManifestFileEntry[],
-  syncId: string,
+  statusKey: string,
   state: AppState,
 ): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
   return ctx.syncClient.syncPeriods({
     bucketPath,
     profile,
+    providerName,
     dataDir: ctx.dataDir,
     tier,
     files: fileEntries,
@@ -419,7 +455,7 @@ async function runSync(
       const bytesDone = progress.bytesDone ?? 0;
       const bytesTotal = progress.bytesTotal ?? 0;
       const fraction = computeSyncFraction(bytesDone, bytesTotal, progress.filesDone, progress.filesTotal);
-      state.syncStatuses[syncId] = {
+      state.syncStatuses[statusKey] = {
         status: 'syncing',
         phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
         progress: fraction,
@@ -435,19 +471,19 @@ async function runSync(
 
 function handleSyncError(
   err: unknown,
-  syncId: string,
+  statusKey: string,
   profile: string,
   state: AppState,
 ): Error {
   const raw = err instanceof Error ? err : new Error(String(err));
   if (raw.message === 'Download cancelled') {
-    state.syncStatuses[syncId] = { status: 'idle', lastSync: null };
+    state.syncStatuses[statusKey] = { status: 'idle', lastSync: null };
     return raw;
   }
   const error = toUserFriendlyError(err, profile);
-  logger.error(`Selective sync '${syncId}' failed: ${error.message}`);
-  recordSyncLog('error', `Sync '${syncId}' failed: ${error.message}`);
-  state.syncStatuses[syncId] = { status: 'failed', error, lastSync: null };
+  logger.error(`Selective sync '${statusKey}' failed: ${error.message}`);
+  recordSyncLog('error', `Sync '${statusKey}' failed: ${error.message}`);
+  state.syncStatuses[statusKey] = { status: 'failed', error, lastSync: null };
   return error;
 }
 

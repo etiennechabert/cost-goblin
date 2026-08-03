@@ -7,7 +7,9 @@ import { buildSource } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import type { MarketplaceAttributionConfig } from '../types/cost-scope.js';
 import { DEFAULT_MARKETPLACE_ATTRIBUTION } from '../config/cost-scope-seed.js';
-import { asDimensionId } from '../types/branded.js';
+import { asDimensionId, asProviderName } from '../types/branded.js';
+
+const PROVIDER = asProviderName('aws');
 
 const dimensions: DimensionsConfig = {
   builtIn: [{ name: asDimensionId('service'), label: 'Service', field: 'service' }],
@@ -22,7 +24,7 @@ async function serviceTotals(
   costMetric: 'unblended' | 'list',
   marketplaceAttribution: MarketplaceAttributionConfig | undefined,
 ): Promise<Record<string, number>> {
-  const source = buildSource({ dataDir, tier: 'daily', dimensions, costMetric, marketplaceAttribution });
+  const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER }], costMetric, marketplaceAttribution });
   const result = await conn.run(`SELECT service, SUM(cost) AS cost FROM ${source} GROUP BY service`);
   const rows = await result.getRowObjects();
   const out: Record<string, number> = {};

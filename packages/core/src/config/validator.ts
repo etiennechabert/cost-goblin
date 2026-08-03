@@ -1,6 +1,7 @@
 import { asBucketPath, asDimensionId } from '../types/branded.js';
 import type { BucketPath } from '../types/branded.js';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
+import { parseProviderName } from './provider-name.js';
 import type {
   ConceptType,
   CostGoblinConfig,
@@ -98,22 +99,41 @@ function validateSync(raw: unknown): SyncConfig {
   };
 }
 
+/** The AWS credentials profile, from the current flattened field or the
+ *  legacy nested `credentials: { profile }` shape (pre-#516 configs and
+ *  bundles still on disk) — read both, emit only `credentialsProfile`. */
+function resolveCredentialsProfile(raw: Record<string, unknown>, ctx: string): string {
+  if (raw['credentialsProfile'] !== undefined) {
+    assertString(raw['credentialsProfile'], `${ctx}.credentialsProfile`);
+    return raw['credentialsProfile'];
+  }
+  assertObject(raw['credentials'], `${ctx}.credentialsProfile`);
+  const credentials = raw['credentials'];
+  assertString(credentials['profile'], `${ctx}.credentials.profile`);
+  return credentials['profile'];
+}
+
 function validateProvider(raw: unknown, index: number): ProviderConfig {
   const ctx = `providers[${String(index)}]`;
   assertObject(raw, ctx);
   assertString(raw['name'], `${ctx}.name`);
+  let name;
+  try {
+    name = parseProviderName(raw['name']);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new ConfigValidationError(`${ctx}.name: ${message}`);
+  }
   assertString(raw['type'], `${ctx}.type`);
   if (raw['type'] !== 'aws') {
     throw new ConfigValidationError(`${ctx}.type must be 'aws'`);
   }
-  assertObject(raw['credentials'], `${ctx}.credentials`);
-  const credentials = raw['credentials'];
-  assertString(credentials['profile'], `${ctx}.credentials.profile`);
+  const credentialsProfile = resolveCredentialsProfile(raw, ctx);
   const sync = validateSync(raw['sync']);
   return {
-    name: raw['name'],
+    name,
     type: 'aws',
-    credentials: { profile: credentials['profile'] },
+    credentialsProfile,
     sync,
   };
 }
@@ -134,6 +154,20 @@ export function validateConfig(raw: unknown): CostGoblinConfig {
   assertObject(raw, 'config');
   assertArray(raw['providers'], 'providers');
   const providers = raw['providers'].map((p, i) => validateProvider(p, i));
+  // Case-insensitive uniqueness: the name becomes a directory and most
+  // desktop filesystems are case-insensitive, so 'Payer-A' and 'payer-a'
+  // would collide on disk.
+  const seen = new Map<string, string>();
+  for (const p of providers) {
+    const key = p.name.toLowerCase();
+    const existing = seen.get(key);
+    if (existing !== undefined) {
+      throw new ConfigValidationError(
+        `providers: duplicate name "${p.name}" (conflicts with "${existing}" — names are case-insensitive)`,
+      );
+    }
+    seen.set(key, p.name);
+  }
   const defaults = validateDefaults(raw['defaults']);
   return { providers, defaults };
 }

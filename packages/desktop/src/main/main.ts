@@ -24,6 +24,7 @@ import { validateUrl, SecurityError } from './url-validator.js';
 import { validateProfileLabel } from './validators/path-validator.js';
 import { resolveWorkspaceEnv } from './workspace-env.js';
 import type { WorkspaceEnv } from './workspace-env.js';
+import { migrateProviderLayoutSync } from './provider-layout-migration.js';
 
 // Log level: debug in dev (NODE_ENV=development or electron-vite serving
 // the renderer), or when COSTGOBLIN_LOG_LEVEL=debug. Otherwise info.
@@ -278,6 +279,16 @@ async function main(): Promise<void> {
   telemetry.start(telemetryPrefs);
 
   await app.whenReady();
+
+  // Migrate a pre-#516 data layout ({dataDir}/aws + root sidecars) to the
+  // provider-keyed one. MUST run before the DuckDB and sync workers start so
+  // no open handles can break the renames (Windows EPERM — same constraint
+  // as the workspace migration above).
+  try {
+    migrateProviderLayoutSync(wsEnv.dataDir, resolveConfigPath(wsEnv.configBase, 'costgoblin'));
+  } catch (err: unknown) {
+    logger.warn(`provider-layout migration failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // Worker bundles are built by `npm run build:worker` (esbuild) into out/worker/
   // — sibling to out/main/ where this file lives. We resolve up one level then

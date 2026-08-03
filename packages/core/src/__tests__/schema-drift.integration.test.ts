@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildSource } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
-import { asDimensionId } from '../types/branded.js';
+import { asDimensionId, asProviderName } from '../types/branded.js';
+
+const PROVIDER = asProviderName('aws');
 
 const dimensions: DimensionsConfig = {
   builtIn: [{ name: asDimensionId('service'), label: 'Service', field: 'service' }],
@@ -106,7 +108,7 @@ describe('CUR schema drift across months (DuckDB end-to-end)', () => {
   });
 
   it('amortized over the mixed span (list form): old rows degrade to unblended, new rows use effective cost', async () => {
-    const source = buildSource({ dataDir, tier: 'daily', dimensions, periods: ['2025-10', '2026-04'], costMetric: 'amortized', availableColumns });
+    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: ['2025-10', '2026-04'], availableColumns }], costMetric: 'amortized' });
     const totals = await monthTotals(conn, source);
     // Old month (no effective-cost cols → degraded to unblended): 7 + 4 + 2 = 13.
     expect(totals['2025-10']).toBe(13);
@@ -115,14 +117,14 @@ describe('CUR schema drift across months (DuckDB end-to-end)', () => {
   });
 
   it('amortized over the mixed span (wildcard fallback, no periods): same correct numbers', async () => {
-    const source = buildSource({ dataDir, tier: 'daily', dimensions, costMetric: 'amortized', availableColumns });
+    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER, availableColumns }], costMetric: 'amortized' });
     const totals = await monthTotals(conn, source);
     expect(totals['2025-10']).toBe(13);
     expect(totals['2026-04']).toBe(9);
   });
 
   it('unblended over the mixed span is unaffected by the unification', async () => {
-    const source = buildSource({ dataDir, tier: 'daily', dimensions, periods: ['2025-10', '2026-04'], costMetric: 'unblended', availableColumns });
+    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: ['2025-10', '2026-04'], availableColumns }], costMetric: 'unblended' });
     const totals = await monthTotals(conn, source);
     expect(totals['2025-10']).toBe(13); // 7 + 4 + 2
     expect(totals['2026-04']).toBe(118); // 9 + 8 + 100 + 1

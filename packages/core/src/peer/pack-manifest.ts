@@ -10,12 +10,24 @@ export class PackManifestError extends Error {
   }
 }
 
-export const PACK_MANIFEST_VERSION = 1;
+/** v2 (#516): file paths carry a provider-name segment ({provider}/raw/...)
+ *  instead of the fixed `aws/raw/...` of v1. v1 packs are still accepted —
+ *  their paths classify as provider 'aws' and the importer maps them onto a
+ *  local provider. */
+export const PACK_MANIFEST_VERSION = 2;
+export type PackManifestVersion = 1 | typeof PACK_MANIFEST_VERSION;
+
+function isAcceptedPackVersion(v: unknown): v is PackManifestVersion {
+  return v === 1 || v === PACK_MANIFEST_VERSION;
+}
 
 /** One Parquet data file in a snapshot. The consumer drops it byte-identical
  *  into its local data tree and queries it in place — no ETL. */
 export interface PackFileEntry {
-  /** Relative path under the data root, e.g. "aws/raw/daily-2026-06/x.parquet". */
+  /** Relative path under the data root, e.g.
+   *  "aws-main/raw/daily-2026-06/x.parquet" (v1 packs: "aws/raw/..."). The
+   *  leading segment is the publisher's provider name; the importer remaps
+   *  it onto one of its own configured providers. */
   readonly path: string;
   readonly size: number;
   /** SHA-256 of the file contents, lowercase hex. */
@@ -33,7 +45,10 @@ export interface PackEnrichment {
 /** Describes a data+config snapshot. Signed as a whole by the publisher, so
  *  the inline config/enrichment and the per-file hashes are all tamper-evident. */
 export interface PackManifest {
-  readonly v: typeof PACK_MANIFEST_VERSION;
+  /** The version the pack was PUBLISHED with — preserved verbatim on parse
+   *  so signature verification sees the exact signed bytes. New packs are
+   *  always written with PACK_MANIFEST_VERSION. */
+  readonly v: PackManifestVersion;
   readonly createdAt: string;
   /** Publisher Ed25519 public key (raw, base64url) — pins the source. */
   readonly publisher: string;
@@ -87,8 +102,11 @@ export function serializeSignedManifest(signed: SignedPackManifest): string {
 }
 
 /** Pack file paths are written to disk by the consumer, so they are confined
- *  to the data tree: `aws/raw/{tier}-{period}/<file>.parquet`, no traversal. */
-const PACK_FILE_PATH = /^aws\/raw\/[a-z][a-z-]*-\d{4}-\d{2}(?:-\d{2})?\/[A-Za-z0-9._-]+\.parquet$/;
+ *  to the data tree: `{provider}/raw/{tier}-{period}/<file>.parquet`, no
+ *  traversal. The provider segment charset mirrors PROVIDER_NAME_PATTERN
+ *  (no dots, no separators), so `..` cannot appear in it; the filename part
+ *  allows dots but the explicit `..` check below rejects traversal anyway. */
+const PACK_FILE_PATH = /^[A-Za-z0-9][A-Za-z0-9_-]*\/raw\/[a-z][a-z-]*-\d{4}-\d{2}(?:-\d{2})?\/[A-Za-z0-9._-]+\.parquet$/;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 export function isSafePackPath(path: string): boolean {
@@ -100,7 +118,7 @@ export function isSafePackPath(path: string): boolean {
  *  assume tier === prefix. */
 export type PackTier = 'daily' | 'hourly' | 'cost-optimization';
 
-/** Maps an on-disk `aws/raw/` directory prefix to its tier. Mirrors
+/** Maps an on-disk `{provider}/raw/` directory prefix to its tier. Mirrors
  *  sync-utils' TIER_RAW_PREFIXES; kept here so the peer module stays
  *  self-contained. */
 const TIER_BY_PREFIX: ReadonlyMap<string, PackTier> = new Map([
@@ -109,17 +127,20 @@ const TIER_BY_PREFIX: ReadonlyMap<string, PackTier> = new Map([
   ['cost-opt', 'cost-optimization'],
 ]);
 
-/** Classify a pack file path — `aws/raw/{prefix}-{YYYY-MM}[-DD]/<file>.parquet`
- *  — into its tier and YYYY-MM period. Returns null for paths that don't match
- *  a known tier prefix. NOTE: do not reuse a `[a-z-]+` period regex for this —
- *  it swallows the prefix and can't distinguish daily/hourly/cost-opt. */
-export function classifyPackPath(path: string): { readonly tier: PackTier; readonly period: string } | null {
-  const m = /^aws\/raw\/([a-z][a-z-]*)-(\d{4}-\d{2})(?:-\d{2})?\//.exec(path);
-  const prefix = m?.[1];
-  const period = m?.[2];
-  if (prefix === undefined || period === undefined) return null;
+/** Classify a pack file path — `{provider}/raw/{prefix}-{YYYY-MM}[-DD]/<file>.parquet`
+ *  — into the publisher's provider name, its tier, and YYYY-MM period.
+ *  Returns null for paths that don't match a known tier prefix. NOTE: do not
+ *  reuse a `[a-z-]+` period regex for this — it swallows the prefix and
+ *  can't distinguish daily/hourly/cost-opt. v1 packs classify as provider
+ *  'aws' (the fixed segment of the old layout). */
+export function classifyPackPath(path: string): { readonly provider: string; readonly tier: PackTier; readonly period: string } | null {
+  const m = /^([A-Za-z0-9][A-Za-z0-9_-]*)\/raw\/([a-z][a-z-]*)-(\d{4}-\d{2})(?:-\d{2})?\//.exec(path);
+  const provider = m?.[1];
+  const prefix = m?.[2];
+  const period = m?.[3];
+  if (provider === undefined || prefix === undefined || period === undefined) return null;
   const tier = TIER_BY_PREFIX.get(prefix);
-  return tier === undefined ? null : { tier, period };
+  return tier === undefined ? null : { provider, tier, period };
 }
 
 function validateEnrichment(raw: unknown): PackEnrichment {
@@ -150,7 +171,8 @@ function validateFile(raw: unknown, i: number): PackFileEntry {
 
 function validateManifest(raw: unknown): PackManifest {
   if (!isStringRecord(raw)) throw new PackManifestError('manifest is malformed');
-  if (raw['v'] !== PACK_MANIFEST_VERSION) {
+  const version = raw['v'];
+  if (!isAcceptedPackVersion(version)) {
     throw new PackManifestError(`Unsupported pack manifest version (${String(raw['v'])})`);
   }
   const createdAt = raw['createdAt'];
@@ -164,7 +186,7 @@ function validateManifest(raw: unknown): PackManifest {
   const files = raw['files'];
   if (!Array.isArray(files)) throw new PackManifestError('manifest.files must be an array');
   return {
-    v: PACK_MANIFEST_VERSION,
+    v: version,
     createdAt,
     publisher,
     label,

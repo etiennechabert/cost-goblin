@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildCostQuery, buildDailyCostsQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildSource, computePeriodsInRange } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
-import { asDimensionId, asDateString, asDollars, asEntityRef, asHourString, asTagValue } from '../types/branded.js';
+import { asDimensionId, asDateString, asDollars, asEntityRef, asHourString, asProviderName, asTagValue } from '../types/branded.js';
 
 const dimensions: DimensionsConfig = {
   builtIn: [
@@ -21,6 +21,10 @@ const dimensions: DimensionsConfig = {
   ],
 };
 
+// Single provider named 'aws' keeps the pre-#516 '/data/aws/raw/...' path
+// literals valid: the path segment is now the provider name.
+const providers = [{ name: asProviderName('aws') }];
+
 describe('buildCostQuery', () => {
   it('generates valid SQL for built-in dimension', () => {
     const result = buildCostQuery(
@@ -29,7 +33,7 @@ describe('buildCostQuery', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
       },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(result.sql).toContain('service AS entity');
     expect(result.sql).toContain('usage_date BETWEEN');
@@ -50,7 +54,7 @@ describe('buildCostQuery', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: { [asDimensionId('account')]: [asTagValue('111111111111')] },
       },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(result.sql).toContain('account_id = $');
     expect(result.params).toContain('2026-01-01');
@@ -65,7 +69,7 @@ describe('buildCostQuery', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
       },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(result.sql).toContain('CASE');
     expect(result.sql).toContain("'core-banking'");
@@ -82,7 +86,7 @@ describe('buildTrendQuery', () => {
         deltaThreshold: asDollars(100),
         percentThreshold: 10,
       },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(result.sql).toContain('current_cost');
     expect(result.sql).toContain('previous_cost');
@@ -120,24 +124,26 @@ describe('computePeriodsInRange', () => {
 
 describe('buildSource narrowed paths', () => {
   it('emits read_parquet with a list of month paths when periods are given', () => {
-    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions, periods: ['2026-03', '2026-04'] });
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions, providers: [{ name: asProviderName('aws'), periods: ['2026-03', '2026-04'] }] });
     expect(sql).toContain("'/data/aws/raw/daily-2026-03/*.parquet'");
     expect(sql).toContain("'/data/aws/raw/daily-2026-04/*.parquet'");
     expect(sql).not.toContain("daily-*/*.parquet");
+    // Every branch projects its provider name as the leading constant column.
+    expect(sql).toContain("'aws' AS provider,");
     // union_by_name tolerates CUR schema drift between months (older exports
     // lack the effective-cost columns the amortized expression references).
     expect(sql).toContain('union_by_name=true');
   });
 
   it('falls back to the wildcard when periods are empty or omitted', () => {
-    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions, periods: [] });
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions, providers: [{ name: asProviderName('aws'), periods: [] }] });
     expect(sql).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet', union_by_name=true)");
-    const sql2 = buildSource({ dataDir: '/data', tier: 'daily', dimensions });
+    const sql2 = buildSource({ dataDir: '/data', tier: 'daily', dimensions, providers });
     expect(sql2).toContain("read_parquet('/data/aws/raw/daily-*/*.parquet', union_by_name=true)");
   });
 
   it('uses the hourly prefix when tier is hourly', () => {
-    const sql = buildSource({ dataDir: '/data', tier: 'hourly', dimensions, periods: ['2026-04'] });
+    const sql = buildSource({ dataDir: '/data', tier: 'hourly', dimensions, providers: [{ name: asProviderName('aws'), periods: ['2026-04'] }] });
     expect(sql).toContain("'/data/aws/raw/hourly-2026-04/*.parquet'");
   });
 });
@@ -171,7 +177,7 @@ describe('buildTrendQuery with fallback-bearing tag dim', () => {
         deltaThreshold: asDollars(0),
         percentThreshold: 0,
       },
-      { dataDir: '/data', dimensions: dims, orgAccountsPath: '/org.json' },
+      { dataDir: '/data', dimensions: dims, orgAccountsPath: '/org.json', providers },
     );
     // The COALESCE / missingValueTemplate expression lives in the source subquery.
     expect(sql).toContain("COALESCE(NULLIF(element_at(cur.resource_tags, 'user_sb_system')[1], '')");
@@ -192,7 +198,7 @@ describe('buildTrendQuery with fallback-bearing tag dim', () => {
         deltaThreshold: asDollars(0),
         percentThreshold: 0,
       },
-      { dataDir: '/data', dimensions: dims, orgAccountsPath: '/org.json', materializedSource: 'mat_table' },
+      { dataDir: '/data', dimensions: dims, orgAccountsPath: '/org.json', materializedSource: 'mat_table', providers },
     );
     expect(sql).toContain('FROM mat_table');
     expect(sql).toContain('LOWER(tag_user_sb_system)');
@@ -211,7 +217,7 @@ describe('buildTrendQuery', () => {
         deltaThreshold: asDollars(0),
         percentThreshold: 0,
       },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(result.sql).toContain("'/data/aws/raw/daily-2026-02/*.parquet'");
     expect(result.sql).toContain("'/data/aws/raw/daily-2026-03/*.parquet'");
@@ -228,7 +234,7 @@ describe('buildMissingTagsQuery', () => {
   };
 
   it('filters to resource-bound Usage lines (excludes Tax / Support / empty resource_id)', () => {
-    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions });
+    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions, providers });
     expect(result.sql).toContain("line_item_type IN ('Usage', 'DiscountedUsage')");
     expect(result.sql).toContain("resource_id IS NOT NULL AND resource_id != ''");
     expect(result.sql).toContain('usage_date BETWEEN');
@@ -238,7 +244,7 @@ describe('buildMissingTagsQuery', () => {
   });
 
   it('computes has_tag per resource and category tagged_ratio', () => {
-    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions });
+    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions, providers });
     // Resource is tagged if ANY line for it has the tag populated — MAX over a
     // CASE expression does exactly that.
     expect(result.sql).toContain('MAX(CASE WHEN');
@@ -249,18 +255,18 @@ describe('buildMissingTagsQuery', () => {
   });
 
   it('buckets into actionable (ratio > 0) vs likely-untaggable (ratio = 0)', () => {
-    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions });
+    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions, providers });
     expect(result.sql).toContain("WHEN c.tagged_ratio > 0 THEN 'actionable'");
     expect(result.sql).toContain("ELSE 'likely-untaggable'");
   });
 
   it('does not filter by minCost in SQL (filtering is done in JS for distribution)', () => {
-    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions });
+    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions, providers });
     expect(result.sql).not.toContain('r.cost >= $');
   });
 
   it('treats default placeholder patterns as missing tags', () => {
-    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions });
+    const result = buildMissingTagsQuery(baseParams, { dataDir: '/data', dimensions, providers });
     // Each default placeholder pattern becomes a parameterized NOT ILIKE clause.
     expect(result.sql).toMatch(/NOT ILIKE \$\d+/);
     expect(result.params).toContain('unknown-%');
@@ -274,7 +280,7 @@ describe('buildMissingTagsQuery', () => {
   it('uses custom placeholder patterns when provided', () => {
     const result = buildMissingTagsQuery(
       { ...baseParams, placeholderPatterns: ['placeholder-%', 'TODO'] },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(result.params).toContain('placeholder-%');
     expect(result.params).toContain('TODO');
@@ -285,7 +291,7 @@ describe('buildMissingTagsQuery', () => {
   it('treats empty placeholderPatterns as no placeholder filtering', () => {
     const result = buildMissingTagsQuery(
       { ...baseParams, placeholderPatterns: [] },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(result.sql).not.toContain('NOT ILIKE');
     expect(result.params).not.toContain('unknown-%');
@@ -302,7 +308,7 @@ describe('buildNonResourceCostQuery', () => {
         minCost: asDollars(0),
         tagDimension: asDimensionId('tag_org_team'),
       },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(result.sql).toContain("line_item_type NOT IN ('Usage', 'DiscountedUsage')");
     expect(result.sql).toContain("OR resource_id IS NULL OR resource_id = ''");
@@ -320,7 +326,7 @@ describe('buildSource with account tag fallback', () => {
       builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
       tags: [{ tagName: 'system', label: 'System', concept: 'product', accountTagFallback: 'sb:system' }],
     };
-    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
     expect(sql).toContain('COALESCE(NULLIF(');
     expect(sql).toContain('fallback_tag_system');
     expect(sql).not.toContain('unknown');
@@ -331,7 +337,7 @@ describe('buildSource with account tag fallback', () => {
       builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
       tags: [{ tagName: 'system', label: 'System', concept: 'product', accountTagFallback: 'sb:owner', missingValueTemplate: 'unknown-{fallback}' }],
     };
-    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
     expect(sql).toContain("'unknown-'");
     expect(sql).toContain('fallback_tag_system');
     expect(sql).toContain('COALESCE');
@@ -342,7 +348,7 @@ describe('buildSource with account tag fallback', () => {
       builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
       tags: [{ tagName: 'team', label: 'Team', accountTagFallback: 'sb:team', missingValueTemplate: '{fallback}' }],
     };
-    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
     expect(sql).toContain('COALESCE(NULLIF(');
     expect(sql).toContain('fallback_tag_team');
     // Should NOT contain string concatenation — {fallback} is passthrough
@@ -354,7 +360,7 @@ describe('buildSource with account tag fallback', () => {
       builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
       tags: [{ tagName: 'system', label: 'System', accountTagFallback: 'sb:system' }],
     };
-    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims });
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, providers });
     expect(sql).not.toContain('LEFT JOIN');
     expect(sql).not.toContain('fallback');
   });
@@ -364,7 +370,7 @@ describe('buildSource with account tag fallback', () => {
       builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
       tags: [{ tagName: 'team', label: 'Team', accountTagFallback: '__ouPath__' }],
     };
-    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
     expect(sql).toContain('ouPath AS fallback_tag_team');
     expect(sql).toContain('COALESCE(NULLIF(');
   });
@@ -374,7 +380,7 @@ describe('buildSource with account tag fallback', () => {
       builtIn: [{ name: asDimensionId('account'), label: 'Account', field: 'account_id' }],
       tags: [{ label: 'Department', accountTagFallback: '__ouPath__' }],
     };
-    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
     // Column name derives from "ou_path" since no tagName was provided.
     expect(sql).toContain('acct_tags.fallback_tag_ou_path AS tag_ou_path');
     expect(sql).toContain('ouPath AS fallback_tag_ou_path');
@@ -392,7 +398,7 @@ describe('buildSource with account tag fallback', () => {
         pathSegment: { separator: ' / ', index: 1 },
       }],
     };
-    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
     expect(sql).toContain("split_part(COALESCE(NULLIF(element_at(cur.resource_tags, 'user_department')[1], ''), acct_tags.fallback_tag_department), ' / ', 1)");
     expect(sql).toContain('AS tag_department');
   });
@@ -406,7 +412,7 @@ describe('buildSource with account tag fallback', () => {
         pathSegment: { separator: ' / ', index: 1 },
       }],
     };
-    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
     expect(sql).toContain("split_part(acct_tags.fallback_tag_ou_path, ' / ', 1)");
     expect(sql).toContain('AS tag_ou_path');
   });
@@ -420,7 +426,7 @@ describe('buildSource with account tag fallback', () => {
         pathSegment: { separator: ' / ', index: -1 },
       }],
     };
-    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json' });
+    const sql = buildSource({ dataDir: '/data', tier: 'daily', dimensions: dims, orgAccountsPath: '/org-tags.json', providers });
     expect(sql).toContain("split_part(acct_tags.fallback_tag_ou_path, ' / ', -1)");
   });
 });
@@ -434,7 +440,7 @@ describe('buildEntityDetailQuery', () => {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
         filters: {},
       },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(sql).toContain('$');
     expect(params).toContain('2026-01-01');
@@ -461,7 +467,7 @@ describe('hour-bounded date ranges', () => {
         filters: {},
         granularity: 'hourly',
       },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(sql).toContain('usage_hour BETWEEN');
     expect(sql).toContain('::TIMESTAMP');
@@ -479,7 +485,7 @@ describe('hour-bounded date ranges', () => {
         filters: {},
         granularity: 'hourly',
       },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(sql).toContain('usage_hour BETWEEN');
     // Mid-hour fee timestamps round to nearest hour (see buildDailyCostsQuery).
@@ -496,7 +502,7 @@ describe('hour-bounded date ranges', () => {
         filters: {},
         granularity: 'hourly',
       },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(sql).toContain('usage_hour BETWEEN');
     expect(params).toContain('2026-04-30 14:00:00');
@@ -511,7 +517,7 @@ describe('hour-bounded date ranges', () => {
         minCost: asDollars(0),
         tagDimension: asDimensionId('tag_org_team'),
       },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(sql).toContain('usage_hour BETWEEN');
     expect(sql).toContain("'/data/aws/raw/hourly-2026-04/*.parquet'");
@@ -525,7 +531,7 @@ describe('hour-bounded date ranges', () => {
         minCost: asDollars(0),
         tagDimension: asDimensionId('tag_org_team'),
       },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(sql).toContain('usage_hour BETWEEN');
     expect(sql).toContain("'/data/aws/raw/hourly-2026-04/*.parquet'");
@@ -539,7 +545,7 @@ describe('hour-bounded date ranges', () => {
         filters: {},
         granularity: 'daily',
       },
-      { dataDir: '/data', dimensions },
+      { dataDir: '/data', dimensions, providers },
     );
     expect(sql).toContain('usage_date BETWEEN');
     expect(sql).not.toContain('usage_hour BETWEEN');

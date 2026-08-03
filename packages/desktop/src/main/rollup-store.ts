@@ -5,6 +5,7 @@ import {
   logger,
   ROLLUP_SCHEMA_VERSION,
   validateManifest,
+  type ProviderName,
   type RollupManifest,
   type RollupPartitionMeta,
   type RollupStatus,
@@ -50,6 +51,11 @@ export interface ResolveSourceArgs {
 
 interface RollupStoreDeps {
   readonly dataDir: string;
+  /** Which provider's tree (`{dataDir}/{name}/rollup`) this store owns. A
+   *  closure because the store is constructed before the config is loaded;
+   *  it throws when called with no provider configured, so every store
+   *  entry point must run after the config cache is populated. */
+  readonly providerName: () => ProviderName;
   readonly runQuery: (sql: string) => Promise<RawRow[]>;
   /** Runs a partition-build query on a fresh, disposable DuckDB connection so
    *  per-build time doesn't climb across a batch (buffer/cache accumulation on
@@ -64,7 +70,7 @@ interface RollupStoreDeps {
 
 /**
  * Persistent per-period pre-aggregated rollup, stored as Hive-style Parquet
- * partitions under `{dataDir}/aws/rollup/daily-YYYY-MM/rollup.parquet` with a
+ * partitions under `{dataDir}/{provider}/rollup/daily-YYYY-MM/rollup.parquet` with a
  * `manifest.json` recording the shape-signature and each partition's raw-etag
  * watermark.
  *
@@ -81,6 +87,7 @@ interface RollupStoreDeps {
  */
 export class RollupStore {
   private readonly dataDir: string;
+  private readonly providerName: () => ProviderName;
   private readonly runQuery: (sql: string) => Promise<RawRow[]>;
   private readonly runBuild: (sql: string) => Promise<RawRow[]>;
   private buildConcurrency: number;
@@ -96,6 +103,7 @@ export class RollupStore {
 
   constructor(deps: RollupStoreDeps) {
     this.dataDir = deps.dataDir;
+    this.providerName = deps.providerName;
     this.runQuery = deps.runQuery;
     this.runBuild = deps.runBuild ?? deps.runQuery;
     this.buildConcurrency = Math.max(1, deps.buildConcurrency ?? 1);
@@ -134,7 +142,7 @@ export class RollupStore {
    *  the transition to `ready`/`failed`. */
   markSettled(): void { this.setStatus(this.settledStatus()); }
 
-  private rollupDir(): string { return join(this.dataDir, 'aws', 'rollup'); }
+  private rollupDir(): string { return join(this.dataDir, String(this.providerName()), 'rollup'); }
   private manifestPath(): string { return join(this.rollupDir(), 'manifest.json'); }
   private partitionDir(period: string): string { return join(this.rollupDir(), `daily-${period}`); }
   private partitionPath(period: string): string { return join(this.partitionDir(period), 'rollup.parquet'); }
