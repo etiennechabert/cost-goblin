@@ -8,6 +8,11 @@
 #
 #   ./deploy.sh
 #
+# No local install needed: this runs happily in Cloud Shell, which already has
+# gcloud, Docker and your credentials. The README has an "Open in Cloud Shell"
+# link, and a copy-paste equivalent of everything below for anyone who would
+# rather run the commands directly.
+#
 set -euo pipefail
 
 # --- edit these ------------------------------------------------------------
