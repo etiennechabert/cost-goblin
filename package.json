@@ -54,7 +54,7 @@
     "jsdom": "^30.0.0",
     "postcss": "^8.5.23",
     "tsx": "^4.23.1",
-    "typescript": "^7.0.2",
+    "typescript": "^6.0.3",
     "v8-to-istanbul": "^9.3.0",
     "vitest": "^4.1.8"
   },
