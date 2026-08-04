@@ -14,6 +14,13 @@ Phases A–E are implemented. Four decisions in the original draft below turned 
 checked against the code and against DuckDB, and were changed. They are recorded here rather than
 edited away silently, because each one is a bug that would have shipped.
 
+**C0 — The exporter is one deployed job, not a choice between two variants.**
+§3 offered "variant A (scheduled query)" and "variant B (Cloud Run job)" as
+alternatives. They are not alternatives: a scheduled query cannot delete GCS
+objects, so on its own it accumulates orphaned shards and silently reports
+inflated costs. The shipped recipe is the Cloud Run job; the standalone SQL is
+the same export runnable by hand for a first look, documented as incomplete.
+
 **C1 — Downloads shell out to `gcloud storage rsync`, not the SDK.** §4 sketched SDK streaming
 through the handle. The adapter now mirrors AWS seam for seam instead: the vendor SDK
 (`@google-cloud/storage`) lists the bucket for change detection, and the vendor CLI moves the

@@ -1,15 +1,19 @@
--- CostGoblin GCP FOCUS exporter — BigQuery scheduled query ("variant A").
+-- CostGoblin GCP FOCUS exporter — the export, as a standalone BigQuery script.
 --
--- The zero-infrastructure alternative to the Cloud Run job. Same change
--- detection, same output layout; CostGoblin cannot tell which one wrote the
--- files, so you can switch later with no migration.
+-- Same change detection and same export as the deployed Cloud Run job, runnable
+-- by hand. Useful for a first look at the data before you deploy anything.
 --
--- KNOWN LIMITATION: a SQL job cannot delete GCS objects. `EXPORT DATA` shards
--- its output across N files and picks N itself, so a re-export that produces
--- FEWER shards than the previous run can leave the extras behind — and nothing
--- downstream can distinguish an orphaned shard from a live one, so the month
--- silently reads high. Fine while you are evaluating; use the Cloud Run job
--- (deploy.sh) for anything you rely on. To clean up by hand:
+-- THIS IS NOT A COMPLETE SETUP. `EXPORT DATA` shards its output across N files
+-- and BigQuery chooses N; N is not stable between runs. A re-export that packs
+-- into fewer files leaves the previous run's extra files behind, and nothing
+-- downstream can tell an orphan from a live shard — so the month silently reads
+-- high. Removing them requires deleting GCS objects, which SQL cannot do. That
+-- is the one thing the deployed job adds, and the reason it exists:
+--
+--   cd scripts/gcp-focus-exporter && ./deploy.sh
+--
+-- If you do run this on a schedule anyway, clean up by hand whenever a period
+-- gets re-exported:
 --
 --   gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/billing_period=YYYY-MM/
 --

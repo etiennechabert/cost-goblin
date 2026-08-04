@@ -36,31 +36,7 @@ versioning would retain every superseded shard forever:
 gcloud storage buckets create gs://cost-goblin --location=EU --uniform-bucket-level-access
 ```
 
-## Which variant
-
-Both do the same job with the same change detection and produce the identical
-layout. The only difference is that **SQL cannot delete GCS objects and a
-program can** — which matters because `EXPORT DATA` chooses how many shards to
-write, and that number is not stable between runs.
-
-| | **A** — `scheduled-query.sql` | **B** — `deploy.sh` (Cloud Run job) |
-|---|---|---|
-| Setup | ~5 min, no infrastructure | ~15 min, container + job + scheduler |
-| Per period | `EXPORT DATA` | **delete folder** → `EXPORT DATA` |
-| Orphaned shards | possible | impossible |
-
-**A re-export that produces fewer shards than the previous run leaves the
-extras behind**, and nothing downstream can tell an orphan from a live shard —
-same folder, same shape. They get counted alongside the new data and the month
-silently reads high. That is the one failure this whole design is arranged
-around, and it is why B exists.
-
-Recommended: **start with A** to get data flowing (a first export cannot hit
-the problem — there is nothing to orphan), **move to B before you trust the
-numbers.** Switching costs nothing: same watermark table, same bucket, same
-layout, so CostGoblin cannot tell which one wrote the files.
-
-## Variant B
+## Deploy it
 
 Edit the config block at the top of `deploy.sh` — at minimum `FOCUS_TABLE`,
 `BUCKET` and `PROJECT_ID` — then:
@@ -88,6 +64,46 @@ your own credentials:
 gcloud auth application-default login
 npm install
 FOCUS_TABLE=... BUCKET=cost-goblin STATE_TABLE=... DRY_RUN=1 npm start
+```
+
+### Why this has to be a deployed job
+
+`EXPORT DATA` shards its output across N files and **BigQuery chooses N**,
+based on data size and available slots. N is not stable between runs.
+
+So when a period is re-exported after a correction and this time packs into
+fewer files, the extra files from the previous run stay in the folder:
+
+```
+shard-000000000000.parquet   rewritten
+shard-000000000001.parquet   rewritten
+shard-000000000002.parquet   rewritten
+shard-000000000003.parquet   ← orphan from the previous run
+shard-000000000004.parquet   ← orphan from the previous run
+```
+
+Nothing downstream can tell an orphan from a live shard — same folder, same
+shape, same naming. They are read alongside the new data and **the month
+silently reads high**. No error, no warning, just wrong numbers, which for a
+cost tool is the worst possible failure.
+
+Fixing it requires deleting objects, and **SQL cannot delete GCS objects**.
+That is the entire reason this runs as a job: it clears each period's folder
+before rewriting it. Everything else here — the watermark, the export itself —
+could live in a scheduled query.
+
+### Running the export by hand
+
+`scheduled-query.sql` contains the same change detection and the same export,
+as a standalone BigQuery script. Useful for a first look at the data before
+you deploy anything.
+
+It is **not a complete setup**: on its own it accumulates the orphans described
+above. If you leave it running as a scheduled query, clean up by hand whenever
+a period is re-exported:
+
+```bash
+gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/billing_period=YYYY-MM/
 ```
 
 ## How change detection works
@@ -141,8 +157,8 @@ watermark dataset, and the bucket must all be in the same location, and the
 BigQuery job must run there too. `LOCATION` in `deploy.sh` and the scheduled
 query's processing location both have to match.
 
-**A month's totals look too high.** Orphaned shards — see the variant table
-above. Check the folder's shard numbering for gaps at the top, delete the
+**A month's totals look too high.** Orphaned shards — see "Why this has to be a
+deployed job". Check the folder's shard numbering for gaps at the top, delete the
 folder, and re-export:
 
 ```bash

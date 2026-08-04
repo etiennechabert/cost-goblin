@@ -1,5 +1,5 @@
 /**
- * CostGoblin GCP FOCUS exporter — Cloud Run job ("variant B").
+ * CostGoblin GCP FOCUS exporter — the Cloud Run job.
  *
  * Keeps a GCS bucket in step with the FOCUS 1.2 BigQuery billing export, in
  * the layout CostGoblin syncs from:
@@ -11,13 +11,14 @@
  *   2. per period: DELETES the period's folder, then re-exports it
  *   3. advances that period's watermark
  *
- * Step 2's delete is the entire reason this job exists rather than a plain
- * BigQuery scheduled query. `EXPORT DATA` shards its output across N files and
- * chooses N itself; a re-export that produces FEWER shards than the previous
- * run leaves the extra ones behind. Nothing downstream can tell an orphaned
- * shard from a live one — they are the same shape, in the same folder — so
- * they get read and counted alongside the new data, and the month silently
- * reads high. SQL cannot delete GCS objects. This can.
+ * Step 2's delete is the entire reason this is a deployed job rather than a
+ * plain BigQuery scheduled query — everything else here could live in one.
+ * `EXPORT DATA` shards its output across N files and chooses N itself; a
+ * re-export producing FEWER shards than the previous run leaves the extras
+ * behind. Nothing downstream can tell an orphaned shard from a live one — they
+ * are the same shape, in the same folder — so they get read and counted
+ * alongside the new data, and the month silently reads high. SQL cannot delete
+ * GCS objects. This can.
  *
  * Plain ESM JavaScript on purpose: it runs in your container, not in
  * CostGoblin's toolchain, so there is no build step between what you read here
