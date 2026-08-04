@@ -1893,6 +1893,19 @@
     .provider-modal .step-callout { margin-left: 0; }
     .provider-modal .step { opacity: 1; transform: none; }
 
+    /* Links inside the setup steps were never styled — they rendered as the
+       browser's default blue underline, which is glaring on this palette. Now
+       that the steps live in a modal people actually open, give them the
+       site's own link treatment. */
+    .get-started-steps a {
+      color: var(--emerald);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(16, 185, 129, 0.35);
+      transition: border-color 0.2s ease;
+    }
+
+    .get-started-steps a:hover { border-bottom-color: var(--emerald); }
+
     @media (max-width: 768px) {
       .provider-modal { padding: 16px 8px; }
       .provider-modal-panel { padding: 20px 16px; }
