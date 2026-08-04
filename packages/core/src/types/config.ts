@@ -28,6 +28,17 @@ export interface GcpProviderConfig {
   readonly name: ProviderName;
   readonly type: 'gcp';
   readonly keyFile?: string | undefined;
+  /** Service account to impersonate, e.g.
+   *  `costgoblin-reader@my-project.iam.gserviceaccount.com`.
+   *
+   *  The least-privilege option, and the one to prefer: it needs no
+   *  long-lived key on disk. Establish it once with
+   *  `gcloud auth application-default login --impersonate-service-account=<sa>`
+   *  — that covers the listing SDK, which reads ADC — and this field passes
+   *  the same identity to the `gcloud storage rsync` download, which uses
+   *  gcloud's own credentials rather than ADC and would otherwise run as the
+   *  signed-in user. */
+  readonly impersonateServiceAccount?: string | undefined;
   readonly sync: GcpSyncConfig;
 }
 

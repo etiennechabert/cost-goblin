@@ -199,6 +199,29 @@ describe('validateConfig — gcp provider arm', () => {
     expect(() => validateConfig(withBucket('b/../../etc'))).toThrow(ConfigValidationError);
   });
 
+  it('accepts a service account to impersonate, and rejects a malformed one', () => {
+    const sa = 'costgoblin-reader@billing-504501.iam.gserviceaccount.com';
+    expect(gcpArm(validateConfig(gcp({ impersonateServiceAccount: sa })).providers[0]).impersonateServiceAccount).toBe(sa);
+    // Absent rather than an explicit undefined — it must not be written back
+    // to YAML on a round-trip.
+    expect('impersonateServiceAccount' in gcpArm(validateConfig(gcp()).providers[0])).toBe(false);
+
+    // The value reaches the gcloud CLI as `--impersonate-service-account=<v>`
+    // in an argv array, and a config can arrive from a shared bundle — so it
+    // is checked against the service-account grammar, not taken on trust.
+    for (const bad of [
+      'not-an-email',
+      'someone@gmail.com',
+      'reader@project.example.com',
+      '--flag-injection@p.iam.gserviceaccount.com',
+      'x@p.iam.gserviceaccount.com evil',
+      '',
+      42,
+    ]) {
+      expect(() => validateConfig(gcp({ impersonateServiceAccount: bad })), String(bad)).toThrow(ConfigValidationError);
+    }
+  });
+
   it('rejects tiers GCP does not deliver instead of silently ignoring them', () => {
     const withTier = (tier: string): unknown => gcp({
       sync: {

@@ -34,11 +34,15 @@ export interface ObjectStoreHandle {
  *  login`. */
 export type ProviderAuth =
   | { readonly kind: 'aws-profile'; readonly profile: string }
-  | { readonly kind: 'gcp'; readonly keyFile?: string | undefined };
+  | { readonly kind: 'gcp'; readonly keyFile?: string | undefined; readonly impersonateServiceAccount?: string | undefined };
 
 export function providerAuth(provider: ProviderConfig): ProviderAuth {
   if (provider.type === 'gcp') {
-    return { kind: 'gcp', ...(provider.keyFile === undefined ? {} : { keyFile: provider.keyFile }) };
+    return {
+      kind: 'gcp',
+      ...(provider.keyFile === undefined ? {} : { keyFile: provider.keyFile }),
+      ...(provider.impersonateServiceAccount === undefined ? {} : { impersonateServiceAccount: provider.impersonateServiceAccount }),
+    };
   }
   return { kind: 'aws-profile', profile: provider.credentialsProfile };
 }
@@ -67,7 +71,9 @@ export function isProviderAuth(value: unknown): value is ProviderAuth {
   const record: Record<string, unknown> = Object.fromEntries(Object.entries(value));
   if (record['kind'] === 'aws-profile') return typeof record['profile'] === 'string';
   if (record['kind'] === 'gcp') {
-    return record['keyFile'] === undefined || typeof record['keyFile'] === 'string';
+    const keyFileOk = record['keyFile'] === undefined || typeof record['keyFile'] === 'string';
+    const impersonateOk = record['impersonateServiceAccount'] === undefined || typeof record['impersonateServiceAccount'] === 'string';
+    return keyFileOk && impersonateOk;
   }
   return false;
 }

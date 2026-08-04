@@ -138,6 +138,45 @@ describe('syncGcpSelectedFiles', () => {
     expect(observedArgv).toContain('--delete-unmatched-destination-objects');
   });
 
+  it('runs gcloud as the impersonated service account when one is configured', async () => {
+    // ADC impersonation covers the listing SDK but NOT the CLI, which uses
+    // gcloud's own signed-in identity. Without this flag the two halves of a
+    // sync authenticate as different principals and the least-privilege
+    // service account is bypassed for the half that moves the data.
+    let argv: string[] = [];
+    mockSpawn.mockImplementationOnce((_bin: unknown, args: unknown) => {
+      const proc = new MockChildProcess();
+      argv = Array.isArray(args) ? args.map(String) : [];
+      const dest = argv.find(a => a.includes('staging-gcp')) ?? '';
+      queueMicrotask(() => { void writeBqShard(dest, 1).then(() => { proc.emit('close', 0, null); }); });
+      return proc;
+    });
+
+    await syncGcpSelectedFiles({
+      bucketPath: 'gs://b/focus', providerName, dataDir,
+      impersonateServiceAccount: 'costgoblin-reader@p.iam.gserviceaccount.com',
+      files: [file('focus/billing_period=2026-01/s.parquet')],
+    });
+
+    expect(argv).toContain('--impersonate-service-account=costgoblin-reader@p.iam.gserviceaccount.com');
+  });
+
+  it('omits the impersonation flag entirely when none is configured', async () => {
+    let argv: string[] = [];
+    mockSpawn.mockImplementationOnce((_bin: unknown, args: unknown) => {
+      const proc = new MockChildProcess();
+      argv = Array.isArray(args) ? args.map(String) : [];
+      const dest = argv[3] ?? '';
+      queueMicrotask(() => { void writeBqShard(dest, 1).then(() => { proc.emit('close', 0, null); }); });
+      return proc;
+    });
+    await syncGcpSelectedFiles({
+      bucketPath: 'gs://b/focus', providerName, dataDir,
+      files: [file('focus/billing_period=2026-01/s.parquet')],
+    });
+    expect(argv.some(a => a.startsWith('--impersonate-service-account'))).toBe(false);
+  });
+
   it('removes the staging directory once the period is installed', async () => {
     nextProcess(dest => writeBqShard(dest, 1));
     await syncGcpSelectedFiles({

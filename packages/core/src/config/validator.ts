@@ -168,6 +168,22 @@ function resolveCredentialsProfile(raw: Record<string, unknown>, ctx: string): s
   return credentials['profile'];
 }
 
+/** A service-account email to impersonate. The value is passed to the gcloud
+ *  CLI as `--impersonate-service-account=<value>`, so it is checked against the
+ *  documented service-account address grammar rather than accepted verbatim —
+ *  a config file can arrive from a shared bundle, and an unvalidated value
+ *  would land straight in an argv array. */
+function validateServiceAccountEmail(raw: unknown, ctx: string): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  assertString(raw, `${ctx}.impersonateServiceAccount`);
+  if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z0-9-]+\.iam\.gserviceaccount\.com$/.test(raw)) {
+    throw new ConfigValidationError(
+      `${ctx}.impersonateServiceAccount must be a service-account address like name@project.iam.gserviceaccount.com`,
+    );
+  }
+  return raw;
+}
+
 function validateProvider(raw: unknown, index: number): ProviderConfig {
   const ctx = `providers[${String(index)}]`;
   assertObject(raw, ctx);
@@ -182,11 +198,13 @@ function validateProvider(raw: unknown, index: number): ProviderConfig {
   assertString(raw['type'], `${ctx}.type`);
   if (raw['type'] === 'gcp') {
     const keyFile = validateGcpKeyFile(raw['keyFile'], ctx);
+    const impersonate = validateServiceAccountEmail(raw['impersonateServiceAccount'], ctx);
     const sync = validateGcpSync(raw['sync']);
     return {
       name,
       type: 'gcp',
       ...(keyFile === undefined ? {} : { keyFile }),
+      ...(impersonate === undefined ? {} : { impersonateServiceAccount: impersonate }),
       sync,
     };
   }

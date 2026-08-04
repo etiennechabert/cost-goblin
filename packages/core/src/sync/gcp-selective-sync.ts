@@ -96,6 +96,7 @@ interface GcloudRsyncOptions {
   readonly source: string;
   readonly dest: string;
   readonly keyFile?: string | undefined;
+  readonly impersonateServiceAccount?: string | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly onLine?: ((line: string) => void) | undefined;
 }
@@ -111,6 +112,15 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
       // leave orphans behind to be double-counted.
       '--delete-unmatched-destination-objects',
     ];
+
+    if (options.impersonateServiceAccount !== undefined) {
+      // The download runs as gcloud's signed-in user by default — ADC
+      // impersonation covers the listing SDK but not the CLI. Without this the
+      // two halves of a sync would authenticate as different identities, and
+      // the least-privilege service account would be bypassed for the half
+      // that actually moves the data.
+      args.push(`--impersonate-service-account=${options.impersonateServiceAccount}`);
+    }
 
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (options.keyFile !== undefined) {
@@ -173,6 +183,8 @@ export interface GcpSelectiveSyncOptions {
   readonly bucketPath: string;
   /** Absent means Application Default Credentials. */
   readonly keyFile?: string | undefined;
+  /** Service account to run as. See `GcpProviderConfig`. */
+  readonly impersonateServiceAccount?: string | undefined;
   readonly providerName: ProviderName;
   readonly dataDir: string;
   readonly files: readonly ManifestFileEntry[];
@@ -252,6 +264,7 @@ export async function syncGcpSelectedFiles(
         source,
         dest: stagingDir,
         ...(options.keyFile === undefined ? {} : { keyFile: options.keyFile }),
+        ...(options.impersonateServiceAccount === undefined ? {} : { impersonateServiceAccount: options.impersonateServiceAccount }),
         signal: options.signal,
         onLine: (line) => {
           logger.info(`[gcloud] ${line}`);

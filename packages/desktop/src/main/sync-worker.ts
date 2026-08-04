@@ -179,6 +179,7 @@ async function handleSyncRequest(req: SyncRequest): Promise<void> {
       const gcpOptions: GcpSelectiveSyncOptions = {
         bucketPath: req.bucketPath,
         ...(req.auth.keyFile === undefined ? {} : { keyFile: req.auth.keyFile }),
+        ...(req.auth.impersonateServiceAccount === undefined ? {} : { impersonateServiceAccount: req.auth.impersonateServiceAccount }),
         providerName,
         dataDir: req.dataDir,
         files: req.files,
