@@ -135,6 +135,37 @@ npm install
 FOCUS_TABLE=... BUCKET=cost-goblin STATE_TABLE=... DRY_RUN=1 npm start
 ```
 
+### How often should it run?
+
+`deploy.sh` schedules **daily at 06:00 UTC**, which is the right answer for
+almost everyone. Two things make more frequent runs less useful than they look:
+
+- **The upstream export is not real-time.** Google refreshes the billing export
+  a few times a day, so most extra runs would find nothing changed. Those runs
+  are nearly free — the change-detection query touches two columns — but they
+  also achieve nothing.
+- **A run that *does* find a change re-exports the whole period.** The current
+  month is always the one changing, and it grows through the month, so by the
+  28th every triggered run scans a full month of data. Four runs a day at
+  month-end is roughly four times the scan cost of one.
+
+Pick by what you actually need:
+
+| You want | Schedule |
+|---|---|
+| Normal cost tracking | `0 6 * * *` — the default |
+| Fresher numbers during the day | `0 6,18 * * *` — twice daily |
+| A number *right now* (incident, spend spike) | leave the schedule alone and run it on demand: `gcloud run jobs execute costgoblin-focus-exporter --region=<REGION> --wait` |
+
+Raising the schedule to hourly is the one option not worth it: it multiplies
+the scan cost of the current month without making the data meaningfully
+fresher, because the source only updates a few times a day.
+
+Note there are **two** cadences between BigQuery and your dashboard — this
+schedule (BigQuery → bucket) and CostGoblin's own sync interval (bucket →
+your machine, `intervalMinutes` in `costgoblin.yaml`). End-to-end freshness is
+whichever is slower.
+
 ### Why this has to be a deployed job
 
 `EXPORT DATA` shards its output across N files and **BigQuery chooses N**,
@@ -193,6 +224,28 @@ query cost bounded.
 The watermark advances to the **observed** maximum, never to wall-clock now.
 Advancing to "now" would mark rows that landed mid-run as already exported, and
 they would never be picked up again.
+
+## Differences from the AWS integration
+
+If you already run the AWS side, three things are deliberately not the same:
+
+- **One tier, not three.** AWS can feed a daily export, an optional hourly
+  export, and Cost Optimization Hub. GCP's FOCUS export is a single export, so
+  a `gcp` provider configures the daily tier only — the config validator
+  rejects `hourly` and `costOptimization` outright rather than silently
+  ignoring them.
+- **No intraday view yet.** The AWS hourly tier exists because it is a
+  *separate export with finer-grained rows*. Whatever granularity GCP's
+  `ChargePeriodStart` carries is preserved verbatim in the local Parquet, so
+  the detail is not being thrown away — but the hourly views read a separate
+  `raw/hourly-*` tier that GCP does not populate. If the live export turns out
+  to be sub-daily, wiring that up is a follow-up that needs no re-sync.
+- **No savings recommendations.** Cost Optimization Hub has no equivalent
+  here. GCP's Recommender API is a different shape and is out of scope.
+
+Everything above the sync layer is shared: the same dimensions, views,
+baselines and tag handling, with a `provider` dimension splitting the clouds
+apart and totals summing across them.
 
 ## Cost
 

@@ -36,8 +36,14 @@ LOCATION="${LOCATION:-EU}"
 # Cloud Run jobs are regional; pick a region inside ${LOCATION}.
 REGION="${REGION:-europe-west1}"
 
-# How often to check for changed periods. Daily is plenty — the billing export
-# itself only lands a few times a day.
+# How often to check for changed periods.
+#
+# Daily is the right answer for almost everyone: the upstream export only
+# refreshes a few times a day, so extra runs mostly find nothing changed — and
+# the ones that DO find a change re-export the whole current month, which grows
+# through the month. Twice daily ("0 6,18 * * *") is a reasonable step up;
+# hourly multiplies month-end scan cost for no real freshness gain. For a
+# number right now, run the job on demand instead of raising the schedule.
 SCHEDULE="${SCHEDULE:-0 6 * * *}"
 
 # ---------------------------------------------------------------------------
