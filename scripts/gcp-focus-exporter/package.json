@@ -1,0 +1,19 @@
+{
+  "name": "costgoblin-gcp-focus-exporter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Exports the GCP FOCUS 1.2 BigQuery billing export to GCS in the layout CostGoblin syncs from",
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node export-focus.mjs",
+    "dry-run": "DRY_RUN=1 node export-focus.mjs"
+  },
+  "dependencies": {
+    "@google-cloud/bigquery": "^8.1.1",
+    "@google-cloud/storage": "^7.21.0"
+  }
+}
