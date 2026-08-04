@@ -2630,21 +2630,19 @@ gcloud storage buckets create <span class="code-dir">gs://your-company-billing</
             <span class="step-num">2</span>
             <h4>Deploy the exporter</h4>
           </div>
-          <p>A small job in <em>your</em> project copies each changed billing period out of BigQuery into the bucket. CostGoblin never holds credentials that can reach BigQuery &mdash; it only reads the bucket. Both variants ship in the repo under <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter" target="_blank" rel="noopener"><strong>scripts/gcp-focus-exporter</strong></a>:</p>
+          <p>A scheduled job in <em>your</em> project copies each changed billing period out of BigQuery into the bucket. CostGoblin never holds credentials that can reach BigQuery &mdash; it only reads the bucket. It ships in the repo under <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter" target="_blank" rel="noopener"><strong>scripts/gcp-focus-exporter</strong></a>:</p>
           <div class="code-block">
-<span class="code-comment">Variant A — BigQuery scheduled query, no infrastructure</span>
-  <span class="code-file">scheduled-query.sql</span>   <span class="code-comment"># paste into a daily scheduled query</span>
-
-<span class="code-comment">Variant B — Cloud Run job (recommended)</span>
-  <span class="code-file">./deploy.sh</span>           <span class="code-comment"># builds, deploys and schedules it</span>
+cd scripts/gcp-focus-exporter
+<span class="code-file">./deploy.sh</span>   <span class="code-comment"># builds the job, deploys it, schedules it daily</span>
           </div>
-          <p>Both write the same layout, so you can start with A and move to B later with no migration:</p>
+          <p>Each run re-exports only the periods that changed, and writes them as:</p>
           <div class="code-block">
 <span class="code-dir">gs://your-company-billing/focus/</span>
 ├── <span class="code-dir">billing_period=2026-07/</span><span class="code-file">shard-000000000000.parquet</span>
 └── <span class="code-dir">billing_period=2026-08/</span><span class="code-file">shard-000000000000.parquet</span>
           </div>
-          <div class="step-callout"><strong>Why two variants:</strong> BigQuery decides how many files to split an export into, and that number is not stable between runs. A re-export producing fewer files leaves the extras behind, and nothing downstream can tell an orphan from a live one &mdash; so the month silently reads high. SQL cannot delete Cloud Storage objects; the Cloud Run job deletes each period's folder before rewriting it. Variant A is fine for evaluation.</div>
+          <div class="step-callout"><strong>Why a deployed job and not just a scheduled query:</strong> BigQuery decides how many files to split an export into, and that number is not stable between runs. A re-export producing fewer files leaves the extras behind &mdash; and nothing downstream can tell an orphan from a live one, so the month silently reads high. SQL cannot delete Cloud Storage objects, so the job clears each period's folder before rewriting it. A scheduled query on its own will look like it is working and quietly report inflated costs.</div>
+          <div class="step-note">The same export runs standalone as <em>scheduled-query.sql</em> if you want to eyeball the data before deploying anything &mdash; useful for a first look, but not a complete setup, for the reason above.</div>
           <div class="step-note">The folder name must be lowercase <em>billing_period=</em>. CostGoblin matches it case-sensitively on purpose, so a leftover uppercase tree in the same bucket stays invisible &mdash; get it wrong and the bucket reads as empty with no error.</div>
         </div>
 
