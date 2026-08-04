@@ -8,6 +8,56 @@
 > once dataset access is provided — everything else is developed and validated against synthetic
 > fixtures.
 
+## 0. Corrections since drafting
+
+Phases A–E are implemented. Four decisions in the original draft below turned out to be wrong when
+checked against the code and against DuckDB, and were changed. They are recorded here rather than
+edited away silently, because each one is a bug that would have shipped.
+
+**C1 — Downloads shell out to `gcloud storage rsync`, not the SDK.** §4 sketched SDK streaming
+through the handle. The adapter now mirrors AWS seam for seam instead: the vendor SDK
+(`@google-cloud/storage`) lists the bucket for change detection, and the vendor CLI moves the
+bytes — the sister of `aws s3 sync`. So the app expects the gcloud CLI exactly as it already
+expects the AWS CLI, and it is the same binary the sign-in affordance shells out to, so a working
+GCP setup already has it. `ObjectStoreHandle.downloadFile` survives for single-object reads (the
+wizard's schema probe). `--delete-unmatched-destination-objects` also solves the stale-shard
+problem on the app side for free.
+
+**C2 — `ChargePeriodStart` must be normalized to naive UTC, from the *observed* type.** Absent
+from the draft entirely. BigQuery writes TIMESTAMP with `isAdjustedToUTC=1`; DuckDB reads that back
+as `TIMESTAMP WITH TIME ZONE`, and `::DATE` then resolves in the **session** timezone — verified
+under `TimeZone='Europe/Berlin'`, a `2026-01-31 23:30 UTC` row reads as `2026-02-01`, silently
+moving spend across a month boundary in both `usage_date` and the period-directory layout. The
+conversion has to be selected from the footer type: applying `AT TIME ZONE 'UTC'` to an
+*already-naive* TIMESTAMP shifts it the other way by the session offset, introducing the very bug
+it prevents.
+
+**C3 — §4's `map_from_entries` snippet is a hard runtime failure.** Verified:
+`map_from_entries` raises `Invalid Input Error` on a duplicate key *or* a NULL key, failing the
+whole period's `COPY`. Both occur in real exports — the same name can appear as a resource tag and
+a project label, and a malformed label can carry a NULL key. Keys are now de-duplicated and
+NULL-filtered first, each surviving key taking the value of its first occurrence, which makes the
+source order (`Tags` → `x_Labels` → `x_ProjectLabels`) a **precedence rule**: resource tags outrank
+labels. This resolves §5's `[LIVE-GATE: decide precedence]` marker — it was a correctness
+precondition, not deferrable polish.
+
+**C4 — `union_by_name` does not rescue a wholly-absent column.** It NULL-fills a column missing
+from *some* file in a glob; a column missing from *every* file in one provider's glob is still a
+binder error. So all 20 contract columns are physically materialized in each canonical file — the
+`CAST(NULL AS VARCHAR) AS x_Operation` is load-bearing, not cosmetic.
+
+Two smaller ones: `isCredentialError`'s bare `'credentials'` substring matched Google's *"Could not
+load the default credentials"*, so every GCP auth failure was being rewritten into "run `aws sso
+login --profile undefined`" — narrowed, with cross-negative tests in both directions. And
+`resolveBucketPath` returned the **daily** bucket for an hourly request against a GCP provider
+(`hourly?.bucket ?? daily.bucket`), which is worse than the missing throw the draft described.
+
+Also: `saveEtags`/`pruneStaleFiles` are private to `selective-sync.ts`, not in `sync-utils.ts` as
+§4 seam 5 claims — `saveEtags` was extracted; `pruneStaleFiles` is deliberately **not** reused,
+since it compares remote basenames against local ones and would delete every canonicalized file.
+And `duckdb-lazy.ts` is unusable from the sync worker (`createRequire(import.meta.url)` breaks once
+esbuild bundles it as CJS), so the canonicalizer uses `await import('@duckdb/node-api')`.
+
 ## 1. Goal and ingest contract
 
 The GCP adapter's only job: keep `{workspace}/data/{providerName}/raw/daily-YYYY-MM/*.parquet`
@@ -191,27 +241,42 @@ documented #516 v1 caveat — not GCP-specific, no new work here.
 
 Each phase: types → failing tests → implementation → `npm run check` green → commit.
 
-- **A. Config model** — `GcpProviderConfig` arm + validator + serializer + `config-upsert` /
+- **A. Config model** ✅ — `GcpProviderConfig` arm + validator + serializer + `config-upsert` /
   scaffold support. Tests: validator accept/reject matrix, legacy configs untouched.
-- **B. Listing** — `ObjectStoreHandle` factory + `gcs-client.ts` + `parseGcsPath`;
-  `data-inventory.ts` goes through the factory (aws behavior byte-identical — existing tests prove
-  it). Tests: fake handle (the `s3Override` injection pattern, `data-inventory.ts:159`).
-- **C. Canonicalizer** — pure core function (staging dir in → canonical period dir out) with the
-  DuckDB `COPY` above. Tests (Layer 2, real DuckDB): BQ-shaped fixture in → contract assertions out
-  (MAP tags via `element_at`, DOUBLE costs, all `REQUIRED_FOCUS_COLUMNS`, header-only shard
-  tolerated, missing required column ⇒ typed error).
-- **D. Download path** — `gcp-selective-sync.ts` (download → canonicalize → atomic swap → etags);
-  worker protocol auth threading; `resolveBucketPath` per-arm. Tests: worker-level with fake
-  handle; abort mid-period leaves `raw/` untouched.
-- **E. Errors & login UX** — `isGcpCredentialError`, `toUserFriendlyError` branch, UI sniff +
-  ADC-login button, generalized `data:sso-login`. Tests: classifier matrix mirroring
-  `credential-error.test.ts`.
-- **F. Setup & data-management UI** — type picker, GCS test-connection/browse + footer-based column
-  validation, badge, gcp tier card (daily only). Tests: Layer 3 against extended `MockCostApi`.
-- **G. Fixtures & integration** — `focus-fixture.ts` gains a BQ-export-shaped GCP emitter
-  (list-of-struct tags, DECIMAL costs, `x_ServiceId`, no `x_Operation`, `shard-NNNN` names, one
-  header-only shard); extend `multi-provider-union.integration.test.ts` with an aws+gcp workspace
-  asserting the `provider` dimension splits and totals sum; e2e `--fixture-mode` pass.
+- **B. Listing** ✅ — `ObjectStoreHandle` factory + `gcs-client.ts` + `parseGcsPath`;
+  `data-inventory.ts` goes through the factory (aws behavior byte-identical — the existing
+  `data-inventory.test.ts` assertions are unchanged and prove it). `getDataInventory`'s second
+  parameter is now a `ProviderAuth` descriptor rather than a profile string.
+- **C. Canonicalizer** ✅ — `gcp-canonicalize.ts`, schema-adaptive (the export is in Preview and
+  ships `SELECT *`, so unknown columns pass through and the contract columns are normalized).
+  Tests (Layer 2, real DuckDB, session TZ pinned to `Europe/Berlin`): MAP tags via `element_at`,
+  DOUBLE costs, every `REQUIRED_FOCUS_COLUMNS` present, month-boundary row stays in its month,
+  duplicate/NULL tag keys survive, header-only shard tolerated, union with an AWS-shaped file,
+  missing required column ⇒ typed error.
+- **D. Download path** ✅ — `gcp-selective-sync.ts` (rsync → canonicalize → dir swap → etags);
+  `ProviderAuth` threaded through the worker protocol; `resolveBucketPath` per-arm. Tests exercise
+  the *real* filesystem (only `gcloud` is faked): abort and canonicalize-failure both leave `raw/`
+  byte-identical, and etags are written only after a period is installed.
+- **E. Errors & login UX** ✅ — `isGcpCredentialError`, `toUserFriendlyError` per-arm, UI sniff +
+  `GcloudLoginButton`, and a `data:gcloud-login` **sibling** channel (`ssoLogin(profile)`'s arity is
+  frozen across `CostApi`/preload/UI, and ADC takes no profile).
+- **F. Setup & data-management UI** — **explicit provider-type step first** (maintainer's call: the
+  GCP path must be discoverable, and the six wizard tests that walk the literal AWS path are
+  updated in the same commit). Plus GCS test-connection/browse with footer-based column validation
+  (GCS has no `metadata/` manifest — the Parquet footer *is* the truth, and the raw BQ export
+  legitimately lacks `x_ServiceCode`/`x_Operation`, so it must not be validated against
+  `REQUIRED_FOCUS_COLUMNS`). Data-management is already arm-aware: `provider.type` badge,
+  credentials chip, hourly/cost-opt panels and the AWS-only sections hidden for GCP.
+- **G. Fixtures & integration** — a BQ-export-shaped emitter **derived** from the existing
+  `synthetic` table (`CREATE TABLE … AS SELECT`, the exact inverse of the canonicalizer) rather
+  than a parallel hand-written DDL, preserving `focus-fixture.ts`'s no-drift invariant. The shared
+  `__fixtures__/config/costgoblin.yaml` **gains a gcp provider** (maintainer's call: real e2e and
+  `npm run dev:fixtures` coverage of a mixed workspace, at the cost of updating the four suites
+  that assert `providers.length === 1` or exact totals). `multi-provider-union.integration.test.ts`
+  gains an aws+gcp case — and it must add a **tag dimension**, since its `dimensions` const has
+  `tags: []` today, leaving `element_at` (the most GCP-fragile expression) uncovered there.
+  Note: the `--fixture-mode` flag §6 originally cited does not exist; the mechanism is
+  `COSTGOBLIN_DATA_DIR` + `COSTGOBLIN_CONFIG_DIR` (`e2e/helpers.ts`).
 - **H. Cloud recipe & docs** — `scripts/gcp-focus-exporter/` (variants A+B, Dockerfile, deploy.sh);
   split the landing-page guide: `docs/index.html#get-started` becomes two provider cards linking to
   new `docs/setup-aws.html` (current steps 0–4 moved verbatim) and `docs/setup-gcp.html` (§3 recipe
