@@ -121,7 +121,9 @@ function sq(v: string): string {
   return `'${v.replaceAll("'", "''")}'`;
 }
 
-function round2(v: number): number {
+/** Round to cents. Shared with the focus-1-2 provider samples so both
+ *  generators agree on cent boundaries. */
+export function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 

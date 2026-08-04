@@ -1,0 +1,5 @@
+# The committed FOCUS samples are compared byte-for-byte against generator
+# output (packages/core/src/__tests__/focus-1-2-samples.integration.test.ts).
+# Git's autocrlf would rewrite them on checkout under Windows and fail the
+# comparison — and with it the pre-commit hook — so pin the line endings.
+*.csv text eol=lf

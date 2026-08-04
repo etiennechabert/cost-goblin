@@ -1,0 +1,142 @@
+# FOCUS 1.2 provider samples
+
+Three committed samples of one billing month (2026-05), each shaped the way
+that provider's **native** FOCUS 1.2 export actually delivers it:
+
+| File | Export | Columns | Rows |
+|---|---|---|---|
+| `samples/aws.csv` | AWS Data Exports, `FOCUS_1_2_AWS` table | 52 | 116 |
+| `samples/azure.csv` | Microsoft Cost Management FOCUS 1.2 | 64 | 116 |
+| `samples/gcp.csv` | Google Cloud FOCUS BigQuery export | 50 | 116 |
+
+The data is **synthetic** — no real account, resource or cost figure appears
+in it. What is real is the *shape*: column sets, physical types, value
+vocabularies and the gaps between what FOCUS specifies and what each provider
+ships.
+
+All three render the **same** set of billing events, so any difference between
+the files is a difference in how that provider bills or exports — never
+generator noise. Both facts are asserted in
+`packages/core/src/__tests__/focus-1-2-samples.integration.test.ts`.
+
+## Why native shapes rather than idealized FOCUS
+
+A sample where all three providers carry an identical 57-column FOCUS 1.2
+schema would be fiction, and tests written against it would pass while real
+ingest fails. The interesting content of these files is precisely what each
+provider *omits*:
+
+| Query-contract column | AWS | Azure | GCP |
+|---|---|---|---|
+| `ServiceCategory` | ✅ | ✅ | ❌ absent |
+| `CommitmentDiscountStatus` | ✅ | ✅ | ❌ — CUDs surface in `x_Credits` |
+| `SkuMeter` | ✅ | ✅ | ❌ — only `SkuId` |
+| `Tags` | ✅ MAP | ⚠️ JSON document | ❌ — `x_Labels` / `x_Tags` repeated records |
+| `x_ServiceCode` | ✅ | ❌ AWS extension | ❌ — closest is `x_ServiceId` |
+| `x_Operation` | ✅ | ❌ AWS extension | ❌ |
+
+GCP additionally omits three columns FOCUS 1.2 marks mandatory with no
+condition attached — `BillingAccountName`, `InvoiceIssuerName` and
+`ServiceCategory`.
+
+Its commitment reporting is the subtlest of these: used and unused commitment
+both arrive as the *same* `x_Credits` type, separated only by the sign of the
+amount (negative = discount applied, positive = unconsumed capacity). A reader
+that keys on the credit type alone reports every commitment row as `Used` and
+silently loses the unused one.
+
+`shapes.ts` encodes all of this, including the FOCUS 1.2 requirement levels
+themselves (21 mandatory columns, 32 conditional), so the gap analysis is a
+data structure rather than prose.
+
+## Physical types
+
+A CSV cannot express that AWS delivers `Tags` as a Parquet `MAP`, Azure as a
+JSON document, and GCP as `ARRAY<STRUCT<Key, Value>>` under a different name.
+`load.ts` restores the real types on the way into Parquet — including
+`DECIMAL(38,9)` costs for GCP (BigQuery `NUMERIC`) and `DECIMAL(29,10)` for
+Azure. This matters: tag extraction in the query layer is
+`element_at(Tags, 'key')[1]`, which only compiles against a `MAP`.
+
+Empty CSV cells load as `NULL`, the way a real export delivers absent values.
+
+Nested columns are stored in the CSV as JSON text and parsed back on load.
+
+## Using them in a test
+
+```ts
+const { providerName } = await writeSampleParquet(conn, 'gcp', dataDir, 'contract');
+const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: asProviderName(providerName), periods: ['2026-05'] }] });
+```
+
+`shape: 'native'` writes the export exactly as the provider delivers it — what
+an ingest pipeline receives. `shape: 'contract'` writes the canonicalized form
+the query layer requires; `contractProjection(provider, table)` in `load.ts` is
+that mapping. The AWS path needs no projection at all; the real GCP adapter
+lives with the sync code, not here.
+
+Read the projection as a reference mapping, not a settled contract — two
+divergences are deliberate and open:
+
+- **Commitment status.** GCP reports used and unused commitment as the same
+  `x_Credits` type, separated only by the sign of the amount, so the projection
+  infers `Used`/`Unused` from it. The GCP provider work NULL-fills that column
+  instead. The two disagree; which is right is a question for that PR.
+- **Marketplace attribution.** The query layer re-attributes marketplace rows
+  by matching an empty `x_ServiceCode` against a known operation. Both non-AWS
+  branches synthesize a non-empty service code, so that predicate never fires
+  and third-party rows keep their `$0` list price on the `list` metric.
+
+## Tags across the three providers
+
+The same event tags reach each export differently, and the samples keep that
+difference rather than flattening it:
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| Physical form | `MAP` | JSON document | repeated `Key`/`Value` records |
+| Key casing | `team` | `Team` (Azure preserves what the user typed) | `team` |
+| Sources | one | one | `x_Tags` ≻ `x_Labels` ≻ `x_ProjectLabels` |
+
+GCP's three sources overlap on purpose: the project label sets a project-wide
+`environment=production`, while the tag binding carries what the workload
+actually is — so the merge order is observable, not decorative. Project labels
+also propagate to rows the workload owner never labelled, which is why GCP's
+untagged rows still resolve an environment while AWS's and Azure's do not. That
+is genuine provider behaviour; the ~8% untagged population survives on the
+resource-level keys (`team`, `system`) on all three.
+
+## Regenerating
+
+```bash
+npx tsx packages/core/src/__fixtures__/focus-1-2/write-samples.ts
+```
+
+Output is deterministic — a seeded generator and fixed timestamps, so an
+unchanged generator rewrites identical bytes. A test compares the committed
+CSVs against a fresh generator run, so the two cannot drift apart silently.
+
+## Sources
+
+Column sets were taken from vendor references, not from prose summaries, and
+last re-checked on 2026-08-04:
+
+- **FOCUS 1.2 requirement levels** — the FinOps Foundation validator's rule
+  model `model-1.2.0.1.json`
+  ([finopsfoundation/focus_validator](https://github.com/finopsfoundation/focus_validator)):
+  every rule whose `Requirement.CheckFunction` is `ColumnPresent`, split by
+  keyword and applicability.
+- **AWS** — [FOCUS 1.2 with AWS columns](https://docs.aws.amazon.com/cur/latest/userguide/table-dictionary-focus-1-2-aws.html):
+  the full FOCUS 1.2 column set plus exactly three AWS columns
+  (`x_Discounts`, `x_Operation`, `x_ServiceCode`).
+- **Azure** — `src/open-data/dataset-metadata/FocusCost_1.2-preview.json` in
+  [microsoft/finops-toolkit](https://github.com/microsoft/finops-toolkit)
+  (106 columns). The `x_` extensions are trimmed here to the eleven that carry
+  signal for a cost tool; the standard FOCUS columns are complete.
+- **GCP** — [Structure of FOCUS data export](https://docs.cloud.google.com/billing/docs/how-to/export-data-bigquery-tables/focus-export),
+  cross-checked against a live export schema.
+
+For comparison, the only *official* public FOCUS dataset
+([FOCUS-Sample-Data](https://github.com/FinOps-Open-Cost-and-Usage-Spec/FOCUS-Sample-Data),
+CC BY 4.0) is FOCUS **1.0**, CSV-only, and contains 115 Google Cloud rows out
+of 5.5 million — which is why these samples exist.
