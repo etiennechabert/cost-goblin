@@ -1,0 +1,3 @@
+# Real AWS profile names / account identifiers — never commit (public repo).
+config.local.sh
+__pycache__/
