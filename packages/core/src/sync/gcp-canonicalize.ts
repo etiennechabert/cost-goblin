@@ -66,10 +66,21 @@ const VARCHAR_COLUMNS: readonly string[] = [
 ];
 
 /** Repeated `STRUCT<Key, Value, …>` fields that hold tags/labels, in
- *  precedence order: on a key collision the earlier source wins. Resource
- *  tags are the most specific signal, so `Tags` outranks the GCP label
- *  fields; project labels are the broadest and lose to both. */
-const TAG_SOURCE_COLUMNS: readonly string[] = ['Tags', 'x_Labels', 'x_ProjectLabels'];
+ *  precedence order: on a key collision the earlier source wins, so the list
+ *  runs most-specific to broadest.
+ *
+ *  The GCP export calls its resource tags **`x_Tags`**, not the FOCUS-standard
+ *  `Tags` — verified against a live export's schema, which has 55 columns and
+ *  no `Tags` at all. Reading only `Tags` silently produced an empty tag map
+ *  for every resource tag, with no error anywhere: exactly the failure this
+ *  whole canonicalization step exists to prevent. `Tags` stays in the list for
+ *  the day the export adopts the standard name; absent columns are skipped, so
+ *  carrying both costs nothing.
+ *
+ *  `x_SystemLabels` is deliberately NOT here. Those are GCP-generated (machine
+ *  spec, instance metadata), not cost-allocation tags, and merging them would
+ *  bury the user's own keys in the dimension picker. */
+const TAG_SOURCE_COLUMNS: readonly string[] = ['x_Tags', 'Tags', 'x_Labels', 'x_ProjectLabels'];
 
 /** Source-only columns consumed to synthesize contract columns. They are not
  *  passed through — carrying both `x_ServiceId` and the `x_ServiceCode`

@@ -210,6 +210,57 @@ describe('canonicalizeGcpPeriod', () => {
     expect(names.has('x_Labels')).toBe(false);
   });
 
+  it('reads tags from the column the real export actually uses (x_Tags)', async () => {
+    // The live GCP FOCUS export has 55 columns and NO `Tags` — resource tags
+    // are in `x_Tags`. Reading only the FOCUS-standard name produced an empty
+    // tag map for every row, with no error anywhere. This pins the real names
+    // and their precedence: resource tags beat labels beat project labels.
+    const dir = join(root, 'staging', 'real-names');
+    await mkdir(dir, { recursive: true });
+    await conn.run(`CREATE TABLE bq_real AS SELECT * FROM (VALUES (
+      TIMESTAMPTZ '2026-07-15 08:00:00+00', 'proj-a', 'Project A',
+      CAST(1 AS DECIMAL(38,9)), CAST(1 AS DECIMAL(38,9)),
+      'Compute Engine', 'Usage',
+      [{'Key': 'team', 'Value': 'platform', 'x_Inherited': false, 'x_Namespace': CAST(NULL AS VARCHAR)}],
+      [{'Key': 'team', 'Value': 'label-loses'}, {'Key': 'system', 'Value': 'checkout'}],
+      [{'Key': 'cost-centre', 'Value': 'eng'}],
+      [{'Key': 'machine_spec', 'Value': 'n1-standard-1'}],
+      'compute.googleapis.com', 'N1-Std'
+    )) AS t(
+      ChargePeriodStart, SubAccountId, SubAccountName,
+      BilledCost, EffectiveCost, ServiceName, ChargeCategory,
+      x_Tags, x_Labels, x_ProjectLabels, x_SystemLabels, x_ServiceId, SkuId
+    )`);
+    await conn.run(`COPY (SELECT * FROM bq_real) TO '${join(dir, 'shard-0.parquet')}' (FORMAT PARQUET)`);
+
+    const out = join(root, 'out', 'real-names', 'part-0.parquet');
+    await canonicalizeGcpPeriod({ stagingDir: dir, outputPath: out, connection: conn });
+
+    const [row] = await rowsOf(`SELECT
+      element_at(Tags,'team')[1] AS team,
+      element_at(Tags,'system')[1] AS system,
+      element_at(Tags,'cost-centre')[1] AS cc,
+      element_at(Tags,'machine_spec')[1] AS machine,
+      cardinality(Tags) AS n,
+      x_ServiceCode, SkuMeter, ServiceCategory, CommitmentDiscountStatus
+      FROM read_parquet('${out}')`);
+
+    expect(row?.['team']).toBe('platform');          // x_Tags outranks x_Labels
+    expect(row?.['system']).toBe('checkout');        // merged from x_Labels
+    expect(row?.['cc']).toBe('eng');                 // merged from x_ProjectLabels
+    // System labels are GCP-generated, not cost-allocation tags — including
+    // them would bury the user's own keys in the dimension picker.
+    expect(row?.['machine']).toBeNull();
+    expect(Number(row?.['n'])).toBe(3);
+
+    // Columns the real export simply does not have, materialized as NULL so
+    // the glob still binds rather than erroring at query time.
+    expect(row?.['x_ServiceCode']).toBe('compute.googleapis.com');
+    expect(row?.['SkuMeter']).toBe('N1-Std');
+    expect(row?.['ServiceCategory']).toBeNull();
+    expect(row?.['CommitmentDiscountStatus']).toBeNull();
+  });
+
   it('fails with a typed error when a required FOCUS column is absent', async () => {
     const staging = await stageBqPeriod(
       'nocost',

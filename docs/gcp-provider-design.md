@@ -21,6 +21,33 @@ objects, so on its own it accumulates orphaned shards and silently reports
 inflated costs. The shipped recipe is the Cloud Run job; the standalone SQL is
 the same export runnable by hand for a first look, documented as incomplete.
 
+**C0a — [LIVE-GATE RESOLVED] The real export schema, read from a live table.**
+`gcp_billing_export_focus_<ACCOUNT>` materialized on 2026-08-04 with **55
+columns and zero rows**, which settles the schema questions §5 left open even
+before any data lands:
+
+| §5 assumed | Reality |
+|---|---|
+| `Tags` (FOCUS standard) | **absent — it is `x_Tags`** |
+| `x_Labels` / `x_ProjectLabels` | present, plus `x_SystemLabels` |
+| `SkuMeter` | absent; `SkuId` + `SkuPriceId` present |
+| `ServiceCategory` | **absent** |
+| `CommitmentDiscountStatus` (+ Id/Name/Type) | **absent** — CUDs surface via `x_Credits[]` |
+| all four cost columns | present, all `NUMERIC` ⇒ the DECIMAL→DOUBLE cast is right |
+| `ChargePeriodStart` | `TIMESTAMP` ⇒ tz-aware in Parquet, so C2's branch applies |
+| `x_ServiceId`, `x_ExportTime`, `BillingPeriodStart` | present ⇒ synthesis and the watermark both work |
+
+The `Tags`/`x_Tags` mismatch was a live bug: every resource tag was silently
+dropped, producing an empty tag map with no error — the exact failure mode
+canonicalization exists to prevent. Fixed, with the precedence now
+`x_Tags` → `Tags` → `x_Labels` → `x_ProjectLabels`. `x_SystemLabels` is
+deliberately excluded: GCP-generated machine metadata, not cost allocation.
+
+Two contract columns have no GCP source at all and are NULL-filled, so **the
+Service Category and Commitment Status dimensions will be empty for GCP rows**.
+Worth surfacing in the UI rather than looking like a sync failure. The table
+also carries a 730-day partition expiry, confirming §2's two-year retention.
+
 **C0b — `gcloud storage rsync` emits no byte counts.** Confirmed against
 gcloud 578 on a real bucket: rsync prints a `Copying gs://… to file://…` line
 per transfer as it *starts*, then a dot progress bar and an
