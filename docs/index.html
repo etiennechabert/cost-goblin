@@ -1740,6 +1740,165 @@
 
     .lightbox-close:hover { background: rgba(255, 255, 255, 0.2); }
 
+    /* --- Provider integration cards + modals --------------------------
+       The per-provider setup guides are long. Keeping them inline pushed
+       everything below Get started far down the page, so each provider is a
+       card that opens its guide in a modal. */
+    .integration-intro {
+      max-width: 620px;
+      margin: 0 auto 40px;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 16px;
+      line-height: 1.7;
+    }
+
+    .integration-choice {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      max-width: 760px;
+      margin: 0 auto;
+    }
+
+    .integration-card {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+      padding: 28px;
+      text-align: left;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .integration-card:hover,
+    .integration-card:focus-visible {
+      border-color: var(--border-glow);
+      transform: translateY(-2px);
+      box-shadow: 0 0 24px var(--emerald-glow);
+      outline: none;
+    }
+
+    .integration-card-name {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .integration-card-sub {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .integration-card-cta {
+      margin-top: 14px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--emerald);
+    }
+
+    .provider-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(8px);
+      align-items: flex-start;
+      justify-content: center;
+      padding: 40px 24px;
+      overflow-y: auto;
+    }
+
+    .provider-modal.open { display: flex; }
+
+    .provider-modal-panel {
+      position: relative;
+      width: 100%;
+      max-width: 900px;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+    }
+
+    .provider-modal-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 8px;
+      padding-right: 40px;
+    }
+
+    .provider-modal-head h3 {
+      font-family: var(--font-display);
+      font-size: 26px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .provider-modal-head .provider-modal-sub {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .provider-modal-close {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      width: 34px;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-dim);
+      font-size: 22px;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .provider-modal-close:hover { background: rgba(255, 255, 255, 0.14); color: var(--text); }
+
+    /* The steps were authored for a full-width section; inside the panel they
+       need no extra indent. */
+    .provider-modal .get-started-steps { margin-top: 24px; }
+    .provider-modal .step p,
+    .provider-modal .step .code-block,
+    .provider-modal .step-note,
+    .provider-modal .step-callout { margin-left: 0; }
+    .provider-modal .step { opacity: 1; transform: none; }
+
+    /* Links inside the setup steps were never styled — they rendered as the
+       browser's default blue underline, which is glaring on this palette. Now
+       that the steps live in a modal people actually open, give them the
+       site's own link treatment. */
+    .get-started-steps a {
+      color: var(--emerald);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(16, 185, 129, 0.35);
+      transition: border-color 0.2s ease;
+    }
+
+    .get-started-steps a:hover { border-bottom-color: var(--emerald); }
+
+    @media (max-width: 768px) {
+      .provider-modal { padding: 16px 8px; }
+      .provider-modal-panel { padding: 20px 16px; }
+      .provider-modal-head h3 { font-size: 21px; }
+    }
+
     /* --- ANIMATIONS --- */
     @keyframes fadeInUp {
       from { opacity: 0; transform: translateY(24px); }
@@ -2175,123 +2334,21 @@
   <section class="get-started" id="get-started">
     <div class="container">
       <div class="section-label">Get started</div>
-      <div class="section-title">Set up your AWS data exports</div>
-      <div class="get-started-steps">
+      <div class="section-title">Connect your billing data</div>
+      <p class="integration-intro">CostGoblin reads FOCUS&nbsp;1.2 exports straight from your own cloud storage. Nothing leaves your machine, and no third party ever sees your bill. Pick your cloud for the setup guide.</p>
 
-        <div class="step" data-animate>
-          <div class="step-header">
-            <span class="step-num">0</span>
-            <h4>Activate your cost allocation tags</h4>
-          </div>
-          <p>Before setting up any exports, make sure the tags you want to slice costs by are activated in the AWS Billing Console &rarr; <strong>Cost Allocation Tags</strong>.</p>
-          <p>Activate any user-defined tag you plan to use as a dimension in CostGoblin (e.g. <em>team</em>, <em>environment</em>, <em>service</em>). Tags that aren't activated here won't appear in the FOCUS exports, no matter how they're configured.</p>
-          <div class="step-note">Newly activated tags only appear in data generated <strong>after</strong> activation &mdash; they are not backfilled. Activate them as early as possible.</div>
-        </div>
+      <div class="integration-choice">
+        <button type="button" class="integration-card" data-open-modal="modal-aws" aria-haspopup="dialog">
+          <span class="integration-card-name">AWS Integration</span>
+          <span class="integration-card-sub">FOCUS 1.2 Data Export &rarr; S3</span>
+          <span class="integration-card-cta">Setup guide &rarr;</span>
+        </button>
 
-        <div class="step" data-animate>
-          <div class="step-header">
-            <span class="step-num">1</span>
-            <h4>Create your S3 bucket</h4>
-          </div>
-          <p>Pick a dedicated bucket (or prefix) for all CostGoblin data. We recommend this structure so each export lands in its own namespace:</p>
-          <div class="code-block">
-<span class="code-dir">s3://your-company-billing/</span>
-├── <span class="code-dir">focus_daily/</span>       <span class="code-comment"># Daily FOCUS 1.2 export — required</span>
-├── <span class="code-dir">focus_hourly/</span>      <span class="code-comment"># Hourly FOCUS 1.2 export — optional</span>
-└── <span class="code-dir">cost_optimization/</span> <span class="code-comment"># Cost Optimization Hub export</span>
-          </div>
-          <div class="step-note">Use any bucket name. The three prefixes are what matters.</div>
-        </div>
-
-        <div class="step" data-animate>
-          <div class="step-header">
-            <span class="step-num">2</span>
-            <h4>Create the FOCUS exports</h4>
-          </div>
-          <p>From <strong>Billing and Cost Management</strong>, open <a href="https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports" target="_blank" rel="noopener"><strong>Data Exports</strong></a> in the left navigation, then click <strong>Create export</strong>. Choose <strong>Standard data export</strong> and select <strong>FOCUS 1.2</strong> as the data table (<em>FOCUS_1_2_AWS</em>). Only the <strong>daily</strong> export is required. You can optionally create a second, <strong>hourly</strong> export &mdash; helpful to understand how costs distribute within a day (intraday drill-down and incident analysis). Configure each as follows:</p>
-          <div class="step-note">Use <strong>Data Exports</strong>, not the legacy <strong>Cost &amp; Usage Reports</strong> page &mdash; and pick the <strong>FOCUS 1.2</strong> table, not CUR 2.0. A correct FOCUS 1.2 export lands as Parquet under <em>data/</em> and <em>metadata/</em> folders, partitioned by billing period.</div>
-          <div class="code-block">
-<span class="code-comment">Data table content settings</span>
-<span class="code-comment">─────────────────────────────────────</span>
-Data table:          <span class="code-file">FOCUS 1.2</span>  <span class="code-comment">(FOCUS_1_2_AWS)</span>
-Column selection:    <span class="code-file">All columns</span>  <span class="code-comment">(see the list below)</span>
-Time granularity:    <span class="code-file">Daily</span>  <span class="code-comment">(or Hourly for the optional second export)</span>
-
-<span class="code-comment">Data export delivery options</span>
-<span class="code-comment">─────────────────────────────────────</span>
-Compression &amp; format:   <span class="code-file">Parquet</span>  <span class="code-comment">(not gzip/CSV)</span>
-Data export overwriting: <span class="code-file">Overwrite existing data export file</span>
-
-<span class="code-comment">Data export storage settings</span>
-<span class="code-comment">─────────────────────────────────────</span>
-S3 bucket:       <span class="code-dir">your-company-billing</span>
-S3 path prefix:  <span class="code-dir">focus_daily</span>  <span class="code-comment">(or focus_hourly for the optional hourly export)</span>
-          </div>
-          <p>Under <strong>Column selection</strong>, keep <strong>all columns</strong> enabled. These are the ones CostGoblin requires:</p>
-          <div class="code-block">
-<span class="code-comment"># Identity &amp; time</span>
- &bull; <span class="code-file">ChargePeriodStart</span>           <span class="code-comment">usage timestamp</span>
- &bull; <span class="code-file">SubAccountId</span>                <span class="code-comment">AWS account ID</span>
- &bull; <span class="code-file">SubAccountName</span>              <span class="code-comment">account display name</span>
-
-<span class="code-comment"># What was used</span>
- &bull; <span class="code-file">ServiceName</span>                 <span class="code-comment">service display name (Amazon EC2, Amazon S3…)</span>
- &bull; <span class="code-file">x_ServiceCode</span>               <span class="code-comment">service code (AmazonEC2, AmazonS3…)</span>
- &bull; <span class="code-file">ServiceCategory</span>             <span class="code-comment">cross-cloud category (Compute, Storage…)</span>
- &bull; <span class="code-file">RegionId</span>                    <span class="code-comment">region</span>
- &bull; <span class="code-file">ResourceId</span>                  <span class="code-comment">resource ARN</span>
- &bull; <span class="code-file">x_Operation</span>                 <span class="code-comment">API operation</span>
- &bull; <span class="code-file">SkuMeter</span>                    <span class="code-comment">usage meter (replaces CUR's usage type)</span>
- &bull; <span class="code-file">ConsumedQuantity</span>            <span class="code-comment">usage quantity</span>
- &bull; <span class="code-file">ChargeDescription</span>           <span class="code-comment">line item description</span>
-
-<span class="code-comment"># Charge classification</span>
- &bull; <span class="code-file">ChargeCategory</span>              <span class="code-comment">Usage, Purchase, Tax, Credit…</span>
- &bull; <span class="code-file">PricingCategory</span>             <span class="code-comment">On-Demand, Committed…</span>
- &bull; <span class="code-file">CommitmentDiscountStatus</span>    <span class="code-comment">Used / Unused commitment</span>
-
-<span class="code-comment"># Cost columns</span>
- &bull; <span class="code-file">BilledCost</span>                  <span class="code-comment">invoiced cost</span>
- &bull; <span class="code-file">EffectiveCost</span>               <span class="code-comment">amortized cost — the default metric</span>
- &bull; <span class="code-file">ListCost</span>                    <span class="code-comment">public on-demand price</span>
- &bull; <span class="code-file">ContractedCost</span>              <span class="code-comment">after negotiated discounts</span>
-
-<span class="code-comment"># Tags</span>
- &bull; <span class="code-file">Tags</span>                        <span class="code-comment">your cost allocation tags</span>
-          </div>
-          <div class="step-note">CostGoblin validates an export against the columns above and rejects it if any are missing &mdash; keeping every column enabled is the simplest way to stay valid, and the extra columns cost little in Parquet.</div>
-          <div class="step-callout"><strong>Pro tip:</strong> New data exports only include data from the day they're created. To get historical data, open an AWS Support case requesting a backfill for your export &mdash; AWS can typically reload up to 12 months of past billing data into your S3 bucket.</div>
-        </div>
-
-        <div class="step" data-animate>
-          <div class="step-header">
-            <span class="step-num">3</span>
-            <h4>Enable Cost Optimization Hub export</h4>
-          </div>
-          <p>In the AWS Billing Console &rarr; <strong>Cost Optimization Hub</strong> &rarr; Preferences, enable the S3 data export:</p>
-          <div class="code-block">
-<span class="code-comment"># Cost Optimization Hub export</span>
-S3 path:  <span class="code-dir">s3://your-company-billing/cost_optimization/</span>
-Format:   <span class="code-file">Parquet</span>
-          </div>
-          <div class="step-note">This feeds the Cost Optimization view with rightsizing, RI, and deletion recommendations.</div>
-        </div>
-
-        <div class="step" data-animate>
-          <div class="step-header">
-            <span class="step-num">4</span>
-            <h4>Connect and configure dimensions</h4>
-          </div>
-          <p>Open CostGoblin, go to <strong>Sync</strong> and point each data source to its S3 prefix. Once the first sync completes, head to <strong>Dimensions</strong> to map your tags to cost allocation dimensions. This is where CostGoblin shines &mdash; for each dimension you can:</p>
-          <ul style="margin: 12px 0 0 46px; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: var(--text-dim);">
-            <li><strong style="color: var(--emerald);">Normalize</strong> &mdash; merge inconsistent casing and spelling (<em>prod</em>, <em>Prod</em>, <em>production</em> &rarr; one value)</li>
-            <li><strong style="color: var(--emerald);">Define aliases</strong> &mdash; group multiple tag values under a single label across all views</li>
-            <li><strong style="color: var(--emerald);">Define fallbacks</strong> &mdash; fill missing resource tags with the account-level tag</li>
-            <li style="color: var(--text-muted); font-style: italic;">No data reprocessing &mdash; changes take effect instantly across all views.</li>
-          </ul>
-          <div class="step-note">First sync takes a few minutes depending on billing history size. Subsequent syncs only re-download the current month (AWS regenerates the full month's data with each export refresh).</div>
-        </div>
-
+        <button type="button" class="integration-card" data-open-modal="modal-gcp" aria-haspopup="dialog">
+          <span class="integration-card-name">GCP Integration</span>
+          <span class="integration-card-sub">FOCUS 1.2 BigQuery export &rarr; Cloud Storage</span>
+          <span class="integration-card-cta">Setup guide &rarr;</span>
+        </button>
       </div>
     </div>
   </section>
@@ -2392,6 +2449,260 @@ Format:   <span class="code-file">Parquet</span>
   </footer>
 
   <!-- LIGHTBOX -->
+  <!-- PROVIDER SETUP MODALS -->
+  <div class="provider-modal" id="modal-aws" role="dialog" aria-modal="true" aria-labelledby="modal-aws-title">
+    <div class="provider-modal-panel">
+      <button type="button" class="provider-modal-close" aria-label="Close">&times;</button>
+      <div class="provider-modal-head">
+        <h3 id="modal-aws-title">Set up your AWS data exports</h3>
+        <span class="provider-modal-sub">FOCUS 1.2 &rarr; S3</span>
+      </div>
+      <div class="get-started-steps">
+
+        <div class="step">
+          <div class="step-header">
+            <span class="step-num">0</span>
+            <h4>Activate your cost allocation tags</h4>
+          </div>
+          <p>Before setting up any exports, make sure the tags you want to slice costs by are activated in the AWS Billing Console &rarr; <strong>Cost Allocation Tags</strong>.</p>
+          <p>Activate any user-defined tag you plan to use as a dimension in CostGoblin (e.g. <em>team</em>, <em>environment</em>, <em>service</em>). Tags that aren't activated here won't appear in the FOCUS exports, no matter how they're configured.</p>
+          <div class="step-note">Newly activated tags only appear in data generated <strong>after</strong> activation &mdash; they are not backfilled. Activate them as early as possible.</div>
+        </div>
+
+        <div class="step">
+          <div class="step-header">
+            <span class="step-num">1</span>
+            <h4>Create your S3 bucket</h4>
+          </div>
+          <p>Pick a dedicated bucket (or prefix) for all CostGoblin data. We recommend this structure so each export lands in its own namespace:</p>
+          <div class="code-block">
+<span class="code-dir">s3://your-company-billing/</span>
+├── <span class="code-dir">focus_daily/</span>       <span class="code-comment"># Daily FOCUS 1.2 export — required</span>
+├── <span class="code-dir">focus_hourly/</span>      <span class="code-comment"># Hourly FOCUS 1.2 export — optional</span>
+└── <span class="code-dir">cost_optimization/</span> <span class="code-comment"># Cost Optimization Hub export</span>
+          </div>
+          <div class="step-note">Use any bucket name. The three prefixes are what matters.</div>
+        </div>
+
+        <div class="step">
+          <div class="step-header">
+            <span class="step-num">2</span>
+            <h4>Create the FOCUS exports</h4>
+          </div>
+          <p>From <strong>Billing and Cost Management</strong>, open <a href="https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports" target="_blank" rel="noopener"><strong>Data Exports</strong></a> in the left navigation, then click <strong>Create export</strong>. Choose <strong>Standard data export</strong> and select <strong>FOCUS 1.2</strong> as the data table (<em>FOCUS_1_2_AWS</em>). Only the <strong>daily</strong> export is required. You can optionally create a second, <strong>hourly</strong> export &mdash; helpful to understand how costs distribute within a day (intraday drill-down and incident analysis). Configure each as follows:</p>
+          <div class="step-note">Use <strong>Data Exports</strong>, not the legacy <strong>Cost &amp; Usage Reports</strong> page &mdash; and pick the <strong>FOCUS 1.2</strong> table, not CUR 2.0. A correct FOCUS 1.2 export lands as Parquet under <em>data/</em> and <em>metadata/</em> folders, partitioned by billing period.</div>
+          <div class="code-block">
+<span class="code-comment">Data table content settings</span>
+<span class="code-comment">─────────────────────────────────────</span>
+Data table:          <span class="code-file">FOCUS 1.2</span>  <span class="code-comment">(FOCUS_1_2_AWS)</span>
+Column selection:    <span class="code-file">All columns</span>  <span class="code-comment">(see the list below)</span>
+Time granularity:    <span class="code-file">Daily</span>  <span class="code-comment">(or Hourly for the optional second export)</span>
+
+<span class="code-comment">Data export delivery options</span>
+<span class="code-comment">─────────────────────────────────────</span>
+Compression &amp; format:   <span class="code-file">Parquet</span>  <span class="code-comment">(not gzip/CSV)</span>
+Data export overwriting: <span class="code-file">Overwrite existing data export file</span>
+
+<span class="code-comment">Data export storage settings</span>
+<span class="code-comment">─────────────────────────────────────</span>
+S3 bucket:       <span class="code-dir">your-company-billing</span>
+S3 path prefix:  <span class="code-dir">focus_daily</span>  <span class="code-comment">(or focus_hourly for the optional hourly export)</span>
+          </div>
+          <p>Under <strong>Column selection</strong>, keep <strong>all columns</strong> enabled. These are the ones CostGoblin requires:</p>
+          <div class="code-block">
+<span class="code-comment"># Identity &amp; time</span>
+ &bull; <span class="code-file">ChargePeriodStart</span>           <span class="code-comment">usage timestamp</span>
+ &bull; <span class="code-file">SubAccountId</span>                <span class="code-comment">AWS account ID</span>
+ &bull; <span class="code-file">SubAccountName</span>              <span class="code-comment">account display name</span>
+
+<span class="code-comment"># What was used</span>
+ &bull; <span class="code-file">ServiceName</span>                 <span class="code-comment">service display name (Amazon EC2, Amazon S3…)</span>
+ &bull; <span class="code-file">x_ServiceCode</span>               <span class="code-comment">service code (AmazonEC2, AmazonS3…)</span>
+ &bull; <span class="code-file">ServiceCategory</span>             <span class="code-comment">cross-cloud category (Compute, Storage…)</span>
+ &bull; <span class="code-file">RegionId</span>                    <span class="code-comment">region</span>
+ &bull; <span class="code-file">ResourceId</span>                  <span class="code-comment">resource ARN</span>
+ &bull; <span class="code-file">x_Operation</span>                 <span class="code-comment">API operation</span>
+ &bull; <span class="code-file">SkuMeter</span>                    <span class="code-comment">usage meter (replaces CUR's usage type)</span>
+ &bull; <span class="code-file">ConsumedQuantity</span>            <span class="code-comment">usage quantity</span>
+ &bull; <span class="code-file">ChargeDescription</span>           <span class="code-comment">line item description</span>
+
+<span class="code-comment"># Charge classification</span>
+ &bull; <span class="code-file">ChargeCategory</span>              <span class="code-comment">Usage, Purchase, Tax, Credit…</span>
+ &bull; <span class="code-file">PricingCategory</span>             <span class="code-comment">On-Demand, Committed…</span>
+ &bull; <span class="code-file">CommitmentDiscountStatus</span>    <span class="code-comment">Used / Unused commitment</span>
+
+<span class="code-comment"># Cost columns</span>
+ &bull; <span class="code-file">BilledCost</span>                  <span class="code-comment">invoiced cost</span>
+ &bull; <span class="code-file">EffectiveCost</span>               <span class="code-comment">amortized cost — the default metric</span>
+ &bull; <span class="code-file">ListCost</span>                    <span class="code-comment">public on-demand price</span>
+ &bull; <span class="code-file">ContractedCost</span>              <span class="code-comment">after negotiated discounts</span>
+
+<span class="code-comment"># Tags</span>
+ &bull; <span class="code-file">Tags</span>                        <span class="code-comment">your cost allocation tags</span>
+          </div>
+          <div class="step-note">CostGoblin validates an export against the columns above and rejects it if any are missing &mdash; keeping every column enabled is the simplest way to stay valid, and the extra columns cost little in Parquet.</div>
+          <div class="step-callout"><strong>Pro tip:</strong> New data exports only include data from the day they're created. To get historical data, open an AWS Support case requesting a backfill for your export &mdash; AWS can typically reload up to 12 months of past billing data into your S3 bucket.</div>
+        </div>
+
+        <div class="step">
+          <div class="step-header">
+            <span class="step-num">3</span>
+            <h4>Enable Cost Optimization Hub export</h4>
+          </div>
+          <p>In the AWS Billing Console &rarr; <strong>Cost Optimization Hub</strong> &rarr; Preferences, enable the S3 data export:</p>
+          <div class="code-block">
+<span class="code-comment"># Cost Optimization Hub export</span>
+S3 path:  <span class="code-dir">s3://your-company-billing/cost_optimization/</span>
+Format:   <span class="code-file">Parquet</span>
+          </div>
+          <div class="step-note">This feeds the Cost Optimization view with rightsizing, RI, and deletion recommendations.</div>
+        </div>
+
+        <div class="step">
+          <div class="step-header">
+            <span class="step-num">4</span>
+            <h4>Connect and configure dimensions</h4>
+          </div>
+          <p>Open CostGoblin, go to <strong>Sync</strong> and point each data source to its S3 prefix. Once the first sync completes, head to <strong>Dimensions</strong> to map your tags to cost allocation dimensions. This is where CostGoblin shines &mdash; for each dimension you can:</p>
+          <ul style="margin: 12px 0 0 46px; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: var(--text-dim);">
+            <li><strong style="color: var(--emerald);">Normalize</strong> &mdash; merge inconsistent casing and spelling (<em>prod</em>, <em>Prod</em>, <em>production</em> &rarr; one value)</li>
+            <li><strong style="color: var(--emerald);">Define aliases</strong> &mdash; group multiple tag values under a single label across all views</li>
+            <li><strong style="color: var(--emerald);">Define fallbacks</strong> &mdash; fill missing resource tags with the account-level tag</li>
+            <li style="color: var(--text-muted); font-style: italic;">No data reprocessing &mdash; changes take effect instantly across all views.</li>
+          </ul>
+          <div class="step-note">First sync takes a few minutes depending on billing history size. Subsequent syncs only re-download the current month (AWS regenerates the full month's data with each export refresh).</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="provider-modal" id="modal-gcp" role="dialog" aria-modal="true" aria-labelledby="modal-gcp-title">
+    <div class="provider-modal-panel">
+      <button type="button" class="provider-modal-close" aria-label="Close">&times;</button>
+      <div class="provider-modal-head">
+        <h3 id="modal-gcp-title">Set up your GCP billing export</h3>
+        <span class="provider-modal-sub">FOCUS 1.2 &rarr; Cloud Storage</span>
+      </div>
+
+      <div class="get-started-steps">
+
+        <div class="step">
+          <div class="step-header">
+            <span class="step-num">0</span>
+            <h4>Enable the FOCUS export &mdash; today</h4>
+          </div>
+          <p>In the Google Cloud Console, open <strong>Billing</strong> &rarr; <strong>Billing export</strong> &rarr; <strong>BigQuery export</strong> and enable <strong>FOCUS usage cost</strong>. Google creates a managed dataset holding the export; storage of it is free.</p>
+          <div class="step-note">Choose the <strong>FOCUS</strong> export, not the older FOCUS <em>view</em> over the detailed export &mdash; that one is FOCUS 1.0 and CostGoblin does not support it.</div>
+          <div class="step-callout"><strong>Do this first:</strong> enabling a multi-region export backfills only the current and previous month, and a single-region one starts completely empty. Every day you wait is a month-edge you cannot get back. The dataset location is also fixed at creation and constrains your bucket, so prefer <strong>Multi-region</strong> (EU or US).</div>
+          <div class="step-note">The <strong>Projects</strong> field only chooses where the dataset lives. The export is configured per <em>billing account</em> and already covers every project linked to it.</div>
+        </div>
+
+        <div class="step">
+          <div class="step-header">
+            <span class="step-num">1</span>
+            <h4>Create the bucket</h4>
+          </div>
+          <p>The bucket must be in the same location as the export dataset &mdash; BigQuery refuses to export across locations:</p>
+          <div class="code-block">
+gcloud storage buckets create <span class="code-dir">gs://your-company-billing</span> \
+  --location=<span class="code-file">EU</span> --uniform-bucket-level-access
+          </div>
+          <div class="step-note">Standard storage class, and leave <strong>object versioning off</strong>: the exporter rewrites a period's folder whenever that month changes, so versioning would silently retain every superseded file forever.</div>
+        </div>
+
+        <div class="step">
+          <div class="step-header">
+            <span class="step-num">2</span>
+            <h4>Deploy the exporter</h4>
+          </div>
+          <p>A scheduled job in <em>your</em> project copies each changed billing period out of BigQuery into the bucket. CostGoblin never holds credentials that can reach BigQuery &mdash; it only reads the bucket. It ships in the repo under <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter" target="_blank" rel="noopener"><strong>scripts/gcp-focus-exporter</strong></a>.</p>
+          <p>Three ways to run it &mdash; same deployment either way, pick whichever suits you:</p>
+          <p style="margin-top:14px"><strong>1. In Cloud Shell</strong> &mdash; nothing installed on your machine; gcloud, Docker and your credentials are already there. <a href="https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https%3A%2F%2Fgithub.com%2Fetiennechabert%2Fcost-goblin&amp;cloudshell_working_dir=scripts%2Fgcp-focus-exporter" target="_blank" rel="noopener"><strong>Open in Cloud Shell</strong></a>, edit the settings at the top of <em>deploy.sh</em>, then run it.</p>
+          <p style="margin-top:14px"><strong>2. Locally</strong>, if you already have the gcloud CLI:</p>
+          <div class="code-block">
+cd scripts/gcp-focus-exporter
+<span class="code-file">./deploy.sh</span>   <span class="code-comment"># builds the job, deploys it, schedules it daily</span>
+          </div>
+          <p style="margin-top:14px"><strong>3. Copy-paste</strong>, if you would rather see exactly what runs. Set the five values, then paste the rest into Cloud Shell or any terminal:</p>
+          <div class="code-block">
+<span class="code-comment"># ---- your settings ----</span>
+PROJECT_ID=<span class="code-file">billing-504501</span>
+FOCUS_TABLE=<span class="code-file">$PROJECT_ID.gcp_billing_immutable_XXXXXX_eu.gcp_billing_export_focus_XXXXXX</span>
+BUCKET=<span class="code-file">your-company-billing</span>
+LOCATION=<span class="code-file">EU</span>          <span class="code-comment"># must match the export dataset AND the bucket</span>
+REGION=<span class="code-file">europe-west1</span>  <span class="code-comment"># a region inside LOCATION</span>
+
+<span class="code-comment"># ---- fetch the exporter ----</span>
+mkdir -p costgoblin-exporter &amp;&amp; cd costgoblin-exporter
+BASE=https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/gcp-focus-exporter
+curl -fsSL -O $BASE/export-focus.mjs -O $BASE/package.json -O $BASE/Dockerfile
+
+<span class="code-comment"># ---- one-time setup ----</span>
+JOB=costgoblin-focus-exporter
+SA=costgoblin-exporter@$PROJECT_ID.iam.gserviceaccount.com
+gcloud config set project $PROJECT_ID
+gcloud services enable bigquery.googleapis.com storage.googleapis.com \
+  run.googleapis.com cloudscheduler.googleapis.com cloudbuild.googleapis.com
+bq --location=$LOCATION mk --dataset --force $PROJECT_ID:costgoblin_exporter
+gcloud iam service-accounts create costgoblin-exporter \
+  --display-name="CostGoblin FOCUS exporter"
+for ROLE in bigquery.jobUser bigquery.dataViewer bigquery.dataEditor; do
+  gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member=serviceAccount:$SA --role=roles/$ROLE --condition=None
+done
+<span class="code-comment"># objectAdmin, not objectCreator — deleting each period's folder is the point</span>
+gcloud storage buckets add-iam-policy-binding gs://$BUCKET \
+  --member=serviceAccount:$SA --role=roles/storage.objectAdmin
+
+<span class="code-comment"># ---- deploy and schedule ----</span>
+ENV_VARS=FOCUS_TABLE=$FOCUS_TABLE,BUCKET=$BUCKET,PREFIX=focus
+ENV_VARS=$ENV_VARS,STATE_TABLE=$PROJECT_ID.costgoblin_exporter.export_state
+ENV_VARS=$ENV_VARS,BQ_LOCATION=$LOCATION
+gcloud run jobs deploy $JOB --source=. --region=$REGION \
+  --service-account=$SA --tasks=1 --max-retries=1 --task-timeout=30m \
+  --set-env-vars="$ENV_VARS"
+gcloud scheduler jobs create http $JOB-trigger --location=$REGION \
+  --schedule="0 6 * * *" --http-method=POST \
+  --uri=https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$JOB:run \
+  --oauth-service-account-email=$SA
+gcloud run jobs add-iam-policy-binding $JOB --region=$REGION \
+  --member=serviceAccount:$SA --role=roles/run.invoker
+
+<span class="code-comment"># ---- run it now ----</span>
+gcloud run jobs execute $JOB --region=$REGION --wait
+gcloud storage ls gs://$BUCKET/focus/
+          </div>
+          <p>Each run re-exports only the periods that changed, and writes them as:</p>
+          <div class="code-block">
+<span class="code-dir">gs://your-company-billing/focus/</span>
+├── <span class="code-dir">billing_period=2026-07/</span><span class="code-file">shard-000000000000.parquet</span>
+└── <span class="code-dir">billing_period=2026-08/</span><span class="code-file">shard-000000000000.parquet</span>
+          </div>
+          <div class="step-note">It runs <strong>daily at 06:00 UTC</strong> by default, which suits almost everyone &mdash; GCP refreshes the billing export only a few times a day, and each run that finds a change re-exports the whole current month, which grows through the month. <em>0 6,18 * * *</em> is a reasonable step up; hourly mostly multiplies month-end cost for no real freshness gain. For a number right now, trigger the job on demand rather than raising the schedule.</div>
+          <div class="step-callout"><strong>Why a deployed job and not just a scheduled query:</strong> BigQuery decides how many files to split an export into, and that number is not stable between runs. A re-export producing fewer files leaves the extras behind &mdash; and nothing downstream can tell an orphan from a live one, so the month silently reads high. SQL cannot delete Cloud Storage objects, so the job clears each period's folder before rewriting it. A scheduled query on its own will look like it is working and quietly report inflated costs.</div>
+          <div class="step-note">The same export runs standalone as <em>scheduled-query.sql</em> if you want to eyeball the data before deploying anything &mdash; useful for a first look, but not a complete setup, for the reason above.</div>
+          <div class="step-note">The folder name must be lowercase <em>billing_period=</em>. CostGoblin matches it case-sensitively on purpose, so a leftover uppercase tree in the same bucket stays invisible &mdash; get it wrong and the bucket reads as empty with no error.</div>
+        </div>
+
+        <div class="step">
+          <div class="step-header">
+            <span class="step-num">3</span>
+            <h4>Connect CostGoblin</h4>
+          </div>
+          <p>Sign in once so the app can read the bucket, then add the provider in <strong>Sync</strong> pointing at <em>gs://your-company-billing/focus</em>:</p>
+          <div class="code-block">
+gcloud auth application-default login
+          </div>
+          <p>Each sync downloads only the periods that changed and rewrites them locally into the same FOCUS&nbsp;1.2 shape the AWS exports use &mdash; so both clouds land in one set of dashboards, split by a <strong>provider</strong> dimension.</p>
+          <div class="step-note">GCP's managed billing table has a two-year retention. Your local Parquet mirror keeps everything you have ever synced, so it doubles as the long-term archive.</div>
+          <div class="step-note"><strong>Coming from the AWS setup?</strong> GCP's FOCUS export is a single export, so a GCP source configures the <strong>daily</strong> tier only &mdash; there is no separate hourly export and no Cost Optimization Hub equivalent. Whatever time granularity the export carries is preserved in your local Parquet, so nothing is discarded.</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
   <div class="lightbox" id="lightbox">
     <button class="lightbox-close" aria-label="Close">&times;</button>
     <img id="lightbox-img" src="" alt="">
@@ -2425,6 +2736,61 @@ Format:   <span class="code-file">Parquet</span>
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') closeLightbox();
     });
+
+    // --- Provider setup modals ---
+    // The per-provider guides are long enough to bury the rest of the page,
+    // so each lives in a modal opened from its card.
+    let lastModalTrigger = null;
+
+    function openProviderModal(id, trigger) {
+      const modal = document.getElementById(id);
+      if (!modal) return;
+      lastModalTrigger = trigger || null;
+      modal.classList.add('open');
+      document.body.style.overflow = 'hidden';
+      modal.querySelector('.provider-modal-close')?.focus();
+    }
+
+    function closeProviderModals() {
+      let closedOne = false;
+      document.querySelectorAll('.provider-modal.open').forEach((modal) => {
+        modal.classList.remove('open');
+        closedOne = true;
+      });
+      if (!closedOne) return;
+      document.body.style.overflow = '';
+      // Return focus to the card that opened it, so keyboard users don't get
+      // dropped back at the top of the document.
+      lastModalTrigger?.focus();
+      lastModalTrigger = null;
+    }
+
+    document.querySelectorAll('[data-open-modal]').forEach((trigger) => {
+      trigger.addEventListener('click', () => {
+        openProviderModal(trigger.dataset.openModal, trigger);
+      });
+    });
+
+    document.querySelectorAll('.provider-modal').forEach((modal) => {
+      // Backdrop click closes; clicks inside the panel must not.
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeProviderModals();
+      });
+      modal.querySelector('.provider-modal-close')?.addEventListener('click', closeProviderModals);
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeProviderModals();
+    });
+
+    // Deep links: /#get-started-aws and /#get-started-gcp open a guide
+    // directly, so the setup steps stay linkable from docs and support replies.
+    function openFromHash() {
+      if (location.hash === '#get-started-aws') openProviderModal('modal-aws', null);
+      if (location.hash === '#get-started-gcp') openProviderModal('modal-gcp', null);
+    }
+    window.addEventListener('hashchange', openFromHash);
+    openFromHash();
 
     // --- Scroll animations ---
     const observer = new IntersectionObserver((entries) => {
