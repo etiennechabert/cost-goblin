@@ -67,17 +67,13 @@ def _sns_publish(run_id):
     return 1
 
 
-def _fetch_site():
+def _fetch_site(_run_id):
     """Drive CloudFront request + data-transfer-out meters."""
     if not SITE_URL:
         return 0
-    try:
-        with urllib.request.urlopen(SITE_URL, timeout=5) as response:
-            response.read()
-        return 1
-    except (urllib.error.URLError, TimeoutError) as exc:
-        print(json.dumps({"level": "warn", "msg": "site fetch failed", "error": str(exc)}))
-        return 0
+    with urllib.request.urlopen(SITE_URL, timeout=5) as response:
+        response.read()
+    return 1
 
 
 def handler(event, context):
@@ -85,22 +81,33 @@ def handler(event, context):
     started = time.time()
     calls = {}
 
+    failed = []
+
+    # _fetch_site is in this loop rather than called directly: it is the only
+    # step that touches the public internet, so it is the most likely to raise —
+    # and ConnectionResetError / IncompleteRead are not URLError subclasses.
     for name, fn in (
         ("dynamodb", _dynamo_roundtrip),
         ("sqs", _sqs_roundtrip),
         ("sns", _sns_publish),
+        ("cloudfront", _fetch_site),
     ):
         try:
             calls[name] = fn(run_id)
         except Exception as exc:  # keep one failing service from killing the run
             print(json.dumps({"level": "error", "service": name, "error": str(exc)}))
             calls[name] = 0
+            failed.append(name)
 
-    calls["cloudfront"] = _fetch_site()
     elapsed_ms = round((time.time() - started) * 1000, 1)
 
     # Exactly one custom metric name, one dimension value per deployment, to
     # stay inside the 10-custom-metric always-free allowance.
+    #
+    # Report 0 when ANY service failed. Publishing the surviving services' count
+    # would keep the cg-lab-idle-<module> alarm (Sum < 1) permanently OK while a
+    # service was silently producing no FOCUS rows at all.
+    metric_value = 0.0 if failed else float(sum(calls.values()))
     try:
         cw.put_metric_data(
             Namespace=NAMESPACE,
@@ -108,7 +115,7 @@ def handler(event, context):
                 {
                     "MetricName": "WorkItemsProcessed",
                     "Dimensions": [{"Name": "Module", "Value": MODULE}],
-                    "Value": float(sum(calls.values())),
+                    "Value": metric_value,
                     "Unit": "Count",
                 }
             ],
@@ -117,12 +124,13 @@ def handler(event, context):
         print(json.dumps({"level": "error", "service": "cloudwatch", "error": str(exc)}))
 
     print(json.dumps({
-        "level": "info",
+        "level": "info" if not failed else "warn",
         "run_id": run_id,
         "module": MODULE,
         "region": REGION,
         "elapsed_ms": elapsed_ms,
         "calls": calls,
+        "failed": failed,
     }))
 
-    return {"run_id": run_id, "calls": calls, "elapsed_ms": elapsed_ms}
+    return {"run_id": run_id, "calls": calls, "elapsed_ms": elapsed_ms, "failed": failed}
