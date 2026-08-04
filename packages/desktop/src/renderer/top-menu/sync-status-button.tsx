@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CloudDownload, RefreshCw } from 'lucide-react';
-import { Popover, PopoverTrigger, PopoverContent, formatRelativeTime, SsoLoginButton } from '@costgoblin/ui';
+import { Popover, PopoverTrigger, PopoverContent, formatRelativeTime, SsoLoginButton, GcloudLoginButton } from '@costgoblin/ui';
+import { GCLOUD_ADC_LOGIN_COMMAND } from '@costgoblin/core/browser';
 import type { SyncStatus } from '@costgoblin/core/browser';
 
 export type SyncActivity = 'idle' | 'syncing' | 'downloading';
@@ -103,6 +104,14 @@ function ssoLoginProfile(error: string | null): string | null {
   return /--profile\s+(\S+)/.exec(error)?.[1] ?? null;
 }
 
+/** The GCP sister of `ssoLoginProfile`. `toUserFriendlyError` builds both
+ *  provider messages the same way — `… Run: <command>` — so the presence of
+ *  the ADC login command is the marker. Without this the popover told a GCP
+ *  user to run a command and offered no button, while AWS got one. */
+function needsGcloudLogin(error: string | null): boolean {
+  return error !== null && error.includes(GCLOUD_ADC_LOGIN_COMMAND);
+}
+
 /** Dedicated data-sync indicator, split out of the Settings gear. Shows whether
  *  a download is in progress (and how many files remain), surfaces sync errors,
  *  and flags un-synced periods — with a per-tier breakdown on click, so the user
@@ -122,6 +131,7 @@ export function SyncStatusButton({
 
   const showError = error !== null;
   const ssoProfile = ssoLoginProfile(error);
+  const showGcloudLogin = needsGcloudLogin(error);
   const showActive = !showError && activity !== 'idle';
   const showMissing = !showError && activity === 'idle' && missingPeriods > 0 && !inSettingsData;
 
@@ -186,6 +196,9 @@ export function SyncStatusButton({
             {error}
             {ssoProfile !== null && (
               <SsoLoginButton profile={ssoProfile} hint="A browser window will open. Refresh above after logging in." />
+            )}
+            {showGcloudLogin && (
+              <GcloudLoginButton hint="A browser window will open. Refresh above after logging in." />
             )}
           </div>
         )}

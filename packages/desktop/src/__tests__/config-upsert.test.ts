@@ -175,6 +175,30 @@ describe('upsertWizardProvider', () => {
     });
   });
 
+  it('refuses to rewrite a gcp provider as aws when the wizard payload carries no type', () => {
+    // The wizard has never sent a `type`, so `type` defaults to 'aws'. Without
+    // this guard an upsert matching a gcp entry by name silently replaced it
+    // with {type:'aws', credentialsProfile:…, sync.daily.bucket:'s3://…'} —
+    // the GCP source vanished rather than the write failing.
+    const gcpEntry = {
+      name: 'gcp-main',
+      type: 'gcp',
+      sync: { daily: { bucket: 'gs://cost-goblin/focus/', retentionDays: 365 }, intervalMinutes: 60 },
+    };
+    expect(() => upsertWizardProvider({ providers: [gcpEntry] }, {
+      providerName: 'gcp-main', profile: 'default', dailyBucket: 's3://some-bucket/daily/',
+    })).toThrow(/GCP provider/);
+
+    // An explicit gcp payload still targets it, and an unrelated aws name is
+    // unaffected.
+    expect(() => upsertWizardProvider({ providers: [gcpEntry] }, {
+      providerName: 'gcp-main', type: 'gcp', profile: '', dailyBucket: 'gs://other/focus/',
+    })).not.toThrow();
+    expect(() => upsertWizardProvider({ providers: [gcpEntry] }, {
+      providerName: 'aws-main', profile: 'default', dailyBucket: 's3://b/',
+    })).not.toThrow();
+  });
+
   it('rejects invalid provider names with a friendly ProviderNameError', () => {
     const wizard = { profile: 'p', dailyBucket: 's3://b/' };
     expect(() => upsertWizardProvider({}, { ...wizard, providerName: '' })).toThrow(ProviderNameError);

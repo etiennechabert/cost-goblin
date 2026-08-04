@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
 import { mkdtemp, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -68,14 +68,25 @@ async function stageBqPeriod(name: string, values: readonly string[], extraSql =
   return dir;
 }
 
+let ownedInstance: DuckDBInstance | null = null;
+
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), 'gcp-canon-'));
   const instance = await DuckDBInstance.create();
+  ownedInstance = instance;
   conn = await instance.connect();
   // The trap this suite exists to pin: `::DATE` on a tz-aware timestamp
   // resolves in the SESSION timezone, so every assertion below runs east of
   // UTC where an un-normalized 23:30 row would land in the next month.
   await conn.run(`SET TimeZone='Europe/Berlin'`);
+});
+
+// A DuckDB instance is a native engine with its own buffer pool; without this
+// every run of the suite leaks one for the life of the vitest worker.
+afterAll(() => {
+  conn.disconnectSync();
+  ownedInstance?.closeSync();
+  ownedInstance = null;
 });
 
 describe('canonicalizeGcpPeriod', () => {

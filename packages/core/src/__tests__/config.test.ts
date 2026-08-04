@@ -222,6 +222,20 @@ describe('validateConfig — gcp provider arm', () => {
     }
   });
 
+  it('rejects a key file combined with impersonation, which would split the two halves of a sync', () => {
+    const sa = 'costgoblin-reader@billing-504501.iam.gserviceaccount.com';
+    // Each alone is fine.
+    expect(() => validateConfig(gcp({ keyFile: '/home/me/sa-key.json' }))).not.toThrow();
+    expect(() => validateConfig(gcp({ impersonateServiceAccount: sa }))).not.toThrow();
+
+    // Together they are contradictory, and the failure was silent: the download
+    // half passes `--impersonate-service-account` to gcloud while the listing
+    // half authenticates with the key alone, so listing ran as the key holder —
+    // who the least-privilege recipe grants nothing — and returned a bare 403.
+    expect(() => validateConfig(gcp({ keyFile: '/home/me/sa-key.json', impersonateServiceAccount: sa })))
+      .toThrow(ConfigValidationError);
+  });
+
   it('rejects tiers GCP does not deliver instead of silently ignoring them', () => {
     const withTier = (tier: string): unknown => gcp({
       sync: {

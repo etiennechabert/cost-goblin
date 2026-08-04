@@ -187,6 +187,51 @@ describe('syncGcpSelectedFiles', () => {
     await expect(readdir(stagingRoot)).resolves.toEqual([]);
   });
 
+  it('skips a period whose key is not under a billing_period folder, instead of mirroring the bucket', async () => {
+    // `extractPeriod` matches `billing_period=2026-01` anywhere in the key, but
+    // `extractPeriodPrefix` needs a trailing slash and returns '' without one.
+    // The source would then collapse to `gs://focus-export/` and rsync would
+    // pull the WHOLE bucket into this one period's staging dir.
+    const result = await syncGcpSelectedFiles({
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir,
+      files: [file('focus/billing_period=2026-01_shard0.parquet', 'crc-1')],
+    });
+
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(result.filesDownloaded).toBe(0);
+    await expect(readdir(rawPeriodDir('2026-01'))).rejects.toThrow();
+  });
+
+  it('keeps gcloud progress lines out of the failure message', async () => {
+    // gcloud writes progress to stderr, so the raw buffer carries byte counts.
+    // A `503.1MiB` aggregate previously reached `isGcloudDownloadFailure`,
+    // whose `503` marker then reported a permission error as an expired session.
+    mockSpawn.mockImplementationOnce(() => {
+      const proc = new MockChildProcess();
+      queueMicrotask(() => {
+        proc.stderr.emit('data', Buffer.from(
+          'Copying gs://focus-export/focus/billing_period=2026-01/s.parquet to file:///tmp/s.parquet\n'
+          + '....\n'
+          + 'Completed files 12/50 | 503.1MiB/1.2GiB\n'
+          + 'Average throughput: 40.0MiB/s\n'
+          + "ERROR: (gcloud.storage.rsync) User does not have storage.objects.get access.\n",
+        ));
+        proc.emit('close', 1, null);
+      });
+      return proc;
+    });
+
+    const failure = await syncGcpSelectedFiles({
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir,
+      files: [file('focus/billing_period=2026-01/s.parquet')],
+    }).catch((err: unknown) => (err instanceof Error ? err.message : String(err)));
+
+    expect(failure).toContain('storage.objects.get');
+    expect(failure).not.toContain('503');
+    expect(failure).not.toContain('Copying gs://');
+    expect(failure).not.toContain('Average throughput');
+  });
+
   it('leaves an already-installed period untouched when the download fails', async () => {
     // Install 2026-01 first, then fail a re-sync of it.
     nextProcess(dest => writeBqShard(dest, 2));

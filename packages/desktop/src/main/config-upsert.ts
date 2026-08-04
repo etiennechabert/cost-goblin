@@ -49,6 +49,17 @@ export function upsertWizardProvider(
   const existingSync: Readonly<Record<string, unknown>> = isStringRecord(rawSync) ? rawSync : {};
   const type = wizard.type ?? 'aws';
 
+  // Defence in depth behind the UI gate. `type` defaults to 'aws' because the
+  // wizard's payload has never carried one, so an upsert that lands on an
+  // existing gcp entry would silently rewrite it as an AWS provider — losing
+  // the GCP source rather than failing. `swapProviderCredentialsProfile`
+  // already refuses the same way.
+  if (type === 'aws' && isStringRecord(target) && target['type'] === 'gcp') {
+    throw new Error(
+      `Provider "${wizard.providerName}" is a GCP provider — the setup wizard configures AWS providers only. Edit costgoblin.yaml to change it.`,
+    );
+  }
+
   // GCP delivers the daily tier only, and `validateGcpSync` rejects the other
   // two outright. Inheriting the previous entry's sync block — which is right
   // for AWS, where a wizard run that didn't mention `hourly` must not drop it

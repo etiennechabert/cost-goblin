@@ -72,7 +72,9 @@ terminal with gcloud. Every variable is braced deliberately — in zsh
 
 ```bash
 # ---- your settings ----
-PROJECT_ID=billing-504501
+# PROJECT_ID is the project that RUNS the job. It only differs from the billing
+# export's own project if you keep billing and ops separate.
+PROJECT_ID=my-project
 FOCUS_TABLE=${PROJECT_ID}.gcp_billing_immutable_XXXXXX_eu.gcp_billing_export_focus_XXXXXX
 BUCKET=your-company-billing
 LOCATION=EU          # must match the export dataset AND the bucket
@@ -102,10 +104,12 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
 # it needs to read exactly one (the billing export) and write exactly one
 # (its own watermark). Dataset ACLs rather than `bq add-iam-policy-binding
 # --dataset`, which still fails with "This feature requires allowlisting".
-grant_dataset() {   # $1 = dataset, $2 = READER|WRITER
+# Takes the owning project explicitly — the billing export may live in a
+# different project from the one running the job.
+grant_dataset() {   # $1 = project, $2 = dataset, $3 = READER|WRITER
   TMP=$(mktemp)
-  bq show --format=prettyjson "${PROJECT_ID}:$1" > "${TMP}"
-  python3 - "${TMP}" "$2" "${SA}" <<'PYEOF'
+  bq show --format=prettyjson "$1:$2" > "${TMP}"
+  python3 - "${TMP}" "$3" "${SA}" <<'PYEOF'
 import json, sys
 path, role, member = sys.argv[1], sys.argv[2], sys.argv[3]
 d = json.load(open(path))
@@ -115,11 +119,12 @@ if entry not in access:
     access.append(entry)
 json.dump(d, open(path, 'w'))
 PYEOF
-  bq update --source "${TMP}" "${PROJECT_ID}:$1"
+  bq update --source "${TMP}" "$1:$2"
   rm -f "${TMP}"
 }
-grant_dataset "$(printf '%s' "${FOCUS_TABLE}" | cut -d. -f2)" READER
-grant_dataset costgoblin_exporter WRITER
+grant_dataset "$(printf '%s' "${FOCUS_TABLE}" | cut -d. -f1)" \
+              "$(printf '%s' "${FOCUS_TABLE}" | cut -d. -f2)" READER
+grant_dataset "${PROJECT_ID}" costgoblin_exporter WRITER
 
 # objectAdmin, not objectCreator — deleting each period's folder is the point
 gcloud storage buckets add-iam-policy-binding gs://${BUCKET} \

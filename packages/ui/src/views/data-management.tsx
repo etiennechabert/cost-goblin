@@ -695,7 +695,12 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
         </div>
       )}
 
-      {/* Two-column tier layout — show immediately if a sync is running */}
+      {/* Two-column tier layout — show immediately if a sync is running.
+          Daily's Configure gear is AWS-only: the wizard browses S3 and its save
+          path writes an `aws` provider, so opening it on a GCP provider would
+          rewrite that entry as `type: aws` and the GCP source would vanish. The
+          GCP wizard step is #517 phase F; until then GCP is configured in the
+          YAML. */}
       {(inventory !== null || anySyncing) && (
         <div className="flex gap-5">
           <TierPanel
@@ -719,7 +724,7 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
             onDeletePeriod={handleDelete('daily', () => { setDailyRefreshKey(k => k + 1); })}
             syncState={dailySyncState}
             onCancelSync={() => { api.cancelSync(syncIdFor(name, 'daily')).catch(() => undefined); setDailySyncState({ status: 'idle' }); }}
-            onConfigure={() => { setConfigureSource('daily'); }}
+            onConfigure={provider.type === 'aws' ? () => { setConfigureSource('daily'); } : undefined}
           />
           {provider.type === 'aws' && (
             <>

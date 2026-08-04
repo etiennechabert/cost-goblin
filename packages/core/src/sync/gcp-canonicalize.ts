@@ -311,10 +311,27 @@ function buildProjection(source: ReadonlyMap<string, string>): Projection {
  * turns that into a classified sync failure and leaves `raw/` untouched.
  */
 export async function canonicalizeGcpPeriod(options: CanonicalizeOptions): Promise<CanonicalizeResult> {
+  // A caller-supplied connection belongs to the caller; one we create is ours
+  // to close. A DuckDB instance is a native engine with its own buffer pool,
+  // and a first sync of two years calls this once per period — leaving each
+  // one open grows the sync worker's native memory monotonically.
+  if (options.connection !== undefined) {
+    return canonicalizeWithConnection(options.connection, options);
+  }
+  const owned = await createOwnConnection(options);
+  try {
+    return await canonicalizeWithConnection(owned.connection, options);
+  } finally {
+    owned.close();
+  }
+}
+
+async function canonicalizeWithConnection(
+  conn: CanonicalizeConnection,
+  options: CanonicalizeOptions,
+): Promise<CanonicalizeResult> {
   const sourceGlob = `${options.stagingDir}/*.parquet`;
   const sourceExpr = `read_parquet(${quoteLiteral(sourceGlob)}, union_by_name=true)`;
-
-  const conn = options.connection ?? await createOwnConnection(options);
 
   let source: ReadonlyMap<string, string>;
   try {
@@ -365,7 +382,14 @@ COPY (
   return { rows, synthesizedColumns: synthesized };
 }
 
-async function createOwnConnection(options: CanonicalizeOptions): Promise<CanonicalizeConnection> {
+/** A connection this module owns, paired with the teardown that releases both
+ *  it and the instance behind it. */
+interface OwnedConnection {
+  readonly connection: CanonicalizeConnection;
+  readonly close: () => void;
+}
+
+async function createOwnConnection(options: CanonicalizeOptions): Promise<OwnedConnection> {
   // Dynamic so the native binding is only loaded by a workspace that actually
   // has a GCP provider. NOT via `duckdb-lazy.ts`: that helper uses
   // `createRequire(import.meta.url)`, and esbuild rewrites `import.meta` to
@@ -379,5 +403,13 @@ async function createOwnConnection(options: CanonicalizeOptions): Promise<Canoni
   // than DuckDB's sole-tenant default.
   await conn.run(`SET memory_limit = '${String(options.memoryGB ?? 2)}GB'`);
   await conn.run(`SET threads = ${String(options.threads ?? 2)}`);
-  return conn;
+  return {
+    connection: conn,
+    close: () => {
+      // Best effort: a teardown failure must not mask the canonicalization
+      // error that sent us through the `finally`.
+      try { conn.disconnectSync(); } catch { /* already gone */ }
+      try { instance.closeSync(); } catch { /* already gone */ }
+    },
+  };
 }

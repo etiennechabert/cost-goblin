@@ -52,6 +52,13 @@ export function providerAuth(provider: ProviderConfig): ProviderAuth {
  *  dynamic import inside its own `create…Handle`, so a workspace with no GCP
  *  provider never loads the GCS SDK (and vice versa). */
 export async function createObjectStoreHandle(auth: ProviderAuth): Promise<ObjectStoreHandle> {
+  // `impersonateServiceAccount` is deliberately not forwarded: it is a gcloud
+  // CLI flag for the download half, while this half reads Application Default
+  // Credentials — which already carry the impersonation, because the documented
+  // way to establish them is
+  // `gcloud auth application-default login --impersonate-service-account=<sa>`.
+  // The validator rejects `keyFile` + `impersonateServiceAccount` together, so
+  // the case where a key file would displace that ADC cannot reach here.
   if (auth.kind === 'gcp') return createGcsHandle(auth.keyFile);
   return createS3Handle(auth.profile);
 }

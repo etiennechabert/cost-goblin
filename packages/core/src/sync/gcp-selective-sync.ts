@@ -63,6 +63,20 @@ export function parseGcloudCopyingKey(line: string): string | null {
   return match?.[1] ?? null;
 }
 
+/** Whether a stderr line is part of the progress feed rather than failure
+ *  text. `gcloud storage` writes both to stderr, so the failure message has to
+ *  filter — keeping the whole feed would not only bloat the message by
+ *  megabytes but feed byte counts to the substring classifiers downstream: a
+ *  `503.1MiB/1.2GiB` line makes `isGcloudDownloadFailure` match `503`, and a
+ *  genuine 403 gets reported as an expired session. */
+function isProgressNoise(line: string): boolean {
+  if (line.length === 0) return true;
+  if (/^[.\s]+$/.test(line)) return true;
+  if (parseGcloudCopyingKey(line) !== null) return true;
+  if (parseGcloudCompletedBytes(line) !== null) return true;
+  return line.startsWith('Average throughput:');
+}
+
 /** Some gcloud builds do print an aggregate byte line. Kept as a refinement:
  *  when present it gives smooth intra-file progress, when absent (the
  *  observed default) the manifest-derived count carries it. Returns null on
@@ -131,7 +145,20 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
       env['CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE'] = options.keyFile;
     }
 
-    const proc = spawn(findGcloudCli(), args, { stdio: ['ignore', 'pipe', 'pipe'], env });
+    // The Windows Cloud SDK ships `gcloud.cmd`, and since Node 18.20.2 /
+    // 20.12.2 (CVE-2024-27980) spawning a `.cmd` without a shell fails with
+    // EINVAL — which is not in the emit-as-'error' list, so it would throw out
+    // of this executor and every GCP sync would die before a byte moved.
+    // Arguments are quoted because the staging destination is a user path that
+    // routinely contains spaces; `isSafePeriodPrefix` has already rejected the
+    // shell metacharacters that quoting alone would not contain.
+    const gcloudPath = findGcloudCli();
+    const useShell = process.platform === 'win32';
+    const proc = spawn(
+      useShell ? `"${gcloudPath}"` : gcloudPath,
+      useShell ? args.map(arg => `"${arg}"`) : args,
+      { stdio: ['ignore', 'pipe', 'pipe'], env, shell: useShell },
+    );
 
     if (options.signal !== undefined) {
       if (options.signal.aborted) {
@@ -142,22 +169,28 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
       options.signal.addEventListener('abort', () => { proc.kill(); }, { once: true });
     }
 
-    let stderr = '';
+    /** The tail of stderr with the progress feed stripped — see
+     *  `isProgressNoise`. Bounded so a run that fails after a long transfer
+     *  still produces a readable message. */
+    const stderrLines: string[] = [];
+    const MAX_STDERR_LINES = 40;
 
-    const forward = (data: Buffer): void => {
+    const forward = (data: Buffer, capture: boolean): void => {
       for (const line of data.toString().split('\n')) {
         const trimmed = line.trim();
-        if (trimmed.length > 0) options.onLine?.(trimmed);
+        if (trimmed.length === 0) continue;
+        options.onLine?.(trimmed);
+        if (capture && !isProgressNoise(trimmed)) {
+          stderrLines.push(trimmed);
+          if (stderrLines.length > MAX_STDERR_LINES) stderrLines.shift();
+        }
       }
     };
 
-    proc.stdout.on('data', forward);
+    proc.stdout.on('data', (data: Buffer) => { forward(data, false); });
     // `gcloud storage` writes its progress to stderr, so stderr is both the
     // progress feed and the failure text.
-    proc.stderr.on('data', (data: Buffer) => {
-      stderr += data.toString();
-      forward(data);
-    });
+    proc.stderr.on('data', (data: Buffer) => { forward(data, true); });
 
     proc.on('error', (err: Error) => {
       if (err.message.includes('ENOENT')) {
@@ -173,7 +206,7 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
       } else if (code === 0) {
         resolve();
       } else {
-        reject(new Error(`gcloud storage rsync failed (exit ${String(code)}): ${stderr.trim()}`));
+        reject(new Error(`gcloud storage rsync failed (exit ${String(code)}): ${stderrLines.join('\n')}`));
       }
     });
   });
@@ -190,6 +223,23 @@ export interface GcpSelectiveSyncOptions {
   readonly files: readonly ManifestFileEntry[];
   readonly onProgress?: ProgressCallback | undefined;
   readonly signal?: AbortSignal | undefined;
+}
+
+/** Whether a period prefix is safe to hand to `gcloud storage rsync`.
+ *
+ *  Two failures it prevents, both silent:
+ *   - `extractPeriodPrefix` returns `''` when the `billing_period=YYYY-MM`
+ *     token is not followed by `/` (a flat layout: `billing_period=2026-01_a
+ *     .parquet`). `extractPeriod` still matches, so the period survives the
+ *     filter, and the source collapses to `gs://bucket/` — mirroring the WHOLE
+ *     bucket into one period's staging dir, which the canonicalizer then folds
+ *     into that month.
+ *   - the prefix comes from a listed object key, and on Windows it reaches
+ *     cmd.exe; a key carrying shell metacharacters is rejected rather than
+ *     escaped. */
+function isSafePeriodPrefix(prefix: string): boolean {
+  if (!/billing_period=\d{4}-\d{2}\/$/.test(prefix)) return false;
+  return !/["'`$%&|<>^\\\r\n]/.test(prefix);
 }
 
 /** Staging lives under `meta/`, never under `raw/`. The query layer globs
@@ -241,6 +291,10 @@ export async function syncGcpSelectedFiles(
     if (firstFile === undefined) continue;
 
     const periodPrefix = extractPeriodPrefix(firstFile.key);
+    if (!isSafePeriodPrefix(periodPrefix)) {
+      logger.warn(`Skipping GCP period ${period}: ${firstFile.key} is not under a billing_period=YYYY-MM/ folder`);
+      continue;
+    }
     const source = `gs://${gcsPath.bucket}/${periodPrefix}`;
     const stagingDir = stagingDirFor(dataDir, providerName, period);
     const periodBytes = periodFiles.reduce((sum, f) => sum + f.size, 0);
@@ -250,6 +304,11 @@ export async function syncGcpSelectedFiles(
     let inFlightKey: string | null = null;
     let filesInPeriod = 0;
     let bytesInPeriod = 0;
+    /** Last aggregate byte count scraped from gcloud, on the builds that print
+     *  one. Retained across lines: recomputing it as `parsed?.bytesDone ?? 0`
+     *  would drop back to the manifest count on every announcement line and
+     *  run the progress bar backwards. */
+    let scrapedBytes = 0;
 
     logger.info(`Processing GCP period ${period}: ${String(periodFiles.length)} shard(s)`);
 
@@ -282,6 +341,7 @@ export async function syncGcpSelectedFiles(
           }
 
           const parsed = parseGcloudCompletedBytes(line);
+          if (parsed !== null) scrapedBytes = parsed.bytesDone;
           onProgress?.({
             phase: 'downloading',
             filesTotal: totalFiles,
@@ -290,7 +350,7 @@ export async function syncGcpSelectedFiles(
             // Clamped: a byte line, where one exists, counts retried bytes and
             // can exceed the listed size — a fraction above 1 would run the
             // progress bar off its track.
-            bytesDone: Math.min(bytesBefore + Math.max(bytesInPeriod, parsed?.bytesDone ?? 0), bytesTotal),
+            bytesDone: Math.min(bytesBefore + Math.max(bytesInPeriod, scrapedBytes), bytesTotal),
             ...(parsed === null ? {} : { message: line }),
           });
         },

@@ -411,13 +411,30 @@ export function registerSyncHandlers(app: AppContext): void {
   ipcMain.handle('data:gcloud-login', async (): Promise<void> => {
     const { spawn } = await import('node:child_process');
     const { delimiter } = await import('node:path');
+    const { homedir } = await import('node:os');
+    const { join } = await import('node:path');
     const currentPath = process.env['PATH'] ?? '';
+    // `~/google-cloud-sdk/bin` is where Google's own install script lands the
+    // CLI, and `findGcloudCli` probes it — without it here, sync works but the
+    // re-auth button silently fails for exactly that install layout.
     const extraPaths = process.platform === 'win32'
       ? []
-      : ['/usr/local/bin', '/opt/homebrew/bin', '/usr/bin'];
+      : ['/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/opt/local/bin', join(homedir(), 'google-cloud-sdk', 'bin')];
     const fullPath = [...new Set([...currentPath.split(delimiter), ...extraPaths])].join(delimiter);
+
+    // Re-establishing ADC without the impersonation flag would REPLACE a
+    // working impersonating credential with a plain-user one — turning the
+    // button that exists to fix auth into the thing that breaks it, since the
+    // least-privilege recipe grants the bucket only to the service account.
+    const config = await getConfig().catch(() => null);
+    const impersonate = config?.providers.find(
+      (p): p is Extract<typeof p, { type: 'gcp' }> => p.type === 'gcp' && p.impersonateServiceAccount !== undefined,
+    )?.impersonateServiceAccount;
+    const loginArgs = ['auth', 'application-default', 'login'];
+    if (impersonate !== undefined) loginArgs.push(`--impersonate-service-account=${impersonate}`);
+
     return new Promise<void>((resolve, reject) => {
-      const child = spawn('gcloud', ['auth', 'application-default', 'login'], {
+      const child = spawn('gcloud', loginArgs, {
         stdio: 'ignore',
         detached: true,
         shell: process.platform === 'win32',

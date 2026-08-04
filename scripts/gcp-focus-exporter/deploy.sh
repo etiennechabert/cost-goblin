@@ -15,10 +15,17 @@
 #
 set -euo pipefail
 
+# `--source=.` uploads the build context from the working directory, and every
+# IAM and dataset mutation below happens BEFORE that step — so a run from the
+# repo root would grant all the permissions and only then fail with the wrong
+# build context. Anchor to this script's own directory instead.
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
 # --- edit these ------------------------------------------------------------
 
-# Project that hosts the BigQuery billing export dataset and runs the job.
-PROJECT_ID="${PROJECT_ID:-billing-504501}"
+# Project that hosts the job. Defaults to the project of the billing export
+# table, so the common single-project setup needs no value here.
+PROJECT_ID="${PROJECT_ID:-}"
 
 # The Google-managed FOCUS export table: project.dataset.table.
 # Find it under BigQuery -> gcp_billing_immutable_<BILLING_ACCOUNT_ID>_<location>.
@@ -26,7 +33,7 @@ FOCUS_TABLE="${FOCUS_TABLE:-CHANGE_ME.gcp_billing_immutable_XXXXXX_eu.gcp_billin
 
 # Destination bucket (no gs://) and key prefix. CostGoblin is then pointed at
 # gs://${BUCKET}/${PREFIX}
-BUCKET="${BUCKET:-cost-goblin}"
+BUCKET="${BUCKET:-}"
 PREFIX="${PREFIX:-focus}"
 
 # MUST match the billing export dataset's location, and the bucket's. BigQuery
@@ -58,6 +65,22 @@ if [[ "${FOCUS_TABLE}" == CHANGE_ME.* ]]; then
   echo "ERROR: set FOCUS_TABLE to your billing export table first (see the top of this file)." >&2
   exit 1
 fi
+
+# FOCUS_TABLE is project.dataset.table. Both halves are needed below: the
+# dataset ACL has to be granted in the project that OWNS the billing export,
+# which is not necessarily the project running the job.
+BILLING_PROJECT="$(printf '%s' "${FOCUS_TABLE}" | cut -d. -f1)"
+BILLING_DATASET="$(printf '%s' "${FOCUS_TABLE}" | cut -d. -f2)"
+PROJECT_ID="${PROJECT_ID:-${BILLING_PROJECT}}"
+
+if [[ -z "${BUCKET}" ]]; then
+  echo "ERROR: set BUCKET to the destination bucket (no gs://)." >&2
+  exit 1
+fi
+
+# Recomputed here: the defaults above are evaluated before PROJECT_ID resolves.
+SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+STATE_TABLE="${PROJECT_ID}.${STATE_DATASET}.export_state"
 
 echo "==> Project ${PROJECT_ID}, location ${LOCATION}, region ${REGION}"
 gcloud config set project "${PROJECT_ID}" >/dev/null
@@ -93,10 +116,16 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
 #
 # Dataset ACLs rather than `bq add-iam-policy-binding --dataset`, which still
 # requires allowlisting and fails with "This feature requires allowlisting".
-grant_dataset_access() {   # dataset_id, READER|WRITER
-  local dataset="$1" role="$2" tmp
+#
+# Takes the OWNING PROJECT explicitly: the billing export commonly lives in a
+# dedicated billing project while the job runs in an ops project, and
+# qualifying its dataset with PROJECT_ID would look up a dataset that does not
+# exist there — aborting under `set -e` after the service account and the
+# project-level binding had already been created.
+grant_dataset_access() {   # project, dataset_id, READER|WRITER
+  local project="$1" dataset="$2" role="$3" tmp
   tmp=$(mktemp)
-  bq show --format=prettyjson "${PROJECT_ID}:${dataset}" > "${tmp}"
+  bq show --format=prettyjson "${project}:${dataset}" > "${tmp}"
   python3 - "${tmp}" "${role}" "${SA_EMAIL}" <<'PYEOF'
 import json, sys
 path, role, member = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -107,15 +136,14 @@ if entry not in access:
     access.append(entry)
 json.dump(d, open(path, 'w'))
 PYEOF
-  bq update --source "${tmp}" "${PROJECT_ID}:${dataset}" >/dev/null
+  bq update --source "${tmp}" "${project}:${dataset}" >/dev/null
   rm -f "${tmp}"
 }
 
-# Read the billing export. FOCUS_TABLE is project.dataset.table — take the
-# middle part.
-BILLING_DATASET="$(printf '%s' "${FOCUS_TABLE}" | cut -d. -f2)"
-grant_dataset_access "${BILLING_DATASET}" READER
-grant_dataset_access "${STATE_DATASET}" WRITER
+# Read the billing export (in whichever project owns it); write our own
+# watermark dataset (always in the job's project).
+grant_dataset_access "${BILLING_PROJECT}" "${BILLING_DATASET}" READER
+grant_dataset_access "${PROJECT_ID}" "${STATE_DATASET}" WRITER
 # objectAdmin, not objectCreator: deleting each period's folder before the
 # re-export is the whole point of this job.
 gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \

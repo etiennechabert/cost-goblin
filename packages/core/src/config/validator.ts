@@ -199,6 +199,18 @@ function validateProvider(raw: unknown, index: number): ProviderConfig {
   if (raw['type'] === 'gcp') {
     const keyFile = validateGcpKeyFile(raw['keyFile'], ctx);
     const impersonate = validateServiceAccountEmail(raw['impersonateServiceAccount'], ctx);
+    // Rejected rather than silently half-applied. Impersonation reaches the
+    // listing SDK only because ADC itself was established with
+    // `--impersonate-service-account`; a key file replaces ADC for that half
+    // while the download half still passes `--impersonate-service-account` to
+    // gcloud. The two halves would then authenticate as different identities,
+    // and the listing would fail with a bare 403 on a bucket the impersonated
+    // account can read.
+    if (keyFile !== undefined && impersonate !== undefined) {
+      throw new ConfigValidationError(
+        `${ctx} sets both keyFile and impersonateServiceAccount — pick one. Impersonation is established once with 'gcloud auth application-default login --impersonate-service-account=<sa>' and needs no key file.`,
+      );
+    }
     const sync = validateGcpSync(raw['sync']);
     return {
       name,
