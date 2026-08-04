@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Copy to config.local.sh (gitignored) and fill in your own values.
+#
+# This repo is public, so nothing account-identifying belongs in tracked files.
+# AWS account IDs in particular make role-name probing and bucket-name guessing
+# easy — the lab's origin bucket is named cg-lab-site-<account-id>.
+
+# AWS CLI profile for the Organizations *management* account (the one whose
+# FOCUS Data Export CostGoblin reads).
+MGMT_PROFILE="my-management-profile"
+
+# AWS CLI profile for the member account that populates the SubAccount
+# dimension. Created by Organizations; assumes OrganizationAccountAccessRole.
+SANDBOX_PROFILE="cg-sandbox"
