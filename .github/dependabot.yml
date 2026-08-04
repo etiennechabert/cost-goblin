@@ -20,6 +20,17 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    ignore:
+      # TypeScript majors are held back until typescript-eslint supports them.
+      # Every @typescript-eslint release to date — including the 8.66.x canary —
+      # still declares `peerDependencies.typescript: ">=4.8.4 <6.1.0"`, so a TS 7
+      # bump makes `npm ci` fail outright with ERESOLVE. Because the group below
+      # matches "*", that single incompatible package takes down the whole weekly
+      # dependency PR (see #527), not just the TypeScript bump.
+      # Remove this entry once @typescript-eslint widens its peer range to TS 7;
+      # minor/patch TypeScript updates are unaffected and still flow through.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     groups:
       all-dependencies:
         patterns:
