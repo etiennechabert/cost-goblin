@@ -81,14 +81,41 @@ gcloud iam service-accounts create "${SA_NAME}" \
   --display-name="CostGoblin FOCUS exporter" 2>/dev/null || echo "    (already exists)"
 
 echo "==> Granting roles"
-# Run BigQuery jobs, and read the billing export.
+# Running a BigQuery job is a project-level permission, so this one has to be
+# granted at the project. It confers no data access on its own.
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${SA_EMAIL}" --role="roles/bigquery.jobUser" --condition=None >/dev/null
-gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member="serviceAccount:${SA_EMAIL}" --role="roles/bigquery.dataViewer" --condition=None >/dev/null
-# Write the watermark table.
-gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member="serviceAccount:${SA_EMAIL}" --role="roles/bigquery.dataEditor" --condition=None >/dev/null
+
+# Data access is granted per DATASET, not project-wide. Project-level
+# dataViewer/dataEditor would let this service account read and write every
+# dataset in the project — it needs to read exactly one (the billing export)
+# and write exactly one (its own watermark table).
+#
+# Dataset ACLs rather than `bq add-iam-policy-binding --dataset`, which still
+# requires allowlisting and fails with "This feature requires allowlisting".
+grant_dataset_access() {   # dataset_id, READER|WRITER
+  local dataset="$1" role="$2" tmp
+  tmp=$(mktemp)
+  bq show --format=prettyjson "${PROJECT_ID}:${dataset}" > "${tmp}"
+  python3 - "${tmp}" "${role}" "${SA_EMAIL}" <<'PYEOF'
+import json, sys
+path, role, member = sys.argv[1], sys.argv[2], sys.argv[3]
+d = json.load(open(path))
+access = d.setdefault('access', [])
+entry = {'role': role, 'userByEmail': member}
+if entry not in access:
+    access.append(entry)
+json.dump(d, open(path, 'w'))
+PYEOF
+  bq update --source "${tmp}" "${PROJECT_ID}:${dataset}" >/dev/null
+  rm -f "${tmp}"
+}
+
+# Read the billing export. FOCUS_TABLE is project.dataset.table — take the
+# middle part.
+BILLING_DATASET="$(printf '%s' "${FOCUS_TABLE}" | cut -d. -f2)"
+grant_dataset_access "${BILLING_DATASET}" READER
+grant_dataset_access "${STATE_DATASET}" WRITER
 # objectAdmin, not objectCreator: deleting each period's folder before the
 # re-export is the whole point of this job.
 gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
