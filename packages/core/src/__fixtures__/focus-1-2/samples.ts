@@ -16,7 +16,7 @@
  *  Regenerate with:
  *    npx tsx packages/core/src/__fixtures__/focus-1-2/write-samples.ts */
 
-import { seededRandom } from '../focus-fixture.js';
+import { round2, seededRandom } from '../focus-fixture.js';
 import type { Rand } from '../focus-fixture.js';
 import { NATIVE_COLUMNS } from './shapes.js';
 import type { SampleProvider } from './shapes.js';
@@ -57,8 +57,16 @@ interface BillingEvent {
   readonly effective: number;
   readonly list: number;
   readonly contracted: number;
-  readonly tags: Readonly<Record<string, string>>;
+  readonly tags: EventTags;
 }
+
+/** The three tag concepts every event can carry. Naming them as a closed
+ *  union keeps the per-provider key rendering total — a fourth concept added
+ *  here fails to compile until every provider declares its key for it, rather
+ *  than silently collapsing into another key's slot. */
+type TagConcept = 'team' | 'system' | 'environment';
+const TAG_CONCEPTS: readonly TagConcept[] = ['team', 'system', 'environment'];
+type EventTags = Partial<Readonly<Record<TagConcept, string>>>;
 
 interface SampleService {
   readonly name: string;
@@ -103,13 +111,20 @@ interface SampleVocabulary {
   readonly services: readonly SampleService[];
   readonly marketplacePublisher: string;
   readonly marketplaceService: SampleService;
+  /** Tax is not billed against a workload service. Without its own identity a
+   *  VAT row inherits whichever service happened to be first in the catalog,
+   *  and lands in reports as compute spend carrying a compute SKU. */
+  readonly taxService: SampleService;
+  /** The commitment's own rows — the recurring fee and the unused share —
+   *  are billed against the commitment product, not the workload it covers. */
+  readonly commitmentService: SampleService;
   readonly commitmentId: string;
   readonly commitmentName: string;
   readonly commitmentType: string;
   readonly commitmentCategory: string;
   readonly commitmentUnit: string;
   /** Tag keys, in this provider's own casing convention. */
-  readonly tagKeys: { readonly team: string; readonly system: string; readonly environment: string };
+  readonly tagKeys: Readonly<Record<TagConcept, string>>;
   resourceId(service: SampleService, region: SampleRegion, account: SampleAccount, seq: number): string;
   resourceName(service: SampleService, seq: number): string;
 }
@@ -120,10 +135,6 @@ function at<T>(arr: readonly T[], idx: number): T {
   return item;
 }
 
-function money(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
 function unitPrice(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000;
 }
@@ -132,7 +143,7 @@ const TEAMS = ['platform', 'payments', 'data-eng', 'security'];
 const SYSTEMS = ['api-gateway', 'ledger', 'event-bus', 'risk-engine'];
 const ENVS = ['production', 'staging', 'sandbox'];
 
-function eventTags(rand: Rand): Readonly<Record<string, string>> {
+function eventTags(rand: Rand): EventTags {
   // ~8% of usage rows are untagged — the population every tag-coverage
   // report has to account for.
   if (rand() < 0.08) return {};
@@ -156,8 +167,8 @@ function billingEvents(): readonly BillingEvent[] {
     const end = `${next} 00:00:00`;
 
     for (let i = 0; i < 6; i++) {
-      const list = money(4 + rand() * 180);
-      const contracted = money(list * (0.72 + rand() * 0.2));
+      const list = round2(4 + rand() * 180);
+      const contracted = round2(list * (0.72 + rand() * 0.2));
       events.push({
         kind: 'usage',
         chargeStart: start, chargeEnd: end,
@@ -165,7 +176,7 @@ function billingEvents(): readonly BillingEvent[] {
         regionIdx: Math.floor(rand() * 5),
         serviceIdx: Math.floor(rand() * 6),
         resourceSeq: 100 + Math.floor(rand() * 400),
-        quantity: money(rand() * 720),
+        quantity: round2(rand() * 720),
         billed: contracted, effective: contracted, list, contracted,
         tags: eventTags(rand),
       });
@@ -173,8 +184,8 @@ function billingEvents(): readonly BillingEvent[] {
 
     // Commitment-covered usage: the invoice charge sits on the Purchase row,
     // so BilledCost is 0 while EffectiveCost carries the amortized share.
-    const coveredList = money(20 + rand() * 60);
-    const coveredEffective = money(coveredList * 0.62);
+    const coveredList = round2(20 + rand() * 60);
+    const coveredEffective = round2(coveredList * 0.62);
     events.push({
       kind: 'committed-usage',
       chargeStart: start, chargeEnd: end,
@@ -182,13 +193,13 @@ function billingEvents(): readonly BillingEvent[] {
       regionIdx: 0,
       serviceIdx: 0,
       resourceSeq: 900 + Math.floor(rand() * 20),
-      quantity: money(12 + rand() * 12),
+      quantity: round2(12 + rand() * 12),
       billed: 0, effective: coveredEffective, list: coveredList, contracted: coveredEffective,
       tags: eventTags(rand),
     });
 
     // Third-party / marketplace consumption billed through the provider.
-    const mktCost = money(1 + rand() * 40);
+    const mktCost = round2(1 + rand() * 40);
     events.push({
       kind: 'marketplace',
       chargeStart: start, chargeEnd: end,
@@ -196,7 +207,7 @@ function billingEvents(): readonly BillingEvent[] {
       regionIdx: Math.floor(rand() * 5),
       serviceIdx: 0,
       resourceSeq: 500 + Math.floor(rand() * 50),
-      quantity: money(rand() * 900_000),
+      quantity: round2(rand() * 900_000),
       billed: mktCost, effective: mktCost, list: 0, contracted: mktCost,
       tags: eventTags(rand),
     });
@@ -256,6 +267,8 @@ const AWS: SampleVocabulary = {
     { name: 'AmazonCloudWatch', category: 'Management and Governance', subcategory: 'Observability', code: 'AmazonCloudWatch', operation: 'PutLogEvents', skuMeter: 'DataProcessing-Bytes', skuId: 'B3TDFXKP9WNC7SLM', unit: 'GB', resourceKind: 'log-group', namespace: 'logs' },
     { name: 'Amazon DynamoDB', category: 'Databases', subcategory: 'NoSQL Databases', code: 'AmazonDynamoDB', operation: 'PutItem', skuMeter: 'WriteRequestUnits', skuId: 'F5NQ8ZJVCT2XR6WD', unit: 'WriteRequestUnits', resourceKind: 'table', namespace: 'dynamodb' },
   ],
+  taxService: { name: 'Tax', category: 'Other', subcategory: 'Other', code: 'AWSTax', operation: '', skuMeter: '', skuId: '', unit: '', resourceKind: '', namespace: '' },
+  commitmentService: { name: 'Savings Plans for AWS Compute usage', category: 'Compute', subcategory: 'Virtual Machines', code: 'ComputeSavingsPlans', operation: '', skuMeter: 'ComputeSP:AllUsage', skuId: '', unit: '', resourceKind: 'savingsplan', namespace: 'savingsplans' },
   marketplacePublisher: 'Anthropic',
   // A real AWS Marketplace row carries no service code and an empty
   // ServiceName — attribution has to come from the publisher.
@@ -300,6 +313,8 @@ const AZURE: SampleVocabulary = {
     { name: 'Azure Monitor', category: 'Management and Governance', subcategory: 'Observability', code: 'Management and Governance', operation: 'Microsoft.OperationalInsights/workspaces', skuMeter: 'Data Ingestion', skuId: 'DZH318Z0BS3Q', unit: 'GB', resourceKind: 'workspaces', namespace: 'Microsoft.OperationalInsights' },
     { name: 'Azure Cosmos DB', category: 'Databases', subcategory: 'NoSQL Databases', code: 'Databases', operation: 'Microsoft.DocumentDB/databaseAccounts', skuMeter: 'RU/s Provisioned Throughput', skuId: 'DZH318Z0BPZ7', unit: '100 RU/s Hours', resourceKind: 'databaseAccounts', namespace: 'Microsoft.DocumentDB' },
   ],
+  taxService: { name: 'Tax', category: 'Other', subcategory: 'Other', code: 'Other', operation: '', skuMeter: '', skuId: '', unit: '', resourceKind: '', namespace: '' },
+  commitmentService: { name: 'Reservations', category: 'Compute', subcategory: 'Virtual Machines', code: 'Compute', operation: '', skuMeter: 'Reserved Instance Fee', skuId: 'DZH318Z0BQ4P', unit: '', resourceKind: 'reservations', namespace: 'Microsoft.Capacity' },
   marketplacePublisher: 'Datadog',
   marketplaceService: { name: 'Datadog Pro', category: 'Management and Governance', subcategory: 'Observability', code: 'Management and Governance', operation: 'Datadog.Monitor/monitors', skuMeter: 'Pro Host Hours', skuId: 'DZH318Z0C1WY', unit: 'Hours', resourceKind: 'monitors', namespace: 'Datadog.Monitor' },
   commitmentId: '/providers/Microsoft.Capacity/reservationOrders/9d4a6c31-77b2-4f0e-9c1a-6b8e2d5f3a10/reservations/4c7f1b8e-2a93-4d6c-8e05-1f7b9a3c6d24',
@@ -347,6 +362,8 @@ const GCP: SampleVocabulary = {
     { name: 'BigQuery', category: 'Analytics', subcategory: 'Data Processing', code: '24E6-581D-38E5', operation: 'bigquery.jobs.query', skuMeter: 'Analysis', skuId: 'D5B1-8E44-70A9', unit: 'tebibyte', resourceKind: 'datasets', namespace: 'bigquery.googleapis.com' },
     { name: 'Google Kubernetes Engine', category: 'Compute', subcategory: 'Containers', code: 'CCD8-9BF1-090E', operation: 'container.clusters.running', skuMeter: 'Autopilot Pod vCPU', skuId: '7F3A-2C68-B04D', unit: 'hour', resourceKind: 'clusters', namespace: 'container.googleapis.com' },
   ],
+  taxService: { name: 'Tax', category: 'Other', subcategory: 'Other', code: '', operation: '', skuMeter: '', skuId: '', unit: '', resourceKind: '', namespace: '' },
+  commitmentService: { name: 'Compute Engine', category: 'Compute', subcategory: 'Virtual Machines', code: '6F81-5844-456A', operation: '', skuMeter: 'Commitment v1: N2 Cpu in Americas', skuId: 'F449-9E0B-3C7A', unit: '', resourceKind: 'commitments', namespace: 'compute.googleapis.com' },
   marketplacePublisher: 'Confluent, Inc.',
   marketplaceService: { name: 'Confluent Cloud', category: 'Analytics', subcategory: 'Streaming Analytics', code: 'C0AF-0C4B-3A1D', operation: 'marketplace.usage.report', skuMeter: 'Confluent Cloud eCKU', skuId: 'B8D2-1F35-6C07', unit: 'hour', resourceKind: 'clusters', namespace: 'cloudcommerceconsumerprocurement.googleapis.com' },
   commitmentId: 'cud-compute-n2-3yr-us-central1',
@@ -406,8 +423,13 @@ interface RenderContext {
 }
 
 function contextOf(event: BillingEvent, vocab: SampleVocabulary): RenderContext {
-  const service = event.kind === 'marketplace'
-    ? vocab.marketplaceService
+  // Non-usage rows are not billed against a workload service. Letting them
+  // inherit one books VAT and commitment fees as compute spend, complete with
+  // a compute SKU — the exact misattribution this fixture exists to expose.
+  // A credit is the exception: it offsets a service, so it keeps one.
+  const service = event.kind === 'marketplace' ? vocab.marketplaceService
+    : event.kind === 'tax' ? vocab.taxService
+    : event.kind === 'purchase' || event.kind === 'unused-commitment' ? vocab.commitmentService
     : at(vocab.services, event.serviceIdx);
   const account = at(vocab.accounts, event.accountIdx);
   const region = at(vocab.regions, event.regionIdx);
@@ -431,17 +453,33 @@ function contextOf(event: BillingEvent, vocab: SampleVocabulary): RenderContext 
   };
 }
 
-function jsonTags(tags: Readonly<Record<string, string>>, keys: SampleVocabulary['tagKeys']): string {
-  const entries = Object.entries(tags).map(([k, v]) => {
-    const key = k === 'team' ? keys.team : k === 'system' ? keys.system : keys.environment;
-    return [key, v] as const;
-  });
-  return JSON.stringify(Object.fromEntries(entries));
+/** Event tags rendered into this provider's key casing, in concept order.
+ *  Every concept resolves through `tagKeys`, so no key can fall through into
+ *  another's slot. */
+function renderedTags(
+  tags: EventTags,
+  keys: SampleVocabulary['tagKeys'],
+  only: readonly TagConcept[] = TAG_CONCEPTS,
+): readonly (readonly [string, string])[] {
+  const entries: (readonly [string, string])[] = [];
+  for (const concept of only) {
+    const value = tags[concept];
+    if (value !== undefined) entries.push([keys[concept], value]);
+  }
+  return entries;
+}
+
+function jsonTags(tags: EventTags, keys: SampleVocabulary['tagKeys']): string {
+  return JSON.stringify(Object.fromEntries(renderedTags(tags, keys)));
 }
 
 /** GCP's repeated-record shape: `ARRAY<STRUCT<Key, Value>>`. */
-function keyValueRecords(tags: Readonly<Record<string, string>>): string {
-  return JSON.stringify(Object.entries(tags).map(([Key, Value]) => ({ Key, Value })));
+function keyValueRecords(
+  tags: EventTags,
+  keys: SampleVocabulary['tagKeys'],
+  only?: readonly TagConcept[],
+): string {
+  return JSON.stringify(renderedTags(tags, keys, only).map(([Key, Value]) => ({ Key, Value })));
 }
 
 function awsRow(ctx: RenderContext): Record<string, string> {
@@ -469,7 +507,7 @@ function awsRow(ctx: RenderContext): Record<string, string> {
     CommitmentDiscountStatus: ctx.commitmentStatus,
     CommitmentDiscountType: isCommitment ? vocab.commitmentType : '',
     CommitmentDiscountUnit: isCommitment ? vocab.commitmentUnit : '',
-    ConsumedQuantity: event.quantity.toFixed(3),
+    ConsumedQuantity: ctx.resourceless ? '' : event.quantity.toFixed(3),
     ConsumedUnit: ctx.resourceless ? '' : service.unit,
     ContractedCost: event.contracted.toFixed(2),
     ContractedUnitPrice: event.quantity > 0 ? unitPrice(event.contracted / event.quantity).toFixed(6) : '',
@@ -479,7 +517,7 @@ function awsRow(ctx: RenderContext): Record<string, string> {
     ListCost: event.list.toFixed(2),
     ListUnitPrice: event.quantity > 0 ? unitPrice(event.list / event.quantity).toFixed(6) : '',
     PricingCategory: ctx.pricingCategory,
-    PricingQuantity: event.quantity.toFixed(3),
+    PricingQuantity: ctx.resourceless ? '' : event.quantity.toFixed(3),
     PricingUnit: ctx.resourceless ? '' : service.unit,
     ProviderName: vocab.providerName,
     PublisherName: publisher,
@@ -498,10 +536,13 @@ function awsRow(ctx: RenderContext): Record<string, string> {
     SubAccountName: account.name,
     SubAccountType: account.type,
     Tags: jsonTags(event.tags, vocab.tagKeys),
-    // AWS reports negotiated discounts as a map rather than separate rows;
-    // it is populated only where a discount actually applied.
-    x_Discounts: event.list > 0 && event.contracted < event.list
-      ? JSON.stringify({ 'Enterprise Discount Program': money(event.list - event.contracted) })
+    // AWS reports negotiated discounts as a map rather than separate rows.
+    // Restricted to standard usage on purpose: on a commitment-covered row
+    // the list-to-effective gap IS the commitment benefit, already reported
+    // through the CommitmentDiscount* columns, so booking it here as well
+    // would double-count the same saving.
+    x_Discounts: event.kind === 'usage' && event.list > 0 && event.contracted < event.list
+      ? JSON.stringify({ 'Enterprise Discount Program': round2(event.list - event.contracted) })
       : '{}',
     x_Operation: ctx.resourceless ? '' : service.operation,
     x_ServiceCode: service.code,
@@ -514,7 +555,7 @@ function azureRow(ctx: RenderContext): Record<string, string> {
   const isMarketplace = event.kind === 'marketplace';
   // Microsoft bills in the customer's currency and republishes the USD
   // figure alongside it.
-  const usd = (v: number): string => money(v * 1.09).toFixed(2);
+  const usd = (v: number): string => round2(v * 1.09).toFixed(2);
   return {
     BilledCost: event.billed.toFixed(2),
     BillingAccountId: vocab.billingAccountId,
@@ -538,7 +579,7 @@ function azureRow(ctx: RenderContext): Record<string, string> {
     CommitmentDiscountStatus: ctx.commitmentStatus,
     CommitmentDiscountType: isCommitment ? vocab.commitmentType : '',
     CommitmentDiscountUnit: isCommitment ? vocab.commitmentUnit : '',
-    ConsumedQuantity: event.quantity.toFixed(3),
+    ConsumedQuantity: ctx.resourceless ? '' : event.quantity.toFixed(3),
     ConsumedUnit: ctx.resourceless ? '' : service.unit,
     ContractedCost: event.contracted.toFixed(2),
     ContractedUnitPrice: event.quantity > 0 ? unitPrice(event.contracted / event.quantity).toFixed(6) : '',
@@ -549,7 +590,7 @@ function azureRow(ctx: RenderContext): Record<string, string> {
     ListUnitPrice: event.quantity > 0 ? unitPrice(event.list / event.quantity).toFixed(6) : '',
     PricingCategory: ctx.pricingCategory,
     PricingCurrency: vocab.currency,
-    PricingQuantity: event.quantity.toFixed(3),
+    PricingQuantity: ctx.resourceless ? '' : event.quantity.toFixed(3),
     PricingUnit: ctx.resourceless ? '' : service.unit,
     ProviderName: vocab.providerName,
     PublisherName: isMarketplace ? vocab.marketplacePublisher : vocab.publisherName,
@@ -595,7 +636,7 @@ function gcpRow(ctx: RenderContext): Record<string, string> {
   // same credit type, so a reader that ignores the sign cannot tell a used
   // commitment from an unused one.
   const credits = isCommitment
-    ? [{ Id: vocab.commitmentId, FullName: vocab.commitmentName, Type: 'COMMITTED_USAGE_DISCOUNT', Name: vocab.commitmentName, Amount: money(event.effective - event.list) }]
+    ? [{ Id: vocab.commitmentId, FullName: vocab.commitmentName, Type: 'COMMITTED_USAGE_DISCOUNT', Name: vocab.commitmentName, Amount: round2(event.effective - event.list) }]
     : event.kind === 'credit'
       ? [{ Id: 'promo-2026-05', FullName: 'Promotional credit', Type: 'PROMOTION', Name: 'Promotional credit', Amount: event.billed }]
       : [];
@@ -613,7 +654,7 @@ function gcpRow(ctx: RenderContext): Record<string, string> {
     ChargeDescription: chargeDescription(event.kind, vocab, service),
     ChargePeriodEnd: event.chargeEnd,
     ChargePeriodStart: event.chargeStart,
-    ConsumedQuantity: event.quantity.toFixed(3),
+    ConsumedQuantity: ctx.resourceless ? '' : event.quantity.toFixed(3),
     ConsumedUnit: ctx.resourceless ? '' : service.unit,
     ContractedCost: event.contracted.toFixed(2),
     ContractedUnitPrice: event.quantity > 0 ? unitPrice(event.contracted / event.quantity).toFixed(6) : '',
@@ -625,7 +666,7 @@ function gcpRow(ctx: RenderContext): Record<string, string> {
     PricingCurrencyContractedUnitPrice: event.quantity > 0 ? unitPrice(event.contracted / event.quantity).toFixed(6) : '',
     PricingCurrencyEffectiveCost: event.effective.toFixed(2),
     PricingCurrencyListUnitPrice: event.quantity > 0 ? unitPrice(event.list / event.quantity).toFixed(6) : '',
-    PricingQuantity: event.quantity.toFixed(3),
+    PricingQuantity: ctx.resourceless ? '' : event.quantity.toFixed(3),
     PricingUnit: ctx.resourceless ? '' : service.unit,
     ProviderName: vocab.providerName,
     PublisherName: event.kind === 'marketplace' ? vocab.marketplacePublisher : vocab.publisherName,
@@ -644,18 +685,30 @@ function gcpRow(ctx: RenderContext): Record<string, string> {
     x_CurrencyConversionRate: '1.000000',
     x_ExportTime: '2026-06-02 04:17:33',
     // Resource labels — the tags a GCP user actually sets on a resource.
-    x_Labels: keyValueRecords(event.tags),
+    // Resource labels the workload owner set. The environment lives in a tag
+    // binding instead (below), which is how a centrally-governed value
+    // actually reaches a GCP row.
+    x_Labels: keyValueRecords(event.tags, vocab.tagKeys, ['team', 'system']),
     x_Location: ctx.resourceless ? 'global' : region.id,
     x_Project: JSON.stringify({ Id: account.id, Name: account.name, Number: `12345678900${String(event.accountIdx)}` }),
-    x_ProjectLabels: JSON.stringify([{ Key: 'cost-center', Value: 'cc-2087' }]),
+    // Project labels propagate to every row of the project — including rows
+    // the workload owner never labelled. The project-level environment
+    // default is deliberately 'production' so a row whose binding says
+    // otherwise proves the precedence order.
+    x_ProjectLabels: JSON.stringify([
+      { Key: 'cost-center', Value: 'cc-2087' },
+      { Key: 'environment', Value: 'production' },
+    ]),
     x_ServiceId: service.code,
     x_SubscriptionInstanceId: '',
     x_SystemLabels: ctx.resourceless
       ? '[]'
       : JSON.stringify([{ Key: 'compute.googleapis.com/machine_spec', Value: 'n2-standard-4' }]),
     // Tag bindings (the org-policy kind) — distinct from labels, and the
-    // higher-precedence source when both carry the same key.
-    x_Tags: JSON.stringify([{ Key: 'environment', Value: 'production', x_Inherited: false, x_Namespace: '123456789012/environment' }]),
+    // higher-precedence source when both carry the same key. Absent on the
+    // rows the event left untagged, so the untagged population survives.
+    x_Tags: JSON.stringify(renderedTags(event.tags, vocab.tagKeys, ['environment']).map(
+      ([Key, Value]) => ({ Key, Value, x_Inherited: false, x_Namespace: '123456789012/environment' }))),
   };
 }
 
@@ -664,6 +717,19 @@ const RENDERERS: Record<SampleProvider, (ctx: RenderContext) => Record<string, s
   azure: azureRow,
   gcp: gcpRow,
 };
+
+/** Total BilledCost across the month — the same amount on every provider,
+ *  each in its own BillingCurrency (Azure bills in EUR). Derived from the
+ *  events so a generator change cannot leave a stale literal behind in a
+ *  test. */
+export const SAMPLE_BILLED_TOTAL = round2(
+  billingEvents().reduce((sum, e) => sum + e.billed, 0),
+);
+
+/** Rows carrying resource tags. The rest are the deliberately-untagged
+ *  population plus the month-span charges, which no provider tags. */
+export const SAMPLE_TAGGED_ROW_COUNT = billingEvents()
+  .filter(e => Object.keys(e.tags).length > 0).length;
 
 /** Rows of one provider's sample, keyed by native column name. */
 export function sampleRows(provider: SampleProvider): readonly Readonly<Record<string, string>>[] {
@@ -682,7 +748,14 @@ export function buildSampleCsv(provider: SampleProvider): string {
   const columns = NATIVE_COLUMNS[provider];
   const lines = [columns.join(',')];
   for (const row of sampleRows(provider)) {
-    lines.push(columns.map(col => csvCell(row[col] ?? '')).join(','));
+    lines.push(columns.map(col => {
+      const value = row[col];
+      // A declared column with no rendered value would become 116 blank cells
+      // that regenerate cleanly and pass every test — a typo in a renderer key
+      // has to fail here instead.
+      if (value === undefined) throw new Error(`${provider}: no value rendered for declared column ${col}`);
+      return csvCell(value);
+    }).join(','));
   }
   return `${lines.join('\n')}\n`;
 }

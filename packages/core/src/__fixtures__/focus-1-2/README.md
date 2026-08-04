@@ -71,10 +71,40 @@ const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ n
 
 `shape: 'native'` writes the export exactly as the provider delivers it — what
 an ingest pipeline receives. `shape: 'contract'` writes the canonicalized form
-the query layer requires; `contractProjection()` in `load.ts` is that mapping,
-and doubles as the specification a provider adapter has to satisfy. The shipped
-AWS path needs no projection at all; GCP's real adapter lives with the sync
-code (see the GCP provider work), not here.
+the query layer requires; `contractProjection(provider, table)` in `load.ts` is
+that mapping. The AWS path needs no projection at all; the real GCP adapter
+lives with the sync code, not here.
+
+Read the projection as a reference mapping, not a settled contract — two
+divergences are deliberate and open:
+
+- **Commitment status.** GCP reports used and unused commitment as the same
+  `x_Credits` type, separated only by the sign of the amount, so the projection
+  infers `Used`/`Unused` from it. The GCP provider work NULL-fills that column
+  instead. The two disagree; which is right is a question for that PR.
+- **Marketplace attribution.** The query layer re-attributes marketplace rows
+  by matching an empty `x_ServiceCode` against a known operation. Both non-AWS
+  branches synthesize a non-empty service code, so that predicate never fires
+  and third-party rows keep their `$0` list price on the `list` metric.
+
+## Tags across the three providers
+
+The same event tags reach each export differently, and the samples keep that
+difference rather than flattening it:
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| Physical form | `MAP` | JSON document | repeated `Key`/`Value` records |
+| Key casing | `team` | `Team` (Azure preserves what the user typed) | `team` |
+| Sources | one | one | `x_Tags` ≻ `x_Labels` ≻ `x_ProjectLabels` |
+
+GCP's three sources overlap on purpose: the project label sets a project-wide
+`environment=production`, while the tag binding carries what the workload
+actually is — so the merge order is observable, not decorative. Project labels
+also propagate to rows the workload owner never labelled, which is why GCP's
+untagged rows still resolve an environment while AWS's and Azure's do not. That
+is genuine provider behaviour; the ~8% untagged population survives on the
+resource-level keys (`team`, `system`) on all three.
 
 ## Regenerating
 

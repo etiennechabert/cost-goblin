@@ -92,13 +92,17 @@ function isJsonBacked(type: string): boolean {
 function castExpr(column: string, type: string | undefined): string {
   const quoted = `"${column}"`;
   if (type === undefined) return `${quoted} AS ${quoted}`;
-  if (type === 'JSON') return `CAST(${quoted} AS JSON) AS ${quoted}`;
+  // An empty cell means the export carried no value, so it becomes NULL for
+  // every type. Substituting an empty JSON literal instead would be wrong
+  // twice over: `CAST('{}' AS STRUCT(...))` throws on the first missing key,
+  // and `CAST('' AS JSON)` throws outright — so the guard has to null out
+  // before the parse, not after.
+  const empty = `NULLIF(${quoted}, '')`;
   if (isJsonBacked(type)) {
-    // Empty cells are only produced for scalar columns, but guard anyway so a
-    // hand-edited sample cannot blow up with a JSON parse error.
-    return `CAST(CAST(COALESCE(NULLIF(${quoted}, ''), '${type.endsWith('[]') ? '[]' : '{}'}') AS JSON) AS ${type}) AS ${quoted}`;
+    const parsed = `CAST(${empty} AS JSON)`;
+    return type === 'JSON' ? `${parsed} AS ${quoted}` : `CAST(${parsed} AS ${type}) AS ${quoted}`;
   }
-  return `CAST(NULLIF(${quoted}, '') AS ${type}) AS ${quoted}`;
+  return `CAST(${empty} AS ${type}) AS ${quoted}`;
 }
 
 /** Read a sample CSV into a DuckDB table typed the way the provider's own
@@ -119,15 +123,26 @@ export async function createNativeTable(
   return tableName;
 }
 
-/** The projection each provider adapter has to produce before the query
- *  layer can read its export: every column of `QUERY_CONTRACT_COLUMNS`,
- *  physically present, with `Tags` as a MAP.
+/** The projection that turns one provider's native export into the shape the
+ *  query layer reads: every column of `QUERY_CONTRACT_COLUMNS`, physically
+ *  present, with `Tags` as a MAP. Returns a complete query over `table`.
  *
- *  This lives in the fixtures on purpose — it is the *specification* the
- *  shipped adapters are tested against, not an adapter itself. AWS needs
- *  nothing beyond a pass-through; the other two show exactly how much work a
- *  provider that is not AWS actually costs. */
-export function contractProjection(provider: SampleProvider): string {
+ *  This is the fixtures' own reference mapping, not the shipped adapter.
+ *  AWS needs nothing beyond a pass-through; the other two show what a
+ *  provider that is not AWS actually costs. Two deliberate divergences to
+ *  know about before treating it as a specification:
+ *
+ *  - **Commitment status.** This projection infers `Used`/`Unused` from the
+ *    sign of a GCP credit. The #517 adapter NULL-fills the column instead
+ *    (its design doc calls the dimension empty for GCP rows), so the two
+ *    disagree — an open question for that PR, not a settled contract.
+ *  - **Marketplace attribution.** `buildSource` re-attributes marketplace
+ *    rows by matching an empty `x_ServiceCode` against a known operation
+ *    (`builder.ts`). Synthesizing a non-empty service code, as both non-AWS
+ *    branches do, makes that predicate permanently false — so third-party
+ *    rows keep their $0 `ListCost` on the `list` metric. Whether an adapter
+ *    should leave the code empty for publisher-billed rows is unresolved. */
+export function contractProjection(provider: SampleProvider, table: string): string {
   switch (provider) {
     case 'aws':
       // AWS's export already is the contract.
@@ -136,7 +151,8 @@ export function contractProjection(provider: SampleProvider): string {
         ServiceName, ServiceCategory, ChargeDescription, ChargeCategory,
         PricingCategory, CommitmentDiscountStatus, ConsumedQuantity, ResourceId,
         BilledCost, EffectiveCost, ListCost, ContractedCost,
-        SkuMeter, Tags, x_ServiceCode, x_Operation`;
+        SkuMeter, Tags, x_ServiceCode, x_Operation
+      FROM ${table}`;
     case 'azure':
       return `SELECT
         ChargePeriodStart, SubAccountId, SubAccountName, RegionId,
@@ -152,8 +168,14 @@ export function contractProjection(provider: SampleProvider): string {
         CAST(Tags AS MAP(VARCHAR, VARCHAR)) AS Tags,
         -- Azure publishes no service code and no operation dimension.
         ServiceName AS x_ServiceCode,
-        CAST(NULL AS VARCHAR) AS x_Operation`;
+        CAST(NULL AS VARCHAR) AS x_Operation
+      FROM ${table}`;
     case 'gcp':
+      // The merged tag list is materialized once per row in the inner
+      // SELECT. Inlining it would rebuild all three sources once for the key
+      // list and again for every distinct key — cheap on 116 fixture rows,
+      // ruinous on a real month, and this projection is what an adapter
+      // author copies.
       return `SELECT
         ChargePeriodStart, SubAccountId, SubAccountName, RegionId,
         ServiceName,
@@ -164,13 +186,13 @@ export function contractProjection(provider: SampleProvider): string {
         -- CUDs surface as x_Credits entries, not CommitmentDiscount* columns,
         -- and the credit's SIGN is the only thing separating the two states
         -- the FOCUS column distinguishes: a negative amount is the discount
-        -- applied to covered usage ('Used'), a positive one is the residual
-        -- charged for capacity that went unconsumed ('Unused'). Keying on the
-        -- credit type alone labels both 'Used' and loses the unused
-        -- commitment — the population AWS and Azure report explicitly.
+        -- applied to covered usage ('Used'), anything else on a commitment
+        -- credit is the residual charged for capacity that went unconsumed.
+        -- Keying on the credit type alone labels both 'Used' and loses the
+        -- unused commitment — the population AWS and Azure report explicitly.
         CASE
-          WHEN len(list_filter(x_Credits, c -> c."Type" = 'COMMITTED_USAGE_DISCOUNT' AND c."Amount" < 0)) > 0 THEN 'Used'
-          WHEN len(list_filter(x_Credits, c -> c."Type" = 'COMMITTED_USAGE_DISCOUNT' AND c."Amount" > 0)) > 0 THEN 'Unused'
+          WHEN len(list_filter(_credits, c -> c."Type" = 'COMMITTED_USAGE_DISCOUNT' AND c."Amount" < 0)) > 0 THEN 'Used'
+          WHEN len(_credits) > 0 THEN 'Unused'
           ELSE ''
         END AS CommitmentDiscountStatus,
         CAST(ConsumedQuantity AS DOUBLE) AS ConsumedQuantity, ResourceId,
@@ -183,17 +205,40 @@ export function contractProjection(provider: SampleProvider): string {
         -- labels, which outrank project labels. The sources overlap, and
         -- map_from_entries REJECTS a duplicate key rather than picking one —
         -- so keys are de-duplicated first and each one resolved to its
-        -- strongest source. A NULL key would fail the same way, hence the
-        -- filter.
+        -- strongest source, which is the FIRST match in the concatenation.
+        -- A NULL key would fail the same way, hence the filter.
         map_from_entries(list_transform(
-          list_distinct(list_transform(
-            list_filter(${GCP_TAG_SOURCES}, e -> e."Key" IS NOT NULL), e -> e."Key")),
-          k -> struct_pack(
-            k := k,
-            v := list_filter(${GCP_TAG_SOURCES}, e -> e."Key" = k)[1]."Value"))) AS Tags,
+          list_distinct(list_transform(_tags, e -> e."Key")),
+          k -> struct_pack(k := k, v := list_filter(_tags, e -> e."Key" = k)[1]."Value"))) AS Tags,
         COALESCE(NULLIF(x_ServiceId, ''), ServiceName) AS x_ServiceCode,
-        CAST(NULL AS VARCHAR) AS x_Operation`;
+        CAST(NULL AS VARCHAR) AS x_Operation
+      FROM (
+        SELECT *,
+          list_filter(${GCP_TAG_SOURCES}, e -> e."Key" IS NOT NULL) AS _tags,
+          list_filter(x_Credits, c -> c."Type" = 'COMMITTED_USAGE_DISCOUNT') AS _credits
+        FROM ${table}
+      )`;
   }
+}
+
+/** Tables already materialized, per connection. Writing both shapes of a
+ *  provider would otherwise re-read and re-cast the same CSV — including the
+ *  MAP/STRUCT JSON parsing — for every shape. Keyed on the connection so two
+ *  connections cannot share (and then miss) each other's tables. */
+const loadedTables = new WeakMap<Runner, Set<SampleProvider>>();
+
+async function loadOnce(conn: Runner, provider: SampleProvider): Promise<string> {
+  const table = `native_${provider}`;
+  let loaded = loadedTables.get(conn);
+  if (loaded === undefined) {
+    loaded = new Set();
+    loadedTables.set(conn, loaded);
+  }
+  if (!loaded.has(provider)) {
+    await createNativeTable(conn, provider, table);
+    loaded.add(provider);
+  }
+  return table;
 }
 
 export interface WrittenSample {
@@ -208,8 +253,13 @@ export interface WrittenSample {
  *  `{dataDir}/{provider}/raw/daily-{month}/data.parquet`.
  *
  *  `shape: 'native'` writes the export exactly as the provider delivers it —
- *  which is what an ingest pipeline receives. `shape: 'contract'` writes the
- *  canonicalized form the query layer requires. */
+ *  which is what an ingest pipeline receives — under `{provider}-native`.
+ *  `shape: 'contract'` writes the canonicalized form the query layer
+ *  requires, under `{provider}`. Callers should read `providerName` and
+ *  `parquetPath` off the result rather than rebuilding either: this function
+ *  owns the layout.
+ *
+ *  The CSV is parsed once per provider and reused across shapes. */
 export async function writeSampleParquet(
   conn: Runner,
   provider: SampleProvider,
@@ -221,10 +271,10 @@ export async function writeSampleParquet(
   await mkdir(partDir, { recursive: true });
   const parquetPath = join(partDir, 'data.parquet');
 
-  const table = await createNativeTable(conn, provider, `native_${provider}_${shape}`);
+  const table = await loadOnce(conn, provider);
   const query = shape === 'native'
     ? `SELECT * FROM ${table}`
-    : `${contractProjection(provider)} FROM ${table}`;
+    : contractProjection(provider, table);
   await conn.run(`COPY (${query}) TO '${parquetPath}' (FORMAT PARQUET)`);
 
   return { dataDir, providerName, parquetPath };

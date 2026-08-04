@@ -17,10 +17,11 @@
  *      (`src/open-data/dataset-metadata/`) — 106 columns, of which the `x_`
  *      extensions are trimmed here to the ones that carry signal (see the
  *      README).
- *    - GCP: the FOCUS BigQuery export schema, cross-checked against the live
- *      table read recorded in `docs/gcp-provider-design.md` §C0a. GCP's
- *      export is the interesting one: it omits three *unconditionally*
- *      mandatory columns and carries tags as repeated records, not `Tags`. */
+ *    - GCP: the published FOCUS BigQuery export schema, cross-checked against
+ *      a live export's column list. GCP's is the interesting one: it omits
+ *      three *unconditionally* mandatory columns and carries tags as repeated
+ *      records, not `Tags`. The samples carry the columns that export
+ *      delivers today; its Preview status means the set can still grow. */
 
 export const SAMPLE_PROVIDERS = ['aws', 'azure', 'gcp'] as const;
 export type SampleProvider = (typeof SAMPLE_PROVIDERS)[number];
@@ -89,6 +90,15 @@ export const FOCUS_1_2_CONDITIONAL_COLUMNS: readonly string[] = [
   'SubAccountName',
   'SubAccountType',
   'Tags',
+] as const;
+
+/** Columns FOCUS 1.2 marks RECOMMENDED — optional, but real exports carry
+ *  them, so they belong in the known-name set. */
+export const FOCUS_1_2_RECOMMENDED_COLUMNS: readonly string[] = [
+  'AvailabilityZone',
+  'ChargeFrequency',
+  'InvoiceId',
+  'ServiceSubcategory',
 ] as const;
 
 /** Every raw column `buildSource` reads off a Parquet file. This is the
@@ -214,6 +224,19 @@ export const NATIVE_COLUMNS: Record<SampleProvider, readonly string[]> = {
 export function contractGap(provider: SampleProvider): readonly string[] {
   const native = new Set(NATIVE_COLUMNS[provider]);
   return QUERY_CONTRACT_COLUMNS.filter(col => !native.has(col));
+}
+
+/** Columns a provider declares that are neither a FOCUS 1.2 column nor an
+ *  `x_` extension — i.e. a typo or an invented name. FOCUS reserves the `x_`
+ *  prefix for provider extensions, so anything else has to appear in one of
+ *  the specification's own lists. */
+export function unknownColumns(provider: SampleProvider): readonly string[] {
+  const known = new Set([
+    ...FOCUS_1_2_MANDATORY_COLUMNS,
+    ...FOCUS_1_2_CONDITIONAL_COLUMNS,
+    ...FOCUS_1_2_RECOMMENDED_COLUMNS,
+  ]);
+  return NATIVE_COLUMNS[provider].filter(col => !col.startsWith('x_') && !known.has(col));
 }
 
 /** Unconditionally-mandatory FOCUS 1.2 columns a provider's export omits.

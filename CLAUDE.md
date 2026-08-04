@@ -126,6 +126,7 @@ No I/O, no DuckDB. Tests run in milliseconds.
 ### Layer 2: DuckDB Queries (Vitest)
 Real DuckDB queries against synthetic fixture Parquet files in `packages/core/src/__fixtures__/synthetic/`.
 Shared DuckDB instance created once per test suite. Fixtures are small (~1000 rows), queries complete in milliseconds.
+Provider-shape coverage uses the committed FOCUS 1.2 samples in `packages/core/src/__fixtures__/focus-1-2/` (AWS/Azure/GCP native export shapes, materialized to Parquet at test time).
 
 ### Layer 3: React Components (Vitest + React Testing Library)
 Components tested against `MockCostApi` (implements `CostApi` interface with fixture data).
@@ -140,6 +141,7 @@ Slow (seconds). Run before commits, always in CI.
 - `profile.json` extracted from real data — committed (statistical shape, no PII)
 - Synthetic Parquet files generated from profile — committed, deterministic (seeded random)
 - Service names are real (not sensitive). Account IDs, tag values, costs are synthetic.
+- A second fixture family lives in `packages/core/src/__fixtures__/focus-1-2/`: committed **CSV** samples of each provider's native FOCUS 1.2 export, regenerated with `write-samples.ts` (see Commands) and pinned byte-for-byte by a drift test.
 
 ## Git Safety
 
