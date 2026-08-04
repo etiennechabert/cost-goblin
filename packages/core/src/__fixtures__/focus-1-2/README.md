@@ -39,6 +39,12 @@ GCP additionally omits three columns FOCUS 1.2 marks mandatory with no
 condition attached — `BillingAccountName`, `InvoiceIssuerName` and
 `ServiceCategory`.
 
+Its commitment reporting is the subtlest of these: used and unused commitment
+both arrive as the *same* `x_Credits` type, separated only by the sign of the
+amount (negative = discount applied, positive = unconsumed capacity). A reader
+that keys on the credit type alone reports every commitment row as `Used` and
+silently loses the unused one.
+
 `shapes.ts` encodes all of this, including the FOCUS 1.2 requirement levels
 themselves (21 mandatory columns, 32 conditional), so the gap analysis is a
 data structure rather than prose.

@@ -161,9 +161,18 @@ export function contractProjection(provider: SampleProvider): string {
         -- rather than being invented.
         '' AS ServiceCategory,
         ChargeDescription, ChargeCategory, PricingCategory,
-        -- CUDs surface as x_Credits entries, not CommitmentDiscount* columns.
-        CASE WHEN len(list_filter(x_Credits, c -> c."Type" = 'COMMITTED_USAGE_DISCOUNT')) > 0
-             THEN 'Used' ELSE '' END AS CommitmentDiscountStatus,
+        -- CUDs surface as x_Credits entries, not CommitmentDiscount* columns,
+        -- and the credit's SIGN is the only thing separating the two states
+        -- the FOCUS column distinguishes: a negative amount is the discount
+        -- applied to covered usage ('Used'), a positive one is the residual
+        -- charged for capacity that went unconsumed ('Unused'). Keying on the
+        -- credit type alone labels both 'Used' and loses the unused
+        -- commitment — the population AWS and Azure report explicitly.
+        CASE
+          WHEN len(list_filter(x_Credits, c -> c."Type" = 'COMMITTED_USAGE_DISCOUNT' AND c."Amount" < 0)) > 0 THEN 'Used'
+          WHEN len(list_filter(x_Credits, c -> c."Type" = 'COMMITTED_USAGE_DISCOUNT' AND c."Amount" > 0)) > 0 THEN 'Unused'
+          ELSE ''
+        END AS CommitmentDiscountStatus,
         CAST(ConsumedQuantity AS DOUBLE) AS ConsumedQuantity, ResourceId,
         CAST(BilledCost AS DOUBLE) AS BilledCost,
         CAST(EffectiveCost AS DOUBLE) AS EffectiveCost,

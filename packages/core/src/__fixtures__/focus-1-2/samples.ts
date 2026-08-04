@@ -589,7 +589,11 @@ function gcpRow(ctx: RenderContext): Record<string, string> {
   const { event, vocab, service, account, region } = ctx;
   const isCommitment = event.kind === 'committed-usage' || event.kind === 'unused-commitment';
   // GCP surfaces commitment coverage as a credit entry on the usage row —
-  // there are no CommitmentDiscount* columns to carry it.
+  // there are no CommitmentDiscount* columns to carry it. The sign carries
+  // the state: negative is the discount applied to covered usage, positive
+  // is the residual charged for capacity that went unconsumed. Both are the
+  // same credit type, so a reader that ignores the sign cannot tell a used
+  // commitment from an unused one.
   const credits = isCommitment
     ? [{ Id: vocab.commitmentId, FullName: vocab.commitmentName, Type: 'COMMITTED_USAGE_DISCOUNT', Name: vocab.commitmentName, Amount: money(event.effective - event.list) }]
     : event.kind === 'credit'
