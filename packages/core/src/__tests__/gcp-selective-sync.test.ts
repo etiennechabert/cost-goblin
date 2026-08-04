@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readdir, readFile, writeFile, rm } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DuckDBInstance } from '@duckdb/node-api';
-import { syncGcpSelectedFiles, parseGcloudCompletedBytes } from '../sync/gcp-selective-sync.js';
+import { syncGcpSelectedFiles, parseGcloudCompletedBytes, parseGcloudCopyingKey } from '../sync/gcp-selective-sync.js';
 import type { ManifestFileEntry } from '../sync/manifest.js';
 import type { SyncProgress } from '../sync/s3-client.js';
 import { asProviderName } from '../types/branded.js';
@@ -246,6 +246,65 @@ describe('syncGcpSelectedFiles', () => {
     await expect(readdir(rawPeriodDir('2026-01'))).rejects.toThrow();
   });
 
+  it('advances progress from the CLI\'s "Copying" lines, which is all it emits', async () => {
+    // Verified against gcloud 578 on a real bucket: rsync announces each
+    // transfer as it starts and then draws a progress bar — there is no
+    // running byte count to scrape. Without deriving progress from those
+    // announcements the bar sits at zero for the whole period.
+    const progress: SyncProgress[] = [];
+    const key = (n: string): string => `focus/billing_period=2026-01/shard-${n}.parquet`;
+    mockSpawn.mockImplementationOnce((_bin: unknown, args: unknown) => {
+      const proc = new MockChildProcess();
+      const dest = (Array.isArray(args) ? args.map(String) : [])[3] ?? '';
+      queueMicrotask(() => {
+        void writeBqShard(dest, 1).then(() => {
+          proc.stderr.emit('data', Buffer.from(
+            `At gs://b/focus/billing_period=2026-01/**, worker process 1 thread 2 listed 2...\n`
+            + `Copying gs://b/${key('000000000000')} to file:///tmp/a.parquet\n`
+            + `Copying gs://b/${key('000000000001')} to file:///tmp/b.parquet\n`
+            + `.......\nAverage throughput: 1.0MiB/s\n`));
+          proc.emit('close', 0, null);
+        });
+      });
+      return proc;
+    });
+
+    await syncGcpSelectedFiles({
+      bucketPath: 'gs://b/focus', providerName, dataDir,
+      files: [file(key('000000000000'), 'h1', 1000), file(key('000000000001'), 'h2', 3000)],
+      onProgress: (p) => { progress.push(p); },
+    });
+
+    const downloading = progress.filter(p => p.phase === 'downloading');
+    // The second "Copying" implies the first file landed: 1 of 2, 1000 bytes.
+    expect(downloading.some(p => p.filesDone === 1 && p.bytesDone === 1000)).toBe(true);
+    // Never runs backwards, and never past the total.
+    const bytes = downloading.map(p => p.bytesDone ?? 0);
+    expect(bytes).toEqual([...bytes].sort((a, b) => a - b));
+    expect(Math.max(...bytes)).toBeLessThanOrEqual(4000);
+    const last = progress.at(-1);
+    expect(last?.phase).toBe('done');
+    expect(last?.bytesDone).toBe(4000);
+  });
+
+  it('counts the repartitioning phase in periods, not files', async () => {
+    // filesDone was the running FILE count against a periods total, so two
+    // shards in one period reported "2 of 1" and the UI fraction ran to 200%.
+    const progress: SyncProgress[] = [];
+    nextProcess(dest => writeBqShard(dest, 1));
+    await syncGcpSelectedFiles({
+      bucketPath: 'gs://b/focus', providerName, dataDir,
+      files: [
+        file('focus/billing_period=2026-01/a.parquet', 'h1'),
+        file('focus/billing_period=2026-01/b.parquet', 'h2'),
+      ],
+      onProgress: (p) => { progress.push(p); },
+    });
+    for (const p of progress.filter(p => p.phase === 'repartitioning')) {
+      expect(p.filesDone).toBeLessThanOrEqual(p.filesTotal);
+    }
+  });
+
   it('reports an exact byte total from the listing, before any CLI output', async () => {
     const progress: SyncProgress[] = [];
     nextProcess(dest => writeBqShard(dest, 1));
@@ -271,6 +330,20 @@ describe('syncGcpSelectedFiles', () => {
     });
     expect(result.filesDownloaded).toBe(0);
     expect(mockSpawn).not.toHaveBeenCalled();
+  });
+});
+
+describe('parseGcloudCopyingKey', () => {
+  it('extracts the object key from a real gcloud rsync announcement', () => {
+    expect(parseGcloudCopyingKey('Copying gs://my-bucket/focus/billing_period=2026-01/shard-000000000000.parquet to file:///tmp/x.parquet'))
+      .toBe('focus/billing_period=2026-01/shard-000000000000.parquet');
+  });
+
+  it('ignores the other lines gcloud emits', () => {
+    expect(parseGcloudCopyingKey('At gs://b/focus/**, worker process 1 thread 2 listed 2...')).toBeNull();
+    expect(parseGcloudCopyingKey('.......')).toBeNull();
+    expect(parseGcloudCopyingKey('Average throughput: 1.0MiB/s')).toBeNull();
+    expect(parseGcloudCopyingKey('')).toBeNull();
   });
 });
 

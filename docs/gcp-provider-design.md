@@ -21,6 +21,16 @@ objects, so on its own it accumulates orphaned shards and silently reports
 inflated costs. The shipped recipe is the Cloud Run job; the standalone SQL is
 the same export runnable by hand for a first look, documented as incomplete.
 
+**C0b — `gcloud storage rsync` emits no byte counts.** Confirmed against
+gcloud 578 on a real bucket: rsync prints a `Copying gs://… to file://…` line
+per transfer as it *starts*, then a dot progress bar and an
+`Average throughput:` summary. There is no running byte total to scrape, so
+the AWS-style "Completed X MiB/Y MiB" parser never matched and the progress
+bar sat at zero for a whole period. Byte progress is now derived from the
+manifest: when a file is announced, the previously announced one has landed.
+The same run surfaced a units bug — the canonicalize phase reported
+files-done against a periods-total ("2 of 1", a 200% bar).
+
 **C1 — Downloads shell out to `gcloud storage rsync`, not the SDK.** §4 sketched SDK streaming
 through the handle. The adapter now mirrors AWS seam for seam instead: the vendor SDK
 (`@google-cloud/storage`) lists the bucket for change detection, and the vendor CLI moves the

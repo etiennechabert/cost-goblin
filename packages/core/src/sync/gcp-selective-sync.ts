@@ -50,15 +50,23 @@ function findGcloudCli(): string {
   return cachedGcloudPath;
 }
 
-/** `gcloud storage` reports transfer progress as
- *  `Completed files 3/10 | 12.0MiB/40.0MiB`. Sister of
- *  `parseAwsCompletedBytes`; the unit spellings differ in case between the
- *  two CLIs, so the match is case-insensitive. Returns null on any line
- *  without both byte counts so callers keep the previous numbers.
+/** `gcloud storage rsync` announces each transfer as it STARTS:
  *
- *  [LIVE-GATE] The exact wording is verified against a real `gcloud storage
- *  rsync` run at the live gate. A miss only costs a smoother progress bar —
- *  the file-count fraction is the documented fallback. */
+ *    Copying gs://bucket/some/key.parquet to file:///local/path
+ *
+ *  Verified against gcloud 578: that is the only per-file line it emits.
+ *  There is no running byte count — the CLI draws a progress bar (`....`)
+ *  instead — which is why byte progress here is derived from the manifest
+ *  rather than scraped, unlike the AWS path. */
+export function parseGcloudCopyingKey(line: string): string | null {
+  const match = /^Copying gs:\/\/[^/]+\/(\S+) to /.exec(line);
+  return match?.[1] ?? null;
+}
+
+/** Some gcloud builds do print an aggregate byte line. Kept as a refinement:
+ *  when present it gives smooth intra-file progress, when absent (the
+ *  observed default) the manifest-derived count carries it. Returns null on
+ *  any line without both counts so callers keep the previous numbers. */
 export function parseGcloudCompletedBytes(line: string): { bytesDone: number; bytesTotal: number } | null {
   const match = /([\d.]+)\s*(B|KiB|MiB|GiB|TiB)\s*\/\s*([\d.]+)\s*(B|KiB|MiB|GiB|TiB)/i.exec(line);
   if (match === null) return null;
@@ -206,11 +214,12 @@ export async function syncGcpSelectedFiles(
   // listing, so the progress bar is exact from the first tick instead of
   // waiting for the CLI's first "Completed" line.
   const bytesTotal = files.reduce((sum, f) => sum + f.size, 0);
-  let filesDone = 0;
-  /** Bytes transferred by periods that already finished. The CLI's own counts
-   *  restart at zero for each invocation, so they are an offset from here. */
+  /** Files and bytes completed by periods that already finished — the running
+   *  per-period counters below are offsets from these. */
+  let filesBefore = 0;
   let bytesBefore = 0;
   let totalFilesDownloaded = 0;
+  let periodsDone = 0;
   let totalRows = 0;
 
   for (const [period, periodFiles] of periodList) {
@@ -223,6 +232,12 @@ export async function syncGcpSelectedFiles(
     const source = `gs://${gcsPath.bucket}/${periodPrefix}`;
     const stagingDir = stagingDirFor(dataDir, providerName, period);
     const periodBytes = periodFiles.reduce((sum, f) => sum + f.size, 0);
+    const sizeByKey = new Map(periodFiles.map(f => [f.key, f.size]));
+    // The file gcloud most recently announced; it is in flight until the next
+    // announcement (or until the process exits cleanly).
+    let inFlightKey: string | null = null;
+    let filesInPeriod = 0;
+    let bytesInPeriod = 0;
 
     logger.info(`Processing GCP period ${period}: ${String(periodFiles.length)} shard(s)`);
 
@@ -240,29 +255,50 @@ export async function syncGcpSelectedFiles(
         signal: options.signal,
         onLine: (line) => {
           logger.info(`[gcloud] ${line}`);
+
+          // Each "Copying" line means a transfer STARTED, so the previously
+          // announced file has landed. Without this the bar sits at zero for
+          // the whole period — gcloud emits no byte counts of its own.
+          const startedKey = parseGcloudCopyingKey(line);
+          if (startedKey !== null) {
+            if (inFlightKey !== null) {
+              filesInPeriod++;
+              bytesInPeriod += sizeByKey.get(inFlightKey) ?? 0;
+            }
+            inFlightKey = startedKey;
+          }
+
           const parsed = parseGcloudCompletedBytes(line);
           onProgress?.({
             phase: 'downloading',
             filesTotal: totalFiles,
-            filesDone,
+            filesDone: Math.min(filesBefore + filesInPeriod, totalFiles),
             bytesTotal,
-            // Clamped: the CLI's total for this period can exceed the listed
-            // size (it counts retried bytes), and a fraction above 1 would
-            // run the progress bar off its track.
-            bytesDone: Math.min(bytesBefore + (parsed?.bytesDone ?? 0), bytesTotal),
+            // Clamped: a byte line, where one exists, counts retried bytes and
+            // can exceed the listed size — a fraction above 1 would run the
+            // progress bar off its track.
+            bytesDone: Math.min(bytesBefore + Math.max(bytesInPeriod, parsed?.bytesDone ?? 0), bytesTotal),
             ...(parsed === null ? {} : { message: line }),
           });
         },
       });
 
-      filesDone += periodFiles.length;
+      // A clean exit means every file in the period landed, whatever the
+      // running count reached — the last announced file has no successor to
+      // imply its completion. Snap to the period's real totals.
+      filesBefore = Math.min(filesBefore + periodFiles.length, totalFiles);
       bytesBefore = Math.min(bytesBefore + periodBytes, bytesTotal);
       totalFilesDownloaded += periodFiles.length;
 
       // Reuses the existing worker/UI phase token rather than adding one:
       // "repartitioning" is already rendered as the post-download processing
       // step, which is exactly what canonicalization is.
-      onProgress?.({ phase: 'repartitioning', filesTotal: periodList.length, filesDone: totalFilesDownloaded });
+      //
+      // Both numbers must be PERIODS. Reporting files-done against
+      // periods-total mixes units — with two shards in one period that reads
+      // "2 of 1", and the UI's fraction runs past 100%.
+      periodsDone++;
+      onProgress?.({ phase: 'repartitioning', filesTotal: periodList.length, filesDone: periodsDone });
 
       totalRows += await installCanonicalPeriod({
         stagingDir,
