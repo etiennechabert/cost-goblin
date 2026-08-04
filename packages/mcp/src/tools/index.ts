@@ -228,7 +228,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
     {
       description: 'Run an ad-hoc SELECT query. A "costs" CTE is pre-defined with the dataset for the given date range (default: last 60 days). Write: SELECT ... FROM costs WHERE ...',
       inputSchema: {
-        sql: z.string().describe('SQL query (SELECT/WITH only). A "costs" CTE with columns: usage_date, account_id, account_name, region, service, service_family, line_item_type, operation, usage_type, description, resource_id, usage_amount, cost, list_cost, plus tag columns.'),
+        sql: z.string().describe('SQL query (SELECT/WITH only). A "costs" CTE with columns: usage_date, account_id, account_name, region, service, service_code, service_category, charge_category, pricing_category, commitment_status, operation, sku_meter, description, resource_id, usage_amount, cost, list_cost, plus tag columns.'),
         dateRange: dateRangeSchema,
         limit: z.number().optional().describe('Max rows (default 100, max 500)'),
         format: formatSchema,

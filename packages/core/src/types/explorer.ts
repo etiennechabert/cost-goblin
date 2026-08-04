@@ -1,4 +1,4 @@
-import type { CostMetric, CostPerspective } from './cost-scope.js';
+import type { CostMetric } from './cost-scope.js';
 import type { DateRange, Granularity } from './query.js';
 
 /** Multi-value filter for the Explorer. Each key is a dimension id, each
@@ -32,14 +32,12 @@ export interface ExplorerBaseParams {
    *  dataset, so hiding Tax / Credits / RI purchases by default defeats
    *  the purpose. User opts in via a toggle to compare with other views. */
   readonly applyCostScope?: boolean;
-  /** Which cost column backs the `cost` field. Defaults to `unblended`
-   *  (the as-billed amount, always present). The UI picks from the
-   *  probed column set so unsupported metrics never reach the server. */
+  /** Which FOCUS cost column backs the `cost` field. When omitted, the
+   *  server inherits the Cost Scope's metric if `applyCostScope` is set,
+   *  else falls back to `billed` (the invoice-faithful metric matching the
+   *  Explorer's raw-inspection intent). All four metrics are always
+   *  available in a FOCUS export. */
   readonly costMetric?: CostMetric;
-  /** Gross (as-billed) or Net (post-credit). Defaults to `gross`. Only
-   *  meaningful when the CUR includes `line_item_net_*` columns —
-   *  capabilities probe tells the UI whether to show the toggle. */
-  readonly costPerspective?: CostPerspective;
   /** Debug-only: tag identifying which widget/view fired this query. */
   readonly origin?: string | undefined;
 }
@@ -66,10 +64,10 @@ export interface ExplorerSampleRow {
   readonly accountName: string;
   readonly region: string;
   readonly service: string;
-  readonly serviceFamily: string;
-  readonly lineItemType: string;
+  readonly serviceCategory: string;
+  readonly chargeCategory: string;
   readonly operation: string;
-  readonly usageType: string;
+  readonly skuMeter: string;
   readonly description: string;
   readonly resourceId: string;
   readonly usageAmount: number;
@@ -84,7 +82,7 @@ export interface ExplorerTagColumn {
 }
 
 /** The "static" slice of the Explorer result — daily histogram + totals.
- *  Driven only by filters/range/scope/metric/perspective, so it doesn't
+ *  Driven only by filters/range/scope/metric, so it doesn't
  *  refresh when the user changes the table sort. Paired with
  *  ExplorerRowsResult which handles the sortable rows. */
 export interface ExplorerOverviewResult {
@@ -92,7 +90,7 @@ export interface ExplorerOverviewResult {
   readonly startDate: string;
   readonly endDate: string;
   readonly dailyTotals: readonly ExplorerDailyRow[];
-  /** Underlying CUR line-item count matching the filters (before the
+  /** Underlying charge-row count matching the filters (before the
    *  rows sample cap). The UI shows "N of M rows" honestly. */
   readonly totalRows: number;
   readonly totalCost: number;
@@ -166,6 +164,5 @@ export interface ExplorerFilterValuesParams {
    *  counts reflect whatever scope the user is looking at. Default false. */
   readonly applyCostScope?: boolean;
   readonly costMetric?: CostMetric;
-  readonly costPerspective?: CostPerspective;
   readonly origin?: string | undefined;
 }

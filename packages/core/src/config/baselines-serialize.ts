@@ -25,7 +25,6 @@ function scopeToYaml(scope: BaselineScope): Record<string, unknown> {
 export function baselineSpecToYaml(spec: BaselineSpec): Record<string, unknown> {
   const basis: CostScopeConfig = {
     costMetric: spec.basis.costMetric,
-    costPerspective: spec.basis.costPerspective,
     rules: spec.basis.rules,
     ...(spec.basis.marketplaceAttribution === undefined ? {} : { marketplaceAttribution: spec.basis.marketplaceAttribution }),
     ...(spec.basis.lagDays === undefined ? {} : { lagDays: spec.basis.lagDays }),

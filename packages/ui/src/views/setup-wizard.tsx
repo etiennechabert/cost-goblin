@@ -11,8 +11,8 @@ import { SsoLoginButton } from '../components/sso-login-button.js';
 type DataSource = 'daily' | 'hourly' | 'costOptimization';
 
 const SOURCE_LABELS: Record<DataSource, { title: string; description: string }> = {
-  daily: { title: 'Daily CUR', description: 'Main billing data — required' },
-  hourly: { title: 'Hourly CUR', description: 'For short-term drill-down and incident analysis' },
+  daily: { title: 'Daily FOCUS export', description: 'Main billing data — required' },
+  hourly: { title: 'Hourly FOCUS export', description: 'For short-term drill-down and incident analysis' },
   costOptimization: { title: 'Cost Optimization', description: 'RI/SP recommendations and rightsizing suggestions' },
 };
 
@@ -22,7 +22,7 @@ type WizardStep =
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
-  | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[]; path: string[] }
+  | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; path: string[] }
   | { step: 'confirm'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
 
 interface SetupWizardProps {
@@ -161,7 +161,7 @@ function StartStep({ workspaceLabel, onSetup, onImport, onBack, jumpBack }: Read
           Set up from S3
         </Button>
         <p className="text-text-muted text-xs">
-          Connect your AWS billing data. CostGoblin syncs CUR (Cost and Usage Report) data from S3, stores it locally, and lets you slice costs by any dimension.
+          Connect your AWS billing data. CostGoblin syncs a FOCUS 1.2 Data Export from S3, stores it locally, and lets you slice costs by any dimension.
         </p>
         <Button variant="outline" onClick={onImport}>
           Import from a teammate
@@ -172,7 +172,7 @@ function StartStep({ workspaceLabel, onSetup, onImport, onBack, jumpBack }: Read
       </div>
       <JumpBackList jumpBack={jumpBack} />
       <p className="text-text-muted text-xs">
-        {"Don't have a CUR yet? Create a CUR 2.0 export in "}
+        {"Don't have an export yet? Create a FOCUS 1.2 Data Export in "}
         <a
           href="https://us-east-1.console.aws.amazon.com/costmanagement/home#/bcm-data-exports"
           target="_blank"
@@ -417,26 +417,40 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
         ))}
       </div>
 
-      {state.isCurReport && state.detectedType === 'cost-optimization' && state.source !== 'costOptimization' && (
+      {state.isBillingExport && state.detectedType === 'cost-optimization' && state.source !== 'costOptimization' && (
         <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3">
           <p className="text-sm font-medium text-warning">Data type mismatch</p>
           <p className="text-xs text-warning mt-0.5">
-            This looks like a Cost Optimization report, not a CUR. Continue anyway?
+            This looks like a Cost Optimization report, not a billing export. Continue anyway?
           </p>
         </div>
       )}
-      {state.isCurReport && state.detectedType !== 'cost-optimization' && state.detectedType !== 'unknown' && state.source === 'costOptimization' && (
+      {state.isBillingExport && state.detectedType !== 'cost-optimization' && state.detectedType !== 'unknown' && state.detectedType !== 'cur-legacy' && state.source === 'costOptimization' && (
         <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3">
           <p className="text-sm font-medium text-warning">Data type mismatch</p>
           <p className="text-xs text-warning mt-0.5">
-            This looks like a CUR report, not a Cost Optimization export. Continue anyway?
+            This looks like a billing export, not a Cost Optimization export. Continue anyway?
           </p>
         </div>
       )}
-      {state.isCurReport && !(state.detectedType === 'cost-optimization' && state.source !== 'costOptimization') && !(state.detectedType !== 'cost-optimization' && state.detectedType !== 'unknown' && state.source === 'costOptimization') && (
+      {state.detectedType === 'cur-legacy' && (
+        <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
+          <p className="text-sm font-medium text-negative">This is a CUR 2.0 export — CostGoblin reads FOCUS 1.2</p>
+          <p className="text-xs text-text-secondary mt-0.5">
+            The manifest here lists CUR 2.0 columns (<code className="text-text-primary">line_item_*</code>).
+            CostGoblin&apos;s data schema is FOCUS 1.2, so this export can&apos;t be ingested.
+          </p>
+          <p className="text-xs text-text-muted mt-1">
+            In the AWS console, open <span className="text-text-secondary">Billing and Cost Management → Data Exports → Create export</span>,
+            pick the <span className="text-text-secondary">FOCUS 1.2</span> table (not CUR 2.0), export as Parquet to a fresh prefix,
+            and point CostGoblin at that prefix instead.
+          </p>
+        </div>
+      )}
+      {state.isBillingExport && state.detectedType !== 'cur-legacy' && !(state.detectedType === 'cost-optimization' && state.source !== 'costOptimization') && !(state.detectedType !== 'cost-optimization' && state.detectedType !== 'unknown' && state.source === 'costOptimization') && (
         <div className="rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
           <p className="text-sm font-medium text-accent">
-            {state.detectedType === 'cost-optimization' ? 'Cost Optimization report detected' : 'CUR report detected'}
+            {state.detectedType === 'cost-optimization' ? 'Cost Optimization report detected' : 'FOCUS billing export detected'}
           </p>
           <p className="text-xs text-text-secondary mt-0.5">
             Found <code className="text-text-primary">data/</code> and <code className="text-text-primary">metadata/</code> folders
@@ -444,14 +458,14 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
         </div>
       )}
 
-      {state.isCurReport && state.missingColumns.length > 0 && (
+      {state.isBillingExport && state.missingColumns.length > 0 && (
         <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
           <p className="text-sm font-medium text-negative">Missing required columns</p>
           <p className="text-xs text-text-secondary mt-0.5">
             {state.missingColumns.join(', ')}
           </p>
           <p className="text-xs text-text-muted mt-1">
-            CostGoblin needs these columns. Check your CUR report configuration in the AWS Console.
+            CostGoblin needs these columns. Check your FOCUS 1.2 Data Export configuration in the AWS Console.
           </p>
         </div>
       )}
@@ -496,10 +510,10 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
           )}
           <Button
             onClick={onConfirm}
-            disabled={!state.isCurReport}
+            disabled={!state.isBillingExport || state.detectedType === 'cur-legacy'}
             className="bg-accent hover:bg-accent-hover text-white px-8"
           >
-            {state.isCurReport ? 'Use this location' : 'Select a CUR folder'}
+            {state.detectedType === 'cur-legacy' ? 'CUR 2.0 not supported' : state.isBillingExport ? 'Use this location' : 'Select an export folder'}
           </Button>
         </div>
       </div>
@@ -577,8 +591,8 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
   }
 
   const paths: { label: string; value: string }[] = [];
-  if (state.s3Path.length > 0) paths.push({ label: 'Daily CUR', value: state.s3Path });
-  if (state.hourlyPath.length > 0) paths.push({ label: 'Hourly CUR', value: state.hourlyPath });
+  if (state.s3Path.length > 0) paths.push({ label: 'Daily FOCUS export', value: state.s3Path });
+  if (state.hourlyPath.length > 0) paths.push({ label: 'Hourly FOCUS export', value: state.hourlyPath });
   if (state.costOptPath.length > 0) paths.push({ label: 'Cost Optimization', value: state.costOptPath });
 
   return (
@@ -808,9 +822,9 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
 
   function browseTo(profile: string, source: DataSource, bucket: string, prefix: string) {
     const path = prefix.split('/').filter(s => s.length > 0);
-    setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: [], loading: true, isCurReport: false, detectedType: 'unknown', missingColumns: [], path });
+    setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: [], loading: true, isBillingExport: false, detectedType: 'unknown', missingColumns: [], path });
     api.browseS3({ profile, bucket, prefix }).then(result => {
-      setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: result.prefixes, loading: false, isCurReport: result.isCurReport, detectedType: result.detectedType, missingColumns: result.missingColumns, path });
+      setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: result.prefixes, loading: false, isBillingExport: result.isBillingExport, detectedType: result.detectedType, missingColumns: result.missingColumns, path });
     }).catch(() => undefined);
   }
 

@@ -307,7 +307,7 @@ export function buildMissingTagsResult(
       accountName: toStr(row['account_name']),
       resourceId: toStr(row['resource_id']),
       service: toStr(row['service']),
-      serviceFamily: toStr(row['service_family']),
+      serviceCategory: toStr(row['service_category']),
       cost: asDollars(cost),
       closestOwner,
       bucket,
@@ -346,8 +346,8 @@ export function buildMissingTagsResult(
     totalNonResourceCost += cost;
     nonResourceRows.push({
       service: toStr(row['service']),
-      serviceFamily: toStr(row['service_family']),
-      lineItemType: toStr(row['line_item_type']),
+      serviceCategory: toStr(row['service_category']),
+      chargeCategory: toStr(row['charge_category']),
       cost: asDollars(cost),
     });
   }

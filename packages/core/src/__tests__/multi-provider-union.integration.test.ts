@@ -27,44 +27,52 @@ async function rowsOf(conn: Conn, sql: string): Promise<Record<string, unknown>[
   return result.getRowObjects();
 }
 
-/** Seed one provider's daily partition. `withReservationColumn` mimics a
- *  payer whose CUR export carries the optional amortized-cost column —
- *  providers can genuinely differ here, which is why cost expressions are
- *  evaluated per union branch. */
+/** Seed one provider's daily partition with FOCUS 1.2-shaped rows. All four
+ *  cost columns are always present in a FOCUS export; per-row `effective`
+ *  lets a commitment-covered row price differently from its billed cost —
+ *  cost expressions are still evaluated per union branch, so each provider
+ *  must be priced from its own export. */
 async function seedProvider(
   conn: Conn,
   dataDir: string,
   provider: string,
   period: string,
-  rows: readonly { account: string; service: string; cost: number; effectiveCost?: number; lineItemType?: string }[],
-  withReservationColumn: boolean,
+  rows: readonly { account: string; service: string; billed: number; effective?: number; pricingCategory?: string }[],
 ): Promise<void> {
   const partDir = join(dataDir, provider, 'raw', `daily-${period}`);
   await mkdir(partDir, { recursive: true });
-  const table = `cur_${provider.replaceAll('-', '_')}_${period.replaceAll('-', '_')}`;
-  const extraCol = withReservationColumn ? ',\n      reservation_effective_cost DOUBLE' : '';
+  const table = `focus_${provider.replaceAll('-', '_')}_${period.replaceAll('-', '_')}`;
   await conn.run(`
     CREATE TABLE ${table} (
-      line_item_usage_start_date TIMESTAMP,
-      line_item_usage_account_id VARCHAR,
-      line_item_usage_account_name VARCHAR,
-      product_region_code VARCHAR,
-      product_servicecode VARCHAR,
-      product_product_family VARCHAR,
-      line_item_line_item_description VARCHAR,
-      line_item_resource_id VARCHAR,
-      line_item_usage_amount DOUBLE,
-      line_item_unblended_cost DOUBLE,
-      pricing_public_on_demand_cost DOUBLE,
-      line_item_line_item_type VARCHAR,
-      line_item_operation VARCHAR,
-      line_item_usage_type VARCHAR${extraCol}
+      ChargePeriodStart TIMESTAMP,
+      SubAccountId VARCHAR,
+      SubAccountName VARCHAR,
+      RegionId VARCHAR,
+      ServiceName VARCHAR,
+      x_ServiceCode VARCHAR,
+      ServiceCategory VARCHAR,
+      ChargeDescription VARCHAR,
+      ConsumedQuantity DOUBLE,
+      ListCost DOUBLE,
+      ResourceId VARCHAR,
+      BilledCost DOUBLE,
+      EffectiveCost DOUBLE,
+      ContractedCost DOUBLE,
+      ChargeCategory VARCHAR,
+      PricingCategory VARCHAR,
+      CommitmentDiscountStatus VARCHAR,
+      x_Operation VARCHAR,
+      SkuMeter VARCHAR
     )
   `);
   for (const r of rows) {
-    const effective = withReservationColumn ? `, ${String(r.effectiveCost ?? r.cost)}` : '';
+    const effective = r.effective ?? r.billed;
+    const pricingCategory = r.pricingCategory ?? 'Standard';
+    const commitmentStatus = pricingCategory === 'Committed' ? 'Used' : '';
     await conn.run(`INSERT INTO ${table} VALUES
-      (TIMESTAMP '${period}-15', '${r.account}', 'acct', 'eu-central-1', '${r.service}', '', 'row', 'res', 1, ${String(r.cost)}, ${String(r.cost)}, '${r.lineItemType ?? 'Usage'}', 'Op', 'UT'${effective})
+      (TIMESTAMP '${period}-15', '${r.account}', 'acct', 'eu-central-1', '${r.service}', '${r.service}', 'Compute', 'row', 1,
+       ${String(r.billed)}, 'res', ${String(r.billed)}, ${String(effective)}, ${String(r.billed)},
+       'Usage', '${pricingCategory}', '${commitmentStatus}', 'Op', 'SKU')
     `);
   }
   await conn.run(`COPY (SELECT * FROM ${table}) TO '${join(partDir, 'data.parquet')}' (FORMAT PARQUET)`);
@@ -79,22 +87,22 @@ describe('multi-provider union (DuckDB end-to-end)', () => {
     conn = await db.connect();
     dataDir = await mkdtemp(join(tmpdir(), 'cg-multi-'));
 
-    // payer-a: two months, CUR carries reservation_effective_cost.
-    // The EC2 row is reserved-instance usage: on the amortized metric its
-    // cost comes from reservation_effective_cost (80), not unblended (100).
+    // payer-a: two months. The EC2 row is commitment-covered usage: on the
+    // effective metric its cost comes from EffectiveCost (80), not
+    // BilledCost (100).
     await seedProvider(conn, dataDir, 'payer-a', '2026-01', [
-      { account: '111', service: 'AmazonEC2', cost: 100, effectiveCost: 80, lineItemType: 'DiscountedUsage' },
-      { account: '222', service: 'AmazonRDS', cost: 50, effectiveCost: 50 },
-    ], true);
+      { account: '111', service: 'AmazonEC2', billed: 100, effective: 80, pricingCategory: 'Committed' },
+      { account: '222', service: 'AmazonRDS', billed: 50 },
+    ]);
     await seedProvider(conn, dataDir, 'payer-a', '2026-02', [
-      { account: '111', service: 'AmazonEC2', cost: 10, effectiveCost: 10 },
-    ], true);
-    // payer-b: one month, NO reservation column, and it sees account 111 too
-    // (an account visible from two payers — the provider dim disambiguates).
+      { account: '111', service: 'AmazonEC2', billed: 10 },
+    ]);
+    // payer-b: one month, and it sees account 111 too (an account visible
+    // from two payers — the provider dim disambiguates).
     await seedProvider(conn, dataDir, 'payer-b', '2026-01', [
-      { account: '111', service: 'AmazonEC2', cost: 7 },
-      { account: '333', service: 'AmazonS3', cost: 3 },
-    ], false);
+      { account: '111', service: 'AmazonEC2', billed: 7 },
+      { account: '333', service: 'AmazonS3', billed: 3 },
+    ]);
   });
 
   function branches(): ProviderSourceBranch[] {
@@ -105,7 +113,7 @@ describe('multi-provider union (DuckDB end-to-end)', () => {
   }
 
   it('unions every provider and injects the provider column', async () => {
-    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: branches(), costMetric: 'unblended' });
+    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: branches(), costMetric: 'billed' });
     const rows = await rowsOf(conn, `SELECT provider, SUM(cost) AS cost FROM ${source} GROUP BY provider ORDER BY provider`);
     expect(rows).toEqual([
       { provider: 'payer-a', cost: 160 },
@@ -115,20 +123,20 @@ describe('multi-provider union (DuckDB end-to-end)', () => {
 
   it('per-provider month lists keep DuckDB clear of zero-match globs', async () => {
     // payer-b has no 2026-02 on disk — its branch simply lists fewer globs.
-    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: branches(), costMetric: 'unblended' });
+    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: branches(), costMetric: 'billed' });
     const rows = await rowsOf(conn, `SELECT SUM(cost) AS cost FROM ${source} WHERE usage_date BETWEEN '2026-02-01' AND '2026-02-28'`);
     expect(rows).toEqual([{ cost: 10 }]);
   });
 
   it('the provider dimension filters like any other dimension', async () => {
-    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: branches(), costMetric: 'unblended' });
+    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: branches(), costMetric: 'billed' });
     const { fieldExpr } = resolveField(asDimensionId('provider'), dimensions);
     const rows = await rowsOf(conn, `SELECT SUM(cost) AS cost FROM ${source} WHERE ${fieldExpr} = 'payer-b'`);
     expect(rows).toEqual([{ cost: 10 }]);
   });
 
   it('disambiguates an account visible from two payers', async () => {
-    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: branches(), costMetric: 'unblended' });
+    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: branches(), costMetric: 'billed' });
     const rows = await rowsOf(conn, `SELECT provider, SUM(cost) AS cost FROM ${source} WHERE account_id = '111' GROUP BY provider ORDER BY provider`);
     expect(rows).toEqual([
       { provider: 'payer-a', cost: 110 },
@@ -136,24 +144,22 @@ describe('multi-provider union (DuckDB end-to-end)', () => {
     ]);
   });
 
-  it('evaluates the cost expression per branch — amortized uses each provider\'s own columns', async () => {
-    // payer-a has reservation_effective_cost (80 ≠ 100 on one row); payer-b's
-    // export lacks the column entirely — a shared expression would binder-error
-    // or silently misprice one of them. Each branch gets its own PROBED column
-    // set (undefined would mean "don't gate", which is not how production
-    // calls this — getQueryProviders always probes).
+  it("evaluates the cost expression per branch — 'effective' prices each provider from its own columns", async () => {
+    // payer-a's EC2 row is commitment-covered (EffectiveCost 80 ≠ BilledCost
+    // 100); payer-b's rows have billed == effective. A union that priced one
+    // branch from the other's rows would misreport one of them.
     const source = buildSource({
       dataDir, tier: 'daily', dimensions,
       providers: [
-        { name: PAYER_A, periods: ['2026-01'], availableColumns: new Set(['reservation_effective_cost']) },
-        { name: PAYER_B, periods: ['2026-01'], availableColumns: new Set(['line_item_unblended_cost']) },
+        { name: PAYER_A, periods: ['2026-01'] },
+        { name: PAYER_B, periods: ['2026-01'] },
       ],
-      costMetric: 'amortized',
+      costMetric: 'effective',
     });
     const rows = await rowsOf(conn, `SELECT provider, SUM(cost) AS cost FROM ${source} GROUP BY provider ORDER BY provider`);
     expect(rows).toEqual([
       { provider: 'payer-a', cost: 130 }, // 80 effective + 50
-      { provider: 'payer-b', cost: 10 },  // unblended fallback
+      { provider: 'payer-b', cost: 10 },  // billed == effective
     ]);
   });
 
@@ -184,6 +190,8 @@ describe('multi-provider union (DuckDB end-to-end)', () => {
       const cost = r['total_cost'];
       return entity !== null && typeof cost === 'number' ? sum + cost : sum;
     }, 0);
-    expect(total).toBe(160); // 2026-01 across both payers
+    // 2026-01 across both payers on the default 'effective' metric:
+    // payer-a 80 (committed EC2) + 50, payer-b 7 + 3.
+    expect(total).toBe(140);
   });
 });

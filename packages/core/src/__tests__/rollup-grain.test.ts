@@ -21,7 +21,7 @@ const dimensions: DimensionsConfig = {
     { name: asDimensionId('account_id'), label: 'Account', field: 'account_id', displayField: 'account_name' },
     { name: asDimensionId('service'), label: 'Service', field: 'service' },
     { name: asDimensionId('region'), label: 'Region', field: 'region' },
-    { name: asDimensionId('usage_type'), label: 'Usage Type', field: 'usage_type', enabled: false },
+    { name: asDimensionId('operation'), label: 'Operation', field: 'operation', enabled: false },
   ],
   tags: [
     { tagName: 'team', label: 'Team', concept: 'owner', normalize: 'lowercase-kebab' },
@@ -53,11 +53,11 @@ async function queryAll(conn: Awaited<ReturnType<Awaited<ReturnType<typeof DuckD
 }
 
 function scope(rules: CostScopeConfig['rules']): CostScopeConfig {
-  return { costMetric: 'unblended', costPerspective: 'gross', rules };
+  return { costMetric: 'effective', rules };
 }
 
 function rawSourceJan(): string {
-  return buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: [PERIOD] }], costMetric: 'unblended' });
+  return buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: [PERIOD] }], costMetric: 'effective' });
 }
 
 describe('rollupGrainDimensions', () => {
@@ -66,8 +66,8 @@ describe('rollupGrainDimensions', () => {
     // account_name rides with account_id — it is NOT a standalone dimension.
     expect(dims.find(d => d.column === 'account_id')?.columns).toEqual(['account_id', 'account_name']);
     expect(dims.some(d => d.column === 'account_name')).toBe(false);
-    // disabled usage_type is absent; single-column dims carry just themselves.
-    expect(dims.some(d => d.column === 'usage_type')).toBe(false);
+    // disabled operation is absent; single-column dims carry just themselves.
+    expect(dims.some(d => d.column === 'operation')).toBe(false);
     expect(dims.find(d => d.column === 'service')?.columns).toEqual(['service']);
     expect(dims.find(d => d.column === 'tag_team')?.columns).toEqual(['tag_team']);
     // Built-ins first, then tags; one entry per enabled dimension.
@@ -122,8 +122,8 @@ describe('buildRollupPartitionQuery', () => {
     const cols = desc.map(r => String(r['column_name'])).sort((a, b) => a.localeCompare(b));
     const expected = [...rollupGrainColumns(dimensions), 'cost', 'line_items'].sort((a, b) => a.localeCompare(b));
     expect(cols).toEqual(expected);
-    // usage_type is disabled → must NOT be in the partition
-    expect(cols).not.toContain('usage_type');
+    // operation is disabled → must NOT be in the partition
+    expect(cols).not.toContain('operation');
     expect(cols).not.toContain('resource_id');
   });
 

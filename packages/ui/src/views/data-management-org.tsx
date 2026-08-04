@@ -355,7 +355,7 @@ export function OrgAccountsSection({ profile, providerName, refreshToken = 0, on
       {showClearConfirm && (
         <ConfirmModal
           title="Clear AWS Org sync data?"
-          message="Removes locally cached accounts, account-tag lookups, and SSM region names. Your CUR data is untouched. Re-sync any time to repopulate."
+          message="Removes locally cached accounts, account-tag lookups, and SSM region names. Your billing data is untouched. Re-sync any time to repopulate."
           confirmLabel="Clear"
           cancelLabel="Cancel"
           destructive

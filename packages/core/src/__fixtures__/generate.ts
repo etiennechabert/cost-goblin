@@ -4,6 +4,10 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 
+import { buildSyntheticTable, seededRandom } from './focus-fixture.js';
+import type { FocusFixtureConfig } from './focus-fixture.js';
+import { FIXTURE_PROVIDER_NAME } from './layout.js';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '..', '..', '..', '..', 'data');
 const RAW_DATA = join(DATA_DIR, 'raw');
@@ -26,33 +30,33 @@ async function loadTagDefs(): Promise<TagDimensionDef[]> {
 interface Profile {
   rowCount: number;
   dateRange: { min: string; max: string };
-  services: { name: string; costShare: number; avgDailyCost: number }[];
+  services: { code: string; name: string; costShare: number; avgDailyCost: number }[];
   accounts: { id: string; name: string; costShare: number }[];
   regions: string[];
   tags: Record<string, { values: string[]; missingPercent: number }>;
   costDistribution: { p50: number; p90: number; p99: number };
-  lineItemTypes: Record<string, number>;
+  chargeCategories: Record<string, number>;
 }
 
 const DEFAULT_PROFILE: Profile = {
   rowCount: 1000000,
   dateRange: { min: '2026-01-01', max: '2026-03-01' },
   services: [
-    { name: 'AmazonEC2', costShare: 0.25, avgDailyCost: 500 },
-    { name: 'AmazonRDS', costShare: 0.15, avgDailyCost: 300 },
-    { name: 'AmazonS3', costShare: 0.08, avgDailyCost: 160 },
-    { name: 'AmazonCloudWatch', costShare: 0.06, avgDailyCost: 120 },
-    { name: 'AmazonDynamoDB', costShare: 0.05, avgDailyCost: 100 },
-    { name: 'AWSELB', costShare: 0.05, avgDailyCost: 100 },
-    { name: 'AmazonECS', costShare: 0.04, avgDailyCost: 80 },
-    { name: 'AmazonVPC', costShare: 0.04, avgDailyCost: 80 },
-    { name: 'AWSBackup', costShare: 0.03, avgDailyCost: 60 },
-    { name: 'AmazonElastiCache', costShare: 0.03, avgDailyCost: 60 },
-    { name: 'awskms', costShare: 0.02, avgDailyCost: 40 },
-    { name: 'AWSXRay', costShare: 0.02, avgDailyCost: 40 },
-    { name: 'AmazonGuardDuty', costShare: 0.02, avgDailyCost: 40 },
-    { name: 'AWSSecurityHub', costShare: 0.01, avgDailyCost: 20 },
-    { name: 'AmazonConnect', costShare: 0.01, avgDailyCost: 20 },
+    { code: 'AmazonEC2', name: 'Amazon Elastic Compute Cloud', costShare: 0.25, avgDailyCost: 500 },
+    { code: 'AmazonRDS', name: 'Amazon Relational Database Service', costShare: 0.15, avgDailyCost: 300 },
+    { code: 'AmazonS3', name: 'Amazon Simple Storage Service', costShare: 0.08, avgDailyCost: 160 },
+    { code: 'AmazonCloudWatch', name: 'AmazonCloudWatch', costShare: 0.06, avgDailyCost: 120 },
+    { code: 'AmazonDynamoDB', name: 'Amazon DynamoDB', costShare: 0.05, avgDailyCost: 100 },
+    { code: 'AWSELB', name: 'Elastic Load Balancing', costShare: 0.05, avgDailyCost: 100 },
+    { code: 'AmazonECS', name: 'Amazon EC2 Container Service', costShare: 0.04, avgDailyCost: 80 },
+    { code: 'AmazonVPC', name: 'Amazon Virtual Private Cloud', costShare: 0.04, avgDailyCost: 80 },
+    { code: 'AWSBackup', name: 'AWS Backup', costShare: 0.03, avgDailyCost: 60 },
+    { code: 'AmazonElastiCache', name: 'Amazon ElastiCache', costShare: 0.03, avgDailyCost: 60 },
+    { code: 'awskms', name: 'AWS Key Management Service', costShare: 0.02, avgDailyCost: 40 },
+    { code: 'AWSXRay', name: 'AWS X-Ray', costShare: 0.02, avgDailyCost: 40 },
+    { code: 'AmazonGuardDuty', name: 'Amazon GuardDuty', costShare: 0.02, avgDailyCost: 40 },
+    { code: 'AWSSecurityHub', name: 'AWS Security Hub', costShare: 0.01, avgDailyCost: 20 },
+    { code: 'AmazonConnect', name: 'Amazon Connect', costShare: 0.01, avgDailyCost: 20 },
   ],
   accounts: [
     { id: '100000000000', name: 'Main Production', costShare: 0.45 },
@@ -80,7 +84,7 @@ const DEFAULT_PROFILE: Profile = {
     environment: { values: ['production', 'staging', 'testing', 'sandbox'], missingPercent: 0.03 },
   },
   costDistribution: { p50: 0.000005, p90: 0.012, p99: 0.86 },
-  lineItemTypes: { Usage: 0.81, Tax: 0.002, Fee: 0.06, Credit: 0.04, DiscountedUsage: 0.004, EdpDiscount: 0.084 },
+  chargeCategories: { Usage: 0.95, Tax: 0.002, Purchase: 0.008, Credit: 0.04 },
 };
 
 async function queryAll(conn: { run: (sql: string) => Promise<{ columnCount: number; columnName: (i: number) => string; fetchChunk: () => Promise<{ rowCount: number; getColumnVector: (i: number) => { getItem: (r: number) => unknown } } | null> }> }, sql: string): Promise<Record<string, unknown>[]> {
@@ -104,37 +108,40 @@ async function queryAll(conn: { run: (sql: string) => Promise<{ columnCount: num
   return rows;
 }
 
+/** Profile a real FOCUS 1.2 export dropped under data/raw/ (any nesting —
+ *  matched by the billing_period= Hive dir the AWS export delivers). */
 async function profile(): Promise<void> {
   process.stdout.write('Profiling real data...\n');
   const db = await DuckDBInstance.create();
   const conn = await db.connect();
-  const src = `read_parquet('${RAW_DATA}/BILLING_PERIOD=*/*.parquet')`;
+  const src = `read_parquet('${RAW_DATA}/**/*.parquet', union_by_name=true)`;
 
   const [countRow] = await queryAll(conn, `SELECT COUNT(*) as cnt FROM ${src}`);
   const rowCount = Number(countRow?.['cnt'] ?? 0);
 
-  const [dateRow] = await queryAll(conn, `SELECT MIN(line_item_usage_start_date)::DATE::VARCHAR as mn, MAX(line_item_usage_end_date)::DATE::VARCHAR as mx FROM ${src}`);
+  const [dateRow] = await queryAll(conn, `SELECT MIN(ChargePeriodStart)::DATE::VARCHAR as mn, MAX(ChargePeriodEnd)::DATE::VARCHAR as mx FROM ${src}`);
 
-  const totalCostRows = await queryAll(conn, `SELECT SUM(line_item_unblended_cost) as total FROM ${src}`);
+  const totalCostRows = await queryAll(conn, `SELECT SUM(EffectiveCost) as total FROM ${src}`);
   const totalCost = Number(totalCostRows[0]?.['total'] ?? 1);
   const days = 30;
 
   const serviceRows = await queryAll(conn, `
-    SELECT product_servicecode as name, SUM(line_item_unblended_cost) as total
+    SELECT x_ServiceCode as code, ANY_VALUE(ServiceName) as name, SUM(EffectiveCost) as total
     FROM ${src}
-    WHERE product_servicecode IS NOT NULL AND product_servicecode != ''
-    GROUP BY product_servicecode ORDER BY total DESC LIMIT 20
+    WHERE x_ServiceCode IS NOT NULL AND x_ServiceCode != ''
+    GROUP BY x_ServiceCode ORDER BY total DESC LIMIT 20
   `);
   const services = serviceRows.map(r => ({
+    code: String(r['code']),
     name: String(r['name']),
     costShare: Number(r['total']) / totalCost,
     avgDailyCost: Number(r['total']) / days,
   }));
 
   const accountRows = await queryAll(conn, `
-    SELECT line_item_usage_account_id as id, line_item_usage_account_name as name, SUM(line_item_unblended_cost) as total
+    SELECT SubAccountId as id, SubAccountName as name, SUM(EffectiveCost) as total
     FROM ${src}
-    GROUP BY line_item_usage_account_id, line_item_usage_account_name ORDER BY total DESC LIMIT 15
+    GROUP BY SubAccountId, SubAccountName ORDER BY total DESC LIMIT 15
   `);
   const accountTotal = accountRows.reduce((s, r) => s + Number(r['total']), 0);
   const accounts = accountRows.map(r => ({
@@ -143,32 +150,35 @@ async function profile(): Promise<void> {
     costShare: Number(r['total']) / accountTotal,
   }));
 
-  const regionRows = await queryAll(conn, `SELECT DISTINCT product_region_code as r FROM ${src} WHERE product_region_code IS NOT NULL ORDER BY r`);
+  const regionRows = await queryAll(conn, `SELECT DISTINCT RegionId as r FROM ${src} WHERE RegionId IS NOT NULL AND RegionId != '' ORDER BY r`);
   const regions = regionRows.map(r => String(r['r']));
 
   const tagDefs = await loadTagDefs();
   const tagResults: Record<string, { values: string[]; missingPercent: number }> = {};
   for (const tag of tagDefs) {
-    const curKey = tag.tagName.startsWith('user_') ? tag.tagName : `user_${tag.tagName}`;
+    // FOCUS Tags map keys are the raw tag keys — no CUR-style user_ prefix.
+    // Escaped for SQL-literal position: tagName comes from the (shareable)
+    // dimensions.yaml config, so it is untrusted — same rule as builder.ts.
+    const tagKey = tag.tagName.replaceAll("'", "''");
     const concept = tag.concept ?? tag.tagName;
-    const valRows = await queryAll(conn, `SELECT DISTINCT element_at(resource_tags, '${curKey}')[1] as v FROM ${src} WHERE element_at(resource_tags, '${curKey}') IS NOT NULL LIMIT 30`);
+    const valRows = await queryAll(conn, `SELECT DISTINCT element_at(Tags, '${tagKey}')[1] as v FROM ${src} WHERE element_at(Tags, '${tagKey}') IS NOT NULL LIMIT 30`);
     const values = valRows.map(r => String(r['v'])).filter(v => v !== '' && v !== 'null');
-    const [missingRow] = await queryAll(conn, `SELECT COUNT(*) as cnt FROM ${src} WHERE element_at(resource_tags, '${curKey}') IS NULL`);
+    const [missingRow] = await queryAll(conn, `SELECT COUNT(*) as cnt FROM ${src} WHERE element_at(Tags, '${tagKey}') IS NULL`);
     const missingPct = Number(missingRow?.['cnt'] ?? 0) / rowCount;
     tagResults[concept] = { values, missingPercent: missingPct };
   }
 
   const [pRow] = await queryAll(conn, `SELECT
-    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY line_item_unblended_cost) as p50,
-    PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY line_item_unblended_cost) as p90,
-    PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY line_item_unblended_cost) as p99
-    FROM ${src} WHERE line_item_unblended_cost > 0`);
+    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EffectiveCost) as p50,
+    PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY EffectiveCost) as p90,
+    PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY EffectiveCost) as p99
+    FROM ${src} WHERE EffectiveCost > 0`);
 
-  const litRows = await queryAll(conn, `
-    SELECT line_item_line_item_type as t, COUNT(*)::DOUBLE / ${String(rowCount)} as pct
-    FROM ${src} GROUP BY line_item_line_item_type`);
-  const lineItemTypes: Record<string, number> = {};
-  for (const r of litRows) lineItemTypes[String(r['t'])] = Number(r['pct']);
+  const ccRows = await queryAll(conn, `
+    SELECT ChargeCategory as t, COUNT(*)::DOUBLE / ${String(rowCount)} as pct
+    FROM ${src} GROUP BY ChargeCategory`);
+  const chargeCategories: Record<string, number> = {};
+  for (const r of ccRows) chargeCategories[String(r['t'])] = Number(r['pct']);
 
   const profileData: Profile = {
     rowCount,
@@ -185,7 +195,7 @@ async function profile(): Promise<void> {
       p90: Number(pRow?.['p90'] ?? 0),
       p99: Number(pRow?.['p99'] ?? 0),
     },
-    lineItemTypes,
+    chargeCategories,
   };
 
   await writeFile(PROFILE_PATH, JSON.stringify(profileData, null, 2));
@@ -193,28 +203,6 @@ async function profile(): Promise<void> {
   process.stdout.write(`  ${String(rowCount)} rows, ${String(services.length)} services, ${String(accounts.length)} accounts\n`);
   const tagSummary = Object.entries(tagResults).map(([k, v]) => `${String(v.values.length)} ${k}`).join(', ');
   process.stdout.write(`  ${tagSummary}\n`);
-}
-
-function seededRandom(seed: number): () => number {
-  let s = seed;
-  return () => {
-    s = (s * 1664525 + 1013904223) & 0x7fffffff;
-    return s / 0x7fffffff;
-  };
-}
-
-function pick<T>(arr: readonly T[], rand: () => number): T {
-  return arr[Math.floor(rand() * arr.length)]!;
-}
-
-function weightedPick<T extends { costShare: number }>(arr: readonly T[], rand: () => number): T {
-  const r = rand();
-  let cumulative = 0;
-  for (const item of arr) {
-    cumulative += item.costShare;
-    if (r <= cumulative) return item;
-  }
-  return arr.at(-1)!;
 }
 
 function generateDailyDates(): string[] {
@@ -226,64 +214,6 @@ function generateDailyDates(): string[] {
     }
   }
   return dates;
-}
-
-function pickLineItemType(lineItemTypes: string[], litWeights: number[], rand: () => number): string {
-  const litR = rand();
-  let litCum = 0;
-  for (let j = 0; j < lineItemTypes.length; j++) {
-    litCum += litWeights[j]!;
-    if (litR <= litCum) return lineItemTypes[j]!;
-  }
-  return 'Usage';
-}
-
-function optionalTag(rand: () => number, missingRate: number, values: readonly string[]): string | null {
-  return rand() < missingRate ? null : pick(values, rand);
-}
-
-import { SERVICE_META, DEFAULT_META } from './service-meta.js';
-import { FIXTURE_PROVIDER_NAME } from './layout.js';
-
-interface GenerateRowOpts {
-  date: string;
-  profileData: Profile;
-  syntheticAccounts: { id: string; name: string; costShare: number }[];
-  rand: () => number;
-  owners: string[];
-  products: string[];
-  envs: string[];
-  lineItemTypes: string[];
-  litWeights: number[];
-}
-
-function generateRow(opts: GenerateRowOpts): string {
-  const { date, profileData, syntheticAccounts, rand, owners, products, envs, lineItemTypes, litWeights } = opts;
-  const service = weightedPick(profileData.services, rand);
-  const account = weightedPick(syntheticAccounts, rand);
-  const region = pick(profileData.regions.slice(0, 5), rand);
-
-  const owner = optionalTag(rand, Math.max(profileData.tags['owner']?.missingPercent ?? 0.08, 0.08), owners);
-  const product = optionalTag(rand, Math.max(profileData.tags['product']?.missingPercent ?? 0.12, 0.12), products);
-  const env = optionalTag(rand, Math.max(profileData.tags['environment']?.missingPercent ?? 0.03, 0.03), envs);
-
-  const baseCost = Math.exp(rand() * 6 - 2) * service.costShare * 10;
-  const cost = Math.round(baseCost * 100) / 100;
-  const lineItemType = pickLineItemType(lineItemTypes, litWeights, rand);
-  const listCost = Math.round(cost * (1 + rand() * 0.3) * 100) / 100;
-  const usageAmount = Math.round(rand() * 1000 * 100) / 100;
-  const resourceId = `arn:aws:${service.name.toLowerCase()}:${region}:${account.id}:resource/${String(Math.floor(rand() * 10000))}`;
-
-  const meta = SERVICE_META[service.name] ?? DEFAULT_META;
-  const operation = pick(meta.operations, rand);
-
-  const tagEntries: string[] = [];
-  if (owner !== null) tagEntries.push(`'user_team': '${owner}'`);
-  if (product !== null) tagEntries.push(`'user_system': '${product}'`);
-  if (env !== null) tagEntries.push(`'user_environment': '${env}'`);
-  const tagsMap = `MAP {${tagEntries.join(', ')}}`;
-
-  return `(TIMESTAMP '${date}', '${account.id}', '${account.name}', '${region}', '${service.name}', '${meta.family}', '${lineItemType}', '${resourceId}', ${String(usageAmount)}, ${String(cost)}, ${String(listCost)}, '${lineItemType}', '${operation}', 'Usage', ${tagsMap})`;
 }
 
 async function generate(): Promise<void> {
@@ -315,61 +245,26 @@ async function generate(): Promise<void> {
     costShare: a.costShare,
   }));
 
-  const owners = [
-    'backend', 'frontend', 'platform', 'data-eng', 'security',
-    'payments', 'identity', 'cards', 'sre', 'devops', 'ml', 'mobile',
-  ];
-  const products = [
-    'api-gateway', 'auth-service', 'billing-engine', 'card-processor',
-    'data-pipeline', 'event-bus', 'identity-provider', 'ledger',
-    'notification-service', 'payment-router', 'risk-engine',
-    'search-index', 'user-service', 'vault', 'workflow-engine',
-  ];
-  const envs = ['production', 'staging', 'testing', 'sandbox'];
-
-  const lineItemTypes = ['Usage', 'Fee', 'Credit', 'Tax'];
-  const litWeights = [0.89, 0.06, 0.04, 0.01];
+  const cfg: FocusFixtureConfig = {
+    services: profileData.services.map(s => ({ code: s.code, costShare: s.costShare, name: s.name })),
+    accounts: syntheticAccounts,
+    regions: profileData.regions.slice(0, 5),
+    owners: [
+      'backend', 'frontend', 'platform', 'data-eng', 'security',
+      'payments', 'identity', 'cards', 'sre', 'devops', 'ml', 'mobile',
+    ],
+    products: [
+      'api-gateway', 'auth-service', 'billing-engine', 'card-processor',
+      'data-pipeline', 'event-bus', 'identity-provider', 'ledger',
+      'notification-service', 'payment-router', 'risk-engine',
+      'search-index', 'user-service', 'vault', 'workflow-engine',
+    ],
+    envs: ['production', 'staging', 'testing', 'sandbox'],
+  };
 
   const dailyDates = generateDailyDates();
-
-  const ROWS_PER_DAY = 50;
-  const rows: string[] = [];
-
-  for (const date of dailyDates) {
-    for (let i = 0; i < ROWS_PER_DAY; i++) {
-      rows.push(generateRow({ date, profileData, syntheticAccounts, rand, owners, products, envs, lineItemTypes, litWeights }));
-    }
-  }
-
-  // Create table with raw CUR column names
-  await conn.run(`
-    CREATE TABLE synthetic (
-      line_item_usage_start_date TIMESTAMP,
-      line_item_usage_account_id VARCHAR,
-      line_item_usage_account_name VARCHAR,
-      product_region_code VARCHAR,
-      product_servicecode VARCHAR,
-      product_product_family VARCHAR,
-      line_item_line_item_description VARCHAR,
-      line_item_resource_id VARCHAR,
-      line_item_usage_amount DOUBLE,
-      line_item_unblended_cost DOUBLE,
-      pricing_public_on_demand_cost DOUBLE,
-      line_item_line_item_type VARCHAR,
-      line_item_operation VARCHAR,
-      line_item_usage_type VARCHAR,
-      resource_tags MAP(VARCHAR, VARCHAR)
-    )
-  `);
-
-  // Insert in batches
-  const BATCH_SIZE = 500;
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const batch = rows.slice(i, i + BATCH_SIZE);
-    await conn.run(`INSERT INTO synthetic VALUES ${batch.join(',')}`);
-  }
-
-  process.stdout.write(`  Generated ${String(rows.length)} rows\n`);
+  const rowCount = await buildSyntheticTable(conn, dailyDates, cfg, rand);
+  process.stdout.write(`  Generated ${String(rowCount)} rows\n`);
 
   // Export daily data as raw monthly files
   const rawDir = join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw');
@@ -378,41 +273,50 @@ async function generate(): Promise<void> {
     const monthDir = join(rawDir, `daily-${month}`);
     await mkdir(monthDir, { recursive: true });
     const outPath = join(monthDir, 'data.parquet');
-    await conn.run(`COPY (SELECT * FROM synthetic WHERE line_item_usage_start_date::DATE::VARCHAR LIKE '${month}%') TO '${outPath}' (FORMAT PARQUET)`);
+    await conn.run(`COPY (SELECT * FROM synthetic WHERE ChargePeriodStart::DATE::VARCHAR LIKE '${month}%') TO '${outPath}' (FORMAT PARQUET)`);
   }
   process.stdout.write(`  Exported ${String(months.length)} monthly raw files\n`);
 
-  // Export hourly data (last 7 days of Feb with hourly timestamps)
+  // Export hourly data (last 7 days of Feb expanded to hourly charge periods).
+  // Month-span rows (Purchase/Tax/Credit) are kept as-is — real hourly FOCUS
+  // exports also deliver monthly-frequency charges as month-span rows.
   const hourlyMonthDir = join(rawDir, 'hourly-2026-02');
   await mkdir(hourlyMonthDir, { recursive: true });
   const hourlyDates = dailyDates.slice(-7);
-  // Expand daily rows into hourly rows by adding hour offsets
   await conn.run(`
     CREATE TABLE hourly_synthetic AS
     SELECT
-      line_item_usage_start_date + INTERVAL (h) HOUR AS line_item_usage_start_date,
-      line_item_usage_account_id,
-      line_item_usage_account_name,
-      product_region_code,
-      product_servicecode,
-      product_product_family,
-      line_item_line_item_type,
-      line_item_resource_id,
-      line_item_usage_amount / 24.0 AS line_item_usage_amount,
-      line_item_unblended_cost / 24.0 AS line_item_unblended_cost,
-      pricing_public_on_demand_cost / 24.0 AS pricing_public_on_demand_cost,
-      line_item_line_item_description,
-      line_item_operation,
-      line_item_usage_type,
-      resource_tags
+      ChargePeriodStart + INTERVAL (h) HOUR AS ChargePeriodStart,
+      ChargePeriodStart + INTERVAL (h + 1) HOUR AS ChargePeriodEnd,
+      BillingPeriodStart,
+      BillingAccountId, SubAccountId, SubAccountName,
+      RegionId, RegionName, ServiceName, ServiceCategory, ChargeDescription,
+      ChargeCategory, ChargeClass, PricingCategory,
+      CommitmentDiscountId, CommitmentDiscountName, CommitmentDiscountStatus, CommitmentDiscountType,
+      ConsumedQuantity / 24.0 AS ConsumedQuantity,
+      ConsumedUnit, ResourceId, ResourceName, ResourceType,
+      BilledCost / 24.0 AS BilledCost,
+      EffectiveCost / 24.0 AS EffectiveCost,
+      ListCost / 24.0 AS ListCost,
+      ContractedCost / 24.0 AS ContractedCost,
+      PublisherName, InvoiceIssuerName, SkuMeter, Tags, x_Operation, x_ServiceCode,
+      ProviderName, BillingCurrency
     FROM synthetic
     CROSS JOIN generate_series(0, 23) AS t(h)
-    WHERE line_item_usage_start_date::DATE::VARCHAR IN (${hourlyDates.map(d => `'${d}'`).join(', ')})
+    WHERE ChargePeriodStart::DATE::VARCHAR IN (${hourlyDates.map(d => `'${d}'`).join(', ')})
+      AND ChargeCategory = 'Usage'
   `);
-  const hourlyWhereClause = '1=1';
+  // Month-span rows (Purchase/Tax/Credit) ride along unexpanded — real hourly
+  // FOCUS exports deliver monthly-frequency charges as month-span rows too.
+  await conn.run(`
+    INSERT INTO hourly_synthetic
+    SELECT * FROM synthetic
+    WHERE ChargeCategory != 'Usage'
+      AND ChargePeriodStart::DATE::VARCHAR LIKE '2026-02%'
+  `);
   await conn.run(`
     COPY (
-      SELECT * FROM hourly_synthetic WHERE ${hourlyWhereClause}
+      SELECT * FROM hourly_synthetic
     ) TO '${join(hourlyMonthDir, 'data.parquet')}' (FORMAT PARQUET)
   `);
   process.stdout.write(`  Exported hourly raw file (${String(hourlyDates.length)} days)\n`);

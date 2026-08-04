@@ -163,7 +163,7 @@ describe('summarizeConfigBundle', () => {
     const summary = summarizeConfigBundle({ bundle, fingerprintValid: true });
     expect(summary.sections).toEqual(['config', 'dimensions', 'orgTree', 'costScope', 'views']);
     expect(summary.providers).toEqual([{ name: 'aws-main', dailyBucket: 's3://test-cur-bucket/daily/' }]);
-    expect(summary.builtInDimensionCount).toBe(10);
+    expect(summary.builtInDimensionCount).toBe(13);
     expect(summary.tagDimensionCount).toBe(4);
     expect(summary.orgTreeNodeCount).toBe(12);
     expect(summary.exclusionRuleCount).toBeGreaterThan(0);

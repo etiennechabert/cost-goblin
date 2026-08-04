@@ -1,6 +1,6 @@
 /**
  * Rollup benchmark — confirm the performance gain (raw vs rollup) and the rollup
- * build cost, against a real CUR dataset, using the real query builders + config.
+ * build cost, against a real FOCUS 1.2 dataset, using the real query builders + config.
  *
  * Reproducible:
  *   COSTGOBLIN_DATA_DIR=/path/to/data/processed \
@@ -70,19 +70,17 @@ for (const a of acct.accounts) if (typeof a.id === 'string' && typeof a.name ===
 const allMonths = await listLocalMonths(DATA, PROVIDER, 'daily');
 const months = allMonths.slice(-12);
 const latest = allMonths[allMonths.length - 1]!;
-const desc = await rows(`DESCRIBE SELECT * FROM read_parquet('${DATA}/aws-main/raw/daily-${latest}/*.parquet')`);
-const cols = new Set(desc.map(r => String(r['column_name'])));
 const orgTags = `${ORG_DIR}/org-account-tags.json`;
 const lag = cs.lagDays ?? 2;
 const end = new Date(Date.now() - lag * 86_400_000);
 
 console.log(`\n=== Rollup benchmark ===`);
-console.log(`threads=${cpus().length} RAM=${(totalmem() / 1e9).toFixed(0)}GB | metric=${cs.costMetric} perspective=${cs.costPerspective ?? 'gross'} enabledRules=${cs.rules.filter(r => r.enabled).length}`);
+console.log(`threads=${cpus().length} RAM=${(totalmem() / 1e9).toFixed(0)}GB | metric=${cs.costMetric} enabledRules=${cs.rules.filter(r => r.enabled).length}`);
 console.log(`daily months on disk: ${allMonths.length}; benchmarking last ${months.length} (${months[0]}..${latest})`);
 
 // ---- (1) BUILD ----
 const rollupDir = await mkdtemp(join(tmpdir(), 'cg-rollup-bench-'));
-const optsBuild = { dataDir: DATA, dimensions: dims, orgAccountsPath: orgTags, accountReverseMap: arm, costScope: cs, providers: [{ name: PROVIDER, availableColumns: cols }] };
+const optsBuild = { dataDir: DATA, dimensions: dims, orgAccountsPath: orgTags, accountReverseMap: arm, costScope: cs, providers: [{ name: PROVIDER }] };
 console.log(`\n--- (1) build per-period partitions (cold) ---`);
 const buildTimes: number[] = []; let rollupBytes = 0; let rollupRows = 0;
 for (const m of months) {
@@ -106,7 +104,7 @@ const glob = `read_parquet('${join(rollupDir, 'daily-*', 'rollup.parquet').repla
 
 // ---- (2) CORRECTNESS gate ----
 const fullStart = `${months[0]}-01`;
-const rawSrcFull = buildSource({ dataDir: DATA, tier: 'daily', dimensions: dims, orgAccountsPath: orgTags, providers: [{ name: PROVIDER, periods: months, availableColumns: cols }], costMetric: cs.costMetric ?? 'unblended', costPerspective: cs.costPerspective ?? 'gross', includeRawTags: false, slim: true });
+const rawSrcFull = buildSource({ dataDir: DATA, tier: 'daily', dimensions: dims, orgAccountsPath: orgTags, providers: [{ name: PROVIDER, periods: months }], costMetric: cs.costMetric ?? 'effective', includeRawTags: false, slim: true });
 const excl = cs.rules.filter(r => r.enabled).map(r => buildRuleMatchExpr(r, dims, arm)).filter((e): e is string => e !== null).map(e => `NOT (${e})`);
 const fullW = `usage_date >= '${fullStart}' AND usage_date <= '${iso(end)}'`;
 const rawTotal = Number((await rows(`SELECT SUM(cost) t FROM ${rawSrcFull} WHERE ${fullW}${excl.length ? ' AND ' + excl.join(' AND ') : ''}`))[0]!['t']);
@@ -122,7 +120,7 @@ for (const w of windows) {
   const start = iso(new Date(end.getTime() - (w.days - 1) * 86_400_000));
   const dr = { start, end: iso(end) };
   const periods = computePeriodsInRange(dr).filter(p => allMonths.includes(p));
-  const rawOpts = { dataDir: DATA, dimensions: dims, orgAccountsPath: orgTags, accountReverseMap: arm, costScope: cs, providers: [{ name: PROVIDER, availablePeriods: periods, availableColumns: cols }] };
+  const rawOpts = { dataDir: DATA, dimensions: dims, orgAccountsPath: orgTags, accountReverseMap: arm, costScope: cs, providers: [{ name: PROVIDER, availablePeriods: periods }] };
   const matOpts = { ...rawOpts, materializedSource: glob };
   const queries: { name: string; raw: { sql: string; params: readonly unknown[] }; mat: { sql: string; params: readonly unknown[] } }[] = [
     { name: 'cost by service', raw: buildCostQuery({ groupBy: 'service', dateRange: dr, filters: {}, granularity: 'daily' } as any, rawOpts), mat: buildCostQuery({ groupBy: 'service', dateRange: dr, filters: {}, granularity: 'daily' } as any, matOpts) },

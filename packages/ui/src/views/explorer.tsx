@@ -1,8 +1,6 @@
 import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CostMetric,
-  CostPerspective,
-  CostScopeCapabilities,
   DateRange,
   Dimension,
   ExplorerFilterMap,
@@ -57,7 +55,7 @@ function hourDisplay(hour: string): string {
 
 const BASE_COLUMNS: readonly TableColumn<ExplorerSampleRow>[] = [
   { id: 'usage_date', header: 'Date', accessorFn: r => r.date, mono: true },
-  { id: 'line_item_type', header: 'Line type', dimId: 'line_item_type', clickable: true, accessorFn: r => r.lineItemType },
+  { id: 'charge_category', header: 'Charge Category', dimId: 'charge_category', clickable: true, accessorFn: r => r.chargeCategory },
   {
     id: 'cost', header: 'Cost', align: 'right', mono: true,
     accessorFn: r => r.cost,
@@ -67,12 +65,12 @@ const BASE_COLUMNS: readonly TableColumn<ExplorerSampleRow>[] = [
       return <span className={cls}>{formatSignedDollars(n)}</span>;
     },
   },
-  { id: 'service_family', header: 'Family', dimId: 'service_family', clickable: true, accessorFn: r => r.serviceFamily },
+  { id: 'service_category', header: 'Service Category', dimId: 'service_category', clickable: true, accessorFn: r => r.serviceCategory },
   { id: 'region', header: 'Region', dimId: 'region', clickable: true, accessorFn: r => r.region, mono: true },
   { id: 'account_name', header: 'Account', dimId: 'account', clickable: true, accessorFn: r => r.accountName.length > 0 ? r.accountName : r.accountId },
   { id: 'resource_id', header: 'Resource', dimId: 'resource_id', clickable: true, accessorFn: r => r.resourceId, mono: true, truncate: true },
   { id: 'description', header: 'Description', accessorFn: r => r.description, truncate: true },
-  { id: 'usage_type', header: 'Usage type', dimId: 'usage_type', clickable: true, accessorFn: r => r.usageType, mono: true },
+  { id: 'sku_meter', header: 'SKU Meter', dimId: 'sku_meter', clickable: true, accessorFn: r => r.skuMeter, mono: true },
   { id: 'usage_hour', header: 'Hour', accessorFn: r => hourDisplay(r.hour), mono: true },
   {
     id: 'list_cost', header: 'List', align: 'right', mono: true,
@@ -102,12 +100,10 @@ export function ExplorerView(): React.JSX.Element {
   const [filters, setFilters] = useState<ExplorerFilterMap>({});
   const [sort, setSort] = useState<ExplorerSort | undefined>(undefined);
   const [dimensions, setDimensions] = useState<Dimension[]>([]);
-  const [capabilities, setCapabilities] = useState<CostScopeCapabilities | null>(null);
   const [dateRange, setDateRange] = useState<DateRange>(() => getDefaultDateRange(lagDays));
   const [granularity, setGranularity] = useState<Granularity>('daily');
   const [applyCostScope, setApplyCostScope] = useState(false);
-  const [costMetric, setCostMetric] = useState<CostMetric>('unblended');
-  const [costPerspective, setCostPerspective] = useState<CostPerspective>('gross');
+  const [costMetric, setCostMetric] = useState<CostMetric>('effective');
   const [overview, setOverview] = useState<OverviewState>({ data: null, loading: true, error: null });
   const [rows, setRows] = useState<RowsState>({ data: null, loading: true, error: null });
   const [hiddenColumns, setHiddenColumns] = useState<readonly string[]>([...DEFAULT_HIDDEN]);
@@ -137,7 +133,6 @@ export function ExplorerView(): React.JSX.Element {
       }
       if (Object.keys(defaults).length > 0) setFilters(defaults);
     }).catch(() => { setDimensions([]); });
-    api.getCostScopeCapabilities().then(setCapabilities).catch(() => { setCapabilities(null); });
     api.getExplorerPreferences().then(prefs => {
       setHiddenColumns(prefs.hiddenColumns);
       setColumnOrder(prefs.columnOrder);
@@ -202,24 +197,12 @@ export function ExplorerView(): React.JSX.Element {
     api.cancelPendingQueries().catch(() => undefined);
   }, [dateRange, granularity, api]);
 
-  // Back-off from a metric / perspective the CUR doesn't support. Happens
-  // when a user's CUR export drops the effective-cost or net-cost columns
-  // between sessions — we downgrade silently instead of returning bogus
-  // values from the server.
-  useEffect(() => {
-    if (capabilities === null) return;
-    if (costMetric === 'amortized' && !capabilities.hasEffectiveCostColumns) setCostMetric('unblended');
-    if (costMetric === 'list' && !capabilities.hasListPriceColumn) setCostMetric('unblended');
-    if (costPerspective === 'net' && !capabilities.hasNetColumns) setCostPerspective('gross');
-  }, [capabilities, costMetric, costPerspective]);
-
   const runOverview = useCallback((
     f: ExplorerFilterMap,
     range: DateRange,
     gran: Granularity,
     scope: boolean,
     metric: CostMetric,
-    perspective: CostPerspective,
   ) => {
     const reqId = ++overviewReqIdRef.current;
     setOverview(prev => ({ ...prev, loading: true, error: null }));
@@ -229,7 +212,6 @@ export function ExplorerView(): React.JSX.Element {
       granularity: gran,
       applyCostScope: scope,
       costMetric: metric,
-      costPerspective: perspective,
       origin: 'explorer:overview',
     })
       .then(data => {
@@ -252,7 +234,6 @@ export function ExplorerView(): React.JSX.Element {
     gran: Granularity,
     scope: boolean,
     metric: CostMetric,
-    perspective: CostPerspective,
   ) => {
     const reqId = ++rowsReqIdRef.current;
     setRows(prev => ({ ...prev, loading: true, error: null }));
@@ -263,7 +244,6 @@ export function ExplorerView(): React.JSX.Element {
       granularity: gran,
       applyCostScope: scope,
       costMetric: metric,
-      costPerspective: perspective,
       ...(s === undefined ? {} : { sort: s }),
       origin: 'explorer:rows',
     })
@@ -285,24 +265,24 @@ export function ExplorerView(): React.JSX.Element {
   useEffect(() => {
     if (overviewDebounceRef.current !== null) clearTimeout(overviewDebounceRef.current);
     overviewDebounceRef.current = setTimeout(() => {
-      runOverview(filters, dateRange, granularity, applyCostScope, costMetric, costPerspective);
+      runOverview(filters, dateRange, granularity, applyCostScope, costMetric);
     }, DEBOUNCE_MS);
     return () => {
       if (overviewDebounceRef.current !== null) clearTimeout(overviewDebounceRef.current);
     };
-  }, [filters, dateRange, granularity, applyCostScope, costMetric, costPerspective, runOverview]);
+  }, [filters, dateRange, granularity, applyCostScope, costMetric, runOverview]);
 
   // Sample rows — all overview deps PLUS sort. A sort-only change therefore
   // only re-fires this fetch, leaving the histogram alone.
   useEffect(() => {
     if (rowsDebounceRef.current !== null) clearTimeout(rowsDebounceRef.current);
     rowsDebounceRef.current = setTimeout(() => {
-      runRows(filters, sort, dateRange, granularity, applyCostScope, costMetric, costPerspective);
+      runRows(filters, sort, dateRange, granularity, applyCostScope, costMetric);
     }, DEBOUNCE_MS);
     return () => {
       if (rowsDebounceRef.current !== null) clearTimeout(rowsDebounceRef.current);
     };
-  }, [filters, sort, dateRange, granularity, applyCostScope, costMetric, costPerspective, runRows]);
+  }, [filters, sort, dateRange, granularity, applyCostScope, costMetric, runRows]);
 
   const tagColumns = overview.data?.tagColumns ?? rows.data?.tagColumns ?? [];
   const defaultColumns = useMemo<readonly TableColumn<ExplorerSampleRow>[]>(() => [
@@ -450,7 +430,7 @@ export function ExplorerView(): React.JSX.Element {
     <div className="p-6 max-w-[1800px] mx-auto space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-base font-medium text-text-secondary">Inspect the raw CUR dataset.</p>
+          <p className="text-base font-medium text-text-secondary">Inspect the raw billing dataset.</p>
           {overviewData !== null && (
             <div className="mt-1 text-xs text-text-muted tabular-nums">
               {formatDollars(overviewData.totalCost)} · {overviewData.totalRows.toLocaleString()} line items
@@ -468,13 +448,10 @@ export function ExplorerView(): React.JSX.Element {
       </div>
 
       <ExplorerOptions
-        capabilities={capabilities}
         applyCostScope={applyCostScope}
         onApplyCostScopeChange={setApplyCostScope}
         costMetric={costMetric}
         onCostMetricChange={setCostMetric}
-        costPerspective={costPerspective}
-        onCostPerspectiveChange={setCostPerspective}
       />
 
       <div className="flex items-center justify-between">
@@ -489,7 +466,6 @@ export function ExplorerView(): React.JSX.Element {
             granularity,
             applyCostScope,
             costMetric,
-            costPerspective,
             origin: `explorer:filter-values:${dimId}`,
           })}
         />
@@ -548,30 +524,24 @@ export function ExplorerView(): React.JSX.Element {
 }
 
 interface ExplorerOptionsProps {
-  readonly capabilities: CostScopeCapabilities | null;
   readonly applyCostScope: boolean;
   readonly onApplyCostScopeChange: (v: boolean) => void;
   readonly costMetric: CostMetric;
   readonly onCostMetricChange: (m: CostMetric) => void;
-  readonly costPerspective: CostPerspective;
-  readonly onCostPerspectiveChange: (p: CostPerspective) => void;
 }
 
 function ExplorerOptions({
-  capabilities,
   applyCostScope,
   onApplyCostScopeChange,
   costMetric,
   onCostMetricChange,
-  costPerspective,
-  onCostPerspectiveChange,
 }: ExplorerOptionsProps): React.JSX.Element {
-  const metricOptions: { value: CostMetric; label: string; available: boolean }[] = [
-    { value: 'amortized', label: 'Amortized', available: capabilities?.hasEffectiveCostColumns !== false },
-    { value: 'list', label: 'List price', available: capabilities?.hasListPriceColumn !== false },
-    { value: 'unblended', label: 'Unblended', available: true },
+  const metricOptions: { value: CostMetric; label: string; title: string }[] = [
+    { value: 'effective', label: 'Effective (amortized)', title: 'Amortized cost including unused commitment — matches Cost Explorer amortized. The attribution default.' },
+    { value: 'billed', label: 'Billed', title: 'The invoiced amount. Commitment purchases land as Purchase rows; covered usage shows $0.' },
+    { value: 'list', label: 'List price', title: 'Hypothetical on-demand list price (Usage rows only).' },
+    { value: 'contracted', label: 'Contracted', title: 'After negotiated discounts, before commitment discounts.' },
   ];
-  const netAvailable = capabilities?.hasNetColumns !== false;
 
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -592,52 +562,19 @@ function ExplorerOptions({
           {metricOptions.map(opt => (
             <label
               key={opt.value}
-              className={[
-                'flex items-center gap-1 select-none',
-                opt.available ? 'cursor-pointer' : 'cursor-not-allowed opacity-50',
-              ].join(' ')}
-              title={opt.available ? undefined : 'Not available in your CUR export'}
+              className="flex items-center gap-1 select-none cursor-pointer"
+              title={opt.title}
             >
               <input
                 type="radio"
                 name="explorer-metric"
                 className="accent-accent"
                 checked={costMetric === opt.value}
-                disabled={!opt.available}
                 onChange={() => { onCostMetricChange(opt.value); }}
               />
               <span className="text-text-secondary">{opt.label}</span>
             </label>
           ))}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2 text-xs">
-        <span className="text-text-muted">Perspective:</span>
-        <div className="flex items-center gap-3">
-          {(['gross', 'net'] as const).map(p => {
-            const available = p === 'gross' || netAvailable;
-            return (
-              <label
-                key={p}
-                className={[
-                  'flex items-center gap-1 select-none',
-                  available ? 'cursor-pointer' : 'cursor-not-allowed opacity-50',
-                ].join(' ')}
-                title={available ? undefined : 'Net columns not present — enable "Include Net Columns" on the CUR'}
-              >
-                <input
-                  type="radio"
-                  name="explorer-perspective"
-                  className="accent-accent"
-                  checked={costPerspective === p}
-                  disabled={!available}
-                  onChange={() => { onCostPerspectiveChange(p); }}
-                />
-                <span className="text-text-secondary capitalize">{p}</span>
-              </label>
-            );
-          })}
         </div>
       </div>
     </div>
@@ -1067,13 +1004,13 @@ const DETAIL_FIELDS: readonly { key: string; label: string; render: (r: import('
   { key: 'cost', label: 'Cost', render: r => formatSignedDollars(r.cost) },
   { key: 'listCost', label: 'List Cost', render: r => formatSignedDollars(r.listCost) },
   { key: 'service', label: 'Service', render: r => r.service },
-  { key: 'serviceFamily', label: 'Family', render: r => r.serviceFamily },
+  { key: 'serviceCategory', label: 'Service Category', render: r => r.serviceCategory },
   { key: 'accountId', label: 'Account ID', render: r => r.accountId },
   { key: 'accountName', label: 'Account Name', render: r => r.accountName },
   { key: 'region', label: 'Region', render: r => r.region },
-  { key: 'lineItemType', label: 'Line Type', render: r => r.lineItemType },
+  { key: 'chargeCategory', label: 'Charge Category', render: r => r.chargeCategory },
   { key: 'operation', label: 'Operation', render: r => r.operation },
-  { key: 'usageType', label: 'Usage Type', render: r => r.usageType },
+  { key: 'skuMeter', label: 'SKU Meter', render: r => r.skuMeter },
   { key: 'usageAmount', label: 'Usage Amount', render: r => r.usageAmount === 0 ? '' : r.usageAmount.toLocaleString(undefined, { maximumFractionDigits: 4 }) },
   { key: 'resourceId', label: 'Resource', render: r => r.resourceId },
   { key: 'description', label: 'Description', render: r => r.description },

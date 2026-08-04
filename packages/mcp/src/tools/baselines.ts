@@ -130,7 +130,7 @@ async function load(ctx: McpContext): Promise<Loaded> {
 
 function derive(spec: Spec, loaded: Loaded): Derived {
   const history = loaded.history.get(spec.id) ?? [];
-  // Band the amortized run-rate (matches the desktop store) so a periodic/spiky
+  // Band the effective-cost run-rate (matches the desktop store) so a periodic/spiky
   // charge can't set a phantom ceiling that inflates realized savings.
   const runRate = runRateSeries(history, loaded.windowDays);
   const bands = computeBands(runRate, { lowerPct: loaded.lowerPct, upperPct: loaded.upperPct });

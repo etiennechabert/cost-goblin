@@ -25,7 +25,6 @@ import {
   type CostGoblinConfig,
   type DimensionsConfig,
   type ViewsConfig,
-  type CostScopeCapabilities,
   type CostScopeConfig,
   type CostScopePreviewResult,
   type ExplorerFilterValue,
@@ -153,9 +152,9 @@ const trendResult: TrendResult = {
 
 const missingTagsResult: MissingTagsResult = {
   rows: [
-    { accountId: '123456789012', accountName: 'prod-main', resourceId: 'i-0abc123def456gh78', service: 'Amazon EC2', serviceFamily: 'Compute', cost: asDollars(1_200), closestOwner: asEntityRef('platform'), bucket: 'actionable', categoryTaggedRatio: 0.82 },
-    { accountId: '234567890123', accountName: 'prod-data', resourceId: 'arn:aws:rds:us-east-1:234567890123:db:analytics-prod', service: 'Amazon RDS', serviceFamily: 'Database', cost: asDollars(870), closestOwner: asEntityRef('data'), bucket: 'actionable', categoryTaggedRatio: 0.65 },
-    { accountId: '345678901234', accountName: 'staging', resourceId: 'arn:aws:s3:::untagged-bucket-staging', service: 'Amazon S3', serviceFamily: 'Storage', cost: asDollars(340), closestOwner: null, bucket: 'likely-untaggable', categoryTaggedRatio: 0 },
+    { accountId: '123456789012', accountName: 'prod-main', resourceId: 'i-0abc123def456gh78', service: 'Amazon EC2', serviceCategory: 'Compute', cost: asDollars(1_200), closestOwner: asEntityRef('platform'), bucket: 'actionable', categoryTaggedRatio: 0.82 },
+    { accountId: '234567890123', accountName: 'prod-data', resourceId: 'arn:aws:rds:us-east-1:234567890123:db:analytics-prod', service: 'Amazon RDS', serviceCategory: 'Databases', cost: asDollars(870), closestOwner: asEntityRef('data'), bucket: 'actionable', categoryTaggedRatio: 0.65 },
+    { accountId: '345678901234', accountName: 'staging', resourceId: 'arn:aws:s3:::untagged-bucket-staging', service: 'Amazon S3', serviceCategory: 'Storage', cost: asDollars(340), closestOwner: null, bucket: 'likely-untaggable', categoryTaggedRatio: 0 },
   ],
   totalRows: 3,
   totalActionableCost: asDollars(2_070),
@@ -168,8 +167,8 @@ const missingTagsResult: MissingTagsResult = {
   unfilteredLikelyUntaggableCount: 1,
   unfilteredLikelyUntaggableCost: asDollars(340),
   nonResourceRows: [
-    { service: 'Tax', serviceFamily: '', lineItemType: 'Tax', cost: asDollars(95) },
-    { service: 'AWS Support', serviceFamily: '', lineItemType: 'Fee', cost: asDollars(55) },
+    { service: 'Tax', serviceCategory: '', chargeCategory: 'Tax', cost: asDollars(95) },
+    { service: 'AWS Support', serviceCategory: '', chargeCategory: 'Purchase', cost: asDollars(55) },
   ],
 };
 
@@ -213,7 +212,7 @@ const awsMainProvider: ProviderConfig = {
 
 const config: CostGoblinConfig = {
   providers: [awsMainProvider],
-  defaults: { periodDays: 30, costMetric: 'UnblendedCost', lagDays: 2 },
+  defaults: { periodDays: 30, costMetric: 'effective', lagDays: 2 },
 };
 
 /** Two providers with distinct names and credentials profiles — override
@@ -234,10 +233,10 @@ export const MOCK_MULTI_PROVIDER_CONFIG: CostGoblinConfig = {
 
 const mockDimensions: Dimension[] = [
   { name: asDimensionId('provider'), label: 'Provider', field: 'provider' },
-  { name: asDimensionId('account'), label: 'Account', field: 'line_item_usage_account_id', displayField: 'account_name' },
-  { name: asDimensionId('service'), label: 'Service', field: 'product_service_name' },
-  { name: asDimensionId('region'), label: 'Region', field: 'product_region' },
-  { name: asDimensionId('resource'), label: 'Resource', field: 'line_item_resource_id' },
+  { name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name' },
+  { name: asDimensionId('service'), label: 'Service', field: 'service' },
+  { name: asDimensionId('region'), label: 'Region', field: 'region' },
+  { name: asDimensionId('resource_id'), label: 'Resource', field: 'resource_id' },
   { tagName: 'team', label: 'Team', concept: 'owner', normalize: 'lowercase-kebab', aliases: { platform: ['Platform', 'platform-eng', 'plt'], data: ['Data', 'data-eng', 'data-platform'] } },
   { tagName: 'env', label: 'Environment', concept: 'environment', normalize: 'lowercase', aliases: { prod: ['production', 'prd'], staging: ['stage', 'stg'] } },
   { tagName: 'product', label: 'Product', concept: 'product', normalize: 'lowercase-kebab' },
@@ -332,7 +331,7 @@ export class MockCostApi implements CostApi {
   testConnection(): Promise<{ ok: boolean; error?: string | undefined }> { return Promise.resolve({ ok: true }); }
   listAwsProfiles(): Promise<string[]> { return Promise.resolve(['default', 'prod', 'staging']); }
   listS3Buckets(): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> { return Promise.resolve({ buckets: [{ name: 'my-cur-bucket', region: 'eu-central-1' }] }); }
-  browseS3(): Promise<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }> { return Promise.resolve({ prefixes: ['data', 'metadata'], isCurReport: true, detectedType: 'daily', missingColumns: [] }); }
+  browseS3(): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }> { return Promise.resolve({ prefixes: ['data', 'metadata'], isBillingExport: true, detectedType: 'daily', missingColumns: [] }); }
   scaffoldConfig(): Promise<void> { return Promise.resolve(); }
   writeConfig(): Promise<void> { return Promise.resolve(); }
   removeProvider(): Promise<void> { return Promise.resolve(); }
@@ -416,9 +415,6 @@ export class MockCostApi implements CostApi {
       tagColumns: [],
     });
   }
-  getCostScopeCapabilities(): Promise<CostScopeCapabilities> {
-    return Promise.resolve({ hasEffectiveCostColumns: true, hasNetColumns: true, hasListPriceColumn: true });
-  }
   revealCostScopeFolder(): Promise<void> { return Promise.resolve(); }
   queryExplorerOverview(): Promise<ExplorerOverviewResult> {
     const today = new Date();
@@ -450,9 +446,9 @@ export class MockCostApi implements CostApi {
     const end = today.toISOString().slice(0, 10);
     const start = new Date(today.getTime() - 29 * 86_400_000).toISOString().slice(0, 10);
     const mockRows = [
-      { date: end, hour: '', accountId: '111', accountName: 'prod-main', region: 'eu-central-1', service: 'Amazon EC2', serviceFamily: 'Compute', lineItemType: 'Usage', operation: 'RunInstances', usageType: 'EUC1-BoxUsage:t3.medium', description: '$0.0464 per On Demand Linux t3.medium Instance Hour', resourceId: 'i-0abc', usageAmount: 24, cost: 1_180.5, listCost: 1_200, tags: { tag_team: 'platform', tag_env: 'prod' } },
-      { date: end, hour: '', accountId: '222', accountName: 'staging', region: 'us-east-1', service: 'Amazon RDS', serviceFamily: 'Database', lineItemType: 'Usage', operation: 'CreateDBInstance', usageType: 'RDS:db.t4g.micro', description: 'Aurora MySQL db.t4g.micro', resourceId: 'arn:rds:...', usageAmount: 12, cost: 420, listCost: 500, tags: { tag_team: 'data', tag_env: 'staging' } },
-      { date: start, hour: '', accountId: '111', accountName: 'prod-main', region: 'eu-central-1', service: 'Amazon S3', serviceFamily: 'Storage', lineItemType: 'Usage', operation: 'PutObject', usageType: 'EUC1-Requests-Tier1', description: 'PUT requests', resourceId: 'arn:s3:::...', usageAmount: 12_000, cost: 3.6, listCost: 3.6, tags: { tag_team: 'platform', tag_env: 'prod' } },
+      { date: end, hour: '', accountId: '111', accountName: 'prod-main', region: 'eu-central-1', service: 'Amazon EC2', serviceCategory: 'Compute', chargeCategory: 'Usage', operation: 'RunInstances', skuMeter: 'EUC1-BoxUsage:t3.medium', description: '$0.0464 per On Demand Linux t3.medium Instance Hour', resourceId: 'i-0abc', usageAmount: 24, cost: 1_180.5, listCost: 1_200, tags: { tag_team: 'platform', tag_env: 'prod' } },
+      { date: end, hour: '', accountId: '222', accountName: 'staging', region: 'us-east-1', service: 'Amazon RDS', serviceCategory: 'Databases', chargeCategory: 'Usage', operation: 'CreateDBInstance', skuMeter: 'RDS:db.t4g.micro', description: 'Aurora MySQL db.t4g.micro', resourceId: 'arn:rds:...', usageAmount: 12, cost: 420, listCost: 500, tags: { tag_team: 'data', tag_env: 'staging' } },
+      { date: start, hour: '', accountId: '111', accountName: 'prod-main', region: 'eu-central-1', service: 'Amazon S3', serviceCategory: 'Storage', chargeCategory: 'Usage', operation: 'PutObject', skuMeter: 'EUC1-Requests-Tier1', description: 'PUT requests', resourceId: 'arn:s3:::...', usageAmount: 12_000, cost: 3.6, listCost: 3.6, tags: { tag_team: 'platform', tag_env: 'prod' } },
     ];
     return Promise.resolve({
       sampleRows: mockRows,
@@ -517,7 +513,7 @@ export class MockCostApi implements CostApi {
   getBaseline(): Promise<BaselineDetail | null> { return Promise.resolve(null); }
   createBaseline(input: BaselineCreateInput): Promise<BaselineRecord> {
     return Promise.resolve({
-      spec: { id: 'mock', source: 'manual', scope: input.scope, basis: { costMetric: 'amortized', costPerspective: 'gross', rules: [] }, basisSnapshotAt: '', createdAt: '', updatedAt: '' },
+      spec: { id: 'mock', source: 'manual', scope: input.scope, basis: { costMetric: 'effective', rules: [] }, basisSnapshotAt: '', createdAt: '', updatedAt: '' },
       stats: null,
       current: null,
       savings: { potentialDaily: asDollars(0), realizedDaily: asDollars(0), potentialMonthly: asDollars(0), realizedMonthly: asDollars(0) },

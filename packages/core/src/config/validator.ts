@@ -2,6 +2,7 @@ import { asBucketPath, asDimensionId } from '../types/branded.js';
 import type { BucketPath } from '../types/branded.js';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
 import { parseProviderName } from './provider-name.js';
+import { logger } from '../logger/logger.js';
 import type {
   ConceptType,
   CostGoblinConfig,
@@ -64,7 +65,7 @@ function hasControlChar(value: string): boolean {
  *  a leading-dash flag. We therefore reject only genuinely malformed input: an
  *  empty value, a leading dash, `..` traversal, or control characters (which
  *  would corrupt logs / the argument). S3 keys legitimately contain `=`, `+`,
- *  `:`, spaces, etc. (e.g. CUR 2.0 Hive partitions like `BILLING_PERIOD=…`), so
+ *  `:`, spaces, etc. (e.g. Hive partition dirs like `billing_period=…`), so
  *  the key charset is intentionally left unrestricted — over-restricting it
  *  would reject valid existing configs on load. */
 function validateBucketPath(raw: unknown, context: string): BucketPath {
@@ -308,9 +309,20 @@ function validateTagDimension(tag: unknown, i: number) {
   assertObject(tag, ctx);
   // tagName is optional — when omitted, the dimension is sourced purely from
   // accountTagFallback (e.g. the OU Path sentinel).
-  const tagName = tag['tagName'] === undefined || tag['tagName'] === ''
+  let tagName = tag['tagName'] === undefined || tag['tagName'] === ''
     ? undefined
     : (assertString(tag['tagName'], `${ctx}.tagName`), tag['tagName']);
+  // CUR-era resource_tags keys carried a `user_` prefix and older configs
+  // persist it (tag discovery stored the raw key verbatim). FOCUS `Tags` map
+  // keys have no prefix, so a prefixed tagName would silently match nothing —
+  // migrate it at load time, mirroring the legacy cost-metric migration.
+  if (tagName !== undefined && tagName.startsWith('user_')) {
+    const stripped = tagName.slice('user_'.length);
+    if (stripped.length > 0) {
+      logger.warn(`${ctx}.tagName "${tagName}" carries the CUR-era user_ prefix; migrating to "${stripped}"`);
+      tagName = stripped;
+    }
+  }
   assertString(tag['label'], `${ctx}.label`);
 
   const accountTagFallback = optionalNonEmptyString(tag['accountTagFallback']);

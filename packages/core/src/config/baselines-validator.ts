@@ -4,6 +4,8 @@ import type { BaselineCostBasis, BaselineScope, BaselineSource, BaselineSpec, Ma
 import type { DimensionsConfig } from '../types/config.js';
 import { assertArray, assertNumber, assertObject, assertString, ConfigValidationError } from './validator.js';
 import { validateCostScope } from './cost-scope-validator.js';
+import { mergeBuiltInExclusionRules } from './cost-scope-seed.js';
+import { dimensionIdSet, migrateLegacyDimensionId } from './legacy-renames.js';
 
 function validateScope(raw: unknown, builtInIds: ReadonlySet<string>, ctx: string): BaselineScope {
   assertObject(raw, ctx);
@@ -16,7 +18,10 @@ function validateScope(raw: unknown, builtInIds: ReadonlySet<string>, ctx: strin
   }
   assertObject(raw['filters'], `${ctx}.filters`);
   const filters: Partial<Record<DimensionId, readonly TagValue[]>> = {};
-  for (const [key, arr] of Object.entries(raw['filters'])) {
+  for (const [rawKey, arr] of Object.entries(raw['filters'])) {
+    // Persisted baselines may reference CUR-era dimension ids (#515). Current
+    // built-in ids are exempt from the rename (they are the allow-list here).
+    const key = migrateLegacyDimensionId(rawKey, builtInIds);
     if (!builtInIds.has(key)) {
       throw new ConfigValidationError(
         `${ctx}.filters: "${key}" is not a built-in dimension. ` +
@@ -48,25 +53,32 @@ function validateManualBand(raw: unknown, ctx: string): ManualBand {
   };
 }
 
-function validateBasis(raw: unknown): BaselineCostBasis {
-  const cs = validateCostScope(raw);
+function validateBasis(raw: unknown, liveDimensionIds: ReadonlySet<string>): BaselineCostBasis {
+  // Routed through validateCostScope so persisted bases pick up the same
+  // CUR-era migrations as cost-scope.yaml (legacy metric names remapped,
+  // the removed costPerspective key dropped), then through
+  // mergeBuiltInExclusionRules — bases snapshot the FULL rules array, so
+  // without the merge a CUR-era basis keeps the old premium-support seed
+  // conditions (service codes that match nothing against FOCUS ServiceName —
+  // the rule silently no-ops and baseline totals drift from the live scope)
+  // and retired rules escape their compensating cost-metric rewrite.
+  const cs = mergeBuiltInExclusionRules(validateCostScope(raw, liveDimensionIds));
   return {
     costMetric: cs.costMetric,
-    costPerspective: cs.costPerspective ?? 'gross',
     rules: cs.rules,
     ...(cs.marketplaceAttribution === undefined ? {} : { marketplaceAttribution: cs.marketplaceAttribution }),
     ...(cs.lagDays === undefined ? {} : { lagDays: cs.lagDays }),
   };
 }
 
-function validateSpec(raw: unknown, builtInIds: ReadonlySet<string>, ctx: string): BaselineSpec {
+function validateSpec(raw: unknown, builtInIds: ReadonlySet<string>, liveDimensionIds: ReadonlySet<string>, ctx: string): BaselineSpec {
   assertObject(raw, ctx);
   assertString(raw['id'], `${ctx}.id`);
   const name = raw['name'] === undefined ? undefined : (assertString(raw['name'], `${ctx}.name`), raw['name']);
   assertString(raw['source'], `${ctx}.source`);
   const source: BaselineSource = raw['source'] === 'manual' ? 'manual' : 'discovered';
   const scope = validateScope(raw['scope'], builtInIds, `${ctx}.scope`);
-  const basis = validateBasis(raw['basis']);
+  const basis = validateBasis(raw['basis'], liveDimensionIds);
   assertString(raw['basisSnapshotAt'], `${ctx}.basisSnapshotAt`);
   assertString(raw['createdAt'], `${ctx}.createdAt`);
   assertString(raw['updatedAt'], `${ctx}.updatedAt`);
@@ -90,5 +102,6 @@ export function validateBaselines(raw: unknown, dimensions: DimensionsConfig): r
   assertObject(raw, 'baselines');
   assertArray(raw['baselines'], 'baselines.baselines');
   const builtInIds = new Set<string>(dimensions.builtIn.map((d) => String(d.name)));
-  return raw['baselines'].map((b, i) => validateSpec(b, builtInIds, `baselines[${String(i)}]`));
+  const liveDimensionIds = dimensionIdSet(dimensions);
+  return raw['baselines'].map((b, i) => validateSpec(b, builtInIds, liveDimensionIds, `baselines[${String(i)}]`));
 }

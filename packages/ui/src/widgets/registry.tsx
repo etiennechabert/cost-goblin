@@ -50,7 +50,7 @@ export const WIDGET_CATALOG: readonly WidgetCatalogEntry[] = [
   { type: 'treemap',    label: 'Treemap',          description: 'Hierarchical cells sized by cost.', needsGroupBy: true },
   { type: 'heatmap',    label: 'Heatmap',          description: 'Dimension × date density.', needsGroupBy: true },
   { type: 'bubble',     label: 'Bubble (trends)',  description: 'Period-over-period scatter.', needsGroupBy: true },
-  { type: 'table',      label: 'Table',            description: 'Raw line-item rows with dynamic columns.', needsGroupBy: false },
+  { type: 'table',      label: 'Table',            description: 'Raw charge rows with dynamic columns.', needsGroupBy: false },
   { type: 'baseline',   label: 'Baselines',        description: 'Top scopes by potential savings, with drift band.', needsGroupBy: false },
   { type: 'waterfall',  label: 'Waterfall',        description: 'Period-over-period delta decomposed into drivers.', needsGroupBy: true },
   { type: 'priceVolume', label: 'Price vs volume', description: 'Split cost change into volume and rate effects.', needsGroupBy: true },

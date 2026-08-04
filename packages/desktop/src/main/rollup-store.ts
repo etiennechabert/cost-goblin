@@ -29,14 +29,12 @@ function summarizeErrors(errorCounts: ReadonlyMap<string, number>): string {
 
 /** Builds the `COPY (...) TO '<outPath>' (FORMAT PARQUET)` DDL for one period.
  *  Supplied by the caller (context.ts) so the store stays decoupled from the
- *  query builder. May be async: the caller probes each period's parquet schema
- *  before emitting SQL (months drift in which optional cost columns they have). */
+ *  query builder. May be async for historical flexibility. */
 export type BuildPartitionSql = (period: string, outPath: string) => string | Promise<string>;
 
 export interface RollupShape {
   readonly signature: string;
   readonly grainDimensions: readonly string[];
-  readonly availableColumns: readonly string[];
 }
 
 export interface ResolveSourceArgs {
@@ -269,7 +267,7 @@ export class RollupStore {
       this.shape = shape;
       let manifest: RollupManifest = this.manifest !== null && this.manifest.shapeSignature === shape.signature
         ? this.manifest
-        : { schemaVersion: ROLLUP_SCHEMA_VERSION, shapeSignature: shape.signature, builtAt: '', grainDimensions: shape.grainDimensions, availableColumns: shape.availableColumns, partitions: {} };
+        : { schemaVersion: ROLLUP_SCHEMA_VERSION, shapeSignature: shape.signature, builtAt: '', grainDimensions: shape.grainDimensions, partitions: {} };
 
       // Progress is reported completed-first: the renderer's status popover
       // labels chip `i` as built when `i < done`, so `periods[0..done)` must be

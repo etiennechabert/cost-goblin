@@ -23,7 +23,7 @@ const dimensions: DimensionsConfig = {
   tags: [],
 };
 
-const costScope: CostScopeConfig = { costMetric: 'unblended', costPerspective: 'gross', rules: [] };
+const costScope: CostScopeConfig = { costMetric: 'effective', rules: [] };
 const opts: QueryContextOptions = { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER, availablePeriods: PERIODS }], costScope };
 const dateRange = { start: asDateString('2026-01-01'), end: asDateString('2026-02-28') };
 
@@ -82,7 +82,7 @@ describe('baseline discovery query (DuckDB)', () => {
 
     const discoveryTotal = rows.reduce((acc, r) => acc + Number(r['cost']), 0);
 
-    const src = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: PERIODS }], costMetric: 'unblended' });
+    const src = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: PERIODS }], costMetric: 'effective' });
     // Reference: sum/count over per-tuple totals that clear the same >= 0 floor,
     // so the per-day decomposition is verified lossless.
     const [rawTotalRow] = await queryAll(
@@ -118,7 +118,7 @@ describe('baseline discovery query (DuckDB)', () => {
       opts,
     );
     const rows = await queryAll(q.sql, q.params);
-    const src = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: PERIODS }], costMetric: 'unblended' });
+    const src = buildSource({ dataDir: SYNTHETIC_DIR, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: PERIODS }], costMetric: 'effective' });
     const [ref] = await queryAll(
       `SELECT COUNT(*) AS n, SUM(c) AS t FROM (SELECT account_id, service, SUM(cost) AS c FROM ${src} WHERE usage_date BETWEEN '2026-01-01' AND '2026-02-28' GROUP BY account_id, service)`,
     );

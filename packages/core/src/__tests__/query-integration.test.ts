@@ -212,7 +212,7 @@ describe('DuckDB query integration', () => {
     }
   });
 
-  it('non-resource cost query returns rows for non-Usage line items', async () => {
+  it('non-resource cost query returns rows for non-Usage charge categories', async () => {
     const result = buildNonResourceCostQuery(
       {
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
@@ -223,11 +223,13 @@ describe('DuckDB query integration', () => {
       { dataDir: SYNTHETIC_DIR, dimensions, providers: [{ name: PROVIDER }] },
     );
     const rows = await queryAllPrepared(conn, result.sql, result.params);
-    // Fixture may have zero non-Usage lines; just verify the query is valid
-    // and every returned row has the expected shape.
+    // FOCUS fixtures guarantee non-resource charges in-window: a month-span
+    // Tax row and marketplace Usage rows with an empty resource_id. (Purchase
+    // has effective cost 0 and Credit is negative — both drop via HAVING.)
+    expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
       expect(typeof row['service']).toBe('string');
-      expect(typeof row['line_item_type']).toBe('string');
+      expect(typeof row['charge_category']).toBe('string');
       expect(Number(row['cost'])).toBeGreaterThan(0);
     }
   });
@@ -235,7 +237,8 @@ describe('DuckDB query integration', () => {
   it('queries entity detail by service', async () => {
     const result = buildEntityDetailQuery(
       {
-        entity: asEntityRef('AmazonRDS'),
+        // FOCUS `service` carries display names (ServiceName), not codes.
+        entity: asEntityRef('Amazon Relational Database Service'),
         dimension: asDimensionId('service'),
         dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-02-28') },
         filters: {},

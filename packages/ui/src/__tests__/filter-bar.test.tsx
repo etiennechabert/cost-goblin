@@ -6,8 +6,8 @@ import { asDimensionId, asTagValue } from '@costgoblin/core/browser';
 import { FilterBar } from '../components/filter-bar.js';
 
 const dimensions: Dimension[] = [
-  { name: asDimensionId('account'), label: 'Account', field: 'line_item_usage_account_id', displayField: 'account_name' },
-  { name: asDimensionId('service'), label: 'Service', field: 'product_service_name' },
+  { name: asDimensionId('account'), label: 'Account', field: 'account_id', displayField: 'account_name' },
+  { name: asDimensionId('service'), label: 'Service', field: 'service' },
   { tagName: 'team', label: 'Team', concept: 'owner', normalize: 'lowercase-kebab', aliases: {} },
 ];
 

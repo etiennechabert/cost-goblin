@@ -304,7 +304,7 @@ function NewBaselineDialog({ onClose, onCreated }: Readonly<{ onClose: () => voi
           </label>
           <label className="flex flex-col gap-1 text-xs text-text-secondary">
             Value
-            <input value={value} onChange={(e) => { setValue(e.target.value); }} placeholder="e.g. AmazonRDS" className="rounded-md border border-border bg-bg-primary px-2 py-1 text-sm text-text-primary placeholder:text-text-muted" />
+            <input value={value} onChange={(e) => { setValue(e.target.value); }} placeholder="e.g. Amazon Relational Database Service" className="rounded-md border border-border bg-bg-primary px-2 py-1 text-sm text-text-primary placeholder:text-text-muted" />
           </label>
           {error !== null && <p className="text-xs text-negative">{error}</p>}
         </div>

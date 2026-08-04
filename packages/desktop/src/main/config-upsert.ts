@@ -72,7 +72,7 @@ export function upsertWizardProvider(
     providers,
     defaults: typeof existing['defaults'] === 'object' && existing['defaults'] !== null
       ? existing['defaults']
-      : { periodDays: 30, costMetric: 'UnblendedCost', lagDays: 2 },
+      : { periodDays: 30, costMetric: 'effective', lagDays: 2 },
   };
 }
 

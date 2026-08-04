@@ -7,61 +7,57 @@ import { buildRollupPartitionQuery, rollupGrainColumns, type DimensionsConfig, t
 import { RollupStore, type RollupShape, type BuildPartitionSql } from '../main/rollup-store.js';
 import type { RawRow } from '../main/duckdb-client.js';
 
-// Months drift in which optional cost columns they carry: a CUR ships
-// reservation_effective_cost / the SP effective-cost family only from the
-// billing period the user enabled resource IDs. The amortized metric
-// references those columns, so a cold rebuild that builds an OLDER month (which
-// lacks them) with the LATEST month's column set throws a DuckDB Binder Error
-// and that partition never builds. This guards the per-period probe fix.
+// FOCUS 1.2 pins the core column set (all four cost columns always present),
+// so the CUR-era mixed-schema machinery — per-period column probing, the
+// amortized degradation path — is gone. What still deserves a store-level
+// guard is the cold rebuild itself: multiple months building through
+// maintainPeriods, each partition's stored cost matching the chosen metric,
+// including a month whose parquet carries an EXTRA column a future export
+// revision might add (must be ignored, not fatal).
 
-// Columns every CUR carries. `type` is appended per-column below.
-const BASE_COLS: readonly [string, string][] = [
-  ['line_item_usage_start_date', 'TIMESTAMP'],
-  ['line_item_usage_account_id', 'VARCHAR'],
-  ['line_item_usage_account_name', 'VARCHAR'],
-  ['product_region_code', 'VARCHAR'],
-  ['product_servicecode', 'VARCHAR'],
-  ['product_product_family', 'VARCHAR'],
-  ['line_item_resource_id', 'VARCHAR'],
-  ['line_item_usage_amount', 'DOUBLE'],
-  ['line_item_unblended_cost', 'DOUBLE'],
-  ['line_item_net_unblended_cost', 'DOUBLE'],
-  ['pricing_public_on_demand_cost', 'DOUBLE'],
-  ['line_item_line_item_type', 'VARCHAR'],
-  ['line_item_operation', 'VARCHAR'],
-  ['line_item_usage_type', 'VARCHAR'],
-];
-// Optional RI/SP effective-cost columns — present only once the user enables
-// resource IDs. The amortized metric references these; an older month lacks
-// them entirely (matches real data — 18-col months still keep net_unblended).
-const OPTIONAL_COLS: readonly [string, string][] = [
-  ['reservation_effective_cost', 'DOUBLE'],
-  ['reservation_net_effective_cost', 'DOUBLE'],
-  ['savings_plan_savings_plan_effective_cost', 'DOUBLE'],
-  ['savings_plan_net_savings_plan_effective_cost', 'DOUBLE'],
+const FOCUS_COLS: readonly [string, string][] = [
+  ['ChargePeriodStart', 'TIMESTAMP'],
+  ['SubAccountId', 'VARCHAR'],
+  ['SubAccountName', 'VARCHAR'],
+  ['RegionId', 'VARCHAR'],
+  ['ServiceName', 'VARCHAR'],
+  ['x_ServiceCode', 'VARCHAR'],
+  ['ServiceCategory', 'VARCHAR'],
+  ['ResourceId', 'VARCHAR'],
+  ['BilledCost', 'DOUBLE'],
+  ['EffectiveCost', 'DOUBLE'],
+  ['ListCost', 'DOUBLE'],
+  ['ContractedCost', 'DOUBLE'],
+  ['ChargeCategory', 'VARCHAR'],
+  ['PricingCategory', 'VARCHAR'],
+  ['CommitmentDiscountStatus', 'VARCHAR'],
+  ['x_Operation', 'VARCHAR'],
+  ['SkuMeter', 'VARCHAR'],
+  ['ConsumedQuantity', 'DOUBLE'],
+  ['ChargeDescription', 'VARCHAR'],
+  ['Tags', 'MAP(VARCHAR, VARCHAR)'],
 ];
 
 interface FixtureRow {
-  readonly line_item_usage_start_date: string;
-  readonly line_item_usage_account_id: string;
-  readonly line_item_usage_account_name: string;
-  readonly product_servicecode: string;
-  readonly product_product_family: string;
-  readonly line_item_resource_id: string;
-  readonly line_item_unblended_cost: number;
-  readonly reservation_effective_cost: number;
-  readonly savings_plan_savings_plan_effective_cost: number;
-  readonly line_item_line_item_type: string;
-  readonly line_item_operation: string;
+  readonly start: string;
+  readonly accountId: string;
+  readonly accountName: string;
+  readonly service: string;
+  readonly billed: number;
+  readonly effective: number;
+  readonly chargeCategory: string;
+  readonly commitmentStatus: string;
 }
 
 function rowsFor(period: string): readonly FixtureRow[] {
   const d = `${period}-05`;
-  // One RI-covered, one SP-covered, one plain Usage row.
+  // One standard usage row, one commitment-covered row (billed 0), one
+  // unused-commitment row (effective only) — the FOCUS shapes whose split
+  // between billed and effective the rollup must preserve.
   return [
-    { line_item_usage_start_date: `${d} 00:00:00`, line_item_usage_account_id: '111', line_item_usage_account_name: 'acct-a', product_servicecode: 'AmazonEC2', product_product_family: 'Compute', line_item_resource_id: 'i-1', line_item_unblended_cost: 10, reservation_effective_cost: 7, savings_plan_savings_plan_effective_cost: 0, line_item_line_item_type: 'DiscountedUsage', line_item_operation: 'RunInstances' },
-    { line_item_usage_start_date: `${d} 01:00:00`, line_item_usage_account_id: '111', line_item_usage_account_name: 'acct-a', product_servicecode: 'AmazonEC2', product_product_family: 'Compute', line_item_resource_id: 'i-2', line_item_unblended_cost: 20, reservation_effective_cost: 0, savings_plan_savings_plan_effective_cost: 3, line_item_line_item_type: 'SavingsPlanCoveredUsage', line_item_operation: 'RunInstances' },
-    { line_item_usage_start_date: `${d} 02:00:00`, line_item_usage_account_id: '222', line_item_usage_account_name: 'acct-b', product_servicecode: 'AmazonS3', product_product_family: 'Storage', line_item_resource_id: 's-1', line_item_unblended_cost: 5, reservation_effective_cost: 0, savings_plan_savings_plan_effective_cost: 0, line_item_line_item_type: 'Usage', line_item_operation: 'GetObject' },
+    { start: `${d} 00:00:00`, accountId: '111', accountName: 'acct-a', service: 'Amazon Elastic Compute Cloud', billed: 10, effective: 10, chargeCategory: 'Usage', commitmentStatus: '' },
+    { start: `${d} 01:00:00`, accountId: '111', accountName: 'acct-a', service: 'Amazon Elastic Compute Cloud', billed: 0, effective: 7, chargeCategory: 'Usage', commitmentStatus: 'Used' },
+    { start: `${d} 02:00:00`, accountId: '222', accountName: 'acct-b', service: 'Amazon Simple Storage Service', billed: 0, effective: 3, chargeCategory: 'Usage', commitmentStatus: 'Unused' },
   ];
 }
 
@@ -72,59 +68,44 @@ const dimensions: DimensionsConfig = {
   ],
   tags: [],
 };
-// Amortized is the metric that references the optional RI/SP columns.
-const costScope: CostScopeConfig = { costMetric: 'amortized', costPerspective: 'gross', rules: [] };
-const shape: RollupShape = { signature: 'SIG-DRIFT', grainDimensions: rollupGrainColumns(dimensions), availableColumns: ['account_id', 'account_name', 'service'] };
+const costScope: CostScopeConfig = { costMetric: 'effective', rules: [] };
+const shape: RollupShape = { signature: 'SIG-DRIFT', grainDimensions: rollupGrainColumns(dimensions) };
 const etags = { '2025-10': { f: 'h-old' }, '2026-04': { f: 'h-new' } };
 // This suite seeds its raw tree under {dataDir}/aws/raw/... — 'aws' is the
 // provider name for both the build SQL and the store's rollup dir.
 const providerName = (): ProviderName => asProviderName('aws');
 
-describe('RollupStore cold rebuild over mixed-schema months', () => {
+describe('RollupStore cold rebuild over multiple months', () => {
   let db: Awaited<ReturnType<typeof DuckDBInstance.create>>;
   let conn: Awaited<ReturnType<typeof db.connect>>;
   let dataDir: string;
   let runQuery: (sql: string) => Promise<RawRow[]>;
 
-  // Probe ONE month's columns (mirrors context.ts getColumnsForPeriod).
-  async function probe(period: string): Promise<ReadonlySet<string>> {
-    const glob = `${dataDir}/aws/raw/daily-${period}/*.parquet`;
-    const rows = await runQuery(`DESCRIBE SELECT * FROM read_parquet('${glob}') LIMIT 0`);
-    const cols = new Set<string>();
-    for (const r of rows) { const n = r['column_name']; if (typeof n === 'string') cols.add(n); }
-    return cols;
-  }
-
-  // The fixed wiring: each period's build SQL uses THAT period's columns.
-  const buildPerPeriod: BuildPartitionSql = async (period, outPath) =>
-    buildRollupPartitionQuery(period, 'daily', outPath, { dataDir, dimensions, costScope, providers: [{ name: providerName(), availableColumns: await probe(period) }] });
-
-  // The OLD (buggy) wiring: every period uses the latest month's columns.
-  const buildLatestForAll: BuildPartitionSql = async (period, outPath) =>
-    buildRollupPartitionQuery(period, 'daily', outPath, { dataDir, dimensions, costScope, providers: [{ name: providerName(), availableColumns: await probe('2026-04') }] });
+  const buildPerPeriod: BuildPartitionSql = (period, outPath) =>
+    buildRollupPartitionQuery(period, 'daily', outPath, { dataDir, dimensions, costScope, providers: [{ name: providerName() }] });
 
   function sqlValue(col: string, type: string, row: FixtureRow): string {
     switch (col) {
-      case 'line_item_usage_start_date': return `TIMESTAMP '${row.line_item_usage_start_date}'`;
-      case 'line_item_usage_account_id': return `'${row.line_item_usage_account_id}'`;
-      case 'line_item_usage_account_name': return `'${row.line_item_usage_account_name}'`;
-      case 'product_servicecode': return `'${row.product_servicecode}'`;
-      case 'product_product_family': return `'${row.product_product_family}'`;
-      case 'line_item_resource_id': return `'${row.line_item_resource_id}'`;
-      case 'line_item_unblended_cost': return String(row.line_item_unblended_cost);
-      case 'line_item_line_item_type': return `'${row.line_item_line_item_type}'`;
-      case 'line_item_operation': return `'${row.line_item_operation}'`;
-      case 'reservation_effective_cost': return String(row.reservation_effective_cost);
-      case 'savings_plan_savings_plan_effective_cost': return String(row.savings_plan_savings_plan_effective_cost);
+      case 'ChargePeriodStart': return `TIMESTAMP '${row.start}'`;
+      case 'SubAccountId': return `'${row.accountId}'`;
+      case 'SubAccountName': return `'${row.accountName}'`;
+      case 'ServiceName': return `'${row.service}'`;
+      case 'BilledCost': return String(row.billed);
+      case 'EffectiveCost': return String(row.effective);
+      case 'ChargeCategory': return `'${row.chargeCategory}'`;
+      case 'CommitmentDiscountStatus': return `'${row.commitmentStatus}'`;
+      case 'Tags': return 'MAP {}';
       // Columns the rollup build doesn't read — fill a type-appropriate default.
-      default: return type === 'TIMESTAMP' ? `TIMESTAMP '${row.line_item_usage_start_date}'` : type === 'VARCHAR' ? `''` : '0';
+      default: return type === 'TIMESTAMP' ? `TIMESTAMP '${row.start}'` : type === 'DOUBLE' ? '0' : `''`;
     }
   }
 
-  async function writeMonth(period: string, full: boolean): Promise<void> {
+  async function writeMonth(period: string, extraColumn: boolean): Promise<void> {
     const dir = join(dataDir, 'aws', 'raw', `daily-${period}`);
     await mkdir(dir, { recursive: true });
-    const schema = full ? [...BASE_COLS, ...OPTIONAL_COLS] : [...BASE_COLS];
+    // A future AWS export revision may add columns we don't reference —
+    // the build must ignore them.
+    const schema = extraColumn ? [...FOCUS_COLS, ['x_FutureColumn', 'VARCHAR'] as [string, string]] : [...FOCUS_COLS];
     await conn.run(`CREATE OR REPLACE TABLE m (${schema.map(([n, t]) => `${n} ${t}`).join(', ')})`);
     const colNames = schema.map(([n]) => n).join(', ');
     const values = rowsFor(period)
@@ -160,7 +141,7 @@ describe('RollupStore cold rebuild over mixed-schema months', () => {
   });
   afterAll(async () => { await rm(dataDir, { recursive: true, force: true }); });
 
-  it('builds every month, including the older drifted-schema one (no Binder Error)', async () => {
+  it('builds every month, including one with an unreferenced extra column', async () => {
     const store = new RollupStore({ dataDir, providerName, runQuery });
     // Newest-first, exactly like warmupRollup orders toBuild.
     await store.maintainPeriods(['2026-04', '2025-10'], buildPerPeriod, etags, shape);
@@ -169,21 +150,10 @@ describe('RollupStore cold rebuild over mixed-schema months', () => {
     await expect(stat(join(dataDir, 'aws', 'rollup', 'daily-2025-10', 'rollup.parquet'))).resolves.toBeDefined();
     await expect(stat(join(dataDir, 'aws', 'rollup', 'daily-2026-04', 'rollup.parquet'))).resolves.toBeDefined();
 
-    // The drifted month degrades amortized → unblended (it has nothing to
-    // amortize against), so its cost is the sum of unblended: 10 + 20 + 5 = 35.
-    const old = await runQuery(`SELECT SUM(cost) AS c FROM read_parquet('${join(dataDir, 'aws', 'rollup', 'daily-2025-10', 'rollup.parquet').replaceAll('\\', '/')}')`);
-    expect(Number(old[0]?.['c'])).toBeCloseTo(35);
-
-    // The full month uses true amortized: RI effective (7) + SP effective (3) +
-    // Usage unblended (5) = 15.
-    const recent = await runQuery(`SELECT SUM(cost) AS c FROM read_parquet('${join(dataDir, 'aws', 'rollup', 'daily-2026-04', 'rollup.parquet').replaceAll('\\', '/')}')`);
-    expect(Number(recent[0]?.['c'])).toBeCloseTo(15);
-  });
-
-  it('regression guard: the old latest-month-for-all wiring fails to build the drifted month', async () => {
-    const store = new RollupStore({ dataDir, providerName, runQuery });
-    await store.maintainPeriods(['2026-04', '2025-10'], buildLatestForAll, etags, shape);
-    // 2026-04 builds; 2025-10's COPY throws a Binder Error and is skipped.
-    expect([...store.getValidPeriods()]).toEqual(['2026-04']);
+    // Effective metric sums standard (10) + committed-used (7) + unused (3).
+    for (const period of ['2025-10', '2026-04']) {
+      const rows = await runQuery(`SELECT SUM(cost) AS c FROM read_parquet('${join(dataDir, 'aws', 'rollup', `daily-${period}`, 'rollup.parquet').replaceAll('\\', '/')}')`);
+      expect(Number(rows[0]?.['c'])).toBeCloseTo(20);
+    }
   });
 });

@@ -15,7 +15,7 @@ const SYNTHETIC_DIR = join(__dirname, '..', '__fixtures__', 'synthetic');
 const PROVIDER = asProviderName(FIXTURE_PROVIDER_NAME);
 const PERIOD = '2026-01';
 
-const scope: CostScopeConfig = { costMetric: 'unblended', costPerspective: 'gross', rules: [] };
+const scope: CostScopeConfig = { costMetric: 'effective', rules: [] };
 
 const stableGrain: DimensionsConfig = {
   builtIn: [

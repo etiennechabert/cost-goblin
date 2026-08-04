@@ -30,14 +30,14 @@ export async function loadOrgTree(path: string): Promise<OrgTreeConfig> {
   return validateOrgTree(raw);
 }
 
-export async function loadViews(path: string): Promise<ViewsConfig> {
+export async function loadViews(path: string, liveDimensionIds?: ReadonlySet<string>): Promise<ViewsConfig> {
   const content = await readFile(path, 'utf-8');
   const raw: unknown = parse(content);
-  return validateViews(raw);
+  return validateViews(raw, liveDimensionIds);
 }
 
-export async function loadCostScope(path: string): Promise<CostScopeConfig> {
+export async function loadCostScope(path: string, liveDimensionIds?: ReadonlySet<string>): Promise<CostScopeConfig> {
   const content = await readFile(path, 'utf-8');
   const raw: unknown = parse(content);
-  return validateCostScope(raw);
+  return validateCostScope(raw, liveDimensionIds);
 }

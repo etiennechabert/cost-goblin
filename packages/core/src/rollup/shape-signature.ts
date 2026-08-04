@@ -1,12 +1,14 @@
 import type { BuiltInDimension, DimensionsConfig, TagDimension } from '../types/config.js';
-import type { CostMetric, CostPerspective, ExclusionRule, MarketplaceAttributionConfig } from '../types/cost-scope.js';
+import type { CostMetric, ExclusionRule, MarketplaceAttributionConfig } from '../types/cost-scope.js';
 import { tagDimColumn } from '../types/branded.js';
 import { normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { canonicalJson, sha256Hex } from './digest.js';
 
 /** Bump to invalidate every persisted rollup partition (e.g. when the stored
- *  partition schema or build semantics change in a backwards-incompatible way). */
-export const ROLLUP_SCHEMA_VERSION = 1;
+ *  partition schema or build semantics change in a backwards-incompatible way).
+ *  v2: FOCUS 1.2 migration (#515) — canonical columns and cost metrics changed,
+ *  so every CUR-era partition is invalid. */
+export const ROLLUP_SCHEMA_VERSION = 2;
 
 function isEnabled(d: { readonly enabled?: boolean | undefined }): boolean {
   return d.enabled !== false;
@@ -30,7 +32,6 @@ function findDim(dimensionId: string, dims: DimensionsConfig): BuiltInDimension 
 export interface ShapeSignatureInput {
   readonly dimensions: DimensionsConfig;
   readonly costMetric: CostMetric;
-  readonly costPerspective: CostPerspective;
   /** All exclusion rules; only enabled ones contribute to the signature. */
   readonly rules: readonly ExclusionRule[];
   /** Marketplace re-attribution. Rewrites the `service` column (and `cost` on
@@ -39,8 +40,6 @@ export interface ShapeSignatureInput {
   readonly marketplaceAttribution?: MarketplaceAttributionConfig | undefined;
   /** Digest of org-accounts.json content — see {@link computeOrgAccountsDigest}. */
   readonly orgAccountsDigest: string;
-  /** Columns the build probed in the user's Parquet. */
-  readonly availableColumns: readonly string[];
 }
 
 /** The set of enabled dimension columns that form the rollup grain, sorted.
@@ -73,7 +72,7 @@ function marketplaceForSignature(
 }
 
 export function computeShapeSignature(input: ShapeSignatureInput): string {
-  const { dimensions, costMetric, costPerspective, rules, orgAccountsDigest, availableColumns } = input;
+  const { dimensions, costMetric, rules, orgAccountsDigest } = input;
 
   const builtinDims = dimensions.builtIn
     .filter(isEnabled)
@@ -118,11 +117,9 @@ export function computeShapeSignature(input: ShapeSignatureInput): string {
     builtinDims,
     tagDims,
     costMetric,
-    costPerspective,
     exclusionRules,
     ...(marketplace === null ? {} : { marketplaceAttribution: marketplace }),
     orgAccountsDigest,
-    availableColumns: [...availableColumns].sort((a, b) => a.localeCompare(b)),
   }));
 }
 

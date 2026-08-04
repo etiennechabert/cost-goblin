@@ -36,7 +36,6 @@ import type {
   AutoSyncStatus,
   PruneResult,
   ViewsConfig,
-  CostScopeCapabilities,
   CostScopeConfig,
   CostScopePreviewResult,
   ExplorerFilterValue,
@@ -198,8 +197,8 @@ const api: CostApi = {
   listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> {
     return invoke<{ buckets: { name: string; region: string }[]; error?: string | undefined }>('setup:list-buckets', profile);
   },
-  browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }> {
-    return invoke<{ prefixes: string[]; isCurReport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'unknown'; missingColumns: string[] }>('setup:browse-s3', params);
+  browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }> {
+    return invoke<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }>('setup:browse-s3', params);
   },
   scaffoldConfig(): Promise<void> {
     return invoke<undefined>('setup:scaffold-config').then(() => undefined);
@@ -302,9 +301,6 @@ const api: CostApi = {
   },
   previewCostScope(config: CostScopeConfig): Promise<CostScopePreviewResult> {
     return invoke<CostScopePreviewResult>('cost-scope:preview', config);
-  },
-  getCostScopeCapabilities(): Promise<CostScopeCapabilities> {
-    return invoke<CostScopeCapabilities>('cost-scope:get-capabilities');
   },
   revealCostScopeFolder(): Promise<void> {
     return invoke<undefined>('cost-scope:reveal-folder').then(() => undefined);

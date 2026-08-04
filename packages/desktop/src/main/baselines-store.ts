@@ -75,7 +75,6 @@ export interface BaselineEngineDeps {
   readonly getAccountMap: () => Promise<Map<string, string>>;
   readonly getAccountReverseMap: () => Promise<Map<string, readonly string[]>>;
   readonly getOrgTreeConfig: () => Promise<{ readonly tree: readonly OrgNode[] }>;
-  readonly getAvailableColumns: (tier: 'daily' | 'hourly') => Promise<ReadonlySet<string>>;
   readonly runPreparedQuery: (sql: string, params: readonly unknown[], materialized?: boolean) => Promise<RawRow[]>;
   readonly rollupStore: {
     getBuiltSignature(): string | null;
@@ -562,7 +561,6 @@ export class BaselineStore {
     const cfg = this.effectiveConfig();
     const dimensions = await deps.getQueryDimensions();
     const costScope = await deps.getCostScope();
-    const availableColumns = await deps.getAvailableColumns('daily');
     const end = dateNDaysAgo(todayUtc(), costScope.lagDays ?? 2);
     const start = dateNDaysAgo(end, cfg.lookbackDays);
     const dateRange = { start: asDateString(start), end: asDateString(end) };
@@ -613,7 +611,7 @@ export class BaselineStore {
 
     // Both discovery queries hit the same source/columns — resolve the rollup
     // once (computeShapeSignature isn't free).
-    const mat = this.matSource(deps, providers.length, costScope, dimensions, availableColumns, dateRange, [...grainCols, 'cost']);
+    const mat = this.matSource(deps, providers.length, costScope, dimensions, dateRange, [...grainCols, 'cost']);
 
     // 2) Cheap totals query — ONE row per tuple. Enumerates every scope without
     //    the per-day fan-out, so "discover everything" stays fast even on a big
@@ -696,7 +694,6 @@ export class BaselineStore {
   private async recomputeOne(deps: BaselineEngineDeps, spec: BaselineSpec): Promise<void> {
     const cfg = this.effectiveConfig();
     const dimensions = await deps.getQueryDimensions();
-    const availableColumns = await deps.getAvailableColumns('daily');
     const end = dateNDaysAgo(todayUtc(), spec.basis.lagDays ?? 2);
     const start = dateNDaysAgo(end, cfg.lookbackDays);
     const dateRange = { start: asDateString(start), end: asDateString(end) };
@@ -714,7 +711,7 @@ export class BaselineStore {
         'cost',
       ]),
     ];
-    const mat = this.matSource(deps, providers.length, basisScope, dimensions, availableColumns, dateRange, neededColumns);
+    const mat = this.matSource(deps, providers.length, basisScope, dimensions, dateRange, neededColumns);
     const opts = {
       dataDir: deps.dataDir,
       dimensions,
@@ -775,7 +772,6 @@ export class BaselineStore {
     if (spec === undefined) return [];
     const cfg = this.effectiveConfig();
     const dimensions = await deps.getQueryDimensions();
-    const availableColumns = await deps.getAvailableColumns('daily');
     const basisScope = basisToCostScope(spec.basis);
     const end = dateNDaysAgo(todayUtc(), spec.basis.lagDays ?? 2);
     // `dateNDaysAgo(end, N)` then an inclusive BETWEEN spans N+1 calendar days;
@@ -791,7 +787,7 @@ export class BaselineStore {
       if (providers.length === 0) return new Map<string, number>();
       const range = { start: asDateString(winStart), end: asDateString(end) };
       if (providersEmptyForRange(providers, range)) return new Map<string, number>();
-      const mat = this.matSource(deps, providers.length, basisScope, dimensions, availableColumns, range, [columnForDimension(dimensions, childDimension), 'cost']);
+      const mat = this.matSource(deps, providers.length, basisScope, dimensions, range, [columnForDimension(dimensions, childDimension), 'cost']);
       const q = buildDailyCostsQuery(
         { dateRange: range, filters: scopeFilters(spec.scope), groupBy: child },
         {
@@ -829,7 +825,6 @@ export class BaselineStore {
     providerCount: number,
     costScope: CostScopeConfig,
     dimensions: DimensionsConfig,
-    availableColumns: ReadonlySet<string>,
     dateRange: { start: string; end: string },
     neededColumns: readonly string[],
   ): string | undefined {
@@ -844,11 +839,9 @@ export class BaselineStore {
     const sig = computeShapeSignature({
       dimensions,
       costMetric: costScope.costMetric,
-      costPerspective: costScope.costPerspective ?? 'gross',
       rules: costScope.rules,
       marketplaceAttribution: costScope.marketplaceAttribution,
       orgAccountsDigest: this.cachedOrgDigest,
-      availableColumns: [...availableColumns],
     });
     if (sig !== built) return undefined;
     return deps.rollupStore.resolveSource({ requiredPeriods: periodsFor(dateRange), tier: 'daily', neededColumns });
@@ -903,7 +896,6 @@ async function snapshotBasis(deps: BaselineEngineDeps): Promise<BaselineCostBasi
   const cs = await deps.getCostScope();
   return {
     costMetric: cs.costMetric,
-    costPerspective: cs.costPerspective ?? 'gross',
     rules: cs.rules,
     ...(cs.marketplaceAttribution === undefined ? {} : { marketplaceAttribution: cs.marketplaceAttribution }),
     ...(cs.lagDays === undefined ? {} : { lagDays: cs.lagDays }),
@@ -913,7 +905,6 @@ async function snapshotBasis(deps: BaselineEngineDeps): Promise<BaselineCostBasi
 function basisToCostScope(basis: BaselineCostBasis): CostScopeConfig {
   return {
     costMetric: basis.costMetric,
-    costPerspective: basis.costPerspective,
     rules: basis.rules,
     ...(basis.marketplaceAttribution === undefined ? {} : { marketplaceAttribution: basis.marketplaceAttribution }),
     ...(basis.lagDays === undefined ? {} : { lagDays: basis.lagDays }),

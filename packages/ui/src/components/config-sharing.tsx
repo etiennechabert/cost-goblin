@@ -20,8 +20,8 @@ import { ProfilePicker } from './profile-picker.js';
 import { Button } from './ui/button.js';
 
 const DATA_TIER_LABELS: Record<SharedDataTier, string> = {
-  'daily': 'Daily CUR',
-  'hourly': 'Hourly CUR',
+  'daily': 'Daily billing data',
+  'hourly': 'Hourly billing data',
   'cost-optimization': 'Cost optimization',
 };
 const DATA_TIERS: readonly SharedDataTier[] = ['daily', 'hourly', 'cost-optimization'];
@@ -756,7 +756,7 @@ export function ImportConfigPanel({ onApplied, onClose, onBusyChange, onDoneChan
   const [s3Location, setS3Location] = useState('');
   const [fetching, setFetching] = useState(false);
   // The configured sync profile is the only one guaranteed to reach the
-  // CUR bucket, so it beats the alphabetical-first fallback as the
+  // billing-export bucket, so it beats the alphabetical-first fallback as the
   // default. Once the user picks a profile themselves, neither async
   // loader may override it.
   const userPickedProfileRef = useRef(false);

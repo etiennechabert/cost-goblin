@@ -20,7 +20,8 @@ import {
 
 const VALID_COLUMNS: ReadonlySet<string> = new Set([
   'usage_date', 'account_id', 'account_name', 'region', 'service',
-  'service_family', 'line_item_type', 'operation', 'usage_type',
+  'service_code', 'service_category', 'charge_category', 'pricing_category',
+  'commitment_status', 'operation', 'sku_meter',
   'description', 'resource_id', 'usage_amount', 'cost', 'list_cost',
 ]);
 
@@ -47,7 +48,8 @@ export async function exploreData(
 
   const dimensions = await ctx.getQueryDimensions();
   const orgPath = await ctx.getOrgAccountsPath();
-  const availableColumns = await ctx.getAvailableColumns('daily');
+  // Mirror the dashboards: the active Cost Scope's metric backs `cost`.
+  const scopeMetric = await ctx.getCostScope().then(cs => cs.costMetric).catch(() => 'effective' as const);
   const allProviders = await getQueryProviders(ctx, 'daily');
   const required = computePeriodsInRange(dateRange);
   // Per-provider month intersection; providers with nothing in range are
@@ -56,7 +58,6 @@ export async function exploreData(
     .map(p => ({
       name: p.name,
       periods: required.filter(m => p.availablePeriods?.includes(m) ?? false),
-      availableColumns: p.availableColumns,
     }))
     .filter(b => b.periods.length > 0);
   if (branches.length === 0) return emptyRangeResult(ctx, dateRange, format, `Explore Data (${dateRange.start} to ${dateRange.end})`);
@@ -68,7 +69,7 @@ export async function exploreData(
     dimensions,
     orgAccountsPath: orgPath,
     providers: branches,
-    costMetric: 'unblended',
+    costMetric: scopeMetric,
   });
 
   const whereClause = `WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}'`;
@@ -78,7 +79,7 @@ export async function exploreData(
   logger.info('explore-data', { dateRange, grouped: groupByColumns !== undefined && groupByColumns.length > 0 });
 
   const isSlim = matSource !== undefined;
-  const hasListCost = !isSlim && availableColumns.has('pricing_public_on_demand_cost');
+  const hasListCost = !isSlim;
 
   if (groupByColumns !== undefined && groupByColumns.length > 0) {
     const selectCols = groupByColumns.map(col =>
@@ -136,8 +137,8 @@ export async function exploreData(
 
   const rawCols = [
     'usage_date::VARCHAR AS usage_date',
-    'account_id', 'account_name', 'region', 'service', 'service_family',
-    'line_item_type', 'resource_id',
+    'account_id', 'account_name', 'region', 'service', 'service_category',
+    'charge_category', 'resource_id',
     'CAST(cost AS DOUBLE) AS cost',
     ...(hasListCost ? ['CAST(list_cost AS DOUBLE) AS list_cost'] : []),
   ];

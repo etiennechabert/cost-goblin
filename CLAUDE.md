@@ -210,7 +210,7 @@ Keep replies professional and free of any AI attribution (see global git rules).
 ## Key Architecture Decisions
 
 - **Tag normalization at query time** — aliases applied via SQL, not during sync. Changing aliases takes effect immediately.
-- **CUR repartitioned to daily Hive partitions** — monthly files downloaded to staging, repartitioned with DuckDB, staging deleted. Enables file-level date filter pushdown.
+- **FOCUS 1.2 is the core schema** — the AWS source is the FOCUS 1.2 Data Export (Parquet); providers are receivers that deliver FOCUS Parquet into per-month `raw/{tier}-{YYYY-MM}/` dirs. Queries read the downloaded Parquet as-is (no repartitioning); per-month dirs give file-level date filter pushdown.
 - **No SQLite** — all state is YAML (user config) or JSON (app state). DuckDB is the only database.
 - **CostApi interface is the boundary** — UI codes against the interface, never calls DuckDB directly. Enables mock testing and future web mode.
 - **Dark mode default, light mode available** — two chart color palettes (standard + Okabe-Ito colorblind-safe), togglable.

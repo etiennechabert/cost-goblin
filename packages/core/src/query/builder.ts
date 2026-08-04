@@ -4,9 +4,10 @@ import { DEFAULT_PLACEHOLDER_PATTERNS } from '../types/query.js';
 import type { DimensionId, ProviderName } from '../types/branded.js';
 import { tagDimColumn } from '../types/branded.js';
 import { OU_PATH_SOURCE_KEY } from '../types/config.js';
-import type { CostMetric, CostPerspective, CostScopeConfig, ExclusionRule, MarketplaceAttributionConfig, MarketplaceAttributionRule } from '../types/cost-scope.js';
+import type { CostMetric, CostScopeConfig, ExclusionRule, MarketplaceAttributionConfig, MarketplaceAttributionRule } from '../types/cost-scope.js';
+import { DEFAULT_COST_METRIC } from '../types/cost-scope.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
-import { costExprFor, LIST_METRIC_LINE_ITEM_TYPES } from './cost-metric.js';
+import { costExprFor, LIST_METRIC_CHARGE_CATEGORIES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
 import { assertDateString, assertHourString, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
@@ -300,11 +301,10 @@ function buildTagValueExpr(
     return 'NULL';
   }
 
-  const tagName = t.tagName ?? '';
-  const rawKey = tagName.startsWith('user_') ? tagName : `user_${tagName}`;
-  const curKey = sqlEscapeString(rawKey);
-  const tablePrefix = needsOrgJoin ? 'cur.' : '';
-  const resourceExpr = `element_at(${tablePrefix}resource_tags, '${curKey}')[1]`;
+  // FOCUS `Tags` map keys are the raw tag keys — no CUR-style `user_` prefix.
+  const tagKey = sqlEscapeString(t.tagName ?? '');
+  const tablePrefix = needsOrgJoin ? 'src.' : '';
+  const resourceExpr = `element_at(${tablePrefix}Tags, '${tagKey}')[1]`;
 
   if (!hasFallback || !needsOrgJoin) return resourceExpr;
 
@@ -330,23 +330,19 @@ function applyPathSegment(expr: string, pathSegment: { separator: string; index:
 
 /** One provider's contribution to a query source. `periods` follows the
  *  pre-#516 single-provider contract: an explicit list produces per-month
- *  globs, an empty list the tier wildcard (see `buildParquetSource`).
- *  `availableColumns` is per provider — two payer accounts can export
- *  different CUR column sets, so cost expressions are evaluated per branch. */
+ *  globs, an empty list the tier wildcard (see `buildParquetSource`). */
 export interface ProviderSourceBranch {
   readonly name: ProviderName;
   readonly periods?: readonly string[] | undefined;
-  readonly availableColumns?: ReadonlySet<string> | undefined;
 }
 
-/** One provider's query-time context: what's on disk (per the queried tier)
- *  and which CUR columns its latest export carries. The month intersection
- *  with a query's date range happens per provider — DuckDB errors on globs
- *  matching zero files, and providers sync independently. */
+/** One provider's query-time context: what's on disk for the queried tier.
+ *  The month intersection with a query's date range happens per provider —
+ *  DuckDB errors on globs matching zero files, and providers sync
+ *  independently. */
 export interface ProviderSourceSpec {
   readonly name: ProviderName;
   readonly availablePeriods?: readonly string[] | undefined;
-  readonly availableColumns?: ReadonlySet<string> | undefined;
 }
 
 export interface BuildSourceOptions {
@@ -358,7 +354,6 @@ export interface BuildSourceOptions {
    *  One branch per provider; multiple branches are UNION ALLed. */
   readonly providers: readonly ProviderSourceBranch[];
   readonly costMetric?: CostMetric | undefined;
-  readonly costPerspective?: CostPerspective | undefined;
   /** When true, tags with accountTagFallback also emit a raw_<col> column
    *  containing the resource-level value before COALESCE fallback. Used by
    *  the missing-tags query to detect truly untagged resources. */
@@ -367,9 +362,9 @@ export interface BuildSourceOptions {
    *  description, usage_amount, list_cost. Used by the materialized base
    *  to keep the in-memory table small. */
   readonly slim?: boolean | undefined;
-  /** Re-attributes empty-product_servicecode AWS Marketplace rows to a real
-   *  service (and, on the `list` metric, swaps the $0 list price for unblended
-   *  cost). Omitted/disabled → raw CUR attribution. */
+  /** Re-attributes empty-x_ServiceCode AWS Marketplace rows to a real
+   *  service (and, on the `list` metric, swaps the $0 list price for billed
+   *  cost). Omitted/disabled → raw FOCUS attribution. */
   readonly marketplaceAttribution?: MarketplaceAttributionConfig | undefined;
 }
 
@@ -382,7 +377,7 @@ function activeMarketplaceRules(
 }
 
 /** SQL predicate matching any active rule's Marketplace rows (empty
- *  product_servicecode + matching operation). Null when nothing is active. */
+ *  x_ServiceCode + matching operation). Null when nothing is active. */
 function marketplaceMatchPredicate(
   prefix: string,
   rules: readonly MarketplaceAttributionRule[],
@@ -391,11 +386,11 @@ function marketplaceMatchPredicate(
   const ops = [...new Set(rules.flatMap(r => r.operations))]
     .map(o => `'${sqlEscapeString(o)}'`)
     .join(', ');
-  return `COALESCE(${prefix}product_servicecode, '') = '' AND ${prefix}line_item_operation IN (${ops})`;
+  return `COALESCE(${prefix}x_ServiceCode, '') = '' AND ${prefix}x_Operation IN (${ops})`;
 }
 
 /** Wraps the base service expression in a CASE that rewrites each rule's
- *  empty-servicecode Marketplace rows to its target service code. */
+ *  empty-servicecode Marketplace rows to its target service name. */
 function marketplaceServiceExpr(
   prefix: string,
   base: string,
@@ -404,18 +399,18 @@ function marketplaceServiceExpr(
   if (rules.length === 0) return base;
   const branches = rules.map(r => {
     const ops = r.operations.map(o => `'${sqlEscapeString(o)}'`).join(', ');
-    return `WHEN COALESCE(${prefix}product_servicecode, '') = '' AND ${prefix}line_item_operation IN (${ops}) THEN '${sqlEscapeString(r.service)}'`;
+    return `WHEN COALESCE(${prefix}x_ServiceCode, '') = '' AND ${prefix}x_Operation IN (${ops}) THEN '${sqlEscapeString(r.service)}'`;
   });
   return `CASE ${branches.join(' ')} ELSE ${base} END`;
 }
 
-/** Marketplace rows have a $0 public-on-demand price, so any expression keyed
- *  on it (the `list` metric, the `list_cost` column) reports them as free.
- *  Substitute unblended cost — the only real figure AWS gives these rows —
- *  for matched rows. No-op when the predicate is null. */
+/** Marketplace rows carry no public list price (`ListCost` is 0), so any
+ *  expression keyed on it (the `list` metric, the `list_cost` column)
+ *  reports them as free. Substitute billed cost — the only real figure AWS
+ *  gives these rows — for matched rows. No-op when the predicate is null. */
 function marketplaceListFallback(prefix: string, base: string, matchPredicate: string | null): string {
   if (matchPredicate === null) return base;
-  return `CASE WHEN ${matchPredicate} THEN COALESCE(${prefix}line_item_unblended_cost, 0) ELSE ${base} END`;
+  return `CASE WHEN ${matchPredicate} THEN ${costExprFor('billed', prefix)} ELSE ${base} END`;
 }
 
 function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
@@ -423,23 +418,19 @@ function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
   for (const t of dimensions.tags) {
     if (t.accountTagFallback === undefined) continue;
     if (t.tagName === undefined || t.tagName.length === 0) continue;
-    const rawKey = t.tagName.startsWith('user_') ? t.tagName : `user_${t.tagName}`;
-    const curKey = sqlEscapeString(rawKey);
+    const tagKey = sqlEscapeString(t.tagName);
     const colName = tagDimColumn(t);
-    selects.push(`element_at(cur.resource_tags, '${curKey}')[1] AS raw_${colName}`);
+    selects.push(`element_at(src.Tags, '${tagKey}')[1] AS raw_${colName}`);
   }
   return selects;
 }
 
 function buildParquetSource(dataDir: string, provider: ProviderName, tier: string, periods: readonly string[] | undefined): string {
   // union_by_name unifies columns by name across files, filling absent columns
-  // with NULL. Required because CUR schema drifts between months: older exports
-  // lack reservation_effective_cost / savings_plan_savings_plan_effective_cost
-  // while newer ones carry them. getAvailableColumns probes only the latest
-  // month, so the amortized expression references those columns; without
-  // union_by_name DuckDB throws a Binder Error on any read spanning a month
-  // that omits them. The now-NULL column makes amortizedExpr's COALESCE fall
-  // through to unblended for the old rows — the correct degradation.
+  // with NULL. FOCUS pins the core column set, but AWS adds x_ extension
+  // columns over time, so a multi-month read can still span two export
+  // revisions; without union_by_name DuckDB throws a Binder Error on any
+  // read spanning a month that omits a referenced column.
   const rawRoot = `${dataDir}/${String(provider)}/raw`;
   if (periods !== undefined && periods.length > 0) {
     const paths = periods.map(p => `'${rawRoot}/${tier}-${p}/*.parquet'`).join(', ');
@@ -464,15 +455,15 @@ function buildFromClause(
       const fallbackKey = sqlEscapeString(fallback);
       return `tags->>'${fallbackKey}' AS fallback_${colName}`;
     });
-  return `${parquetSource} AS cur
+  return `${parquetSource} AS src
       LEFT JOIN (
         SELECT id, ${fallbackSelects.join(', ')}
         FROM read_json_auto('${orgAccountsPath}')
-      ) AS acct_tags ON cur.line_item_usage_account_id = acct_tags.id`;
+      ) AS acct_tags ON src.SubAccountId = acct_tags.id`;
 }
 
 export function buildSource(opts: BuildSourceOptions): string {
-  const { dataDir, tier, dimensions, orgAccountsPath, providers, costMetric = 'unblended', costPerspective, includeRawTags, slim } = opts;
+  const { dataDir, tier, dimensions, orgAccountsPath, providers, costMetric = DEFAULT_COST_METRIC, includeRawTags, slim } = opts;
   if (providers.length === 0) {
     throw new SecurityError('buildSource requires at least one provider branch');
   }
@@ -486,73 +477,73 @@ export function buildSource(opts: BuildSourceOptions): string {
   const tagClause = tagSelects.length > 0 ? `,\n      ${tagSelects.join(',\n      ')}` : '';
 
   const dateExpr = tier === 'hourly'
-    ? 'line_item_usage_start_date::DATE AS usage_date,\n      line_item_usage_start_date::TIMESTAMP AS usage_hour'
-    : 'line_item_usage_start_date::DATE AS usage_date';
+    ? 'ChargePeriodStart::DATE AS usage_date,\n      ChargePeriodStart::TIMESTAMP AS usage_hour'
+    : 'ChargePeriodStart::DATE AS usage_date';
 
-  const tablePrefix = needsOrgJoin ? 'cur.' : '';
+  const tablePrefix = needsOrgJoin ? 'src.' : '';
 
-  // Marketplace re-attribution: matched rows get a real service code, and on
-  // the `list` metric their $0 public-on-demand price is replaced with
-  // unblended cost (see marketplaceListFallback).
+  // Marketplace re-attribution: matched rows get a real service name, and on
+  // the `list` metric their $0 list price is replaced with billed cost (see
+  // marketplaceListFallback).
   const mktRules = activeMarketplaceRules(opts.marketplaceAttribution);
   const mktMatch = marketplaceMatchPredicate(tablePrefix, mktRules);
 
   const serviceExpr = marketplaceServiceExpr(
     tablePrefix,
-    `COALESCE(${tablePrefix}product_servicecode, '')`,
+    `COALESCE(${tablePrefix}ServiceName, '')`,
     mktRules,
   );
 
   const listCostExpr = marketplaceListFallback(
     tablePrefix,
-    `COALESCE(${tablePrefix}pricing_public_on_demand_cost, 0)`,
+    costExprFor('list', tablePrefix),
     mktMatch,
   );
   const flexColumns = slim === true ? '' : `
-      COALESCE(${tablePrefix}line_item_line_item_description, '') AS description,
-      COALESCE(${tablePrefix}line_item_usage_amount, 0) AS usage_amount,
+      COALESCE(${tablePrefix}ChargeDescription, '') AS description,
+      COALESCE(${tablePrefix}ConsumedQuantity, 0) AS usage_amount,
       ${listCostExpr} AS list_cost,`;
 
-  // The `list` metric reports on-demand list price for usage that actually
-  // happened. RI/SP fee rows (RIFee, SavingsPlanRecurringFee, etc.) have no
-  // retail equivalent, and including them just adds zero-cost rows that bloat
-  // group-by buckets. Restrict at the source level so every downstream query
-  // (Explorer, custom views, MCP, materialized base) sees a consistent slice.
-  const listTypeLiterals = LIST_METRIC_LINE_ITEM_TYPES.map(t => `'${t}'`).join(', ');
+  // The `list` metric reports list price for usage that actually happened.
+  // Purchase/Tax/Credit rows have no retail equivalent, and including them
+  // just adds zero-cost rows that bloat group-by buckets. Restrict at the
+  // source level so every downstream query (Explorer, custom views, MCP,
+  // materialized base) sees a consistent slice.
+  const listCategoryLiterals = LIST_METRIC_CHARGE_CATEGORIES.map(t => `'${t}'`).join(', ');
   const metricWhere = costMetric === 'list'
-    ? `\n    WHERE COALESCE(${tablePrefix}line_item_line_item_type, '') IN (${listTypeLiterals})`
+    ? `\n    WHERE COALESCE(${tablePrefix}ChargeCategory, '') IN (${listCategoryLiterals})`
     : '';
 
-  // One SELECT branch per provider. Branches differ in three ways only: the
-  // Parquet glob, the injected constant `provider` column, and the cost
-  // expression (per-provider availableColumns — payer accounts can export
-  // different CUR column sets). The provider name is a validated
-  // `ProviderName` (path- and quote-safe); escaping is defense in depth.
+  // One SELECT branch per provider. Branches differ in two ways only: the
+  // Parquet glob and the injected constant `provider` column. The provider
+  // name is a validated `ProviderName` (path- and quote-safe); escaping is
+  // defense in depth.
   const orgJoinPath = needsOrgJoin ? orgAccountsPath : undefined;
+  const costExpr = costMetric === 'list'
+    ? marketplaceListFallback(tablePrefix, costExprFor(costMetric, tablePrefix), mktMatch)
+    : costExprFor(costMetric, tablePrefix);
   const branches = providers.map(branch => {
     const parquetSource = buildParquetSource(dataDir, branch.name, tier, branch.periods);
     const fromClause = orgJoinPath !== undefined
       ? buildFromClause(parquetSource, dimensions, orgJoinPath)
       : parquetSource;
 
-    const baseCostExpr = costExprFor(costMetric, tablePrefix, costPerspective, branch.availableColumns);
-    const costExpr = costMetric === 'list'
-      ? marketplaceListFallback(tablePrefix, baseCostExpr, mktMatch)
-      : baseCostExpr;
-
     return `SELECT
       '${sqlEscapeString(String(branch.name))}' AS provider,
       ${dateExpr},
-      ${tablePrefix}line_item_usage_account_id AS account_id,
-      COALESCE(${tablePrefix}line_item_usage_account_name, '') AS account_name,
-      COALESCE(${tablePrefix}product_region_code, '') AS region,
+      ${tablePrefix}SubAccountId AS account_id,
+      COALESCE(${tablePrefix}SubAccountName, '') AS account_name,
+      COALESCE(${tablePrefix}RegionId, '') AS region,
       ${serviceExpr} AS service,
-      COALESCE(${tablePrefix}product_product_family, '') AS service_family,${flexColumns}
-      COALESCE(${tablePrefix}line_item_resource_id, '') AS resource_id,
+      COALESCE(${tablePrefix}x_ServiceCode, '') AS service_code,
+      COALESCE(${tablePrefix}ServiceCategory, '') AS service_category,${flexColumns}
+      COALESCE(${tablePrefix}ResourceId, '') AS resource_id,
       ${costExpr} AS cost,
-      COALESCE(${tablePrefix}line_item_line_item_type, '') AS line_item_type,
-      COALESCE(${tablePrefix}line_item_operation, '') AS operation,
-      COALESCE(${tablePrefix}line_item_usage_type, '') AS usage_type${tagClause}
+      COALESCE(${tablePrefix}ChargeCategory, '') AS charge_category,
+      COALESCE(${tablePrefix}PricingCategory, '') AS pricing_category,
+      COALESCE(${tablePrefix}CommitmentDiscountStatus, '') AS commitment_status,
+      COALESCE(${tablePrefix}x_Operation, '') AS operation,
+      COALESCE(${tablePrefix}SkuMeter, '') AS sku_meter${tagClause}
     FROM ${fromClause}${metricWhere}`;
   });
 
@@ -579,11 +570,7 @@ function resolveProviderBranches(
       ? [...requiredPeriods]
       : requiredPeriods.filter(m => p.availablePeriods?.includes(m));
     return {
-      branch: {
-        name: p.name,
-        periods,
-        ...(p.availableColumns === undefined ? {} : { availableColumns: p.availableColumns }),
-      },
+      branch: { name: p.name, periods },
       hasData: p.availablePeriods === undefined || p.availablePeriods.length > 0,
     };
   });
@@ -647,7 +634,7 @@ export interface QueryContextOptions {
   readonly dimensions: DimensionsConfig;
   readonly orgAccountsPath?: string | undefined;
   /** Configured providers contributing to queries, in config order. Each
-   *  carries its own on-disk months and probed CUR columns. */
+   *  carries its own on-disk months. */
   readonly providers: readonly ProviderSourceSpec[];
   readonly accountReverseMap?: ReadonlyMap<string, readonly string[]> | undefined;
   readonly costScope?: CostScopeConfig | undefined;
@@ -663,7 +650,7 @@ function setupQuery(
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope, materializedSource } = opts;
   const qb = new QueryBuilder();
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
-  const costMetric = costScope?.costMetric ?? 'unblended';
+  const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
   // The materialized base table is built at daily tier and lacks usage_hour,
   // so it can't satisfy hour-bounded queries. Fall through to a fresh hourly
@@ -673,10 +660,9 @@ function setupQuery(
   }
 
   const exclusionClauses = costScope === undefined ? [] : buildExclusionClauses(costScope.rules, dimensions, accountReverseMap, qb);
-  const costPerspective = costScope?.costPerspective ?? 'gross';
   const branches = resolveProviderBranches(providers, computePeriodsInRange(params.dateRange));
   const resolvedTier = effectiveTier(tier, params.dateRange);
-  const source = buildSource({ dataDir, tier: resolvedTier, dimensions, orgAccountsPath, providers: branches, costMetric, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution, ...extraSourceOpts });
+  const source = buildSource({ dataDir, tier: resolvedTier, dimensions, orgAccountsPath, providers: branches, costMetric, marketplaceAttribution: costScope?.marketplaceAttribution, ...extraSourceOpts });
   return { qb, filterClauses, exclusionClauses, source, costMetric };
 }
 
@@ -749,8 +735,7 @@ export function buildTrendQuery(
   const qb = new QueryBuilder();
   const groupByResolved = resolveField(params.groupBy, dimensions);
   const filterClauses = buildFilterClauses(params.filters, dimensions, accountReverseMap, qb);
-  const costMetric = costScope?.costMetric ?? 'unblended';
-  const costPerspective = costScope?.costPerspective ?? 'gross';
+  const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
   const startDate = params.dateRange.start;
   const endDate = params.dateRange.end;
@@ -773,7 +758,7 @@ export function buildTrendQuery(
     const previousPeriods = computePeriodsInRange({ start: prevStartIso, end: prevEndIso });
     const required = [...new Set([...currentPeriods, ...previousPeriods])].sort((a, b) => a.localeCompare(b));
     const branches = resolveProviderBranches(providers, required);
-    source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, providers: branches, costMetric, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution });
+    source = buildSource({ dataDir, tier: 'daily', dimensions, orgAccountsPath, providers: branches, costMetric, marketplaceAttribution: costScope?.marketplaceAttribution });
   } else {
     source = materializedSource;
     exclusionClauses = [];
@@ -831,11 +816,11 @@ export function buildTrendQuery(
 /**
  * Missing-tags classifier.
  *
- * Pass 1 (resources CTE): aggregate Usage/DiscountedUsage line items by
+ * Pass 1 (resources CTE): aggregate resource-bound usage line items by
  * resource_id. A resource is "tagged" if ANY of its line items in the window
  * has the target tag populated — tags can be added mid-month.
  *
- * Pass 2 (category_coverage CTE): per (service, service_family), compute the
+ * Pass 2 (category_coverage CTE): per (service, service_category), compute the
  * cost-weighted ratio of cost that is tagged. A category with ratio = 0 is
  * "likely-untaggable": no resource in it has ever been tagged, so either AWS
  * doesn't allow it or the org never has. A category with ratio > 0 has proof
@@ -862,7 +847,10 @@ export function buildMissingTagsQuery(
 
   const whereConditions = [
     buildDateRangeWhere(qb, params.dateRange),
-    `line_item_type IN ('Usage', 'DiscountedUsage')`,
+    // Resource-bound usage. In FOCUS, commitment-covered usage stays
+    // ChargeCategory='Usage' (flagged via PricingCategory), so this covers
+    // the CUR-era Usage/DiscountedUsage/SavingsPlanCoveredUsage slice.
+    `charge_category = 'Usage'`,
     `resource_id IS NOT NULL AND resource_id != ''`,
     ...filterClauses,
     ...exclusionClauses,
@@ -889,38 +877,38 @@ export function buildMissingTagsQuery(
         account_id,
         account_name,
         service,
-        service_family,
+        service_category,
         resource_id,
         SUM(cost) AS cost,
         MAX(CASE WHEN ${isTaggedExpr} THEN 1 ELSE 0 END) AS has_tag,
         MAX(${tagResolved.rawField}) AS closest_owner
       FROM ${source}
       WHERE ${whereConditions.join(' AND ')}
-      GROUP BY account_id, account_name, service, service_family, resource_id
+      GROUP BY account_id, account_name, service, service_category, resource_id
     ),
     category_coverage AS (
       SELECT
         service,
-        service_family,
+        service_category,
         CASE
           WHEN SUM(cost) > 0 THEN SUM(CASE WHEN has_tag = 1 THEN cost ELSE 0 END) / SUM(cost)
           ELSE 0
         END AS tagged_ratio
       FROM resources
-      GROUP BY service, service_family
+      GROUP BY service, service_category
     )
     SELECT
       r.account_id,
       r.account_name,
       r.resource_id,
       r.service,
-      r.service_family,
+      r.service_category,
       r.cost,
       r.closest_owner,
       c.tagged_ratio,
       CASE WHEN c.tagged_ratio > 0 THEN 'actionable' ELSE 'likely-untaggable' END AS bucket
     FROM resources r
-    JOIN category_coverage c USING (service, service_family)
+    JOIN category_coverage c USING (service, service_category)
     WHERE r.has_tag = 0
     ORDER BY r.cost DESC
   `.trim();
@@ -930,12 +918,12 @@ export function buildMissingTagsQuery(
 
 /**
  * Non-resource cost: everything that's NOT a resource-bound Usage line.
- *   - line_item_type not in (Usage, DiscountedUsage): tax, support, fees,
- *     credits, savings-plan recurring fees, bundled discounts, etc.
+ *   - charge_category != 'Usage': tax, support/commitment purchases,
+ *     credits, adjustments.
  *   - resource_id empty on a Usage line: some data-transfer and misc charges
  *     are Usage but have no resource to attach tags to.
  *
- * Returns cost by (service, service_family, line_item_type) for a sidebar
+ * Returns cost by (service, service_category, charge_category) for a sidebar
  * breakdown. These totals reconcile against the cost overview but are
  * inherently un-taggable at the resource level.
  */
@@ -947,7 +935,7 @@ export function buildNonResourceCostQuery(
 
   const whereConditions = [
     buildDateRangeWhere(qb, params.dateRange),
-    `(line_item_type NOT IN ('Usage', 'DiscountedUsage') OR resource_id IS NULL OR resource_id = '')`,
+    `(charge_category != 'Usage' OR resource_id IS NULL OR resource_id = '')`,
     ...filterClauses,
     ...exclusionClauses,
   ];
@@ -955,12 +943,12 @@ export function buildNonResourceCostQuery(
   const sql = `
     SELECT
       service,
-      service_family,
-      line_item_type,
+      service_category,
+      charge_category,
       SUM(cost) AS cost
     FROM ${source}
     WHERE ${whereConditions.join(' AND ')}
-    GROUP BY service, service_family, line_item_type
+    GROUP BY service, service_category, charge_category
     HAVING SUM(cost) > 0
     ORDER BY cost DESC
   `.trim();
@@ -983,7 +971,7 @@ export function buildDailyCostsQuery(
     ...exclusionClauses,
   ];
 
-  // Round CUR's mid-hour fee timestamps (SavingsPlanFee, RIFee, Tax, etc.)
+  // Round mid-hour fee timestamps (recurring fees, Tax, etc.)
   // to the nearest hour boundary so they land in a single bucket alongside
   // hour-aligned Usage rows instead of polluting the histogram.
   const dateExpr = resolvedTier === 'hourly'
@@ -1215,10 +1203,9 @@ export function buildMaterializeBaseQuery(
       exclusionClauses.push(`NOT (${matchExpr})`);
     }
   }
-  const costMetric = costScope?.costMetric ?? 'unblended';
-  const costPerspective = costScope?.costPerspective ?? 'gross';
+  const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
   const branches = resolveProviderBranches(providers, computePeriodsInRange(dateRange));
-  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, providers: branches, costMetric, costPerspective, marketplaceAttribution: costScope?.marketplaceAttribution, includeRawTags: true, slim: true });
+  const source = buildSource({ dataDir, tier, dimensions, orgAccountsPath, providers: branches, costMetric, marketplaceAttribution: costScope?.marketplaceAttribution, includeRawTags: true, slim: true });
 
   assertDateString(dateRange.start);
   assertDateString(dateRange.end);
@@ -1244,12 +1231,12 @@ function periodUpperBound(period: string): string {
 /** Build the DDL that materializes ONE month's PRE-AGGREGATED rollup partition
  *  to Parquet. Grain = usage_date + enabled dimension columns (see
  *  `rollupGrainColumns`); measures = SUM(cost) + COUNT(*) AS line_items. The
- *  active cost metric/perspective are baked into `cost`, exclusion rows are
+ *  active cost metric is baked into `cost`, exclusion rows are
  *  dropped at build time, and ALL days are ingested (lagDays stays a query-time
  *  filter). Dimension values are stored RAW — aliasing remains query-time.
  *
  *  `buildSource` runs over the FULL dimensions (so exclusion rules referencing
- *  a disabled dim such as line_item_type still resolve); the GROUP BY is what
+ *  a disabled dim such as charge_category still resolve); the GROUP BY is what
  *  collapses non-grain columns away.
  *
  *  Like buildMaterializeBaseQuery this interpolates escaped literals (DuckDB
@@ -1266,19 +1253,14 @@ export function buildRollupPartitionQuery(
   }
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
   const grain = rollupGrainColumns(dimensions);
-  const costMetric = costScope?.costMetric ?? 'unblended';
-  const costPerspective = costScope?.costPerspective ?? 'gross';
+  const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
   // Rollup partitions are built per provider: the caller passes exactly the
   // provider whose store is being (re)built, with the explicit period.
   const source = buildSource({
     dataDir, tier, dimensions, orgAccountsPath,
-    providers: providers.map(pr => ({
-      name: pr.name,
-      periods: [period],
-      ...(pr.availableColumns === undefined ? {} : { availableColumns: pr.availableColumns }),
-    })),
-    costMetric, costPerspective,
+    providers: providers.map(pr => ({ name: pr.name, periods: [period] })),
+    costMetric,
     marketplaceAttribution: costScope?.marketplaceAttribution,
     includeRawTags: false, slim: true,
   });
@@ -1345,17 +1327,12 @@ export function buildGrainProbeQuery(
     throw new SecurityError(`Invalid probe period "${period}" — expected YYYY-MM.`);
   }
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
-  const costMetric = costScope?.costMetric ?? 'unblended';
-  const costPerspective = costScope?.costPerspective ?? 'gross';
+  const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
   const source = buildSource({
     dataDir, tier: 'daily', dimensions, orgAccountsPath,
-    providers: providers.map(pr => ({
-      name: pr.name,
-      periods: [period],
-      ...(pr.availableColumns === undefined ? {} : { availableColumns: pr.availableColumns }),
-    })),
-    costMetric, costPerspective,
+    providers: providers.map(pr => ({ name: pr.name, periods: [period] })),
+    costMetric,
     marketplaceAttribution: costScope?.marketplaceAttribution,
     includeRawTags: false, slim: true,
   });

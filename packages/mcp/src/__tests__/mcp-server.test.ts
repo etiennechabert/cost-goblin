@@ -7,7 +7,6 @@ import {
   loadConfig,
   loadDimensions,
   loadCostScope,
-  listLocalMonths,
 } from '@costgoblin/core';
 import type { McpContext, RawRow } from '../context.js';
 import { createMcpHttpServer } from '../http-server.js';
@@ -202,11 +201,6 @@ describe('MCP server E2E', () => {
     const providerName = config.providers[0]?.name;
     if (providerName === undefined) throw new Error('fixture config has no providers');
 
-    const available = await listLocalMonths(SYNTHETIC_DIR, providerName, 'daily');
-    const glob = `${SYNTHETIC_DIR}/aws-main/raw/daily-${String(available.at(-1))}/*.parquet`;
-    const colRows = await queryAll(conn, `DESCRIBE SELECT * FROM read_parquet('${glob}') LIMIT 0`);
-    const columns = new Set(colRows.map(r => String(r['column_name'])));
-
     const ctx: McpContext = {
       dataDir: SYNTHETIC_DIR,
       stateDir: FIXTURES_DIR,
@@ -219,7 +213,6 @@ describe('MCP server E2E', () => {
       getAccountMap: () => Promise.resolve(accountMap),
       getAccountReverseMap: () => Promise.resolve(reverseMap),
       getOrgAccountsPath: () => Promise.resolve(undefined),
-      getAvailableColumns: () => Promise.resolve(columns),
       materializedBase: { getSource: () => undefined },
       warmup: () => Promise.resolve(),
     };
@@ -299,8 +292,8 @@ describe('MCP server E2E', () => {
       dimensionId: 'service',
       dateRange: { start: '2026-01-01', end: '2026-01-31' },
     });
-    expect(text).toContain('AmazonEC2');
-    expect(text).toContain('AmazonRDS');
+    expect(text).toContain('Amazon Elastic Compute Cloud');
+    expect(text).toContain('Amazon Relational Database Service');
   });
 
   it('get_filter_values returns values for account dimension', async () => {
@@ -318,7 +311,7 @@ describe('MCP server E2E', () => {
       groupBy: 'service',
       dateRange: { start: '2026-01-01', end: '2026-01-31' },
     });
-    expect(text).toContain('AmazonEC2');
+    expect(text).toContain('Amazon Elastic Compute Cloud');
     expect(text).toContain('$');
     expect(text).toContain('%');
   });
@@ -371,11 +364,11 @@ describe('MCP server E2E', () => {
 
   it('query_entity_detail drills into a service', async () => {
     const { text } = await client.callTool('query_entity_detail', {
-      entity: 'AmazonEC2',
+      entity: 'Amazon Elastic Compute Cloud',
       dimension: 'service',
       dateRange: { start: '2026-01-01', end: '2026-01-31' },
     });
-    expect(text).toContain('AmazonEC2');
+    expect(text).toContain('Amazon Elastic Compute Cloud');
     expect(text).toContain('$');
   });
 
@@ -449,7 +442,7 @@ describe('MCP server E2E', () => {
       groupByColumns: ['service', 'region'],
       limit: 10,
     });
-    expect(text).toContain('AmazonEC2');
+    expect(text).toContain('Amazon Elastic Compute Cloud');
     expect(text).toContain('eu-central-1');
   });
 

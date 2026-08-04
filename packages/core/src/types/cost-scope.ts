@@ -1,40 +1,45 @@
 import type { DimensionId } from './branded.js';
 
-/** Which cost perspective backs the `cost` alias in every query.
- *  - `unblended`  — what you were actually billed; upfront RI/SP fees land
- *                   as a lump in their month.
- *  - `amortized`  — spreads RI/SP upfront payments over their term and uses
- *                   effective cost for covered usage. Best for run-rate and
- *                   forecasting.
- *  - `list`       — hypothetical on-demand list price (`pricing_public_on_demand_cost`),
- *                   ignoring all RI/SP discounts. Not money actually spent;
- *                   shows what usage would have cost without commitments.
- *                   When selected, queries are automatically restricted to
- *                   usage-bearing line items (`Usage`, `SavingsPlanCoveredUsage`,
- *                   `DiscountedUsage`) because RI/SP fee rows have no list price.
+/** Which FOCUS 1.2 cost column backs the `cost` alias in every query.
+ *  - `billed`     — `BilledCost`: the basis for invoicing. Excludes
+ *                   amortization of upfront/recurring commitment fees;
+ *                   commitment-covered usage rows carry 0 and the invoiced
+ *                   amount sits on `ChargeCategory='Purchase'` rows. Use for
+ *                   invoice reconciliation.
+ *  - `effective`  — `EffectiveCost`: amortized cost. Spreads commitment
+ *                   purchases over the usage they cover and includes the
+ *                   unused portion of commitments
+ *                   (`CommitmentDiscountStatus='Unused'` rows). Matches Cost
+ *                   Explorer's amortized view. The default for attribution.
+ *  - `list`       — `ListCost`: hypothetical list-price cost, ignoring all
+ *                   negotiated and commitment discounts. Not money actually
+ *                   spent. When selected, queries are restricted to
+ *                   `ChargeCategory='Usage'` rows because purchase/tax/credit
+ *                   rows have no list price.
+ *  - `contracted` — `ContractedCost`: price after negotiated (e.g. EDP)
+ *                   discounts but before commitment discounts.
+ *                   `list − contracted` is what the negotiated discount is
+ *                   worth.
  *
- *  AWS's `blended` (consolidated-billing weighted-average) metric was
- *  intentionally NOT shipped: AWS never extended blended math to Savings
- *  Plans, so on any modern SP-based fleet it's nearly indistinguishable
- *  from unblended and ships none of the chargeback fairness it was
- *  originally designed for. Users on legacy configs with
- *  `costMetric: 'blended'` are silently migrated to `'amortized'` at load
- *  time (see cost-scope-validator.ts).
+ *  Legacy CUR-era metric names on disk (`unblended`, `amortized`, `blended`)
+ *  are silently migrated at load time (see cost-scope-validator.ts):
+ *  `unblended` → `billed`, `amortized`/`blended` → `effective`. The CUR-era
+ *  `net` perspective is gone — FOCUS has no net cost columns.
  *
- *  The SQL expression that each value resolves to lives in
+ *  The SQL expression each value resolves to lives in
  *  packages/core/src/query/cost-metric.ts. */
-export type CostMetric = 'unblended' | 'amortized' | 'list';
+export type CostMetric = 'billed' | 'effective' | 'list' | 'contracted';
 
-export const COST_METRICS: readonly CostMetric[] = ['unblended', 'amortized', 'list'] as const;
+export const COST_METRICS: readonly CostMetric[] = ['billed', 'effective', 'list', 'contracted'] as const;
 
-/** Whether the cost column should be the as-billed ("gross") value or the
- *  post-credit/refund ("net") value. Orthogonal to the metric axis —
- *  every metric has a net variant in CUR when "Include Net Columns" is
- *  enabled on the report. When net columns are missing, the expression
- *  falls back to the gross column for that metric. */
-export type CostPerspective = 'gross' | 'net';
-
-export const COST_PERSPECTIVES: readonly CostPerspective[] = ['gross', 'net'] as const;
+/** The metric every query layer falls back to when no Cost Scope is
+ *  configured (or fails to load). One constant rather than scattered
+ *  'effective' literals: the rollup shape signature and the rollup build
+ *  must agree on the fallback, or a signature mismatch would silently serve
+ *  partitions built under a different metric. (The Explorer's raw-inspection
+ *  default of 'billed' is a deliberate, separate choice — see
+ *  resolveScopeMetric in the desktop explorer handlers.) */
+export const DEFAULT_COST_METRIC: CostMetric = 'effective';
 
 /** One AND-ed condition inside an exclusion rule. Matches when the row's
  *  value for `dimensionId` is in `values` (OR within values). Empty `values`
@@ -63,33 +68,35 @@ export interface ExclusionRule {
 
 /** One re-attribution rule for AWS Marketplace line items. AWS bills
  *  third-party Marketplace usage (foundation models like Claude, partner AMIs,
- *  etc.) with an EMPTY `product_servicecode` and a $0 `pricing_public_on_demand_cost`
- *  — the real charge lands only in `line_item_unblended_cost`. A plain
- *  service-code grouping therefore buckets this spend under a blank service,
- *  and the `list` metric reports it as $0. This rule matches such rows by their
- *  billing `operation` and re-attributes them to a real `service` code (and, for
- *  the `list` metric, substitutes unblended cost for the missing list price).
+ *  etc.) with an EMPTY service code — in FOCUS, an empty `x_ServiceCode` (and
+ *  a `PublisherName` naming the seller rather than AWS). A plain service
+ *  grouping therefore buckets this spend under a blank service, and the
+ *  `list` metric reports it as $0 because Marketplace rows carry no public
+ *  list price. This rule matches such rows by their billing `x_Operation` and
+ *  re-attributes them to a real `service` value (and, for the `list` metric,
+ *  substitutes `BilledCost` for the missing list price).
  *
  *  The canonical case is Bedrock model inference (`InvokeModelInference`,
- *  `InvokeModelStreamingInference`) → `AmazonBedrock`. */
+ *  `InvokeModelStreamingInference`) → `Amazon Bedrock`. */
 export interface MarketplaceAttributionRule {
-  /** Service code matched rows are re-attributed to, e.g. `AmazonBedrock`. */
+  /** `ServiceName` value matched rows are re-attributed to, e.g.
+   *  `Amazon Bedrock`. */
   readonly service: string;
-  /** `line_item_operation` values identifying this rule's Marketplace rows.
-   *  Only rows that ALSO have an empty `product_servicecode` are rewritten, so
+  /** `x_Operation` values identifying this rule's Marketplace rows. Only
+   *  rows that ALSO have an empty `x_ServiceCode` are rewritten, so
    *  first-party usage on the same operation is never touched. */
   readonly operations: readonly string[];
 }
 
 /** Marketplace re-attribution settings. This deliberately rewrites the
- *  as-billed product code for practical readability, so it is a toggle —
- *  enabled by default, disable to see the raw CUR attribution. */
+ *  as-billed service attribution for practical readability, so it is a
+ *  toggle — enabled by default, disable to see the raw FOCUS attribution. */
 export interface MarketplaceAttributionConfig {
   readonly enabled: boolean;
   readonly rules: readonly MarketplaceAttributionRule[];
 }
 
-/** Number of most-recent days to exclude from all date ranges. AWS CUR
+/** Number of most-recent days to exclude from all date ranges. AWS billing
  *  data is not consolidated immediately, so the latest day(s) are
  *  typically incomplete. `0` = include today, `1` = end at yesterday,
  *  `2` (default) = end at the day before yesterday. */
@@ -97,9 +104,6 @@ export const DEFAULT_LAG_DAYS = 2;
 
 export interface CostScopeConfig {
   readonly costMetric: CostMetric;
-  /** Optional. Defaults to 'gross' when omitted (back-compat with
-   *  earlier on-disk configs that predate the perspective axis). */
-  readonly costPerspective?: CostPerspective;
   /** How many recent days to trim from query date ranges. Defaults to
    *  `DEFAULT_LAG_DAYS` (2) when omitted. */
   readonly lagDays?: number | undefined;
@@ -138,10 +142,10 @@ export interface CostScopeSampleRow {
   readonly accountName: string;
   readonly region: string;
   readonly service: string;
-  readonly serviceFamily: string;
-  readonly lineItemType: string;
+  readonly serviceCategory: string;
+  readonly chargeCategory: string;
   readonly operation: string;
-  readonly usageType: string;
+  readonly skuMeter: string;
   readonly description: string;
   readonly resourceId: string;
   readonly usageAmount: number;
@@ -149,27 +153,6 @@ export interface CostScopeSampleRow {
   readonly listCost: number;
   readonly excluded: boolean;
   readonly tags: Readonly<Record<string, string>>;
-}
-
-/** Which optional CUR columns exist in the user's export. Drives UI
- *  warnings (e.g. "Amortized is degraded — your CUR lacks the
- *  effective-cost columns"). The probe runs once per tier, cached for
- *  the session. */
-export interface CostScopeCapabilities {
-  /** `reservation_effective_cost` AND
-   *  `savings_plan_savings_plan_effective_cost` are both present.
-   *  Required for an accurate Amortized metric; when missing we
-   *  degrade to Unblended. Both columns ship only when the CUR has
-   *  "Include Resource IDs" enabled. */
-  readonly hasEffectiveCostColumns: boolean;
-  /** `line_item_net_unblended_cost` is present. Ships only when the
-   *  CUR has "Include Net Columns" enabled. Without it, the Net
-   *  perspective toggle falls back to Gross. */
-  readonly hasNetColumns: boolean;
-  /** `pricing_public_on_demand_cost` is present. Almost always true
-   *  for CUR v2 exports but technically optional. Required for the
-   *  `list` metric — without it, list-price queries return zeros. */
-  readonly hasListPriceColumn: boolean;
 }
 
 export interface CostScopePreviewResult {

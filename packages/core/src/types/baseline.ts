@@ -1,5 +1,5 @@
 import type { DateString, DimensionId, Dollars, EntityRef } from './branded.js';
-import type { CostMetric, CostPerspective, ExclusionRule, MarketplaceAttributionConfig } from './cost-scope.js';
+import type { CostMetric, ExclusionRule, MarketplaceAttributionConfig } from './cost-scope.js';
 import type { FilterMap } from './query.js';
 
 /** What a baseline measures. A scope is either a selection over CostGoblin's
@@ -13,11 +13,10 @@ export type BaselineScope =
 
 /** The slice of the active Cost Scope captured when a baseline is created, so
  *  recompute re-queries like-for-like even if the global Cost Scope later
- *  flips Amortized↔Unblended. Mirrors the build-affecting fields of
+ *  flips Effective↔Billed. Mirrors the build-affecting fields of
  *  {@link CostScopeConfig}. */
 export interface BaselineCostBasis {
   readonly costMetric: CostMetric;
-  readonly costPerspective: CostPerspective;
   readonly rules: readonly ExclusionRule[];
   readonly marketplaceAttribution?: MarketplaceAttributionConfig | undefined;
   readonly lagDays?: number | undefined;
