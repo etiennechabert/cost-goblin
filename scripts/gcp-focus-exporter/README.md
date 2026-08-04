@@ -92,10 +92,35 @@ gcloud services enable bigquery.googleapis.com storage.googleapis.com \
 bq --location=${LOCATION} mk --dataset --force ${PROJECT_ID}:costgoblin_exporter
 gcloud iam service-accounts create costgoblin-exporter \
   --display-name="CostGoblin FOCUS exporter"
-for ROLE in bigquery.jobUser bigquery.dataViewer bigquery.dataEditor; do
-  gcloud projects add-iam-policy-binding ${PROJECT_ID} \
-    --member=serviceAccount:${SA} --role=roles/${ROLE} --condition=None
-done
+# Running a BigQuery job is a project-level permission. On its own it grants
+# no access to any data.
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+  --member=serviceAccount:${SA} --role=roles/bigquery.jobUser --condition=None
+
+# Data access is granted per DATASET. Project-level dataViewer/dataEditor
+# would let this service account read and write every dataset in the project;
+# it needs to read exactly one (the billing export) and write exactly one
+# (its own watermark). Dataset ACLs rather than `bq add-iam-policy-binding
+# --dataset`, which still fails with "This feature requires allowlisting".
+grant_dataset() {   # $1 = dataset, $2 = READER|WRITER
+  TMP=$(mktemp)
+  bq show --format=prettyjson "${PROJECT_ID}:$1" > "${TMP}"
+  python3 - "${TMP}" "$2" "${SA}" <<'PYEOF'
+import json, sys
+path, role, member = sys.argv[1], sys.argv[2], sys.argv[3]
+d = json.load(open(path))
+access = d.setdefault('access', [])
+entry = {'role': role, 'userByEmail': member}
+if entry not in access:
+    access.append(entry)
+json.dump(d, open(path, 'w'))
+PYEOF
+  bq update --source "${TMP}" "${PROJECT_ID}:$1"
+  rm -f "${TMP}"
+}
+grant_dataset "$(printf '%s' "${FOCUS_TABLE}" | cut -d. -f2)" READER
+grant_dataset costgoblin_exporter WRITER
+
 # objectAdmin, not objectCreator — deleting each period's folder is the point
 gcloud storage buckets add-iam-policy-binding gs://${BUCKET} \
   --member=serviceAccount:${SA} --role=roles/storage.objectAdmin
@@ -207,6 +232,96 @@ a period is re-exported:
 ```bash
 gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/billing_period=YYYY-MM/
 ```
+
+## Point CostGoblin at it
+
+The setup wizard is AWS-only for now, so a GCP provider is added by editing
+`costgoblin.yaml` directly. Open the folder that holds it from
+**Data Management → Generate config templates & open folder** — the button
+scaffolds an AWS-shaped template and reveals the directory. Replace the
+`providers` entry (or add a second one alongside your AWS provider):
+
+```yaml
+providers:
+  - name: gcp-main
+    type: gcp
+    sync:
+      daily:
+        bucket: gs://cost-goblin/focus/   # BUCKET + PREFIX from the deploy
+        retentionDays: 365
+      intervalMinutes: 60
+
+defaults:
+  periodDays: 30
+  costMetric: effective
+  lagDays: 2
+```
+
+The config is read once at startup, so **restart the app** after editing.
+
+Field by field:
+
+| Field | Notes |
+|---|---|
+| `name` | Becomes the on-disk directory `{dataDir}/{name}/` and the value of the `provider` dimension. Letters, digits, hyphens and underscores; 64 chars max. Changing it later orphans the already-synced data. |
+| `type` | `gcp`. This is the discriminator — `credentialsProfile` is an AWS-only field and is rejected here. |
+| `sync.daily.bucket` | The **bucket plus the prefix** the exporter writes under, i.e. `BUCKET` + `PREFIX` from the deploy — not the bucket alone, unless you left `PREFIX` empty. The `gs://` scheme is optional. An `s3://` URL is rejected outright rather than failing later as a mysteriously empty listing. |
+| `sync.daily.retentionDays` | How long downloaded periods are kept locally. |
+| `sync.intervalMinutes` | How often CostGoblin re-checks the bucket. The second of the two cadences described above. |
+
+There is deliberately **no `hourly` and no `costOptimization`** block — GCP has
+no delivery behind either name, and the validator rejects them rather than
+silently ignoring them. See "Differences from the AWS integration" below.
+
+### Credentials
+
+By default the provider uses **Application Default Credentials**, which is one
+command and no key material on disk:
+
+```bash
+gcloud auth application-default login
+```
+
+For least privilege, create a read-only service account and impersonate it —
+no long-lived key, and it can reach nothing but this bucket:
+
+```bash
+gcloud iam service-accounts create costgoblin-reader \
+  --display-name="CostGoblin read-only"
+gcloud storage buckets add-iam-policy-binding gs://cost-goblin \
+  --member=serviceAccount:costgoblin-reader@PROJECT.iam.gserviceaccount.com \
+  --role=roles/storage.objectViewer
+gcloud auth application-default login \
+  --impersonate-service-account=costgoblin-reader@PROJECT.iam.gserviceaccount.com
+```
+
+then name it in the config:
+
+```yaml
+  - name: gcp-main
+    type: gcp
+    impersonateServiceAccount: costgoblin-reader@PROJECT.iam.gserviceaccount.com
+    sync:
+      ...
+```
+
+Both halves are needed: the `gcloud auth` command covers the listing SDK, which
+reads ADC, while the config field passes the same identity to the
+`gcloud storage rsync` download, which uses gcloud's own credentials and would
+otherwise run as the signed-in user.
+
+A `keyFile: /path/to/key.json` is also accepted for environments that require a
+service-account key, but impersonation is the better default — there is no
+secret to leak or rotate.
+
+### What GCP does not fill in
+
+Two dimensions are empty for GCP rows, because the FOCUS export has no such
+columns: **Service Category** and **Commitment Discount Status**. They are
+materialized as NULL rather than omitted (a column missing from every file is a
+query-time binder error, not a NULL fill), so those dimensions will show blank
+values for GCP while still working for AWS. That is the export's shape, not a
+sync failure.
 
 ## How change detection works
 

@@ -62,7 +62,11 @@ On first launch, the setup wizard guides you through connecting to your AWS bill
 ## Prerequisites
 
 - **Node.js** 24+
-- **AWS FOCUS 1.2** Data Export delivered as Parquet to S3
+- At least one billing source:
+  - **AWS** — a FOCUS 1.2 Data Export delivered as Parquet to S3 (below)
+  - **GCP** — the native FOCUS BigQuery export, copied into a GCS bucket by [the FOCUS exporter](scripts/gcp-focus-exporter/README.md)
+
+A workspace can configure several providers at once; totals sum across them and a `provider` dimension splits them apart.
 
 ### Setting Up a FOCUS 1.2 Export
 
@@ -145,6 +149,14 @@ Skip the wizard and download the export data manually:
 aws s3 sync s3://your-bucket/path/to/focus-export/ ~/Library/Application\ Support/@costgoblin/desktop/data/raw/
 ```
 Then use the Data tab to register the downloaded files.
+
+### GCP
+
+GCP's billing data reaches CostGoblin through its native **FOCUS BigQuery export**. Because SQL cannot delete GCS objects — and stale export shards would silently inflate a month's totals — a small Cloud Run job in your own project copies each billing period into a bucket. CostGoblin then reads that bucket and never holds credentials that can reach BigQuery.
+
+[**scripts/gcp-focus-exporter**](scripts/gcp-focus-exporter/README.md) covers the whole path: enabling the export, deploying the job (Cloud Shell, local, or copy-paste), and the `costgoblin.yaml` entry that points the app at the result.
+
+> The setup wizard is AWS-only for now, so a GCP provider is added by editing `costgoblin.yaml` — use **Data Management → Generate config templates & open folder**, which scaffolds a template containing a commented-out GCP block.
 
 ## Features
 
