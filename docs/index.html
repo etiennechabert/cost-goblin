@@ -2630,10 +2630,62 @@ gcloud storage buckets create <span class="code-dir">gs://your-company-billing</
             <span class="step-num">2</span>
             <h4>Deploy the exporter</h4>
           </div>
-          <p>A scheduled job in <em>your</em> project copies each changed billing period out of BigQuery into the bucket. CostGoblin never holds credentials that can reach BigQuery &mdash; it only reads the bucket. It ships in the repo under <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter" target="_blank" rel="noopener"><strong>scripts/gcp-focus-exporter</strong></a>:</p>
+          <p>A scheduled job in <em>your</em> project copies each changed billing period out of BigQuery into the bucket. CostGoblin never holds credentials that can reach BigQuery &mdash; it only reads the bucket. It ships in the repo under <a href="https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter" target="_blank" rel="noopener"><strong>scripts/gcp-focus-exporter</strong></a>.</p>
+          <p>Three ways to run it &mdash; same deployment either way, pick whichever suits you:</p>
+          <p style="margin-top:14px"><strong>1. In Cloud Shell</strong> &mdash; nothing installed on your machine; gcloud, Docker and your credentials are already there. <a href="https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https%3A%2F%2Fgithub.com%2Fetiennechabert%2Fcost-goblin&amp;cloudshell_working_dir=scripts%2Fgcp-focus-exporter" target="_blank" rel="noopener"><strong>Open in Cloud Shell</strong></a>, edit the settings at the top of <em>deploy.sh</em>, then run it.</p>
+          <p style="margin-top:14px"><strong>2. Locally</strong>, if you already have the gcloud CLI:</p>
           <div class="code-block">
 cd scripts/gcp-focus-exporter
 <span class="code-file">./deploy.sh</span>   <span class="code-comment"># builds the job, deploys it, schedules it daily</span>
+          </div>
+          <p style="margin-top:14px"><strong>3. Copy-paste</strong>, if you would rather see exactly what runs. Set the five values, then paste the rest into Cloud Shell or any terminal:</p>
+          <div class="code-block">
+<span class="code-comment"># ---- your settings ----</span>
+PROJECT_ID=<span class="code-file">billing-504501</span>
+FOCUS_TABLE=<span class="code-file">$PROJECT_ID.gcp_billing_immutable_XXXXXX_eu.gcp_billing_export_focus_XXXXXX</span>
+BUCKET=<span class="code-file">your-company-billing</span>
+LOCATION=<span class="code-file">EU</span>          <span class="code-comment"># must match the export dataset AND the bucket</span>
+REGION=<span class="code-file">europe-west1</span>  <span class="code-comment"># a region inside LOCATION</span>
+
+<span class="code-comment"># ---- fetch the exporter ----</span>
+mkdir -p costgoblin-exporter &amp;&amp; cd costgoblin-exporter
+BASE=https://raw.githubusercontent.com/etiennechabert/cost-goblin/main/scripts/gcp-focus-exporter
+curl -fsSL -O $BASE/export-focus.mjs -O $BASE/package.json -O $BASE/Dockerfile
+
+<span class="code-comment"># ---- one-time setup ----</span>
+JOB=costgoblin-focus-exporter
+SA=costgoblin-exporter@$PROJECT_ID.iam.gserviceaccount.com
+gcloud config set project $PROJECT_ID
+gcloud services enable bigquery.googleapis.com storage.googleapis.com \
+  run.googleapis.com cloudscheduler.googleapis.com cloudbuild.googleapis.com
+bq --location=$LOCATION mk --dataset --force $PROJECT_ID:costgoblin_exporter
+gcloud iam service-accounts create costgoblin-exporter \
+  --display-name="CostGoblin FOCUS exporter"
+for ROLE in bigquery.jobUser bigquery.dataViewer bigquery.dataEditor; do
+  gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member=serviceAccount:$SA --role=roles/$ROLE --condition=None
+done
+<span class="code-comment"># objectAdmin, not objectCreator — deleting each period's folder is the point</span>
+gcloud storage buckets add-iam-policy-binding gs://$BUCKET \
+  --member=serviceAccount:$SA --role=roles/storage.objectAdmin
+
+<span class="code-comment"># ---- deploy and schedule ----</span>
+ENV_VARS=FOCUS_TABLE=$FOCUS_TABLE,BUCKET=$BUCKET,PREFIX=focus
+ENV_VARS=$ENV_VARS,STATE_TABLE=$PROJECT_ID.costgoblin_exporter.export_state
+ENV_VARS=$ENV_VARS,BQ_LOCATION=$LOCATION
+gcloud run jobs deploy $JOB --source=. --region=$REGION \
+  --service-account=$SA --tasks=1 --max-retries=1 --task-timeout=30m \
+  --set-env-vars="$ENV_VARS"
+gcloud scheduler jobs create http $JOB-trigger --location=$REGION \
+  --schedule="0 6 * * *" --http-method=POST \
+  --uri=https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$PROJECT_ID/jobs/$JOB:run \
+  --oauth-service-account-email=$SA
+gcloud run jobs add-iam-policy-binding $JOB --region=$REGION \
+  --member=serviceAccount:$SA --role=roles/run.invoker
+
+<span class="code-comment"># ---- run it now ----</span>
+gcloud run jobs execute $JOB --region=$REGION --wait
+gcloud storage ls gs://$BUCKET/focus/
           </div>
           <p>Each run re-exports only the periods that changed, and writes them as:</p>
           <div class="code-block">
