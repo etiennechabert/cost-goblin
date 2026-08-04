@@ -44,6 +44,7 @@ npx vitest run <specific-file>        # single test file (fastest iteration)
 # Fixtures
 npx tsx packages/core/src/__fixtures__/generate.ts --profile    # profile real data
 npx tsx packages/core/src/__fixtures__/generate.ts --generate   # create synthetic fixtures
+npx tsx packages/core/src/__fixtures__/focus-1-2/write-samples.ts  # regenerate the committed AWS/Azure/GCP FOCUS 1.2 samples
 ```
 
 ## Development Workflow
