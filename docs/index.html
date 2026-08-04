@@ -1387,6 +1387,12 @@
       background: rgba(255, 255, 255, 0.02);
     }
 
+    .roadmap-badge.in-progress {
+      color: var(--emerald);
+      border-color: rgba(16, 185, 129, 0.35);
+      background: rgba(16, 185, 129, 0.08);
+    }
+
     .roadmap-badge {
       display: inline-block;
       font-family: var(--font-mono);
@@ -1880,18 +1886,19 @@
     .provider-modal .step-callout { margin-left: 0; }
     .provider-modal .step { opacity: 1; transform: none; }
 
-    /* Links inside the setup steps were never styled — they rendered as the
-       browser's default blue underline, which is glaring on this palette. Now
-       that the steps live in a modal people actually open, give them the
-       site's own link treatment. */
-    .get-started-steps a {
+    /* Body links were never styled — they rendered as the browser's default
+       blue underline, which is glaring on this palette. Applies anywhere prose
+       carries a link: the setup steps and the roadmap cards. */
+    .get-started-steps a,
+    .roadmap-card a {
       color: var(--emerald);
       text-decoration: none;
       border-bottom: 1px solid rgba(16, 185, 129, 0.35);
       transition: border-color 0.2s ease;
     }
 
-    .get-started-steps a:hover { border-bottom-color: var(--emerald); }
+    .get-started-steps a:hover,
+    .roadmap-card a:hover { border-bottom-color: var(--emerald); }
 
     @media (max-width: 768px) {
       .provider-modal { padding: 16px 8px; }
@@ -2375,9 +2382,14 @@
           <p>Share dashboards and cost reports with your team. Collaborative triage for cost spikes.</p>
         </div>
         <div class="roadmap-card" data-animate>
+          <div class="roadmap-badge in-progress">In progress</div>
+          <h4>GCP support</h4>
+          <p>The FOCUS 1.2 BigQuery export, synced to your machine alongside AWS and split by a provider dimension. The <a href="#get-started-gcp">setup guide</a> is live; the in-app connection is landing now.</p>
+        </div>
+        <div class="roadmap-card" data-animate>
           <div class="roadmap-badge">Maybe</div>
-          <h4>Multi-cloud</h4>
-          <p>GCP and Azure billing support alongside AWS. One interface for all your cloud spend.</p>
+          <h4>Azure</h4>
+          <p>Azure billing support alongside AWS and GCP. One interface for all your cloud spend.</p>
         </div>
       </div>
 
