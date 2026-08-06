@@ -30,8 +30,10 @@ import {
   logger,
   isStringRecord,
   GCLOUD_ADC_LOGIN_COMMAND,
+  GCLOUD_CLI_LOGIN_COMMAND,
   isCredentialError,
   isGcloudDownloadFailure,
+  isGcloudCliAccountError,
   isGcpCredentialError,
   isS3SyncDownloadFailure,
 } from '@costgoblin/core';
@@ -787,6 +789,15 @@ export { isCredentialError };
  *  an IAM permission error must not be dressed up as "log in again". */
 export function toUserFriendlyError(err: unknown, auth: ProviderAuth): Error {
   if (auth.kind === 'gcp') {
+    // BEFORE the ADC check, whose markers this shares. A GCP sync spans two
+    // credential stores — the listing SDK reads ADC, `gcloud storage rsync`
+    // runs as gcloud's active account — and only re-running the matching one
+    // helps. Observed live: with a work account active in gcloud but personal
+    // ADC, listing succeeded and the download failed, and the ADC advice would
+    // have looped forever.
+    if (isGcloudCliAccountError(err)) {
+      return new Error(`The gcloud CLI is signed in as a different account than CostGoblin's credentials, or its session expired. Run: ${GCLOUD_CLI_LOGIN_COMMAND}`);
+    }
     if (isGcpCredentialError(err)) {
       return new Error(`GCP credentials are missing or expired. Run: ${GCLOUD_ADC_LOGIN_COMMAND}`);
     }

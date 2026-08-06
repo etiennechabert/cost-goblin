@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { isCredentialError, isS3SyncDownloadFailure } from '../sync/s3-client.js';
-import { isGcloudDownloadFailure, isGcpCredentialError } from '../sync/gcs-client.js';
+import { isGcloudCliAccountError, isGcloudDownloadFailure, isGcpCredentialError } from '../sync/gcs-client.js';
 
 /** Every AWS message the suite asserts on, reused as cross-negatives for the
  *  GCP classifiers (and vice versa). The two provider paths share one error
@@ -116,6 +116,40 @@ describe('isGcloudDownloadFailure', () => {
     expect(isGcloudDownloadFailure(new Error('aws s3 sync failed (exit 1): download failed: s3://b/k Max Retries Exceeded'))).toBe(false);
     expect(isGcloudDownloadFailure('a string')).toBe(false);
     expect(isGcloudDownloadFailure(null)).toBe(false);
+  });
+});
+
+describe('isGcloudCliAccountError', () => {
+  /** Verbatim stderr from a live run: personal ADC, work account active in
+   *  gcloud. Listing succeeded; the download failed like this. */
+  const LIVE = 'gcloud storage rsync failed (exit 1): WARNING: This command is using service account impersonation. '
+    + 'All API calls will be executed as [costgoblin-reader@billing-504501.iam.gserviceaccount.com].\n'
+    + 'ERROR: (gcloud.storage.rsync) There was a problem refreshing your current auth tokens: Reauthentication failed. '
+    + 'cannot prompt during non-interactive execution.\nPlease run:\n$ gcloud auth login\nto obtain new credentials.\n'
+    + 'If you have already logged in with a different account, run:\n$ gcloud config set account ACCOUNT';
+
+  it('detects a stale or mismatched gcloud CLI account', () => {
+    expect(isGcloudCliAccountError(new Error(LIVE))).toBe(true);
+    expect(isGcloudCliAccountError(new Error('gcloud storage rsync failed (exit 1): You do not currently have an active account selected'))).toBe(true);
+  });
+
+  it('outranks isGcpCredentialError, which the same message also matches', () => {
+    // Both match — which is exactly why order matters in toUserFriendlyError.
+    // ADC is fine here; telling the user to re-run `application-default login`
+    // would send them round a loop that never fixes the CLI account.
+    expect(isGcpCredentialError(new Error(LIVE))).toBe(true);
+    expect(isGcloudCliAccountError(new Error(LIVE))).toBe(true);
+  });
+
+  it('is scoped to the gcloud CLI download wrapper only', () => {
+    // The ADC failure from the listing SDK must never land here — its fix is
+    // the other command.
+    expect(isGcloudCliAccountError(new Error('Could not load the default credentials'))).toBe(false);
+    // `gcloud auth application-default login` does not contain `gcloud auth login`.
+    expect(isGcloudCliAccountError(new Error('gcloud storage rsync failed (exit 1): run gcloud auth application-default login'))).toBe(false);
+    expect(isGcloudCliAccountError(new Error('Reauthentication failed'))).toBe(false);
+    expect(isGcloudCliAccountError('a string')).toBe(false);
+    expect(isGcloudCliAccountError(null)).toBe(false);
   });
 });
 

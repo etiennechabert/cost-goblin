@@ -30,6 +30,7 @@ export {
 
 export {
   createGcsHandle,
+  isGcloudCliAccountError,
   isGcloudDownloadFailure,
   isGcpCredentialError,
   parseGcsPath,

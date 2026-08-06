@@ -14,6 +14,11 @@
  *  a single machine-wide credential. */
 export const GCLOUD_ADC_LOGIN_COMMAND = 'gcloud auth application-default login';
 
+/** Signs the gcloud CLI itself in. Distinct from ADC and NOT interchangeable:
+ *  a GCP sync authenticates through both, and only this one governs the
+ *  `gcloud storage rsync` that moves the bytes. */
+export const GCLOUD_CLI_LOGIN_COMMAND = 'gcloud auth login';
+
 /** Marker the AWS credential-expiry message carries. The full message names a
  *  profile, so consumers match on this prefix rather than the whole string. */
 export const AWS_SSO_LOGIN_COMMAND_PREFIX = 'aws sso login';

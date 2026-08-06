@@ -62,6 +62,36 @@ export function isGcpCredentialError(err: unknown): boolean {
   );
 }
 
+/** The gcloud CLI's OWN sign-in is the problem, not Application Default
+ *  Credentials.
+ *
+ *  The two halves of a GCP sync authenticate through different stores by
+ *  design: the listing SDK reads ADC, while `gcloud storage rsync` runs as
+ *  gcloud's ACTIVE ACCOUNT, which the app never sets. Anyone signed into both
+ *  a work and a personal account routinely has the wrong one active — listing
+ *  succeeds and the download fails, which is exactly what a live run against a
+ *  real bucket produced.
+ *
+ *  Must be tested BEFORE `isGcpCredentialError`, whose `Reauthentication
+ *  failed` / `gcloud auth login` markers this shares. Re-running
+ *  `application-default login` cannot refresh a stale CLI account, so that
+ *  advice sends the user round a loop that never terminates.
+ *
+ *  Scoped to the CLI failure wrapper so an SDK error can never land here. */
+export function isGcloudCliAccountError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message;
+  if (!msg.includes('gcloud storage rsync failed')) return false;
+  return (
+    msg.includes('Reauthentication failed') ||
+    msg.includes('gcloud config set account') ||
+    msg.includes('do not currently have an active account') ||
+    // Not a substring of `gcloud auth application-default login`, so this
+    // matches only gcloud's own advice to re-authenticate the CLI.
+    msg.includes('gcloud auth login')
+  );
+}
+
 /** A `gcloud storage rsync` download that failed without an explicit
  *  credential signature — retries exhausted, connection reset. Sister of
  *  `isS3SyncDownloadFailure`: for an ADC-backed bucket this is usually an
