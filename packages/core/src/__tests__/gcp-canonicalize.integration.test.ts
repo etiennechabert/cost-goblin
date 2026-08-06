@@ -221,6 +221,41 @@ describe('canonicalizeGcpPeriod', () => {
     expect(names.has('x_Labels')).toBe(false);
   });
 
+  it('drops Google-reserved goog- keys, which the real export mixes into x_Labels', async () => {
+    // Excluding x_SystemLabels is not enough. In the first real export observed
+    // (2026-08), x_Labels carried `goog-resource-type` on 20 of 60 rows,
+    // alongside a genuine user label on 9 — so a workspace would get a
+    // Google-generated key sitting above its own in the dimension picker.
+    // `goog-` is Google's documented reserved label prefix.
+    const dir = join(root, 'staging', 'goog-labels');
+    await mkdir(dir, { recursive: true });
+    await conn.run(`CREATE TABLE bq_goog AS SELECT * FROM (VALUES (
+      TIMESTAMPTZ '2026-08-04 04:00:00+00', 'proj-a', 'Project A',
+      CAST(1 AS DECIMAL(38,9)), CAST(1 AS DECIMAL(38,9)),
+      'Cloud Storage', 'Usage',
+      [{'Key': 'goog-resource-type', 'Value': 'bigquery_resource'}, {'Key': 'purpose', 'Value': 'freetier-billing-probe'}],
+      'storage.googleapis.com'
+    )) AS t(
+      ChargePeriodStart, SubAccountId, SubAccountName,
+      BilledCost, EffectiveCost, ServiceName, ChargeCategory,
+      x_Labels, x_ServiceId
+    )`);
+    await conn.run(`COPY (SELECT * FROM bq_goog) TO '${join(dir, 'shard-0.parquet')}' (FORMAT PARQUET)`);
+
+    const out = join(root, 'out', 'goog-labels', 'part-0.parquet');
+    await canonicalizeGcpPeriod({ stagingDir: dir, outputPath: out, connection: conn });
+
+    const [row] = await rowsOf(`SELECT
+      element_at(Tags,'purpose')[1] AS purpose,
+      element_at(Tags,'goog-resource-type')[1] AS goog,
+      cardinality(Tags) AS n
+      FROM read_parquet('${out}')`);
+
+    expect(row?.['purpose']).toBe('freetier-billing-probe');
+    expect(row?.['goog']).toBeNull();
+    expect(Number(row?.['n'])).toBe(1);
+  });
+
   it('reads tags from the column the real export actually uses (x_Tags)', async () => {
     // The live GCP FOCUS export has 55 columns and NO `Tags` — resource tags
     // are in `x_Tags`. Reading only the FOCUS-standard name produced an empty

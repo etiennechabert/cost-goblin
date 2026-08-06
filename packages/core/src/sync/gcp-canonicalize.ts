@@ -203,6 +203,17 @@ function tagEntriesExpr(present: readonly string[]): string {
   return `list_concat(${parts.join(', ')})`;
 }
 
+/** Google reserves the `goog-` label prefix for keys it generates itself.
+ *
+ *  Excluding `x_SystemLabels` wholesale is not enough: a live export puts
+ *  `goog-resource-type` in **`x_Labels`**, the same column that carries the
+ *  user's own labels — 20 of 60 rows in the first real export observed, next
+ *  to a genuine `purpose` label on 9. Without this filter every GCP workspace
+ *  gets a Google-generated key sitting in the dimension picker above the
+ *  user's own, which is the outcome the `x_SystemLabels` exclusion already
+ *  exists to prevent. */
+const RESERVED_TAG_PREFIX = 'goog-';
+
 /** Fold the merged entry list into a `MAP(VARCHAR, VARCHAR)`.
  *
  *  `map_from_entries` throws `Invalid Input Error` — failing the whole
@@ -214,7 +225,7 @@ function tagEntriesExpr(present: readonly string[]): string {
  *  rule. Quadratic in tags-per-row, which is fine at the handful of tags a
  *  billing row actually carries. */
 const TAGS_EXPR = `map_from_entries(list_transform(
-      list_distinct(list_transform(list_filter(__tag_entries, e -> e.k IS NOT NULL), e -> e.k)),
+      list_distinct(list_transform(list_filter(__tag_entries, e -> e.k IS NOT NULL AND NOT starts_with(e.k, ${quoteLiteral(RESERVED_TAG_PREFIX)})), e -> e.k)),
       k -> struct_pack(k := k, v := list_filter(__tag_entries, e -> e.k = k)[1].v)))`;
 
 interface Projection {
