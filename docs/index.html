@@ -81,16 +81,11 @@
     section, header, footer { position: relative; z-index: 1; }
 
     .container {
-      max-width: 980px;
-      margin: 0 auto;
-      padding: 0 24px;
-    }
-
-    .container-wide {
       max-width: 1120px;
       margin: 0 auto;
       padding: 0 24px;
     }
+
 
     /* --- NAV --- */
     nav {
@@ -106,7 +101,7 @@
     }
 
     nav .inner {
-      max-width: 980px;
+      max-width: 1120px;
       margin: 0 auto;
       display: flex;
       align-items: center;
@@ -400,8 +395,8 @@
 
     .positioning-header {
       max-width: 760px;
-      margin: 0 auto 56px;
-      text-align: center;
+      margin: 0 0 56px;
+      text-align: left;
       opacity: 0;
       transform: translateY(12px);
       transition: opacity 0.6s ease, transform 0.6s ease;
@@ -593,8 +588,8 @@
 
     .showcase-header {
       max-width: 720px;
-      margin: 0 auto 72px;
-      text-align: center;
+      margin: 0 0 72px;
+      text-align: left;
       opacity: 0;
       transform: translateY(12px);
       transition: all 0.6s ease;
@@ -605,7 +600,7 @@
     }
     .showcase-header .section-label { margin-bottom: 12px; }
     .showcase-header .section-title {
-      margin: 0 auto 20px;
+      margin: 0 0 20px;
       max-width: 640px;
     }
     .showcase-intro {
@@ -1517,21 +1512,21 @@
 
     .sponsors-header {
       max-width: 640px;
-      margin: 0 auto 56px;
-      text-align: center;
+      margin: 0 0 56px;
+      text-align: left;
       opacity: 0;
       transform: translateY(12px);
       transition: opacity 0.6s ease, transform 0.6s ease;
     }
     .sponsors-header.visible { opacity: 1; transform: translateY(0); }
     .sponsors-header .section-label { margin-bottom: 12px; }
-    .sponsors-title { margin: 0 auto 18px; }
+    .sponsors-title { margin: 0 0 18px; }
     .sponsors-intro {
       font-size: 15px;
       line-height: 1.65;
       color: var(--text-dim);
       max-width: 520px;
-      margin: 0 auto;
+      margin: 0;
     }
 
     .sponsors-grid {
@@ -1598,7 +1593,7 @@
     }
 
     footer .inner {
-      max-width: 980px;
+      max-width: 1120px;
       margin: 0 auto;
       display: flex;
       align-items: center;
@@ -1673,8 +1668,8 @@
        card that opens its guide in a modal. */
     .integration-intro {
       max-width: 620px;
-      margin: 0 auto 40px;
-      text-align: center;
+      margin: 0 0 40px;
+      text-align: left;
       color: var(--text-dim);
       font-size: 16px;
       line-height: 1.7;
@@ -1685,7 +1680,7 @@
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       gap: 20px;
       max-width: 1020px;
-      margin: 0 auto;
+      margin: 0;
     }
 
     .integration-card {
@@ -2080,7 +2075,7 @@
 
   <!-- SHOWCASE -->
   <section class="showcase" id="showcase">
-    <div class="container-wide">
+    <div class="container">
       <div class="showcase-header" data-animate>
         <div class="section-label">What it does</div>
         <h2 class="section-title">Cloud cost visibility<br>without the cloud</h2>
