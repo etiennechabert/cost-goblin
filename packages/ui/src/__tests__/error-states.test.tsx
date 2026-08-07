@@ -150,7 +150,7 @@ describe('SetupWizard error states', () => {
       missingColumns: ['ConsumedQuantity', 'ListCost'],
     });
 
-    await user.click(screen.getByText('Set up from S3'));
+    await user.click(screen.getByLabelText('Set up from AWS'));
     await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
     await user.click(screen.getByText('default'));
     await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
@@ -171,7 +171,7 @@ describe('SetupWizard error states', () => {
       missingColumns: [],
     });
 
-    await user.click(screen.getByText('Set up from S3'));
+    await user.click(screen.getByLabelText('Set up from AWS'));
     await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
     await user.click(screen.getByText('default'));
     await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
@@ -193,7 +193,7 @@ describe('SetupWizard error states', () => {
       missingColumns: [],
     });
 
-    await user.click(screen.getByText('Set up from S3'));
+    await user.click(screen.getByLabelText('Set up from AWS'));
     await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
     await user.click(screen.getByText('default'));
     await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
@@ -210,7 +210,7 @@ describe('SetupWizard error states', () => {
     const { api, user } = renderWizard();
     vi.spyOn(api, 'listAwsProfiles').mockResolvedValue([]);
 
-    await user.click(screen.getByText('Set up from S3'));
+    await user.click(screen.getByLabelText('Set up from AWS'));
     await waitFor(() => {
       expect(screen.getByText('No AWS profiles found')).toBeDefined();
     });

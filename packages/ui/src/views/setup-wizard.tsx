@@ -138,7 +138,72 @@ function WelcomeStep({ onNext, naming, jumpBack }: Readonly<{ onNext: () => void
   );
 }
 
-/** Step 2 — the get-started hub: S3, Google Cloud, or a teammate's bundle. */
+/** Simple geometric marks rather than the vendors' actual logos: those are
+ *  trademarks with their own usage rules, and a recognizable silhouette in the
+ *  brand colour is all a picker needs. `currentColor` is deliberately NOT used
+ *  — the colour IS the recognition cue, and it must survive the disabled tile's
+ *  dimming as a wash rather than turning grey. */
+function AwsMark(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 32 32" className="h-8 w-8" aria-hidden="true">
+      <path d="M6 19q-1 3 2 4.5T16 25t8-1.5 2-4.5" fill="none" stroke="#FF9900" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M10 8h3l3 8 3-8h3" fill="none" stroke="#FF9900" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function GcpMark(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 32 32" className="h-8 w-8" aria-hidden="true">
+      <path d="M16 6a8 8 0 0 1 7.5 5.2A6 6 0 0 1 23 23H11a7 7 0 0 1-1.6-13.8A8 8 0 0 1 16 6z" fill="none" stroke="#4285F4" strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M9.4 9.2A8 8 0 0 1 16 6" fill="none" stroke="#EA4335" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M23.5 11.2A6 6 0 0 1 23 23" fill="none" stroke="#FBBC05" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M11 23h6" fill="none" stroke="#34A853" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function AzureMark(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 32 32" className="h-8 w-8" aria-hidden="true">
+      <path d="M13 5 5 24h6l8-19z" fill="none" stroke="#0078D4" strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M19 11 27 24H12l5-4" fill="none" stroke="#0078D4" strokeWidth="2.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** One cloud in the provider row. Disabled tiles stay visible on purpose —
+ *  "Azure is coming" is information; a missing tile just looks like a product
+ *  that never considered it. */
+function ProviderTile({ label, note, mark, onClick, disabled }: Readonly<{
+  label: string;
+  note: string;
+  mark: React.JSX.Element;
+  onClick?: (() => void) | undefined;
+  disabled?: boolean | undefined;
+}>) {
+  const isDisabled = disabled === true;
+  return (
+    <button
+      type="button"
+      onClick={isDisabled ? undefined : onClick}
+      disabled={isDisabled}
+      aria-label={`Set up from ${label}`}
+      className={[
+        'flex flex-1 flex-col items-center gap-2 rounded-lg border px-3 py-4 transition-colors',
+        isDisabled
+          ? 'cursor-not-allowed border-border/60 opacity-40'
+          : 'border-border hover:border-accent hover:bg-bg-secondary cursor-pointer',
+      ].join(' ')}
+    >
+      {mark}
+      <span className="text-sm font-medium text-text-primary">{label}</span>
+      <span className="text-[11px] leading-tight text-text-muted">{note}</span>
+    </button>
+  );
+}
+
+/** Step 2 — the get-started hub: pick a cloud, or import a teammate's bundle. */
 function StartStep({ workspaceLabel, onSetup, onGcp, onImport, onBack, jumpBack }: Readonly<{
   workspaceLabel: string | undefined;
   onSetup: () => void;
@@ -157,25 +222,33 @@ function StartStep({ workspaceLabel, onSetup, onGcp, onImport, onBack, jumpBack 
           </p>
         )}
       </div>
-      <p className="text-text-secondary text-lg">How do you want to get started?</p>
-      <div className="flex w-full max-w-xs flex-col gap-3">
-        <Button onClick={onSetup} className="bg-accent hover:bg-accent-hover text-white">
-          Set up from S3
-        </Button>
-        <p className="text-text-muted text-xs">
-          Connect your AWS billing data. CostGoblin syncs a FOCUS 1.2 Data Export from S3, stores it locally, and lets you slice costs by any dimension.
-        </p>
-        <Button variant="outline" onClick={onGcp}>
-          Set up from Google Cloud
-        </Button>
-        <p className="text-text-muted text-xs">
-          Connect your GCP billing data. Needs the FOCUS export running in your own project — CostGoblin reads the bucket it fills.
-        </p>
+      <p className="text-text-secondary text-lg">Which cloud are you billing on?</p>
+      <div className="flex w-full max-w-md gap-3">
+        <ProviderTile
+          label="AWS"
+          note="FOCUS 1.2 Data Export in S3"
+          mark={<AwsMark />}
+          onClick={onSetup}
+        />
+        <ProviderTile
+          label="Google Cloud"
+          note="FOCUS BigQuery export via GCS"
+          mark={<GcpMark />}
+          onClick={onGcp}
+        />
+        <ProviderTile
+          label="Azure"
+          note="Coming soon"
+          mark={<AzureMark />}
+          disabled
+        />
+      </div>
+      <div className="flex w-full max-w-xs flex-col gap-2">
         <Button variant="outline" onClick={onImport}>
           Import from a teammate
         </Button>
         <p className="text-text-muted text-xs">
-          Pull config and data from a teammate — a bundle file, from S3, or straight over your network. No AWS access needed.
+          Pull config and data from a teammate — a bundle file, from S3, or straight over your network. No cloud access needed.
         </p>
       </div>
       <JumpBackList jumpBack={jumpBack} />

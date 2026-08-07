@@ -41,7 +41,7 @@ afterEach(cleanup);
 describe('SetupWizard', () => {
   it('get started button advances to profile step', async () => {
     const { user } = renderWizard();
-    await user.click(screen.getByText('Set up from S3'));
+    await user.click(screen.getByLabelText('Set up from AWS'));
     await waitFor(() => {
       expect(screen.getByText('default')).toBeDefined();
     });
@@ -60,7 +60,7 @@ describe('SetupWizard', () => {
         <SetupWizard onComplete={onComplete} />
       </CostApiProvider>,
     );
-    await user.click(screen.getByText('Set up from S3'));
+    await user.click(screen.getByLabelText('Set up from AWS'));
     expect(screen.getByText('Loading profiles...')).toBeDefined();
     resolveProfiles?.(['default']);
     await waitFor(() => {
@@ -78,7 +78,7 @@ describe('SetupWizard', () => {
   it('continues to manual browsing when the bucket has no published config', async () => {
     const { api, user } = renderWizard();
     const beaconSpy = vi.spyOn(api, 'checkConfigBeacon');
-    await user.click(screen.getByText('Set up from S3'));
+    await user.click(screen.getByLabelText('Set up from AWS'));
     await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
     await user.click(screen.getByText('default'));
     await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
@@ -112,7 +112,7 @@ describe('SetupWizard', () => {
     });
     const applySpy = vi.spyOn(api, 'applyConfigBundle');
 
-    await user.click(screen.getByText('Set up from S3'));
+    await user.click(screen.getByLabelText('Set up from AWS'));
     await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
     await user.click(screen.getByText('default'));
     await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
@@ -149,7 +149,7 @@ describe('SetupWizard', () => {
       },
     });
 
-    await user.click(screen.getByText('Set up from S3'));
+    await user.click(screen.getByLabelText('Set up from AWS'));
     await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
     await user.click(screen.getByText('default'));
     await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
@@ -168,7 +168,7 @@ describe('SetupWizard', () => {
 
   it('returns to the start screen from a wizard step via the close button', async () => {
     const { user } = renderWizard();
-    await user.click(screen.getByText('Set up from S3'));
+    await user.click(screen.getByLabelText('Set up from AWS'));
     await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
     await user.click(screen.getByLabelText('Back to start'));
     await waitFor(() => { expect(screen.getByText('Import from a teammate')).toBeDefined(); });
@@ -223,7 +223,7 @@ describe('SetupWizard workspace naming', () => {
     await user.type(input, 'client-a');
     await user.click(screen.getByRole('button', { name: 'Continue' }));
 
-    await waitFor(() => { expect(screen.getByText('How do you want to get started?')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByText('Which cloud are you billing on?')).toBeDefined(); });
     expect(screen.getByText('client-a')).toBeDefined();
     // The hub offers the way back to the naming step.
     await user.click(screen.getByText('← Change workspace name'));
@@ -314,7 +314,7 @@ describe('SetupWizard jump-back to existing workspaces', () => {
   it('add mode requires a fresh provider name and rejects duplicates', async () => {
     const { api, user, onComplete } = renderWizard({ mode: 'add' });
     const writeSpy = vi.spyOn(api, 'writeConfig');
-    await user.click(screen.getByText('Set up from S3'));
+    await user.click(screen.getByLabelText('Set up from AWS'));
     await waitFor(() => { expect(screen.getByText('prod')).toBeDefined(); });
     await user.click(screen.getByText('prod'));
     await walkToConfirm(user);
@@ -342,19 +342,32 @@ describe('SetupWizard jump-back to existing workspaces', () => {
 });
 
 describe('SetupWizard — GCP', () => {
-  it('offers a Google Cloud door beside S3 and the teammate import', () => {
+  it('offers a Google Cloud door beside AWS and the teammate import', () => {
     // Before this existed, a GCP user reaching the hub had no route at all:
     // the manual escape hatch lives on a screen only reachable AFTER setup
     // completes, so the two AWS-shaped options were the whole world.
     renderWizard();
-    expect(screen.getByText('Set up from S3')).toBeDefined();
-    expect(screen.getByText('Set up from Google Cloud')).toBeDefined();
+    expect(screen.getByLabelText('Set up from AWS')).toBeDefined();
+    expect(screen.getByLabelText('Set up from Google Cloud')).toBeDefined();
     expect(screen.getByText('Import from a teammate')).toBeDefined();
+  });
+
+  it('shows Azure as a visible but disabled tile', async () => {
+    // Kept on screen rather than omitted: "Azure is coming" is information,
+    // whereas a missing tile reads as a product that never considered it.
+    const { user } = renderWizard();
+    const azure = screen.getByLabelText('Set up from Azure');
+    expect(azure.hasAttribute('disabled')).toBe(true);
+    expect(screen.getByText('Coming soon')).toBeDefined();
+
+    // Clicking it must go nowhere — still on the hub afterwards.
+    await user.click(azure);
+    expect(screen.getByLabelText('Set up from AWS')).toBeDefined();
   });
 
   it('states the exporter prerequisite before offering to write anything', async () => {
     const { user } = renderWizard();
-    await user.click(screen.getByText('Set up from Google Cloud'));
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
     await waitFor(() => { expect(screen.getByText('scripts/gcp-focus-exporter')).toBeDefined(); });
     expect(screen.getByText('gcloud auth application-default login')).toBeDefined();
     // Nothing to restart into yet — the confirm button appears only once the
@@ -364,7 +377,7 @@ describe('SetupWizard — GCP', () => {
 
   it('scaffolds the GCP arm, not the AWS one', async () => {
     const { api, user } = renderWizard();
-    await user.click(screen.getByText('Set up from Google Cloud'));
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
     await user.click(screen.getByText('Create config & open folder'));
     // An AWS template here would leave a GCP user deleting a block before the
     // app would start — the friction this step exists to remove.
@@ -373,7 +386,7 @@ describe('SetupWizard — GCP', () => {
 
   it('only offers the restart once the config exists, then completes', async () => {
     const { api, user, onComplete } = renderWizard();
-    await user.click(screen.getByText('Set up from Google Cloud'));
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
     await user.click(screen.getByText('Create config & open folder'));
     await waitFor(() => { expect(screen.getByText("I've saved it — restart")).toBeDefined(); });
     // Re-openable without re-scaffolding from scratch — the handler skips
@@ -389,7 +402,7 @@ describe('SetupWizard — GCP', () => {
   it('surfaces a scaffold failure instead of claiming success', async () => {
     const { api, user } = renderWizard();
     api.scaffoldConfig = () => Promise.reject(new Error('EACCES: permission denied'));
-    await user.click(screen.getByText('Set up from Google Cloud'));
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
     await user.click(screen.getByText('Create config & open folder'));
     await waitFor(() => { expect(screen.getByText('EACCES: permission denied')).toBeDefined(); });
     expect(screen.queryByText(/I've saved it/)).toBeNull();
@@ -397,9 +410,9 @@ describe('SetupWizard — GCP', () => {
 
   it('goes back to the hub without completing setup', async () => {
     const { user, onComplete } = renderWizard();
-    await user.click(screen.getByText('Set up from Google Cloud'));
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
     await user.click(screen.getByText('← Back'));
-    await waitFor(() => { expect(screen.getByText('Set up from S3')).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByLabelText('Set up from AWS')).toBeDefined(); });
     expect(onComplete).not.toHaveBeenCalled();
   });
 });
