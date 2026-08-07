@@ -173,7 +173,7 @@ function AwsMark(): React.JSX.Element {
 
 function GcpMark(): React.JSX.Element {
   return (
-    <svg viewBox="3 2 27 25" className="h-8 w-8" aria-hidden="true">
+    <svg viewBox="0 0 34 30" className="h-8 w-8" aria-hidden="true">
       <path fill="#EA4335" d="M21.85,7.41l1,0,2.85-2.85.14-1.21A12.81,12.81,0,0,0,5,9.6a1.55,1.55,0,0,1,1-.06l5.7-.94s.29-.48.44-.45a7.11,7.11,0,0,1,9.73-.74Z" />
       <path fill="#4285F4" d="M29.76,9.6a12.84,12.84,0,0,0-3.87-6.24l-4,4A7.11,7.11,0,0,1,24.5,13v.71a3.56,3.56,0,1,1,0,7.12H17.38l-.71.72v4.27l.71.71H24.5A9.26,9.26,0,0,0,29.76,9.6Z" />
       <path fill="#34A853" d="M10.25,26.49h7.12v-5.7H10.25a3.54,3.54,0,0,1-1.47-.32l-1,.31L4.91,23.63l-.25,1A9.21,9.21,0,0,0,10.25,26.49Z" />
@@ -1518,6 +1518,15 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
 
   function handleReturnToStart() {
     setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
+    // The ✕ abandons the whole configuration, so the typed name goes with the
+    // collected paths. Left set, a name entered for an abandoned GCP provider
+    // prefilled the next AWS run — the same wrong-cloud-name failure the
+    // derived default exists to prevent, just reached by a different route.
+    //
+    // Deliberately NOT reset in `goToProfileStep` / `goToGcpProjectStep`:
+    // those are also reached by ← Back mid-flow, where clearing a name the
+    // user has already typed would be the more surprising behaviour.
+    setProviderNameEdited(false);
     setWizard({ step: 'start' });
   }
 
