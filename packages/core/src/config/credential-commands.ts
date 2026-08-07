@@ -19,6 +19,3 @@ export const GCLOUD_ADC_LOGIN_COMMAND = 'gcloud auth application-default login';
  *  `gcloud storage rsync` that moves the bytes. */
 export const GCLOUD_CLI_LOGIN_COMMAND = 'gcloud auth login';
 
-/** Marker the AWS credential-expiry message carries. The full message names a
- *  profile, so consumers match on this prefix rather than the whole string. */
-export const AWS_SSO_LOGIN_COMMAND_PREFIX = 'aws sso login';

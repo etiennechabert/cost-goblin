@@ -10,8 +10,7 @@ import { OrgAccountsSection } from './data-management-org.js';
 import { SsmParameterSection } from './data-management-ssm.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
 import { SyncLogPanel } from './data-management-logs.js';
-import { GcloudLoginButton } from '../components/gcloud-login-button.js';
-import { SsoLoginButton } from '../components/sso-login-button.js';
+import { GcloudLoginButton, SsoLoginButton } from '../components/sso-login-button.js';
 import { SchedulerControls } from '../components/scheduler-controls.js';
 
 function syncStatusToState(s: SyncStatus): SyncState | null {
