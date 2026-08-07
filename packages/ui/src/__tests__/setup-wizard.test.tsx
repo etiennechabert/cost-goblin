@@ -421,17 +421,17 @@ describe('SetupWizard — GCP', () => {
  *  Keyed by browse prefix so a test can walk the tree the way a user does. */
 function gcpExportLayout(api: MockCostApi): void {
   api.gcsBrowseByPrefix = {
-    '': { prefixes: ['focus'], folder: { kind: 'unknown' }, hasParquet: false },
-    'focus/': { prefixes: ['daily', 'hourly'], folder: { kind: 'tier-parent', tiers: ['daily', 'hourly'] }, hasParquet: false },
+    '': { prefixes: ['focus'], folder: { kind: 'unknown' }, hasParquet: false, truncated: false },
+    'focus/': { prefixes: ['daily', 'hourly'], folder: { kind: 'tier-parent', tiers: ['daily', 'hourly'] }, hasParquet: false, truncated: false },
     'focus/daily/': {
       prefixes: ['billing_period=2026-06', 'billing_period=2026-07'],
       folder: { kind: 'export', periods: ['2026-06', '2026-07'] },
-      hasParquet: true,
+      hasParquet: true, truncated: false,
     },
     'focus/hourly/': {
       prefixes: ['billing_period=2026-07'],
       folder: { kind: 'export', periods: ['2026-07'] },
-      hasParquet: true,
+      hasParquet: true, truncated: false,
     },
   };
 }
@@ -601,7 +601,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     api.gcsBrowseByPrefix['focus/daily/'] = {
       prefixes: ['billing_period=2026-07'],
       folder: { kind: 'export', periods: ['2026-07'] },
-      hasParquet: false,
+      hasParquet: false, truncated: false,
     };
     await enterGcpBrowse(user);
     await user.click(screen.getByLabelText('Open folder focus'));
@@ -635,6 +635,7 @@ describe('SetupWizard — GCP browse-and-pick', () => {
       prefixes: [],
       folder: { kind: 'unknown' },
       hasParquet: false,
+      truncated: false,
       error: 'Could not load the default credentials',
     };
     // Walked by hand rather than via enterGcpBrowse: a failing browse renders
@@ -660,6 +661,146 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await waitFor(() => { expect(screen.getByText('scripts/gcp-focus-exporter')).toBeDefined(); });
     await userClickText(user, 'Write the config by hand instead');
     await waitFor(() => { expect(api.scaffoldedFor).toEqual(['gcp']); });
+  });
+
+  it('does not carry an AWS hourly path into a gcp provider', async () => {
+    // collectedPaths is shared by both chains. A stale s3:// hourly path
+    // reaching a type:'gcp' write produces a config validateGcsSyncTier
+    // refuses on the next launch — setup "succeeds", the app won't start.
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+
+    // AWS leg: daily, then hourly, collecting two s3:// paths.
+    await user.click(screen.getByLabelText('Set up from AWS'));
+    await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
+    await userClickText(user, 'default');
+    await walkToConfirm(user);
+
+    // Back out to the hub and run GCP instead.
+    await user.click(screen.getByLabelText('Back to start'));
+    await waitFor(() => { expect(screen.getByLabelText('Set up from Google Cloud')).toBeDefined(); });
+    await enterGcpBrowse(user);
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('Skip')).toBeDefined(); });
+    await userClickText(user, 'Skip');
+    await waitFor(() => { expect(screen.getByText('Confirm Setup')).toBeDefined(); });
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs.length).toBe(1); });
+
+    const written = api.writtenConfigs[0];
+    expect(written?.type).toBe('gcp');
+    expect(written?.hourlyBucket).toBeUndefined();
+    expect(written?.dailyBucket.startsWith('gs://')).toBe(true);
+  });
+
+  it('does not flag the ancestors of the daily path as overlapping', async () => {
+    // gcsTiersOverlap is symmetric containment, so every ancestor of the daily
+    // folder matched it. The hourly browse opened on a red "already used"
+    // banner, contradicting the "go one level deeper" banner beside it.
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    await enterGcpBrowse(user);
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+
+    // Now on the hourly leg. The bucket root and focus/ are ancestors of the
+    // daily path but are not themselves selectable exports.
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    await userClickText(user, 'acme-focus-export');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+    expect(screen.queryByText('Already used by the daily tier')).toBeNull();
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder hourly')).toBeDefined(); });
+    expect(screen.queryByText('Already used by the daily tier')).toBeNull();
+  });
+
+  it('tells the user to skip when the exporter publishes no hourly tier', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsBrowseByPrefix['focus/'] = {
+      prefixes: ['daily'],
+      folder: { kind: 'tier-parent', tiers: ['daily'] },
+      hasParquet: false,
+      truncated: false,
+    };
+    await enterGcpBrowse(user);
+    await user.click(screen.getByLabelText('Open folder focus'));
+    await waitFor(() => { expect(screen.getByLabelText('Open folder daily')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder daily'));
+    await waitFor(() => { expect(screen.getByText('Use this location')).toBeDefined(); });
+    await userClickText(user, 'Use this location');
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    await userClickText(user, 'acme-focus-export');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+    await user.click(screen.getByLabelText('Open folder focus'));
+    // Naming a folder that isn't there sent the user looking for it.
+    await waitFor(() => { expect(screen.getByText(/publishes no hourly tier/)).toBeDefined(); });
+  });
+
+  it('offers the install link, not a sign-in, when gcloud is missing', async () => {
+    const { api, user } = renderWizard();
+    api.gcpProjectsResult = { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText(/is not installed/)).toBeDefined(); });
+    // The login button cannot run a CLI that isn't installed; offering it made
+    // the user click something guaranteed to fail to reach the real remedy.
+    expect(screen.queryByText('Sign in the gcloud CLI')).toBeNull();
+    expect(screen.getByText('Install the gcloud CLI')).toBeDefined();
+  });
+
+  it('lets the user type a bucket name when listing buckets is forbidden', async () => {
+    // The exporter README's least-privilege recipe grants objectViewer on the
+    // bucket, which cannot enumerate buckets — browsing objects still works.
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsBucketsResult = { buckets: [], error: 'does not have storage.buckets.list access' };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+    await waitFor(() => { expect(screen.getByLabelText(/enter the name directly/i)).toBeDefined(); });
+    await user.type(screen.getByLabelText(/enter the name directly/i), 'acme-focus-export');
+    await userClickText(user, 'Browse');
+    await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+  });
+
+  it('keeps the aws-main default when the user backs out of the GCP chain', async () => {
+    // Retargeting the name on entry was one-way: an AWS provider ended up
+    // named gcp-main, which becomes its data folder and dimension label.
+    const { api, user } = renderWizard();
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, '← Back');
+    await waitFor(() => { expect(screen.getByText('Find my export')).toBeDefined(); });
+    await userClickText(user, '← Back');
+    await waitFor(() => { expect(screen.getByLabelText('Set up from AWS')).toBeDefined(); });
+
+    await user.click(screen.getByLabelText('Set up from AWS'));
+    await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
+    await userClickText(user, 'default');
+    await walkToConfirm(user);
+    await userClickText(user, 'Complete Setup');
+    await waitFor(() => { expect(api.writtenConfigs.length).toBe(1); });
+    expect(api.writtenConfigs[0]?.providerName).toBe('aws-main');
+  });
+
+  it('warns when the folder listing was truncated', async () => {
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsBrowseByPrefix[''] = { prefixes: ['focus'], folder: { kind: 'unknown' }, hasParquet: false, truncated: true };
+    await enterGcpBrowse(user);
+    // Presenting a partial listing as complete makes an export past the cut
+    // look absent, with nothing to tell the user why.
+    await waitFor(() => { expect(screen.getByText('Showing the first folders only')).toBeDefined(); });
   });
 
   it('walks back from the project step to the GCP intro', async () => {

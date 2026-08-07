@@ -17,13 +17,15 @@ function isUsableLifecycle(entry: Readonly<Record<string, unknown>>): boolean {
 
 /** Narrow `gcloud projects list --format=json` stdout into the project list.
  *
- *  Returns `[]` rather than throwing on unparseable output: gcloud writes
- *  update nags and "no active account" prose to stdout in some configurations,
- *  and the caller distinguishes "no projects" from "command failed" by the
- *  exit code, not by this. */
-export function parseGcloudProjects(stdout: string): GcpProject[] {
+ *  Returns `null` — NOT an empty array — when the payload isn't a JSON array.
+ *  gcloud writes update nags and auth prose to stdout in some configurations
+ *  while still exiting 0, and collapsing that into `[]` told the user
+ *  "the signed-in account can't see any active projects", which is a claim
+ *  about their account rather than the truth (we couldn't read the answer).
+ *  An empty array still means genuinely zero projects. */
+export function parseGcloudProjects(stdout: string): GcpProject[] | null {
   const parsed = parseJsonArray(stdout);
-  if (parsed === null) return [];
+  if (parsed === null) return null;
 
   const projects: GcpProject[] = [];
   for (const entry of parsed) {

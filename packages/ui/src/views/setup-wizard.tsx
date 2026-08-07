@@ -1,6 +1,6 @@
 import type { ConfigBundleSummary, GcpProject, GcsFolderKind } from '@costgoblin/core/browser';
-import { gcsTiersOverlap, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
-import { useState, useEffect } from 'react';
+import { gcsTiersOverlap, isGcpCredentialError, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
+import { useState, useEffect, useRef } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
@@ -27,7 +27,7 @@ type WizardStep =
   | { step: 'gcp'; scaffolded: boolean; error: string }
   | { step: 'gcp-project'; projects: readonly GcpProject[]; loading: boolean; selected: string; error: string }
   | { step: 'gcp-bucket'; project: string; source: GcpSource; buckets: readonly { name: string }[]; loading: boolean; selected: string; error: string }
-  | { step: 'gcp-browse'; project: string; source: GcpSource; bucket: string; prefix: string; prefixes: readonly string[]; loading: boolean; folder: GcsFolderKind; hasParquet: boolean; error: string; path: string[] }
+  | { step: 'gcp-browse'; project: string; source: GcpSource; bucket: string; prefix: string; prefixes: readonly string[]; loading: boolean; folder: GcsFolderKind; hasParquet: boolean; truncated: boolean; error: string; path: string[] }
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
@@ -147,36 +147,67 @@ function WelcomeStep({ onNext, naming, jumpBack }: Readonly<{ onNext: () => void
   );
 }
 
-/** Simple geometric marks rather than the vendors' actual logos: those are
- *  trademarks with their own usage rules, and a recognizable silhouette in the
- *  brand colour is all a picker needs. `currentColor` is deliberately NOT used
- *  — the colour IS the recognition cue, and it must survive the disabled tile's
- *  dimming as a wash rather than turning grey. */
+/** The vendors' own marks, taken from their published SVGs — AWS's is
+ *  Apache-2.0 artwork, Google Cloud's and Azure's are PD-textlogo on Wikimedia
+ *  Commons — and used unmodified. Nominative use: they identify whose billing
+ *  data CostGoblin reads, not an endorsement.
+ *
+ *  Icon forms rather than the full wordmark lockups. Those run 1.67:1, 6.5:1
+ *  and 1:1 respectively, which cannot be optically balanced in one row, and the
+ *  tile already carries the provider's name in text beneath.
+ *
+ *  The previous marks were hand-drawn approximations. The AWS one in
+ *  particular — a stroked arc beside a "W" that rendered as a bare V — read as
+ *  two unrelated squiggles rather than a logo.
+ */
 function AwsMark(): React.JSX.Element {
+  // The smile is a wide swoosh; a square box would shrink it to a hairline
+  // beside the other two, so it is matched on width instead of height.
   return (
-    <svg viewBox="0 0 32 32" className="h-8 w-8" aria-hidden="true">
-      <path d="M6 19q-1 3 2 4.5T16 25t8-1.5 2-4.5" fill="none" stroke="#FF9900" strokeWidth="2.5" strokeLinecap="round" />
-      <path d="M10 8h3l3 8 3-8h3" fill="none" stroke="#FF9900" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+    <svg viewBox="0 116 304 66" className="h-6 w-11" aria-hidden="true">
+      <path fill="#FF9900" d="M273.5,143.7c-32.9,24.3-80.7,37.2-121.8,37.2c-57.6,0-109.5-21.3-148.7-56.7c-3.1-2.8-0.3-6.6,3.4-4.4c42.4,24.6,94.7,39.5,148.8,39.5c36.5,0,76.6-7.6,113.5-23.2C274.2,133.6,278.9,139.7,273.5,143.7z" />
+      <path fill="#FF9900" d="M287.2,128.1c-4.2-5.4-27.8-2.6-38.5-1.3c-3.2,0.4-3.7-2.4-0.8-4.5c18.8-13.2,49.7-9.4,53.3-5c3.6,4.5-1,35.4-18.6,50.2c-2.7,2.3-5.3,1.1-4.1-1.9C282.5,155.7,291.4,133.4,287.2,128.1z" />
     </svg>
   );
 }
 
 function GcpMark(): React.JSX.Element {
   return (
-    <svg viewBox="0 0 32 32" className="h-8 w-8" aria-hidden="true">
-      <path d="M16 6a8 8 0 0 1 7.5 5.2A6 6 0 0 1 23 23H11a7 7 0 0 1-1.6-13.8A8 8 0 0 1 16 6z" fill="none" stroke="#4285F4" strokeWidth="2.5" strokeLinejoin="round" />
-      <path d="M9.4 9.2A8 8 0 0 1 16 6" fill="none" stroke="#EA4335" strokeWidth="2.5" strokeLinecap="round" />
-      <path d="M23.5 11.2A6 6 0 0 1 23 23" fill="none" stroke="#FBBC05" strokeWidth="2.5" strokeLinecap="round" />
-      <path d="M11 23h6" fill="none" stroke="#34A853" strokeWidth="2.5" strokeLinecap="round" />
+    <svg viewBox="0 0 34 30" className="h-8 w-8" aria-hidden="true">
+      <path fill="#EA4335" d="M21.85,7.41l1,0,2.85-2.85.14-1.21A12.81,12.81,0,0,0,5,9.6a1.55,1.55,0,0,1,1-.06l5.7-.94s.29-.48.44-.45a7.11,7.11,0,0,1,9.73-.74Z" />
+      <path fill="#4285F4" d="M29.76,9.6a12.84,12.84,0,0,0-3.87-6.24l-4,4A7.11,7.11,0,0,1,24.5,13v.71a3.56,3.56,0,1,1,0,7.12H17.38l-.71.72v4.27l.71.71H24.5A9.26,9.26,0,0,0,29.76,9.6Z" />
+      <path fill="#34A853" d="M10.25,26.49h7.12v-5.7H10.25a3.54,3.54,0,0,1-1.47-.32l-1,.31L4.91,23.63l-.25,1A9.21,9.21,0,0,0,10.25,26.49Z" />
+      <path fill="#FBBC05" d="M10.25,8A9.26,9.26,0,0,0,4.66,24.6l4.13-4.13a3.56,3.56,0,1,1,4.71-4.71l4.13-4.13A9.25,9.25,0,0,0,10.25,8Z" />
     </svg>
   );
 }
 
 function AzureMark(): React.JSX.Element {
   return (
-    <svg viewBox="0 0 32 32" className="h-8 w-8" aria-hidden="true">
-      <path d="M13 5 5 24h6l8-19z" fill="none" stroke="#0078D4" strokeWidth="2.5" strokeLinejoin="round" />
-      <path d="M19 11 27 24H12l5-4" fill="none" stroke="#0078D4" strokeWidth="2.5" strokeLinejoin="round" />
+    <svg viewBox="0 0 96 96" className="h-8 w-8" aria-hidden="true">
+      <defs>
+        {/* Ids are namespaced: this component can render beside other inlined
+            SVGs, and a bare "a"/"b"/"c" would collide across documents. */}
+        <linearGradient id="cg-azure-body" x1="-1032.172" x2="-1059.213" y1="145.312" y2="65.426" gradientTransform="matrix(1 0 0 -1 1075 158)" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#114a8b" />
+          <stop offset="1" stopColor="#0669bc" />
+        </linearGradient>
+        <linearGradient id="cg-azure-shade" x1="-1023.725" x2="-1029.98" y1="108.083" y2="105.968" gradientTransform="matrix(1 0 0 -1 1075 158)" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopOpacity=".3" />
+          <stop offset=".071" stopOpacity=".2" />
+          <stop offset=".321" stopOpacity=".1" />
+          <stop offset=".623" stopOpacity=".05" />
+          <stop offset="1" stopOpacity="0" />
+        </linearGradient>
+        <linearGradient id="cg-azure-fold" x1="-1027.165" x2="-997.482" y1="147.642" y2="68.561" gradientTransform="matrix(1 0 0 -1 1075 158)" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#3ccbf4" />
+          <stop offset="1" stopColor="#2892df" />
+        </linearGradient>
+      </defs>
+      <path fill="url(#cg-azure-body)" d="M33.338 6.544h26.038l-27.03 80.087a4.152 4.152 0 0 1-3.933 2.824H8.149a4.145 4.145 0 0 1-3.928-5.47L29.404 9.368a4.152 4.152 0 0 1 3.934-2.825z" />
+      <path fill="#0078d4" d="M71.175 60.261h-41.29a1.911 1.911 0 0 0-1.305 3.309l26.532 24.764a4.171 4.171 0 0 0 2.846 1.121h23.38z" />
+      <path fill="url(#cg-azure-shade)" d="M33.338 6.544a4.118 4.118 0 0 0-3.943 2.879L4.252 83.917a4.14 4.14 0 0 0 3.908 5.538h20.787a4.443 4.443 0 0 0 3.41-2.9l5.014-14.777 17.91 16.705a4.237 4.237 0 0 0 2.666.972H81.24L71.024 60.261l-29.781.007L59.47 6.544z" />
+      <path fill="url(#cg-azure-fold)" d="M66.595 9.364a4.145 4.145 0 0 0-3.928-2.82H33.648a4.146 4.146 0 0 1 3.928 2.82l25.184 74.62a4.146 4.146 0 0 1-3.928 5.472h29.02a4.146 4.146 0 0 0 3.927-5.472z" />
     </svg>
   );
 }
@@ -361,22 +392,21 @@ function GcpIntroStep({ state, onBrowse, onScaffold, onDone, onBack }: Readonly<
   );
 }
 
-/** Errors from the project/bucket/browse handlers that a sign-in fixes.
- *  `GCLOUD_CLI_NOT_FOUND` is deliberately excluded — the login button can't
- *  run a CLI that isn't installed, and `GcloudLoginButton` surfaces its own
- *  install prompt for that case. */
+/** Whether a sign-in would fix this error.
+ *
+ *  Delegates to core's `isGcpCredentialError` — the same predicate the sync
+ *  uses — rather than keeping a second message list here. The local copy had
+ *  already drifted, missing `invalid_rapt`, "Your credentials are invalid" and
+ *  "does not have any valid credentials", so a Workspace user hitting reauth
+ *  saw a raw OAuth string and no sign-in button on the one screen that exists
+ *  to offer it.
+ *
+ *  `GCLOUD_CLI_NOT_FOUND` is excluded: the login button cannot run a CLI that
+ *  is not installed. */
 function isGcpAuthError(message: string): boolean {
-  if (message.length === 0) return false;
-  return (
-    message.includes('Could not load the default credentials') ||
-    message.includes('Could not refresh access token') ||
-    message.includes('Unable to detect a Project Id') ||
-    message.includes('invalid_grant') ||
-    message.includes('Token has been expired or revoked') ||
-    message.includes('gcloud auth') ||
-    message.includes('do not currently have an active account') ||
-    message.includes('Reauthentication failed')
-  );
+  if (message.length === 0 || message.includes('GCLOUD_CLI_NOT_FOUND')) return false;
+  return isGcpCredentialError(new Error(message))
+    || message.includes('do not currently have an active account');
 }
 
 /** Error panel shared by the three GCP steps. `GCLOUD_CLI_NOT_FOUND` is a
@@ -391,7 +421,18 @@ function GcpError({ message, mode }: Readonly<{ message: string; mode: 'adc' | '
           ? 'The Google Cloud CLI (gcloud) is not installed — CostGoblin needs it to list your projects and download the export.'
           : message}
       </p>
-      {(missingCli || isGcpAuthError(message)) && <GcloudLoginButton mode={mode} />}
+      {missingCli ? (
+        <a
+          href="https://cloud.google.com/sdk/docs/install"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-block text-xs text-accent underline underline-offset-2 hover:text-accent-hover"
+        >
+          Install the gcloud CLI
+        </a>
+      ) : (
+        isGcpAuthError(message) && <GcloudLoginButton mode={mode} />
+      )}
     </div>
   );
 }
@@ -465,6 +506,9 @@ function GcpProjectStep({ state, onSelect, onManual, onBack }: Readonly<{
                 <span className="font-mono text-xs text-text-muted">{project.projectId}</span>
               </button>
             ))}
+            {filtered.length === 0 && (
+              <p className="text-sm text-text-muted text-center py-4">No projects match that filter</p>
+            )}
           </div>
         </>
       )}
@@ -491,6 +535,7 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
   onBack: () => void;
 }>) {
   const [filter, setFilter] = useState('');
+  const [manual, setManual] = useState('');
   const filtered = state.buckets.filter(b => filter.length === 0 || b.name.toLowerCase().includes(filter.toLowerCase()));
   const sourceLabel = SOURCE_LABELS[state.source];
 
@@ -545,6 +590,38 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
         </>
       )}
 
+      {/* Listing buckets needs project-level `storage.buckets.list`, but the
+          exporter README's least-privilege recipe grants `objectViewer` on the
+          BUCKET and impersonates a service account. That identity can browse
+          objects yet cannot enumerate buckets — so following the documented
+          setup dead-ended here, one step before the part that would have
+          worked. Typing the name skips the enumeration entirely. */}
+      <div className="flex flex-col gap-1.5 border-t border-border pt-4">
+        <label htmlFor="gcs-bucket-manual" className="text-xs text-text-muted">
+          {state.error === '' && state.buckets.length > 0
+            ? 'Or enter a bucket name directly'
+            : "Can't list buckets? Enter the name directly — browsing objects needs weaker permissions than listing buckets."}
+        </label>
+        <div className="flex gap-2">
+          <input
+            id="gcs-bucket-manual"
+            value={manual}
+            onChange={(e) => { setManual(e.target.value.trim()); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && manual.length > 0) onSelect(manual); }}
+            placeholder="my-focus-export"
+            spellCheck={false}
+            className="h-9 flex-1 rounded-md border border-border bg-bg-primary px-3 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+          />
+          <Button
+            variant="outline"
+            disabled={manual.length === 0}
+            onClick={() => { onSelect(manual); }}
+          >
+            Browse
+          </Button>
+        </div>
+      </div>
+
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
         {onSkip !== undefined && (
@@ -575,7 +652,13 @@ function GcpBrowseStep({ state, conflictsWith, onNavigate, onConfirm, onSkip, on
   const isExport = state.folder.kind === 'export';
   // `validateGcpSync` rejects overlapping tiers at load time, so allowing the
   // selection here would write a config the app then refuses to start on.
-  const overlaps = conflictsWith !== undefined
+  // Gated on `isExport`, because `gcsTiersOverlap` is symmetric containment:
+  // every ANCESTOR of the other tier's path matches it too. Ungated, the
+  // browse opened on a red "already used" banner at the bucket root and kept
+  // it up — beside the contradictory "go one level deeper" banner — all the
+  // way down to the folder the user was being sent to.
+  const overlaps = isExport
+    && conflictsWith !== undefined
     && conflictsWith.length > 0
     && gcsTiersOverlap(`gs://${state.bucket}/${state.prefix}`, conflictsWith);
   const selectable = isExport && state.hasParquet && !overlaps;
@@ -596,7 +679,10 @@ function GcpBrowseStep({ state, conflictsWith, onNavigate, onConfirm, onSkip, on
           {state.bucket}
         </button>
         {state.path.map((seg, i) => (
-          <span key={seg} className="flex items-center gap-1">
+          // Keyed by the full path, not the segment: folder names repeat
+          // (focus/focus/daily), and duplicate keys let React swap the two
+          // crumbs' click handlers on re-render.
+          <span key={state.path.slice(0, i + 1).join('/')} className="flex items-center gap-1">
             <span>/</span>
             <button
               type="button"
@@ -615,9 +701,22 @@ function GcpBrowseStep({ state, conflictsWith, onNavigate, onConfirm, onSkip, on
         <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3">
           <p className="text-sm font-medium text-warning">This is the parent folder — go one level deeper</p>
           <p className="text-xs text-warning mt-0.5">
-            It holds {state.folder.tiers.map(t => `${t}/`).join(' and ')}. Pointing a provider here would make the{' '}
-            {state.source} tier read every tier&apos;s files. Open{' '}
-            <code className="text-text-primary">{state.source}/</code> to select it.
+            It holds {state.folder.tiers.map(t => `${t}/`).join(' and ')}. Pointing a provider here would make
+            the {state.source} tier read every tier&apos;s files.{' '}
+            {state.folder.tiers.includes(state.source)
+              ? <>Open <code className="text-text-primary">{state.source}/</code> to select it.</>
+              : <>This exporter publishes no {state.source} tier — deploy it with{' '}
+                <code className="text-text-primary">TIERS=daily,hourly</code> if you want one, or skip this tier.</>}
+          </p>
+        </div>
+      )}
+
+      {state.truncated && (
+        <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3">
+          <p className="text-sm font-medium text-warning">Showing the first folders only</p>
+          <p className="text-xs text-warning mt-0.5">
+            This location has more subfolders than CostGoblin lists at once. If the export folder
+            isn&apos;t here, write the config by hand instead.
           </p>
         </div>
       )}
@@ -923,7 +1022,10 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
           {state.bucket}
         </button>
         {state.path.map((seg, i) => (
-          <span key={seg} className="flex items-center gap-1">
+          // Keyed by the full path, not the segment: folder names repeat
+          // (focus/focus/daily), and duplicate keys let React swap the two
+          // crumbs' click handlers on re-render.
+          <span key={state.path.slice(0, i + 1).join('/')} className="flex items-center gap-1">
             <span>/</span>
             <button
               type="button"
@@ -1217,6 +1319,11 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   // mode), free-text when adding one, prefilled 'aws-main' on first run.
   const [providerName, setProviderName] = useState(initialProviderName ?? (mode === 'add' ? '' : 'aws-main'));
   const [existingProviders, setExistingProviders] = useState<readonly string[]>([]);
+  // Whether the user has typed a name. Until they do, the default is DERIVED
+  // from the cloud they picked rather than written into state on entry — a
+  // one-way `setProviderName('gcp-main')` survived backing out of the GCP
+  // chain and named an AWS provider "gcp-main".
+  const [providerNameEdited, setProviderNameEdited] = useState(false);
   useEffect(() => {
     api.getConfig().then(config => {
       const names = config.providers.map(p => String(p.name));
@@ -1249,6 +1356,12 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     return workspaceNaming !== undefined ? { step: 'welcome' } : { step: 'start' };
   });
   const [collectedPaths, setCollectedPaths] = useState({ daily: '', hourly: '', costOpt: '' });
+  // Monotonic token for the GCP loaders. Each resolver rebuilds a whole step
+  // object from captured args, so without this a slow response (a cold ADC
+  // token refresh, or gcloud sitting on a re-auth prompt until the 20s
+  // timeout) would land AFTER the user navigated away and teleport them back.
+  // `handleBeaconApply` already guards the same way via a functional update.
+  const gcpRequestRef = useRef(0);
   const [bucketsLoaded, setBucketsLoaded] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [switchingTo, setSwitchingTo] = useState<string | null>(null);
@@ -1297,33 +1410,41 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
    *  GCP arm, but only while it is still the untouched AWS default — a name
    *  the user typed, or one fixed by source/add mode, is never rewritten. */
   function goToGcpProjectStep(): void {
-    if (!providerNameFixed && mode !== 'add' && providerName === 'aws-main') {
-      setProviderName('gcp-main');
-    }
+    // See `goToProfileStep`: the two chains share `collectedPaths`.
+    setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
+    const token = ++gcpRequestRef.current;
     setWizard({ step: 'gcp-project', projects: [], loading: true, selected: '', error: '' });
     api.listGcpProjects().then(result => {
+      if (gcpRequestRef.current !== token) return;
       setWizard({ step: 'gcp-project', projects: result.projects, loading: false, selected: '', error: result.error ?? '' });
     }).catch((err: unknown) => {
+      if (gcpRequestRef.current !== token) return;
       setWizard({ step: 'gcp-project', projects: [], loading: false, selected: '', error: err instanceof Error ? err.message : String(err) });
     });
   }
 
   function startGcpBucketStep(project: string, source: GcpSource): void {
+    const token = ++gcpRequestRef.current;
     setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: true, selected: '', error: '' });
     api.listGcsBuckets(project).then(result => {
+      if (gcpRequestRef.current !== token) return;
       setWizard({ step: 'gcp-bucket', project, source, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
     }).catch((err: unknown) => {
+      if (gcpRequestRef.current !== token) return;
       setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: false, selected: '', error: err instanceof Error ? err.message : String(err) });
     });
   }
 
   function gcpBrowseTo(project: string, source: GcpSource, bucket: string, prefix: string): void {
     const path = prefix.split('/').filter(s => s.length > 0);
-    setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: [], loading: true, folder: { kind: 'unknown' }, hasParquet: false, error: '', path });
+    const token = ++gcpRequestRef.current;
+    setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: [], loading: true, folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: '', path });
     api.browseGcs({ projectId: project, bucket, prefix }).then(result => {
-      setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: result.prefixes, loading: false, folder: result.folder, hasParquet: result.hasParquet, error: result.error ?? '', path });
+      if (gcpRequestRef.current !== token) return;
+      setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: result.prefixes, loading: false, folder: result.folder, hasParquet: result.hasParquet, truncated: result.truncated, error: result.error ?? '', path });
     }).catch((err: unknown) => {
-      setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: [], loading: false, folder: { kind: 'unknown' }, hasParquet: false, error: err instanceof Error ? err.message : String(err), path });
+      if (gcpRequestRef.current !== token) return;
+      setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: [], loading: false, folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: err instanceof Error ? err.message : String(err), path });
     });
   }
 
@@ -1380,6 +1501,11 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }, [isSourceMode, bucketsLoaded, api, initialProfile, initialSource]);
 
   function goToProfileStep() {
+    // `collectedPaths` is shared by both chains, so entering one must clear
+    // what the other collected. Without this, an s3:// hourly path picked on
+    // the AWS leg survived a ← Back to the hub and was written into a gcp
+    // provider, whose loader then refuses the config on the next launch.
+    setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
     setWizard({ step: 'profile', profiles: [], loading: true, selected: '' });
     api.listAwsProfiles().then(profiles => {
       setWizard({ step: 'profile', profiles, loading: false, selected: '' });
@@ -1392,6 +1518,15 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
 
   function handleReturnToStart() {
     setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
+    // The ✕ abandons the whole configuration, so the typed name goes with the
+    // collected paths. Left set, a name entered for an abandoned GCP provider
+    // prefilled the next AWS run — the same wrong-cloud-name failure the
+    // derived default exists to prevent, just reached by a different route.
+    //
+    // Deliberately NOT reset in `goToProfileStep` / `goToGcpProjectStep`:
+    // those are also reached by ← Back mid-flow, where clearing a name the
+    // user has already typed would be the more surprising behaviour.
+    setProviderNameEdited(false);
     setWizard({ step: 'start' });
   }
 
@@ -1603,7 +1738,10 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
           {wizard.step === 'gcp-browse' && (
             <GcpBrowseStep
               state={wizard}
-              conflictsWith={wizard.source === 'hourly' ? collectedPaths.daily : undefined}
+              // Both legs: Back-navigation lets the user re-pick daily after
+              // hourly is already collected, and validateGcpSync rejects the
+              // overlap in either direction.
+              conflictsWith={wizard.source === 'hourly' ? collectedPaths.daily : collectedPaths.hourly}
               onNavigate={(prefix) => { gcpBrowseTo(wizard.project, wizard.source, wizard.bucket, prefix); }}
               onConfirm={handleGcpBrowseConfirm}
               onSkip={wizard.source === 'daily' ? undefined : handleGcpSkip}
@@ -1640,11 +1778,13 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <ConfirmStep
               state={wizard}
               providerNaming={{
-                value: providerName,
+                value: providerNameFixed || providerNameEdited || mode === 'add'
+                  ? providerName
+                  : (wizard.cloud === 'gcp' ? 'gcp-main' : 'aws-main'),
                 fixed: providerNameFixed,
                 checkTaken: mode === 'add',
                 takenNames: existingProviders,
-                onChange: setProviderName,
+                onChange: (value) => { setProviderNameEdited(true); setProviderName(value); },
               }}
               onRetentionChange={(days) => { setWizard(prev => prev.step === 'confirm' ? { ...prev, retentionDays: days } : prev); }}
               onComplete={finish}

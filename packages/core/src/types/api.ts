@@ -186,6 +186,10 @@ export interface GcsBrowseResult {
    *  sync rather than an empty partition the exporter created and never
    *  filled. */
   readonly hasParquet: boolean;
+  /** True when the folder listing hit the handler's page cap and more children
+   *  exist than were returned. Without this the UI presents a truncated
+   *  listing as complete, so an export sitting past the cut looks absent. */
+  readonly truncated: boolean;
   readonly error?: string | undefined;
 }
 

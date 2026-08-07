@@ -22,6 +22,16 @@ import type { AppContext } from './context.js';
  *  leaves the wizard's spinner running forever with no way back. */
 const GCLOUD_PROJECTS_TIMEOUT_MS = 20_000;
 
+/** Page size for a browse listing. `maxResults` bounds `items[] + prefixes[]`
+ *  COMBINED in the GCS JSON API, so a folder that also holds loose objects can
+ *  spend a whole page on them and return no folders at all — which is why the
+ *  browse paginates rather than taking a single page. */
+const GCS_BROWSE_PAGE_SIZE = 200;
+
+/** Hard cap on pages walked per browse, so a bucket with a pathological number
+ *  of children cannot hang the wizard. Hitting it sets `truncated`. */
+const GCS_BROWSE_MAX_PAGES = 12;
+
 /** Normalize a browsed prefix to the form the GCS delimiter listing needs:
  *  either empty (bucket root) or ending in the delimiter, so child names
  *  slice off cleanly. */
@@ -199,6 +209,7 @@ export function registerSetupHandlers(app: AppContext): void {
   ipcMain.handle('setup:list-gcp-projects', async (): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> => {
     const { spawn } = await import('node:child_process');
     const { delimiter } = await import('node:path');
+    const { StringDecoder } = await import('node:string_decoder');
 
     // Windows ships gcloud as `gcloud.cmd`, which Node refuses to spawn
     // without a shell (CVE-2024-27980) — and cmd.exe starts fine whether or
@@ -226,6 +237,11 @@ export function registerSetupHandlers(app: AppContext): void {
         },
       );
 
+      // StringDecoder, not chunk.toString(): a pipe boundary can fall mid
+      // multi-byte character, and two halves each decode to U+FFFD. JSON still
+      // parses, so a mangled project name would reach the picker silently.
+      const outDecoder = new StringDecoder('utf8');
+      const errDecoder = new StringDecoder('utf8');
       let stdout = '';
       let stderr = '';
       let settled = false;
@@ -241,16 +257,26 @@ export function registerSetupHandlers(app: AppContext): void {
         finish({ projects: [], error: 'Timed out listing projects. Check that `gcloud auth login` has been run.' });
       }, GCLOUD_PROJECTS_TIMEOUT_MS);
 
-      proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-      proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+      proc.stdout.on('data', (chunk: Buffer) => { stdout += outDecoder.write(chunk); });
+      proc.stderr.on('data', (chunk: Buffer) => { stderr += errDecoder.write(chunk); });
 
       proc.on('error', (err: NodeJS.ErrnoException) => {
         finish({ projects: [], error: err.code === 'ENOENT' ? 'GCLOUD_CLI_NOT_FOUND' : err.message });
       });
 
       proc.on('close', (code) => {
+        stdout += outDecoder.end();
+        stderr += errDecoder.end();
         if (code === 0) {
-          finish({ projects: parseGcloudProjects(stdout) });
+          const projects = parseGcloudProjects(stdout);
+          if (projects === null) {
+            // Exit 0 but unreadable stdout. Reporting [] here would render as
+            // "the signed-in account can't see any active projects" — a false
+            // statement about their account, with no remedy offered.
+            finish({ projects: [], error: 'Could not read the project list from gcloud. Run `gcloud projects list` in a terminal to see what it printed.' });
+            return;
+          }
+          finish({ projects });
           return;
         }
         // gcloud's own stderr is the most useful thing to show: it names the
@@ -283,41 +309,86 @@ export function registerSetupHandlers(app: AppContext): void {
       const storage = new Storage({ projectId: params.projectId, scopes: [GCS_READ_ONLY_SCOPE] });
       const bucket = storage.bucket(params.bucket);
 
-      // The common prefixes live only on the raw `apiResponse` — the SDK types
-      // it `unknown`, so `extractGcsPrefixNames` guards every step.
-      const [, , apiResponse] = await bucket.getFiles({
-        prefix,
-        delimiter: '/',
-        maxResults: 200,
-        autoPaginate: false,
-      });
-      const prefixes = extractGcsPrefixNames(apiResponse, prefix);
+      // PAGINATED, because `maxResults` bounds `items[] + prefixes[]`
+      // COMBINED. A single 200-entry page of a bucket that also holds loose
+      // objects at this level can be all objects and no folders, which
+      // rendered as "No subfolders found" for a bucket that plainly contains
+      // the export. Walk pages until the folders run out, with a hard cap so a
+      // pathological bucket can't hang the wizard.
+      const prefixes: string[] = [];
+      const seen = new Set<string>();
+      let pageToken: string | undefined;
+      let pagesFetched = 0;
+      let truncated = false;
+
+      do {
+        // The common prefixes live only on the raw `apiResponse` — the SDK
+        // types it `unknown`, so `extractGcsPrefixNames` guards every step.
+        const [, nextQuery, apiResponse] = await bucket.getFiles({
+          prefix,
+          delimiter: '/',
+          maxResults: GCS_BROWSE_PAGE_SIZE,
+          autoPaginate: false,
+          ...(pageToken === undefined ? {} : { pageToken }),
+        });
+        for (const name of extractGcsPrefixNames(apiResponse, prefix)) {
+          if (seen.has(name)) continue;
+          seen.add(name);
+          prefixes.push(name);
+        }
+        pagesFetched += 1;
+        pageToken = isStringRecord(nextQuery) && typeof nextQuery['pageToken'] === 'string'
+          ? nextQuery['pageToken']
+          : undefined;
+        if (pageToken !== undefined && pagesFetched >= GCS_BROWSE_MAX_PAGES) {
+          truncated = true;
+          break;
+        }
+      } while (pageToken !== undefined);
+
       const folder = classifyGcsFolder(prefixes);
 
-      // Stand-in for the AWS side's manifest read: confirm the first period
-      // partition actually holds shards, so the wizard can't hand the sync a
-      // partition the exporter created and never filled.
+      // Stand-in for the AWS side's manifest read: confirm a period partition
+      // actually holds shards, so the wizard can't hand the sync a partition
+      // the exporter created and never filled.
+      //
+      // The NEWEST period, not the oldest: `classifyGcsFolder` sorts ascending,
+      // and the oldest partition is the one a lifecycle rule or the exporter
+      // README's documented `gcloud storage rm --recursive` cleanup will have
+      // emptied, leaving a folder placeholder. Probing it reported a healthy,
+      // actively-running export as empty and hard-disabled the button.
       let hasParquet = false;
       if (folder.kind === 'export') {
-        const firstPeriod = folder.periods[0];
-        if (firstPeriod !== undefined) {
-          const [periodFiles] = await bucket.getFiles({
-            prefix: `${prefix}billing_period=${firstPeriod}/`,
-            maxResults: 10,
-            autoPaginate: false,
-          });
-          hasParquet = periodFiles.some(f => f.name.endsWith('.parquet'));
+        const newestPeriod = folder.periods[folder.periods.length - 1];
+        if (newestPeriod !== undefined) {
+          try {
+            const [periodFiles] = await bucket.getFiles({
+              // Well above a page of `_SUCCESS` / `.tmp…` / placeholder
+              // objects, all of which sort BEFORE `shard-` lexicographically
+              // and used to crowd `.parquet` out of a 10-key sample.
+              prefix: `${prefix}billing_period=${newestPeriod}/`,
+              maxResults: 200,
+              autoPaginate: false,
+            });
+            hasParquet = periodFiles.some(f => f.name.endsWith('.parquet'));
+          } catch {
+            // Inner catch, mirroring `setup:browse-s3`'s manifest read: a probe
+            // that fails (transient 5xx, or an IAM condition that grants the
+            // tier prefix but not the period prefix) must degrade the shard
+            // check, NOT discard a folder listing we already have.
+            hasParquet = false;
+          }
         }
       }
 
-      return { prefixes, folder, hasParquet };
+      return { prefixes, folder, hasParquet, truncated };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       logger.info('setup:browse-gcs failed', { error: message });
       // Unlike `setup:browse-s3`, which swallows the error into an empty
       // listing, the message is carried back: a GCP browse fails mostly on
       // credentials, and the wizard turns that into an inline sign-in button.
-      return { prefixes: [], folder: { kind: 'unknown' }, hasParquet: false, error: message };
+      return { prefixes: [], folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: message };
     }
   });
 

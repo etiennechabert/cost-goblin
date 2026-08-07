@@ -81,16 +81,11 @@
     section, header, footer { position: relative; z-index: 1; }
 
     .container {
-      max-width: 980px;
-      margin: 0 auto;
-      padding: 0 24px;
-    }
-
-    .container-wide {
       max-width: 1120px;
       margin: 0 auto;
       padding: 0 24px;
     }
+
 
     /* --- NAV --- */
     nav {
@@ -106,7 +101,7 @@
     }
 
     nav .inner {
-      max-width: 980px;
+      max-width: 1120px;
       margin: 0 auto;
       display: flex;
       align-items: center;
@@ -400,8 +395,8 @@
 
     .positioning-header {
       max-width: 760px;
-      margin: 0 auto 56px;
-      text-align: center;
+      margin: 0 0 56px;
+      text-align: left;
       opacity: 0;
       transform: translateY(12px);
       transition: opacity 0.6s ease, transform 0.6s ease;
@@ -593,8 +588,8 @@
 
     .showcase-header {
       max-width: 720px;
-      margin: 0 auto 72px;
-      text-align: center;
+      margin: 0 0 72px;
+      text-align: left;
       opacity: 0;
       transform: translateY(12px);
       transition: all 0.6s ease;
@@ -605,7 +600,7 @@
     }
     .showcase-header .section-label { margin-bottom: 12px; }
     .showcase-header .section-title {
-      margin: 0 auto 20px;
+      margin: 0 0 20px;
       max-width: 640px;
     }
     .showcase-intro {
@@ -1061,10 +1056,11 @@
       width: 48px;
       height: 48px;
       margin-bottom: 20px;
-      color: var(--text-dim);
+      object-fit: contain;
     }
 
-    .platform-card.detected .platform-icon { color: var(--emerald); }
+    /* No detected-state tint: the icons carry their own brand colours now,
+       and the card's badge plus emerald border already signal detection. */
 
     .platform-card h4 {
       font-size: 18px;
@@ -1141,93 +1137,6 @@
     .download-note a:hover {
       color: var(--emerald);
       border-color: var(--emerald);
-    }
-
-    .next-step {
-      display: flex;
-      align-items: center;
-      gap: 24px;
-      max-width: 720px;
-      margin: 56px auto 0;
-      padding: 22px 28px;
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      background:
-        linear-gradient(135deg, rgba(16, 185, 129, 0.06), transparent 60%),
-        var(--bg-card);
-      text-decoration: none;
-      color: var(--text);
-      position: relative;
-      overflow: hidden;
-      opacity: 0;
-      transform: translateY(12px);
-      transition: transform 0.6s ease, opacity 0.6s ease, border-color 0.25s ease, background 0.25s ease;
-    }
-    .next-step.visible { opacity: 1; transform: translateY(0); }
-    .next-step::after {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background: radial-gradient(circle at 0% 50%, var(--emerald-glow), transparent 50%);
-      opacity: 0;
-      transition: opacity 0.35s ease;
-      pointer-events: none;
-    }
-    .next-step:hover {
-      border-color: var(--emerald);
-      transform: translateY(-2px);
-    }
-    .next-step:hover::after { opacity: 1; }
-    .next-step:hover .next-step-chev { transform: translateX(4px); color: var(--emerald); }
-
-    .next-step-tag {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 12px;
-      border: 1px solid var(--emerald-dim);
-      border-radius: 999px;
-      background: var(--emerald-glow);
-      font-family: var(--font-mono);
-      font-size: 11px;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--emerald);
-      flex-shrink: 0;
-      position: relative;
-      z-index: 1;
-    }
-    .next-step-arrow {
-      font-size: 13px;
-      line-height: 1;
-    }
-
-    .next-step-body { flex: 1; position: relative; z-index: 1; }
-    .next-step-title {
-      font-size: 16px;
-      font-weight: 500;
-      color: var(--text);
-      margin-bottom: 2px;
-    }
-    .next-step-sub {
-      font-size: 13px;
-      color: var(--text-dim);
-      line-height: 1.5;
-    }
-
-    .next-step-chev {
-      width: 18px;
-      height: 18px;
-      color: var(--text-dim);
-      flex-shrink: 0;
-      transition: transform 0.25s ease, color 0.25s ease;
-      position: relative;
-      z-index: 1;
-    }
-
-    @media (max-width: 600px) {
-      .next-step { flex-direction: column; align-items: flex-start; padding: 20px; }
-      .next-step-chev { align-self: flex-end; }
     }
 
     /* --- GET STARTED --- */
@@ -1399,6 +1308,19 @@
       padding: 3px 8px;
       border-radius: 4px;
       margin-bottom: 16px;
+    }
+
+    /* Work actually underway. Emerald rather than the roadmap's gold, so it
+       separates from "Planned" at a glance rather than on the word alone. */
+    .roadmap-badge.in-progress {
+      color: var(--emerald);
+      border-color: rgba(52, 211, 153, 0.35);
+      background: rgba(52, 211, 153, 0.08);
+    }
+
+    .roadmap-card.in-progress {
+      border-style: solid;
+      border-color: rgba(52, 211, 153, 0.28);
     }
 
     .roadmap-card h4 {
@@ -1590,21 +1512,21 @@
 
     .sponsors-header {
       max-width: 640px;
-      margin: 0 auto 56px;
-      text-align: center;
+      margin: 0 0 56px;
+      text-align: left;
       opacity: 0;
       transform: translateY(12px);
       transition: opacity 0.6s ease, transform 0.6s ease;
     }
     .sponsors-header.visible { opacity: 1; transform: translateY(0); }
     .sponsors-header .section-label { margin-bottom: 12px; }
-    .sponsors-title { margin: 0 auto 18px; }
+    .sponsors-title { margin: 0 0 18px; }
     .sponsors-intro {
       font-size: 15px;
       line-height: 1.65;
       color: var(--text-dim);
       max-width: 520px;
-      margin: 0 auto;
+      margin: 0;
     }
 
     .sponsors-grid {
@@ -1671,7 +1593,7 @@
     }
 
     footer .inner {
-      max-width: 980px;
+      max-width: 1120px;
       margin: 0 auto;
       display: flex;
       align-items: center;
@@ -1746,8 +1668,8 @@
        card that opens its guide in a modal. */
     .integration-intro {
       max-width: 620px;
-      margin: 0 auto 40px;
-      text-align: center;
+      margin: 0 0 40px;
+      text-align: left;
       color: var(--text-dim);
       font-size: 16px;
       line-height: 1.7;
@@ -1755,10 +1677,10 @@
 
     .integration-choice {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       gap: 20px;
-      max-width: 760px;
-      margin: 0 auto;
+      max-width: 1020px;
+      margin: 0;
     }
 
     .integration-card {
@@ -1784,6 +1706,33 @@
       outline: none;
     }
 
+    /* Provider marks, mirroring the in-app setup tiles. Deliberately geometric
+       rather than the vendors' actual logos: those are trademarks with their
+       own usage rules, and a recognizable silhouette in the brand colour is all
+       a card needs. The colour IS the recognition cue, so it is hard-coded
+       rather than inherited. */
+    /* The vendors' own marks, taken from their published SVGs (AWS: Apache-2.0
+       artwork; Google Cloud and Azure: PD-textlogo on Commons) and used
+       unmodified apart from the reverse-colour treatment each vendor publishes
+       for dark backgrounds. Nominative use — identifying whose billing data
+       CostGoblin reads — not an endorsement claim. Icon forms rather than the
+       full wordmark lockups: those run 1.67:1, 6.5:1 and 1:1, which cannot be
+       balanced in one row, and the card heading already carries the name. */
+    .integration-card-mark {
+      width: 32px;
+      height: 32px;
+      margin-bottom: 10px;
+      overflow: visible;
+    }
+
+    /* The AWS smile is a wide swoosh, so a square box would shrink it to a
+       hairline beside the other two. Optically matched on width instead. */
+    .integration-card-mark--aws {
+      width: 42px;
+      height: 24px;
+      margin-bottom: 14px;
+    }
+
     .integration-card-name {
       font-family: var(--font-display);
       font-size: 20px;
@@ -1797,11 +1746,32 @@
       color: var(--text-muted);
     }
 
+    /* `margin-top: auto` inside the card's flex column pins the CTA to the
+       bottom, so it lands on the same baseline whether the sub-line wraps to
+       one line or two. The grid already stretches the cards to equal height. */
     .integration-card-cta {
-      margin-top: 14px;
+      margin-top: auto;
+      padding-top: 14px;
       font-size: 14px;
       font-weight: 500;
       color: var(--emerald);
+    }
+
+    /* Mirrors the in-app Azure tile: dimmed as a wash rather than desaturated,
+       so the brand colour still reads as the recognition cue. */
+    .integration-card--soon {
+      cursor: default;
+      opacity: 0.45;
+    }
+
+    .integration-card--soon:hover {
+      border-color: var(--border);
+      transform: none;
+      box-shadow: none;
+    }
+
+    .integration-card-cta--soon {
+      color: var(--text-muted);
     }
 
     .provider-modal {
@@ -2105,7 +2075,7 @@
 
   <!-- SHOWCASE -->
   <section class="showcase" id="showcase">
-    <div class="container-wide">
+    <div class="container">
       <div class="showcase-header" data-animate>
         <div class="section-label">What it does</div>
         <h2 class="section-title">Cloud cost visibility<br>without the cloud</h2>
@@ -2274,7 +2244,7 @@
 
         <!-- macOS -->
         <div class="platform-card" data-animate data-platform="mac">
-          <svg class="platform-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+          <svg class="platform-icon" viewBox="0 0 24 24" fill="#FFFFFF"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
           <h4>macOS</h4>
           <div class="platform-links">
             <a class="dl-btn primary" data-asset="mac-arm64-dmg" href="#">
@@ -2287,7 +2257,7 @@
 
         <!-- Windows -->
         <div class="platform-card" data-animate data-platform="win">
-          <svg class="platform-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+          <svg class="platform-icon" viewBox="0 0 24 24" fill="#0078D4"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
           <h4>Windows</h4>
           <div class="platform-links">
             <a class="dl-btn primary" data-asset="win-x64-exe" href="#">
@@ -2300,7 +2270,7 @@
 
         <!-- Linux -->
         <div class="platform-card" data-animate data-platform="linux">
-          <svg class="platform-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 0 0-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.368 1.884 1.43.39.03.8-.066 1.109-.264a.952.952 0 0 0 .401-.518c.03-.134.039-.269.019-.399a.613.613 0 0 0-.04-.133 1.777 1.777 0 0 0-.339-.468 3.017 3.017 0 0 1-.394-.533c-.126-.199-.24-.468-.36-.468h-.003c-.09.135-.19.334-.396.468-.135.066-.268.07-.4.003-.066-.066-.134-.196-.2-.396-.066-.199-.135-.466-.2-.7-.135-.534-.264-1.068-.396-1.4a4.15 4.15 0 0 0-.796-1.202 5.555 5.555 0 0 0-.2-.2 3.86 3.86 0 0 0 .396-1.203c.135-.468.2-.868.2-1.334 0-.466-.066-.934-.267-1.467-.198-.534-.53-1.068-.929-1.466a8.07 8.07 0 0 0-1.196-1.067c-.399-.3-.864-.534-1.33-.734a7.448 7.448 0 0 0-2.395-.533c-.2-.003-.393.003-.59.03-.133.018-.267.05-.399.082a3.736 3.736 0 0 0-.6-.267c-.395-.135-.795-.2-1.128-.2-.267 0-.531.035-.73.135a.673.673 0 0 0-.267.2c-.066.066-.13.2-.13.266a.503.503 0 0 0 .026.199c.062.134.161.267.265.399.2.268.465.534.73.868.086.133.178.266.24.4h.003a.26.26 0 0 1 .024.067c.399.268.864.668 1.196 1.068.333.399.6.798.73 1.268.06.199.09.398.09.598a3.02 3.02 0 0 1-.132.998 9.89 9.89 0 0 0-.467.399 5.834 5.834 0 0 0-1.262 1.6c-.332.666-.53 1.333-.53 2.066 0 .268.031.534.1.802.028.066.066.134.093.2-.134.268-.332.534-.531.865-.2.268-.397.6-.597.864-.198.198-.334.268-.465.268a.457.457 0 0 1-.2-.066c-.066-.066-.133-.133-.133-.268-.048-.198.013-.531.08-.864.064-.331.131-.666.131-.998 0-.268-.066-.534-.198-.8-.133-.268-.332-.535-.531-.735a3.061 3.061 0 0 0-.665-.467c-.265-.134-.53-.2-.795-.2a.96.96 0 0 0-.532.133c-.133.067-.266.2-.332.334a.794.794 0 0 0-.133.465c0 .199.033.399.1.598.133.4.332.8.464 1.133.134.334.2.669.2.934 0 .268-.066.467-.198.6-.066.067-.133.1-.265.134-.133.033-.332.033-.532.033-.198 0-.398-.033-.597-.1a2.79 2.79 0 0 1-.597-.265c-.066-.033-.103-.07-.133-.1z"/></svg>
+          <img class="platform-icon" src="assets/tux.svg" alt="" aria-hidden="true">
           <h4>Linux</h4>
           <div class="platform-links">
             <a class="dl-btn primary" data-asset="linux-amd64-deb" href="#">.deb (amd64)</a>
@@ -2312,21 +2282,10 @@
 
       </div>
       <div class="download-note">
-        All builds are unsigned. macOS users: right-click &gt; Open on first launch.
+        macOS builds are signed and notarized. Windows and Linux builds are unsigned &mdash;
+        Windows SmartScreen may warn on first launch.
         <br>View all assets on <a id="releases-link" href="https://github.com/etiennechabert/cost-goblin/releases/latest" target="_blank" rel="noopener">GitHub Releases</a>.
       </div>
-
-      <a href="#get-started" class="next-step" data-animate>
-        <div class="next-step-tag">
-          <span class="next-step-arrow">&rarr;</span>
-          <span class="next-step-label">Next</span>
-        </div>
-        <div class="next-step-body">
-          <div class="next-step-title">Set up your AWS data exports</div>
-          <div class="next-step-sub">5-minute walkthrough — cost allocation tags, FOCUS 1.2 exports, Cost Optimization Hub.</div>
-        </div>
-        <svg class="next-step-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-      </a>
     </div>
   </section>
 
@@ -2339,16 +2298,49 @@
 
       <div class="integration-choice">
         <button type="button" class="integration-card" data-open-modal="modal-aws" aria-haspopup="dialog">
+          <svg class="integration-card-mark integration-card-mark--aws" viewBox="0 116 304 66" aria-hidden="true">
+            <path fill="#FF9900" d="M273.5,143.7c-32.9,24.3-80.7,37.2-121.8,37.2c-57.6,0-109.5-21.3-148.7-56.7c-3.1-2.8-0.3-6.6,3.4-4.4c42.4,24.6,94.7,39.5,148.8,39.5c36.5,0,76.6-7.6,113.5-23.2C274.2,133.6,278.9,139.7,273.5,143.7z"/>
+            <path fill="#FF9900" d="M287.2,128.1c-4.2-5.4-27.8-2.6-38.5-1.3c-3.2,0.4-3.7-2.4-0.8-4.5c18.8-13.2,49.7-9.4,53.3-5c3.6,4.5-1,35.4-18.6,50.2c-2.7,2.3-5.3,1.1-4.1-1.9C282.5,155.7,291.4,133.4,287.2,128.1z"/>
+          </svg>
           <span class="integration-card-name">AWS Integration</span>
           <span class="integration-card-sub">FOCUS 1.2 Data Export &rarr; S3</span>
           <span class="integration-card-cta">Setup guide &rarr;</span>
         </button>
 
         <button type="button" class="integration-card" data-open-modal="modal-gcp" aria-haspopup="dialog">
+          <svg class="integration-card-mark" viewBox="0 0 34 30" aria-hidden="true">
+            <path fill="#EA4335" d="M21.85,7.41l1,0,2.85-2.85.14-1.21A12.81,12.81,0,0,0,5,9.6a1.55,1.55,0,0,1,1-.06l5.7-.94s.29-.48.44-.45a7.11,7.11,0,0,1,9.73-.74Z"/>
+            <path fill="#4285F4" d="M29.76,9.6a12.84,12.84,0,0,0-3.87-6.24l-4,4A7.11,7.11,0,0,1,24.5,13v.71a3.56,3.56,0,1,1,0,7.12H17.38l-.71.72v4.27l.71.71H24.5A9.26,9.26,0,0,0,29.76,9.6Z"/>
+            <path fill="#34A853" d="M10.25,26.49h7.12v-5.7H10.25a3.54,3.54,0,0,1-1.47-.32l-1,.31L4.91,23.63l-.25,1A9.21,9.21,0,0,0,10.25,26.49Z"/>
+            <path fill="#FBBC05" d="M10.25,8A9.26,9.26,0,0,0,4.66,24.6l4.13-4.13a3.56,3.56,0,1,1,4.71-4.71l4.13-4.13A9.25,9.25,0,0,0,10.25,8Z"/>
+          </svg>
           <span class="integration-card-name">GCP Integration</span>
           <span class="integration-card-sub">FOCUS 1.2 BigQuery export &rarr; Cloud Storage</span>
           <span class="integration-card-cta">Setup guide &rarr;</span>
         </button>
+
+        <div class="integration-card integration-card--soon" aria-disabled="true">
+          <svg class="integration-card-mark" viewBox="0 0 96 96" aria-hidden="true">
+            <defs>
+              <linearGradient id="lp-azure-body" x1="-1032.172" x2="-1059.213" y1="145.312" y2="65.426" gradientTransform="matrix(1 0 0 -1 1075 158)" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-color="#114a8b"/><stop offset="1" stop-color="#0669bc"/>
+              </linearGradient>
+              <linearGradient id="lp-azure-shade" x1="-1023.725" x2="-1029.98" y1="108.083" y2="105.968" gradientTransform="matrix(1 0 0 -1 1075 158)" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-opacity=".3"/><stop offset=".071" stop-opacity=".2"/><stop offset=".321" stop-opacity=".1"/><stop offset=".623" stop-opacity=".05"/><stop offset="1" stop-opacity="0"/>
+              </linearGradient>
+              <linearGradient id="lp-azure-fold" x1="-1027.165" x2="-997.482" y1="147.642" y2="68.561" gradientTransform="matrix(1 0 0 -1 1075 158)" gradientUnits="userSpaceOnUse">
+                <stop offset="0" stop-color="#3ccbf4"/><stop offset="1" stop-color="#2892df"/>
+              </linearGradient>
+            </defs>
+            <path fill="url(#lp-azure-body)" d="M33.338 6.544h26.038l-27.03 80.087a4.152 4.152 0 0 1-3.933 2.824H8.149a4.145 4.145 0 0 1-3.928-5.47L29.404 9.368a4.152 4.152 0 0 1 3.934-2.825z"/>
+            <path fill="#0078d4" d="M71.175 60.261h-41.29a1.911 1.911 0 0 0-1.305 3.309l26.532 24.764a4.171 4.171 0 0 0 2.846 1.121h23.38z"/>
+            <path fill="url(#lp-azure-shade)" d="M33.338 6.544a4.118 4.118 0 0 0-3.943 2.879L4.252 83.917a4.14 4.14 0 0 0 3.908 5.538h20.787a4.443 4.443 0 0 0 3.41-2.9l5.014-14.777 17.91 16.705a4.237 4.237 0 0 0 2.666.972H81.24L71.024 60.261l-29.781.007L59.47 6.544z"/>
+            <path fill="url(#lp-azure-fold)" d="M66.595 9.364a4.145 4.145 0 0 0-3.928-2.82H33.648a4.146 4.146 0 0 1 3.928 2.82l25.184 74.62a4.146 4.146 0 0 1-3.928 5.472h29.02a4.146 4.146 0 0 0 3.927-5.472z"/>
+          </svg>
+          <span class="integration-card-name">Azure Integration</span>
+          <span class="integration-card-sub">FOCUS 1.2 export &rarr; Blob Storage</span>
+          <span class="integration-card-cta integration-card-cta--soon">Coming soon</span>
+        </div>
       </div>
     </div>
   </section>
@@ -2359,6 +2351,11 @@
       <div class="section-label">Roadmap</div>
       <div class="section-title">What's next</div>
       <div class="roadmap-grid">
+        <div class="roadmap-card in-progress" data-animate>
+          <div class="roadmap-badge in-progress">In progress</div>
+          <h4>Multi-cloud</h4>
+          <p>GCP billing lands alongside AWS in v0.7 &mdash; FOCUS&nbsp;1.2 from BigQuery via Cloud Storage. Azure next. One interface for all your cloud spend.</p>
+        </div>
         <div class="roadmap-card" data-animate>
           <div class="roadmap-badge">Planned</div>
           <h4>Anomaly detection</h4>
@@ -2373,11 +2370,6 @@
           <div class="roadmap-badge">Planned</div>
           <h4>Collaboration</h4>
           <p>Share dashboards and cost reports with your team. Collaborative triage for cost spikes.</p>
-        </div>
-        <div class="roadmap-card" data-animate>
-          <div class="roadmap-badge">Maybe</div>
-          <h4>Multi-cloud</h4>
-          <p>GCP and Azure billing support alongside AWS. One interface for all your cloud spend.</p>
         </div>
       </div>
 
