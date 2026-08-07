@@ -392,6 +392,7 @@ export class MockCostApi implements CostApi {
     prefixes: ['focus'],
     folder: { kind: 'unknown' },
     hasParquet: false,
+    truncated: false,
   };
 
   gcsBrowseByPrefix: Record<string, GcsBrowseResult> = {};

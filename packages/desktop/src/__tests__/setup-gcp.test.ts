@@ -44,14 +44,21 @@ describe('parseGcloudProjects', () => {
     expect(parseGcloudProjects('[]')).toEqual([]);
   });
 
-  it('returns empty rather than throwing on non-JSON stdout', () => {
-    // gcloud prints update nags and auth prompts to stdout in some configs.
-    expect(parseGcloudProjects('You do not currently have an active account')).toEqual([]);
-    expect(parseGcloudProjects('')).toEqual([]);
+  it('reports unreadable stdout as null, distinct from an empty list', () => {
+    // gcloud prints update nags and auth prompts to stdout in some configs
+    // while still exiting 0. Collapsing that into [] made the wizard claim
+    // "the signed-in account can't see any active projects" — a statement
+    // about the user's account rather than about our failure to read it.
+    expect(parseGcloudProjects('You do not currently have an active account')).toBeNull();
+    expect(parseGcloudProjects('')).toBeNull();
   });
 
-  it('returns empty when the payload is a JSON object rather than an array', () => {
-    expect(parseGcloudProjects('{"projectId":"x"}')).toEqual([]);
+  it('reports a JSON object rather than an array as unreadable', () => {
+    expect(parseGcloudProjects('{"projectId":"x"}')).toBeNull();
+  });
+
+  it('still returns an empty array for a genuinely empty list', () => {
+    expect(parseGcloudProjects('[]')).toEqual([]);
   });
 });
 
