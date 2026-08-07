@@ -29,7 +29,7 @@ async function getStorageModule(): Promise<typeof import('@google-cloud/storage'
  *  key this is what the token is minted for; under Application Default
  *  Credentials the user-account token already carries cloud-platform, and
  *  the scope is simply not narrowed further. */
-const READ_ONLY_SCOPE = 'https://www.googleapis.com/auth/devstorage.read_only';
+export const GCS_READ_ONLY_SCOPE = 'https://www.googleapis.com/auth/devstorage.read_only';
 
 /** Whether an error indicates missing or expired GCP credentials rather than
  *  a genuine storage/network failure. Mirrors `isCredentialError` on the AWS
@@ -143,7 +143,7 @@ export async function createGcsHandle(keyFile?: string): Promise<ObjectStoreHand
   const { Storage } = await getStorageModule();
 
   const storage = new Storage({
-    scopes: [READ_ONLY_SCOPE],
+    scopes: [GCS_READ_ONLY_SCOPE],
     ...(keyFile === undefined ? {} : { keyFilename: keyFile }),
   });
 

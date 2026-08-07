@@ -1,14 +1,19 @@
-import type { ConfigBundleSummary } from '@costgoblin/core/browser';
-import { isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
+import type { ConfigBundleSummary, GcpProject, GcsFolderKind } from '@costgoblin/core/browser';
+import { gcsTiersOverlap, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
 import { useState, useEffect } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
 import { BundleSummaryCard, ImportConfigDialog } from '../components/config-sharing.js';
 import { ProfilePicker } from '../components/profile-picker.js';
-import { SsoLoginButton } from '../components/sso-login-button.js';
+import { GcloudLoginButton, SsoLoginButton } from '../components/sso-login-button.js';
 
 type DataSource = 'daily' | 'hourly' | 'costOptimization';
+
+/** The tiers the GCP exporter can publish. `costOptimization` is absent by
+ *  design — GCP has no Cost Optimization Hub analogue, and `validateGcpSync`
+ *  rejects the key outright. */
+type GcpSource = 'daily' | 'hourly';
 
 const SOURCE_LABELS: Record<DataSource, { title: string; description: string }> = {
   daily: { title: 'Daily FOCUS export', description: 'Main billing data — required' },
@@ -20,11 +25,15 @@ type WizardStep =
   | { step: 'welcome' }
   | { step: 'start' }
   | { step: 'gcp'; scaffolded: boolean; error: string }
+  | { step: 'gcp-project'; projects: readonly GcpProject[]; loading: boolean; selected: string; error: string }
+  | { step: 'gcp-bucket'; project: string; source: GcpSource; buckets: readonly { name: string }[]; loading: boolean; selected: string; error: string }
+  | { step: 'gcp-browse'; project: string; source: GcpSource; bucket: string; prefix: string; prefixes: readonly string[]; loading: boolean; folder: GcsFolderKind; hasParquet: boolean; error: string; path: string[] }
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
   | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; path: string[] }
-  | { step: 'confirm'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
+  | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number }
+  | { step: 'confirm'; cloud: 'gcp'; project: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
 
 interface SetupWizardProps {
   /** Called when setup finishes. Carries the workspace name the user chose on
@@ -275,18 +284,19 @@ function StartStep({ workspaceLabel, onSetup, onGcp, onImport, onBack, jumpBack 
 const GCP_EXPORTER_DOCS = 'https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter';
 
 /**
- * Step 2b — GCP.
+ * Step 2b — GCP: the exporter prerequisite, then into browse-and-pick.
  *
- * Deliberately not the S3 flow's browse-and-pick wizard. That one can list
- * buckets because AWS credentials are already on the machine; the GCP path
- * depends on an exporter the user deploys into their OWN project first, and
- * there is nothing to browse until it has run. So this step states the
- * prerequisite, writes a GCP-shaped config template, and hands over to the
- * editor — which beats the previous behaviour of not existing at all, leaving
- * a GCP user on a screen offering only S3 and a teammate's bundle.
+ * The prerequisite is real — there is nothing in the bucket until the user's
+ * own exporter has run — but it is an ORDERING constraint, not a reason to
+ * hand-edit YAML. Once the exporter has run, a GCS bucket browses exactly like
+ * an S3 one, so this states the prerequisite and then offers the same
+ * pick-from-a-list flow AWS gets. Hand-editing survives as the escape hatch
+ * for anyone whose credentials can't list projects (a bare service-account
+ * key, say).
  */
-function GcpStep({ state, onScaffold, onDone, onBack }: Readonly<{
+function GcpIntroStep({ state, onBrowse, onScaffold, onDone, onBack }: Readonly<{
   state: { scaffolded: boolean; error: string };
+  onBrowse: () => void;
   onScaffold: () => void;
   onDone: () => void;
   onBack: () => void;
@@ -316,12 +326,19 @@ function GcpStep({ state, onScaffold, onDone, onBack }: Readonly<{
           Sign in so CostGoblin can read the bucket:{' '}
           <code className="text-text-primary text-xs">gcloud auth application-default login</code>
         </li>
-        <li>Create the config below, set your bucket in it, and save.</li>
+        <li>Pick the exported folder below — CostGoblin writes the config for you.</li>
       </ol>
       <div className="flex w-full max-w-xs flex-col gap-3">
-        <Button onClick={onScaffold} className="bg-accent hover:bg-accent-hover text-white">
-          {state.scaffolded ? 'Open the config folder again' : 'Create config & open folder'}
+        <Button onClick={onBrowse} className="bg-accent hover:bg-accent-hover text-white">
+          Find my export
         </Button>
+        <button
+          type="button"
+          onClick={onScaffold}
+          className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2"
+        >
+          {state.scaffolded ? 'Open the config folder again' : 'Write the config by hand instead'}
+        </button>
         {state.error !== '' && <p className="text-xs text-negative">{state.error}</p>}
         {state.scaffolded && (
           <>
@@ -340,6 +357,355 @@ function GcpStep({ state, onScaffold, onDone, onBack }: Readonly<{
       <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">
         ← Back
       </button>
+    </div>
+  );
+}
+
+/** Errors from the project/bucket/browse handlers that a sign-in fixes.
+ *  `GCLOUD_CLI_NOT_FOUND` is deliberately excluded — the login button can't
+ *  run a CLI that isn't installed, and `GcloudLoginButton` surfaces its own
+ *  install prompt for that case. */
+function isGcpAuthError(message: string): boolean {
+  if (message.length === 0) return false;
+  return (
+    message.includes('Could not load the default credentials') ||
+    message.includes('Could not refresh access token') ||
+    message.includes('Unable to detect a Project Id') ||
+    message.includes('invalid_grant') ||
+    message.includes('Token has been expired or revoked') ||
+    message.includes('gcloud auth') ||
+    message.includes('do not currently have an active account') ||
+    message.includes('Reauthentication failed')
+  );
+}
+
+/** Error panel shared by the three GCP steps. `GCLOUD_CLI_NOT_FOUND` is a
+ *  sentinel the handlers return rather than a message worth showing. */
+function GcpError({ message, mode }: Readonly<{ message: string; mode: 'adc' | 'cli' }>) {
+  if (message.length === 0) return null;
+  const missingCli = message.includes('GCLOUD_CLI_NOT_FOUND');
+  return (
+    <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3">
+      <p className="text-sm text-negative whitespace-pre-wrap">
+        {missingCli
+          ? 'The Google Cloud CLI (gcloud) is not installed — CostGoblin needs it to list your projects and download the export.'
+          : message}
+      </p>
+      {(missingCli || isGcpAuthError(message)) && <GcloudLoginButton mode={mode} />}
+    </div>
+  );
+}
+
+/** Step 2b-i — which project's buckets to list.
+ *
+ *  Has no AWS counterpart: S3's ListBuckets is account-wide and takes no
+ *  arguments, while `storage.getBuckets()` is project-scoped. */
+function GcpProjectStep({ state, onSelect, onManual, onBack }: Readonly<{
+  state: Extract<WizardStep, { step: 'gcp-project' }>;
+  onSelect: (projectId: string) => void;
+  onManual: () => void;
+  onBack: () => void;
+}>) {
+  const [filter, setFilter] = useState('');
+  const filtered = state.projects.filter(
+    p => filter.length === 0
+      || p.name.toLowerCase().includes(filter.toLowerCase())
+      || p.projectId.toLowerCase().includes(filter.toLowerCase()),
+  );
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <h2 className="text-xl font-semibold text-text-primary">Google Cloud project</h2>
+        <p className="text-sm text-text-secondary mt-1">Which project holds the bucket your exporter writes to?</p>
+        <p className="text-xs text-text-muted mt-1">
+          Read from <code className="text-text-secondary">gcloud projects list</code>
+        </p>
+      </div>
+
+      <GcpError message={state.error} mode="cli" />
+
+      {state.loading && (
+        <div className="flex items-center justify-center py-8">
+          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border border-t-accent" />
+          <span className="ml-2 text-sm text-text-secondary">Loading projects...</span>
+        </div>
+      )}
+      {!state.loading && state.projects.length === 0 && state.error === '' && (
+        <div className="rounded-lg border border-border bg-bg-tertiary/30 px-4 py-6 text-center">
+          <p className="text-sm text-text-secondary">No Google Cloud projects found</p>
+          <p className="text-xs text-text-muted mt-1">The signed-in account can&apos;t see any active projects.</p>
+        </div>
+      )}
+      {!state.loading && state.projects.length > 0 && (
+        <>
+          {state.projects.length > 5 && (
+            <input
+              type="text"
+              value={filter}
+              onChange={(e) => { setFilter(e.target.value); }}
+              placeholder="Filter projects..."
+              className="h-9 rounded-md border border-border bg-bg-primary px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+          )}
+          <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
+            {filtered.map(project => (
+              <button
+                key={project.projectId}
+                type="button"
+                onClick={() => { onSelect(project.projectId); }}
+                className={[
+                  'flex flex-col rounded-lg border px-4 py-2.5 text-left transition-colors',
+                  state.selected === project.projectId
+                    ? 'border-accent bg-accent-muted text-accent'
+                    : 'border-border bg-bg-tertiary/20 text-text-primary hover:bg-bg-tertiary/40',
+                ].join(' ')}
+              >
+                <span className="text-sm">{project.name}</span>
+                <span className="font-mono text-xs text-text-muted">{project.projectId}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div className="flex items-center justify-between pt-2">
+        <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
+        <button
+          type="button"
+          onClick={onManual}
+          className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2"
+        >
+          Write the config by hand instead
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Step 2b-ii — pick the bucket. Sister of `BucketStep`, against GCS. */
+function GcpBucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
+  state: Extract<WizardStep, { step: 'gcp-bucket' }>;
+  onSelect: (bucket: string) => void;
+  onSkip?: (() => void) | undefined;
+  onBack: () => void;
+}>) {
+  const [filter, setFilter] = useState('');
+  const filtered = state.buckets.filter(b => filter.length === 0 || b.name.toLowerCase().includes(filter.toLowerCase()));
+  const sourceLabel = SOURCE_LABELS[state.source];
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <h2 className="text-xl font-semibold text-text-primary">{sourceLabel.title}</h2>
+        <p className="text-sm text-text-secondary mt-1">{sourceLabel.description}</p>
+        <p className="text-xs text-text-muted mt-0.5">
+          Select the Cloud Storage bucket in <code className="text-text-secondary">{state.project}</code>
+        </p>
+      </div>
+
+      <GcpError message={state.error} mode="adc" />
+
+      {state.loading ? (
+        <div className="flex items-center justify-center py-8">
+          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border border-t-accent" />
+          <span className="ml-2 text-sm text-text-secondary">Loading buckets...</span>
+        </div>
+      ) : (
+        <>
+          {state.buckets.length > 5 && (
+            <input
+              type="text"
+              value={filter}
+              onChange={(e) => { setFilter(e.target.value); }}
+              placeholder="Filter buckets..."
+              className="h-9 rounded-md border border-border bg-bg-primary px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+          )}
+          <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
+            {filtered.map(bucket => (
+              <button
+                key={bucket.name}
+                type="button"
+                onClick={() => { onSelect(bucket.name); }}
+                className={[
+                  'flex items-center rounded-lg border px-4 py-2.5 text-left text-sm transition-colors',
+                  state.selected === bucket.name
+                    ? 'border-accent bg-accent-muted text-accent'
+                    : 'border-border bg-bg-tertiary/20 text-text-primary hover:bg-bg-tertiary/40',
+                ].join(' ')}
+              >
+                <span className="font-mono text-xs">{bucket.name}</span>
+              </button>
+            ))}
+            {filtered.length === 0 && (
+              <p className="text-sm text-text-muted text-center py-4">No buckets found</p>
+            )}
+          </div>
+        </>
+      )}
+
+      <div className="flex items-center justify-between pt-2">
+        <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
+        {onSkip !== undefined && (
+          <button type="button" onClick={onSkip} className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2">Skip</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Step 2b-iii — walk the bucket to the tier folder.
+ *
+ *  The `tier-parent` verdict is the point of this screen. Pointing a provider
+ *  at the exporter's PREFIX rather than a tier folder under it makes the daily
+ *  tier list the hourly shards too — the sync has a bespoke error for it, and
+ *  this refuses the selection before the user can make it. */
+function GcpBrowseStep({ state, conflictsWith, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
+  state: Extract<WizardStep, { step: 'gcp-browse' }>;
+  /** A tier location already collected in this run that this one must not
+   *  overlap — the daily path, while browsing for hourly. */
+  conflictsWith?: string | undefined;
+  onNavigate: (prefix: string) => void;
+  onConfirm: () => void;
+  onSkip?: (() => void) | undefined;
+  onBack: () => void;
+}>) {
+  const sourceLabel = SOURCE_LABELS[state.source];
+  const isExport = state.folder.kind === 'export';
+  // `validateGcpSync` rejects overlapping tiers at load time, so allowing the
+  // selection here would write a config the app then refuses to start on.
+  const overlaps = conflictsWith !== undefined
+    && conflictsWith.length > 0
+    && gcsTiersOverlap(`gs://${state.bucket}/${state.prefix}`, conflictsWith);
+  const selectable = isExport && state.hasParquet && !overlaps;
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <h2 className="text-xl font-semibold text-text-primary">{sourceLabel.title}</h2>
+        <p className="text-sm text-text-secondary mt-1">
+          Navigate to the <code className="text-text-primary">{state.source}</code> folder your exporter writes to
+        </p>
+        <p className="text-xs text-text-muted mt-0.5">{sourceLabel.description}</p>
+      </div>
+
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-1 text-xs font-mono text-text-muted flex-wrap">
+        <button type="button" onClick={() => { onNavigate(''); }} className="hover:text-accent transition-colors">
+          {state.bucket}
+        </button>
+        {state.path.map((seg, i) => (
+          <span key={seg} className="flex items-center gap-1">
+            <span>/</span>
+            <button
+              type="button"
+              onClick={() => { onNavigate(state.path.slice(0, i + 1).join('/') + '/'); }}
+              className="hover:text-accent transition-colors"
+            >
+              {seg}
+            </button>
+          </span>
+        ))}
+      </div>
+
+      <GcpError message={state.error} mode="adc" />
+
+      {state.folder.kind === 'tier-parent' && (
+        <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3">
+          <p className="text-sm font-medium text-warning">This is the parent folder — go one level deeper</p>
+          <p className="text-xs text-warning mt-0.5">
+            It holds {state.folder.tiers.map(t => `${t}/`).join(' and ')}. Pointing a provider here would make the{' '}
+            {state.source} tier read every tier&apos;s files. Open{' '}
+            <code className="text-text-primary">{state.source}/</code> to select it.
+          </p>
+        </div>
+      )}
+
+      {overlaps && (
+        <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
+          <p className="text-sm font-medium text-negative">Already used by the daily tier</p>
+          <p className="text-xs text-text-secondary mt-0.5">
+            Each tier needs its own folder — reading one folder as both would sync the same rows
+            twice and make the intraday views show daily grain. Pick the exporter&apos;s{' '}
+            <code className="text-text-primary">hourly/</code> folder, or skip this tier.
+          </p>
+        </div>
+      )}
+
+      {isExport && !overlaps && !state.hasParquet && (
+        <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
+          <p className="text-sm font-medium text-negative">No Parquet files in this export yet</p>
+          <p className="text-xs text-text-secondary mt-0.5">
+            The period folders exist but hold no shards — the exporter has been deployed but hasn&apos;t
+            finished a run. Wait for it to complete, then come back.
+          </p>
+        </div>
+      )}
+
+      {selectable && state.folder.kind === 'export' && (
+        <div className="rounded-lg border border-accent/40 bg-accent/5 px-4 py-3">
+          <p className="text-sm font-medium text-accent">FOCUS export detected</p>
+          <p className="text-xs text-text-secondary mt-0.5">
+            Found {state.folder.periods.length} billing{' '}
+            {state.folder.periods.length === 1 ? 'period' : 'periods'} ({state.folder.periods[0]}
+            {state.folder.periods.length > 1 ? ` – ${String(state.folder.periods[state.folder.periods.length - 1])}` : ''})
+          </p>
+        </div>
+      )}
+
+      {state.loading ? (
+        <div className="flex items-center justify-center py-6">
+          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-border border-t-accent" />
+          <span className="ml-2 text-sm text-text-secondary">Loading...</span>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
+          {state.prefixes.map(prefix => {
+            const isTier = prefix === 'daily' || prefix === 'hourly';
+            return (
+              <button
+                key={prefix}
+                type="button"
+                onClick={() => { onNavigate(state.prefix + prefix + '/'); }}
+                // Explicit name: the folder emoji would otherwise land in the
+                // accessible name, and the tier hint above renders the same
+                // `daily/` string, so a name of its own is what makes this
+                // button unambiguous to a screen reader.
+                aria-label={`Open folder ${prefix}`}
+                className={[
+                  'flex items-center gap-2 rounded-lg border px-4 py-2 text-left text-sm transition-colors',
+                  isTier
+                    ? 'border-accent/30 bg-accent/5 text-accent'
+                    : 'border-border bg-bg-tertiary/20 text-text-primary hover:bg-bg-tertiary/40',
+                ].join(' ')}
+              >
+                <span className="text-text-muted" aria-hidden="true">📁</span>
+                <span className="font-mono text-xs">{prefix}/</span>
+              </button>
+            );
+          })}
+          {state.prefixes.length === 0 && (
+            <p className="text-sm text-text-muted text-center py-4">No subfolders found</p>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between pt-2">
+        <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
+        <div className="flex items-center gap-3">
+          {onSkip !== undefined && (
+            <button type="button" onClick={onSkip} className="text-xs text-text-muted hover:text-text-secondary underline underline-offset-2">Skip</button>
+          )}
+          <Button
+            onClick={onConfirm}
+            disabled={!selectable}
+            className="bg-accent hover:bg-accent-hover text-white px-8"
+          >
+            {selectable ? 'Use this location' : 'Select an export folder'}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -714,6 +1080,13 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
   const isDaily = state.s3Path.length > 0;
   const isHourlyOnly = !isDaily && state.hourlyPath.length > 0;
 
+  // The credential card names whichever store this provider authenticates
+  // through. Hardcoding "AWS Profile" here was fine while the wizard only
+  // built AWS providers; a GCP run has no profile at all.
+  const credential = state.cloud === 'gcp'
+    ? { label: 'Google Cloud project', value: state.project }
+    : { label: 'AWS Profile', value: state.profile };
+
   const retentionOptions = isHourlyOnly
     ? [
         { days: 7, label: '7 days' },
@@ -733,11 +1106,18 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
     setSaving(true);
     api.writeConfig({
       providerName: providerNaming.value,
-      profile: state.profile,
+      type: state.cloud,
+      // GCP authenticates through Application Default Credentials, which the
+      // config expresses by omitting a credential field entirely. The empty
+      // string keeps the payload's shape while the gcp arm of
+      // `upsertWizardProvider` ignores it.
+      profile: state.cloud === 'gcp' ? '' : state.profile,
       dailyBucket: state.s3Path,
       retentionDays: isDaily ? state.retentionDays : undefined,
       ...(state.hourlyPath.length > 0 ? { hourlyBucket: state.hourlyPath } : {}),
-      ...(state.costOptPath.length > 0 ? { costOptBucket: state.costOptPath } : {}),
+      // GCP has no Cost Optimization Hub analogue and `validateGcpSync`
+      // rejects the key, so it is never collected — but never sent, either.
+      ...(state.cloud !== 'gcp' && state.costOptPath.length > 0 ? { costOptBucket: state.costOptPath } : {}),
     }).then(() => {
       onComplete();
     }).catch(() => { setSaving(false); });
@@ -781,8 +1161,8 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
         </div>
 
         <div className="rounded-lg border border-border bg-bg-tertiary/20 px-4 py-3">
-          <p className="text-xs text-text-muted uppercase tracking-wider">AWS Profile</p>
-          <p className="text-sm font-mono text-text-primary mt-0.5">{state.profile}</p>
+          <p className="text-xs text-text-muted uppercase tracking-wider">{credential.label}</p>
+          <p className="text-sm font-mono text-text-primary mt-0.5">{credential.value}</p>
         </div>
 
         {paths.map(({ label, value }) => (
@@ -913,6 +1293,83 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     });
   }
 
+  /** Enter the GCP browse flow. Retargets the default provider name to the
+   *  GCP arm, but only while it is still the untouched AWS default — a name
+   *  the user typed, or one fixed by source/add mode, is never rewritten. */
+  function goToGcpProjectStep(): void {
+    if (!providerNameFixed && mode !== 'add' && providerName === 'aws-main') {
+      setProviderName('gcp-main');
+    }
+    setWizard({ step: 'gcp-project', projects: [], loading: true, selected: '', error: '' });
+    api.listGcpProjects().then(result => {
+      setWizard({ step: 'gcp-project', projects: result.projects, loading: false, selected: '', error: result.error ?? '' });
+    }).catch((err: unknown) => {
+      setWizard({ step: 'gcp-project', projects: [], loading: false, selected: '', error: err instanceof Error ? err.message : String(err) });
+    });
+  }
+
+  function startGcpBucketStep(project: string, source: GcpSource): void {
+    setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: true, selected: '', error: '' });
+    api.listGcsBuckets(project).then(result => {
+      setWizard({ step: 'gcp-bucket', project, source, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
+    }).catch((err: unknown) => {
+      setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: false, selected: '', error: err instanceof Error ? err.message : String(err) });
+    });
+  }
+
+  function gcpBrowseTo(project: string, source: GcpSource, bucket: string, prefix: string): void {
+    const path = prefix.split('/').filter(s => s.length > 0);
+    setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: [], loading: true, folder: { kind: 'unknown' }, hasParquet: false, error: '', path });
+    api.browseGcs({ projectId: project, bucket, prefix }).then(result => {
+      setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: result.prefixes, loading: false, folder: result.folder, hasParquet: result.hasParquet, error: result.error ?? '', path });
+    }).catch((err: unknown) => {
+      setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: [], loading: false, folder: { kind: 'unknown' }, hasParquet: false, error: err instanceof Error ? err.message : String(err), path });
+    });
+  }
+
+  function handleGcpBrowseConfirm(): void {
+    if (wizard.step !== 'gcp-browse') return;
+    const { project, source, bucket, prefix } = wizard;
+    const gcsPath = `gs://${bucket}/${prefix}`;
+    const updated = { ...collectedPaths };
+
+    if (source === 'daily') {
+      updated.daily = gcsPath;
+      setCollectedPaths(updated);
+      // Offer the hourly tier next, exactly as the AWS chain does. Skipping
+      // it lands on Confirm — the exporter publishes hourly only when it was
+      // deployed with TIERS=daily,hourly.
+      startGcpBucketStep(project, 'hourly');
+      return;
+    }
+
+    updated.hourly = gcsPath;
+    setCollectedPaths(updated);
+    goToGcpConfirm(project, updated, 365);
+  }
+
+  /** Leave the GCP browse chain for the Confirm screen, keeping whatever
+   *  tiers were collected so far. */
+  function handleGcpSkip(): void {
+    if (wizard.step !== 'gcp-browse' && wizard.step !== 'gcp-bucket') return;
+    goToGcpConfirm(wizard.project);
+  }
+
+  function goToGcpConfirm(project: string, paths?: { daily: string; hourly: string; costOpt: string }, retention?: number): void {
+    const p = paths ?? collectedPaths;
+    setWizard({
+      step: 'confirm',
+      cloud: 'gcp',
+      project,
+      s3Path: p.daily,
+      hourlyPath: p.hourly,
+      // GCP never collects a cost-optimization path; carrying one here would
+      // put a key in the config that `validateGcpSync` refuses to load.
+      costOptPath: '',
+      retentionDays: retention ?? 365,
+    });
+  }
+
   useEffect(() => {
     if (isSourceMode && !bucketsLoaded) {
       setBucketsLoaded(true);
@@ -1036,6 +1493,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     const p = paths ?? collectedPaths;
     setWizard({
       step: 'confirm',
+      cloud: 'aws',
       profile,
       s3Path: p.daily,
       hourlyPath: p.hourly,
@@ -1059,8 +1517,22 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
       }
     } else if (wizard.step === 'browse') {
       startBucketStep(wizard.profile, wizard.source);
+    } else if (wizard.step === 'gcp-project') {
+      setWizard({ step: 'gcp', scaffolded: false, error: '' });
+    } else if (wizard.step === 'gcp-bucket') {
+      if (wizard.source === 'daily') {
+        goToGcpProjectStep();
+      } else {
+        startGcpBucketStep(wizard.project, 'daily');
+      }
+    } else if (wizard.step === 'gcp-browse') {
+      startGcpBucketStep(wizard.project, wizard.source);
     } else if (wizard.step === 'confirm') {
-      startBucketStep(wizard.profile, 'costOptimization');
+      if (wizard.cloud === 'gcp') {
+        startGcpBucketStep(wizard.project, 'hourly');
+      } else {
+        startBucketStep(wizard.profile, 'costOptimization');
+      }
     }
   }
 
@@ -1104,11 +1576,38 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             />
           )}
           {wizard.step === 'gcp' && (
-            <GcpStep
+            <GcpIntroStep
               state={wizard}
+              onBrowse={goToGcpProjectStep}
               onScaffold={handleGcpScaffold}
               onDone={finish}
               onBack={() => { setWizard({ step: 'start' }); }}
+            />
+          )}
+          {wizard.step === 'gcp-project' && (
+            <GcpProjectStep
+              state={wizard}
+              onSelect={(projectId) => { startGcpBucketStep(projectId, 'daily'); }}
+              onManual={() => { setWizard({ step: 'gcp', scaffolded: false, error: '' }); }}
+              onBack={handleBack}
+            />
+          )}
+          {wizard.step === 'gcp-bucket' && (
+            <GcpBucketStep
+              state={wizard}
+              onSelect={(bucket) => { gcpBrowseTo(wizard.project, wizard.source, bucket, ''); }}
+              onSkip={wizard.source === 'daily' ? undefined : handleGcpSkip}
+              onBack={handleBack}
+            />
+          )}
+          {wizard.step === 'gcp-browse' && (
+            <GcpBrowseStep
+              state={wizard}
+              conflictsWith={wizard.source === 'hourly' ? collectedPaths.daily : undefined}
+              onNavigate={(prefix) => { gcpBrowseTo(wizard.project, wizard.source, wizard.bucket, prefix); }}
+              onConfirm={handleGcpBrowseConfirm}
+              onSkip={wizard.source === 'daily' ? undefined : handleGcpSkip}
+              onBack={handleBack}
             />
           )}
           {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={finish} onBack={handleBack} />}

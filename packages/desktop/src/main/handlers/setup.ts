@@ -1,10 +1,34 @@
 import { ipcMain, shell } from 'electron';
-import { logger, parseS3Path, isStringRecord } from '@costgoblin/core';
+import {
+  GCS_READ_ONLY_SCOPE,
+  classifyGcsFolder,
+  findGcloudCli,
+  gcloudCliFound,
+  gcloudSearchPaths,
+  logger,
+  parseS3Path,
+  isStringRecord,
+} from '@costgoblin/core';
+import type { GcpProject, GcsBrowseResult } from '@costgoblin/core';
 import { upsertWizardProvider } from '../config-upsert.js';
 import { buildConfigTemplate, buildDimensionsTemplate } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
+import { extractGcsPrefixNames, parseGcloudProjects } from '../setup-gcp.js';
 import type { DetectedReportType } from '../setup-manifest.js';
 import type { AppContext } from './context.js';
+
+/** Ceiling on `gcloud projects list`. The CLI can sit on a re-auth prompt it
+ *  will never receive input for (stdin is ignored here), and an unbounded wait
+ *  leaves the wizard's spinner running forever with no way back. */
+const GCLOUD_PROJECTS_TIMEOUT_MS = 20_000;
+
+/** Normalize a browsed prefix to the form the GCS delimiter listing needs:
+ *  either empty (bucket root) or ending in the delimiter, so child names
+ *  slice off cleanly. */
+function normalizeGcsPrefix(prefix: string): string {
+  if (prefix.length === 0) return '';
+  return prefix.endsWith('/') ? prefix : `${prefix}/`;
+}
 
 /** One-shot CLI flag the setup wizard's relaunch adds (see update.ts) so the
  *  next launch knows to resume on the data-sync screen rather than the dashboard.
@@ -159,6 +183,141 @@ export function registerSetupHandlers(app: AppContext): void {
       return { prefixes, isBillingExport, detectedType, missingColumns };
     } catch {
       return { prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [] };
+    }
+  });
+
+  // ---- GCP: the browse-and-pick counterpart of the three S3 handlers above.
+  //
+  // The asymmetry that remains is the project step. S3's ListBuckets is a
+  // parameter-less, account-wide call; `storage.getBuckets()` is scoped to a
+  // project, and Application Default Credentials frequently carry none (hence
+  // the `Unable to detect a Project Id` case in `isGcpCredentialError`). The
+  // list comes from the gcloud CLI rather than the Resource Manager API
+  // because the CLI is already a hard requirement of the GCP download path,
+  // so it costs no new dependency and no extra API to enable.
+
+  ipcMain.handle('setup:list-gcp-projects', async (): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> => {
+    const { spawn } = await import('node:child_process');
+    const { delimiter } = await import('node:path');
+
+    // Windows ships gcloud as `gcloud.cmd`, which Node refuses to spawn
+    // without a shell (CVE-2024-27980) — and cmd.exe starts fine whether or
+    // not gcloud exists, so ENOENT can never fire there. Probe the disk first
+    // or the "not installed" branch is unreachable on Windows.
+    const useShell = process.platform === 'win32';
+    if (useShell && !gcloudCliFound()) {
+      return { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
+    }
+    const bin = findGcloudCli();
+    const currentPath = process.env['PATH'] ?? '';
+    const fullPath = [...new Set([...currentPath.split(delimiter), ...gcloudSearchPaths()])].join(delimiter);
+    const args = ['projects', 'list', '--format=json'];
+
+    return new Promise<{ projects: readonly GcpProject[]; error?: string | undefined }>((resolve) => {
+      const proc = spawn(
+        useShell ? `"${bin}"` : bin,
+        useShell ? args.map(a => `"${a}"`) : args,
+        {
+          // stdin ignored: a gcloud that wants interactive re-auth must fail
+          // on the timeout below rather than block waiting for input.
+          stdio: ['ignore', 'pipe', 'pipe'],
+          shell: useShell,
+          env: { ...process.env, PATH: fullPath },
+        },
+      );
+
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      const finish = (result: { projects: readonly GcpProject[]; error?: string | undefined }): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+
+      const timer = setTimeout(() => {
+        proc.kill();
+        finish({ projects: [], error: 'Timed out listing projects. Check that `gcloud auth login` has been run.' });
+      }, GCLOUD_PROJECTS_TIMEOUT_MS);
+
+      proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+      proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+      proc.on('error', (err: NodeJS.ErrnoException) => {
+        finish({ projects: [], error: err.code === 'ENOENT' ? 'GCLOUD_CLI_NOT_FOUND' : err.message });
+      });
+
+      proc.on('close', (code) => {
+        if (code === 0) {
+          finish({ projects: parseGcloudProjects(stdout) });
+          return;
+        }
+        // gcloud's own stderr is the most useful thing to show: it names the
+        // exact remedy ("You do not currently have an active account") that
+        // the wizard's sign-in button then performs.
+        const message = stderr.trim().length > 0 ? stderr.trim() : `gcloud projects list failed (exit ${String(code)})`;
+        logger.info('setup:list-gcp-projects failed', { error: message });
+        finish({ projects: [], error: message });
+      });
+    });
+  });
+
+  ipcMain.handle('setup:list-gcs-buckets', async (_event, projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> => {
+    try {
+      const { Storage } = await import('@google-cloud/storage');
+      const storage = new Storage({ projectId, scopes: [GCS_READ_ONLY_SCOPE] });
+      const [buckets] = await storage.getBuckets();
+      return { buckets: buckets.map(b => ({ name: b.name })) };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.info('setup:list-gcs-buckets failed', { error: message });
+      return { buckets: [], error: message };
+    }
+  });
+
+  ipcMain.handle('setup:browse-gcs', async (_event, params: { projectId: string; bucket: string; prefix: string }): Promise<GcsBrowseResult> => {
+    const prefix = normalizeGcsPrefix(params.prefix);
+    try {
+      const { Storage } = await import('@google-cloud/storage');
+      const storage = new Storage({ projectId: params.projectId, scopes: [GCS_READ_ONLY_SCOPE] });
+      const bucket = storage.bucket(params.bucket);
+
+      // The common prefixes live only on the raw `apiResponse` — the SDK types
+      // it `unknown`, so `extractGcsPrefixNames` guards every step.
+      const [, , apiResponse] = await bucket.getFiles({
+        prefix,
+        delimiter: '/',
+        maxResults: 200,
+        autoPaginate: false,
+      });
+      const prefixes = extractGcsPrefixNames(apiResponse, prefix);
+      const folder = classifyGcsFolder(prefixes);
+
+      // Stand-in for the AWS side's manifest read: confirm the first period
+      // partition actually holds shards, so the wizard can't hand the sync a
+      // partition the exporter created and never filled.
+      let hasParquet = false;
+      if (folder.kind === 'export') {
+        const firstPeriod = folder.periods[0];
+        if (firstPeriod !== undefined) {
+          const [periodFiles] = await bucket.getFiles({
+            prefix: `${prefix}billing_period=${firstPeriod}/`,
+            maxResults: 10,
+            autoPaginate: false,
+          });
+          hasParquet = periodFiles.some(f => f.name.endsWith('.parquet'));
+        }
+      }
+
+      return { prefixes, folder, hasParquet };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.info('setup:browse-gcs failed', { error: message });
+      // Unlike `setup:browse-s3`, which swallows the error into an empty
+      // listing, the message is carried back: a GCP browse fails mostly on
+      // credentials, and the wizard turns that into an inline sign-in button.
+      return { prefixes: [], folder: { kind: 'unknown' }, hasParquet: false, error: message };
     }
   });
 

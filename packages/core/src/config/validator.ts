@@ -2,6 +2,7 @@ import { asBucketPath, asDimensionId } from '../types/branded.js';
 import type { BucketPath } from '../types/branded.js';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
 import { parseProviderName } from './provider-name.js';
+import { gcsTiersOverlap } from '../sync/gcs-export-layout.js';
 import { logger } from '../logger/logger.js';
 import type {
   ConceptType,
@@ -111,15 +112,6 @@ function validateGcsSyncTier(raw: unknown, context: string): SyncTierConfig {
   };
 }
 
-/** Whether two tier locations resolve to the same folder or one inside the
- *  other. Compared on normalized prefixes so a trailing slash, or a parent
- *  path, is caught as well as an exact match. */
-function tiersOverlap(a: string, b: string): boolean {
-  const norm = (v: string): string => `${v.replace(/^gs:\/\//, '').replace(/\/+$/, '')}/`;
-  const [x, y] = [norm(a), norm(b)];
-  return x === y || x.startsWith(y) || y.startsWith(x);
-}
-
 /** GCP syncs `daily` and, optionally, `hourly` — both published by
  *  `scripts/gcp-focus-exporter` from the one upstream table.
  *
@@ -133,7 +125,7 @@ function validateGcpSync(raw: unknown): GcpSyncConfig {
   if (raw['costOptimization'] !== undefined) {
     throw new ConfigValidationError(`sync.costOptimization is not supported for a 'gcp' provider — it has no Cost Optimization Hub analogue`);
   }
-  if (hourly !== undefined && tiersOverlap(String(daily.bucket), String(hourly.bucket))) {
+  if (hourly !== undefined && gcsTiersOverlap(String(daily.bucket), String(hourly.bucket))) {
     // Both tiers reading one folder would sync the same rows into
     // `raw/daily-*` AND `raw/hourly-*`, so the intraday views would show the
     // daily grain and the two tiers would fight over retention.

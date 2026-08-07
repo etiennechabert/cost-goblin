@@ -24,6 +24,8 @@ import type {
   SavingsResult,
   DataInventoryResult,
   DataTier,
+  GcpProject,
+  GcsBrowseResult,
   AccountMappingStatus,
   SavingsPreferences,
   UIPreferences,
@@ -203,10 +205,22 @@ const api: CostApi = {
   browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }> {
     return invoke<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }>('setup:browse-s3', params);
   },
+  listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> {
+    return invoke<{ projects: readonly GcpProject[]; error?: string | undefined }>('setup:list-gcp-projects');
+  },
+  listGcsBuckets(projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> {
+    return invoke<{ buckets: readonly { name: string }[]; error?: string | undefined }>('setup:list-gcs-buckets', projectId);
+  },
+  browseGcs(params: { projectId: string; bucket: string; prefix: string }): Promise<GcsBrowseResult> {
+    return invoke<GcsBrowseResult>('setup:browse-gcs', params);
+  },
   scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void> {
     return invoke<undefined>('setup:scaffold-config', providerType).then(() => undefined);
   },
-  writeConfig(config: { providerName: string; profile: string; dailyBucket: string; retentionDays?: number | undefined; hourlyBucket?: string | undefined; costOptBucket?: string | undefined; tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined }): Promise<void> {
+  // `type` was missing here while the handler and `upsertWizardProvider` both
+  // already read it, so this bridge's own signature was the only thing
+  // stopping the wizard from writing a gcp provider.
+  writeConfig(config: { providerName: string; type?: 'aws' | 'gcp' | undefined; profile: string; keyFile?: string | undefined; dailyBucket: string; retentionDays?: number | undefined; hourlyBucket?: string | undefined; costOptBucket?: string | undefined; tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined }): Promise<void> {
     return invoke<undefined>('setup:write-config', config).then(() => undefined);
   },
   updateAwsProfile(profile: string, providerName?: string): Promise<void> {

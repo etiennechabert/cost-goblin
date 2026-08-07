@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ProviderNameError } from '@costgoblin/core';
+import { validateConfig } from '@costgoblin/core';
 import { upsertWizardProvider, swapProviderCredentialsProfile } from '../main/config-upsert.js';
 
 function providerA(): Record<string, unknown> {
@@ -329,5 +330,66 @@ describe('upsertWizardProvider — gcp arm', () => {
       providerName: 'aws-main', profile: 'main-profile', dailyBucket: 's3://b/daily',
     });
     expect(providers(result)[0]).toMatchObject({ type: 'aws', credentialsProfile: 'main-profile' });
+  });
+});
+
+/** The wizard's GCP arm produces a payload with no AWS profile and `gs://`
+ *  tier paths. These close the loop the UI tests can't: what the wizard sends
+ *  must survive `upsertWizardProvider` AND load through the real validator,
+ *  or setup "succeeds" and the next launch refuses to start. */
+describe('setup wizard GCP payload round-trips through the config validator', () => {
+  /** Exactly what `ConfirmStep` sends for a GCP run: empty profile (ADC), a
+   *  browsed daily path, and no costOptBucket. */
+  function gcpWizardPayload(overrides: Record<string, unknown> = {}) {
+    return {
+      providerName: 'gcp-main',
+      type: 'gcp' as const,
+      profile: '',
+      dailyBucket: 'gs://acme-focus-export/focus/daily/',
+      retentionDays: 365,
+      ...overrides,
+    };
+  }
+
+  it('writes a loadable single-tier gcp provider', () => {
+    const written = upsertWizardProvider({}, gcpWizardPayload());
+    const config = validateConfig(written);
+    const provider = config.providers[0];
+    expect(provider?.type).toBe('gcp');
+    expect(String(provider?.sync.daily.bucket)).toBe('gs://acme-focus-export/focus/daily/');
+  });
+
+  it('omits credentialsProfile entirely rather than writing the empty string', () => {
+    // Absent means Application Default Credentials — the documented default.
+    // An empty `credentialsProfile` key would be a different thing entirely.
+    const written = upsertWizardProvider({}, gcpWizardPayload());
+    const entry = providers(written)[0];
+    expect(entry).not.toHaveProperty('credentialsProfile');
+    expect(entry).not.toHaveProperty('profile');
+  });
+
+  it('writes a loadable two-tier gcp provider from the sibling tier folders', () => {
+    const written = upsertWizardProvider({}, gcpWizardPayload({
+      hourlyBucket: 'gs://acme-focus-export/focus/hourly/',
+    }));
+    const config = validateConfig(written);
+    expect(String(config.providers[0]?.sync.hourly?.bucket)).toBe('gs://acme-focus-export/focus/hourly/');
+  });
+
+  it('would be rejected by the validator if the wizard ever let the tiers overlap', () => {
+    // Guards the reason the wizard enforces `gcsTiersOverlap` up front: this
+    // config is writable but not loadable, so the check has to live in the UI.
+    const written = upsertWizardProvider({}, gcpWizardPayload({
+      hourlyBucket: 'gs://acme-focus-export/focus/daily/',
+    }));
+    expect(() => validateConfig(written)).toThrow(/must not overlap/);
+  });
+
+  it('adds a gcp provider beside an existing aws one without disturbing it', () => {
+    const written = upsertWizardProvider({ providers: [providerA()] }, gcpWizardPayload());
+    const config = validateConfig(written);
+    expect(config.providers.map(p => String(p.name))).toEqual(['aws-main', 'gcp-main']);
+    expect(config.providers[0]?.type).toBe('aws');
+    expect(config.providers[1]?.type).toBe('gcp');
   });
 });
