@@ -340,3 +340,66 @@ describe('SetupWizard jump-back to existing workspaces', () => {
     expect(writeSpy).toHaveBeenCalledWith(expect.objectContaining({ providerName: 'payer-b' }));
   });
 });
+
+describe('SetupWizard — GCP', () => {
+  it('offers a Google Cloud door beside S3 and the teammate import', () => {
+    // Before this existed, a GCP user reaching the hub had no route at all:
+    // the manual escape hatch lives on a screen only reachable AFTER setup
+    // completes, so the two AWS-shaped options were the whole world.
+    renderWizard();
+    expect(screen.getByText('Set up from S3')).toBeDefined();
+    expect(screen.getByText('Set up from Google Cloud')).toBeDefined();
+    expect(screen.getByText('Import from a teammate')).toBeDefined();
+  });
+
+  it('states the exporter prerequisite before offering to write anything', async () => {
+    const { user } = renderWizard();
+    await user.click(screen.getByText('Set up from Google Cloud'));
+    await waitFor(() => { expect(screen.getByText('scripts/gcp-focus-exporter')).toBeDefined(); });
+    expect(screen.getByText('gcloud auth application-default login')).toBeDefined();
+    // Nothing to restart into yet — the confirm button appears only once the
+    // template has actually been written.
+    expect(screen.queryByText(/I've saved it/)).toBeNull();
+  });
+
+  it('scaffolds the GCP arm, not the AWS one', async () => {
+    const { api, user } = renderWizard();
+    await user.click(screen.getByText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Create config & open folder'));
+    // An AWS template here would leave a GCP user deleting a block before the
+    // app would start — the friction this step exists to remove.
+    await waitFor(() => { expect(api.scaffoldedFor).toEqual(['gcp']); });
+  });
+
+  it('only offers the restart once the config exists, then completes', async () => {
+    const { api, user, onComplete } = renderWizard();
+    await user.click(screen.getByText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Create config & open folder'));
+    await waitFor(() => { expect(screen.getByText("I've saved it — restart")).toBeDefined(); });
+    // Re-openable without re-scaffolding from scratch — the handler skips
+    // files that already exist, so a second press cannot clobber an edit.
+    expect(screen.getByText('Open the config folder again')).toBeDefined();
+    await user.click(screen.getByText('Open the config folder again'));
+    await waitFor(() => { expect(api.scaffoldedFor).toEqual(['gcp', 'gcp']); });
+
+    await user.click(screen.getByText("I've saved it — restart"));
+    expect(onComplete).toHaveBeenCalledOnce();
+  });
+
+  it('surfaces a scaffold failure instead of claiming success', async () => {
+    const { api, user } = renderWizard();
+    api.scaffoldConfig = () => Promise.reject(new Error('EACCES: permission denied'));
+    await user.click(screen.getByText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Create config & open folder'));
+    await waitFor(() => { expect(screen.getByText('EACCES: permission denied')).toBeDefined(); });
+    expect(screen.queryByText(/I've saved it/)).toBeNull();
+  });
+
+  it('goes back to the hub without completing setup', async () => {
+    const { user, onComplete } = renderWizard();
+    await user.click(screen.getByText('Set up from Google Cloud'));
+    await user.click(screen.getByText('← Back'));
+    await waitFor(() => { expect(screen.getByText('Set up from S3')).toBeDefined(); });
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+});

@@ -19,6 +19,7 @@ const SOURCE_LABELS: Record<DataSource, { title: string; description: string }> 
 type WizardStep =
   | { step: 'welcome' }
   | { step: 'start' }
+  | { step: 'gcp'; scaffolded: boolean; error: string }
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
@@ -137,10 +138,11 @@ function WelcomeStep({ onNext, naming, jumpBack }: Readonly<{ onNext: () => void
   );
 }
 
-/** Step 2 — the get-started hub: set up from S3 or import from a teammate. */
-function StartStep({ workspaceLabel, onSetup, onImport, onBack, jumpBack }: Readonly<{
+/** Step 2 — the get-started hub: S3, Google Cloud, or a teammate's bundle. */
+function StartStep({ workspaceLabel, onSetup, onGcp, onImport, onBack, jumpBack }: Readonly<{
   workspaceLabel: string | undefined;
   onSetup: () => void;
+  onGcp: () => void;
   onImport: () => void;
   onBack?: (() => void) | undefined;
   jumpBack: JumpBackProps | undefined;
@@ -162,6 +164,12 @@ function StartStep({ workspaceLabel, onSetup, onImport, onBack, jumpBack }: Read
         </Button>
         <p className="text-text-muted text-xs">
           Connect your AWS billing data. CostGoblin syncs a FOCUS 1.2 Data Export from S3, stores it locally, and lets you slice costs by any dimension.
+        </p>
+        <Button variant="outline" onClick={onGcp}>
+          Set up from Google Cloud
+        </Button>
+        <p className="text-text-muted text-xs">
+          Connect your GCP billing data. Needs the FOCUS export running in your own project — CostGoblin reads the bucket it fills.
         </p>
         <Button variant="outline" onClick={onImport}>
           Import from a teammate
@@ -187,6 +195,78 @@ function StartStep({ workspaceLabel, onSetup, onImport, onBack, jumpBack }: Read
           ← Change workspace name
         </button>
       )}
+    </div>
+  );
+}
+
+const GCP_EXPORTER_DOCS = 'https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter';
+
+/**
+ * Step 2b — GCP.
+ *
+ * Deliberately not the S3 flow's browse-and-pick wizard. That one can list
+ * buckets because AWS credentials are already on the machine; the GCP path
+ * depends on an exporter the user deploys into their OWN project first, and
+ * there is nothing to browse until it has run. So this step states the
+ * prerequisite, writes a GCP-shaped config template, and hands over to the
+ * editor — which beats the previous behaviour of not existing at all, leaving
+ * a GCP user on a screen offering only S3 and a teammate's bundle.
+ */
+function GcpStep({ state, onScaffold, onDone, onBack }: Readonly<{
+  state: { scaffolded: boolean; error: string };
+  onScaffold: () => void;
+  onDone: () => void;
+  onBack: () => void;
+}>) {
+  return (
+    <div className="flex flex-col items-center gap-5 text-center">
+      <span className="text-2xl font-bold text-accent tracking-wider">Set up from Google Cloud</span>
+      <p className="text-text-secondary text-sm max-w-md">
+        CostGoblin reads a GCS bucket that your own exporter fills from the FOCUS 1.2 BigQuery
+        billing export. It never holds credentials that can reach BigQuery.
+      </p>
+      <ol className="flex w-full max-w-md flex-col gap-2 text-left text-sm text-text-secondary list-decimal pl-5">
+        <li>
+          Enable the <span className="text-text-primary">FOCUS usage cost</span> export under
+          Billing → Billing export, and deploy the exporter —{' '}
+          <a
+            href={GCP_EXPORTER_DOCS}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-accent underline underline-offset-2 hover:text-accent-hover"
+          >
+            scripts/gcp-focus-exporter
+          </a>{' '}
+          has a one-command deploy.
+        </li>
+        <li>
+          Sign in so CostGoblin can read the bucket:{' '}
+          <code className="text-text-primary text-xs">gcloud auth application-default login</code>
+        </li>
+        <li>Create the config below, set your bucket in it, and save.</li>
+      </ol>
+      <div className="flex w-full max-w-xs flex-col gap-3">
+        <Button onClick={onScaffold} className="bg-accent hover:bg-accent-hover text-white">
+          {state.scaffolded ? 'Open the config folder again' : 'Create config & open folder'}
+        </Button>
+        {state.error !== '' && <p className="text-xs text-negative">{state.error}</p>}
+        {state.scaffolded && (
+          <>
+            <p className="text-text-muted text-xs">
+              Edit <span className="text-text-primary">costgoblin.yaml</span> — set{' '}
+              <span className="text-text-primary">sync.daily.bucket</span> to the folder your
+              exporter writes to. The config is read at startup, so CostGoblin restarts when you
+              continue.
+            </p>
+            <Button variant="outline" onClick={onDone}>
+              I&apos;ve saved it — restart
+            </Button>
+          </>
+        )}
+      </div>
+      <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">
+        ← Back
+      </button>
     </div>
   );
 }
@@ -748,6 +828,18 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     onComplete();
   }
 
+  /** Write the GCP-shaped template (only where the file is absent) and reveal
+   *  the folder. Re-runnable: the button becomes "open the folder again", and
+   *  a second press must not clobber a config the user has already edited —
+   *  the handler only writes files that do not exist. */
+  function handleGcpScaffold(): void {
+    api.scaffoldConfig('gcp').then(() => {
+      setWizard({ step: 'gcp', scaffolded: true, error: '' });
+    }).catch((err: unknown) => {
+      setWizard({ step: 'gcp', scaffolded: false, error: err instanceof Error ? err.message : String(err) });
+    });
+  }
+
   useEffect(() => {
     if (isSourceMode && !bucketsLoaded) {
       setBucketsLoaded(true);
@@ -932,9 +1024,18 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <StartStep
               workspaceLabel={workspaceNaming !== undefined ? workspaceName : workspaceLabel}
               onSetup={goToProfileStep}
+              onGcp={() => { setWizard({ step: 'gcp', scaffolded: false, error: '' }); }}
               onImport={() => { setImportOpen(true); }}
               onBack={workspaceNaming !== undefined ? () => { setWizard({ step: 'welcome' }); } : undefined}
               jumpBack={jumpBack}
+            />
+          )}
+          {wizard.step === 'gcp' && (
+            <GcpStep
+              state={wizard}
+              onScaffold={handleGcpScaffold}
+              onDone={finish}
+              onBack={() => { setWizard({ step: 'start' }); }}
             />
           )}
           {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={finish} onBack={handleBack} />}

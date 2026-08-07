@@ -237,7 +237,12 @@ export interface CostApi {
   listAwsProfiles(): Promise<string[]>;
   listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }>;
   browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }>;
-  scaffoldConfig(): Promise<void>;
+  /** Write starter `costgoblin.yaml` / `dimensions.yaml` (only where absent)
+   *  and reveal the config folder. `providerType` selects which arm is active
+   *  in the template and which the other is commented out beside — a GCP user
+   *  handed the AWS template has to delete a block before the app will start,
+   *  which is exactly the friction this exists to remove. Defaults to `aws`. */
+  scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void>;
   getSavingsPreferences(): Promise<SavingsPreferences>;
   saveSavingsPreferences(prefs: SavingsPreferences): Promise<void>;
   getUIPreferences(): Promise<UIPreferences>;

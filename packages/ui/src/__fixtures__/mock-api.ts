@@ -349,7 +349,14 @@ export class MockCostApi implements CostApi {
   listAwsProfiles(): Promise<string[]> { return Promise.resolve(['default', 'prod', 'staging']); }
   listS3Buckets(): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> { return Promise.resolve({ buckets: [{ name: 'my-cur-bucket', region: 'eu-central-1' }] }); }
   browseS3(): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }> { return Promise.resolve({ prefixes: ['data', 'metadata'], isBillingExport: true, detectedType: 'daily', missingColumns: [] }); }
-  scaffoldConfig(): Promise<void> { return Promise.resolve(); }
+  scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void> {
+    this.scaffoldedFor.push(providerType ?? 'aws');
+    return Promise.resolve();
+  }
+
+  /** Provider arms `scaffoldConfig` was asked for, oldest first — the GCP
+   *  setup step is only useful if it requests the GCP template. */
+  readonly scaffoldedFor: ('aws' | 'gcp')[] = [];
   writeConfig(): Promise<void> { return Promise.resolve(); }
   removeProvider(): Promise<void> { return Promise.resolve(); }
   updateAwsProfile(): Promise<void> { return Promise.resolve(); }
