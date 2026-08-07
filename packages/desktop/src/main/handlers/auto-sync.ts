@@ -12,7 +12,8 @@ import {
   readAutoSyncIntervalMinutes,
   writeAutoSyncIntervalMinutes,
 } from '../auto-sync.js';
-import { deleteLocalPeriodFiles, cascadeRollupForDeletedMonth, changedRollupMonths, resolveBucketPath } from './sync.js';
+import { resolveBucketPath } from '@costgoblin/core';
+import { deleteLocalPeriodFiles, cascadeRollupForDeletedMonth, changedRollupMonths } from './sync.js';
 import { resolveProvider, syncStatusKey } from '../sync-id.js';
 import { type AppContext, isAnyCredentialError, prefsPath, toUserFriendlyError } from './context.js';
 import type { SyncClient } from '../sync-client.js';

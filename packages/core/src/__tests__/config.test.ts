@@ -236,16 +236,58 @@ describe('validateConfig — gcp provider arm', () => {
       .toThrow(ConfigValidationError);
   });
 
-  it('rejects tiers GCP does not deliver instead of silently ignoring them', () => {
-    const withTier = (tier: string): unknown => gcp({
+  it('accepts an hourly tier alongside daily', () => {
+    // The GCP FOCUS export is delivered at HOURLY grain; the exporter
+    // publishes it untouched under …/hourly/ and a rollup under …/daily/,
+    // so a GCP provider carries the same two tiers an AWS one does.
+    const provider = gcpArm(validateConfig(gcp({
       sync: {
-        daily: { bucket: 'gs://b/focus', retentionDays: 365 },
-        [tier]: { bucket: 'gs://b/other', retentionDays: 30 },
+        daily: { bucket: 'gs://b/focus/daily', retentionDays: 365 },
+        hourly: { bucket: 'gs://b/focus/hourly', retentionDays: 14 },
         intervalMinutes: 60,
       },
-    });
-    expect(() => validateConfig(withTier('hourly'))).toThrow(ConfigValidationError);
-    expect(() => validateConfig(withTier('costOptimization'))).toThrow(ConfigValidationError);
+    })).providers[0]);
+    expect(String(provider.sync.hourly?.bucket)).toBe('gs://b/focus/hourly');
+    expect(provider.sync.hourly?.retentionDays).toBe(14);
+  });
+
+  it('omits hourly entirely when it is not configured', () => {
+    // Absent rather than an explicit undefined, so a round-trip through the
+    // sharing bundle does not write an empty `hourly:` key back to YAML.
+    expect('hourly' in gcpArm(validateConfig(gcp()).providers[0])).toBe(false);
+  });
+
+  it('applies the gs:// bucket rules to the hourly tier too', () => {
+    expect(() => validateConfig(gcp({
+      sync: {
+        daily: { bucket: 'gs://b/focus/daily', retentionDays: 365 },
+        hourly: { bucket: 's3://b/focus/hourly', retentionDays: 14 },
+        intervalMinutes: 60,
+      },
+    }))).toThrow(ConfigValidationError);
+  });
+
+  it('rejects two tiers pointed at one folder', () => {
+    // Both tiers reading the same objects would sync identical rows into
+    // raw/daily-* AND raw/hourly-*, so the intraday views would render the
+    // daily grain and the tiers would fight over retention.
+    expect(() => validateConfig(gcp({
+      sync: {
+        daily: { bucket: 'gs://b/focus', retentionDays: 365 },
+        hourly: { bucket: 'gs://b/focus', retentionDays: 14 },
+        intervalMinutes: 60,
+      },
+    }))).toThrow(/must differ/);
+  });
+
+  it('rejects costOptimization, which has no GCP analogue, instead of ignoring it', () => {
+    expect(() => validateConfig(gcp({
+      sync: {
+        daily: { bucket: 'gs://b/focus', retentionDays: 365 },
+        costOptimization: { bucket: 'gs://b/other', retentionDays: 30 },
+        intervalMinutes: 60,
+      },
+    }))).toThrow(ConfigValidationError);
   });
 
   it('does not require credentialsProfile on the gcp arm, and still requires it on aws', () => {

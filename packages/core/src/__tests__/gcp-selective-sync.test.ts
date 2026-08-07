@@ -97,7 +97,7 @@ describe('syncGcpSelectedFiles', () => {
 
     const files = [file('focus/billing_period=2026-01/shard-000000000000.parquet', 'crc-1')];
     const result = await syncGcpSelectedFiles({
-      bucketPath: 'gs://focus-export/focus', providerName, dataDir, files,
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily', files,
     });
 
     expect(result.filesDownloaded).toBe(1);
@@ -112,6 +112,32 @@ describe('syncGcpSelectedFiles', () => {
     });
   });
 
+  it('installs the hourly tier into raw/hourly-* with its own etag file', async () => {
+    // The GCP FOCUS export is delivered at hourly grain and the exporter
+    // publishes both grains from it, so a GCP provider can carry a real
+    // hourly tier. Hardcoding 'daily' here would land intraday rows in
+    // raw/daily-*, where the daily views would then double-count them
+    // alongside the rolled-up daily tier reading the same months.
+    nextProcess(dest => writeBqShard(dest, 2));
+
+    const result = await syncGcpSelectedFiles({
+      bucketPath: 'gs://focus-export/focus/hourly', providerName, dataDir, expectedDataType: 'hourly',
+      files: [file('focus/hourly/billing_period=2026-01/shard-000000000000.parquet', 'crc-h')],
+    });
+
+    expect(result.rowsProcessed).toBe(2);
+    expect(await readdir(join(dataDir, String(providerName), 'raw', 'hourly-2026-01'))).toEqual(['part-0.parquet']);
+    // The daily tier's directory and etag file are untouched — the two tiers
+    // track their periods independently.
+    await expect(readdir(rawPeriodDir('2026-01'))).rejects.toThrow();
+    const etags: unknown = JSON.parse(
+      await readFile(join(dataDir, String(providerName), 'meta', 'sync-etags-hourly.json'), 'utf-8'),
+    );
+    expect(etags).toEqual({
+      '2026-01': { 'focus/hourly/billing_period=2026-01/shard-000000000000.parquet': 'crc-h' },
+    });
+  });
+
   it('passes the period prefix as the rsync source and stages outside raw/', async () => {
     let observedArgv: string[] = [];
     mockSpawn.mockImplementationOnce((_bin: unknown, args: unknown) => {
@@ -123,7 +149,7 @@ describe('syncGcpSelectedFiles', () => {
     });
 
     await syncGcpSelectedFiles({
-      bucketPath: 'gs://focus-export/focus', providerName, dataDir,
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/billing_period=2026-03/shard-000000000000.parquet')],
     });
 
@@ -153,7 +179,7 @@ describe('syncGcpSelectedFiles', () => {
     });
 
     await syncGcpSelectedFiles({
-      bucketPath: 'gs://b/focus', providerName, dataDir,
+      bucketPath: 'gs://b/focus', providerName, dataDir, expectedDataType: 'daily',
       impersonateServiceAccount: 'costgoblin-reader@p.iam.gserviceaccount.com',
       files: [file('focus/billing_period=2026-01/s.parquet')],
     });
@@ -171,7 +197,7 @@ describe('syncGcpSelectedFiles', () => {
       return proc;
     });
     await syncGcpSelectedFiles({
-      bucketPath: 'gs://b/focus', providerName, dataDir,
+      bucketPath: 'gs://b/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/billing_period=2026-01/s.parquet')],
     });
     expect(argv.some(a => a.startsWith('--impersonate-service-account'))).toBe(false);
@@ -180,7 +206,7 @@ describe('syncGcpSelectedFiles', () => {
   it('removes the staging directory once the period is installed', async () => {
     nextProcess(dest => writeBqShard(dest, 1));
     await syncGcpSelectedFiles({
-      bucketPath: 'gs://focus-export/focus', providerName, dataDir,
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/billing_period=2026-01/s.parquet')],
     });
     const stagingRoot = join(dataDir, String(providerName), 'meta', 'staging-gcp');
@@ -193,7 +219,7 @@ describe('syncGcpSelectedFiles', () => {
     // The source would then collapse to `gs://focus-export/` and rsync would
     // pull the WHOLE bucket into this one period's staging dir.
     const result = await syncGcpSelectedFiles({
-      bucketPath: 'gs://focus-export/focus', providerName, dataDir,
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/billing_period=2026-01_shard0.parquet', 'crc-1')],
     });
 
@@ -222,7 +248,7 @@ describe('syncGcpSelectedFiles', () => {
     });
 
     const failure = await syncGcpSelectedFiles({
-      bucketPath: 'gs://focus-export/focus', providerName, dataDir,
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/billing_period=2026-01/s.parquet')],
     }).catch((err: unknown) => (err instanceof Error ? err.message : String(err)));
 
@@ -236,7 +262,7 @@ describe('syncGcpSelectedFiles', () => {
     // Install 2026-01 first, then fail a re-sync of it.
     nextProcess(dest => writeBqShard(dest, 2));
     await syncGcpSelectedFiles({
-      bucketPath: 'gs://focus-export/focus', providerName, dataDir,
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/billing_period=2026-01/s.parquet', 'crc-1')],
     });
     const before = await readFile(join(rawPeriodDir('2026-01'), 'part-0.parquet'));
@@ -251,7 +277,7 @@ describe('syncGcpSelectedFiles', () => {
     });
 
     await expect(syncGcpSelectedFiles({
-      bucketPath: 'gs://focus-export/focus', providerName, dataDir,
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/billing_period=2026-01/s.parquet', 'crc-2')],
     })).rejects.toThrow(/gcloud storage rsync failed/);
 
@@ -270,7 +296,7 @@ describe('syncGcpSelectedFiles', () => {
     });
 
     await expect(syncGcpSelectedFiles({
-      bucketPath: 'gs://focus-export/focus', providerName, dataDir,
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/billing_period=2026-01/s.parquet')],
     })).rejects.toThrow();
 
@@ -287,7 +313,7 @@ describe('syncGcpSelectedFiles', () => {
     });
 
     await expect(syncGcpSelectedFiles({
-      bucketPath: 'gs://focus-export/focus', providerName, dataDir,
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [
         file('focus/billing_period=2026-01/s.parquet', 'crc-jan'),
         file('focus/billing_period=2026-02/s.parquet', 'crc-feb'),
@@ -304,7 +330,7 @@ describe('syncGcpSelectedFiles', () => {
     const controller = new AbortController();
     controller.abort();
     const result = await syncGcpSelectedFiles({
-      bucketPath: 'gs://focus-export/focus', providerName, dataDir,
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/billing_period=2026-01/s.parquet')],
       signal: controller.signal,
     });
@@ -321,7 +347,7 @@ describe('syncGcpSelectedFiles', () => {
     });
 
     await expect(syncGcpSelectedFiles({
-      bucketPath: 'gs://focus-export/focus', providerName, dataDir,
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/billing_period=2026-01/s.parquet')],
       signal: controller.signal,
     })).rejects.toThrow('Download cancelled');
@@ -354,7 +380,7 @@ describe('syncGcpSelectedFiles', () => {
     });
 
     await syncGcpSelectedFiles({
-      bucketPath: 'gs://b/focus', providerName, dataDir,
+      bucketPath: 'gs://b/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file(key('000000000000'), 'h1', 1000), file(key('000000000001'), 'h2', 3000)],
       onProgress: (p) => { progress.push(p); },
     });
@@ -377,7 +403,7 @@ describe('syncGcpSelectedFiles', () => {
     const progress: SyncProgress[] = [];
     nextProcess(dest => writeBqShard(dest, 1));
     await syncGcpSelectedFiles({
-      bucketPath: 'gs://b/focus', providerName, dataDir,
+      bucketPath: 'gs://b/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [
         file('focus/billing_period=2026-01/a.parquet', 'h1'),
         file('focus/billing_period=2026-01/b.parquet', 'h2'),
@@ -394,7 +420,7 @@ describe('syncGcpSelectedFiles', () => {
     nextProcess(dest => writeBqShard(dest, 1));
 
     await syncGcpSelectedFiles({
-      bucketPath: 'gs://focus-export/focus', providerName, dataDir,
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/billing_period=2026-01/s.parquet', 'h', 4096)],
       onProgress: (p) => { progress.push(p); },
     });
@@ -409,7 +435,7 @@ describe('syncGcpSelectedFiles', () => {
 
   it('skips keys with no recognizable billing period rather than syncing them somewhere odd', async () => {
     const result = await syncGcpSelectedFiles({
-      bucketPath: 'gs://focus-export/focus', providerName, dataDir,
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/BILLING_PERIOD=2026-01/s.parquet'), file('focus/loose.parquet')],
     });
     expect(result.filesDownloaded).toBe(0);

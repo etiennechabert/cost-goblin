@@ -176,8 +176,16 @@ async function handleSyncRequest(req: SyncRequest): Promise<void> {
 
     let result: { filesDownloaded: number; rowsProcessed: number };
     if (req.auth.kind === 'gcp') {
+      // `resolveBucketPath` already refuses a cost-optimization bucket for a
+      // GCP provider, so this is unreachable — but the tier crosses a thread
+      // boundary as loose data, and a wrong tier here would install the rows
+      // into the wrong `raw/` directory rather than fail.
+      if (req.tier === 'cost-optimization') {
+        throw new Error('GCP providers have no Cost Optimization Hub analogue');
+      }
       const gcpOptions: GcpSelectiveSyncOptions = {
         bucketPath: req.bucketPath,
+        expectedDataType: req.tier,
         ...(req.auth.keyFile === undefined ? {} : { keyFile: req.auth.keyFile }),
         ...(req.auth.impersonateServiceAccount === undefined ? {} : { impersonateServiceAccount: req.auth.impersonateServiceAccount }),
         providerName,

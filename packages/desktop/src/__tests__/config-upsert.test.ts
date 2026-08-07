@@ -262,17 +262,33 @@ describe('swapProviderCredentialsProfile', () => {
 });
 
 describe('upsertWizardProvider — gcp arm', () => {
-  it('writes a gcp entry with no credentialsProfile and no non-daily tiers', () => {
+  it('writes a gcp entry with no credentialsProfile, carrying both real tiers', () => {
     const result = upsertWizardProvider({}, {
       providerName: 'gcp-main',
       type: 'gcp',
       profile: '',
-      dailyBucket: 'gs://billing-export/focus/',
+      dailyBucket: 'gs://billing-export/focus/daily/',
       retentionDays: 365,
-      // Supplied by the shared wizard payload but meaningless for GCP — they
-      // must not reach the file.
-      hourlyBucket: 'gs://billing-export/hourly/',
+      hourlyBucket: 'gs://billing-export/focus/hourly/',
+      // Supplied by the shared wizard payload but meaningless for GCP, which
+      // has no Cost Optimization Hub analogue — it must not reach the file.
       costOptBucket: 'gs://billing-export/cost-opt/',
+    });
+    expect(providers(result)[0]).toEqual({
+      name: 'gcp-main',
+      type: 'gcp',
+      sync: {
+        intervalMinutes: 60,
+        daily: { bucket: 'gs://billing-export/focus/daily/', retentionDays: 365 },
+        hourly: { bucket: 'gs://billing-export/focus/hourly/', retentionDays: 30 },
+      },
+    });
+  });
+
+  it('omits hourly for a gcp entry when the wizard did not supply one', () => {
+    const result = upsertWizardProvider({}, {
+      providerName: 'gcp-main', type: 'gcp', profile: '',
+      dailyBucket: 'gs://billing-export/focus/',
     });
     expect(providers(result)[0]).toEqual({
       name: 'gcp-main',

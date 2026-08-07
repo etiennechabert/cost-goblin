@@ -31,10 +31,21 @@ PROJECT_ID="${PROJECT_ID:-}"
 # Find it under BigQuery -> gcp_billing_immutable_<BILLING_ACCOUNT_ID>_<location>.
 FOCUS_TABLE="${FOCUS_TABLE:-CHANGE_ME.gcp_billing_immutable_XXXXXX_eu.gcp_billing_export_focus_XXXXXX}"
 
-# Destination bucket (no gs://) and key prefix. CostGoblin is then pointed at
-# gs://${BUCKET}/${PREFIX}
+# Destination bucket (no gs://) and key prefix. Each tier gets its own folder
+# beneath the prefix, so CostGoblin is pointed at
+# gs://${BUCKET}/${PREFIX}/daily  (and .../hourly, if you publish it)
 BUCKET="${BUCKET:-}"
 PREFIX="${PREFIX:-focus}"
+
+# Which grains to publish: "daily", "hourly", or "daily,hourly".
+#
+# The upstream FOCUS export is HOURLY, so "daily" is a rollup this job computes
+# — one row per day per dimension tuple, measures summed. It is the default
+# because it is roughly 24x smaller, which is the whole reason the tier split
+# exists: keep a year of daily and a fortnight of hourly, not a year of hourly.
+# Add "hourly" only if you actually want intraday charts, and give it a short
+# retentionDays in costgoblin.yaml when you do.
+TIERS="${TIERS:-daily}"
 
 # MUST match the billing export dataset's location, and the bucket's. BigQuery
 # refuses to EXPORT DATA across locations.
@@ -150,6 +161,10 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
   --member="serviceAccount:${SA_EMAIL}" --role="roles/storage.objectAdmin" >/dev/null
 
 echo "==> Building and deploying the job"
+# `^;^` switches --set-env-vars to a semicolon delimiter. TIERS=daily,hourly
+# contains a comma, which is gcloud's DEFAULT delimiter — with it, the value
+# would be split and the job would deploy with a bare `hourly=` variable and
+# TIERS truncated to `daily`.
 gcloud run jobs deploy "${JOB_NAME}" \
   --source=. \
   --region="${REGION}" \
@@ -157,7 +172,7 @@ gcloud run jobs deploy "${JOB_NAME}" \
   --tasks=1 \
   --max-retries=1 \
   --task-timeout=30m \
-  --set-env-vars="FOCUS_TABLE=${FOCUS_TABLE},BUCKET=${BUCKET},PREFIX=${PREFIX},STATE_TABLE=${STATE_TABLE},BQ_LOCATION=${LOCATION}"
+  --set-env-vars="^;^FOCUS_TABLE=${FOCUS_TABLE};BUCKET=${BUCKET};PREFIX=${PREFIX};TIERS=${TIERS};STATE_TABLE=${STATE_TABLE};BQ_LOCATION=${LOCATION}"
 
 echo "==> Scheduling (${SCHEDULE})"
 SCHEDULER_URI="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${JOB_NAME}:run"

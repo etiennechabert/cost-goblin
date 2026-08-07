@@ -1,0 +1,301 @@
+import { describe, it, expect } from 'vitest';
+import {
+  TIERS,
+  buildDailyProjection,
+  buildTierSelect,
+  isGroupableType,
+  loadConfig,
+  parseTiers,
+  periodFolder,
+} from './export-focus.mjs';
+
+/** The live FOCUS 1.2 export's schema, read from INFORMATION_SCHEMA of a real
+ *  billing table (55 columns, `_PARTITIONTIME` excluded as hidden). Kept
+ *  verbatim so a change to the classification rules has to face the actual
+ *  shape it will meet in production rather than a convenient sample. */
+const LIVE_COLUMNS = [
+  ['AvailabilityZone', 'STRING'],
+  ['BilledCost', 'NUMERIC'],
+  ['BillingAccountId', 'STRING'],
+  ['BillingCurrency', 'STRING'],
+  ['BillingPeriodStart', 'TIMESTAMP'],
+  ['BillingPeriodEnd', 'TIMESTAMP'],
+  ['ChargeCategory', 'STRING'],
+  ['ChargeClass', 'STRING'],
+  ['ChargeDescription', 'STRING'],
+  ['ChargePeriodStart', 'TIMESTAMP'],
+  ['ChargePeriodEnd', 'TIMESTAMP'],
+  ['ConsumedQuantity', 'NUMERIC'],
+  ['ConsumedUnit', 'STRING'],
+  ['ContractedCost', 'NUMERIC'],
+  ['ContractedUnitPrice', 'NUMERIC'],
+  ['ListCost', 'NUMERIC'],
+  ['ListUnitPrice', 'NUMERIC'],
+  ['PricingCategory', 'STRING'],
+  ['PricingQuantity', 'NUMERIC'],
+  ['PricingUnit', 'STRING'],
+  ['ProviderName', 'STRING'],
+  ['PublisherName', 'STRING'],
+  ['RegionId', 'STRING'],
+  ['RegionName', 'STRING'],
+  ['ResourceId', 'STRING'],
+  ['ResourceName', 'STRING'],
+  ['ServiceName', 'STRING'],
+  ['SkuId', 'STRING'],
+  ['SkuPriceId', 'STRING'],
+  ['SubAccountId', 'STRING'],
+  ['SubAccountName', 'STRING'],
+  ['x_Credits', 'ARRAY<STRUCT<Name STRING, Amount NUMERIC, FullName STRING, Id STRING, Type STRING>>'],
+  ['x_CostType', 'STRING'],
+  ['x_CurrencyConversionRate', 'FLOAT64'],
+  ['x_ExportTime', 'TIMESTAMP'],
+  ['x_Location', 'STRING'],
+  ['x_Project', 'STRUCT<Id STRING, Number STRING, Name STRING, AncestryNumbers STRING, Ancestors ARRAY<STRUCT<ResourceName STRING, DisplayName STRING>>>'],
+  ['x_ServiceId', 'STRING'],
+  ['x_SystemLabels', 'ARRAY<STRUCT<Key STRING, Value STRING>>'],
+  ['x_Labels', 'ARRAY<STRUCT<Key STRING, Value STRING>>'],
+  ['x_ProjectLabels', 'ARRAY<STRUCT<Key STRING, Value STRING>>'],
+  ['x_Tags', 'ARRAY<STRUCT<Key STRING, Value STRING, x_Inherited BOOL, x_Namespace STRING>>'],
+  ['EffectiveCost', 'NUMERIC'],
+  ['PricingCurrency', 'STRING'],
+  ['PricingCurrencyContractedUnitPrice', 'NUMERIC'],
+  ['PricingCurrencyEffectiveCost', 'NUMERIC'],
+  ['PricingCurrencyListUnitPrice', 'NUMERIC'],
+  ['BillingAccountType', 'STRING'],
+  ['x_SubscriptionInstanceId', 'STRING'],
+  ['x_PriceEffectivePriceDefault', 'NUMERIC'],
+  ['x_PriceListPriceConsumptionModel', 'NUMERIC'],
+  ['x_CostAtEffectivePriceDefault', 'NUMERIC'],
+  ['x_CostAtListConsumptionModel', 'NUMERIC'],
+  ['x_ConsumptionModelId', 'STRING'],
+  ['x_ConsumptionModelDescription', 'STRING'],
+].map(([name, dataType]) => ({ name, dataType }));
+
+const TABLE = 'proj.dataset.gcp_billing_export_focus_XXXXXX';
+
+/** The select-list entry for one column, by its trailing `AS \`name\`` (or the
+ *  bare backticked name for a plain group key). */
+function itemFor(select, name) {
+  const found = select.find(s => s === `\`${name}\`` || s.endsWith(`AS \`${name}\``));
+  if (found === undefined) throw new Error(`no select item for ${name}`);
+  return found;
+}
+
+describe('parseTiers', () => {
+  it('defaults to daily alone — hourly is ~24x the bytes and must be opted into', () => {
+    expect(parseTiers(undefined)).toEqual(['daily']);
+    expect(parseTiers('')).toEqual(['daily']);
+    expect(parseTiers('   ')).toEqual(['daily']);
+  });
+
+  it('accepts either tier, and both', () => {
+    expect(parseTiers('hourly')).toEqual(['hourly']);
+    expect(parseTiers('daily,hourly')).toEqual(['daily', 'hourly']);
+  });
+
+  it('normalizes case, spacing, order and duplicates', () => {
+    // Run order — and therefore the logs — must not depend on how the
+    // environment variable happened to be typed.
+    expect(parseTiers(' HOURLY , daily ,hourly')).toEqual(['daily', 'hourly']);
+  });
+
+  it('rejects an unknown tier rather than silently exporting nothing', () => {
+    expect(() => parseTiers('monthly')).toThrow(/unknown tier/);
+    expect(() => parseTiers('daily,montly')).toThrow(/"montly"/);
+  });
+
+  it('exposes the canonical tier list', () => {
+    expect(TIERS).toEqual(['daily', 'hourly']);
+  });
+});
+
+describe('periodFolder', () => {
+  it('puts the tier between the prefix and the period, with a trailing slash', () => {
+    // The trailing slash is load-bearing: it is used as a DELETE prefix, and
+    // without it `billing_period=2026-1` would also match `2026-10`.
+    expect(periodFolder('focus', 'daily', '2026-08')).toBe('focus/daily/billing_period=2026-08/');
+    expect(periodFolder('a/b', 'hourly', '2026-12')).toBe('a/b/hourly/billing_period=2026-12/');
+  });
+});
+
+describe('isGroupableType', () => {
+  it('accepts scalars', () => {
+    for (const t of ['STRING', 'NUMERIC', 'TIMESTAMP', 'FLOAT64', 'INT64', 'BOOL', 'DATE', 'BIGNUMERIC']) {
+      expect(isGroupableType(t), t).toBe(true);
+    }
+  });
+
+  it('rejects the types BigQuery cannot GROUP BY', () => {
+    for (const t of ['ARRAY<STRUCT<Key STRING>>', 'STRUCT<Id STRING>', 'JSON', 'GEOGRAPHY']) {
+      expect(isGroupableType(t), t).toBe(false);
+    }
+  });
+});
+
+describe('buildDailyProjection', () => {
+  const { select, groupBy } = buildDailyProjection(LIVE_COLUMNS);
+
+  it('projects every source column exactly once, in order', () => {
+    // The two tiers must carry the same columns in the same order, or the
+    // canonicalizer meets two different shapes for one provider.
+    expect(select).toHaveLength(LIVE_COLUMNS.length);
+    for (const { name } of LIVE_COLUMNS) expect(() => itemFor(select, name)).not.toThrow();
+  });
+
+  it('sums the additive cost and quantity measures', () => {
+    for (const name of [
+      'BilledCost', 'EffectiveCost', 'ListCost', 'ContractedCost',
+      'ConsumedQuantity', 'PricingQuantity', 'PricingCurrencyEffectiveCost',
+      'x_CostAtEffectivePriceDefault', 'x_CostAtListConsumptionModel',
+    ]) {
+      expect(itemFor(select, name), name).toBe(`SUM(\`${name}\`) AS \`${name}\``);
+    }
+  });
+
+  it('never sums a unit price or a conversion rate', () => {
+    // Summing 24 hourly unit prices reports a rate 24x reality. These are
+    // NUMERIC like the measures above, so only the explicit allow-list keeps
+    // them apart — this is the test that fails if that list grows carelessly.
+    for (const name of [
+      'ContractedUnitPrice', 'ListUnitPrice',
+      'PricingCurrencyContractedUnitPrice', 'PricingCurrencyListUnitPrice',
+      'x_PriceEffectivePriceDefault', 'x_PriceListPriceConsumptionModel',
+      'x_CurrencyConversionRate',
+    ]) {
+      expect(itemFor(select, name), name).toBe(`\`${name}\``);
+    }
+  });
+
+  it('truncates the charge period to the day and derives the END from the START', () => {
+    expect(itemFor(select, 'ChargePeriodStart'))
+      .toBe('TIMESTAMP_TRUNC(`ChargePeriodStart`, DAY) AS `ChargePeriodStart`');
+    // Truncating ChargePeriodEnd itself would put an hourly row ending at
+    // 00:00 on the FOLLOWING day.
+    expect(itemFor(select, 'ChargePeriodEnd'))
+      .toBe('TIMESTAMP_ADD(TIMESTAMP_TRUNC(`ChargePeriodStart`, DAY), INTERVAL 1 DAY) AS `ChargePeriodEnd`');
+  });
+
+  it('takes the newest export time', () => {
+    expect(itemFor(select, 'x_ExportTime')).toBe('MAX(`x_ExportTime`) AS `x_ExportTime`');
+  });
+
+  it('concatenates credits rather than picking one', () => {
+    // x_Credits carries AMOUNTS. ANY_VALUE would keep one hour's credit while
+    // EffectiveCost beside it summed all 24 — silently under-crediting the day.
+    expect(itemFor(select, 'x_Credits')).toBe('ARRAY_CONCAT_AGG(`x_Credits`) AS `x_Credits`');
+    expect(groupBy).not.toContain('TO_JSON_STRING(`x_Credits`)');
+  });
+
+  it('keeps repeated dimensions apart via a JSON group key', () => {
+    for (const name of ['x_Labels', 'x_Tags', 'x_ProjectLabels', 'x_SystemLabels', 'x_Project']) {
+      expect(itemFor(select, name), name).toBe(`ANY_VALUE(\`${name}\`) AS \`${name}\``);
+      expect(groupBy, name).toContain(`TO_JSON_STRING(\`${name}\`)`);
+    }
+  });
+
+  it('groups by ORDINAL, never by name', () => {
+    // `GROUP BY ChargePeriodStart` binds to the underlying column rather than
+    // the truncated alias of the same name — which would group by the hour and
+    // make the "daily" tier a byte-for-byte copy of the hourly one.
+    const ordinals = groupBy.filter(g => /^\d+$/.test(g));
+    expect(ordinals.length).toBeGreaterThan(0);
+    expect(groupBy).not.toContain('ChargePeriodStart');
+    for (const g of groupBy) {
+      expect(/^\d+$/.test(g) || g.startsWith('TO_JSON_STRING(')).toBe(true);
+    }
+    // Every ordinal points at a non-aggregated select item.
+    for (const o of ordinals) {
+      const item = select[Number(o) - 1];
+      expect(item, `ordinal ${o}`).toBeDefined();
+      expect(/^(SUM|MAX|ANY_VALUE|ARRAY_CONCAT_AGG)\(/.test(item), `ordinal ${o} -> ${item}`).toBe(false);
+    }
+  });
+
+  it('accounts for every column as either a group key or an aggregate', () => {
+    const aggregated = select.filter(s => /^(SUM|MAX|ANY_VALUE|ARRAY_CONCAT_AGG)\(/.test(s));
+    const ordinals = groupBy.filter(g => /^\d+$/.test(g));
+    expect(aggregated.length + ordinals.length).toBe(select.length);
+    // Verified against the live table: 16 aggregated, 39 plain keys + 5 JSON keys.
+    expect(aggregated).toHaveLength(16);
+    expect(groupBy).toHaveLength(44);
+  });
+
+  it('treats an unrecognized column as a group key, which can only over-split', () => {
+    // Drift safety: a new Preview-era column must never be summed by accident.
+    // Splitting a day into more rows keeps totals exact; the reverse does not.
+    const { select: s, groupBy: g } = buildDailyProjection([
+      { name: 'ChargePeriodStart', dataType: 'TIMESTAMP' },
+      { name: 'x_SomeNewColumn', dataType: 'NUMERIC' },
+      { name: 'x_SomeNewRepeated', dataType: 'ARRAY<STRUCT<A STRING>>' },
+    ]);
+    expect(itemFor(s, 'x_SomeNewColumn')).toBe('`x_SomeNewColumn`');
+    expect(itemFor(s, 'x_SomeNewRepeated')).toBe('ANY_VALUE(`x_SomeNewRepeated`) AS `x_SomeNewRepeated`');
+    expect(g).toContain('TO_JSON_STRING(`x_SomeNewRepeated`)');
+  });
+
+  it('rejects a column name that is not a plain identifier', () => {
+    // Names arrive from INFORMATION_SCHEMA and are interpolated into SQL.
+    expect(() => buildDailyProjection([{ name: 'a` , (SELECT 1) AS `b', dataType: 'STRING' }]))
+      .toThrow(/column_name/);
+  });
+});
+
+describe('buildTierSelect', () => {
+  it('passes the hourly tier through untouched', () => {
+    const sql = buildTierSelect('hourly', TABLE, LIVE_COLUMNS);
+    expect(sql).toContain('SELECT *');
+    expect(sql).not.toContain('GROUP BY');
+    expect(sql).toContain('WHERE DATE(BillingPeriodStart) = @period');
+  });
+
+  it('emits a grouped projection for the daily tier', () => {
+    const sql = buildTierSelect('daily', TABLE, LIVE_COLUMNS);
+    expect(sql).toContain('GROUP BY');
+    expect(sql).toContain('SUM(`BilledCost`) AS `BilledCost`');
+    expect(sql).toContain('WHERE DATE(BillingPeriodStart) = @period');
+    expect(sql).not.toContain('SELECT *');
+  });
+
+  it('filters by period through a PARAMETER, never interpolation', () => {
+    for (const tier of TIERS) {
+      expect(buildTierSelect(tier, TABLE, LIVE_COLUMNS)).toContain('= @period');
+    }
+  });
+
+  it('rejects an unknown tier', () => {
+    expect(() => buildTierSelect('monthly', TABLE, LIVE_COLUMNS)).toThrow(/Unknown tier/);
+  });
+});
+
+describe('loadConfig', () => {
+  const BASE = {
+    FOCUS_TABLE: 'proj.ds.tbl',
+    STATE_TABLE: 'proj.state.export_state',
+    BUCKET: 'my-bucket',
+  };
+
+  it('applies the documented defaults', () => {
+    const cfg = loadConfig({ ...BASE });
+    expect(cfg).toMatchObject({ prefix: 'focus', tiers: ['daily'], location: 'EU', dryRun: false });
+  });
+
+  it('strips surrounding slashes from the prefix', () => {
+    // `periodFolder` joins with a single slash; a prefix of `/focus/` would
+    // otherwise produce a `//` key that GCS treats as a distinct folder.
+    expect(loadConfig({ ...BASE, PREFIX: '/focus/' }).prefix).toBe('focus');
+  });
+
+  it('requires the three identifying variables', () => {
+    for (const missing of ['FOCUS_TABLE', 'STATE_TABLE', 'BUCKET']) {
+      const env = { ...BASE };
+      delete env[missing];
+      expect(() => loadConfig(env), missing).toThrow(new RegExp(missing));
+    }
+  });
+
+  it('rejects identifiers that are not in the expected form', () => {
+    expect(() => loadConfig({ ...BASE, FOCUS_TABLE: 'proj.ds' })).toThrow(/FOCUS_TABLE/);
+    expect(() => loadConfig({ ...BASE, BUCKET: 'gs://my-bucket' })).toThrow(/BUCKET/);
+    expect(() => loadConfig({ ...BASE, PREFIX: 'a b' })).toThrow(/PREFIX/);
+  });
+});

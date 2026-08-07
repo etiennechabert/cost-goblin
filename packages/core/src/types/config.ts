@@ -54,15 +54,21 @@ export interface SyncConfig {
   readonly intervalMinutes: number;
 }
 
-/** GCP syncs the daily tier only: the FOCUS export has no hourly delivery
- *  and no Cost-Optimization-Hub analogue. `hourly`/`costOptimization` are
- *  declared as always-`undefined` rather than omitted so tier-generic code
- *  (`resolveBucketPath`, the retention sweep) can read them off a
- *  `ProviderConfig` without first narrowing the arm — the type says
+/** GCP mirrors the AWS tier split, from one upstream table rather than two
+ *  exports: the native FOCUS BigQuery export is delivered at HOURLY grain, and
+ *  `scripts/gcp-focus-exporter` publishes it as `…/hourly/` untouched plus a
+ *  `…/daily/` rollup — one row per day per dimension tuple, roughly 24x
+ *  smaller. Point each tier at its own folder, exactly as an AWS provider
+ *  points each tier at its own Data Export prefix.
+ *
+ *  `costOptimization` stays always-`undefined`: there is no
+ *  Cost-Optimization-Hub analogue on GCP. It is declared rather than omitted so
+ *  tier-generic code (`resolveBucketPath`, the retention sweep) can read it off
+ *  a `ProviderConfig` without first narrowing the arm — the type says
  *  "structurally present, never configured". */
 export interface GcpSyncConfig {
   readonly daily: SyncTierConfig;
-  readonly hourly?: undefined;
+  readonly hourly?: SyncTierConfig | undefined;
   readonly costOptimization?: undefined;
   readonly intervalMinutes: number;
 }

@@ -1,15 +1,30 @@
 # GCP FOCUS exporter
 
 Feeds CostGoblin's GCP provider. Copies the **FOCUS 1.2 BigQuery billing
-export** into a GCS bucket, one folder per billing period:
+export** into a GCS bucket, one folder per tier per billing period:
 
 ```
-gs://<BUCKET>/<PREFIX>/billing_period=2026-07/shard-000000000000.parquet
-                       billing_period=2026-08/shard-000000000000.parquet
+gs://<BUCKET>/<PREFIX>/daily/billing_period=2026-07/shard-000000000000.parquet
+                             billing_period=2026-08/shard-000000000000.parquet
+gs://<BUCKET>/<PREFIX>/hourly/billing_period=2026-08/shard-000000000000.parquet
 ```
 
-CostGoblin lists that bucket, downloads the periods that changed, and
+CostGoblin lists those folders, downloads the periods that changed, and
 canonicalizes them locally into contract-valid FOCUS 1.2 Parquet.
+
+**Two grains, one upstream table.** The FOCUS export is delivered at **hourly**
+grain — every row spans exactly 60 minutes. AWS users create one Data Export per
+granularity; here one job produces both from the single billing table:
+
+| Tier | What it holds | Typical size |
+|---|---|---|
+| `daily` | one row per day per dimension tuple, measures summed | ~24x smaller |
+| `hourly` | the source rows, untouched | the full export |
+
+`daily` is exported by default. Set `TIERS=daily,hourly` to publish both — and
+only then, since hourly is what makes a billing export large. Point
+`sync.daily.bucket` and `sync.hourly.bucket` at the matching folders, exactly as
+an AWS provider points each tier at its own export prefix.
 
 This is **your** infrastructure, running in **your** project — CostGoblin never
 holds credentials that can reach BigQuery. It reads the bucket, nothing else.
@@ -131,12 +146,15 @@ gcloud storage buckets add-iam-policy-binding gs://${BUCKET} \
   --member=serviceAccount:${SA} --role=roles/storage.objectAdmin
 
 # ---- deploy and schedule ----
-ENV_VARS=FOCUS_TABLE=${FOCUS_TABLE},BUCKET=${BUCKET},PREFIX=focus
-ENV_VARS=${ENV_VARS},STATE_TABLE=${PROJECT_ID}.costgoblin_exporter.export_state
-ENV_VARS=${ENV_VARS},BQ_LOCATION=${LOCATION}
+# Semicolon-separated, and `^;^` tells gcloud so. TIERS=daily,hourly contains a
+# comma, which is gcloud's DEFAULT delimiter — with it, TIERS would silently
+# truncate to `daily` and an empty `hourly=` variable would appear beside it.
+ENV_VARS=FOCUS_TABLE=${FOCUS_TABLE};BUCKET=${BUCKET};PREFIX=focus;TIERS=daily
+ENV_VARS=${ENV_VARS};STATE_TABLE=${PROJECT_ID}.costgoblin_exporter.export_state
+ENV_VARS=${ENV_VARS};BQ_LOCATION=${LOCATION}
 gcloud run jobs deploy ${JOB} --source=. --region=${REGION} \
   --service-account=${SA} --tasks=1 --max-retries=1 --task-timeout=30m \
-  --set-env-vars="${ENV_VARS}"
+  --set-env-vars="^;^${ENV_VARS}"
 gcloud scheduler jobs create http ${JOB}-trigger --location=${REGION} \
   --schedule="0 6 * * *" --http-method=POST \
   --uri=https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${JOB}:run \
@@ -235,7 +253,7 @@ above. If you leave it running as a scheduled query, clean up by hand whenever
 a period is re-exported:
 
 ```bash
-gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/billing_period=YYYY-MM/
+gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/<TIER>/billing_period=YYYY-MM/
 ```
 
 ## Point CostGoblin at it
@@ -252,8 +270,12 @@ providers:
     type: gcp
     sync:
       daily:
-        bucket: gs://cost-goblin/focus/   # BUCKET + PREFIX from the deploy
+        bucket: gs://cost-goblin/focus/daily/   # BUCKET + PREFIX + tier
         retentionDays: 365
+      # Only if you deployed with TIERS=daily,hourly.
+      # hourly:
+      #   bucket: gs://cost-goblin/focus/hourly/
+      #   retentionDays: 14
       intervalMinutes: 60
 
 defaults:
@@ -270,13 +292,14 @@ Field by field:
 |---|---|
 | `name` | Becomes the on-disk directory `{dataDir}/{name}/` and the value of the `provider` dimension. Letters, digits, hyphens and underscores; 64 chars max. Changing it later orphans the already-synced data. |
 | `type` | `gcp`. This is the discriminator — `credentialsProfile` is an AWS-only field and is rejected here. |
-| `sync.daily.bucket` | The **bucket plus the prefix** the exporter writes under, i.e. `BUCKET` + `PREFIX` from the deploy — not the bucket alone, unless you left `PREFIX` empty. The `gs://` scheme is optional. An `s3://` URL is rejected outright rather than failing later as a mysteriously empty listing. |
+| `sync.daily.bucket` | The **bucket, prefix and tier folder** the exporter writes under — i.e. `BUCKET` + `PREFIX` + `/daily/`, not the bucket alone. The `gs://` scheme is optional. An `s3://` URL is rejected outright rather than failing later as a mysteriously empty listing. |
 | `sync.daily.retentionDays` | How long downloaded periods are kept locally. |
+| `sync.hourly` | Same shape, pointed at `…/hourly/`. Omit it unless the exporter runs with `TIERS=daily,hourly`; CostGoblin refuses an hourly sync rather than quietly serving daily rows to the intraday views. The two buckets must differ. |
 | `sync.intervalMinutes` | How often CostGoblin re-checks the bucket. The second of the two cadences described above. |
 
-There is deliberately **no `hourly` and no `costOptimization`** block — GCP has
-no delivery behind either name, and the validator rejects them rather than
-silently ignoring them. See "Differences from the AWS integration" below.
+There is deliberately **no `costOptimization`** block — GCP has no Cost
+Optimization Hub analogue, and the validator rejects it rather than silently
+ignoring it. See "Differences from the AWS integration" below.
 
 ### Credentials
 
@@ -333,11 +356,13 @@ sync failure.
 A watermark table in your own project:
 
 ```
-costgoblin_exporter.export_state(billing_period DATE, watermark TIMESTAMP)
+costgoblin_exporter.export_state(billing_period DATE, tier STRING, watermark TIMESTAMP)
 ```
 
 Each run compares every period's `MAX(x_ExportTime)` against its stored
-watermark and re-exports only the periods that moved. Because the billing table
+watermark and re-exports only the periods that moved. The watermark is keyed by
+**tier as well as period**, so turning `hourly` on later backfills it from the
+beginning instead of waiting for the next upstream change. Because the billing table
 is append-only and `x_ExportTime` strictly increases, this catches late
 corrections to **any** closed month, not just the current one — and converges
 to a no-op once nothing is changing, which is also what keeps the BigQuery
@@ -351,17 +376,18 @@ they would never be picked up again.
 
 If you already run the AWS side, three things are deliberately not the same:
 
-- **One tier, not three.** AWS can feed a daily export, an optional hourly
-  export, and Cost Optimization Hub. GCP's FOCUS export is a single export, so
-  a `gcp` provider configures the daily tier only — the config validator
-  rejects `hourly` and `costOptimization` outright rather than silently
-  ignoring them.
-- **No intraday view yet.** The AWS hourly tier exists because it is a
-  *separate export with finer-grained rows*. Whatever granularity GCP's
-  `ChargePeriodStart` carries is preserved verbatim in the local Parquet, so
-  the detail is not being thrown away — but the hourly views read a separate
-  `raw/hourly-*` tier that GCP does not populate. If the live export turns out
-  to be sub-daily, wiring that up is a follow-up that needs no re-sync.
+- **Two tiers, not three.** AWS can feed a daily export, an optional hourly
+  export, and Cost Optimization Hub. GCP has no Cost Optimization Hub analogue,
+  so a `gcp` provider configures `daily` and optionally `hourly` — the config
+  validator rejects `costOptimization` outright rather than silently ignoring
+  it.
+- **One export, two grains.** On AWS the two tiers are two separately
+  configured Data Exports, each delivering its own granularity. GCP's FOCUS
+  export is a single hourly-grained table, so this job derives the daily tier
+  from it with a `GROUP BY` rather than asking Google for a second export. The
+  rollup sums the additive cost and quantity measures, keeps every unit price
+  and dimension as a group key, and concatenates `x_Credits` — so a day's
+  totals match the hours that composed it exactly.
 - **No savings recommendations.** Cost Optimization Hub has no equivalent
   here. GCP's Recommender API is a different shape and is out of scope.
 
@@ -394,7 +420,7 @@ one short run per day.
 almost certainly not lowercase. `billing_period=2026-07` is matched
 case-sensitively, deliberately, so that a leftover uppercase `BILLING_PERIOD=`
 CUR-era tree in the same bucket stays invisible. Check with
-`gcloud storage ls gs://<BUCKET>/<PREFIX>/`.
+`gcloud storage ls gs://<BUCKET>/<PREFIX>/daily/`.
 
 **`Not found: Dataset` or a location error.** The billing export dataset, the
 watermark dataset, and the bucket must all be in the same location, and the
@@ -406,7 +432,7 @@ deployed job". Check the folder's shard numbering for gaps at the top, delete th
 folder, and re-export:
 
 ```bash
-gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/billing_period=YYYY-MM/
+gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/<TIER>/billing_period=YYYY-MM/
 ```
 
 **Permission denied deleting objects.** The service account needs

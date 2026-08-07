@@ -60,11 +60,11 @@ export function upsertWizardProvider(
     );
   }
 
-  // GCP delivers the daily tier only, and `validateGcpSync` rejects the other
-  // two outright. Inheriting the previous entry's sync block — which is right
-  // for AWS, where a wizard run that didn't mention `hourly` must not drop it
-  // — would carry a stale `hourly:` onto a gcp entry and make the whole
-  // config fail to load on the next launch. So gcp starts from an empty sync.
+  // `validateGcpSync` rejects `costOptimization` outright. Inheriting the
+  // previous entry's sync block — which is right for AWS, where a wizard run
+  // that didn't mention `hourly` must not drop it — would carry a stale
+  // `costOptimization:` onto a gcp entry and make the whole config fail to
+  // load on the next launch. So gcp starts from an empty sync.
   const sync: Record<string, unknown> = type === 'gcp'
     ? { intervalMinutes: 60 }
     : { ...existingSync, intervalMinutes: 60 };
@@ -72,13 +72,13 @@ export function upsertWizardProvider(
   if (wizard.dailyBucket.length > 0) {
     sync['daily'] = { bucket: wizard.dailyBucket, retentionDays: wizard.retentionDays ?? 365 };
   }
-  if (type === 'aws') {
-    if (wizard.hourlyBucket !== undefined && wizard.hourlyBucket.length > 0) {
-      sync['hourly'] = { bucket: wizard.hourlyBucket, retentionDays: 30 };
-    }
-    if (wizard.costOptBucket !== undefined && wizard.costOptBucket.length > 0) {
-      sync['costOptimization'] = { bucket: wizard.costOptBucket, retentionDays: 30 };
-    }
+  // Both arms carry an hourly tier: GCP's FOCUS export is delivered hourly and
+  // the exporter publishes that grain to its own folder.
+  if (wizard.hourlyBucket !== undefined && wizard.hourlyBucket.length > 0) {
+    sync['hourly'] = { bucket: wizard.hourlyBucket, retentionDays: 30 };
+  }
+  if (type === 'aws' && wizard.costOptBucket !== undefined && wizard.costOptBucket.length > 0) {
+    sync['costOptimization'] = { bucket: wizard.costOptBucket, retentionDays: 30 };
   }
 
   const entry: Record<string, unknown> = type === 'gcp'

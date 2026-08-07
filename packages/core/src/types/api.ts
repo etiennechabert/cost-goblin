@@ -320,8 +320,8 @@ export interface CostApi {
     providerName: string;
     /** Provider arm to write. Omitted means `'aws'`, so pre-#517 callers
      *  keep their behaviour. `profile` is read only by the aws arm and
-     *  `keyFile` only by the gcp one; `hourlyBucket`/`costOptBucket` are
-     *  ignored for gcp, which delivers the daily tier only. */
+     *  `keyFile` only by the gcp one; `costOptBucket` is ignored for gcp,
+     *  which has no Cost Optimization Hub analogue. */
     type?: 'aws' | 'gcp' | undefined;
     profile: string;
     keyFile?: string | undefined;

@@ -214,6 +214,12 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
 
 export interface GcpSelectiveSyncOptions {
   readonly bucketPath: string;
+  /** Which grain this bucket holds — it decides the `raw/{tier}-{period}/`
+   *  directory the canonicalized Parquet is installed into. Narrower than
+   *  `ExpectedDataType` on purpose: GCP has no Cost Optimization Hub
+   *  analogue, so that tier is unrepresentable here rather than merely
+   *  rejected downstream. */
+  readonly expectedDataType: 'daily' | 'hourly';
   /** Absent means Application Default Credentials. */
   readonly keyFile?: string | undefined;
   /** Service account to run as. See `GcpProviderConfig`. */
@@ -254,7 +260,7 @@ function stagingDirFor(dataDir: string, provider: ProviderName, period: string):
  * Download, canonicalize and install each requested period.
  *
  * Per period the sequence is: rsync into staging → canonicalize into a
- * sibling temp dir → swap that dir into `raw/daily-{period}/` → record
+ * sibling temp dir → swap that dir into `raw/{tier}-{period}/` → record
  * etags. Etags are written last on purpose: they are the "this period is
  * up to date" record, so writing them before the swap succeeds would mark a
  * period done that was never installed, and it would never be retried.
@@ -263,7 +269,7 @@ export async function syncGcpSelectedFiles(
   options: GcpSelectiveSyncOptions,
 ): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
   const { bucketPath, providerName, dataDir, files, onProgress } = options;
-  const tier = 'daily';
+  const tier = options.expectedDataType;
   const gcsPath = parseGcsPath(bucketPath);
 
   const periods = groupByPeriod(files);

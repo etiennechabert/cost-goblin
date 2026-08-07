@@ -96,5 +96,6 @@ export {
   groupByPeriod,
   listLocalMonths,
   parseEtagsJson,
+  resolveBucketPath,
   saveEtags,
 } from './sync-utils.js';

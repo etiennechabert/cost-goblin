@@ -294,16 +294,20 @@ providers:
   # GCP looks like this. Uncomment and adjust to add one alongside the AWS
   # provider above, or replace that block entirely if you only use GCP.
   # It reads the bucket filled by scripts/gcp-focus-exporter — bucket is that
-  # deploy's BUCKET + PREFIX. Credentials come from Application Default
-  # Credentials (gcloud auth application-default login); add
-  # impersonateServiceAccount to use a read-only service account instead.
-  # There is no hourly or costOptimization tier: GCP delivers neither.
+  # deploy's BUCKET + PREFIX + the tier folder. Credentials come from
+  # Application Default Credentials (gcloud auth application-default login);
+  # add impersonateServiceAccount to use a read-only service account instead.
+  # Uncomment hourly only if the exporter runs with TIERS=daily,hourly.
+  # There is no costOptimization tier: GCP has no analogue.
   # - name: gcp-main
   #   type: gcp
   #   sync:
   #     daily:
-  #       bucket: gs://your-bucket/focus/
+  #       bucket: gs://your-bucket/focus/daily/
   #       retentionDays: 365
+  #     # hourly:
+  #     #   bucket: gs://your-bucket/focus/hourly/
+  #     #   retentionDays: 14
   #     intervalMinutes: 60
 
 defaults:

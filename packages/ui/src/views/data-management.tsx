@@ -726,8 +726,10 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
             onCancelSync={() => { api.cancelSync(syncIdFor(name, 'daily')).catch(() => undefined); setDailySyncState({ status: 'idle' }); }}
             onConfigure={provider.type === 'aws' ? () => { setConfigureSource('daily'); } : undefined}
           />
-          {provider.type === 'aws' && (
-            <>
+          {/* Hourly is real on both providers: AWS delivers it as a second
+              Data Export, GCP as the exporter's untouched `…/hourly/` folder.
+              Cost Optimization below stays AWS-only — there is no GCP
+              analogue, and `resolveBucketPath` refuses that tier outright. */}
           <TierPanel
               title="Hourly"
               configured={hourlyBucket !== null}
@@ -749,8 +751,9 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
               onDeletePeriod={handleDelete('hourly', () => { setHourlyRefreshKey(k => k + 1); })}
               syncState={hourlySyncState}
               onCancelSync={() => { api.cancelSync(syncIdFor(name, 'hourly')).catch(() => undefined); setHourlySyncState({ status: 'idle' }); }}
-              onConfigure={() => { setConfigureSource('hourly'); }}
+              onConfigure={provider.type === 'aws' ? () => { setConfigureSource('hourly'); } : undefined}
             />
+          {provider.type === 'aws' && (
             <TierPanel
               title="Cost Optimization"
               configured={costOptBucket !== null}
@@ -774,7 +777,6 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
               onCancelSync={() => { api.cancelSync(syncIdFor(name, 'cost-optimization')).catch(() => undefined); setCostOptSyncState({ status: 'idle' }); }}
               onConfigure={() => { setConfigureSource('costOptimization'); }}
             />
-            </>
           )}
         </div>
       )}

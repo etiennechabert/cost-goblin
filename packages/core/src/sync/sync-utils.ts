@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { isStringRecord } from '../utils/json.js';
 import { logger } from '../logger/logger.js';
 import type { ProviderName } from '../types/branded.js';
+import type { ProviderConfig } from '../types/config.js';
 import type { ManifestFileEntry } from './manifest.js';
 import { providerMetaDir } from './provider-paths.js';
 
@@ -37,6 +38,42 @@ export function getRawDirPrefix(tier: string): string {
     return TIER_RAW_PREFIXES[tier];
   }
   return TIER_RAW_PREFIXES['daily'];
+}
+
+/**
+ * Bucket location for one provider's tier. Shared by manual and background
+ * sync so both resolve buckets identically.
+ *
+ * The `gcp` arm is checked first and deliberately does NOT take the AWS
+ * fallback below (`hourly ?? daily`). An unconfigured GCP hourly tier means
+ * the exporter is not publishing that grain at all, so falling back would sync
+ * rolled-up daily rows into `raw/hourly-*` — the intraday views would then
+ * render one flat 24-hour block per day and look like a data bug rather than a
+ * missing configuration.
+ */
+export function resolveBucketPath(provider: ProviderConfig, tier: ExpectedDataType): string {
+  if (provider.type === 'gcp') {
+    if (tier === 'cost-optimization') {
+      throw new Error(`Provider "${provider.name}" is a GCP billing export, which has no Cost Optimization Hub analogue`);
+    }
+    if (tier === 'hourly') {
+      const hourlyBucket = provider.sync.hourly?.bucket;
+      if (hourlyBucket === undefined) {
+        throw new Error(`Provider "${provider.name}" has no sync.hourly bucket — set TIERS=daily,hourly on the exporter and add sync.hourly to the provider`);
+      }
+      return hourlyBucket;
+    }
+    return provider.sync.daily.bucket;
+  }
+  if (tier === 'hourly') {
+    return provider.sync.hourly?.bucket ?? provider.sync.daily.bucket;
+  }
+  if (tier === 'cost-optimization') {
+    const costOptBucket = provider.sync.costOptimization?.bucket;
+    if (costOptBucket === undefined) throw new Error('Cost optimization not configured');
+    return costOptBucket;
+  }
+  return provider.sync.daily.bucket;
 }
 
 /**

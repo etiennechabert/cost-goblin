@@ -111,20 +111,31 @@ function validateGcsSyncTier(raw: unknown, context: string): SyncTierConfig {
   };
 }
 
-/** GCP syncs the daily tier only. An `hourly` or `costOptimization` block is
- *  rejected rather than ignored — silently dropping a tier the user
- *  configured would look like a sync bug, and there is no GCP delivery
- *  behind either name. */
+/** GCP syncs `daily` and, optionally, `hourly` — both published by
+ *  `scripts/gcp-focus-exporter` from the one upstream table.
+ *
+ *  `costOptimization` is rejected rather than ignored: there is no GCP
+ *  delivery behind that name, and silently dropping a tier the user configured
+ *  would look like a sync bug. */
 function validateGcpSync(raw: unknown): GcpSyncConfig {
   assertObject(raw, 'sync');
   const daily = validateGcsSyncTier(raw['daily'], 'sync.daily');
-  for (const tier of ['hourly', 'costOptimization'] as const) {
-    if (raw[tier] !== undefined) {
-      throw new ConfigValidationError(`sync.${tier} is not supported for a 'gcp' provider — GCP syncs the daily tier only`);
-    }
+  const hourly = raw['hourly'] === undefined ? undefined : validateGcsSyncTier(raw['hourly'], 'sync.hourly');
+  if (raw['costOptimization'] !== undefined) {
+    throw new ConfigValidationError(`sync.costOptimization is not supported for a 'gcp' provider — it has no Cost Optimization Hub analogue`);
+  }
+  if (hourly !== undefined && hourly.bucket === daily.bucket) {
+    // Both tiers reading one folder would sync the same rows into
+    // `raw/daily-*` AND `raw/hourly-*`, so the intraday views would show the
+    // daily grain and the two tiers would fight over retention.
+    throw new ConfigValidationError(`sync.hourly.bucket must differ from sync.daily.bucket — the exporter publishes each tier to its own folder`);
   }
   assertNumber(raw['intervalMinutes'], 'sync.intervalMinutes');
-  return { daily, intervalMinutes: raw['intervalMinutes'] };
+  return {
+    daily,
+    ...(hourly === undefined ? {} : { hourly }),
+    intervalMinutes: raw['intervalMinutes'],
+  };
 }
 
 /** Optional path to a service-account JSON key. Absent means Application

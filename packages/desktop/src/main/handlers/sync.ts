@@ -13,6 +13,7 @@ import {
   providerRawDir,
   readTierLastSync,
   writeTierLastSync,
+  resolveBucketPath,
   logger,
   providerAuth,
 } from '@costgoblin/core';
@@ -23,7 +24,6 @@ import type {
   AccountMappingStatus,
   AccountMappingEntry,
   ProviderAuth,
-  ProviderConfig,
   ProviderName,
   PruneResult,
   SyncStatus,
@@ -46,32 +46,6 @@ type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
  *  'default' and any unrecognized tier-only id mean the daily tier. */
 function resolveDataType(syncId: string): ExpectedDataType {
   return parseSyncId(syncId).tier;
-}
-
-/** Bucket location for one provider's tier. Shared with the auto-sync deps
- *  wiring so manual and background sync resolve buckets identically.
- *
- *  The `gcp` arm is checked first and rejects anything but `daily`: GCP has
- *  no hourly delivery and no Cost-Optimization-Hub analogue, and the AWS
- *  fallback below (`hourly ?? daily`) would otherwise hand back the daily
- *  bucket for an hourly request — quietly syncing daily data into
- *  `raw/hourly-*`, which is worse than an error. */
-export function resolveBucketPath(provider: ProviderConfig, tier: ExpectedDataType): string {
-  if (provider.type === 'gcp') {
-    if (tier !== 'daily') {
-      throw new Error(`Provider "${provider.name}" is a GCP billing export, which delivers the daily tier only — ${tier} is not available`);
-    }
-    return provider.sync.daily.bucket;
-  }
-  if (tier === 'hourly') {
-    return provider.sync.hourly?.bucket ?? provider.sync.daily.bucket;
-  }
-  if (tier === 'cost-optimization') {
-    const costOptBucket = provider.sync.costOptimization?.bucket;
-    if (costOptBucket === undefined) throw new Error('Cost optimization not configured');
-    return costOptBucket;
-  }
-  return provider.sync.daily.bucket;
 }
 
 function matchesPeriodPrefix(entry: string, prefix: string, period: string): boolean {
