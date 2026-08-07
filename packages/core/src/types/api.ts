@@ -13,6 +13,7 @@ import type {
   BaselineUpdatePatch,
 } from './baseline.js';
 import type { RollupGrainEstimate } from '../rollup/estimator.js';
+import type { GcsFolderKind } from '../sync/gcs-export-layout.js';
 import type { AliasSuggestion } from '../normalize/similarity.js';
 import type { ViewsConfig } from './views.js';
 import type { CostScopeConfig, CostScopePreviewResult } from './cost-scope.js';
@@ -165,6 +166,29 @@ export type DataTier = 'daily' | 'hourly' | 'cost-optimization';
  *  `gcloud storage rsync` runs as gcloud's own active account. */
 export type GcloudLoginMode = 'adc' | 'cli';
 
+/** A Google Cloud project the signed-in account can see. GCS has no analogue
+ *  of S3's account-wide `ListBuckets` — `storage.getBuckets()` is scoped to a
+ *  project — so the GCP browse flow needs this step where AWS does not. */
+export interface GcpProject {
+  readonly projectId: string;
+  /** Human-readable project name; falls back to the id when unset. */
+  readonly name: string;
+}
+
+/** One folder level of a GCS bucket, as the setup wizard sees it. */
+export interface GcsBrowseResult {
+  /** Immediate child folder names, relative to the browsed prefix. */
+  readonly prefixes: readonly string[];
+  readonly folder: GcsFolderKind;
+  /** Whether the browsed folder's first period partition actually holds
+   *  `.parquet` shards. Only meaningful when `folder.kind === 'export'`; it
+   *  stands in for the AWS side's manifest read, confirming there is data to
+   *  sync rather than an empty partition the exporter created and never
+   *  filled. */
+  readonly hasParquet: boolean;
+  readonly error?: string | undefined;
+}
+
 export interface DataInventoryResult {
   /** Which configured provider this inventory describes. */
   readonly provider?: string | undefined;
@@ -252,6 +276,15 @@ export interface CostApi {
   listAwsProfiles(): Promise<string[]>;
   listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }>;
   browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }>;
+  /** Projects visible to the gcloud CLI's active account. Backed by
+   *  `gcloud projects list`, not an SDK call: the CLI is already a hard
+   *  requirement of the GCP download path, so this adds no dependency where
+   *  the Resource Manager client would. */
+  listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }>;
+  /** Buckets in one project, read through Application Default Credentials —
+   *  the same store `browseGcs` and the sync's listing half use. */
+  listGcsBuckets(projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }>;
+  browseGcs(params: { projectId: string; bucket: string; prefix: string }): Promise<GcsBrowseResult>;
   /** Write starter `costgoblin.yaml` / `dimensions.yaml` (only where absent)
    *  and reveal the config folder. `providerType` selects which arm is active
    *  in the template and which the other is commented out beside — a GCP user

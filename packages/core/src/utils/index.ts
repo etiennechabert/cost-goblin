@@ -1,1 +1,1 @@
-export { isStringRecord, parseJsonObject } from './json.js';
+export { isStringRecord, parseJsonArray, parseJsonObject } from './json.js';

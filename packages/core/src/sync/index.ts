@@ -29,6 +29,7 @@ export {
 } from './object-store.js';
 
 export {
+  GCS_READ_ONLY_SCOPE,
   createGcsHandle,
   isGcloudCliAccountError,
   isGcloudDownloadFailure,
@@ -73,6 +74,15 @@ export {
 } from './gcp-canonicalize.js';
 
 export { REQUIRED_FOCUS_COLUMNS } from './focus-contract.js';
+
+export {
+  type GcsFolderKind,
+  type GcsTier,
+  classifyGcsFolder,
+  gcsTiersOverlap,
+  isBillingPeriodFolder,
+  parseBillingPeriod,
+} from './gcs-export-layout.js';
 
 export {
   type TierRetention,

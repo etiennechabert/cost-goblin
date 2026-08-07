@@ -262,11 +262,18 @@ gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/<TIER>/billing_period=YYYY-
 
 ## Point CostGoblin at it
 
-The setup wizard is AWS-only for now, so a GCP provider is added by editing
-`costgoblin.yaml` directly. Open the folder that holds it from
-**Data Management → Generate config templates & open folder** — the button
-scaffolds an AWS-shaped template and reveals the directory. Replace the
-`providers` entry (or add a second one alongside your AWS provider):
+Easiest route: pick **Google Cloud** on the setup screen and choose **Find my
+export**. The wizard lists your projects (via `gcloud projects list`), then the
+buckets in the one you pick, then walks the bucket so you can select the tier
+folder — and writes the config itself. It won't let you select the `<PREFIX>`
+folder above the tiers, which is the mistake that makes the daily tier read the
+hourly shards too.
+
+To write the entry by hand instead — a bare service-account key can't list
+projects, for example — take the **Write the config by hand instead** link on
+that same screen, or open the config folder from **Data Management → Generate
+config templates & open folder**. Replace the `providers` entry (or add a
+second one alongside your AWS provider):
 
 ```yaml
 providers:

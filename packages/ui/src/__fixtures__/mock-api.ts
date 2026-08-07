@@ -12,6 +12,8 @@ import {
   type DailyCostsResult,
   type DataInventoryResult,
   type DataTier,
+  type GcpProject,
+  type GcsBrowseResult,
   type Dimension,
   type EntityDetailResult,
   type MissingTagsResult,
@@ -357,6 +359,46 @@ export class MockCostApi implements CostApi {
   listAwsProfiles(): Promise<string[]> { return Promise.resolve(['default', 'prod', 'staging']); }
   listS3Buckets(): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> { return Promise.resolve({ buckets: [{ name: 'my-cur-bucket', region: 'eu-central-1' }] }); }
   browseS3(): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }> { return Promise.resolve({ prefixes: ['data', 'metadata'], isBillingExport: true, detectedType: 'daily', missingColumns: [] }); }
+  listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> {
+    return Promise.resolve(this.gcpProjectsResult);
+  }
+
+  listGcsBuckets(projectId: string): Promise<{ buckets: readonly { name: string }[]; error?: string | undefined }> {
+    this.gcsBucketsListedFor.push(projectId);
+    return Promise.resolve(this.gcsBucketsResult);
+  }
+
+  browseGcs(params: { projectId: string; bucket: string; prefix: string }): Promise<GcsBrowseResult> {
+    this.gcsBrowsed.push(params);
+    // Keyed by prefix so a test can walk `focus/` (the tier parent) into
+    // `focus/daily/` (the export) and assert the wizard reacts to each.
+    return Promise.resolve(this.gcsBrowseByPrefix[params.prefix] ?? this.gcsBrowseResult);
+  }
+
+  /** Overridable GCP browse fixtures — the defaults describe the layout
+   *  `scripts/gcp-focus-exporter` produces with TIERS=daily. */
+  gcpProjectsResult: { projects: readonly GcpProject[]; error?: string | undefined } = {
+    projects: [
+      { projectId: 'acme-prod', name: 'Acme Production' },
+      { projectId: 'acme-dev', name: 'Acme Dev' },
+    ],
+  };
+
+  gcsBucketsResult: { buckets: readonly { name: string }[]; error?: string | undefined } = {
+    buckets: [{ name: 'acme-focus-export' }],
+  };
+
+  gcsBrowseResult: GcsBrowseResult = {
+    prefixes: ['focus'],
+    folder: { kind: 'unknown' },
+    hasParquet: false,
+  };
+
+  gcsBrowseByPrefix: Record<string, GcsBrowseResult> = {};
+
+  readonly gcsBucketsListedFor: string[] = [];
+  readonly gcsBrowsed: { projectId: string; bucket: string; prefix: string }[] = [];
+
   scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void> {
     this.scaffoldedFor.push(providerType ?? 'aws');
     return Promise.resolve();
@@ -365,7 +407,14 @@ export class MockCostApi implements CostApi {
   /** Provider arms `scaffoldConfig` was asked for, oldest first — the GCP
    *  setup step is only useful if it requests the GCP template. */
   readonly scaffoldedFor: ('aws' | 'gcp')[] = [];
-  writeConfig(): Promise<void> { return Promise.resolve(); }
+  writeConfig(config: Parameters<CostApi['writeConfig']>[0]): Promise<void> {
+    this.writtenConfigs.push(config);
+    return Promise.resolve();
+  }
+
+  /** Every payload the wizard sent to `writeConfig`, oldest first — the GCP
+   *  arm is only correct if it carries `type: 'gcp'` and a `gs://` path. */
+  readonly writtenConfigs: Parameters<CostApi['writeConfig']>[0][] = [];
   removeProvider(): Promise<void> { return Promise.resolve(); }
   updateAwsProfile(): Promise<void> { return Promise.resolve(); }
   getSavingsPreferences(): Promise<{ hiddenActionTypes: readonly string[] }> { return Promise.resolve({ hiddenActionTypes: [] }); }
