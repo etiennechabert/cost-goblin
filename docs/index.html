@@ -1402,6 +1402,19 @@
       margin-bottom: 16px;
     }
 
+    /* Work actually underway. Emerald rather than the roadmap's gold, so it
+       separates from "Planned" at a glance rather than on the word alone. */
+    .roadmap-badge.in-progress {
+      color: var(--emerald);
+      border-color: rgba(52, 211, 153, 0.35);
+      background: rgba(52, 211, 153, 0.08);
+    }
+
+    .roadmap-card.in-progress {
+      border-style: solid;
+      border-color: rgba(52, 211, 153, 0.28);
+    }
+
     .roadmap-card h4 {
       font-size: 16px;
       font-weight: 600;
@@ -2349,7 +2362,7 @@
 
         <!-- Linux -->
         <div class="platform-card" data-animate data-platform="linux">
-          <img class="platform-icon" src="/assets/tux.svg" alt="" aria-hidden="true">
+          <img class="platform-icon" src="assets/tux.svg" alt="" aria-hidden="true">
           <h4>Linux</h4>
           <div class="platform-links">
             <a class="dl-btn primary" data-asset="linux-amd64-deb" href="#">.deb (amd64)</a>
@@ -2371,8 +2384,8 @@
           <span class="next-step-label">Next</span>
         </div>
         <div class="next-step-body">
-          <div class="next-step-title">Set up your AWS data exports</div>
-          <div class="next-step-sub">5-minute walkthrough — cost allocation tags, FOCUS 1.2 exports, Cost Optimization Hub.</div>
+          <div class="next-step-title">Connect your billing data</div>
+          <div class="next-step-sub">5-minute walkthrough for AWS or Google Cloud &mdash; the setup guides are just below.</div>
         </div>
         <svg class="next-step-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
       </a>
@@ -2441,6 +2454,11 @@
       <div class="section-label">Roadmap</div>
       <div class="section-title">What's next</div>
       <div class="roadmap-grid">
+        <div class="roadmap-card in-progress" data-animate>
+          <div class="roadmap-badge in-progress">In progress</div>
+          <h4>Multi-cloud</h4>
+          <p>GCP billing lands alongside AWS in v0.7 &mdash; FOCUS&nbsp;1.2 from BigQuery via Cloud Storage. Azure next. One interface for all your cloud spend.</p>
+        </div>
         <div class="roadmap-card" data-animate>
           <div class="roadmap-badge">Planned</div>
           <h4>Anomaly detection</h4>
@@ -2455,11 +2473,6 @@
           <div class="roadmap-badge">Planned</div>
           <h4>Collaboration</h4>
           <p>Share dashboards and cost reports with your team. Collaborative triage for cost spikes.</p>
-        </div>
-        <div class="roadmap-card" data-animate>
-          <div class="roadmap-badge">Maybe</div>
-          <h4>Multi-cloud</h4>
-          <p>GCP and Azure billing support alongside AWS. One interface for all your cloud spend.</p>
         </div>
       </div>
 
