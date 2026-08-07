@@ -1,6 +1,7 @@
 import { ipcMain, shell } from 'electron';
 import { logger, parseS3Path, isStringRecord } from '@costgoblin/core';
 import { upsertWizardProvider } from '../config-upsert.js';
+import { buildConfigTemplate, buildDimensionsTemplate } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
 import type { DetectedReportType } from '../setup-manifest.js';
 import type { AppContext } from './context.js';
@@ -163,7 +164,9 @@ export function registerSetupHandlers(app: AppContext): void {
 
   ipcMain.handle('setup:write-config', async (_event, wizardConfig: {
     providerName: string;
+    type?: 'aws' | 'gcp' | undefined;
     profile: string;
+    keyFile?: string | undefined;
     dailyBucket: string;
     retentionDays?: number | undefined;
     hourlyBucket?: string | undefined;
@@ -250,8 +253,16 @@ export function registerSetupHandlers(app: AppContext): void {
       ...(t.concept === undefined ? {} : { concept: t.concept }),
     }));
 
+    // GCP's FOCUS export has no ServiceCategory, and the canonicalizer only
+    // NULL-fills x_Operation and SkuMeter — so scaffolding them for a gcp
+    // provider produces dimensions that render one blank value for every row.
+    // `buildDimensionsTemplate('gcp')` already drops them; this second writer
+    // has to agree or the two setup routes disagree about the same provider.
+    const GCP_ABSENT_DIMENSIONS = new Set(['service_category', 'operation', 'sku_meter']);
     const dimensionsYaml = {
-      builtIn: builtInDimensions,
+      builtIn: wizardConfig.type === 'gcp'
+        ? builtInDimensions.filter(d => !GCP_ABSENT_DIMENSIONS.has(d.name))
+        : builtInDimensions,
       tags: tagDimensions,
     };
 
@@ -269,66 +280,18 @@ export function registerSetupHandlers(app: AppContext): void {
     logger.info('Setup wizard wrote config files');
   });
 
-  ipcMain.handle('setup:scaffold-config', async (): Promise<void> => {
+  ipcMain.handle('setup:scaffold-config', async (_event, providerType: unknown): Promise<void> => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
 
     const configDir = path.dirname(ctx.configPath);
     await fs.mkdir(configDir, { recursive: true });
 
-    const configTemplate = `# CostGoblin configuration
-# See https://github.com/etiennechabert/cost-goblin for documentation
-
-providers:
-  - name: aws-main
-    type: aws
-    credentialsProfile: default  # <- your AWS CLI profile name
-    sync:
-      daily:
-        bucket: s3://your-bucket/path/to/focus-export/  # <- path containing data/ and metadata/
-        retentionDays: 365
-      intervalMinutes: 60
-
-defaults:
-  periodDays: 30
-  costMetric: effective
-  lagDays: 2
-`;
-
-    const dimensionsTemplate = `# Dimension configuration
-# Built-in dimensions are always available. Add tag dimensions to map your
-# resource tags (the FOCUS Tags map).
-
-builtIn:
-  - name: account
-    label: Account
-    field: account_id
-    displayField: account_name
-  - name: region
-    label: Region
-    field: region
-  - name: service
-    label: Service
-    field: service
-  - name: service_category
-    label: Service Category
-    field: service_category
-
-# Map your resource tags below.
-# tagName: the tag key exactly as it appears in the FOCUS Tags map
-# concept: owner | product | environment (enables special UI features)
-tags: []
-  # Example:
-  # - tagName: team
-  #   label: Team
-  #   concept: owner
-  # - tagName: app
-  #   label: Application
-  #   concept: product
-  # - tagName: env
-  #   label: Environment
-  #   concept: environment
-`;
+    // Anything other than the explicit 'gcp' string keeps the historical AWS
+    // template — the argument arrives over IPC and pre-#517 callers send none.
+    const templateType = providerType === 'gcp' ? 'gcp' : 'aws';
+    const configTemplate = buildConfigTemplate(templateType);
+    const dimensionsTemplate = buildDimensionsTemplate(templateType);
 
     try { await fs.access(ctx.configPath); } catch {
       await fs.writeFile(ctx.configPath, configTemplate, 'utf-8');

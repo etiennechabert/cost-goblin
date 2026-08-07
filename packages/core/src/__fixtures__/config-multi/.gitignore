@@ -1,0 +1,9 @@
+# Only costgoblin.yaml and dimensions.yaml are fixtures here — they are what
+# makes this a MIXED workspace. Everything else the app writes for itself on
+# first launch when COSTGOBLIN_CONFIG_DIR points at this directory (the GCP
+# e2e), and committing its output would pin generated defaults as though they
+# were deliberate test input.
+peer-*.json
+views.yaml
+cost-scope.yaml
+org-tree.yaml

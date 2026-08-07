@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CloudDownload, RefreshCw } from 'lucide-react';
-import { Popover, PopoverTrigger, PopoverContent, formatRelativeTime, SsoLoginButton } from '@costgoblin/ui';
+import { Popover, PopoverTrigger, PopoverContent, formatRelativeTime, SsoLoginButton, GcloudLoginButton } from '@costgoblin/ui';
+import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from '@costgoblin/core/browser';
 import type { SyncStatus } from '@costgoblin/core/browser';
 
 export type SyncActivity = 'idle' | 'syncing' | 'downloading';
@@ -103,6 +104,23 @@ function ssoLoginProfile(error: string | null): string | null {
   return /--profile\s+(\S+)/.exec(error)?.[1] ?? null;
 }
 
+/** The GCP sister of `ssoLoginProfile`. `toUserFriendlyError` builds both
+ *  provider messages the same way — `… Run: <command>` — so the command in the
+ *  message is the marker.
+ *
+ *  BOTH commands are matched. GCP authenticates through two stores, and the
+ *  stale-CLI-account error names `gcloud auth login`, which is not a substring
+ *  of `gcloud auth application-default login` — so sniffing only for ADC left
+ *  the one failure with a one-click remedy showing no button at all. Checked
+ *  most-specific first: ADC's string contains neither the other's nor vice
+ *  versa, but ordering it this way keeps the intent obvious. */
+function gcloudLoginMode(error: string | null): 'adc' | 'cli' | null {
+  if (error === null) return null;
+  if (error.includes(GCLOUD_ADC_LOGIN_COMMAND)) return 'adc';
+  if (error.includes(GCLOUD_CLI_LOGIN_COMMAND)) return 'cli';
+  return null;
+}
+
 /** Dedicated data-sync indicator, split out of the Settings gear. Shows whether
  *  a download is in progress (and how many files remain), surfaces sync errors,
  *  and flags un-synced periods — with a per-tier breakdown on click, so the user
@@ -122,6 +140,7 @@ export function SyncStatusButton({
 
   const showError = error !== null;
   const ssoProfile = ssoLoginProfile(error);
+  const gcloudMode = gcloudLoginMode(error);
   const showActive = !showError && activity !== 'idle';
   const showMissing = !showError && activity === 'idle' && missingPeriods > 0 && !inSettingsData;
 
@@ -186,6 +205,9 @@ export function SyncStatusButton({
             {error}
             {ssoProfile !== null && (
               <SsoLoginButton profile={ssoProfile} hint="A browser window will open. Refresh above after logging in." />
+            )}
+            {gcloudMode !== null && (
+              <GcloudLoginButton mode={gcloudMode} hint="A browser window will open. Refresh above after logging in." />
             )}
           </div>
         )}

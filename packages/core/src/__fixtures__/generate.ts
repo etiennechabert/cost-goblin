@@ -7,6 +7,7 @@ import { parse as parseYaml } from 'yaml';
 import { buildSyntheticTable, seededRandom } from './focus-fixture.js';
 import type { FocusFixtureConfig } from './focus-fixture.js';
 import { FIXTURE_PROVIDER_NAME } from './layout.js';
+import { writeGcpProvider } from './gcp-fixture.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '..', '..', '..', '..', 'data');
@@ -276,6 +277,13 @@ async function generate(): Promise<void> {
     await conn.run(`COPY (SELECT * FROM synthetic WHERE ChargePeriodStart::DATE::VARCHAR LIKE '${month}%') TO '${outPath}' (FORMAT PARQUET)`);
   }
   process.stdout.write(`  Exported ${String(months.length)} monthly raw files\n`);
+
+  // The second provider, for the mixed-workspace e2e. Written here as well as
+  // in the vitest global setup because CI generates fixtures through THIS
+  // script before the e2e shards — adding it to only one generator leaves it
+  // present locally and missing in CI.
+  await writeGcpProvider(conn, SYNTHETIC_DIR, months);
+  process.stdout.write(`  Exported ${String(months.length)} GCP monthly raw files\n`);
 
   // Export hourly data (last 7 days of Feb expanded to hourly charge periods).
   // Month-span rows (Purchase/Tax/Credit) are kept as-is — real hourly FOCUS

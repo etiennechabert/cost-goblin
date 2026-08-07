@@ -1,4 +1,4 @@
-import { logger, parseJsonObject, configuredTierRetentions, periodsOutsideRetention, retentionCutoffPeriod, isCredentialError } from '@costgoblin/core';
+import { logger, parseJsonObject, configuredTierRetentions, periodsOutsideRetention, retentionCutoffPeriod, isCredentialError, isGcpCredentialError } from '@costgoblin/core';
 import type { AutoSyncStatus, ProviderSyncError, SyncLogLevel } from '@costgoblin/core';
 import { updatePrefsFile } from './handlers/prefs-file.js';
 
@@ -141,7 +141,12 @@ async function syncTier(
     // the pass records it against this provider and the toolbar flags that its
     // background sync is blocked. Other (transient) inventory failures stay a
     // silent skip as before.
-    if (isCredentialError(err)) {
+    //
+    // Both arms are tested because this scheduler is provider-agnostic: the
+    // AWS-only predicate would silently downgrade a GCP credential expiry to a
+    // skip, leaving background sync permanently blocked while the toolbar
+    // reported idle.
+    if (isCredentialError(err) || isGcpCredentialError(err)) {
       note(deps, 'warn', `Auto-sync: ${providerName}/${tier.name} inventory failed (credentials) — ${errorMessage(err)}`);
       throw asError(err);
     }

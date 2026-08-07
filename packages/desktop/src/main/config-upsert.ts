@@ -6,10 +6,14 @@ import { isStringRecord, parseProviderName } from '@costgoblin/core';
  *  upsert/targeting rules are unit-testable without touching the filesystem. */
 
 /** The subset of the setup wizard's payload that shapes the provider entry
- *  written to `costgoblin.yaml`. */
+ *  written to `costgoblin.yaml`. `type` defaults to `'aws'` so every
+ *  pre-#517 call site keeps its meaning; `profile` (AWS) and `keyFile`
+ *  (GCP) are each read only by their own arm. */
 export interface WizardProviderConfig {
   readonly providerName: string;
+  readonly type?: 'aws' | 'gcp' | undefined;
   readonly profile: string;
+  readonly keyFile?: string | undefined;
   readonly dailyBucket: string;
   readonly retentionDays?: number | undefined;
   readonly hourlyBucket?: string | undefined;
@@ -43,25 +47,67 @@ export function upsertWizardProvider(
   const target: unknown = targetIndex === -1 ? undefined : providersRaw[targetIndex];
   const rawSync: unknown = isStringRecord(target) ? target['sync'] : undefined;
   const existingSync: Readonly<Record<string, unknown>> = isStringRecord(rawSync) ? rawSync : {};
+  const type = wizard.type ?? 'aws';
 
-  const sync: Record<string, unknown> = { ...existingSync, intervalMinutes: 60 };
+  // Defence in depth behind the UI gate. `type` defaults to 'aws' because the
+  // wizard's payload has never carried one, so an upsert that lands on an
+  // existing gcp entry would silently rewrite it as an AWS provider — losing
+  // the GCP source rather than failing. `swapProviderCredentialsProfile`
+  // already refuses the same way. Guards BOTH directions. Guarding only aws-onto-gcp left the mirror image open:
+  // a `type: 'gcp'` payload landing on an existing AWS entry replaced it
+  // wholesale, dropping `credentialsProfile` and the inherited sync tiers, and
+  // the AWS billing source vanished with no error.
+  const rawTargetType: unknown = isStringRecord(target) ? target['type'] : undefined;
+  const targetType = typeof rawTargetType === 'string' ? rawTargetType : undefined;
+  if (targetType !== undefined && targetType !== type) {
+    throw new Error(
+      `Provider "${wizard.providerName}" is a ${targetType.toUpperCase()} provider — refusing to rewrite it as ${type.toUpperCase()}. Edit costgoblin.yaml to change a provider's type.`,
+    );
+  }
+
+  // `validateGcpSync` rejects `costOptimization` outright. Inheriting the
+  // previous entry's sync block — which is right for AWS, where a wizard run
+  // that didn't mention `hourly` must not drop it — would carry a stale
+  // `costOptimization:` onto a gcp entry and make the whole config fail to
+  // load on the next launch. So gcp starts from an empty sync.
+  const sync: Record<string, unknown> = type === 'gcp'
+    ? { intervalMinutes: 60 }
+    : { ...existingSync, intervalMinutes: 60 };
 
   if (wizard.dailyBucket.length > 0) {
     sync['daily'] = { bucket: wizard.dailyBucket, retentionDays: wizard.retentionDays ?? 365 };
   }
+  // Both arms carry an hourly tier: GCP's FOCUS export is delivered hourly and
+  // the exporter publishes that grain to its own folder.
   if (wizard.hourlyBucket !== undefined && wizard.hourlyBucket.length > 0) {
     sync['hourly'] = { bucket: wizard.hourlyBucket, retentionDays: 30 };
   }
-  if (wizard.costOptBucket !== undefined && wizard.costOptBucket.length > 0) {
+  if (type === 'aws' && wizard.costOptBucket !== undefined && wizard.costOptBucket.length > 0) {
     sync['costOptimization'] = { bucket: wizard.costOptBucket, retentionDays: 30 };
   }
 
-  const entry: Record<string, unknown> = {
-    name: wizard.providerName,
-    type: 'aws',
-    credentialsProfile: wizard.profile,
-    sync,
-  };
+  const entry: Record<string, unknown> = type === 'gcp'
+    ? {
+        name: wizard.providerName,
+        type: 'gcp',
+        // Omitted rather than null when blank: absent means Application
+        // Default Credentials, which is the documented default.
+        ...(wizard.keyFile === undefined || wizard.keyFile.length === 0 ? {} : { keyFile: wizard.keyFile }),
+        // Carried from the entry being replaced. `WizardProviderConfig` has no
+        // field for it, so building the entry from the payload alone silently
+        // deleted it — after which the download half ran as the signed-in user
+        // and 403'd on a bucket granted only to the service account.
+        ...(isStringRecord(target) && typeof target['impersonateServiceAccount'] === 'string'
+          ? { impersonateServiceAccount: target['impersonateServiceAccount'] }
+          : {}),
+        sync,
+      }
+    : {
+        name: wizard.providerName,
+        type: 'aws',
+        credentialsProfile: wizard.profile,
+        sync,
+      };
 
   const providers: readonly unknown[] = targetIndex === -1
     ? [...providersRaw, entry]
@@ -80,8 +126,10 @@ export function upsertWizardProvider(
  *  first provider; otherwise exact-name lookup), leaving every other YAML
  *  field and provider entry untouched. Drops the legacy nested `credentials`
  *  key on the targeted entry only, so the file converges on the flattened
- *  shape. Throws on a missing providers list, an unknown provider name, or a
- *  non-object targeted entry. */
+ *  shape. Throws on a missing providers list, an unknown provider name, a
+ *  non-object targeted entry, or a non-AWS target — `credentialsProfile` is
+ *  an AWS-arm field, and writing one onto a `gcp` entry would produce a
+ *  config the validator accepts but the sync layer ignores. */
 export function swapProviderCredentialsProfile(
   parsed: Readonly<Record<string, unknown>>,
   profile: string,
@@ -96,6 +144,9 @@ export function swapProviderCredentialsProfile(
   if (targetIndex === -1) throw new Error(`Unknown provider "${providerName ?? ''}"`);
   const target: unknown = providers[targetIndex];
   if (!isStringRecord(target)) throw new Error('Provider entry is not an object');
+  if (target['type'] === 'gcp') {
+    throw new Error(`Provider "${providerEntryName(target) ?? ''}" is a GCP provider — it authenticates with Application Default Credentials or a service-account key, not an AWS profile`);
+  }
   const rest = Object.fromEntries(Object.entries(target).filter(([key]) => key !== 'credentials'));
   const entry: Record<string, unknown> = { ...rest, credentialsProfile: profile };
   return { ...parsed, providers: providers.map((p, i) => (i === targetIndex ? entry : p)) };

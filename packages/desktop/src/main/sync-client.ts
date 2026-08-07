@@ -1,5 +1,5 @@
 import { logger } from '@costgoblin/core';
-import type { ManifestFileEntry, SyncProgress, SyncLogLevel } from '@costgoblin/core';
+import type { ManifestFileEntry, ProviderAuth, SyncProgress, SyncLogLevel } from '@costgoblin/core';
 import { initWorkerLifecycle } from './worker-lifecycle.js';
 
 /** A log line forwarded from the sync worker thread. */
@@ -7,7 +7,9 @@ export type SyncLogSink = (level: SyncLogLevel, message: string, ts: number) => 
 
 export interface SyncOptions {
   readonly bucketPath: string;
-  readonly profile: string;
+  /** How the provider authenticates. Crosses the worker-thread boundary by
+   *  structured clone and is re-validated on arrival (`isProviderAuth`). */
+  readonly auth: ProviderAuth;
   /** Which configured provider's tree (`{dataDir}/{providerName}/…`) the
    *  download lands in. Crosses the worker-thread boundary as a plain string;
    *  the worker re-validates it with `parseProviderName` before it touches
@@ -148,7 +150,7 @@ export async function createSyncClient(workerPath: string, onLog?: SyncLogSink):
           kind: 'sync',
           id,
           bucketPath: options.bucketPath,
-          profile: options.profile,
+          auth: options.auth,
           providerName: options.providerName,
           dataDir: options.dataDir,
           tier: options.tier ?? 'daily',

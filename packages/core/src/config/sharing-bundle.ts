@@ -52,9 +52,10 @@ function syncToYaml(sync: SyncConfig): Record<string, unknown> {
   };
 }
 
-/** Shared (credential-less) YAML shape for one provider. Single `aws` arm
- *  today — when `SharedProviderConfig` grows arms (#517), the per-type
- *  fields stop type-checking here and force a per-type dispatch. */
+/** Shared (credential-less) YAML shape for one provider. Every arm shares
+ *  the same three shareable fields, so no per-type dispatch is needed here
+ *  — the credential field each arm adds locally is exactly what a bundle
+ *  must not carry. */
 function sharedProviderToYaml(p: SharedProviderConfig): Record<string, unknown> {
   return { name: String(p.name), type: p.type, sync: syncToYaml(p.sync) };
 }
@@ -70,13 +71,29 @@ function sharedConfigToYaml(config: SharedCostGoblinConfig): Record<string, unkn
   };
 }
 
-/** On-disk YAML shape for one provider, credentials included. Single `aws`
- *  arm today — `credentialsProfile` is arm-specific, so a new provider type
- *  breaks the build here until it gets its own serialization. */
+/** On-disk YAML shape for one provider, credentials included. The
+ *  credential field is arm-specific, so this dispatches on `type` — a new
+ *  provider arm breaks the build here until it gets its own serialization.
+ *  A `gcp` provider with no `keyFile` omits the key entirely (Application
+ *  Default Credentials), rather than writing an explicit `null`. */
 function providerToYaml(p: ProviderConfig): Record<string, unknown> {
+  if (p.type === 'gcp') {
+    return {
+      name: String(p.name),
+      type: 'gcp',
+      ...(p.keyFile === undefined ? {} : { keyFile: p.keyFile }),
+      // Both GCP credential fields, not just keyFile. Omitting
+      // `impersonateServiceAccount` meant any write-back through this function
+      // stripped it, after which `gcloud storage rsync` ran as the signed-in
+      // user and 403'd on a bucket granted only to the service account — the
+      // least-privilege path the setup guide recommends.
+      ...(p.impersonateServiceAccount === undefined ? {} : { impersonateServiceAccount: p.impersonateServiceAccount }),
+      sync: syncToYaml(p.sync),
+    };
+  }
   return {
     name: String(p.name),
-    type: p.type,
+    type: 'aws',
     credentialsProfile: p.credentialsProfile,
     sync: syncToYaml(p.sync),
   };
@@ -147,7 +164,11 @@ export interface BuildConfigBundleInput {
  *  never leak by construction. Single `aws` arm today; new arms (#517) stop
  *  type-checking here until they get their own mapping. */
 function toSharedProvider(p: ProviderConfig): SharedProviderConfig {
-  return { name: p.name, type: p.type, sync: p.sync };
+  // Dispatched rather than spread: TypeScript can't correlate the `type`
+  // discriminant with the arm-specific `sync` type across a single object
+  // literal, so each arm is built explicitly.
+  if (p.type === 'gcp') return { name: p.name, type: 'gcp', sync: p.sync };
+  return { name: p.name, type: 'aws', sync: p.sync };
 }
 
 /** Assemble a shareable bundle from the local configuration. The AWS
@@ -327,12 +348,39 @@ export function summarizeConfigBundle(parsed: ParsedConfigBundle): ConfigBundleS
 }
 
 /** Recombine a bundle's shared config with a locally-chosen AWS
- *  credentials profile. The same profile is applied to every provider —
- *  multi-provider bundles with distinct credentials per provider can
- *  adjust afterwards in the app. */
-export function bundleConfigWithProfile(shared: SharedCostGoblinConfig, credentialsProfile: string): CostGoblinConfig {
+ *  credentials profile. The same profile is applied to every `aws`
+ *  provider — multi-provider bundles with distinct credentials per provider
+ *  can adjust afterwards in the app. `gcp` providers get no credential at
+ *  all: they land on Application Default Credentials, which is the
+ *  zero-configuration path and the one the setup guide recommends. */
+export function bundleConfigWithProfile(
+  shared: SharedCostGoblinConfig,
+  credentialsProfile: string,
+  /** The providers already on disk. Applying a bundle REPLACES costgoblin.yaml,
+   *  and a bundle carries no credentials by design — so without this a GCP
+   *  provider's `keyFile` / `impersonateServiceAccount` were silently dropped
+   *  on every import, and the next sync ran as the signed-in user. The AWS arm
+   *  has no such hole because its credential is re-supplied by the profile the
+   *  user picks during the import. Matched by name; anything not matched keeps
+   *  the zero-configuration default (plain ADC). */
+  existing: readonly ProviderConfig[] = [],
+): CostGoblinConfig {
+  const localGcp = new Map(
+    existing.filter((p): p is Extract<ProviderConfig, { type: 'gcp' }> => p.type === 'gcp')
+      .map(p => [String(p.name), p]),
+  );
   return {
-    providers: shared.providers.map((p): ProviderConfig => ({ name: p.name, type: p.type, credentialsProfile, sync: p.sync })),
+    providers: shared.providers.map((p): ProviderConfig => {
+      if (p.type !== 'gcp') return { name: p.name, type: 'aws', credentialsProfile, sync: p.sync };
+      const prior = localGcp.get(String(p.name));
+      return {
+        name: p.name,
+        type: 'gcp',
+        ...(prior?.keyFile === undefined ? {} : { keyFile: prior.keyFile }),
+        ...(prior?.impersonateServiceAccount === undefined ? {} : { impersonateServiceAccount: prior.impersonateServiceAccount }),
+        sync: p.sync,
+      };
+    }),
     defaults: shared.defaults,
   };
 }

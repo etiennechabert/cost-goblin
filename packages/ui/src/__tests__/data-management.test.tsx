@@ -267,7 +267,7 @@ describe('DataManagement', () => {
     await user.click(screen.getByText('Add Provider'));
     // Add-mode wizard starts at the get-started hub.
     await waitFor(() => {
-      expect(screen.getByText('Set up from S3')).toBeDefined();
+      expect(screen.getByLabelText('Set up from AWS')).toBeDefined();
     });
   });
 });

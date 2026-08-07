@@ -16,10 +16,19 @@ import {
   summarizeConfigBundle,
   validateConfig,
 } from '../config/index.js';
-import type { ConfigBundle } from '../types/index.js';
+import type { AwsProviderConfig, ConfigBundle, ProviderConfig, SharedCostGoblinConfig } from '../types/index.js';
 import { CONFIG_BUNDLE_KIND, CONFIG_BUNDLE_SCHEMA_VERSION } from '../types/index.js';
+import { asBucketPath } from '../types/branded.js';
+import { parseProviderName } from '../config/provider-name.js';
 
 const fixturesDir = join(import.meta.dirname, '..', '__fixtures__', 'config');
+
+/** `credentialsProfile` lives only on the `aws` arm — narrow before asserting
+ *  on it, rather than optional-chaining a property the union doesn't have. */
+function awsArm(p: ProviderConfig | undefined): AwsProviderConfig {
+  if (p?.type !== 'aws') throw new Error(`expected an 'aws' provider, got ${String(p?.type)}`);
+  return p;
+}
 
 async function buildFixtureBundle(): Promise<ConfigBundle> {
   const [config, dimensions, orgTree, costScope, views] = await Promise.all([
@@ -178,11 +187,79 @@ describe('bundleConfigWithProfile', () => {
     const bundle = await buildFixtureBundle();
     const config = bundleConfigWithProfile(bundle.sections.config, 'my-local-profile');
     expect(config.providers).toHaveLength(1);
-    expect(config.providers[0]?.credentialsProfile).toBe('my-local-profile');
+    expect(awsArm(config.providers[0]).credentialsProfile).toBe('my-local-profile');
     expect(String(config.providers[0]?.sync.daily.bucket)).toBe('s3://test-cur-bucket/daily/');
     // The on-disk YAML form passes the standard config validator.
     const revalidated = validateConfig(costGoblinConfigToYaml(config));
-    expect(revalidated.providers[0]?.credentialsProfile).toBe('my-local-profile');
+    expect(awsArm(revalidated.providers[0]).credentialsProfile).toBe('my-local-profile');
+  });
+
+  it('leaves a gcp provider on Application Default Credentials rather than stamping the profile', () => {
+    const shared: SharedCostGoblinConfig = {
+      providers: [
+        { name: parseProviderName('payer-a'), type: 'aws', sync: { daily: { bucket: asBucketPath('s3://b/d'), retentionDays: 30 }, intervalMinutes: 60 } },
+        { name: parseProviderName('gcp-main'), type: 'gcp', sync: { daily: { bucket: asBucketPath('gs://b/focus'), retentionDays: 365 }, intervalMinutes: 60 } },
+      ],
+      defaults: { periodDays: 30, costMetric: 'effective', lagDays: 1 },
+    };
+    const config = bundleConfigWithProfile(shared, 'my-local-profile');
+    expect(awsArm(config.providers[0]).credentialsProfile).toBe('my-local-profile');
+    const gcp = config.providers[1];
+    if (gcp?.type !== 'gcp') throw new Error('expected the second provider to be the gcp arm');
+    expect('keyFile' in gcp).toBe(false);
+    // Round-trips through the on-disk YAML form without acquiring a
+    // credentialsProfile key it has no field for.
+    const yaml = costGoblinConfigToYaml(config);
+    const revalidated = validateConfig(yaml);
+    expect(revalidated.providers[1]?.type).toBe('gcp');
+  });
+
+  it('carries a local gcp provider\'s credentials across a bundle import by name', () => {
+    // Importing a bundle REPLACES costgoblin.yaml, and a bundle carries no
+    // credentials by design (they are per-machine, not shareable). Without the
+    // `existing` carry-forward, importing any bundle silently stripped
+    // impersonateServiceAccount/keyFile from every local gcp provider — after
+    // which the download half ran as the signed-in user and 403'd on a bucket
+    // granted only to the service account.
+    const shared: SharedCostGoblinConfig = {
+      providers: [
+        { name: parseProviderName('gcp-main'), type: 'gcp', sync: { daily: { bucket: asBucketPath('gs://b/focus/daily'), retentionDays: 365 }, intervalMinutes: 60 } },
+      ],
+      defaults: { periodDays: 30, costMetric: 'effective', lagDays: 1 },
+    };
+    const existing: readonly ProviderConfig[] = [
+      { name: parseProviderName('gcp-main'), type: 'gcp', impersonateServiceAccount: 'reader@proj.iam.gserviceaccount.com', sync: { daily: { bucket: asBucketPath('gs://old/daily'), retentionDays: 30 }, intervalMinutes: 60 } },
+    ];
+    const config = bundleConfigWithProfile(shared, 'unused', existing);
+    const gcp = config.providers[0];
+    if (gcp?.type !== 'gcp') throw new Error('expected the gcp arm');
+    expect(gcp.impersonateServiceAccount).toBe('reader@proj.iam.gserviceaccount.com');
+    // The bucket comes from the BUNDLE, not the stale local entry — only the
+    // credential is carried forward.
+    expect(String(gcp.sync.daily.bucket)).toBe('gs://b/focus/daily');
+
+    // And it survives a round-trip to YAML, which needed its own fix:
+    // providerToYaml previously serialized keyFile only.
+    const revalidated = validateConfig(costGoblinConfigToYaml(config));
+    const revalidatedGcp = revalidated.providers[0];
+    if (revalidatedGcp?.type !== 'gcp') throw new Error('expected the gcp arm');
+    expect(revalidatedGcp.impersonateServiceAccount).toBe('reader@proj.iam.gserviceaccount.com');
+  });
+
+  it('does not carry a differently-named local gcp provider\'s credentials onto the bundle one', () => {
+    const shared: SharedCostGoblinConfig = {
+      providers: [
+        { name: parseProviderName('gcp-new'), type: 'gcp', sync: { daily: { bucket: asBucketPath('gs://b/focus/daily'), retentionDays: 365 }, intervalMinutes: 60 } },
+      ],
+      defaults: { periodDays: 30, costMetric: 'effective', lagDays: 1 },
+    };
+    const existing: readonly ProviderConfig[] = [
+      { name: parseProviderName('gcp-old'), type: 'gcp', impersonateServiceAccount: 'reader@proj.iam.gserviceaccount.com', sync: { daily: { bucket: asBucketPath('gs://old/daily'), retentionDays: 30 }, intervalMinutes: 60 } },
+    ];
+    const config = bundleConfigWithProfile(shared, 'unused', existing);
+    const gcp = config.providers[0];
+    if (gcp?.type !== 'gcp') throw new Error('expected the gcp arm');
+    expect('impersonateServiceAccount' in gcp).toBe(false);
   });
 });
 

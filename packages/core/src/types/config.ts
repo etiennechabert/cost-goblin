@@ -4,7 +4,7 @@ export type NormalizationRule = 'lowercase' | 'uppercase' | 'lowercase-kebab' | 
 
 export type ConceptType = 'owner' | 'product' | 'environment' | 'unit';
 
-/** One AWS billing source (a payer account's CUR 2.0 export). A profile can
+/** One AWS billing source (a payer account's FOCUS 1.2 Data Export). A profile can
  *  configure several — e.g. two payer accounts — each identified by its
  *  instance `name`, which keys the on-disk layout
  *  (`{dataDir}/{name}/raw|rollup|meta`). `credentialsProfile` is the
@@ -17,14 +17,59 @@ export interface AwsProviderConfig {
   readonly sync: SyncConfig;
 }
 
-/** Discriminated union on `type`. A single arm today — GCP lands in #517 —
- *  but consumers must already switch on `type` rather than assume AWS. */
-export type ProviderConfig = AwsProviderConfig;
+/** One GCP billing source: a GCS bucket fed by the user-deployed exporter
+ *  that pushes the native FOCUS 1.2 BigQuery export into
+ *  `gs://…/billing_period=YYYY-MM/` folders (see `scripts/gcp-focus-exporter`).
+ *  `keyFile` is an optional path to a service-account JSON key; when absent
+ *  the adapter authenticates with Application Default Credentials
+ *  (`gcloud auth application-default login`), which is the documented
+ *  default. */
+export interface GcpProviderConfig {
+  readonly name: ProviderName;
+  readonly type: 'gcp';
+  readonly keyFile?: string | undefined;
+  /** Service account to impersonate, e.g.
+   *  `costgoblin-reader@my-project.iam.gserviceaccount.com`.
+   *
+   *  The least-privilege option, and the one to prefer: it needs no
+   *  long-lived key on disk. Establish it once with
+   *  `gcloud auth application-default login --impersonate-service-account=<sa>`
+   *  — that covers the listing SDK, which reads ADC — and this field passes
+   *  the same identity to the `gcloud storage rsync` download, which uses
+   *  gcloud's own credentials rather than ADC and would otherwise run as the
+   *  signed-in user. */
+  readonly impersonateServiceAccount?: string | undefined;
+  readonly sync: GcpSyncConfig;
+}
+
+/** Discriminated union on `type`. Consumers must switch on `type` rather
+ *  than assume AWS — `credentialsProfile` exists only on the `aws` arm and
+ *  `keyFile` only on the `gcp` one. */
+export type ProviderConfig = AwsProviderConfig | GcpProviderConfig;
 
 export interface SyncConfig {
   readonly daily: SyncTierConfig;
   readonly hourly?: SyncTierConfig | undefined;
   readonly costOptimization?: SyncTierConfig | undefined;
+  readonly intervalMinutes: number;
+}
+
+/** GCP mirrors the AWS tier split, from one upstream table rather than two
+ *  exports: the native FOCUS BigQuery export is delivered at HOURLY grain, and
+ *  `scripts/gcp-focus-exporter` publishes it as `…/hourly/` untouched plus a
+ *  `…/daily/` rollup — one row per day per dimension tuple, roughly 24x
+ *  smaller. Point each tier at its own folder, exactly as an AWS provider
+ *  points each tier at its own Data Export prefix.
+ *
+ *  `costOptimization` stays always-`undefined`: there is no
+ *  Cost-Optimization-Hub analogue on GCP. It is declared rather than omitted so
+ *  tier-generic code (`resolveBucketPath`, the retention sweep) can read it off
+ *  a `ProviderConfig` without first narrowing the arm — the type says
+ *  "structurally present, never configured". */
+export interface GcpSyncConfig {
+  readonly daily: SyncTierConfig;
+  readonly hourly?: SyncTierConfig | undefined;
+  readonly costOptimization?: undefined;
   readonly intervalMinutes: number;
 }
 

@@ -61,7 +61,7 @@ describe('Sync Worker', () => {
       kind: 'sync',
       id,
       bucketPath: 's3://test-bucket/test',
-      profile: 'default',
+      auth: { kind: 'aws-profile', profile: 'default' },
       providerName: 'aws',
       dataDir: testDataDir,
       tier: 'daily',
@@ -158,5 +158,43 @@ describe('Sync Worker', () => {
     const [r1, r2] = await Promise.all([waitForResult(id1), waitForResult(id2)]);
     expect(r1.id).toBe(id1);
     expect(r2.id).toBe(id2);
+  });
+
+  it('routes a gcp auth descriptor to the GCP sync path', async () => {
+    const id = nextId++;
+    sendSync(id, {
+      bucketPath: 'gs://focus-export/focus',
+      auth: { kind: 'gcp' },
+      providerName: 'gcp-main',
+    });
+    // No files requested → nothing to download, so the gcp branch completes
+    // the same way the aws one does. What this pins is that the request
+    // *reaches* a branch at all: an `auth` shape the worker's guard rejects
+    // is dropped silently and this promise would never settle.
+    expect(await waitForResult(id)).toMatchObject({ id, kind: 'complete', filesDownloaded: 0 });
+  });
+
+  it('accepts a gcp auth descriptor carrying a service-account key file', async () => {
+    const id = nextId++;
+    sendSync(id, {
+      bucketPath: 'gs://focus-export/focus',
+      auth: { kind: 'gcp', keyFile: '/tmp/does-not-need-to-exist.json' },
+      providerName: 'gcp-main',
+    });
+    expect((await waitForResult(id)).kind).toBe('complete');
+  });
+
+  it('drops a request whose auth or tier is malformed, then keeps serving', async () => {
+    // These must not settle — the point is that a bad message can't take the
+    // worker down. The following well-formed request proves it is still alive.
+    worker.postMessage({ kind: 'sync', id: 9001, bucketPath: 's3://b/p', auth: { kind: 'nope' }, providerName: 'aws', dataDir: testDataDir, tier: 'daily', files: [] });
+    worker.postMessage({ kind: 'sync', id: 9002, bucketPath: 's3://b/p', auth: { kind: 'aws-profile', profile: 'default' }, providerName: 'aws', dataDir: testDataDir, tier: 'weekly', files: [] });
+    // The pre-#517 wire shape, in case a stale main process is talking to a
+    // freshly built worker.
+    worker.postMessage({ kind: 'sync', id: 9003, bucketPath: 's3://b/p', profile: 'default', providerName: 'aws', dataDir: testDataDir, tier: 'daily', files: [] });
+
+    const id = nextId++;
+    sendSync(id);
+    expect((await waitForResult(id)).kind).toBe('complete');
   });
 });

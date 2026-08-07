@@ -8,6 +8,7 @@ import type {
   CostGoblinConfig,
   DefaultsConfig,
   DimensionsConfig,
+  GcpSyncConfig,
   NormalizationRule,
   OrgNode,
   OrgTreeConfig,
@@ -67,11 +68,16 @@ function hasControlChar(value: string): boolean {
  *  would corrupt logs / the argument). S3 keys legitimately contain `=`, `+`,
  *  `:`, spaces, etc. (e.g. Hive partition dirs like `billing_period=…`), so
  *  the key charset is intentionally left unrestricted — over-restricting it
- *  would reject valid existing configs on load. */
-function validateBucketPath(raw: unknown, context: string): BucketPath {
+ *  would reject valid existing configs on load.
+ *
+ *  The same rules hold for a GCS location: it reaches the Cloud Storage JSON
+ *  API as a bucket + prefix pair rather than a shell argument, and GCS object
+ *  names carry the same permissive charset. `store` only selects the wording
+ *  of the rejection message. */
+function validateBucketPath(raw: unknown, context: string, store: 'S3' | 'GCS' = 'S3'): BucketPath {
   assertString(raw, context);
   if (raw.length === 0 || raw.startsWith('-') || raw.includes('..') || hasControlChar(raw)) {
-    throw new ConfigValidationError(`${context} is not a valid S3 bucket location`);
+    throw new ConfigValidationError(`${context} is not a valid ${store} bucket location`);
   }
   return asBucketPath(raw);
 }
@@ -84,6 +90,79 @@ function validateSyncTier(raw: unknown, context: string): SyncTierConfig {
     bucket,
     retentionDays: raw['retentionDays'],
   };
+}
+
+/** A `gcp` provider's daily tier. The bucket is a `gs://bucket/prefix`
+ *  location (the scheme is optional, matching how the AWS arm tolerates a
+ *  bare `bucket/prefix`), but an `s3://` URL is rejected outright: it is a
+ *  copy-paste mistake that would otherwise surface much later as an empty
+ *  listing with no explanation. */
+function validateGcsSyncTier(raw: unknown, context: string): SyncTierConfig {
+  assertObject(raw, context);
+  const bucketRaw: unknown = raw['bucket'];
+  if (typeof bucketRaw === 'string' && bucketRaw.startsWith('s3://')) {
+    throw new ConfigValidationError(`${context}.bucket is an S3 URL — a 'gcp' provider needs a gs:// bucket location`);
+  }
+  const bucket = validateBucketPath(bucketRaw, `${context}.bucket`, 'GCS');
+  assertNumber(raw['retentionDays'], `${context}.retentionDays`);
+  return {
+    bucket,
+    retentionDays: raw['retentionDays'],
+  };
+}
+
+/** Whether two tier locations resolve to the same folder or one inside the
+ *  other. Compared on normalized prefixes so a trailing slash, or a parent
+ *  path, is caught as well as an exact match. */
+function tiersOverlap(a: string, b: string): boolean {
+  const norm = (v: string): string => `${v.replace(/^gs:\/\//, '').replace(/\/+$/, '')}/`;
+  const [x, y] = [norm(a), norm(b)];
+  return x === y || x.startsWith(y) || y.startsWith(x);
+}
+
+/** GCP syncs `daily` and, optionally, `hourly` — both published by
+ *  `scripts/gcp-focus-exporter` from the one upstream table.
+ *
+ *  `costOptimization` is rejected rather than ignored: there is no GCP
+ *  delivery behind that name, and silently dropping a tier the user configured
+ *  would look like a sync bug. */
+function validateGcpSync(raw: unknown): GcpSyncConfig {
+  assertObject(raw, 'sync');
+  const daily = validateGcsSyncTier(raw['daily'], 'sync.daily');
+  const hourly = raw['hourly'] === undefined ? undefined : validateGcsSyncTier(raw['hourly'], 'sync.hourly');
+  if (raw['costOptimization'] !== undefined) {
+    throw new ConfigValidationError(`sync.costOptimization is not supported for a 'gcp' provider — it has no Cost Optimization Hub analogue`);
+  }
+  if (hourly !== undefined && tiersOverlap(String(daily.bucket), String(hourly.bucket))) {
+    // Both tiers reading one folder would sync the same rows into
+    // `raw/daily-*` AND `raw/hourly-*`, so the intraday views would show the
+    // daily grain and the two tiers would fight over retention.
+    //
+    // CONTAINMENT, not just equality: the exporter writes `<prefix>/daily/` and
+    // `<prefix>/hourly/`, so `daily: gs://b/focus` + `hourly: gs://b/focus/hourly`
+    // — which is what following the deploy script's closing line produces —
+    // makes the daily listing match every hourly shard too.
+    throw new ConfigValidationError(`sync.hourly.bucket must not overlap sync.daily.bucket — the exporter publishes each tier to its own folder`);
+  }
+  assertNumber(raw['intervalMinutes'], 'sync.intervalMinutes');
+  return {
+    daily,
+    ...(hourly === undefined ? {} : { hourly }),
+    intervalMinutes: raw['intervalMinutes'],
+  };
+}
+
+/** Optional path to a service-account JSON key. Absent means Application
+ *  Default Credentials — the documented default — so an explicitly empty
+ *  string is rejected rather than silently treated as "use ADC": it almost
+ *  always means a UI field was left blank by accident. */
+function validateGcpKeyFile(raw: unknown, ctx: string): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  assertString(raw, `${ctx}.keyFile`);
+  if (raw.length === 0 || hasControlChar(raw)) {
+    throw new ConfigValidationError(`${ctx}.keyFile must be a path to a service-account JSON key, or omitted to use Application Default Credentials`);
+  }
+  return raw;
 }
 
 function validateSync(raw: unknown): SyncConfig {
@@ -114,6 +193,22 @@ function resolveCredentialsProfile(raw: Record<string, unknown>, ctx: string): s
   return credentials['profile'];
 }
 
+/** A service-account email to impersonate. The value is passed to the gcloud
+ *  CLI as `--impersonate-service-account=<value>`, so it is checked against the
+ *  documented service-account address grammar rather than accepted verbatim —
+ *  a config file can arrive from a shared bundle, and an unvalidated value
+ *  would land straight in an argv array. */
+function validateServiceAccountEmail(raw: unknown, ctx: string): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  assertString(raw, `${ctx}.impersonateServiceAccount`);
+  if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z0-9-]+\.iam\.gserviceaccount\.com$/.test(raw)) {
+    throw new ConfigValidationError(
+      `${ctx}.impersonateServiceAccount must be a service-account address like name@project.iam.gserviceaccount.com`,
+    );
+  }
+  return raw;
+}
+
 function validateProvider(raw: unknown, index: number): ProviderConfig {
   const ctx = `providers[${String(index)}]`;
   assertObject(raw, ctx);
@@ -126,8 +221,32 @@ function validateProvider(raw: unknown, index: number): ProviderConfig {
     throw new ConfigValidationError(`${ctx}.name: ${message}`);
   }
   assertString(raw['type'], `${ctx}.type`);
+  if (raw['type'] === 'gcp') {
+    const keyFile = validateGcpKeyFile(raw['keyFile'], ctx);
+    const impersonate = validateServiceAccountEmail(raw['impersonateServiceAccount'], ctx);
+    // Rejected rather than silently half-applied. Impersonation reaches the
+    // listing SDK only because ADC itself was established with
+    // `--impersonate-service-account`; a key file replaces ADC for that half
+    // while the download half still passes `--impersonate-service-account` to
+    // gcloud. The two halves would then authenticate as different identities,
+    // and the listing would fail with a bare 403 on a bucket the impersonated
+    // account can read.
+    if (keyFile !== undefined && impersonate !== undefined) {
+      throw new ConfigValidationError(
+        `${ctx} sets both keyFile and impersonateServiceAccount — pick one. Impersonation is established once with 'gcloud auth application-default login --impersonate-service-account=<sa>' and needs no key file.`,
+      );
+    }
+    const sync = validateGcpSync(raw['sync']);
+    return {
+      name,
+      type: 'gcp',
+      ...(keyFile === undefined ? {} : { keyFile }),
+      ...(impersonate === undefined ? {} : { impersonateServiceAccount: impersonate }),
+      sync,
+    };
+  }
   if (raw['type'] !== 'aws') {
-    throw new ConfigValidationError(`${ctx}.type must be 'aws'`);
+    throw new ConfigValidationError(`${ctx}.type must be 'aws' or 'gcp'`);
   }
   const credentialsProfile = resolveCredentialsProfile(raw, ctx);
   const sync = validateSync(raw['sync']);

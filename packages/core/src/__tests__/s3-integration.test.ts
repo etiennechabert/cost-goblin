@@ -142,7 +142,7 @@ describe.skipIf(!available)('S3 integration (MinIO)', () => {
   it('getDataInventory builds inventory from remote files', async () => {
     const inventory = await getDataInventory(
       `s3://${BUCKET}/${PREFIX}data/`,
-      'default',
+      { kind: 'aws-profile', profile: 'default' },
       tempDir,
       asProviderName(FIXTURE_PROVIDER_NAME),
       'daily',

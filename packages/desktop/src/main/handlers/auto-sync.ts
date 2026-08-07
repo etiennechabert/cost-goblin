@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { getDataInventory, getLocalDataInventory, extractPeriod, isCredentialError, writeTierLastSync } from '@costgoblin/core';
+import { getDataInventory, getLocalDataInventory, extractPeriod, providerAuth, writeTierLastSync } from '@costgoblin/core';
 import type { AutoSyncStatus, ProviderConfig } from '@costgoblin/core';
 import {
   startAutoSync,
@@ -12,9 +12,10 @@ import {
   readAutoSyncIntervalMinutes,
   writeAutoSyncIntervalMinutes,
 } from '../auto-sync.js';
-import { deleteLocalPeriodFiles, cascadeRollupForDeletedMonth, changedRollupMonths, resolveBucketPath } from './sync.js';
+import { resolveBucketPath } from '@costgoblin/core';
+import { deleteLocalPeriodFiles, cascadeRollupForDeletedMonth, changedRollupMonths } from './sync.js';
 import { resolveProvider, syncStatusKey } from '../sync-id.js';
-import { type AppContext, prefsPath, toUserFriendlyError } from './context.js';
+import { type AppContext, isAnyCredentialError, prefsPath, toUserFriendlyError } from './context.js';
 import type { SyncClient } from '../sync-client.js';
 import { recordSyncLog } from '../sync-log.js';
 
@@ -67,12 +68,12 @@ export function registerAutoSyncHandlers(app: AppContext): void {
         const bucket = resolveBucketPath(provider, t);
         let inv;
         try {
-          inv = await getDataInventory(bucket, provider.credentialsProfile, ctx.dataDir, provider.name, t);
+          inv = await getDataInventory(bucket, providerAuth(provider), ctx.dataDir, provider.name, t);
         } catch (err: unknown) {
           // Rewrite credential failures into the actionable "run aws sso login"
           // message so the scheduler surfaces it (instead of silently skipping)
           // and the toolbar shows why background sync stopped.
-          if (isCredentialError(err)) throw toUserFriendlyError(err, provider.credentialsProfile);
+          if (isAnyCredentialError(err)) throw toUserFriendlyError(err, providerAuth(provider));
           throw err;
         }
         return {
@@ -93,7 +94,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
         try {
           const result = await syncClient.syncPeriods({
             bucketPath: bucket,
-            profile: provider.credentialsProfile,
+            auth: providerAuth(provider),
             providerName: provider.name,
             dataDir: ctx.dataDir,
             tier: t,
@@ -134,7 +135,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           // Surface credential expiry / opaque `aws s3 sync` download failures as
           // the actionable "run aws sso login" message so the toolbar offers
           // one-click re-auth instead of a raw CLI error (mirrors getInventory).
-          const error = toUserFriendlyError(err, provider.credentialsProfile);
+          const error = toUserFriendlyError(err, providerAuth(provider));
           state.syncStatuses[key] = { status: 'failed', error, lastSync: null };
           throw error;
         }

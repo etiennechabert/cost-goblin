@@ -12,6 +12,16 @@ export default defineConfig({
         },
       },
       {
+        // The GCP exporter is plain ESM that ships in a container rather than
+        // in a package, so it sits outside the TypeScript projects above — but
+        // it generates SQL, and generated SQL is exactly what needs covering.
+        test: {
+          name: 'scripts',
+          include: ['scripts/**/*.test.mjs'],
+          passWithNoTests: true,
+        },
+      },
+      {
         test: {
           name: 'ui',
           include: ['packages/ui/src/**/*.test.ts', 'packages/ui/src/**/*.test.tsx'],

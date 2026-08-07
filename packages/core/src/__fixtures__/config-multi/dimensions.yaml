@@ -1,0 +1,119 @@
+builtIn:
+  - name: account
+    label: Account
+    field: account_id
+    displayField: account_name
+    description: AWS account the cost was charged to. Main axis for org/team-level rollups.
+  - name: region
+    label: Region
+    field: region
+    description: AWS region where the resource ran. Useful for spotting unintended
+      multi-region sprawl.
+    useRegionNames: true
+  - name: service
+    label: Service
+    field: service
+    description: Service the cost came from (FOCUS ServiceName) — the broadest "what
+      cost me this?" view.
+  - name: service_code
+    label: Service Code
+    field: service_code
+    description: Exact AWS service code (AmazonEC2, AmazonS3). Use for precise filters
+      where display names are ambiguous.
+    enabled: false
+  - name: service_category
+    label: Service Category
+    field: service_category
+    description: Standardized FOCUS category (Compute, Storage, Databases). Good
+      for exec summaries.
+  - name: region_country
+    label: Country
+    field: region
+    description: ISO country code derived from the region (DE, US, IE). Useful for
+      data-residency and geo chargeback.
+    enabled: false
+  - name: region_continent
+    label: Continent
+    field: region
+    description: AWS geographic bucket (EU, NA, AS) derived from the region. Useful
+      for continent-level summaries.
+    enabled: false
+  - name: charge_category
+    label: Charge Category
+    field: charge_category
+    description: Usage vs Purchase vs Tax vs Credit vs Adjustment. Filter this to
+      isolate real usage from billing events.
+  - name: pricing_category
+    label: Pricing Category
+    field: pricing_category
+    description: How the usage was priced — Standard (on-demand), Committed (RI/SP-covered),
+      Dynamic (spot).
+    enabled: false
+  - name: commitment_status
+    label: Commitment Status
+    field: commitment_status
+    description: Used vs Unused commitment (RI/SP) cost. Filter to Unused to see
+      commitment waste.
+    enabled: false
+  - name: sku_meter
+    label: SKU Meter
+    field: sku_meter
+    description: Fine-grained usage meter like EUC1-Requests-Tier2. Use for
+      instance/storage-tier breakdowns.
+  - name: operation
+    label: Operation
+    field: operation
+    description: API operation billed for (RunInstances, GetObject). Useful for
+      API-level cost attribution.
+    enabled: false
+  - name: resource_id
+    label: Resource
+    field: resource_id
+    description: AWS resource ID or ARN (i-0abc…, arn:aws:rds:…). High-cardinality —
+      useful for drilling into specific resources.
+tags:
+  - tagName: team
+    label: Team
+    concept: owner
+    normalize: lowercase-kebab
+    aliases:
+      core-banking:
+        - core_banking
+        - corebanking
+        - CoreBanking
+      platform:
+        - platform-team
+        - platform_team
+  - tagName: system
+    label: Service
+    concept: product
+    normalize: lowercase
+  - tagName: environment
+    label: Environment
+    concept: environment
+    normalize: lowercase
+    aliases:
+      production:
+        - prod
+        - prd
+      staging:
+        - stg
+        - stage
+      development:
+        - dev
+        - develop
+  - tagName: cost-center
+    label: Cost Center
+    normalize: uppercase
+order:
+  - builtin:account
+  - builtin:region
+  - builtin:service
+  - builtin:service_category
+  - builtin:charge_category
+  - builtin:sku_meter
+  - builtin:resource_id
+  - tag:team
+  - tag:system
+  - tag:environment
+  - tag:cost-center

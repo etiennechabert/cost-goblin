@@ -98,9 +98,18 @@ export function registerSharingHandlers(app: AppContext): void {
   ipcMain.handle('sharing:publish-bundle', async (_event, raw: unknown): Promise<PublishConfigBundleResult> => {
     try {
       const config = await getConfig();
-      const provider = config.providers[0];
+      // The beacon is an S3 object written with the AWS SDK, so publishing
+      // needs an AWS provider specifically — a GCP-only workspace has no
+      // bucket to publish to and no profile to write with. Prefer the first
+      // AWS provider rather than `providers[0]`, which may now be a GCP one.
+      const provider = config.providers.find(p => p.type === 'aws');
       if (provider === undefined) {
-        return { status: 'error', message: 'No provider configured — complete setup before publishing' };
+        return {
+          status: 'error',
+          message: config.providers.length === 0
+            ? 'No provider configured — complete setup before publishing'
+            : 'Publishing a config bundle to a shared bucket needs an AWS provider — the beacon is written to S3',
+        };
       }
       // Caller may override the destination (e.g. write-locked billing bucket →
       // sibling config bucket). Default is the discoverable beacon key at

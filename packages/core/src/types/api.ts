@@ -160,6 +160,11 @@ export type Dimension = BuiltInDimension | TagDimension;
 
 export type DataTier = 'daily' | 'hourly' | 'cost-optimization';
 
+/** Which gcloud credential store to sign in. A GCP sync authenticates through
+ *  both: the listing SDK reads Application Default Credentials, while
+ *  `gcloud storage rsync` runs as gcloud's own active account. */
+export type GcloudLoginMode = 'adc' | 'cli';
+
 export interface DataInventoryResult {
   /** Which configured provider this inventory describes. */
   readonly provider?: string | undefined;
@@ -222,6 +227,22 @@ export interface CostApi {
   deleteLocalPeriod(period: string, tier?: DataTier, providerName?: string): Promise<void>;
   openDataFolder(): Promise<void>;
   ssoLogin(profile: string): Promise<void>;
+  /** Establish GCP Application Default Credentials by spawning
+   *  `gcloud auth application-default login`. Takes no profile: ADC is a
+   *  single machine-wide credential, which is why this is its own method
+   *  rather than an argument on `ssoLogin`. Rejects with a message
+   *  containing `GCLOUD_CLI_NOT_FOUND` when the CLI is not installed. */
+  /** Runs a gcloud sign-in. `'adc'` establishes Application Default
+   *  Credentials (the listing half); `'cli'` signs the gcloud CLI itself in
+   *  (the `gcloud storage rsync` download half). They are NOT interchangeable
+   *  — a GCP sync authenticates through both stores, and re-running ADC cannot
+   *  refresh a stale CLI account. Defaults to `'adc'`.
+   *
+   *  `providerName` names the provider whose failure raised the button, so ADC
+   *  is minted with THAT provider's impersonation. Without it a two-GCP
+   *  workspace could stamp provider A's service account onto the machine-wide
+   *  credential while the user was trying to fix provider B. */
+  gcloudLogin(mode?: GcloudLoginMode, providerName?: string): Promise<void>;
   getAccountMapping(): Promise<AccountMappingStatus>;
   /** `postSetup` is true only on the launch immediately following the setup
    *  wizard (carried across the wizard's relaunch), so the UI can land the user
@@ -231,7 +252,12 @@ export interface CostApi {
   listAwsProfiles(): Promise<string[]>;
   listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }>;
   browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }>;
-  scaffoldConfig(): Promise<void>;
+  /** Write starter `costgoblin.yaml` / `dimensions.yaml` (only where absent)
+   *  and reveal the config folder. `providerType` selects which arm is active
+   *  in the template and which the other is commented out beside — a GCP user
+   *  handed the AWS template has to delete a block before the app will start,
+   *  which is exactly the friction this exists to remove. Defaults to `aws`. */
+  scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void>;
   getSavingsPreferences(): Promise<SavingsPreferences>;
   saveSavingsPreferences(prefs: SavingsPreferences): Promise<void>;
   getUIPreferences(): Promise<UIPreferences>;
@@ -312,7 +338,13 @@ export interface CostApi {
    *  configured providers are preserved). */
   writeConfig(config: {
     providerName: string;
+    /** Provider arm to write. Omitted means `'aws'`, so pre-#517 callers
+     *  keep their behaviour. `profile` is read only by the aws arm and
+     *  `keyFile` only by the gcp one; `costOptBucket` is ignored for gcp,
+     *  which has no Cost Optimization Hub analogue. */
+    type?: 'aws' | 'gcp' | undefined;
     profile: string;
+    keyFile?: string | undefined;
     dailyBucket: string;
     retentionDays?: number | undefined;
     hourlyBucket?: string | undefined;

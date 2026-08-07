@@ -562,7 +562,9 @@ export function ShareConfigPanel(): React.JSX.Element {
   useEffect(() => {
     api.listAwsProfiles().then(setProfiles).catch(() => undefined);
     api.getConfig().then(config => {
-      const provider = config.providers[0];
+      // Bundle publishing writes an S3 object, so it needs an AWS provider
+      // specifically — `providers[0]` may be a GCP one.
+      const provider = config.providers.find(p => p.type === 'aws');
       const profile = provider?.credentialsProfile ?? '';
       setConfigProfile(profile);
       setPublishProfile(prev => prev.length > 0 ? prev : profile);
@@ -774,7 +776,8 @@ export function ImportConfigPanel({ onApplied, onClose, onBusyChange, onDoneChan
       }
     }).catch(() => undefined);
     api.getConfig().then(config => {
-      const provider = config.providers[0];
+      // The shared-config beacon lives in S3, so this flow is AWS-only.
+      const provider = config.providers.find(p => p.type === 'aws');
       if (provider === undefined) return;
       if (!userPickedProfileRef.current) {
         setFetchProfile(provider.credentialsProfile);

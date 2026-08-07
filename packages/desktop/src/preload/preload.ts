@@ -182,6 +182,9 @@ const api: CostApi = {
   ssoLogin(profile: string): Promise<void> {
     return invoke<undefined>('data:sso-login', profile).then(() => undefined);
   },
+  gcloudLogin(mode?: 'adc' | 'cli', providerName?: string): Promise<void> {
+    return invoke<undefined>('data:gcloud-login', mode, providerName).then(() => undefined);
+  },
   getAccountMapping(): Promise<AccountMappingStatus> {
     return invoke<AccountMappingStatus>('data:account-mapping');
   },
@@ -200,8 +203,8 @@ const api: CostApi = {
   browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }> {
     return invoke<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }>('setup:browse-s3', params);
   },
-  scaffoldConfig(): Promise<void> {
-    return invoke<undefined>('setup:scaffold-config').then(() => undefined);
+  scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void> {
+    return invoke<undefined>('setup:scaffold-config', providerType).then(() => undefined);
   },
   writeConfig(config: { providerName: string; profile: string; dailyBucket: string; retentionDays?: number | undefined; hourlyBucket?: string | undefined; costOptBucket?: string | undefined; tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined }): Promise<void> {
     return invoke<undefined>('setup:write-config', config).then(() => undefined);

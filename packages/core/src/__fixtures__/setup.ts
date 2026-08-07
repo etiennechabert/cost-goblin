@@ -3,9 +3,10 @@ import { mkdir, access, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { FIXTURE_PROVIDER_NAME } from './layout.js';
+import { FIXTURE_GCP_PROVIDER_NAME, FIXTURE_PROVIDER_NAME } from './layout.js';
 import { buildSyntheticTable, pick, seededRandom, weightedPick } from './focus-fixture.js';
 import type { FocusFixtureConfig } from './focus-fixture.js';
+import { writeGcpProvider } from './gcp-fixture.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, 'synthetic');
@@ -92,8 +93,13 @@ function generateCostOptRows(actionTypes: readonly ActionType[], cfg: FixtureCon
 
 export async function setup(): Promise<void> {
   const dailyParquet = join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw', 'daily-2026-01', 'data.parquet');
+  const gcpParquet = join(SYNTHETIC_DIR, FIXTURE_GCP_PROVIDER_NAME, 'raw', 'daily-2026-01', 'part-0.parquet');
   try {
+    // Both are checked: a tree generated before the GCP provider existed is
+    // still on developers' disks, and returning early on the AWS file alone
+    // would leave the mixed-workspace fixture permanently missing.
     await access(dailyParquet);
+    await access(gcpParquet);
     return;
   } catch {
     // needs generation
@@ -147,6 +153,8 @@ export async function setup(): Promise<void> {
     await mkdir(monthDir, { recursive: true });
     await conn.run(`COPY (SELECT * FROM synthetic WHERE ChargePeriodStart::DATE::VARCHAR LIKE '${month}%') TO '${join(monthDir, 'data.parquet')}' (FORMAT PARQUET)`);
   }
+
+  await writeGcpProvider(conn, SYNTHETIC_DIR, months);
 
   const hourlyDir = join(rawDir, 'hourly-2026-02');
   await mkdir(hourlyDir, { recursive: true });

@@ -19,6 +19,7 @@ const SOURCE_LABELS: Record<DataSource, { title: string; description: string }> 
 type WizardStep =
   | { step: 'welcome' }
   | { step: 'start' }
+  | { step: 'gcp'; scaffolded: boolean; error: string }
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
@@ -137,10 +138,76 @@ function WelcomeStep({ onNext, naming, jumpBack }: Readonly<{ onNext: () => void
   );
 }
 
-/** Step 2 — the get-started hub: set up from S3 or import from a teammate. */
-function StartStep({ workspaceLabel, onSetup, onImport, onBack, jumpBack }: Readonly<{
+/** Simple geometric marks rather than the vendors' actual logos: those are
+ *  trademarks with their own usage rules, and a recognizable silhouette in the
+ *  brand colour is all a picker needs. `currentColor` is deliberately NOT used
+ *  — the colour IS the recognition cue, and it must survive the disabled tile's
+ *  dimming as a wash rather than turning grey. */
+function AwsMark(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 32 32" className="h-8 w-8" aria-hidden="true">
+      <path d="M6 19q-1 3 2 4.5T16 25t8-1.5 2-4.5" fill="none" stroke="#FF9900" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M10 8h3l3 8 3-8h3" fill="none" stroke="#FF9900" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function GcpMark(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 32 32" className="h-8 w-8" aria-hidden="true">
+      <path d="M16 6a8 8 0 0 1 7.5 5.2A6 6 0 0 1 23 23H11a7 7 0 0 1-1.6-13.8A8 8 0 0 1 16 6z" fill="none" stroke="#4285F4" strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M9.4 9.2A8 8 0 0 1 16 6" fill="none" stroke="#EA4335" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M23.5 11.2A6 6 0 0 1 23 23" fill="none" stroke="#FBBC05" strokeWidth="2.5" strokeLinecap="round" />
+      <path d="M11 23h6" fill="none" stroke="#34A853" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function AzureMark(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 32 32" className="h-8 w-8" aria-hidden="true">
+      <path d="M13 5 5 24h6l8-19z" fill="none" stroke="#0078D4" strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M19 11 27 24H12l5-4" fill="none" stroke="#0078D4" strokeWidth="2.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** One cloud in the provider row. Disabled tiles stay visible on purpose —
+ *  "Azure is coming" is information; a missing tile just looks like a product
+ *  that never considered it. */
+function ProviderTile({ label, note, mark, onClick, disabled }: Readonly<{
+  label: string;
+  note: string;
+  mark: React.JSX.Element;
+  onClick?: (() => void) | undefined;
+  disabled?: boolean | undefined;
+}>) {
+  const isDisabled = disabled === true;
+  return (
+    <button
+      type="button"
+      onClick={isDisabled ? undefined : onClick}
+      disabled={isDisabled}
+      aria-label={`Set up from ${label}`}
+      className={[
+        'flex flex-1 flex-col items-center gap-2 rounded-lg border px-3 py-4 transition-colors',
+        isDisabled
+          ? 'cursor-not-allowed border-border/60 opacity-40'
+          : 'border-border hover:border-accent hover:bg-bg-secondary cursor-pointer',
+      ].join(' ')}
+    >
+      {mark}
+      <span className="text-sm font-medium text-text-primary">{label}</span>
+      <span className="text-[11px] leading-tight text-text-muted">{note}</span>
+    </button>
+  );
+}
+
+/** Step 2 — the get-started hub: pick a cloud, or import a teammate's bundle. */
+function StartStep({ workspaceLabel, onSetup, onGcp, onImport, onBack, jumpBack }: Readonly<{
   workspaceLabel: string | undefined;
   onSetup: () => void;
+  onGcp: () => void;
   onImport: () => void;
   onBack?: (() => void) | undefined;
   jumpBack: JumpBackProps | undefined;
@@ -155,19 +222,33 @@ function StartStep({ workspaceLabel, onSetup, onImport, onBack, jumpBack }: Read
           </p>
         )}
       </div>
-      <p className="text-text-secondary text-lg">How do you want to get started?</p>
-      <div className="flex w-full max-w-xs flex-col gap-3">
-        <Button onClick={onSetup} className="bg-accent hover:bg-accent-hover text-white">
-          Set up from S3
-        </Button>
-        <p className="text-text-muted text-xs">
-          Connect your AWS billing data. CostGoblin syncs a FOCUS 1.2 Data Export from S3, stores it locally, and lets you slice costs by any dimension.
-        </p>
+      <p className="text-text-secondary text-lg">Which cloud are you billing on?</p>
+      <div className="flex w-full max-w-md gap-3">
+        <ProviderTile
+          label="AWS"
+          note="FOCUS 1.2 Data Export in S3"
+          mark={<AwsMark />}
+          onClick={onSetup}
+        />
+        <ProviderTile
+          label="Google Cloud"
+          note="FOCUS BigQuery export via GCS"
+          mark={<GcpMark />}
+          onClick={onGcp}
+        />
+        <ProviderTile
+          label="Azure"
+          note="Coming soon"
+          mark={<AzureMark />}
+          disabled
+        />
+      </div>
+      <div className="flex w-full max-w-xs flex-col gap-2">
         <Button variant="outline" onClick={onImport}>
           Import from a teammate
         </Button>
         <p className="text-text-muted text-xs">
-          Pull config and data from a teammate — a bundle file, from S3, or straight over your network. No AWS access needed.
+          Pull config and data from a teammate — a bundle file, from S3, or straight over your network. No cloud access needed.
         </p>
       </div>
       <JumpBackList jumpBack={jumpBack} />
@@ -187,6 +268,78 @@ function StartStep({ workspaceLabel, onSetup, onImport, onBack, jumpBack }: Read
           ← Change workspace name
         </button>
       )}
+    </div>
+  );
+}
+
+const GCP_EXPORTER_DOCS = 'https://github.com/etiennechabert/cost-goblin/tree/main/scripts/gcp-focus-exporter';
+
+/**
+ * Step 2b — GCP.
+ *
+ * Deliberately not the S3 flow's browse-and-pick wizard. That one can list
+ * buckets because AWS credentials are already on the machine; the GCP path
+ * depends on an exporter the user deploys into their OWN project first, and
+ * there is nothing to browse until it has run. So this step states the
+ * prerequisite, writes a GCP-shaped config template, and hands over to the
+ * editor — which beats the previous behaviour of not existing at all, leaving
+ * a GCP user on a screen offering only S3 and a teammate's bundle.
+ */
+function GcpStep({ state, onScaffold, onDone, onBack }: Readonly<{
+  state: { scaffolded: boolean; error: string };
+  onScaffold: () => void;
+  onDone: () => void;
+  onBack: () => void;
+}>) {
+  return (
+    <div className="flex flex-col items-center gap-5 text-center">
+      <span className="text-2xl font-bold text-accent tracking-wider">Set up from Google Cloud</span>
+      <p className="text-text-secondary text-sm max-w-md">
+        CostGoblin reads a GCS bucket that your own exporter fills from the FOCUS 1.2 BigQuery
+        billing export. It never holds credentials that can reach BigQuery.
+      </p>
+      <ol className="flex w-full max-w-md flex-col gap-2 text-left text-sm text-text-secondary list-decimal pl-5">
+        <li>
+          Enable the <span className="text-text-primary">FOCUS usage cost</span> export under
+          Billing → Billing export, and deploy the exporter —{' '}
+          <a
+            href={GCP_EXPORTER_DOCS}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-accent underline underline-offset-2 hover:text-accent-hover"
+          >
+            scripts/gcp-focus-exporter
+          </a>{' '}
+          has a one-command deploy.
+        </li>
+        <li>
+          Sign in so CostGoblin can read the bucket:{' '}
+          <code className="text-text-primary text-xs">gcloud auth application-default login</code>
+        </li>
+        <li>Create the config below, set your bucket in it, and save.</li>
+      </ol>
+      <div className="flex w-full max-w-xs flex-col gap-3">
+        <Button onClick={onScaffold} className="bg-accent hover:bg-accent-hover text-white">
+          {state.scaffolded ? 'Open the config folder again' : 'Create config & open folder'}
+        </Button>
+        {state.error !== '' && <p className="text-xs text-negative">{state.error}</p>}
+        {state.scaffolded && (
+          <>
+            <p className="text-text-muted text-xs">
+              Edit <span className="text-text-primary">costgoblin.yaml</span> — set{' '}
+              <span className="text-text-primary">sync.daily.bucket</span> to the folder your
+              exporter writes to. The config is read at startup, so CostGoblin restarts when you
+              continue.
+            </p>
+            <Button variant="outline" onClick={onDone}>
+              I&apos;ve saved it — restart
+            </Button>
+          </>
+        )}
+      </div>
+      <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">
+        ← Back
+      </button>
     </div>
   );
 }
@@ -748,6 +901,18 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     onComplete();
   }
 
+  /** Write the GCP-shaped template (only where the file is absent) and reveal
+   *  the folder. Re-runnable: the button becomes "open the folder again", and
+   *  a second press must not clobber a config the user has already edited —
+   *  the handler only writes files that do not exist. */
+  function handleGcpScaffold(): void {
+    api.scaffoldConfig('gcp').then(() => {
+      setWizard({ step: 'gcp', scaffolded: true, error: '' });
+    }).catch((err: unknown) => {
+      setWizard({ step: 'gcp', scaffolded: false, error: err instanceof Error ? err.message : String(err) });
+    });
+  }
+
   useEffect(() => {
     if (isSourceMode && !bucketsLoaded) {
       setBucketsLoaded(true);
@@ -932,9 +1097,18 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
             <StartStep
               workspaceLabel={workspaceNaming !== undefined ? workspaceName : workspaceLabel}
               onSetup={goToProfileStep}
+              onGcp={() => { setWizard({ step: 'gcp', scaffolded: false, error: '' }); }}
               onImport={() => { setImportOpen(true); }}
               onBack={workspaceNaming !== undefined ? () => { setWizard({ step: 'welcome' }); } : undefined}
               jumpBack={jumpBack}
+            />
+          )}
+          {wizard.step === 'gcp' && (
+            <GcpStep
+              state={wizard}
+              onScaffold={handleGcpScaffold}
+              onDone={finish}
+              onBack={() => { setWizard({ step: 'start' }); }}
             />
           )}
           {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={finish} onBack={handleBack} />}

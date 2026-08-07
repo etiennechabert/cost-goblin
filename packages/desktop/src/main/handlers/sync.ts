@@ -13,8 +13,12 @@ import {
   providerRawDir,
   readTierLastSync,
   writeTierLastSync,
-  isCredentialError,
+  resolveBucketPath,
+  findGcloudCli,
+  gcloudCliFound,
+  gcloudSearchPaths,
   logger,
+  providerAuth,
 } from '@costgoblin/core';
 import type {
   DataInventoryResult,
@@ -22,6 +26,8 @@ import type {
   ManifestFileEntry,
   AccountMappingStatus,
   AccountMappingEntry,
+  GcloudLoginMode,
+  ProviderAuth,
   ProviderConfig,
   ProviderName,
   PruneResult,
@@ -31,6 +37,7 @@ import {
   type AppContext,
   type AppState,
   type IpcContext,
+  isAnyCredentialError,
   toUserFriendlyError,
 } from './context.js';
 import { triggerAutoSyncNow } from '../auto-sync.js';
@@ -44,20 +51,6 @@ type ExpectedDataType = 'daily' | 'hourly' | 'cost-optimization';
  *  'default' and any unrecognized tier-only id mean the daily tier. */
 function resolveDataType(syncId: string): ExpectedDataType {
   return parseSyncId(syncId).tier;
-}
-
-/** S3 bucket for one provider's tier. Shared with the auto-sync deps wiring so
- *  manual and background sync resolve buckets identically. */
-export function resolveBucketPath(provider: ProviderConfig, tier: ExpectedDataType): string {
-  if (tier === 'hourly') {
-    return provider.sync.hourly?.bucket ?? provider.sync.daily.bucket;
-  }
-  if (tier === 'cost-optimization') {
-    const costOptBucket = provider.sync.costOptimization?.bucket;
-    if (costOptBucket === undefined) throw new Error('Cost optimization not configured');
-    return costOptBucket;
-  }
-  return provider.sync.daily.bucket;
 }
 
 function matchesPeriodPrefix(entry: string, prefix: string, period: string): boolean {
@@ -203,15 +196,15 @@ export function registerSyncHandlers(app: AppContext): void {
     const t = tier ?? 'daily';
     const bucket = resolveBucketPath(provider, t);
     try {
-      const inv = await getDataInventory(bucket, provider.credentialsProfile, ctx.dataDir, provider.name, t);
+      const inv = await getDataInventory(bucket, providerAuth(provider), ctx.dataDir, provider.name, t);
       return { ...inv, provider: provider.name };
     } catch (err: unknown) {
       // Expired/invalid credentials on an install that has synced this tier from
       // S3 before (its etag file exists) is a real auth failure, not the
       // imported-snapshot case — surface it so the user re-authenticates instead
       // of silently showing stale local data as if everything were up to date.
-      if (isCredentialError(err) && await hasSyncedTier(ctx.dataDir, provider.name, t)) {
-        throw toUserFriendlyError(err, provider.credentialsProfile);
+      if (isAnyCredentialError(err) && await hasSyncedTier(ctx.dataDir, provider.name, t)) {
+        throw toUserFriendlyError(err, providerAuth(provider));
       }
       // Otherwise fall back to a disk-only inventory so a consumer that imported
       // a shared snapshot (no S3 access) still sees the data it has.
@@ -220,7 +213,7 @@ export function registerSyncHandlers(app: AppContext): void {
         logger.info('S3 inventory unavailable — using local-only inventory', { tier: t, provider: provider.name });
         return { ...local, provider: provider.name };
       }
-      throw toUserFriendlyError(err, provider.credentialsProfile);
+      throw toUserFriendlyError(err, providerAuth(provider));
     }
   });
 
@@ -293,7 +286,7 @@ export function registerSyncHandlers(app: AppContext): void {
           attributes: { 'sync.tier': tier, 'sync.provider': provider.name, 'sync.files_requested': fileEntries.length },
         },
         async (span) => {
-          const r = await runSync(ctx, provider.credentialsProfile, provider.name, bucketPath, tier, fileEntries, key, state);
+          const r = await runSync(ctx, providerAuth(provider), provider.name, bucketPath, tier, fileEntries, key, state);
           span?.setAttribute('sync.files_downloaded', r.filesDownloaded);
           span?.setAttribute('sync.rows_processed', r.rowsProcessed);
           return r;
@@ -327,7 +320,7 @@ export function registerSyncHandlers(app: AppContext): void {
       return result;
     } catch (err: unknown) {
       syncWorkerIds.delete(key);
-      const error = handleSyncError(err, key, provider.credentialsProfile, state);
+      const error = handleSyncError(err, key, providerAuth(provider), state);
       if (error.message === 'Download cancelled') {
         return { filesDownloaded: 0, rowsProcessed: 0 };
       }
@@ -391,6 +384,89 @@ export function registerSyncHandlers(app: AppContext): void {
     });
   });
 
+  // Sibling channel rather than an extra argument on `data:sso-login`: that
+  // handler's `(profile: string)` arity is frozen across CostApi, the preload
+  // bridge and the SSO button, and GCP's ADC login takes no profile at all.
+  ipcMain.handle('data:gcloud-login', async (_event, rawMode: unknown, rawProvider: unknown): Promise<void> => {
+    const { spawn } = await import('node:child_process');
+    const { delimiter } = await import('node:path');
+    const currentPath = process.env['PATH'] ?? '';
+    // Reuses core's own probe list rather than a second hand-written copy:
+    // they disagreed on Windows, where `findGcloudCli` looks under
+    // PROGRAMFILES/LOCALAPPDATA but this handler relied on bare PATH — so sync
+    // found gcloud and the re-auth button did not.
+    const fullPath = [...new Set([...currentPath.split(delimiter), ...gcloudSearchPaths()])].join(delimiter);
+
+    const mode: GcloudLoginMode = rawMode === 'cli' ? 'cli' : 'adc';
+
+    // Re-establishing ADC without the impersonation flag would REPLACE a
+    // working impersonating credential with a plain-user one — turning the
+    // button that exists to fix auth into the thing that breaks it, since the
+    // least-privilege recipe grants the bucket only to the service account.
+    //
+    // Resolved from the provider whose error raised the button, NOT the first
+    // one that happens to have impersonation configured: in a two-GCP
+    // workspace that stamped provider A's service account onto the
+    // machine-wide ADC while the user was trying to fix provider B, leaving B
+    // with a 403 no classifier recognises and no button at all.
+    const config = await getConfig().catch(() => null);
+    const gcpProviders = (config?.providers ?? []).filter(
+      (p): p is Extract<ProviderConfig, { type: 'gcp' }> => p.type === 'gcp',
+    );
+    const named = typeof rawProvider === 'string'
+      ? gcpProviders.find(p => String(p.name) === rawProvider)
+      : undefined;
+    // With no name supplied, only impersonate when it is unambiguous — one GCP
+    // provider means there is nothing to pick wrong.
+    const target = named ?? (gcpProviders.length === 1 ? gcpProviders[0] : undefined);
+    const impersonate = target?.impersonateServiceAccount;
+
+    const loginArgs = mode === 'cli' ? ['auth', 'login'] : ['auth', 'application-default', 'login'];
+    // `gcloud auth login` signs in the CLI's own account and takes no
+    // impersonation flag — that is a property of the credential ADC mints.
+    if (mode === 'adc' && impersonate !== undefined) {
+      loginArgs.push(`--impersonate-service-account=${impersonate}`);
+    }
+
+    // Windows ships gcloud as `gcloud.cmd`, which Node refuses to spawn without
+    // a shell (CVE-2024-27980) — but cmd.exe starts successfully whether or not
+    // gcloud exists, so the ENOENT below can never fire there. Probe the disk
+    // first, or the "install the Cloud SDK" branch is unreachable on Windows
+    // and the button simply spins for its 30-second lock.
+    const useShell = process.platform === 'win32';
+    if (useShell && !gcloudCliFound()) throw new Error('GCLOUD_CLI_NOT_FOUND');
+    const bin = findGcloudCli();
+
+    return new Promise<void>((resolve, reject) => {
+      const child = spawn(
+        useShell ? `"${bin}"` : bin,
+        useShell ? loginArgs.map(a => `"${a}"`) : loginArgs,
+        {
+          stdio: 'ignore',
+          detached: true,
+          shell: useShell,
+          env: { ...process.env, PATH: fullPath },
+        },
+      );
+      child.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'ENOENT') {
+          reject(new Error('GCLOUD_CLI_NOT_FOUND'));
+        } else {
+          reject(err);
+        }
+      });
+      child.on('spawn', () => {
+        child.unref();
+        resolve();
+      });
+      // Mirrors the SSO path: resolve as soon as the browser is opening, then
+      // kick a sync once the CLI exits cleanly so data refreshes immediately.
+      child.on('exit', (code) => {
+        if (code === 0) triggerAutoSyncNow();
+      });
+    });
+  });
+
   ipcMain.handle('data:account-mapping', async (): Promise<AccountMappingStatus> => {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
@@ -436,7 +512,7 @@ export function registerSyncHandlers(app: AppContext): void {
 
 async function runSync(
   ctx: IpcContext,
-  profile: string,
+  auth: ProviderAuth,
   providerName: ProviderName,
   bucketPath: string,
   tier: ExpectedDataType,
@@ -446,7 +522,7 @@ async function runSync(
 ): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
   return ctx.syncClient.syncPeriods({
     bucketPath,
-    profile,
+    auth,
     providerName,
     dataDir: ctx.dataDir,
     tier,
@@ -472,7 +548,7 @@ async function runSync(
 function handleSyncError(
   err: unknown,
   statusKey: string,
-  profile: string,
+  auth: ProviderAuth,
   state: AppState,
 ): Error {
   const raw = err instanceof Error ? err : new Error(String(err));
@@ -480,7 +556,7 @@ function handleSyncError(
     state.syncStatuses[statusKey] = { status: 'idle', lastSync: null };
     return raw;
   }
-  const error = toUserFriendlyError(err, profile);
+  const error = toUserFriendlyError(err, auth);
   logger.error(`Selective sync '${statusKey}' failed: ${error.message}`);
   recordSyncLog('error', `Sync '${statusKey}' failed: ${error.message}`);
   state.syncStatuses[statusKey] = { status: 'failed', error, lastSync: null };

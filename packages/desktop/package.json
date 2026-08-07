@@ -5,7 +5,7 @@
   "main": "out/main/main.js",
   "scripts": {
     "build": "electron-vite build --sourcemap && npm run build:worker && npm run build:preload",
-    "build:worker": "esbuild src/main/duckdb-worker.ts --bundle --platform=node --format=cjs --sourcemap --outfile=out/worker/duckdb-worker.cjs --external:@duckdb/node-api --external:electron && esbuild src/main/sync-worker.ts --bundle --platform=node --format=cjs --sourcemap --outfile=out/worker/sync-worker.cjs --external:@duckdb/node-api --external:@aws-sdk/client-s3 --external:electron",
+    "build:worker": "esbuild src/main/duckdb-worker.ts --bundle --platform=node --format=cjs --sourcemap --outfile=out/worker/duckdb-worker.cjs --external:@duckdb/node-api --external:electron && esbuild src/main/sync-worker.ts --bundle --platform=node --format=cjs --sourcemap --outfile=out/worker/sync-worker.cjs --external:@duckdb/node-api --external:@aws-sdk/client-s3 --external:@google-cloud/storage --external:electron",
     "build:preload": "esbuild src/preload/preload.ts --bundle --platform=node --format=cjs --sourcemap --outfile=out/worker/preload.cjs --external:electron",
     "check": "tsc --noEmit && eslint src/ && vitest run",
     "test": "vitest run",
@@ -16,6 +16,7 @@
     "@aws-sdk/client-s3": "^3.1095.0",
     "@aws-sdk/client-ssm": "^3.1095.0",
     "@duckdb/node-api": "^1.5.4-r.1",
+    "@google-cloud/storage": "^7.21.0",
     "@sentry/electron": "^7.16.0",
     "@smithy/shared-ini-file-loader": "^4.6.14",
     "electron-updater": "^6.8.9",

@@ -1,5 +1,6 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
 import type { DataInventoryResult, DataTier, CostGoblinConfig, ProviderConfig, SyncStatus } from '@costgoblin/core/browser';
+import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
@@ -9,7 +10,7 @@ import { OrgAccountsSection } from './data-management-org.js';
 import { SsmParameterSection } from './data-management-ssm.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
 import { SyncLogPanel } from './data-management-logs.js';
-import { SsoLoginButton } from '../components/sso-login-button.js';
+import { GcloudLoginButton, SsoLoginButton } from '../components/sso-login-button.js';
 import { SchedulerControls } from '../components/scheduler-controls.js';
 
 function syncStatusToState(s: SyncStatus): SyncState | null {
@@ -363,8 +364,10 @@ export function DataManagement() {
       ))}
 
       {/* Region names enrichment — provider-independent (AWS region metadata
-          is global), so one section fed by the first provider's profile. */}
-      <SsmParameterSection profile={providers[0]?.credentialsProfile ?? null} />
+          is global), so one section fed by the first AWS provider's profile.
+          Not `providers[0]`: that slot may hold a GCP provider, which has no
+          profile and no SSM to read. */}
+      <SsmParameterSection profile={providers.find(p => p.type === 'aws')?.credentialsProfile ?? null} />
 
       <SyncLogPanel active={anySyncing} />
 
@@ -424,19 +427,26 @@ interface ProviderSectionProps {
 function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onConfigChanged, onOrgDataChanged }: ProviderSectionProps) {
   const api = useCostApi();
   const name = String(provider.name);
-  const awsProfile = provider.credentialsProfile;
+  const awsProfile = provider.type === 'aws' ? provider.credentialsProfile : null;
 
   const [dailyRefreshKey, setDailyRefreshKey] = useState(0);
   const [hourlyRefreshKey, setHourlyRefreshKey] = useState(0);
   const [costOptRefreshKey, setCostOptRefreshKey] = useState(0);
 
   const inventoryQuery = useQuery(() => api.getDataInventory('daily', name), [name, dailyRefreshKey, refreshSignal]);
-  const isSsoError = inventoryQuery.status === 'error' && inventoryQuery.error.message.includes('aws sso login');
+  // Poll while a credential error is showing, so the panel heals itself once
+  // the user finishes signing in. Every provider's message, not just AWS's:
+  // sniffing only `aws sso login` left a GCP user staring at a stale expired-
+  // credentials error after a successful re-login, until they navigated away
+  // and back — while the AWS flow recovered in five seconds.
+  const credentialErrorMessage = inventoryQuery.status === 'error' ? inventoryQuery.error.message : '';
+  const isCredentialError = ['aws sso login', GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND]
+    .some(cmd => credentialErrorMessage.includes(cmd));
   useEffect(() => {
-    if (!isSsoError) return;
+    if (!isCredentialError) return;
     const timer = setInterval(() => { setDailyRefreshKey(k => k + 1); }, 5_000);
     return () => { clearInterval(timer); };
-  }, [isSsoError]);
+  }, [isCredentialError]);
 
   const [selected, setSelected] = useState(new Set<string>());
   const [hourlySelected, setHourlySelected] = useState(new Set<string>());
@@ -630,18 +640,26 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
       <div className="flex items-center justify-between border-b border-border pb-2">
         <div className="flex items-baseline gap-3">
           <h3 className="text-base font-semibold text-text-primary">{name}</h3>
-          <span className="rounded bg-bg-tertiary/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-text-muted">aws</span>
-          <span className="text-xs text-text-muted font-mono" title="AWS credentials profile">{awsProfile}</span>
+          <span className="rounded bg-bg-tertiary/60 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-text-muted">{provider.type}</span>
+          {awsProfile === null
+            ? (
+              <span className="text-xs text-text-muted font-mono" title="GCP credentials">
+                {provider.type === 'gcp' && provider.keyFile !== undefined ? 'service account key' : 'application default credentials'}
+              </span>
+            )
+            : <span className="text-xs text-text-muted font-mono" title="AWS credentials profile">{awsProfile}</span>}
         </div>
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => { setShowProfileSwap(true); }}
-            className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors"
-            title={`Currently using profile: ${awsProfile}`}
-          >
-            Change AWS Profile
-          </button>
+          {awsProfile !== null && (
+            <button
+              type="button"
+              onClick={() => { setShowProfileSwap(true); }}
+              className="rounded-md border border-border bg-bg-tertiary/50 px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors"
+              title={`Currently using profile: ${awsProfile}`}
+            >
+              Change AWS Profile
+            </button>
+          )}
           {!soleProvider && (
             <button
               type="button"
@@ -657,25 +675,47 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
 
       {/* Account mapping — per provider: each payer account syncs its own AWS
           Organization; the lookups are merged across providers, so a change
-          in any section refreshes them all (via the shared refresh signal). */}
-      <OrgAccountsSection profile={awsProfile} providerName={name} refreshToken={refreshSignal} onDataChanged={onOrgDataChanged} />
+          in any section refreshes them all (via the shared refresh signal).
+          AWS-only: the GCP analogue (Cloud Resource Manager) is a follow-up. */}
+      {awsProfile !== null && (
+        <OrgAccountsSection profile={awsProfile} providerName={name} refreshToken={refreshSignal} onDataChanged={onOrgDataChanged} />
+      )}
 
       {inventoryQuery.status === 'loading' && !anySyncing && (
         <div className="rounded-xl border border-border bg-bg-secondary/50 p-12 text-center text-text-secondary">
-          Checking S3 for available data...
+          {provider.type === 'gcp' ? 'Checking Cloud Storage for available data...' : 'Checking S3 for available data...'}
         </div>
       )}
 
       {inventoryQuery.status === 'error' && (
         <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
           <p className="text-sm font-medium text-negative">{inventoryQuery.error.message}</p>
-          {inventoryQuery.error.message.includes('aws sso login') && (
+          {/* Each provider's expired-credentials message carries the sign-in
+              command it needs; offer the matching one-click affordance. */}
+          {awsProfile !== null && inventoryQuery.error.message.includes('aws sso login') && (
             <SsoLoginButton profile={awsProfile} />
+          )}
+          {/* Both GCP commands, not just ADC: a stale gcloud CLI account is
+              reported with `gcloud auth login`, which is not a substring of
+              the ADC command — so matching only ADC left the one error with a
+              one-click remedy showing no button, and re-running ADC could
+              never have fixed it anyway. */}
+          {provider.type === 'gcp' && inventoryQuery.error.message.includes(GCLOUD_ADC_LOGIN_COMMAND) && (
+            <GcloudLoginButton mode="adc" providerName={name} />
+          )}
+          {provider.type === 'gcp' && !inventoryQuery.error.message.includes(GCLOUD_ADC_LOGIN_COMMAND)
+            && inventoryQuery.error.message.includes(GCLOUD_CLI_LOGIN_COMMAND) && (
+            <GcloudLoginButton mode="cli" providerName={name} />
           )}
         </div>
       )}
 
-      {/* Two-column tier layout — show immediately if a sync is running */}
+      {/* Two-column tier layout — show immediately if a sync is running.
+          Daily's Configure gear is AWS-only: the wizard browses S3 and its save
+          path writes an `aws` provider, so opening it on a GCP provider would
+          rewrite that entry as `type: aws` and the GCP source would vanish. The
+          GCP wizard step is #517 phase F; until then GCP is configured in the
+          YAML. */}
       {(inventory !== null || anySyncing) && (
         <div className="flex gap-5">
           <TierPanel
@@ -699,54 +739,60 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
             onDeletePeriod={handleDelete('daily', () => { setDailyRefreshKey(k => k + 1); })}
             syncState={dailySyncState}
             onCancelSync={() => { api.cancelSync(syncIdFor(name, 'daily')).catch(() => undefined); setDailySyncState({ status: 'idle' }); }}
-            onConfigure={() => { setConfigureSource('daily'); }}
+            onConfigure={provider.type === 'aws' ? () => { setConfigureSource('daily'); } : undefined}
           />
+          {/* Hourly is real on both providers: AWS delivers it as a second
+              Data Export, GCP as the exporter's untouched `…/hourly/` folder.
+              Cost Optimization below stays AWS-only — there is no GCP
+              analogue, and `resolveBucketPath` refuses that tier outright. */}
           <TierPanel
-            title="Hourly"
-            configured={hourlyBucket !== null}
-            bucket={hourlyBucket}
-            retentionDays={hourlyRetention}
-            localPeriods={hourlyInventory?.local.periods ?? []}
-            diskBytes={hourlyInventory?.local.diskBytes ?? 0}
-            oldestPeriod={hourlyInventory?.local.oldestPeriod ?? null}
-            newestPeriod={hourlyInventory?.local.newestPeriod ?? null}
-            lastSync={hourlyInventory?.lastSync ?? null}
-            periods={hourlyInventory === null ? [] : [...hourlyInventory.periods]}
-            selected={hourlySelected}
-            onToggle={(period) => { toggleInSet(setHourlySelected, period); }}
-            onSelectAll={() => { setHourlySelected(new Set(hourlyMissing.map(p => p.period))); }}
-            onDeselectAll={() => { setHourlySelected(new Set()); }}
-            onDownload={() => {
-              runSelectedSync('hourly', selectedFilesOf(hourlyInventory, hourlySelected), setHourlySyncState, () => { setHourlySelected(new Set()); }, () => { setHourlyRefreshKey(k => k + 1); }).catch(() => undefined);
-            }}
-            onDeletePeriod={handleDelete('hourly', () => { setHourlyRefreshKey(k => k + 1); })}
-            syncState={hourlySyncState}
-            onCancelSync={() => { api.cancelSync(syncIdFor(name, 'hourly')).catch(() => undefined); setHourlySyncState({ status: 'idle' }); }}
-            onConfigure={() => { setConfigureSource('hourly'); }}
-          />
-          <TierPanel
-            title="Cost Optimization"
-            configured={costOptBucket !== null}
-            bucket={costOptBucket}
-            retentionDays={costOptRetention}
-            localPeriods={costOptInventory?.local.periods ?? []}
-            diskBytes={costOptInventory?.local.diskBytes ?? 0}
-            oldestPeriod={costOptInventory?.local.oldestPeriod ?? null}
-            newestPeriod={costOptInventory?.local.newestPeriod ?? null}
-            lastSync={costOptInventory?.lastSync ?? null}
-            periods={costOptInventory === null ? [] : [...costOptInventory.periods]}
-            selected={costOptSelected}
-            onToggle={(period) => { toggleInSet(setCostOptSelected, period); }}
-            onSelectAll={() => { setCostOptSelected(new Set(costOptMissing.map(p => p.period))); }}
-            onDeselectAll={() => { setCostOptSelected(new Set()); }}
-            onDownload={() => {
-              runSelectedSync('cost-optimization', selectedFilesOf(costOptInventory, costOptSelected), setCostOptSyncState, () => { setCostOptSelected(new Set()); }, () => { setCostOptRefreshKey(k => k + 1); }).catch(() => undefined);
-            }}
-            onDeletePeriod={handleDelete('cost-optimization', () => { setCostOptRefreshKey(k => k + 1); })}
-            syncState={costOptSyncState}
-            onCancelSync={() => { api.cancelSync(syncIdFor(name, 'cost-optimization')).catch(() => undefined); setCostOptSyncState({ status: 'idle' }); }}
-            onConfigure={() => { setConfigureSource('costOptimization'); }}
-          />
+              title="Hourly"
+              configured={hourlyBucket !== null}
+              bucket={hourlyBucket}
+              retentionDays={hourlyRetention}
+              localPeriods={hourlyInventory?.local.periods ?? []}
+              diskBytes={hourlyInventory?.local.diskBytes ?? 0}
+              oldestPeriod={hourlyInventory?.local.oldestPeriod ?? null}
+              newestPeriod={hourlyInventory?.local.newestPeriod ?? null}
+              lastSync={hourlyInventory?.lastSync ?? null}
+              periods={hourlyInventory === null ? [] : [...hourlyInventory.periods]}
+              selected={hourlySelected}
+              onToggle={(period) => { toggleInSet(setHourlySelected, period); }}
+              onSelectAll={() => { setHourlySelected(new Set(hourlyMissing.map(p => p.period))); }}
+              onDeselectAll={() => { setHourlySelected(new Set()); }}
+              onDownload={() => {
+                runSelectedSync('hourly', selectedFilesOf(hourlyInventory, hourlySelected), setHourlySyncState, () => { setHourlySelected(new Set()); }, () => { setHourlyRefreshKey(k => k + 1); }).catch(() => undefined);
+              }}
+              onDeletePeriod={handleDelete('hourly', () => { setHourlyRefreshKey(k => k + 1); })}
+              syncState={hourlySyncState}
+              onCancelSync={() => { api.cancelSync(syncIdFor(name, 'hourly')).catch(() => undefined); setHourlySyncState({ status: 'idle' }); }}
+              onConfigure={provider.type === 'aws' ? () => { setConfigureSource('hourly'); } : undefined}
+            />
+          {provider.type === 'aws' && (
+            <TierPanel
+              title="Cost Optimization"
+              configured={costOptBucket !== null}
+              bucket={costOptBucket}
+              retentionDays={costOptRetention}
+              localPeriods={costOptInventory?.local.periods ?? []}
+              diskBytes={costOptInventory?.local.diskBytes ?? 0}
+              oldestPeriod={costOptInventory?.local.oldestPeriod ?? null}
+              newestPeriod={costOptInventory?.local.newestPeriod ?? null}
+              lastSync={costOptInventory?.lastSync ?? null}
+              periods={costOptInventory === null ? [] : [...costOptInventory.periods]}
+              selected={costOptSelected}
+              onToggle={(period) => { toggleInSet(setCostOptSelected, period); }}
+              onSelectAll={() => { setCostOptSelected(new Set(costOptMissing.map(p => p.period))); }}
+              onDeselectAll={() => { setCostOptSelected(new Set()); }}
+              onDownload={() => {
+                runSelectedSync('cost-optimization', selectedFilesOf(costOptInventory, costOptSelected), setCostOptSyncState, () => { setCostOptSelected(new Set()); }, () => { setCostOptRefreshKey(k => k + 1); }).catch(() => undefined);
+              }}
+              onDeletePeriod={handleDelete('cost-optimization', () => { setCostOptRefreshKey(k => k + 1); })}
+              syncState={costOptSyncState}
+              onCancelSync={() => { api.cancelSync(syncIdFor(name, 'cost-optimization')).catch(() => undefined); setCostOptSyncState({ status: 'idle' }); }}
+              onConfigure={() => { setConfigureSource('costOptimization'); }}
+            />
+          )}
         </div>
       )}
 
@@ -758,7 +804,7 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
             </button>
             <SetupWizard
               source={configureSource}
-              profile={awsProfile}
+              profile={awsProfile ?? 'default'}
               providerName={name}
               onComplete={() => { setConfigureSource(null); onConfigChanged(); }}
             />
@@ -766,7 +812,7 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
         </div>
       )}
 
-      {showProfileSwap && (
+      {showProfileSwap && awsProfile !== null && (
         <ProfileSwapModal
           currentProfile={awsProfile}
           providerName={name}

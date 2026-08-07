@@ -1,7 +1,7 @@
 import type { BaselineSpec } from './baseline.js';
 import type { ProviderName } from './branded.js';
 import type { CostScopeConfig } from './cost-scope.js';
-import type { DefaultsConfig, DimensionsConfig, OrgTreeConfig, SyncConfig } from './config.js';
+import type { DefaultsConfig, DimensionsConfig, GcpSyncConfig, OrgTreeConfig, SyncConfig } from './config.js';
 import type { ViewsConfig } from './views.js';
 
 /** Discriminator value in the bundle YAML so arbitrary YAML files are
@@ -21,17 +21,23 @@ export const CONFIG_BUNDLE_SCHEMA_VERSION = 1;
 export const CONFIG_BEACON_KEY = 'costgoblin/org-config.yaml';
 
 /** A provider as it appears inside a bundle: identical to
- *  `ProviderConfig` minus `credentialsProfile`. Bundles structurally cannot
- *  carry an AWS profile name — it's machine-specific and the receiver
- *  picks their own on import. Mirrors the `ProviderConfig` discriminated
- *  union: one arm per provider type. */
+ *  `ProviderConfig` minus its credential field. Bundles structurally cannot
+ *  carry an AWS profile name or a GCP key-file path — both are
+ *  machine-specific and the receiver picks their own on import. Mirrors the
+ *  `ProviderConfig` discriminated union: one arm per provider type. */
 export interface SharedAwsProviderConfig {
   readonly name: ProviderName;
   readonly type: 'aws';
   readonly sync: SyncConfig;
 }
 
-export type SharedProviderConfig = SharedAwsProviderConfig;
+export interface SharedGcpProviderConfig {
+  readonly name: ProviderName;
+  readonly type: 'gcp';
+  readonly sync: GcpSyncConfig;
+}
+
+export type SharedProviderConfig = SharedAwsProviderConfig | SharedGcpProviderConfig;
 
 /** `CostGoblinConfig` with the machine-specific parts stripped. */
 export interface SharedCostGoblinConfig {

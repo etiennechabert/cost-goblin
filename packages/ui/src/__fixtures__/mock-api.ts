@@ -215,6 +215,22 @@ const config: CostGoblinConfig = {
   defaults: { periodDays: 30, costMetric: 'effective', lagDays: 2 },
 };
 
+/** A GCP provider on Application Default Credentials: no `credentialsProfile`,
+ *  and the daily tier only. Use it (or MOCK_MIXED_PROVIDER_CONFIG) to exercise
+ *  the provider-type-dependent UI. */
+export const MOCK_GCP_PROVIDER: ProviderConfig = {
+  name: asProviderName('gcp-main'),
+  type: 'gcp',
+  sync: { daily: { bucket: asBucketPath('gs://costgoblin-focus-export/focus'), retentionDays: 365 }, intervalMinutes: 60 },
+};
+
+/** One AWS and one GCP provider — the shape that exercises every arm-specific
+ *  branch at once (badge, credentials chip, hidden hourly/cost-opt tiers). */
+export const MOCK_MIXED_PROVIDER_CONFIG: CostGoblinConfig = {
+  ...config,
+  providers: [awsMainProvider, MOCK_GCP_PROVIDER],
+};
+
 /** Two providers with distinct names and credentials profiles — override
  *  `getConfig` with this (e.g. `vi.spyOn(api, 'getConfig').mockResolvedValue(
  *  MOCK_MULTI_PROVIDER_CONFIG)`) to exercise multi-provider UI states. */
@@ -326,13 +342,29 @@ export class MockCostApi implements CostApi {
   deleteLocalPeriod(): Promise<void> { return Promise.resolve(); }
   openDataFolder(): Promise<void> { return Promise.resolve(); }
   ssoLogin(): Promise<void> { return Promise.resolve(); }
+  gcloudLogin(mode?: 'adc' | 'cli', providerName?: string): Promise<void> {
+    this.gcloudLogins.push({ mode: mode ?? 'adc', providerName });
+    return Promise.resolve();
+  }
+
+  /** Every gcloud sign-in the UI asked for. The two modes are not
+   *  interchangeable — re-running ADC cannot fix a stale CLI account — so a
+   *  test has to be able to see which one a given error produced. */
+  readonly gcloudLogins: { mode: 'adc' | 'cli'; providerName: string | undefined }[] = [];
   getAccountMapping(): Promise<AccountMappingStatus> { return Promise.resolve({ status: 'missing' }); }
   getSetupStatus(): Promise<{ configured: boolean; postSetup: boolean }> { return Promise.resolve({ configured: true, postSetup: false }); }
   testConnection(): Promise<{ ok: boolean; error?: string | undefined }> { return Promise.resolve({ ok: true }); }
   listAwsProfiles(): Promise<string[]> { return Promise.resolve(['default', 'prod', 'staging']); }
   listS3Buckets(): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> { return Promise.resolve({ buckets: [{ name: 'my-cur-bucket', region: 'eu-central-1' }] }); }
   browseS3(): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }> { return Promise.resolve({ prefixes: ['data', 'metadata'], isBillingExport: true, detectedType: 'daily', missingColumns: [] }); }
-  scaffoldConfig(): Promise<void> { return Promise.resolve(); }
+  scaffoldConfig(providerType?: 'aws' | 'gcp'): Promise<void> {
+    this.scaffoldedFor.push(providerType ?? 'aws');
+    return Promise.resolve();
+  }
+
+  /** Provider arms `scaffoldConfig` was asked for, oldest first — the GCP
+   *  setup step is only useful if it requests the GCP template. */
+  readonly scaffoldedFor: ('aws' | 'gcp')[] = [];
   writeConfig(): Promise<void> { return Promise.resolve(); }
   removeProvider(): Promise<void> { return Promise.resolve(); }
   updateAwsProfile(): Promise<void> { return Promise.resolve(); }

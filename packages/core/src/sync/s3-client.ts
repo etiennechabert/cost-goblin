@@ -4,6 +4,7 @@ import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
 import { dirname } from 'node:path';
 import type { ManifestFileEntry } from './manifest.js';
+import type { DownloadOptions, ObjectStoreHandle } from './object-store.js';
 
 export interface S3SyncOptions {
   readonly bucket: string;
@@ -34,12 +35,18 @@ async function getS3Module(): Promise<typeof import('@aws-sdk/client-s3')> {
   return import('@aws-sdk/client-s3');
 }
 
-/** Whether an error indicates missing or expired credentials (expired SSO
+/** Whether an error indicates missing or expired AWS credentials (expired SSO
  *  token, no resolvable profile) rather than a genuine S3/network failure.
  *  Covers both AWS SDK errors (the inventory listing) and the `aws s3 sync`
  *  CLI's stderr signatures (the download path), so credential expiry is
  *  surfaced consistently across both. Shared by the desktop sync handlers and
- *  the auto-sync scheduler. */
+ *  the auto-sync scheduler.
+ *
+ *  The message tests are deliberately AWS-specific phrases rather than a bare
+ *  `'credentials'` substring: since #517 a GCP failure ("Could not load the
+ *  default credentials") reaches the same classifiers, and a bare match would
+ *  rewrite it into "run aws sso login --profile undefined" before
+ *  `isGcpCredentialError` ever got a look. */
 export function isCredentialError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const name = err.name;
@@ -49,7 +56,11 @@ export function isCredentialError(err: unknown): boolean {
     // AWS SDK credential-resolution failures.
     msg.includes('Token is expired') ||
     msg.includes('SSO session') ||
-    msg.includes('credentials') ||
+    msg.includes('Could not load credentials') ||
+    msg.includes('resolve credentials') ||
+    msg.includes('Resolved credentials are not valid') ||
+    // Round-trip of this app's own rewritten message (toUserFriendlyError).
+    msg.includes('AWS credentials') ||
     // `aws s3 sync` CLI credential/SSO failures arrive as stderr text rather
     // than SDK error names, so the CLI download path classifies them too.
     msg.includes('Error loading SSO Token') ||
@@ -57,7 +68,31 @@ export function isCredentialError(err: unknown): boolean {
     msg.includes('ExpiredToken') ||
     msg.includes('InvalidGrantException') ||
     msg.includes('Unable to locate credentials') ||
-    msg.includes('aws sso login')
+    msg.includes('aws sso login') ||
+    // Catch-all for the wordings not enumerated above — botocore alone emits
+    // "Partial credentials found in env, missing: …" and "Error when
+    // retrieving credentials from custom-process". Losing those to the
+    // narrowing above meant `data:inventory` fell through to the LOCAL
+    // inventory and presented stale on-disk periods as a successful sync,
+    // with no error and no sign-in button.
+    //
+    // Guarded against the GCP arm rather than dropped: this classifier and
+    // `isGcpCredentialError` share one error channel, and Google's "Could not
+    // load the default credentials" would otherwise be rewritten into
+    // "run aws sso login --profile undefined".
+    (/credential/i.test(msg) && !mentionsGcp(msg))
+  );
+}
+
+/** Whether a message belongs to the GCP arm. Kept next to `isCredentialError`
+ *  because it exists only to stop the AWS catch-all above from claiming a GCP
+ *  failure — the two classifiers are fed from the same channel. */
+function mentionsGcp(msg: string): boolean {
+  return (
+    msg.includes('default credentials') ||
+    msg.includes('gcloud') ||
+    msg.includes('google') ||
+    msg.includes('Google')
   );
 }
 
@@ -79,17 +114,13 @@ export function isS3SyncDownloadFailure(err: unknown): boolean {
   );
 }
 
-export interface DownloadOptions {
-  onBytes?: ((bytesReceived: number) => void) | undefined;
-  signal?: AbortSignal | undefined;
-}
+/** The handle shape moved to `object-store.ts` in #517 — it never had
+ *  anything S3-specific in it. Re-exported under the historical names so the
+ *  S3 call sites (and the public `@costgoblin/core` surface) read unchanged. */
+export type { DownloadOptions } from './object-store.js';
+export type S3Handle = ObjectStoreHandle;
 
-export interface S3Handle {
-  listFiles(bucket: string, prefix: string): Promise<ManifestFileEntry[]>;
-  downloadFile(bucket: string, key: string, localPath: string, options?: DownloadOptions): Promise<void>;
-}
-
-export async function createS3Handle(profile: string, region?: string, endpointOptions?: S3EndpointOptions): Promise<S3Handle> {
+export async function createS3Handle(profile: string, region?: string, endpointOptions?: S3EndpointOptions): Promise<ObjectStoreHandle> {
   const { S3Client, ListObjectsV2Command, GetObjectCommand } = await getS3Module();
 
   let credentialConfig: { credentials: { readonly accessKeyId: string; readonly secretAccessKey: string } } | { profile: string } | Record<string, never>;

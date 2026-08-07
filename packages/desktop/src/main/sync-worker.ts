@@ -1,6 +1,14 @@
 import { parentPort } from 'node:worker_threads';
-import { parseProviderName, syncSelectedFiles, logger } from '@costgoblin/core';
-import type { SelectiveSyncOptions, ManifestFileEntry, SyncProgress, SyncLogLevel } from '@costgoblin/core';
+import { isProviderAuth, parseProviderName, syncGcpSelectedFiles, syncSelectedFiles, logger } from '@costgoblin/core';
+import type {
+  ExpectedDataType,
+  GcpSelectiveSyncOptions,
+  ManifestFileEntry,
+  ProviderAuth,
+  SelectiveSyncOptions,
+  SyncLogLevel,
+  SyncProgress,
+} from '@costgoblin/core';
 
 if (parentPort === null) {
   throw new Error('sync-worker.ts must be run as a Node.js Worker thread');
@@ -15,13 +23,15 @@ interface SyncRequest {
   readonly kind: 'sync';
   readonly id: number;
   readonly bucketPath: string;
-  readonly profile: string;
+  /** Provider credentials descriptor. Structured-cloned across the thread
+   *  boundary, so it is re-validated by `isProviderAuth` before use. */
+  readonly auth: ProviderAuth;
   /** Provider directory the download lands in. Arrives as a plain string over
    *  the message boundary — re-parsed with `parseProviderName` before it is
    *  used in any path (the brand does not survive structured cloning). */
   readonly providerName: string;
   readonly dataDir: string;
-  readonly tier: string;
+  readonly tier: ExpectedDataType;
   readonly files: readonly ManifestFileEntry[];
 }
 
@@ -85,12 +95,19 @@ function isSyncRequest(msg: unknown): msg is SyncRequest {
     msg['kind'] === 'sync' &&
     typeof msg['id'] === 'number' &&
     typeof msg['bucketPath'] === 'string' &&
-    typeof msg['profile'] === 'string' &&
+    isProviderAuth(msg['auth']) &&
     typeof msg['providerName'] === 'string' &&
     typeof msg['dataDir'] === 'string' &&
-    typeof msg['tier'] === 'string' &&
+    isExpectedDataType(msg['tier']) &&
     Array.isArray(msg['files'])
   );
+}
+
+/** A request that fails `isSyncRequest` is silently dropped by the message
+ *  handler below, leaving the caller's promise pending forever — so the tier
+ *  is validated here rather than asserted downstream. */
+function isExpectedDataType(value: unknown): value is ExpectedDataType {
+  return value === 'daily' || value === 'hourly' || value === 'cost-optimization';
 }
 
 function isCancelRequest(msg: unknown): msg is CancelRequest {
@@ -136,36 +153,61 @@ async function handleSyncRequest(req: SyncRequest): Promise<void> {
   activeControllers.set(req.id, controller);
 
   try {
-    const options: SelectiveSyncOptions = {
-      bucketPath: req.bucketPath,
-      profile: req.profile,
-      // Re-validate on this side of the thread boundary: the brand is a
-      // compile-time construct, so a malformed name must be rejected here
-      // before it can become a directory segment (throws → error response).
-      providerName: parseProviderName(req.providerName),
-      dataDir: req.dataDir,
-      expectedDataType: req.tier as 'daily' | 'hourly' | 'cost-optimization' | undefined,
-      files: req.files,
-      signal: controller.signal,
-      onProgress: (progress: SyncProgress) => {
-        // Skip sending progress if cancelled
-        if (cancelledIds.has(req.id)) return;
+    // Re-validate on this side of the thread boundary: the brand is a
+    // compile-time construct, so a malformed name must be rejected here
+    // before it can become a directory segment (throws → error response).
+    const providerName = parseProviderName(req.providerName);
+    const onProgress = (progress: SyncProgress): void => {
+      // Skip sending progress if cancelled
+      if (cancelledIds.has(req.id)) return;
 
-        // Only include optional fields when set (exactOptionalPropertyTypes)
-        send({
-          kind: 'progress',
-          id: req.id,
-          phase: progress.phase,
-          filesDone: progress.filesDone,
-          filesTotal: progress.filesTotal,
-          ...(progress.bytesDone === undefined ? {} : { bytesDone: progress.bytesDone }),
-          ...(progress.bytesTotal === undefined ? {} : { bytesTotal: progress.bytesTotal }),
-          ...(progress.message === undefined ? {} : { message: progress.message }),
-        });
-      },
+      // Only include optional fields when set (exactOptionalPropertyTypes)
+      send({
+        kind: 'progress',
+        id: req.id,
+        phase: progress.phase,
+        filesDone: progress.filesDone,
+        filesTotal: progress.filesTotal,
+        ...(progress.bytesDone === undefined ? {} : { bytesDone: progress.bytesDone }),
+        ...(progress.bytesTotal === undefined ? {} : { bytesTotal: progress.bytesTotal }),
+        ...(progress.message === undefined ? {} : { message: progress.message }),
+      });
     };
 
-    const result = await syncSelectedFiles(options);
+    let result: { filesDownloaded: number; rowsProcessed: number };
+    if (req.auth.kind === 'gcp') {
+      // `resolveBucketPath` already refuses a cost-optimization bucket for a
+      // GCP provider, so this is unreachable — but the tier crosses a thread
+      // boundary as loose data, and a wrong tier here would install the rows
+      // into the wrong `raw/` directory rather than fail.
+      if (req.tier === 'cost-optimization') {
+        throw new Error('GCP providers have no Cost Optimization Hub analogue');
+      }
+      const gcpOptions: GcpSelectiveSyncOptions = {
+        bucketPath: req.bucketPath,
+        expectedDataType: req.tier,
+        ...(req.auth.keyFile === undefined ? {} : { keyFile: req.auth.keyFile }),
+        ...(req.auth.impersonateServiceAccount === undefined ? {} : { impersonateServiceAccount: req.auth.impersonateServiceAccount }),
+        providerName,
+        dataDir: req.dataDir,
+        files: req.files,
+        signal: controller.signal,
+        onProgress,
+      };
+      result = await syncGcpSelectedFiles(gcpOptions);
+    } else {
+      const options: SelectiveSyncOptions = {
+        bucketPath: req.bucketPath,
+        profile: req.auth.profile,
+        providerName,
+        dataDir: req.dataDir,
+        expectedDataType: req.tier,
+        files: req.files,
+        signal: controller.signal,
+        onProgress,
+      };
+      result = await syncSelectedFiles(options);
+    }
 
     // Skip sending result if cancelled during execution
     if (cancelledIds.has(req.id)) {
