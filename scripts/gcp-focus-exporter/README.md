@@ -244,9 +244,13 @@ could live in a scheduled query.
 
 ### Running the export by hand
 
-`scheduled-query.sql` contains the same change detection and the same export,
-as a standalone BigQuery script. Useful for a first look at the data before
-you deploy anything.
+`scheduled-query.sql` contains the same change detection and export as the
+job's **hourly** tier, as a standalone BigQuery script. Useful for a first look
+at the data before you deploy anything. It writes to `…/hourly/`, so point
+`sync.daily.bucket` there if you just want a look — it queries fine, at hourly
+grain. The daily rollup is not reproduced: its `GROUP BY` is generated from
+`INFORMATION_SCHEMA` at run time, and a second copy here would have to stay in
+step with the first.
 
 It is **not a complete setup**: on its own it accumulates the orphans described
 above. If you leave it running as a scheduled query, clean up by hand whenever

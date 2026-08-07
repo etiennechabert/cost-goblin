@@ -1,7 +1,14 @@
 -- CostGoblin GCP FOCUS exporter — the export, as a standalone BigQuery script.
 --
--- Same change detection and same export as the deployed Cloud Run job, runnable
--- by hand. Useful for a first look at the data before you deploy anything.
+-- Same change detection and export as the deployed Cloud Run job's HOURLY tier,
+-- runnable by hand. Useful for a first look at the data before you deploy
+-- anything.
+--
+-- Hourly only: the daily tier is a rollup whose GROUP BY is generated from
+-- INFORMATION_SCHEMA at run time, because the FOCUS export is Preview and gains
+-- columns. Reproducing that here would mean maintaining a second copy of the
+-- generator that has to stay in step with the first. Point sync.daily.bucket at
+-- this folder if you only want a look; it queries fine, just at hourly grain.
 --
 -- THIS IS NOT A COMPLETE SETUP. `EXPORT DATA` shards its output across N files
 -- and BigQuery chooses N; N is not stable between runs. A re-export that packs
@@ -15,7 +22,7 @@
 -- If you do run this on a schedule anyway, clean up by hand whenever a period
 -- gets re-exported:
 --
---   gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/billing_period=YYYY-MM/
+--   gcloud storage rm --recursive gs://<BUCKET>/<PREFIX>/hourly/billing_period=YYYY-MM/
 --
 -- SETUP
 --   1. Run the CREATE TABLE below once, in your billing project.
@@ -69,7 +76,7 @@ WHILE i < ARRAY_LENGTH(periods) DO
   -- through untouched.
   EXECUTE IMMEDIATE FORMAT("""
     EXPORT DATA OPTIONS(
-      uri = 'gs://«BUCKET»/«PREFIX»/billing_period=%s/shard-*.parquet',
+      uri = 'gs://«BUCKET»/«PREFIX»/hourly/billing_period=%s/shard-*.parquet',
       format = 'PARQUET',
       compression = 'SNAPPY',
       overwrite = true
