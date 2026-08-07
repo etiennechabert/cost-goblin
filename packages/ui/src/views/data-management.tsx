@@ -1,6 +1,6 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
 import type { DataInventoryResult, DataTier, CostGoblinConfig, ProviderConfig, SyncStatus } from '@costgoblin/core/browser';
-import { GCLOUD_ADC_LOGIN_COMMAND } from '@costgoblin/core/browser';
+import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from '@costgoblin/core/browser';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { ConfirmModal } from '../components/confirm-modal.js';
@@ -434,12 +434,19 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
   const [costOptRefreshKey, setCostOptRefreshKey] = useState(0);
 
   const inventoryQuery = useQuery(() => api.getDataInventory('daily', name), [name, dailyRefreshKey, refreshSignal]);
-  const isSsoError = inventoryQuery.status === 'error' && inventoryQuery.error.message.includes('aws sso login');
+  // Poll while a credential error is showing, so the panel heals itself once
+  // the user finishes signing in. Every provider's message, not just AWS's:
+  // sniffing only `aws sso login` left a GCP user staring at a stale expired-
+  // credentials error after a successful re-login, until they navigated away
+  // and back — while the AWS flow recovered in five seconds.
+  const credentialErrorMessage = inventoryQuery.status === 'error' ? inventoryQuery.error.message : '';
+  const isCredentialError = ['aws sso login', GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND]
+    .some(cmd => credentialErrorMessage.includes(cmd));
   useEffect(() => {
-    if (!isSsoError) return;
+    if (!isCredentialError) return;
     const timer = setInterval(() => { setDailyRefreshKey(k => k + 1); }, 5_000);
     return () => { clearInterval(timer); };
-  }, [isSsoError]);
+  }, [isCredentialError]);
 
   const [selected, setSelected] = useState(new Set<string>());
   const [hourlySelected, setHourlySelected] = useState(new Set<string>());
@@ -688,8 +695,17 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
           {awsProfile !== null && inventoryQuery.error.message.includes('aws sso login') && (
             <SsoLoginButton profile={awsProfile} />
           )}
+          {/* Both GCP commands, not just ADC: a stale gcloud CLI account is
+              reported with `gcloud auth login`, which is not a substring of
+              the ADC command — so matching only ADC left the one error with a
+              one-click remedy showing no button, and re-running ADC could
+              never have fixed it anyway. */}
           {provider.type === 'gcp' && inventoryQuery.error.message.includes(GCLOUD_ADC_LOGIN_COMMAND) && (
-            <GcloudLoginButton />
+            <GcloudLoginButton mode="adc" providerName={name} />
+          )}
+          {provider.type === 'gcp' && !inventoryQuery.error.message.includes(GCLOUD_ADC_LOGIN_COMMAND)
+            && inventoryQuery.error.message.includes(GCLOUD_CLI_LOGIN_COMMAND) && (
+            <GcloudLoginButton mode="cli" providerName={name} />
           )}
         </div>
       )}

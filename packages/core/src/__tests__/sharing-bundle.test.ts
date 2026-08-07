@@ -213,6 +213,54 @@ describe('bundleConfigWithProfile', () => {
     const revalidated = validateConfig(yaml);
     expect(revalidated.providers[1]?.type).toBe('gcp');
   });
+
+  it('carries a local gcp provider\'s credentials across a bundle import by name', () => {
+    // Importing a bundle REPLACES costgoblin.yaml, and a bundle carries no
+    // credentials by design (they are per-machine, not shareable). Without the
+    // `existing` carry-forward, importing any bundle silently stripped
+    // impersonateServiceAccount/keyFile from every local gcp provider — after
+    // which the download half ran as the signed-in user and 403'd on a bucket
+    // granted only to the service account.
+    const shared: SharedCostGoblinConfig = {
+      providers: [
+        { name: parseProviderName('gcp-main'), type: 'gcp', sync: { daily: { bucket: asBucketPath('gs://b/focus/daily'), retentionDays: 365 }, intervalMinutes: 60 } },
+      ],
+      defaults: { periodDays: 30, costMetric: 'effective', lagDays: 1 },
+    };
+    const existing: readonly ProviderConfig[] = [
+      { name: parseProviderName('gcp-main'), type: 'gcp', impersonateServiceAccount: 'reader@proj.iam.gserviceaccount.com', sync: { daily: { bucket: asBucketPath('gs://old/daily'), retentionDays: 30 }, intervalMinutes: 60 } },
+    ];
+    const config = bundleConfigWithProfile(shared, 'unused', existing);
+    const gcp = config.providers[0];
+    if (gcp?.type !== 'gcp') throw new Error('expected the gcp arm');
+    expect(gcp.impersonateServiceAccount).toBe('reader@proj.iam.gserviceaccount.com');
+    // The bucket comes from the BUNDLE, not the stale local entry — only the
+    // credential is carried forward.
+    expect(String(gcp.sync.daily.bucket)).toBe('gs://b/focus/daily');
+
+    // And it survives a round-trip to YAML, which needed its own fix:
+    // providerToYaml previously serialized keyFile only.
+    const revalidated = validateConfig(costGoblinConfigToYaml(config));
+    const revalidatedGcp = revalidated.providers[0];
+    if (revalidatedGcp?.type !== 'gcp') throw new Error('expected the gcp arm');
+    expect(revalidatedGcp.impersonateServiceAccount).toBe('reader@proj.iam.gserviceaccount.com');
+  });
+
+  it('does not carry a differently-named local gcp provider\'s credentials onto the bundle one', () => {
+    const shared: SharedCostGoblinConfig = {
+      providers: [
+        { name: parseProviderName('gcp-new'), type: 'gcp', sync: { daily: { bucket: asBucketPath('gs://b/focus/daily'), retentionDays: 365 }, intervalMinutes: 60 } },
+      ],
+      defaults: { periodDays: 30, costMetric: 'effective', lagDays: 1 },
+    };
+    const existing: readonly ProviderConfig[] = [
+      { name: parseProviderName('gcp-old'), type: 'gcp', impersonateServiceAccount: 'reader@proj.iam.gserviceaccount.com', sync: { daily: { bucket: asBucketPath('gs://old/daily'), retentionDays: 30 }, intervalMinutes: 60 } },
+    ];
+    const config = bundleConfigWithProfile(shared, 'unused', existing);
+    const gcp = config.providers[0];
+    if (gcp?.type !== 'gcp') throw new Error('expected the gcp arm');
+    expect('impersonateServiceAccount' in gcp).toBe(false);
+  });
 });
 
 describe('bundle kind constant', () => {

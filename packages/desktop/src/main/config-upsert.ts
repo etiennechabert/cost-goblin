@@ -53,10 +53,15 @@ export function upsertWizardProvider(
   // wizard's payload has never carried one, so an upsert that lands on an
   // existing gcp entry would silently rewrite it as an AWS provider — losing
   // the GCP source rather than failing. `swapProviderCredentialsProfile`
-  // already refuses the same way.
-  if (type === 'aws' && isStringRecord(target) && target['type'] === 'gcp') {
+  // already refuses the same way. Guards BOTH directions. Guarding only aws-onto-gcp left the mirror image open:
+  // a `type: 'gcp'` payload landing on an existing AWS entry replaced it
+  // wholesale, dropping `credentialsProfile` and the inherited sync tiers, and
+  // the AWS billing source vanished with no error.
+  const rawTargetType: unknown = isStringRecord(target) ? target['type'] : undefined;
+  const targetType = typeof rawTargetType === 'string' ? rawTargetType : undefined;
+  if (targetType !== undefined && targetType !== type) {
     throw new Error(
-      `Provider "${wizard.providerName}" is a GCP provider — the setup wizard configures AWS providers only. Edit costgoblin.yaml to change it.`,
+      `Provider "${wizard.providerName}" is a ${targetType.toUpperCase()} provider — refusing to rewrite it as ${type.toUpperCase()}. Edit costgoblin.yaml to change a provider's type.`,
     );
   }
 
@@ -88,6 +93,13 @@ export function upsertWizardProvider(
         // Omitted rather than null when blank: absent means Application
         // Default Credentials, which is the documented default.
         ...(wizard.keyFile === undefined || wizard.keyFile.length === 0 ? {} : { keyFile: wizard.keyFile }),
+        // Carried from the entry being replaced. `WizardProviderConfig` has no
+        // field for it, so building the entry from the payload alone silently
+        // deleted it — after which the download half ran as the signed-in user
+        // and 403'd on a bucket granted only to the service account.
+        ...(isStringRecord(target) && typeof target['impersonateServiceAccount'] === 'string'
+          ? { impersonateServiceAccount: target['impersonateServiceAccount'] }
+          : {}),
         sync,
       }
     : {

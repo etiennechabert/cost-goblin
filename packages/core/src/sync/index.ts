@@ -59,6 +59,9 @@ export {
   type GcpSelectiveSyncOptions,
   parseGcloudCompletedBytes,
   syncGcpSelectedFiles,
+  findGcloudCli,
+  gcloudCliFound,
+  gcloudSearchPaths,
 } from './gcp-selective-sync.js';
 
 export {

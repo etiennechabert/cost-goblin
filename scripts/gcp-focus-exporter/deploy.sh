@@ -205,5 +205,12 @@ Deployed.
   Watch the logs:  gcloud run jobs executions logs read --job=${JOB_NAME} --region=${REGION}
   See the output:  gcloud storage ls gs://${BUCKET}/${PREFIX}/
 
-Then point CostGoblin at:  gs://${BUCKET}/${PREFIX}
+Then point CostGoblin at the TIER folder, not the prefix:
+
+  sync.daily.bucket:   gs://${BUCKET}/${PREFIX}/daily/
+  sync.hourly.bucket:  gs://${BUCKET}/${PREFIX}/hourly/   (only with TIERS=daily,hourly)
+
+Pointing at gs://${BUCKET}/${PREFIX} makes the daily tier list the hourly shards
+too, so the period reads ~25x its real size and either grain's re-export marks
+the other stale. CostGoblin rejects overlapping tier buckets for this reason.
 EOF

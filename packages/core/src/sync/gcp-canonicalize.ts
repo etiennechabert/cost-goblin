@@ -1,5 +1,5 @@
-import { mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { mkdir, readdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { logger } from '../logger/logger.js';
 import { isSafeColumnIdentifier } from '../query/identifier-validator.js';
 import { REQUIRED_FOCUS_COLUMNS } from './focus-contract.js';
@@ -341,8 +341,22 @@ async function canonicalizeWithConnection(
   conn: CanonicalizeConnection,
   options: CanonicalizeOptions,
 ): Promise<CanonicalizeResult> {
-  const sourceGlob = `${options.stagingDir}/*.parquet`;
-  const sourceExpr = `read_parquet(${quoteLiteral(sourceGlob)}, union_by_name=true)`;
+  // An EXPLICIT file list, never a `dir/*.parquet` glob. DuckDB reads `[`,
+  // `]`, `?` and `*` in a path as glob syntax, and this path is built from the
+  // user's data directory — a folder called `CostGoblin [beta]` made `[beta]`
+  // a character class, so the read matched nothing and every period failed
+  // with "Could not read the downloaded export" AFTER its bytes had been
+  // downloaded. Backslash escaping does not help; listing the files does, and
+  // it also makes the empty-directory case an explicit error rather than an
+  // opaque IO one.
+  const shards = (await readdir(options.stagingDir).catch(() => [] as string[]))
+    .filter(f => f.endsWith('.parquet'))
+    .sort((a, b) => a.localeCompare(b))
+    .map(f => join(options.stagingDir, f));
+  if (shards.length === 0) {
+    throw new GcpCanonicalizeError('Could not read the downloaded export for this period: no .parquet shards were downloaded');
+  }
+  const sourceExpr = `read_parquet([${shards.map(quoteLiteral).join(', ')}], union_by_name=true)`;
 
   let source: ReadonlyMap<string, string>;
   try {
@@ -376,12 +390,15 @@ COPY (
   FROM __src
 ) TO ${quoteLiteral(options.outputPath)} (FORMAT PARQUET, COMPRESSION SNAPPY)`);
 
-  const rows = await readSingleNumber(conn, `SELECT COUNT(*) FROM read_parquet(${quoteLiteral(options.outputPath)})`);
+  // Single-element list for the same reason the source uses one: a literal
+  // path inside a list is not glob-expanded.
+  const outputExpr = `read_parquet([${quoteLiteral(options.outputPath)}])`;
+  const rows = await readSingleNumber(conn, `SELECT COUNT(*) FROM ${outputExpr}`);
 
   // A missing column here would mean the projection above and the contract
   // drifted apart — cheap to check, and it fails at sync time rather than at
   // the first query over the period.
-  const output = await describeSource(conn, `read_parquet(${quoteLiteral(options.outputPath)})`);
+  const output = await describeSource(conn, outputExpr);
   const notEmitted = REQUIRED_FOCUS_COLUMNS.filter(col => !output.has(col));
   if (notEmitted.length > 0) {
     throw new GcpCanonicalizeError(
@@ -408,12 +425,25 @@ async function createOwnConnection(options: CanonicalizeOptions): Promise<OwnedC
   // be constructed with `undefined` and throw at load.
   const { DuckDBInstance } = await import('@duckdb/node-api');
   const instance = await DuckDBInstance.create();
-  const conn = await instance.connect();
-  // memory_limit / threads are instance-global. This instance shares the box
-  // with the query worker's, so it takes a deliberately small slice rather
-  // than DuckDB's sole-tenant default.
-  await conn.run(`SET memory_limit = '${String(options.memoryGB ?? 2)}GB'`);
-  await conn.run(`SET threads = ${String(options.threads ?? 2)}`);
+  // Everything after `create()` is guarded: the caller's `finally` only runs
+  // once this function RESOLVES, so a failure in `connect()` or either `SET`
+  // (a bad memoryGB, say) leaked a native engine — with its own buffer pool
+  // and temp dir — for the life of the sync worker. One per failing period.
+  // Inferred, not annotated as `CanonicalizeConnection`: that interface is the
+  // narrow slice this module queries through, and `close` below needs the
+  // driver's own `disconnectSync`.
+  let conn: Awaited<ReturnType<typeof instance.connect>>;
+  try {
+    conn = await instance.connect();
+    // memory_limit / threads are instance-global. This instance shares the box
+    // with the query worker's, so it takes a deliberately small slice rather
+    // than DuckDB's sole-tenant default.
+    await conn.run(`SET memory_limit = '${String(options.memoryGB ?? 2)}GB'`);
+    await conn.run(`SET threads = ${String(options.threads ?? 2)}`);
+  } catch (err: unknown) {
+    try { instance.closeSync(); } catch { /* nothing to close */ }
+    throw err;
+  }
   return {
     connection: conn,
     close: () => {

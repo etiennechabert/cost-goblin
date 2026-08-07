@@ -82,6 +82,12 @@ function providerToYaml(p: ProviderConfig): Record<string, unknown> {
       name: String(p.name),
       type: 'gcp',
       ...(p.keyFile === undefined ? {} : { keyFile: p.keyFile }),
+      // Both GCP credential fields, not just keyFile. Omitting
+      // `impersonateServiceAccount` meant any write-back through this function
+      // stripped it, after which `gcloud storage rsync` ran as the signed-in
+      // user and 403'd on a bucket granted only to the service account — the
+      // least-privilege path the setup guide recommends.
+      ...(p.impersonateServiceAccount === undefined ? {} : { impersonateServiceAccount: p.impersonateServiceAccount }),
       sync: syncToYaml(p.sync),
     };
   }
@@ -347,13 +353,34 @@ export function summarizeConfigBundle(parsed: ParsedConfigBundle): ConfigBundleS
  *  can adjust afterwards in the app. `gcp` providers get no credential at
  *  all: they land on Application Default Credentials, which is the
  *  zero-configuration path and the one the setup guide recommends. */
-export function bundleConfigWithProfile(shared: SharedCostGoblinConfig, credentialsProfile: string): CostGoblinConfig {
+export function bundleConfigWithProfile(
+  shared: SharedCostGoblinConfig,
+  credentialsProfile: string,
+  /** The providers already on disk. Applying a bundle REPLACES costgoblin.yaml,
+   *  and a bundle carries no credentials by design — so without this a GCP
+   *  provider's `keyFile` / `impersonateServiceAccount` were silently dropped
+   *  on every import, and the next sync ran as the signed-in user. The AWS arm
+   *  has no such hole because its credential is re-supplied by the profile the
+   *  user picks during the import. Matched by name; anything not matched keeps
+   *  the zero-configuration default (plain ADC). */
+  existing: readonly ProviderConfig[] = [],
+): CostGoblinConfig {
+  const localGcp = new Map(
+    existing.filter((p): p is Extract<ProviderConfig, { type: 'gcp' }> => p.type === 'gcp')
+      .map(p => [String(p.name), p]),
+  );
   return {
-    providers: shared.providers.map((p): ProviderConfig => (
-      p.type === 'gcp'
-        ? { name: p.name, type: 'gcp', sync: p.sync }
-        : { name: p.name, type: 'aws', credentialsProfile, sync: p.sync }
-    )),
+    providers: shared.providers.map((p): ProviderConfig => {
+      if (p.type !== 'gcp') return { name: p.name, type: 'aws', credentialsProfile, sync: p.sync };
+      const prior = localGcp.get(String(p.name));
+      return {
+        name: p.name,
+        type: 'gcp',
+        ...(prior?.keyFile === undefined ? {} : { keyFile: prior.keyFile }),
+        ...(prior?.impersonateServiceAccount === undefined ? {} : { impersonateServiceAccount: prior.impersonateServiceAccount }),
+        sync: p.sync,
+      };
+    }),
     defaults: shared.defaults,
   };
 }

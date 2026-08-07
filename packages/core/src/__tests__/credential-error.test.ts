@@ -67,6 +67,16 @@ describe('isCredentialError', () => {
     expect(isCredentialError(undefined)).toBe(false);
   });
 
+  it('still catches AWS credential wordings that are not enumerated', () => {
+    // Narrowing the old bare `includes('credentials')` to a fixed phrase list
+    // dropped these. The cost was silent: `data:inventory` stopped classifying
+    // them, fell through to the LOCAL inventory, and presented stale on-disk
+    // periods as a successful sync — no error, and no sign-in button.
+    expect(isCredentialError(new Error('Partial credentials found in env, missing: AWS_SECRET_ACCESS_KEY'))).toBe(true);
+    expect(isCredentialError(new Error('Error when retrieving credentials from custom-process: exit status 1'))).toBe(true);
+    expect(isCredentialError(new Error('The config profile (prod) could not be found'))).toBe(false);
+  });
+
   it('does not claim GCP credential failures', () => {
     // Before #517 a bare `msg.includes('credentials')` matched Google's
     // "Could not load the default credentials", so every GCP auth failure was
@@ -107,6 +117,19 @@ describe('isGcloudDownloadFailure', () => {
     expect(isGcloudDownloadFailure(new Error('gcloud storage rsync failed (exit 1): Max retries exceeded'))).toBe(true);
     expect(isGcloudDownloadFailure(new Error('gcloud storage rsync failed (exit 1): Connection reset by peer'))).toBe(true);
     expect(isGcloudDownloadFailure(new Error('gcloud storage rsync failed (exit 1): ServiceUnavailable'))).toBe(true);
+    expect(isGcloudDownloadFailure(new Error('gcloud storage rsync failed (exit 1): HTTPError 503: Service Unavailable'))).toBe(true);
+  });
+
+  it('does not read a 503 out of a shard name or a traceback line number', () => {
+    // BigQuery names its shards with twelve zero-padded digits, so `503`
+    // appears inside ordinary object keys. A bare `includes('503')` turned a
+    // genuine permissions failure into "your session may have expired" and
+    // sent the user to re-authenticate for something re-authenticating cannot
+    // fix — while the real cause (a missing IAM grant) went unmentioned.
+    const perms = 'gcloud storage rsync failed (exit 1): ERROR: gs://b/focus/daily/billing_period=2026-01/shard-000000000503.parquet: '
+      + '403 reader@p.iam.gserviceaccount.com does not have storage.objects.get access';
+    expect(isGcloudDownloadFailure(new Error(perms))).toBe(false);
+    expect(isGcloudDownloadFailure(new Error('gcloud storage rsync failed (exit 1): File "cmd.py", line 503, in _RunCommand'))).toBe(false);
   });
 
   it('is scoped to gcloud storage rsync failures only', () => {

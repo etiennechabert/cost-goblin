@@ -307,6 +307,25 @@ describe('canonicalizeGcpPeriod', () => {
     expect(row?.['CommitmentDiscountStatus']).toBeNull();
   });
 
+  it('handles a data directory containing glob metacharacters', async () => {
+    // The staging and output paths are built from the user's data directory,
+    // and DuckDB treats `[`, `]`, `?` and `*` in a read_parquet path as glob
+    // syntax. A folder like `CostGoblin [beta]` made `[beta]` a character
+    // class, so the read matched nothing and every period failed with
+    // "Could not read the downloaded export" — after the bytes had already
+    // been downloaded.
+    const oddDir = join(root, 'CostGoblin [beta] v?1', 'staging');
+    await mkdir(oddDir, { recursive: true });
+    await conn.run(`CREATE TABLE bq_odd AS SELECT * FROM (VALUES ${bqRow({
+      ts: '2026-01-10 00:00:00+00', project: 'proj-odd', cost: 3, tags: NO_TAGS, labels: NO_TAGS,
+    })}) AS t(${BQ_COLUMNS})`);
+    await conn.run(`COPY (SELECT * FROM bq_odd) TO '${join(oddDir, 'shard-000000000000.parquet')}' (FORMAT PARQUET)`);
+
+    const out = join(root, 'CostGoblin [beta] v?1', 'out', 'part-0.parquet');
+    const result = await canonicalizeGcpPeriod({ stagingDir: oddDir, outputPath: out, connection: conn });
+    expect(result.rows).toBe(1);
+  });
+
   it('fails with a typed error when a required FOCUS column is absent', async () => {
     const staging = await stageBqPeriod(
       'nocost',

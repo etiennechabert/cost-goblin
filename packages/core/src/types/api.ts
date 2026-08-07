@@ -160,6 +160,11 @@ export type Dimension = BuiltInDimension | TagDimension;
 
 export type DataTier = 'daily' | 'hourly' | 'cost-optimization';
 
+/** Which gcloud credential store to sign in. A GCP sync authenticates through
+ *  both: the listing SDK reads Application Default Credentials, while
+ *  `gcloud storage rsync` runs as gcloud's own active account. */
+export type GcloudLoginMode = 'adc' | 'cli';
+
 export interface DataInventoryResult {
   /** Which configured provider this inventory describes. */
   readonly provider?: string | undefined;
@@ -227,7 +232,17 @@ export interface CostApi {
    *  single machine-wide credential, which is why this is its own method
    *  rather than an argument on `ssoLogin`. Rejects with a message
    *  containing `GCLOUD_CLI_NOT_FOUND` when the CLI is not installed. */
-  gcloudLogin(): Promise<void>;
+  /** Runs a gcloud sign-in. `'adc'` establishes Application Default
+   *  Credentials (the listing half); `'cli'` signs the gcloud CLI itself in
+   *  (the `gcloud storage rsync` download half). They are NOT interchangeable
+   *  — a GCP sync authenticates through both stores, and re-running ADC cannot
+   *  refresh a stale CLI account. Defaults to `'adc'`.
+   *
+   *  `providerName` names the provider whose failure raised the button, so ADC
+   *  is minted with THAT provider's impersonation. Without it a two-GCP
+   *  workspace could stamp provider A's service account onto the machine-wide
+   *  credential while the user was trying to fix provider B. */
+  gcloudLogin(mode?: GcloudLoginMode, providerName?: string): Promise<void>;
   getAccountMapping(): Promise<AccountMappingStatus>;
   /** `postSetup` is true only on the launch immediately following the setup
    *  wizard (carried across the wizard's relaunch), so the UI can land the user

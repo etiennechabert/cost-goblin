@@ -3,6 +3,7 @@ import {
   buildConfigBundle,
   bundleConfigWithProfile,
   bundleSectionIds,
+  loadConfig,
   costGoblinConfigToYaml,
   costScopeToYaml,
   dimensionsConfigToYaml,
@@ -10,7 +11,7 @@ import {
   parseConfigBundle,
   viewsConfigToYaml,
 } from '@costgoblin/core';
-import type { BundleSectionId, ConfigBundle, ConfigBundleSections } from '@costgoblin/core';
+import type { BundleSectionId, ConfigBundle, ConfigBundleSections, ProviderConfig } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 
 /** The five YAML config file paths of one workspace. `IpcContext` satisfies
@@ -72,6 +73,13 @@ export interface AppliedBundle {
  *  its sections to the config directory, backing up existing files first. The
  *  chosen AWS profile is injected into every provider. Does NOT clear caches —
  *  the caller decides when. */
+/** The providers currently on disk, or none when there is no config yet (a
+ *  first-run import). Never throws: a config too broken to parse must not
+ *  block the import that is probably meant to replace it. */
+async function readExistingProviders(ctx: ConfigFilePaths): Promise<readonly ProviderConfig[]> {
+  return loadConfig(ctx.configPath).then(c => c.providers).catch(() => []);
+}
+
 export async function applyBundleSectionsToDisk(ctx: ConfigFilePaths, content: string, profile: string): Promise<AppliedBundle> {
   const parsed = parseConfigBundle(content);
   const { sections } = parsed.bundle;
@@ -82,7 +90,11 @@ export async function applyBundleSectionsToDisk(ctx: ConfigFilePaths, content: s
   await fs.mkdir(path.dirname(ctx.configPath), { recursive: true });
   const backupDir = await backupExistingConfig(ctx);
 
-  const config = bundleConfigWithProfile(sections.config, profile);
+  // Read the current providers first: applying a bundle rewrites
+  // costgoblin.yaml, and a bundle carries no credentials, so a GCP provider's
+  // keyFile / impersonateServiceAccount have to be carried across by name.
+  const existingProviders = await readExistingProviders(ctx);
+  const config = bundleConfigWithProfile(sections.config, profile, existingProviders);
   await fs.writeFile(ctx.configPath, stringify(costGoblinConfigToYaml(config)), 'utf-8');
   await fs.writeFile(ctx.dimensionsPath, stringify(dimensionsConfigToYaml(sections.dimensions)), 'utf-8');
   if (sections.orgTree !== undefined) {

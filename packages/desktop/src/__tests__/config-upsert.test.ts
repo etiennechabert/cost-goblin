@@ -312,19 +312,16 @@ describe('upsertWizardProvider — gcp arm', () => {
     expect(entry).not.toHaveProperty('keyFile');
   });
 
-  it('drops a stale hourly block when an aws entry is re-run as gcp under the same name', () => {
-    // Inheriting the previous sync block (correct for aws) would write an
-    // `hourly:` key that validateGcpSync rejects — the config would then fail
-    // to load at all on the next launch.
-    const result = upsertWizardProvider({ providers: [providerA()] }, {
+  it('refuses to rewrite an aws entry as gcp under the same name', () => {
+    // The mirror image of the aws-over-gcp guard above. Before this guard
+    // covered both directions, a `type: 'gcp'` payload landing on an existing
+    // aws entry replaced it wholesale — dropping `credentialsProfile` and the
+    // inherited sync tiers, with the AWS billing source simply gone and no
+    // error anywhere.
+    expect(() => upsertWizardProvider({ providers: [providerA()] }, {
       providerName: 'aws-main', type: 'gcp', profile: '',
       dailyBucket: 'gs://b/focus',
-    });
-    expect(providers(result)[0]).toEqual({
-      name: 'aws-main',
-      type: 'gcp',
-      sync: { intervalMinutes: 60, daily: { bucket: 'gs://b/focus', retentionDays: 365 } },
-    });
+    })).toThrow(/is a AWS provider — refusing to rewrite it as GCP/);
   });
 
   it('still writes an aws entry when type is omitted', () => {

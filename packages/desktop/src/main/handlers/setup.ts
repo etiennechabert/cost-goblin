@@ -253,8 +253,16 @@ export function registerSetupHandlers(app: AppContext): void {
       ...(t.concept === undefined ? {} : { concept: t.concept }),
     }));
 
+    // GCP's FOCUS export has no ServiceCategory, and the canonicalizer only
+    // NULL-fills x_Operation and SkuMeter — so scaffolding them for a gcp
+    // provider produces dimensions that render one blank value for every row.
+    // `buildDimensionsTemplate('gcp')` already drops them; this second writer
+    // has to agree or the two setup routes disagree about the same provider.
+    const GCP_ABSENT_DIMENSIONS = new Set(['service_category', 'operation', 'sku_meter']);
     const dimensionsYaml = {
-      builtIn: builtInDimensions,
+      builtIn: wizardConfig.type === 'gcp'
+        ? builtInDimensions.filter(d => !GCP_ABSENT_DIMENSIONS.has(d.name))
+        : builtInDimensions,
       tags: tagDimensions,
     };
 

@@ -40,25 +40,35 @@ const GCP_PROVIDER = `  - name: gcp-main
 
 /** Turn a provider block into the commented alternative shown beside the
  *  active one, so adding the second provider is uncommenting rather than
- *  looking up the shape. Blank lines stay blank — a `  # ` on its own would
- *  read as trailing whitespace in the user's editor. */
+ *  looking up the shape.
+ *
+ *  The comment marker goes BEFORE the existing indentation, never in place of
+ *  it. Trimming first (`# ${line.trimStart()}`) flattens every level to the
+ *  same column, so a user who follows the instruction and strips the markers
+ *  gets `- name:` and `type:` as siblings — invalid YAML, and an app that will
+ *  not start until they work out the indentation themselves.
+ *
+ *  Blank lines stay blank: a `#` on its own is just trailing whitespace. */
 function commented(block: string): string {
   return block
     .split('\n')
-    .map(line => (line.trim() === '' ? '' : `  # ${line.trimStart()}`))
+    .map(line => (line.trim() === '' ? '' : `# ${line}`))
     .join('\n');
 }
 
 export function buildConfigTemplate(providerType: TemplateProviderType): string {
   const forGcp = providerType === 'gcp';
   const active = forGcp ? GCP_PROVIDER : AWS_PROVIDER;
+  // The prose sits at column 0 like the commented block below it, so removing
+  // every `# ` in the selection leaves valid YAML and nothing half-indented.
   const alternative = forGcp
-    ? `  # An AWS provider looks like this — uncomment to add one alongside the GCP
-  # provider above. It reads a FOCUS 1.2 Data Export from S3.
+    ? `# An AWS provider looks like this — uncomment the block below to add one
+# alongside the GCP provider above. It reads a FOCUS 1.2 Data Export from S3.
 ${commented(AWS_PROVIDER)}`
-    : `  # A GCP provider looks like this — uncomment to add one alongside the AWS
-  # provider above. It reads the bucket filled by scripts/gcp-focus-exporter.
-  # There is no costOptimization tier: GCP has no analogue.
+    : `# A GCP provider looks like this — uncomment the block below to add one
+# alongside the AWS provider above. It reads the bucket filled by
+# scripts/gcp-focus-exporter. There is no costOptimization tier: GCP has no
+# analogue.
 ${commented(GCP_PROVIDER)}`;
 
   return `# CostGoblin configuration

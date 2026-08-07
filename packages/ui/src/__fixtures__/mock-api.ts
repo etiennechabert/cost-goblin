@@ -342,7 +342,15 @@ export class MockCostApi implements CostApi {
   deleteLocalPeriod(): Promise<void> { return Promise.resolve(); }
   openDataFolder(): Promise<void> { return Promise.resolve(); }
   ssoLogin(): Promise<void> { return Promise.resolve(); }
-  gcloudLogin(): Promise<void> { return Promise.resolve(); }
+  gcloudLogin(mode?: 'adc' | 'cli', providerName?: string): Promise<void> {
+    this.gcloudLogins.push({ mode: mode ?? 'adc', providerName });
+    return Promise.resolve();
+  }
+
+  /** Every gcloud sign-in the UI asked for. The two modes are not
+   *  interchangeable — re-running ADC cannot fix a stale CLI account — so a
+   *  test has to be able to see which one a given error produced. */
+  readonly gcloudLogins: { mode: 'adc' | 'cli'; providerName: string | undefined }[] = [];
   getAccountMapping(): Promise<AccountMappingStatus> { return Promise.resolve({ status: 'missing' }); }
   getSetupStatus(): Promise<{ configured: boolean; postSetup: boolean }> { return Promise.resolve({ configured: true, postSetup: false }); }
   testConnection(): Promise<{ ok: boolean; error?: string | undefined }> { return Promise.resolve({ ok: true }); }

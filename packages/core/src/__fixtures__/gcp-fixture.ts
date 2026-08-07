@@ -69,8 +69,15 @@ export async function writeGcpProvider(
   for (const month of months) {
     const staging = join(syntheticDir, '.gcp-staging', month);
     await mkdir(staging, { recursive: true });
-    await conn.run(`COPY (SELECT * FROM gcp_bq WHERE ChargePeriodStart::DATE::VARCHAR LIKE '${month}%')
-      TO '${join(staging, 'shard-000000000000.parquet')}' (FORMAT PARQUET)`);
+    // `::DATE` on a TIMESTAMPTZ resolves in the SESSION timezone — the exact
+    // trap `gcp-canonicalize.ts` exists to close. Nothing pins TZ for the test
+    // run, so partitioning that way made the committed fixture tree depend on
+    // the generating machine: west of UTC every midnight-UTC row slid into the
+    // previous month and vanished from both partitions. Compare in UTC.
+    await conn.run(`COPY (
+      SELECT * FROM gcp_bq
+      WHERE strftime(ChargePeriodStart AT TIME ZONE 'UTC', '%Y-%m') = '${month}'
+    ) TO '${join(staging, 'shard-000000000000.parquet')}' (FORMAT PARQUET)`);
 
     const outDir = join(syntheticDir, FIXTURE_GCP_PROVIDER_NAME, 'raw', `daily-${month}`);
     await mkdir(outDir, { recursive: true });

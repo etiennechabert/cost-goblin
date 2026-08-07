@@ -3,6 +3,7 @@ import {
   TIERS,
   buildDailyProjection,
   buildTierSelect,
+  createExporter,
   isGroupableType,
   loadConfig,
   parseTiers,
@@ -297,5 +298,101 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...BASE, FOCUS_TABLE: 'proj.ds' })).toThrow(/FOCUS_TABLE/);
     expect(() => loadConfig({ ...BASE, BUCKET: 'gs://my-bucket' })).toThrow(/BUCKET/);
     expect(() => loadConfig({ ...BASE, PREFIX: 'a b' })).toThrow(/PREFIX/);
+  });
+});
+
+/** A `bigquery.query()` stand-in whose responses are keyed by a fragment of
+ *  the SQL, so a test can drive `pendingExports`'s three queries (source scan,
+ *  state read, INFORMATION_SCHEMA) without a real project. Every SQL string
+ *  passed is recorded, so a test can assert on the query text itself as well
+ *  as on the JS-side attribution of whatever rows it returns — the two are
+ *  independent bugs (the wrong `IFNULL` default vs. mis-keying the result). */
+function fakeBigQuery(responses) {
+  const queries = [];
+  return {
+    queries,
+    query: async ({ query: sql }) => {
+      queries.push(sql);
+      for (const [marker, rows] of responses) {
+        if (sql.includes(marker)) return [rows];
+      }
+      throw new Error(`fakeBigQuery: no response registered for query containing none of the markers.\nSQL: ${sql}`);
+    },
+  };
+}
+
+const CONFIG = {
+  focusTable: 'proj.ds.tbl',
+  stateTable: 'proj.state.export_state',
+  bucketName: 'b',
+  prefix: 'focus',
+  tiers: ['daily', 'hourly'],
+  location: 'EU',
+  dryRun: true,
+};
+
+describe('pendingExports — watermark tier attribution', () => {
+  it('reads a legacy tier-less watermark row as HOURLY, not daily', async () => {
+    // `scheduled-query.sql` — the standalone script this job supersedes —
+    // publishes only the hourly tier, so a watermark table it created holds
+    // hourly progress under a NULL `tier` column. Misreading that row as the
+    // daily tier's watermark would mark a closed month's daily export as
+    // already done, permanently skipping it: a closed month gains no new
+    // x_ExportTime, so nothing would ever trip a re-check.
+    const bigquery = fakeBigQuery([
+      ['FROM `proj.ds.tbl`', [
+        { period_label: '2026-03', period_start: '2026-03-01', watermark: { value: '2026-03-15T00:00:00Z' } },
+      ]],
+      ['FROM `proj.state.export_state`', [
+        // `fakeBigQuery` stands in for the query result, not the SQL — so this
+        // is the shape `IFNULL(tier, 'hourly')` produces for a pre-tier-split
+        // row (a real NULL `tier` column), not the NULL itself.
+        { period_start: '2026-03-01', tier: 'hourly', watermark: { value: '2026-03-15T00:00:00Z' } },
+      ]],
+    ]);
+    const { pendingExports } = createExporter(CONFIG, { bigquery });
+    const pending = await pendingExports();
+
+    // The legacy row satisfies the HOURLY watermark (already caught up) but
+    // says nothing about daily — daily for 2026-03 must still be pending.
+    expect(pending).toEqual([
+      { tier: 'daily', periodLabel: '2026-03', periodStart: '2026-03-01', watermark: '2026-03-15T00:00:00Z' },
+    ]);
+
+    // And the query text itself: `fakeBigQuery` never runs real SQL, so the
+    // behavioural assertion above alone would not catch a regression back to
+    // `IFNULL(tier, 'daily')` — it only proves the JS-side keying is correct
+    // once the right tier value arrives. This proves the query asks for it.
+    const stateQuery = bigquery.queries.find(q => q.includes('FROM `proj.state.export_state`'));
+    expect(stateQuery).toContain(`IFNULL(tier, 'hourly')`);
+  });
+
+  it('treats an up-to-date daily watermark as caught up once tagged', async () => {
+    const bigquery = fakeBigQuery([
+      ['FROM `proj.ds.tbl`', [
+        { period_label: '2026-03', period_start: '2026-03-01', watermark: { value: '2026-03-15T00:00:00Z' } },
+      ]],
+      ['FROM `proj.state.export_state`', [
+        { period_start: '2026-03-01', tier: 'daily', watermark: { value: '2026-03-15T00:00:00Z' } },
+        { period_start: '2026-03-01', tier: 'hourly', watermark: { value: '2026-03-15T00:00:00Z' } },
+      ]],
+    ]);
+    const { pendingExports } = createExporter(CONFIG, { bigquery });
+    expect(await pendingExports()).toEqual([]);
+  });
+
+  it('backfills a newly-added tier for a period the other tier already published', async () => {
+    const bigquery = fakeBigQuery([
+      ['FROM `proj.ds.tbl`', [
+        { period_label: '2026-03', period_start: '2026-03-01', watermark: { value: '2026-03-15T00:00:00Z' } },
+      ]],
+      ['FROM `proj.state.export_state`', [
+        { period_start: '2026-03-01', tier: 'daily', watermark: { value: '2026-03-15T00:00:00Z' } },
+      ]],
+    ]);
+    const { pendingExports } = createExporter(CONFIG, { bigquery });
+    expect(await pendingExports()).toEqual([
+      { tier: 'hourly', periodLabel: '2026-03', periodStart: '2026-03-01', watermark: '2026-03-15T00:00:00Z' },
+    ]);
   });
 });

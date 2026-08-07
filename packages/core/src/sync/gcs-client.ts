@@ -108,7 +108,14 @@ export function isGcloudDownloadFailure(err: unknown): boolean {
     msg.includes('Connection reset') ||
     msg.includes('Could not reach') ||
     msg.includes('ServiceUnavailable') ||
-    msg.includes('503')
+    // A bare `includes('503')` matched any three digits anywhere in the
+    // captured stderr. BigQuery names its shards with twelve zero-padded
+    // digits, so a genuine 403 naming `shard-000000000503.parquet` — or a
+    // gcloud traceback's `line 503,` — was reported as an expired session,
+    // sending the user to re-authenticate for a permissions problem that
+    // re-authenticating cannot fix. Require the status code as its own token
+    // AND unavailability wording beside it.
+    (/\b503\b/.test(msg) && /unavailable|backend error|try again/i.test(msg))
   );
 }
 

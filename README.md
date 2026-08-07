@@ -156,7 +156,7 @@ GCP's billing data reaches CostGoblin through its native **FOCUS BigQuery export
 
 [**scripts/gcp-focus-exporter**](scripts/gcp-focus-exporter/README.md) covers the whole path: enabling the export, deploying the job (Cloud Shell, local, or copy-paste), and the `costgoblin.yaml` entry that points the app at the result.
 
-> The setup wizard is AWS-only for now, so a GCP provider is added by editing `costgoblin.yaml` — use **Data Management → Generate config templates & open folder**, which scaffolds a template containing a commented-out GCP block.
+> On first run, pick **Google Cloud** on the setup screen: it writes a GCP-shaped `costgoblin.yaml` and opens the folder so you can fill in your bucket. To add GCP to a workspace that already has an AWS provider, edit `costgoblin.yaml` directly — the exporter's README has the block to paste.
 
 ## Features
 

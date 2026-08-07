@@ -35,23 +35,31 @@ class MockChildProcess extends EventEmitter {
 /** Write a BigQuery-export-shaped shard where the fake `gcloud` would have
  *  put one, so the canonicalizer downstream has real Parquet to read. */
 async function writeBqShard(dir: string, rows: number): Promise<void> {
+  // Closed in the `finally` below. A DuckDB instance is a native engine with
+  // its own buffer pool; this helper runs on most cases in the file, so
+  // leaking one per call left ~10 resident for the life of the vitest worker.
   const instance = await DuckDBInstance.create();
   const conn = await instance.connect();
-  await mkdir(dir, { recursive: true });
-  await conn.run(`COPY (
-    SELECT
-      TIMESTAMPTZ '2026-01-15 08:00:00+00' AS ChargePeriodStart,
-      'proj-a' AS SubAccountId, 'Project A' AS SubAccountName,
-      CAST(1.5 AS DECIMAL(38,9)) AS BilledCost, CAST(1.5 AS DECIMAL(38,9)) AS EffectiveCost,
-      CAST(3.0 AS DECIMAL(38,9)) AS ListCost, CAST(1.5 AS DECIMAL(38,9)) AS ContractedCost,
-      'Compute Engine' AS ServiceName, 'Compute' AS ServiceCategory,
-      'europe-west1' AS RegionId, '//compute/x' AS ResourceId,
-      'Usage' AS ChargeCategory, 'Standard' AS PricingCategory,
-      'desc' AS ChargeDescription, CAST(1 AS DECIMAL(38,9)) AS ConsumedQuantity,
-      [{'Key': 'team', 'Value': 'platform'}] AS Tags,
-      'compute.googleapis.com' AS x_ServiceId
-    FROM range(${String(rows)})
-  ) TO '${join(dir, 'shard-000000000000.parquet')}' (FORMAT PARQUET)`);
+  try {
+    await mkdir(dir, { recursive: true });
+    await conn.run(`COPY (
+      SELECT
+        TIMESTAMPTZ '2026-01-15 08:00:00+00' AS ChargePeriodStart,
+        'proj-a' AS SubAccountId, 'Project A' AS SubAccountName,
+        CAST(1.5 AS DECIMAL(38,9)) AS BilledCost, CAST(1.5 AS DECIMAL(38,9)) AS EffectiveCost,
+        CAST(3.0 AS DECIMAL(38,9)) AS ListCost, CAST(1.5 AS DECIMAL(38,9)) AS ContractedCost,
+        'Compute Engine' AS ServiceName, 'Compute' AS ServiceCategory,
+        'europe-west1' AS RegionId, '//compute/x' AS ResourceId,
+        'Usage' AS ChargeCategory, 'Standard' AS PricingCategory,
+        'desc' AS ChargeDescription, CAST(1 AS DECIMAL(38,9)) AS ConsumedQuantity,
+        [{'Key': 'team', 'Value': 'platform'}] AS Tags,
+        'compute.googleapis.com' AS x_ServiceId
+      FROM range(${String(rows)})
+    ) TO '${join(dir, 'shard-000000000000.parquet')}' (FORMAT PARQUET)`);
+  } finally {
+    conn.disconnectSync();
+    instance.closeSync();
+  }
 }
 
 describe('syncGcpSelectedFiles', () => {
@@ -164,6 +172,32 @@ describe('syncGcpSelectedFiles', () => {
     expect(observedArgv).toContain('--delete-unmatched-destination-objects');
   });
 
+  it('only records etags for files under the synced prefix, not the whole period group', async () => {
+    // `extractPeriod` matches `billing_period=YYYY-MM` anywhere in a key, so a
+    // provider pointed one level too high (`gs://b/focus` instead of
+    // `gs://b/focus/daily`) groups the daily AND hourly trees under one
+    // period. rsync mirrors only the FIRST file's prefix — but etags used to
+    // be written for every file in the group, so the un-downloaded half was
+    // marked synced. The next inventory read it as up to date forever.
+    nextProcess(dest => writeBqShard(dest, 5));
+
+    const result = await syncGcpSelectedFiles({
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
+      files: [
+        file('focus/daily/billing_period=2026-01/shard-000000000000.parquet', 'crc-daily'),
+        file('focus/hourly/billing_period=2026-01/shard-000000000000.parquet', 'crc-hourly'),
+      ],
+    });
+
+    // Only the one file under the synced prefix counts.
+    expect(result.filesDownloaded).toBe(1);
+
+    const etags: unknown = JSON.parse(await readFile(etagPath(), 'utf-8'));
+    expect(etags).toEqual({
+      '2026-01': { 'focus/daily/billing_period=2026-01/shard-000000000000.parquet': 'crc-daily' },
+    });
+  });
+
   it('runs gcloud as the impersonated service account when one is configured', async () => {
     // ADC impersonation covers the listing SDK but NOT the CLI, which uses
     // gcloud's own signed-in identity. Without this flag the two halves of a
@@ -213,18 +247,40 @@ describe('syncGcpSelectedFiles', () => {
     await expect(readdir(stagingRoot)).resolves.toEqual([]);
   });
 
-  it('skips a period whose key is not under a billing_period folder, instead of mirroring the bucket', async () => {
+  it('fails loudly when no period is under a billing_period folder, instead of mirroring the bucket', async () => {
     // `extractPeriod` matches `billing_period=2026-01` anywhere in the key, but
     // `extractPeriodPrefix` needs a trailing slash and returns '' without one.
     // The source would then collapse to `gs://focus-export/` and rsync would
     // pull the WHOLE bucket into this one period's staging dir.
-    const result = await syncGcpSelectedFiles({
+    //
+    // Skipping is right; returning NORMALLY was not. The caller stamps the
+    // tier `completed` with a fresh `lastSync` on a resolved promise, so the
+    // UI read "synced just now" while the inventory still said `missing` and
+    // auto-sync repeated the identical no-op every interval, forever.
+    await expect(syncGcpSelectedFiles({
       bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/billing_period=2026-01_shard0.parquet', 'crc-1')],
-    });
+    })).rejects.toThrow(/No GCP period could be synced/);
 
     expect(mockSpawn).not.toHaveBeenCalled();
-    expect(result.filesDownloaded).toBe(0);
+    await expect(readdir(rawPeriodDir('2026-01'))).rejects.toThrow();
+  });
+
+  it('syncs the good periods and only warns when SOME have an odd layout', async () => {
+    // A partial mismatch must not fail the whole request — the periods that
+    // are laid out correctly still install.
+    nextProcess(dest => writeBqShard(dest, 4));
+
+    const result = await syncGcpSelectedFiles({
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
+      files: [
+        file('focus/billing_period=2026-01_shard0.parquet', 'crc-bad'),
+        file('focus/billing_period=2026-02/shard-000000000000.parquet', 'crc-good'),
+      ],
+    });
+
+    expect(result.rowsProcessed).toBe(4);
+    expect(await readdir(rawPeriodDir('2026-02'))).toEqual(['part-0.parquet']);
     await expect(readdir(rawPeriodDir('2026-01'))).rejects.toThrow();
   });
 

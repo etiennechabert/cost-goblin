@@ -28,13 +28,27 @@ const AWS: CliLoginVariant = {
   busyLabel: 'Opening SSO Login…',
 };
 
-const GCLOUD: CliLoginVariant = {
+const GCLOUD_BASE = {
   notFoundMarker: 'GCLOUD_CLI_NOT_FOUND',
   cliName: 'Google Cloud CLI',
   installUrl: 'https://cloud.google.com/sdk/docs/install',
   installLabel: 'Install the gcloud CLI',
+} as const;
+
+/** Application Default Credentials — the store the listing SDK reads. */
+const GCLOUD_ADC: CliLoginVariant = {
+  ...GCLOUD_BASE,
   idleLabel: 'Open Google Sign-in',
   busyLabel: 'Opening Google Sign-in…',
+};
+
+/** The gcloud CLI's own active account — the store `gcloud storage rsync`
+ *  runs as. Labelled distinctly because re-running the other one cannot fix
+ *  it, and a user who has just tried that needs to see this is different. */
+const GCLOUD_CLI: CliLoginVariant = {
+  ...GCLOUD_BASE,
+  idleLabel: 'Sign in the gcloud CLI',
+  busyLabel: 'Opening gcloud sign-in…',
 };
 
 /** The shared button. The two clouds differ only in which API method they
@@ -110,12 +124,29 @@ export function SsoLoginButton({ profile, hint = DEFAULT_HINT }: Readonly<{ prof
   return <CliLoginButton variant={AWS} start={() => api.ssoLogin(profile)} hint={hint} />;
 }
 
-/** Re-establishes GCP Application Default Credentials.
+/** Signs one of GCP's two credential stores back in.
  *
- *  Takes no profile: ADC is a single machine-wide credential, unlike an AWS
- *  profile — which is why it goes through its own `gcloudLogin()` API method
- *  rather than reusing `ssoLogin(profile)`. */
-export function GcloudLoginButton({ hint = DEFAULT_HINT }: Readonly<{ hint?: string }> = {}) {
+ *  `mode: 'adc'` (the default) re-establishes Application Default Credentials,
+ *  which the listing SDK reads. `mode: 'cli'` signs the gcloud CLI itself in,
+ *  which is what `gcloud storage rsync` runs as. They are NOT interchangeable
+ *  — a stale CLI account is unfixable by re-running ADC, so offering only the
+ *  ADC button for that error sent the user round a loop that never terminated.
+ *
+ *  Takes no profile: both are machine-wide, unlike an AWS profile — which is
+ *  why this goes through its own API method rather than `ssoLogin(profile)`.
+ *  `providerName` names the provider whose failure raised the button, so ADC
+ *  is minted with that provider's impersonation rather than another's. */
+export function GcloudLoginButton({ mode = 'adc', providerName, hint = DEFAULT_HINT }: Readonly<{
+  mode?: 'adc' | 'cli';
+  providerName?: string;
+  hint?: string;
+}> = {}) {
   const api = useCostApi();
-  return <CliLoginButton variant={GCLOUD} start={() => api.gcloudLogin()} hint={hint} />;
+  return (
+    <CliLoginButton
+      variant={mode === 'cli' ? GCLOUD_CLI : GCLOUD_ADC}
+      start={() => api.gcloudLogin(mode, providerName)}
+      hint={hint}
+    />
+  );
 }

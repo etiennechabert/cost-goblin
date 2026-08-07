@@ -17,6 +17,12 @@ providers:
       hourly:
         bucket: s3://test-cur-bucket/hourly/
         retentionDays: 30
+      # Mirrors the baseline fixture. Without it the e2e's "AWS has a Cost
+      # Optimization panel, GCP does not" assertion passed against an
+      # unconfigured placeholder and proved nothing.
+      costOptimization:
+        bucket: s3://test-cur-bucket/cost-optimization/
+        retentionDays: 90
       intervalMinutes: 60
 
   - name: gcp-main

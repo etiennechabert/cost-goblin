@@ -118,9 +118,14 @@ export function loadConfig(env = process.env) {
     focusTable: checked(required('FOCUS_TABLE', env), TABLE_REF, 'FOCUS_TABLE'),
     stateTable: checked(required('STATE_TABLE', env), TABLE_REF, 'STATE_TABLE'),
     bucketName: checked(required('BUCKET', env), BUCKET_NAME, 'BUCKET'),
-    prefix: checked((env.PREFIX ?? 'focus').replace(/^\/+|\/+$/g, ''), PREFIX_PATTERN, 'PREFIX'),
+    prefix: checked(((env.PREFIX ?? '').trim() || 'focus').replace(/^\/+|\/+$/g, ''), PREFIX_PATTERN, 'PREFIX'),
     tiers: parseTiers(env.TIERS),
-    location: env.BQ_LOCATION ?? 'EU',
+    // `||`, not `??`: container env vars are routinely SET BUT EMPTY, and an
+    // empty BQ_LOCATION reaches every query as `location: ''` — an EU dataset
+    // then fails with "not found in location US" and nothing points at the
+    // blank variable. Same hazard for PREFIX, which would produce a leading
+    // slash and an unnamed top-level GCS folder.
+    location: (env.BQ_LOCATION ?? '').trim() || 'EU',
     dryRun: env.DRY_RUN === '1',
   });
 }
@@ -318,8 +323,12 @@ export function createExporter(config, deps = {}) {
         watermark TIMESTAMP NOT NULL
       )`);
     // Migrates a watermark table written before the tier split. Nullable, and
-    // read back through IFNULL(tier, 'daily'), so the pre-tier rows keep
-    // meaning what they meant: the daily tier is already published.
+    // read back through IFNULL(tier, 'hourly') below: `scheduled-query.sql`,
+    // the standalone script this job supersedes, publishes only the hourly
+    // tier — so a table it created holds hourly watermarks, not daily ones.
+    // Defaulting to 'daily' here would have misread a closed month's hourly
+    // progress as the daily tier's, permanently skipping that month's daily
+    // export (a closed month gains no new x_ExportTime to trip the mismatch).
     await query(`ALTER TABLE \`${stateTable}\` ADD COLUMN IF NOT EXISTS tier STRING`);
   }
 
@@ -367,7 +376,7 @@ export function createExporter(config, deps = {}) {
 
     const state = await query(
       `SELECT FORMAT_DATE('%Y-%m-%d', billing_period) AS period_start,
-              IFNULL(tier, 'daily') AS tier,
+              IFNULL(tier, 'hourly') AS tier,
               watermark
        FROM \`${stateTable}\``);
     const published = new Map(

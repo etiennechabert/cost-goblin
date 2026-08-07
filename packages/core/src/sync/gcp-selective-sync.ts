@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { logger } from '../logger/logger.js';
 import type { ProviderName } from '../types/branded.js';
 import { canonicalizeGcpPeriod } from './gcp-canonicalize.js';
@@ -27,10 +28,13 @@ import { extractPeriodPrefix, getRawDirPrefix, groupByPeriod, saveEtags } from '
 
 let cachedGcloudPath: string | null = null;
 
-function findGcloudCli(): string {
-  if (cachedGcloudPath !== null) return cachedGcloudPath;
-
-  const candidates = process.platform === 'win32'
+/** Absolute paths the CLI is installed to, most-specific first. Exported so
+ *  the desktop sign-in handler augments PATH from the SAME list the sync path
+ *  probes — two hand-written copies had already drifted, the handler's
+ *  omitting every Windows location, so sync found gcloud and the re-auth
+ *  button did not. */
+export function gcloudCliCandidates(): string[] {
+  return process.platform === 'win32'
     ? [
         join(process.env['PROGRAMFILES'] ?? String.raw`C:\Program Files`, 'Google', 'Cloud SDK', 'google-cloud-sdk', 'bin', 'gcloud.cmd'),
         join(process.env['LOCALAPPDATA'] ?? '', 'Google', 'Cloud SDK', 'google-cloud-sdk', 'bin', 'gcloud.cmd'),
@@ -42,8 +46,28 @@ function findGcloudCli(): string {
         '/opt/local/bin/gcloud',
         join(homedir(), 'google-cloud-sdk', 'bin', 'gcloud'),
       ];
+}
 
-  for (const p of candidates) {
+/** The directories of `gcloudCliCandidates`, for PATH augmentation. */
+export function gcloudSearchPaths(): string[] {
+  return [...new Set(gcloudCliCandidates().map(p => dirname(p)))];
+}
+
+/** Whether an actual gcloud executable was located on disk.
+ *
+ *  Distinct from `findGcloudCli` because that falls back to the bare name so
+ *  a POSIX PATH lookup can still succeed. On Windows the binary is a `.cmd`,
+ *  which cannot be spawned without a shell (Node CVE-2024-27980) — and a shell
+ *  starts successfully whether or not gcloud exists, so ENOENT never fires
+ *  there. Callers that need to report "the CLI is not installed" must ask
+ *  this before spawning rather than wait for an error that cannot arrive. */
+export function gcloudCliFound(): boolean {
+  return gcloudCliCandidates().some(p => p.length > 0 && existsSync(p));
+}
+
+export function findGcloudCli(): string {
+  if (cachedGcloudPath !== null) return cachedGcloudPath;
+  for (const p of gcloudCliCandidates()) {
     if (p.length > 0 && existsSync(p)) { cachedGcloudPath = p; return p; }
   }
   cachedGcloudPath = 'gcloud';
@@ -160,14 +184,20 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
       { stdio: ['ignore', 'pipe', 'pipe'], env, shell: useShell },
     );
 
+    const onAbort = (): void => { proc.kill(); };
     if (options.signal !== undefined) {
       if (options.signal.aborted) {
         proc.kill();
         reject(new Error('Download cancelled'));
         return;
       }
-      options.signal.addEventListener('abort', () => { proc.kill(); }, { once: true });
+      options.signal.addEventListener('abort', onAbort, { once: true });
     }
+    // `{ once: true }` fires once; it does NOT detach on normal completion.
+    // One AbortSignal covers a whole sync, so a 24-month backfill left 24 dead
+    // listeners on it — each pinning a finished ChildProcess and its two piped
+    // streams — and Node warns about a leak from the 11th period on.
+    const detachAbort = (): void => { options.signal?.removeEventListener('abort', onAbort); };
 
     /** The tail of stderr with the progress feed stripped — see
      *  `isProgressNoise`. Bounded so a run that fails after a long transfer
@@ -175,24 +205,42 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
     const stderrLines: string[] = [];
     const MAX_STDERR_LINES = 40;
 
-    const forward = (data: Buffer, capture: boolean): void => {
-      for (const line of data.toString().split('\n')) {
-        const trimmed = line.trim();
-        if (trimmed.length === 0) continue;
-        options.onLine?.(trimmed);
-        if (capture && !isProgressNoise(trimmed)) {
-          stderrLines.push(trimmed);
-          if (stderrLines.length > MAX_STDERR_LINES) stderrLines.shift();
+    // A chunk boundary can fall anywhere, including mid-line and mid-UTF-8.
+    // Splitting each chunk independently delivered `$ gcloud auth lo` + `gin`
+    // as two lines, so the credential classifiers — which match on whole
+    // phrases — saw neither, and the one failure with a one-click remedy was
+    // reported as a bare exit code. StringDecoder holds partial code points;
+    // the trailing fragment is carried to the next chunk.
+    const makeSink = (capture: boolean): ((data: Buffer) => void) => {
+      const decoder = new StringDecoder('utf8');
+      let carry = '';
+      return (data: Buffer): void => {
+        const parts = (carry + decoder.write(data)).split('\n');
+        carry = parts.pop() ?? '';
+        for (const line of parts) {
+          const trimmed = line.trim();
+          if (trimmed.length === 0) continue;
+          options.onLine?.(trimmed);
+          if (capture && !isProgressNoise(trimmed)) {
+            stderrLines.push(trimmed);
+            if (stderrLines.length > MAX_STDERR_LINES) stderrLines.shift();
+          }
         }
-      }
+      };
     };
 
-    proc.stdout.on('data', (data: Buffer) => { forward(data, false); });
+    proc.stdout.on('data', makeSink(false));
     // `gcloud storage` writes its progress to stderr, so stderr is both the
     // progress feed and the failure text.
-    proc.stderr.on('data', (data: Buffer) => { forward(data, true); });
+    const stderrSink = makeSink(true);
+    proc.stderr.on('data', stderrSink);
+    // gcloud's last line often has no trailing newline, so the final fragment
+    // would otherwise be dropped — including, on a short failure, the entire
+    // error. Flush it by feeding a newline once the stream ends.
+    proc.stderr.on('end', () => { stderrSink(Buffer.from('\n')); });
 
     proc.on('error', (err: Error) => {
+      detachAbort();
       if (err.message.includes('ENOENT')) {
         reject(new Error('Google Cloud CLI not found — install it with: brew install --cask google-cloud-sdk'));
       } else {
@@ -201,6 +249,7 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
     });
 
     proc.on('close', (code, signal) => {
+      detachAbort();
       if (signal === 'SIGTERM' || options.signal?.aborted) {
         reject(new Error('Download cancelled'));
       } else if (code === 0) {
@@ -289,6 +338,13 @@ export async function syncGcpSelectedFiles(
   let totalFilesDownloaded = 0;
   let periodsDone = 0;
   let totalRows = 0;
+  /** Periods rejected by `isSafePeriodPrefix`. Collected rather than only
+   *  logged: a run where every period was skipped used to return normally and
+   *  report 100%, so the caller stamped the tier `completed` with a fresh
+   *  `lastSync` while nothing had been installed — the UI said "synced just
+   *  now", the inventory still said `missing`, and auto-sync repeated the
+   *  identical no-op every interval forever. */
+  const skipped: string[] = [];
 
   for (const [period, periodFiles] of periodList) {
     if (options.signal?.aborted) break;
@@ -299,12 +355,28 @@ export async function syncGcpSelectedFiles(
     const periodPrefix = extractPeriodPrefix(firstFile.key);
     if (!isSafePeriodPrefix(periodPrefix)) {
       logger.warn(`Skipping GCP period ${period}: ${firstFile.key} is not under a billing_period=YYYY-MM/ folder`);
+      skipped.push(period);
       continue;
     }
     const source = `gs://${gcsPath.bucket}/${periodPrefix}`;
+    // rsync mirrors ONE prefix — the first file's. Etags must therefore record
+    // only the files under that prefix: `extractPeriod` matches
+    // `billing_period=YYYY-MM` anywhere in a key, so pointing the provider one
+    // level too high (at `gs://b/focus` rather than `gs://b/focus/daily`) puts
+    // the daily AND hourly trees in one group. Recording all of them marked the
+    // un-downloaded half as up to date permanently, and inflated the file and
+    // byte totals with data that never arrived.
+    const syncedFiles = periodFiles.filter(f => f.key.startsWith(periodPrefix));
+    const strayFiles = periodFiles.length - syncedFiles.length;
+    if (strayFiles > 0) {
+      logger.warn(
+        `GCP period ${period}: ${String(strayFiles)} file(s) sit outside ${periodPrefix} and were not synced — `
+        + `the provider's bucket path is probably above the tier folder the exporter writes to`,
+      );
+    }
     const stagingDir = stagingDirFor(dataDir, providerName, period);
-    const periodBytes = periodFiles.reduce((sum, f) => sum + f.size, 0);
-    const sizeByKey = new Map(periodFiles.map(f => [f.key, f.size]));
+    const periodBytes = syncedFiles.reduce((sum, f) => sum + f.size, 0);
+    const sizeByKey = new Map(syncedFiles.map(f => [f.key, f.size]));
     // The file gcloud most recently announced; it is in flight until the next
     // announcement (or until the process exits cleanly).
     let inFlightKey: string | null = null;
@@ -316,7 +388,7 @@ export async function syncGcpSelectedFiles(
      *  run the progress bar backwards. */
     let scrapedBytes = 0;
 
-    logger.info(`Processing GCP period ${period}: ${String(periodFiles.length)} shard(s)`);
+    logger.info(`Processing GCP period ${period}: ${String(syncedFiles.length)} shard(s)`);
 
     // A staging dir left behind by an interrupted run would otherwise be
     // reconciled by rsync against the current listing, which is *usually*
@@ -365,9 +437,9 @@ export async function syncGcpSelectedFiles(
       // A clean exit means every file in the period landed, whatever the
       // running count reached — the last announced file has no successor to
       // imply its completion. Snap to the period's real totals.
-      filesBefore = Math.min(filesBefore + periodFiles.length, totalFiles);
+      filesBefore = Math.min(filesBefore + syncedFiles.length, totalFiles);
       bytesBefore = Math.min(bytesBefore + periodBytes, bytesTotal);
-      totalFilesDownloaded += periodFiles.length;
+      totalFilesDownloaded += syncedFiles.length;
 
       // Reuses the existing worker/UI phase token rather than adding one:
       // "repartitioning" is already rendered as the post-download processing
@@ -387,7 +459,7 @@ export async function syncGcpSelectedFiles(
         tier,
       });
 
-      await saveEtags(dataDir, providerName, tier, period, periodFiles);
+      await saveEtags(dataDir, providerName, tier, period, syncedFiles);
     } finally {
       // Staging is pure scratch; leaving it behind would double the on-disk
       // footprint of every synced month.
@@ -395,9 +467,23 @@ export async function syncGcpSelectedFiles(
     }
   }
 
+  // Nothing installable in the whole request: fail loudly instead of
+  // reporting a successful sync of zero files. The bucket layout is wrong, and
+  // silence here is what let the app claim to be up to date indefinitely.
+  if (skipped.length > 0 && skipped.length === periodList.length) {
+    throw new Error(
+      `No GCP period could be synced: ${String(skipped.length)} period(s) are not under a `
+      + `billing_period=YYYY-MM/ folder (${skipped.join(', ')}). Point the provider at the `
+      + `bucket prefix the exporter writes to, including its tier folder.`,
+    );
+  }
+  if (skipped.length > 0) {
+    logger.warn(`GCP sync skipped ${String(skipped.length)} period(s) with an unexpected layout: ${skipped.join(', ')}`);
+  }
+
   onProgress?.({ phase: 'done', filesTotal: totalFiles, filesDone: totalFiles, bytesTotal, bytesDone: bytesTotal });
 
-  logger.info(`GCP sync complete: ${String(totalFilesDownloaded)} shard(s) across ${String(periodList.length)} period(s), ${String(totalRows)} rows`);
+  logger.info(`GCP sync complete: ${String(totalFilesDownloaded)} shard(s) across ${String(periodList.length - skipped.length)} period(s), ${String(totalRows)} rows`);
   return { filesDownloaded: totalFilesDownloaded, rowsProcessed: totalRows };
 }
 

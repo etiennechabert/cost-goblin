@@ -111,6 +111,15 @@ function validateGcsSyncTier(raw: unknown, context: string): SyncTierConfig {
   };
 }
 
+/** Whether two tier locations resolve to the same folder or one inside the
+ *  other. Compared on normalized prefixes so a trailing slash, or a parent
+ *  path, is caught as well as an exact match. */
+function tiersOverlap(a: string, b: string): boolean {
+  const norm = (v: string): string => `${v.replace(/^gs:\/\//, '').replace(/\/+$/, '')}/`;
+  const [x, y] = [norm(a), norm(b)];
+  return x === y || x.startsWith(y) || y.startsWith(x);
+}
+
 /** GCP syncs `daily` and, optionally, `hourly` — both published by
  *  `scripts/gcp-focus-exporter` from the one upstream table.
  *
@@ -124,11 +133,16 @@ function validateGcpSync(raw: unknown): GcpSyncConfig {
   if (raw['costOptimization'] !== undefined) {
     throw new ConfigValidationError(`sync.costOptimization is not supported for a 'gcp' provider — it has no Cost Optimization Hub analogue`);
   }
-  if (hourly !== undefined && hourly.bucket === daily.bucket) {
+  if (hourly !== undefined && tiersOverlap(String(daily.bucket), String(hourly.bucket))) {
     // Both tiers reading one folder would sync the same rows into
     // `raw/daily-*` AND `raw/hourly-*`, so the intraday views would show the
     // daily grain and the two tiers would fight over retention.
-    throw new ConfigValidationError(`sync.hourly.bucket must differ from sync.daily.bucket — the exporter publishes each tier to its own folder`);
+    //
+    // CONTAINMENT, not just equality: the exporter writes `<prefix>/daily/` and
+    // `<prefix>/hourly/`, so `daily: gs://b/focus` + `hourly: gs://b/focus/hourly`
+    // — which is what following the deploy script's closing line produces —
+    // makes the daily listing match every hourly shard too.
+    throw new ConfigValidationError(`sync.hourly.bucket must not overlap sync.daily.bucket — the exporter publishes each tier to its own folder`);
   }
   assertNumber(raw['intervalMinutes'], 'sync.intervalMinutes');
   return {

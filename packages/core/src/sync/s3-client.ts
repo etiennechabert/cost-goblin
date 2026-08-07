@@ -68,7 +68,31 @@ export function isCredentialError(err: unknown): boolean {
     msg.includes('ExpiredToken') ||
     msg.includes('InvalidGrantException') ||
     msg.includes('Unable to locate credentials') ||
-    msg.includes('aws sso login')
+    msg.includes('aws sso login') ||
+    // Catch-all for the wordings not enumerated above — botocore alone emits
+    // "Partial credentials found in env, missing: …" and "Error when
+    // retrieving credentials from custom-process". Losing those to the
+    // narrowing above meant `data:inventory` fell through to the LOCAL
+    // inventory and presented stale on-disk periods as a successful sync,
+    // with no error and no sign-in button.
+    //
+    // Guarded against the GCP arm rather than dropped: this classifier and
+    // `isGcpCredentialError` share one error channel, and Google's "Could not
+    // load the default credentials" would otherwise be rewritten into
+    // "run aws sso login --profile undefined".
+    (/credential/i.test(msg) && !mentionsGcp(msg))
+  );
+}
+
+/** Whether a message belongs to the GCP arm. Kept next to `isCredentialError`
+ *  because it exists only to stop the AWS catch-all above from claiming a GCP
+ *  failure — the two classifiers are fed from the same channel. */
+function mentionsGcp(msg: string): boolean {
+  return (
+    msg.includes('default credentials') ||
+    msg.includes('gcloud') ||
+    msg.includes('google') ||
+    msg.includes('Google')
   );
 }
 

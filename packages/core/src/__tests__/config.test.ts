@@ -277,7 +277,29 @@ describe('validateConfig — gcp provider arm', () => {
         hourly: { bucket: 'gs://b/focus', retentionDays: 14 },
         intervalMinutes: 60,
       },
-    }))).toThrow(/must differ/);
+    }))).toThrow(/must not overlap/);
+  });
+
+  it('rejects an hourly bucket nested inside the daily one', () => {
+    // Exact equality is not enough: the exporter writes <prefix>/daily/ and
+    // <prefix>/hourly/, so a daily bucket left at the bare prefix — what
+    // following deploy.sh's closing line used to produce — would still make
+    // the daily listing match every hourly shard.
+    expect(() => validateConfig(gcp({
+      sync: {
+        daily: { bucket: 'gs://b/focus', retentionDays: 365 },
+        hourly: { bucket: 'gs://b/focus/hourly', retentionDays: 14 },
+        intervalMinutes: 60,
+      },
+    }))).toThrow(/must not overlap/);
+    // A trailing-slash variant of the same daily bucket is the same overlap.
+    expect(() => validateConfig(gcp({
+      sync: {
+        daily: { bucket: 'gs://b/focus/daily', retentionDays: 365 },
+        hourly: { bucket: 'gs://b/focus/daily/', retentionDays: 14 },
+        intervalMinutes: 60,
+      },
+    }))).toThrow(/must not overlap/);
   });
 
   it('rejects costOptimization, which has no GCP analogue, instead of ignoring it', () => {
