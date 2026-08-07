@@ -16,9 +16,13 @@ const DEFAULT_DATA_DIR = join(homedir(), 'Library', 'Application Support', '@cos
 export const DEFAULT_CONFIG_DIR = join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config');
 export const FIXTURE_DATA_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'synthetic');
 export const FIXTURE_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'config');
+/** Same synthetic data tree, but a config listing BOTH provider arms. The
+ *  baseline config above names only `aws-main`, so the `gcp-main/` directory in
+ *  the tree is invisible to every other suite's totals. */
+export const FIXTURE_MULTI_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'config-multi');
 
-export function launchApp(overrides?: { configDir?: string }): Promise<ElectronApplication> {
-  const dataDir = process.env['COSTGOBLIN_DATA_DIR'] ?? DEFAULT_DATA_DIR;
+export function launchApp(overrides?: { configDir?: string; dataDir?: string }): Promise<ElectronApplication> {
+  const dataDir = overrides?.dataDir ?? process.env['COSTGOBLIN_DATA_DIR'] ?? DEFAULT_DATA_DIR;
   const configDir = overrides?.configDir ?? process.env['COSTGOBLIN_CONFIG_DIR'] ?? DEFAULT_CONFIG_DIR;
   return _electron.launch({
     args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],

@@ -1,0 +1,36 @@
+# Mixed AWS + GCP workspace, for the e2e that has to prove the app boots and
+# queries with both provider arms configured at once.
+#
+# Kept SEPARATE from ../config/costgoblin.yaml on purpose. That file is the
+# single-provider baseline a dozen suites assert exact totals against; adding a
+# second provider to it would move every one of those numbers and say nothing
+# about GCP. Both point at the same synthetic tree — `buildSource` globs per
+# CONFIGURED provider, so `gcp-main/` is simply invisible to the baseline.
+providers:
+  - name: aws-main
+    type: aws
+    credentialsProfile: test-profile
+    sync:
+      daily:
+        bucket: s3://test-cur-bucket/daily/
+        retentionDays: 365
+      hourly:
+        bucket: s3://test-cur-bucket/hourly/
+        retentionDays: 30
+      intervalMinutes: 60
+
+  - name: gcp-main
+    type: gcp
+    sync:
+      daily:
+        bucket: gs://test-focus-export/focus/daily/
+        retentionDays: 365
+      hourly:
+        bucket: gs://test-focus-export/focus/hourly/
+        retentionDays: 14
+      intervalMinutes: 60
+
+defaults:
+  periodDays: 30
+  costMetric: unblended_cost
+  lagDays: 1
