@@ -1,6 +1,3 @@
-import type { DimensionsConfig } from '../types/config.js';
-import { tagDimColumn } from '../types/branded.js';
-
 /**
  * Error thrown when SQL identifier validation fails.
  * Prevents SQL injection via untrusted column names or table paths.
@@ -9,139 +6,6 @@ export class SecurityError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'SecurityError';
-  }
-}
-
-/**
- * Standard column names that are always safe to reference. Includes the
- * canonical columns created in buildSource's projection and the raw
- * FOCUS 1.2 fields the projection reads.
- */
-const ALLOWED_COLUMNS = new Set([
-  // Date/time columns (computed in buildSource)
-  'usage_date',
-  'usage_hour',
-
-  // Injected at read time: which configured provider a row came from
-  // (constant column per provider branch — see buildSource).
-  'provider',
-
-  // Core identity columns
-  'account_id',
-  'account_name',
-  'region',
-  'service',
-  'service_code',
-  'service_category',
-
-  // Cost columns
-  'cost',
-  'list_cost',
-
-  // Resource and usage columns
-  'description',
-  'resource_id',
-  'usage_amount',
-  'charge_category',
-  'pricing_category',
-  'commitment_status',
-  'operation',
-  'sku_meter',
-
-  // Raw FOCUS 1.2 fields that may appear in queries
-  'ChargePeriodStart',
-  'ChargePeriodEnd',
-  'BillingPeriodStart',
-  'SubAccountId',
-  'SubAccountName',
-  'RegionId',
-  'RegionName',
-  'ServiceName',
-  'ServiceCategory',
-  'ServiceSubcategory',
-  'ChargeDescription',
-  'ChargeCategory',
-  'ChargeClass',
-  'PricingCategory',
-  'CommitmentDiscountStatus',
-  'CommitmentDiscountId',
-  'CommitmentDiscountName',
-  'CommitmentDiscountType',
-  'ConsumedQuantity',
-  'ConsumedUnit',
-  'ResourceId',
-  'ResourceName',
-  'ResourceType',
-  'BilledCost',
-  'EffectiveCost',
-  'ListCost',
-  'ContractedCost',
-  'PublisherName',
-  'InvoiceIssuerName',
-  'SkuMeter',
-  'Tags',
-  'x_Operation',
-  'x_ServiceCode',
-  'x_Discounts',
-
-  // Aggregate and computed columns that appear in CTEs
-  'entity',
-  'total_cost',
-  'current_cost',
-  'previous_cost',
-  'delta',
-  'percent_change',
-  'service_cost',
-  'has_tag',
-  'tagged_ratio',
-  'days',
-
-  // Org account columns (from org-accounts.json join)
-  'id',
-  'tags',
-]);
-
-/**
- * Build the set of valid column names from the dimensions config.
- * Includes built-in dimension fields, tag columns, and standard CUR columns.
- */
-function buildAllowedColumns(dimensions: DimensionsConfig): ReadonlySet<string> {
-  const allowed = new Set(ALLOWED_COLUMNS);
-
-  // Add built-in dimension fields
-  for (const dim of dimensions.builtIn) {
-    allowed.add(dim.field);
-    if (dim.displayField !== undefined) {
-      allowed.add(dim.displayField);
-    }
-  }
-
-  // Add tag columns (normalized tag names)
-  for (const tag of dimensions.tags) {
-    const col = tagDimColumn(tag);
-    allowed.add(col);
-    allowed.add(`fallback_${col}`);
-  }
-
-  return allowed;
-}
-
-/**
- * Validate a column name against the dimensions config allow-list.
- * Throws SecurityError if the column name is not in the allow-list.
- *
- * @param columnName - The column name to validate (e.g., 'account_id', 'tag_team')
- * @param dimensions - The dimensions config containing built-in and tag definitions
- * @throws {SecurityError} If the column name is not in the allow-list
- */
-export function validateColumnName(columnName: string, dimensions: DimensionsConfig): void {
-  const allowed = buildAllowedColumns(dimensions);
-
-  if (!allowed.has(columnName)) {
-    throw new SecurityError(
-      `Invalid column name "${columnName}" - not in dimensions config allow-list. ` +
-      `This prevents SQL injection via untrusted identifiers.`
-    );
   }
 }
 
@@ -174,6 +38,39 @@ const ALLOWED_TIERS = new Set(['daily', 'hourly', 'cost-optimization']);
  * Matches YYYY-MM where MM is 01-12.
  */
 const BILLING_PERIOD_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/**
+ * Validate a tier name before it is interpolated into a read_parquet path
+ * literal (see `buildParquetSource`). Tiers are app-chosen ('daily'/'hourly'),
+ * but the parameter travels through several exported builders, so the
+ * interpolation site enforces the allow-list rather than trusting callers.
+ * @throws {SecurityError} If the tier is not a known billing-data tier
+ */
+export function assertTier(value: string): void {
+  if (!ALLOWED_TIERS.has(value)) {
+    throw new SecurityError(
+      `Invalid tier "${value}" - must be one of: ${[...ALLOWED_TIERS].join(', ')}. ` +
+      `This prevents SQL injection via untrusted file paths.`
+    );
+  }
+}
+
+/**
+ * Validate a billing period (YYYY-MM) before it is interpolated into a
+ * read_parquet path literal (see `buildParquetSource`). Periods normally come
+ * from `computePeriodsInRange`, but `buildSource` is exported and period lists
+ * can also derive from on-disk directory names, so the interpolation site
+ * validates every entry.
+ * @throws {SecurityError} If the period is not a well-formed YYYY-MM string
+ */
+export function assertBillingPeriod(value: string): void {
+  if (!BILLING_PERIOD_PATTERN.test(value)) {
+    throw new SecurityError(
+      `Invalid billing period "${value}" - must be YYYY-MM format. ` +
+      `This prevents SQL injection via untrusted file paths.`
+    );
+  }
+}
 
 /**
  * Pattern for valid YYYY-MM-DD date strings.
@@ -213,79 +110,3 @@ export function assertHourString(value: string): void {
   }
 }
 
-/**
- * Validate a table path for Parquet file reads.
- * Accepts paths in the format: {dataDir}/{providerName}/raw/{tier}-{period}/*.parquet
- * or the wildcard format: {dataDir}/{providerName}/raw/{tier}-*\/*.parquet
- *
- * The provider segment is validated against `allowedProviders` — the
- * configured provider names, which are themselves branded/validated. A path
- * naming any other provider directory is rejected: config files are
- * git-shareable, so the allow-list is the trust boundary.
- *
- * @param tablePath - The table path to validate
- * @param allowedProviders - Configured provider names (the only valid provider segments)
- * @throws {SecurityError} If the table path does not match the expected pattern
- */
-export function validateTablePath(tablePath: string, allowedProviders: readonly string[]): void {
-  // Extract the provider, tier, and period from the path
-  // Expected formats:
-  // 1. {dataDir}/{provider}/raw/daily-2026-03/*.parquet
-  // 2. {dataDir}/{provider}/raw/daily-*\/*.parquet
-  // 3. read_parquet('{dataDir}/{provider}/raw/daily-2026-03/*.parquet')
-  // 4. read_parquet(['{path1}', '{path2}'])
-
-  // Strip read_parquet wrapper if present
-  const cleanPath = tablePath
-    .replace(/^read_parquet\s*\(\s*/, '')
-    .trimEnd()
-    .replace(/\)$/, '')
-    .trimStart()
-    .replace(/^\[/, '')
-    .replace(/\]$/, '')
-    .replace(/^['"]/, '')
-    .replace(/['"]$/, '');
-
-  // Match the provider, tier, and period pattern
-  // Pattern: {anything}/{provider}/raw/{tier}-{period}/*.parquet
-  const tierPattern = /\/([A-Za-z0-9][A-Za-z0-9_-]*)\/raw\/([a-z]+(?:-[a-z]+)*)-([^/]+)\/\*\.parquet/;
-  const match = tierPattern.exec(cleanPath);
-
-  if (match === null) {
-    throw new SecurityError(
-      `Invalid table path "${tablePath}" - must match pattern ` +
-      `"{dataDir}/{provider}/raw/{tier}-{period}/*.parquet" or "{dataDir}/{provider}/raw/{tier}-*/*.parquet". ` +
-      `This prevents SQL injection via untrusted file paths.`
-    );
-  }
-
-  const provider = match[1];
-  const tier = match[2];
-  const period = match[3];
-
-  if (provider === undefined || !allowedProviders.includes(provider)) {
-    throw new SecurityError(
-      `Invalid provider "${String(provider)}" in table path "${tablePath}" - ` +
-      `not a configured provider name. ` +
-      `This prevents SQL injection via untrusted file paths.`
-    );
-  }
-
-  // Validate tier is in allow-list
-  if (tier === undefined || !ALLOWED_TIERS.has(tier)) {
-    throw new SecurityError(
-      `Invalid tier "${String(tier)}" in table path "${tablePath}" - ` +
-      `must be one of: ${[...ALLOWED_TIERS].join(', ')}. ` +
-      `This prevents SQL injection via untrusted identifiers.`
-    );
-  }
-
-  // Validate period is either wildcard or valid YYYY-MM format
-  if (period !== '*' && (period === undefined || !BILLING_PERIOD_PATTERN.test(period))) {
-    throw new SecurityError(
-      `Invalid period "${String(period)}" in table path "${tablePath}" - ` +
-      `must be "*" or YYYY-MM format. ` +
-      `This prevents SQL injection via untrusted identifiers.`
-    );
-  }
-}
