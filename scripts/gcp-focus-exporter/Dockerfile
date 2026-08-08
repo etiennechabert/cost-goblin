@@ -1,6 +1,6 @@
 # Deliberately minimal: one dependency install, one file, no build step — what
 # you read in export-focus.mjs is exactly what runs.
-FROM node:22-slim
+FROM node:25-slim
 
 WORKDIR /app
 
