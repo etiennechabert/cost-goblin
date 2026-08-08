@@ -177,7 +177,11 @@ npm approve-scripts <pkg>   # then commit the package.json change
 ```
 Two caveats, both hit in practice:
 - `npm approve-scripts` is **workspace-unaware** and can miss a nested duplicate (we ship two `esbuild` copies). Always re-run `npm ci` afterwards and trust its error over the command's output.
-- A package can only be **version-pinned** (`pkg@1.2.3`) if its lockfile entry has a `resolved` URL — npm derives trusted identity from that URL, never from the tarball's own `package.json`. ~298 of our lockfile entries currently lack `resolved`/`integrity`, so `esbuild` is allowlisted **by bare name** (any version) rather than pinned. Regenerating the lockfile so every entry carries `resolved` + `integrity` would let us tighten that to an exact pin.
+- A package can only be **version-pinned** (`pkg@1.2.3`) if its lockfile entry has a `resolved` URL — npm derives trusted identity from that URL, never from the tarball's own `package.json`, which a malicious publisher controls. Every entry now carries `resolved` + `integrity`, so every allowlist entry is an exact pin. **Keep it that way:** if a lockfile entry ever loses those fields, its package can no longer be pinned (only allowed by bare name, i.e. any version). Check with:
+
+```bash
+node -e "const p=require('./package-lock.json').packages;const b=Object.entries(p).filter(([k,v])=>k.startsWith('node_modules/')&&!v.link&&(!v.resolved||!v.integrity));console.log(b.length?'UNVERIFIED: '+b.length:'all entries verified')"
+```
 
 ## Versioning & releases
 
