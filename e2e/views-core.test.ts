@@ -127,11 +127,10 @@ test.describe('Cost Overview', () => {
   test('renders summary card with Total Cost label', async () => {
     await expect(page.getByText('Total Cost', { exact: false }).first()).toBeVisible({ timeout: LOAD_TIMEOUT });
 
-    // Shows either a dollar amount or "—" when no data is in the current range
-    const costText = page.locator('.tabular-nums').first();
-    await expect(costText).toBeVisible();
-    const text = await costText.textContent();
-    expect(text === '—' || (text !== null && text.includes('$'))).toBe(true);
+    // Fixture data plus the pinned COSTGOBLIN_NOW clock guarantee the default
+    // range holds data — "—" or $0.00 here means the pipeline broke.
+    await expect(page.locator('.tabular-nums').first()).toBeVisible();
+    expect(await hasVisibleData(page)).toBe(true);
 
     await screenshot(page, 'overview-summary');
   });
@@ -155,9 +154,9 @@ test.describe('Cost Overview', () => {
     await selectDatePreset(page, 'Last 90 days');
     await waitForQuerySettle(page);
 
-    const costText = page.locator('.tabular-nums').first();
-    const text = await costText.textContent();
-    expect(text === '—' || (text !== null && text.includes('$'))).toBe(true);
+    // 90 days back from the pinned clock covers the whole fixture window, so
+    // the reloaded total must be a real dollar amount.
+    expect(await hasVisibleData(page)).toBe(true);
 
     // switch back
     await selectDatePreset(page, 'Last 30 days');
@@ -322,24 +321,18 @@ test.describe('Cost Overview', () => {
     }
   });
 
-  test('breakdown table renders when data is available', async () => {
+  test('breakdown table renders rows for the fixture range', async () => {
     await selectDatePreset(page, 'Last 365 days');
     await waitForQuerySettle(page);
 
+    expect(await hasVisibleData(page)).toBe(true);
     const tables = page.locator('table');
-    const tableCount = await tables.count();
+    expect(await tables.count()).toBeGreaterThan(0);
 
-    if (tableCount > 0 && await hasVisibleData(page)) {
-      const lastTable = tables.last();
-      const rows = lastTable.locator('tbody tr');
-      const rowCount = await rows.count();
-      expect(rowCount).toBeGreaterThan(0);
-
-      if (rowCount > 0) {
-        await rows.first().hover();
-        await screenshot(page, 'overview-breakdown-hover');
-      }
-    }
+    const rows = tables.last().locator('tbody tr');
+    expect(await rows.count()).toBeGreaterThan(0);
+    await rows.first().hover();
+    await screenshot(page, 'overview-breakdown-hover');
 
     await selectDatePreset(page, 'Last 30 days');
     await waitForQuerySettle(page);
@@ -436,28 +429,18 @@ test.describe('Cost Trends', () => {
     await waitForQuerySettle(page);
   });
 
-  test('when data exists, shows item count summary and table', async () => {
-    const dataExists = await hasVisibleData(page);
-    const errorVisible = await page.locator('.text-negative').first().isVisible().catch(() => false);
+  test('shows item count summary and table', async () => {
+    // Both the current and the previous period sit inside the fixture window
+    // (pinned clock), and the previous test restored the thresholds to 0/0 —
+    // an empty or error state here is a regression, not an acceptable branch.
+    expect(await hasVisibleData(page)).toBe(true);
 
-    if (dataExists) {
-      // summary line
-      const summaryLine = page.locator('text=/\\d+ items/');
-      await expect(summaryLine.first()).toBeVisible();
+    const summaryLine = page.locator('text=/\\d+ items/');
+    await expect(summaryLine.first()).toBeVisible();
 
-      // table with columns
-      const table = page.locator('table');
-      if (await table.isVisible()) {
-        for (const col of ['Entity', 'Current', 'Previous', 'Delta', 'Change']) {
-          await expect(page.getByText(col, { exact: true }).first()).toBeVisible();
-        }
-      }
-    } else if (errorVisible) {
-      // error message is displayed gracefully (red border, readable text)
-      await screenshot(page, 'trends-error-state');
-    } else {
-      // no data, no error — "No increases above thresholds" message
-      await screenshot(page, 'trends-empty-state');
+    await expect(page.locator('table').first()).toBeVisible();
+    for (const col of ['Entity', 'Current', 'Previous', 'Delta', 'Change']) {
+      await expect(page.getByText(col, { exact: true }).first()).toBeVisible();
     }
   });
 
@@ -473,27 +456,24 @@ test.describe('Cost Trends', () => {
     }
   });
 
-  test('clicking entity in table navigates to entity detail', async () => {
+  test('clicking entity in table opens the default dashboard filtered to it', async () => {
+    // Thresholds sit at 0/0 (restored two tests up) and the fixture window is
+    // in range, so the table must offer at least one entity link.
     const entityLink = page.locator('table button.text-accent').first();
-    const exists = await entityLink.isVisible().catch(() => false);
+    await expect(entityLink).toBeVisible({ timeout: 5000 });
+    await entityLink.click();
 
-    if (exists) {
-      const entityName = await entityLink.textContent();
-      await entityLink.click();
+    // Entity click routes to the first dashboard with the entity applied as a
+    // filter (App.handleEntityClick) — the standalone Entity Detail page is no
+    // longer reachable in the app.
+    await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible({ timeout: 5000 });
+    await waitForQuerySettle(page);
+    await expect(page.getByRole('button', { name: 'Clear all' })).toBeVisible();
+    await screenshot(page, 'trends-entity-click-filtered');
 
-      // should navigate to entity detail
-      await expect(page.getByRole('button', { name: '← Back' })).toBeVisible({ timeout: 5000 });
-      if (entityName !== null) {
-        await expect(page.getByText(entityName)).toBeVisible();
-      }
-
-      await waitForQuerySettle(page);
-      await screenshot(page, 'trends-entity-detail');
-
-      // back button returns to overview (by design)
-      await page.getByRole('button', { name: '← Back' }).click();
-      await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
-    }
+    // clear the filter so later blocks start from an unfiltered overview
+    await page.getByRole('button', { name: 'Clear all' }).click();
+    await waitForQuerySettle(page);
   });
 });
 
@@ -552,38 +532,36 @@ test.describe('Missing Tags', () => {
     await waitForQuerySettle(page);
   });
 
-  test('shows summary stats, empty state, or error when data loads', async () => {
-    const hasData = await hasVisibleData(page);
-    const hasError = await page.locator('.text-negative').first().isVisible().catch(() => false);
+  test('shows the Actionable section once data loads', async () => {
+    // Min cost 0 → every untagged resource qualifies. With the pinned clock
+    // the range is inside the fixture window, so rows must appear — the old
+    // "no data is also valid" branch only ever hid the fixture-clock gap.
+    const minCostInput = page.locator('input[type="number"]');
+    await minCostInput.fill('0');
+    await waitForQuerySettle(page);
 
-    if (hasData) {
-      await expect(page.getByText('Actionable missing tags').first()).toBeVisible();
-      await expect(page.getByText('Likely not taggable').first()).toBeVisible();
-      await expect(page.getByText('Non-resource cost').first()).toBeVisible();
-    } else if (hasError) {
-      await screenshot(page, 'missing-tags-error');
-    }
-    // No data and no error is also valid (empty date range)
+    expect(await hasVisibleData(page)).toBe(true);
+    await expect(page.getByText('Actionable', { exact: false }).first()).toBeVisible();
+    await expect(page.getByText('untagged resources in taggable categories').first()).toBeVisible();
     await screenshot(page, 'missing-tags-state');
+
+    // restore the default threshold
+    await minCostInput.fill('50');
+    await waitForQuerySettle(page);
   });
 
-  test('table renders with proper columns when data exists', async () => {
+  test('table renders with proper columns', async () => {
     const table = page.locator('table');
-    const hasTable = await table.first().isVisible().catch(() => false);
+    await expect(table.first()).toBeVisible();
 
-    if (hasTable) {
-      for (const header of ['Account', 'Resource', 'Service', 'Family', 'Cost', 'Closest Owner']) {
-        await expect(page.getByText(header, { exact: true }).first()).toBeVisible();
-      }
-
-      const rows = table.first().locator('tbody tr');
-      const rowCount = await rows.count();
-      if (rowCount > 0) {
-        // hover a row
-        await rows.first().hover();
-        await screenshot(page, 'missing-tags-row-hover');
-      }
+    for (const header of ['Account', 'Resource', 'Service', 'Service Category', 'Cost', 'Fallback Team']) {
+      await expect(page.locator('th').filter({ hasText: header }).first()).toBeVisible();
     }
+
+    const rows = table.first().locator('tbody tr');
+    expect(await rows.count()).toBeGreaterThan(0);
+    await rows.first().hover();
+    await screenshot(page, 'missing-tags-row-hover');
   });
 });
 
@@ -599,42 +577,31 @@ test.describe('Findings', () => {
     await expect(page.getByText('AWS cost optimization recommendations')).toBeVisible();
   });
 
-  test('shows either savings data or empty state', async () => {
-    const hasSavings = await page.getByText('Potential Monthly Savings').isVisible().catch(() => false);
-    const hasEmpty = await page.getByText(/No cost optimization/).isVisible().catch(() => false);
-    const hasError = await page.locator('.text-negative').first().isVisible().catch(() => false);
-
-    // one of the three states must be true
-    expect(hasSavings || hasEmpty || hasError).toBe(true);
-
-    if (hasSavings) {
-      await expect(page.getByText('Recommendations', { exact: true })).toBeVisible();
-    }
+  test('shows the recommendations summary and table', async () => {
+    // The synthetic fixtures ship cost-optimization data, so the loaded state
+    // is the only acceptable one — the old tri-state check let a stale label
+    // pass as "empty state" forever.
+    await expect(page.getByText(/potential savings/).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /^All \(/ }).first()).toBeVisible();
+    await expect(page.locator('table').first()).toBeVisible();
 
     await screenshot(page, 'savings-state');
   });
 
-  test('action type filter pills work when data exists', async () => {
-    const hasSavings = await page.getByText('Potential Monthly Savings').isVisible().catch(() => false);
-    if (!hasSavings) return;
-
+  test('action type filter pills work', async () => {
     const pills = page.locator('button.rounded-full');
-    const count = await pills.count();
+    expect(await pills.count()).toBeGreaterThan(1);
 
-    if (count > 1) {
-      // click a filter pill
-      await pills.nth(1).click();
-      await screenshot(page, 'savings-filtered');
+    // click a filter pill
+    await pills.nth(1).click();
+    await screenshot(page, 'savings-filtered');
 
-      // click first pill to reset (All)
-      await pills.first().click();
-    }
+    // click first pill to reset (All)
+    await pills.first().click();
   });
 
-  test('table column headers are sortable when data exists', async () => {
-    const table = page.locator('table');
-    const hasTable = await table.first().isVisible().catch(() => false);
-    if (!hasTable) return;
+  test('table column headers are sortable', async () => {
+    await expect(page.locator('table').first()).toBeVisible();
 
     // click sortable headers
     for (const header of ['Account', 'Monthly Cost', 'Savings/mo']) {
@@ -650,8 +617,7 @@ test.describe('Findings', () => {
 
   test('clicking a recommendation row expands/collapses detail', async () => {
     const rows = page.locator('table tbody tr.cursor-pointer');
-    const count = await rows.count();
-    if (count === 0) return;
+    expect(await rows.count()).toBeGreaterThan(0);
 
     await rows.first().click();
 
@@ -662,109 +628,6 @@ test.describe('Findings', () => {
 
     // collapse
     await rows.first().click();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Entity Detail (conditional — only if trends has clickable entities)
-// ---------------------------------------------------------------------------
-test.describe('Entity Detail', () => {
-  let entityReached = false;
-
-  test.beforeAll(async () => {
-    // Reach entity detail via Trends → click first entity link.
-    await navigateToText(page, 'Trends', 'Period-over-period comparison');
-
-    const entityLink = page.locator('table button.text-accent').first();
-    const exists = await entityLink.isVisible().catch(() => false);
-
-    if (exists) {
-      await entityLink.click();
-      await expect(page.getByRole('button', { name: '← Back' })).toBeVisible({ timeout: 5000 });
-      await waitForQuerySettle(page);
-      entityReached = true;
-    }
-  });
-
-  test('shows entity name as heading', async () => {
-    test.skip(!entityReached, 'No entity data available to navigate to');
-    await screenshot(page, 'entity-detail-page');
-    const heading = page.locator('h2');
-    const count = await heading.count();
-    expect(count).toBeGreaterThan(0);
-  });
-
-  test('shows Total and vs Previous Period cards', async () => {
-    test.skip(!entityReached, 'No entity data available');
-    await expect(page.getByText('Total', { exact: true }).first()).toBeVisible();
-    const costValue = page.locator('.text-3xl.tabular-nums');
-    await expect(costValue).toBeVisible();
-    const text = await costValue.textContent();
-    expect(text).toContain('$');
-
-    await expect(page.getByText('vs Previous Period')).toBeVisible();
-  });
-
-  test('daily costs histogram with service/account toggle', async () => {
-    test.skip(!entityReached, 'No entity data available');
-    // Title is "Daily Costs" or "Hourly Costs" depending on granularity
-    const hasTitle = await page.getByText(/Daily Costs|Hourly Costs/).first().isVisible().catch(() => false);
-    expect(hasTitle).toBe(true);
-
-    // Tab buttons may use different casing
-    const tabs = page.locator('button').filter({ hasText: /service|account/i });
-    if (await tabs.count() >= 2) {
-      await tabs.last().click();
-      await screenshot(page, 'entity-detail-histogram-toggle');
-      await tabs.first().click();
-    }
-  });
-
-  test('hover on histogram bars shows tooltip', async () => {
-    test.skip(!entityReached, 'No entity data available');
-    const bars = page.locator('.group.relative.flex-1');
-    const count = await bars.count();
-
-    if (count > 0) {
-      await bars.nth(Math.min(5, count - 1)).hover();
-      await screenshot(page, 'entity-detail-bar-hover');
-    }
-  });
-
-  test('breakdown section renders', async () => {
-    test.skip(!entityReached, 'No entity data available');
-    await expect(page.getByText('Breakdown', { exact: true }).first()).toBeVisible();
-    await screenshot(page, 'entity-detail-breakdown');
-  });
-
-  test('breakdown table renders with Service, Cost, % columns', async () => {
-    test.skip(!entityReached, 'No entity data available');
-    await expect(page.getByText('Breakdown', { exact: true }).first()).toBeVisible();
-    const table = page.locator('table').last();
-    const rows = table.locator('tbody tr');
-    const count = await rows.count();
-    expect(count).toBeGreaterThan(0);
-  });
-
-  test('date range picker works on entity detail', async () => {
-    test.skip(!entityReached, 'No entity data available');
-    await selectDatePreset(page, 'Last 90 days');
-    await waitForQuerySettle(page);
-
-    const costValue = page.locator('.text-3xl.tabular-nums');
-    const text = await costValue.textContent();
-    expect(text).toContain('$');
-  });
-
-  test('Export CSV button is visible', async () => {
-    test.skip(!entityReached, 'No entity data available');
-    await expect(page.getByRole('button', { name: 'Export CSV' })).toBeVisible();
-  });
-
-  test('back button returns to overview', async () => {
-    test.skip(!entityReached, 'No entity data available');
-    await page.getByRole('button', { name: '← Back' }).click();
-    await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible();
   });
 });
 

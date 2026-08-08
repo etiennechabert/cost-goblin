@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, copyFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
   launchApp,
-  DEFAULT_CONFIG_DIR,
+  FIXTURE_CONFIG_DIR,
   startCoverage,
   stopAndCollectCoverage,
   screenshot,
@@ -55,7 +55,7 @@ test.describe('default dashboards', () => {
     // but omit views.yaml, so views:get-config falls back to
     // SEED_VIEWS_CONFIG instead of an existing file. Dimensions + data come
     // from the active config, so widgets still populate.
-    const srcConfig = process.env['COSTGOBLIN_CONFIG_DIR'] ?? DEFAULT_CONFIG_DIR;
+    const srcConfig = process.env['COSTGOBLIN_CONFIG_DIR'] ?? FIXTURE_CONFIG_DIR;
     const tmpConfig = mkdtempSync(join(tmpdir(), 'cg-seed-config-'));
     for (const entry of readdirSync(srcConfig)) {
       if (entry === 'views.yaml') continue;

@@ -1,7 +1,7 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import {
   FIXTURE_CONFIG_DIR,
   clickNavButton,
@@ -16,10 +16,7 @@ import {
 // Widget growth regression — every widget × every size stays bounded
 // ---------------------------------------------------------------------------
 test.describe('Widget growth', () => {
-  const isCI = process.env['CI'] === 'true';
-  const SOURCE_CONFIG_DIR = isCI
-    ? FIXTURE_CONFIG_DIR
-    : join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config');
+  const SOURCE_CONFIG_DIR = FIXTURE_CONFIG_DIR;
   const TEMP_CONFIG_DIR = join(tmpdir(), `costgoblin-widget-growth-${String(Date.now())}`);
   const VIEWS_YAML = buildWidgetMatrixYaml();
 

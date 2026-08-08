@@ -2,57 +2,26 @@
  * Takes screenshots for the homepage (docs/screenshots/).
  * Run: npm run build --workspace=packages/desktop && npx tsx e2e/homepage-screenshots.ts
  */
-import { _electron } from '@playwright/test';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { setup } from '../packages/core/src/__fixtures__/setup.js';
+import { launchApp, ROOT } from './helpers.js';
 
-const ROOT = join(import.meta.dirname, '..');
-const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
 const OUTPUT_DIR = join(ROOT, 'docs', 'screenshots');
 mkdirSync(OUTPUT_DIR, { recursive: true });
-
-const FIXTURE_DATA_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'synthetic');
-const FIXTURE_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'config');
-
-// Fake "today" to March 2 2026 so presets align with fixture data (Jan-Feb 2026)
-const FAKE_NOW = new Date('2026-03-02T12:00:00Z').getTime();
 
 async function main() {
   console.log('Generating fixture data...');
   await setup();
 
-  const app = await _electron.launch({
-    args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],
-    env: {
-      ...process.env,
-      NODE_ENV: 'production',
-      COSTGOBLIN_E2E: '1',
-      COSTGOBLIN_DATA_DIR: FIXTURE_DATA_DIR,
-      COSTGOBLIN_CONFIG_DIR: FIXTURE_CONFIG_DIR,
-    },
-  });
+  // launchApp pins the fixture data/config dirs (copied to a temp root so the
+  // committed fixtures stay clean) and fakes "today" to 2026-03-02 via
+  // COSTGOBLIN_NOW, so presets align with the fixture window (Jan–Feb 2026).
+  const app = await launchApp();
 
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
   await page.getByText('CostGoblin', { exact: true }).waitFor({ timeout: 10_000 });
-
-  // Override Date.now so date presets resolve within fixture data range
-  await page.evaluate(`
-    (function() {
-      var fakeNow = ${String(FAKE_NOW)};
-      var OrigDate = Date;
-      function FakeDate() {
-        if (arguments.length === 0) return new OrigDate(fakeNow);
-        return new (Function.prototype.bind.apply(OrigDate, [null].concat(Array.prototype.slice.call(arguments))))();
-      }
-      FakeDate.prototype = OrigDate.prototype;
-      FakeDate.now = function() { return fakeNow; };
-      FakeDate.parse = function(s) { return OrigDate.parse(s); };
-      FakeDate.UTC = function() { return OrigDate.UTC.apply(null, arguments); };
-      Date = FakeDate;
-    })();
-  `);
 
   async function settle() {
     try {

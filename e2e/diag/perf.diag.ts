@@ -1,10 +1,19 @@
+/**
+ * DIAGNOSTIC, not a test suite — benchmarks every view against the
+ * developer's real local data dirs and writes a timing report to $TMPDIR.
+ * Some selectors predate the current nav model (e.g. the 'Cost Trends'
+ * heading and 'Savings Opportunities') and may need updating before a run.
+ * Excluded from `npx playwright test` (playwright.config.ts testMatch);
+ * run explicitly with:
+ *   npx playwright test --config playwright.diag.config.ts e2e/diag/perf.diag.ts
+ */
 import { test, expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { clickNavButton } from './helpers.js';
+import { clickNavButton } from '../helpers.js';
 
-const ROOT = join(import.meta.dirname, '..');
+const ROOT = join(import.meta.dirname, '..', '..');
 const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
 const REPORT_DIR = join(tmpdir(), 'costgoblin-perf');
 mkdirSync(REPORT_DIR, { recursive: true });

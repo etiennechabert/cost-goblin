@@ -1,7 +1,7 @@
 import { expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
 import { join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 export const ROOT = join(import.meta.dirname, '..');
 export const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
@@ -12,8 +12,6 @@ mkdirSync(V8_DIR, { recursive: true });
 
 export const LOAD_TIMEOUT = 5_000;
 
-const DEFAULT_DATA_DIR = join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'data');
-export const DEFAULT_CONFIG_DIR = join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config');
 export const FIXTURE_DATA_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'synthetic');
 export const FIXTURE_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'config');
 /** Same synthetic data tree, but a config listing BOTH provider arms. The
@@ -21,19 +19,51 @@ export const FIXTURE_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtu
  *  the tree is invisible to every other suite's totals. */
 export const FIXTURE_MULTI_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'config-multi');
 
+/** "Today" for every app launched by `launchApp`: the day after the fixture
+ *  window (generate.ts pins 2026-01-01..2026-03-01), so relative presets like
+ *  "Last 30 days" resolve to dates that actually hold fixture data. The app
+ *  honours it via COSTGOBLIN_NOW (see packages/desktop/src/renderer/fake-clock.ts). */
+export const FIXTURE_NOW = '2026-03-02T12:00:00Z';
+
 export function launchApp(overrides?: { configDir?: string; dataDir?: string }): Promise<ElectronApplication> {
-  const dataDir = overrides?.dataDir ?? process.env['COSTGOBLIN_DATA_DIR'] ?? DEFAULT_DATA_DIR;
-  const configDir = overrides?.configDir ?? process.env['COSTGOBLIN_CONFIG_DIR'] ?? DEFAULT_CONFIG_DIR;
+  const dataDir = overrides?.dataDir ?? process.env['COSTGOBLIN_DATA_DIR'] ?? FIXTURE_DATA_DIR;
+  const configDir = overrides?.configDir ?? process.env['COSTGOBLIN_CONFIG_DIR'] ?? FIXTURE_CONFIG_DIR;
+  // Pinned mode writes app state NEXT TO the data dir (stateDir =
+  // dirname(dataDir), see desktop's workspace-env.ts) and edits config in
+  // place, so launching straight against the committed fixtures dirties the
+  // repo — that's how __fixtures__/explorer-preferences.json ended up
+  // committed. Copy both dirs into a throwaway root per launch: state lands
+  // there, and no test click ("Delete All Data", the config editors) can
+  // reach the committed files.
+  const runRoot = mkdtempSync(join(tmpdir(), 'costgoblin-e2e-run-'));
+  const runDataDir = join(runRoot, 'data');
+  const runConfigDir = join(runRoot, 'config');
+  cpSync(dataDir, runDataDir, { recursive: true });
+  cpSync(configDir, runConfigDir, { recursive: true });
   return _electron.launch({
     args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],
     env: {
       ...process.env,
       NODE_ENV: 'production',
       COSTGOBLIN_E2E: '1',
-      COSTGOBLIN_DATA_DIR: dataDir,
-      COSTGOBLIN_CONFIG_DIR: configDir,
+      COSTGOBLIN_NOW: process.env['COSTGOBLIN_NOW'] ?? FIXTURE_NOW,
+      COSTGOBLIN_DATA_DIR: runDataDir,
+      COSTGOBLIN_CONFIG_DIR: runConfigDir,
     },
   });
+}
+
+/** Close, but never let a stalled Electron exit fail a suite. Under system
+ *  load the process occasionally wedges on quit behind boot-time DuckDB work
+ *  (a known flake — see the coverage-ordering comments in stress/gcp); after
+ *  15s give up and SIGKILL. Per-launch state is a throwaway temp dir, so a
+ *  hard kill loses nothing. */
+export async function closeApp(app: ElectronApplication): Promise<void> {
+  const closed = await Promise.race([
+    app.close().then(() => true, () => true),
+    new Promise<boolean>((resolve) => setTimeout(() => { resolve(false); }, 15_000)),
+  ]);
+  if (!closed) app.process().kill('SIGKILL');
 }
 
 export async function startCoverage(page: Page): Promise<void> {
