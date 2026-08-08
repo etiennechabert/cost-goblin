@@ -132,10 +132,12 @@ export function SyncStatusButton({
   const [rechecking, setRechecking] = useState(false);
   const synced = missingPeriods === 0;
 
-  function handleRecheck(): void {
-    if (rechecking) return;
+  // Returns the promise so the credential panel's Retry can await the same
+  // re-check the header icon runs — one action, both spinners.
+  function handleRecheck(): Promise<void> {
+    if (rechecking) return Promise.resolve();
     setRechecking(true);
-    void onRecheck().finally(() => { setRechecking(false); });
+    return onRecheck().finally(() => { setRechecking(false); });
   }
 
   const showError = error !== null;
@@ -191,7 +193,7 @@ export function SyncStatusButton({
           </div>
           <button
             type="button"
-            onClick={handleRecheck}
+            onClick={() => { void handleRecheck(); }}
             disabled={rechecking}
             className="rounded p-1 text-text-muted transition-colors hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-50"
             title="Check for new data"
@@ -203,11 +205,14 @@ export function SyncStatusButton({
         {showError && (
           <div className="mb-2 rounded-md border border-negative/50 bg-negative-muted px-2.5 py-1.5 text-xs text-negative">
             {error}
+            {/* `onRetry` is the same re-check the header's refresh icon runs —
+                it clears `syncError` on success, so a finished sign-in makes
+                this whole panel disappear without leaving the popover. */}
             {ssoProfile !== null && (
-              <SsoLoginButton profile={ssoProfile} hint="A browser window will open. Refresh above after logging in." />
+              <SsoLoginButton profile={ssoProfile} onRetry={handleRecheck} />
             )}
             {gcloudMode !== null && (
-              <GcloudLoginButton mode={gcloudMode} hint="A browser window will open. Refresh above after logging in." />
+              <GcloudLoginButton mode={gcloudMode} onRetry={handleRecheck} />
             )}
           </div>
         )}

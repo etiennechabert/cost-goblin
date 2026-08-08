@@ -43,7 +43,10 @@ describe('DataManagement error states', () => {
     // than racing it — the synchronous getByText was flaky on slow CI runners.
     expect(await screen.findByText('To authenticate, run: aws sso login --profile prod')).toBeDefined();
     expect(await screen.findByText('Open SSO Login')).toBeDefined();
-    expect(await screen.findByText('A browser window will open. Refresh this page after logging in.')).toBeDefined();
+    // Paired with a Retry, so the hint points at it rather than at a page
+    // refresh the user has no way to trigger.
+    expect(await screen.findByText('A browser window will open — come back here and hit Retry.')).toBeDefined();
+    expect(await screen.findByRole('button', { name: 'Retry' })).toBeDefined();
   });
 
   it('shows permission denied error without refresh hint', async () => {
@@ -55,7 +58,11 @@ describe('DataManagement error states', () => {
     await waitFor(() => {
       expect(screen.getByText('Access Denied: insufficient permissions for s3:ListBucket')).toBeDefined();
     });
-    expect(screen.queryByText('Refresh this page after logging in.')).toBeNull();
+    // Nothing a sign-in can fix, so neither the login button nor its Retry
+    // should appear. (Asserted on the affordances, not the hint copy: a
+    // substring that never matched the full sentence passed vacuously.)
+    expect(screen.queryByText('Open SSO Login')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 
   it('shows network timeout error', async () => {

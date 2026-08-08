@@ -447,6 +447,10 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
     const timer = setInterval(() => { setDailyRefreshKey(k => k + 1); }, 5_000);
     return () => { clearInterval(timer); };
   }, [isCredentialError]);
+  // The poll above heals the panel on its own, but only on its next tick and
+  // only for this tier — the login buttons still get an explicit Retry so a
+  // user who has just finished signing in isn't left watching a stale error.
+  const retryInventory = (): void => { setDailyRefreshKey(k => k + 1); };
 
   const [selected, setSelected] = useState(new Set<string>());
   const [hourlySelected, setHourlySelected] = useState(new Set<string>());
@@ -693,7 +697,7 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
           {/* Each provider's expired-credentials message carries the sign-in
               command it needs; offer the matching one-click affordance. */}
           {awsProfile !== null && inventoryQuery.error.message.includes('aws sso login') && (
-            <SsoLoginButton profile={awsProfile} />
+            <SsoLoginButton profile={awsProfile} onRetry={retryInventory} />
           )}
           {/* Both GCP commands, not just ADC: a stale gcloud CLI account is
               reported with `gcloud auth login`, which is not a substring of
@@ -701,11 +705,11 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
               one-click remedy showing no button, and re-running ADC could
               never have fixed it anyway. */}
           {provider.type === 'gcp' && inventoryQuery.error.message.includes(GCLOUD_ADC_LOGIN_COMMAND) && (
-            <GcloudLoginButton mode="adc" providerName={name} />
+            <GcloudLoginButton mode="adc" providerName={name} onRetry={retryInventory} />
           )}
           {provider.type === 'gcp' && !inventoryQuery.error.message.includes(GCLOUD_ADC_LOGIN_COMMAND)
             && inventoryQuery.error.message.includes(GCLOUD_CLI_LOGIN_COMMAND) && (
-            <GcloudLoginButton mode="cli" providerName={name} />
+            <GcloudLoginButton mode="cli" providerName={name} onRetry={retryInventory} />
           )}
         </div>
       )}

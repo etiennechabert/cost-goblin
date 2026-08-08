@@ -18,13 +18,19 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function setup(api: SsoApi) {
+function setup(api: SsoApi, onRetry?: () => void | Promise<void>) {
   render(
     <CostApiProvider value={api}>
-      <SsoLoginButton profile="prod" />
+      <SsoLoginButton profile="prod" onRetry={onRetry} />
     </CostApiProvider>,
   );
-  return { button: screen.getByRole('button') };
+  return { button: screen.getByRole('button', { name: /SSO Login/ }) };
+}
+
+function retryButton(): HTMLButtonElement | null {
+  const found = screen.queryAllByRole('button')
+    .find(b => /Retry/.test(b.textContent));
+  return found instanceof HTMLButtonElement ? found : null;
 }
 
 describe('SsoLoginButton', () => {
@@ -70,5 +76,57 @@ describe('SsoLoginButton', () => {
     // CLI missing → button is replaced by the install hint, not left spinning.
     expect(screen.queryByRole('button')).toBeNull();
     expect(screen.getByText(/Install the AWS CLI/i)).toBeDefined();
+  });
+
+  // Without this the panel is a dead end: `aws sso login` resolves the moment
+  // the browser opens, so nothing in the renderer ever learns the sign-in
+  // finished and the expired-credentials error sits there until the view is
+  // remounted (or the app restarted).
+  it('offers no retry affordance when the caller wires none', () => {
+    setup(new SsoApi());
+    expect(retryButton()).toBeNull();
+    expect(screen.getByText(/Refresh this page after logging in/)).toBeDefined();
+  });
+
+  it('runs the caller-supplied retry and points the hint at it', async () => {
+    const onRetry = vi.fn<() => Promise<void>>();
+    let finishRetry!: () => void;
+    onRetry.mockReturnValue(new Promise<void>((resolve) => { finishRetry = resolve; }));
+    setup(new SsoApi(), onRetry);
+
+    expect(screen.getByText(/come back here and hit Retry/)).toBeDefined();
+    const retry = retryButton();
+    expect(retry?.textContent).toContain('Retry');
+
+    await act(async () => { retry?.click(); await Promise.resolve(); });
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    // Locked while the re-fetch is in flight, so an impatient double-click
+    // can't queue a second one.
+    expect(retryButton()?.disabled).toBe(true);
+    expect(retryButton()?.textContent).toContain('Retrying');
+    await act(async () => { retry?.click(); await Promise.resolve(); });
+    expect(onRetry).toHaveBeenCalledTimes(1);
+
+    await act(async () => { finishRetry(); await Promise.resolve(); });
+    expect(retryButton()?.disabled).toBe(false);
+  });
+
+  it('unlocks the retry button when the retry itself rejects', async () => {
+    const onRetry = vi.fn<() => Promise<void>>().mockRejectedValue(new Error('still expired'));
+    setup(new SsoApi(), onRetry);
+
+    await act(async () => { retryButton()?.click(); await Promise.resolve(); });
+
+    expect(retryButton()?.disabled).toBe(false);
+    expect(retryButton()?.textContent).toContain('Retry');
+  });
+
+  it('relabels the retry once the login has been launched', async () => {
+    const api = new SsoApi();
+    const { button } = setup(api, vi.fn());
+
+    expect(retryButton()?.textContent.trim()).toBe('Retry');
+    await act(async () => { button.click(); await Promise.resolve(); });
+    expect(retryButton()?.textContent).toContain("I've signed in");
   });
 });

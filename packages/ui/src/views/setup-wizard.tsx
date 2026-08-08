@@ -411,7 +411,14 @@ function isGcpAuthError(message: string): boolean {
 
 /** Error panel shared by the three GCP steps. `GCLOUD_CLI_NOT_FOUND` is a
  *  sentinel the handlers return rather than a message worth showing. */
-function GcpError({ message, mode }: Readonly<{ message: string; mode: 'adc' | 'cli' }>) {
+function GcpError({ message, mode, onRetry }: Readonly<{
+  message: string;
+  mode: 'adc' | 'cli';
+  /** Re-runs the step's own listing/browse call — each GCP step passes its
+   *  loader, since a sign-in that succeeds in the browser leaves this panel
+   *  showing a stale error the renderer never learns to drop. */
+  onRetry: () => void;
+}>) {
   if (message.length === 0) return null;
   const missingCli = message.includes('GCLOUD_CLI_NOT_FOUND');
   return (
@@ -431,7 +438,7 @@ function GcpError({ message, mode }: Readonly<{ message: string; mode: 'adc' | '
           Install the gcloud CLI
         </a>
       ) : (
-        isGcpAuthError(message) && <GcloudLoginButton mode={mode} />
+        isGcpAuthError(message) && <GcloudLoginButton mode={mode} onRetry={onRetry} />
       )}
     </div>
   );
@@ -441,11 +448,12 @@ function GcpError({ message, mode }: Readonly<{ message: string; mode: 'adc' | '
  *
  *  Has no AWS counterpart: S3's ListBuckets is account-wide and takes no
  *  arguments, while `storage.getBuckets()` is project-scoped. */
-function GcpProjectStep({ state, onSelect, onManual, onBack }: Readonly<{
+function GcpProjectStep({ state, onSelect, onManual, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'gcp-project' }>;
   onSelect: (projectId: string) => void;
   onManual: () => void;
   onBack: () => void;
+  onRetry: () => void;
 }>) {
   const [filter, setFilter] = useState('');
   const filtered = state.projects.filter(
@@ -464,7 +472,7 @@ function GcpProjectStep({ state, onSelect, onManual, onBack }: Readonly<{
         </p>
       </div>
 
-      <GcpError message={state.error} mode="cli" />
+      <GcpError message={state.error} mode="cli" onRetry={onRetry} />
 
       {state.loading && (
         <div className="flex items-center justify-center py-8">
@@ -528,11 +536,12 @@ function GcpProjectStep({ state, onSelect, onManual, onBack }: Readonly<{
 }
 
 /** Step 2b-ii — pick the bucket. Sister of `BucketStep`, against GCS. */
-function GcpBucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
+function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'gcp-bucket' }>;
   onSelect: (bucket: string) => void;
   onSkip?: (() => void) | undefined;
   onBack: () => void;
+  onRetry: () => void;
 }>) {
   const [filter, setFilter] = useState('');
   const [manual, setManual] = useState('');
@@ -549,7 +558,7 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
         </p>
       </div>
 
-      <GcpError message={state.error} mode="adc" />
+      <GcpError message={state.error} mode="adc" onRetry={onRetry} />
 
       {state.loading ? (
         <div className="flex items-center justify-center py-8">
@@ -638,7 +647,7 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
  *  at the exporter's PREFIX rather than a tier folder under it makes the daily
  *  tier list the hourly shards too — the sync has a bespoke error for it, and
  *  this refuses the selection before the user can make it. */
-function GcpBrowseStep({ state, conflictsWith, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
+function GcpBrowseStep({ state, conflictsWith, onNavigate, onConfirm, onSkip, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'gcp-browse' }>;
   /** A tier location already collected in this run that this one must not
    *  overlap — the daily path, while browsing for hourly. */
@@ -647,6 +656,7 @@ function GcpBrowseStep({ state, conflictsWith, onNavigate, onConfirm, onSkip, on
   onConfirm: () => void;
   onSkip?: (() => void) | undefined;
   onBack: () => void;
+  onRetry: () => void;
 }>) {
   const sourceLabel = SOURCE_LABELS[state.source];
   const isExport = state.folder.kind === 'export';
@@ -695,7 +705,7 @@ function GcpBrowseStep({ state, conflictsWith, onNavigate, onConfirm, onSkip, on
         ))}
       </div>
 
-      <GcpError message={state.error} mode="adc" />
+      <GcpError message={state.error} mode="adc" onRetry={onRetry} />
 
       {state.folder.kind === 'tier-parent' && (
         <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3">
@@ -913,11 +923,15 @@ function ProfileStep({ state, onSelect, onSkip, onBack }: Readonly<{
   );
 }
 
-function BucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
+function BucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'bucket' }>;
   onSelect: (bucket: string) => void;
   onSkip?: (() => void) | undefined;
   onBack: () => void;
+  /** Re-lists the buckets. The wizard has no other way back out of an expired-
+   *  token error: ← Back returns to the profile picker, and re-picking the same
+   *  profile was the only route to a second attempt. */
+  onRetry: () => void;
 }>) {
   const [filter, setFilter] = useState('');
   const filtered = state.buckets.filter(b => filter.length === 0 || b.name.toLowerCase().includes(filter.toLowerCase()));
@@ -935,7 +949,7 @@ function BucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
         <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3">
           <p className="text-sm text-negative">{state.error}</p>
           {state.error.includes('aws sso login') && (
-            <SsoLoginButton profile={state.profile} />
+            <SsoLoginButton profile={state.profile} onRetry={onRetry} />
           )}
         </div>
       )}
@@ -1412,6 +1426,13 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   function goToGcpProjectStep(): void {
     // See `goToProfileStep`: the two chains share `collectedPaths`.
     setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
+    reloadGcpProjects();
+  }
+
+  /** The listing half of `goToGcpProjectStep`, without the `collectedPaths`
+   *  reset — so the step's own Retry re-runs `gcloud projects list` after a
+   *  sign-in without discarding anything the user has already picked. */
+  function reloadGcpProjects(): void {
     const token = ++gcpRequestRef.current;
     setWizard({ step: 'gcp-project', projects: [], loading: true, selected: '', error: '' });
     api.listGcpProjects().then(result => {
@@ -1725,6 +1746,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onSelect={(projectId) => { startGcpBucketStep(projectId, 'daily'); }}
               onManual={() => { setWizard({ step: 'gcp', scaffolded: false, error: '' }); }}
               onBack={handleBack}
+              onRetry={reloadGcpProjects}
             />
           )}
           {wizard.step === 'gcp-bucket' && (
@@ -1733,6 +1755,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onSelect={(bucket) => { gcpBrowseTo(wizard.project, wizard.source, bucket, ''); }}
               onSkip={wizard.source === 'daily' ? undefined : handleGcpSkip}
               onBack={handleBack}
+              onRetry={() => { startGcpBucketStep(wizard.project, wizard.source); }}
             />
           )}
           {wizard.step === 'gcp-browse' && (
@@ -1746,6 +1769,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onConfirm={handleGcpBrowseConfirm}
               onSkip={wizard.source === 'daily' ? undefined : handleGcpSkip}
               onBack={handleBack}
+              onRetry={() => { gcpBrowseTo(wizard.project, wizard.source, wizard.bucket, wizard.prefix); }}
             />
           )}
           {wizard.step === 'profile' && <ProfileStep state={wizard} onSelect={handleProfileSelect} onSkip={finish} onBack={handleBack} />}
@@ -1763,6 +1787,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onSelect={handleBucketSelect}
               onSkip={wizard.source === 'daily' ? undefined : handleBrowseSkip}
               onBack={handleBack}
+              onRetry={() => { startBucketStep(wizard.profile, wizard.source); }}
             />
           )}
           {wizard.step === 'browse' && (

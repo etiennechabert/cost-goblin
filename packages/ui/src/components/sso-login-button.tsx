@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 
+/** Fallback copy for a panel with no `onRetry` wired — the user has to leave
+ *  the screen and come back for the failed call to run again. */
 const DEFAULT_HINT = 'A browser window will open. Refresh this page after logging in.';
+
+/** Copy used whenever `onRetry` IS wired, i.e. the escape route is right here.
+ *  The old wording sent people looking for a refresh that doesn't exist: the
+ *  CLI login resolves as soon as the browser opens, so nothing in the renderer
+ *  ever learns that the sign-in finished, and the error panel sat there until
+ *  the view was remounted (or the app restarted). */
+const RETRY_HINT = 'A browser window will open — come back here and hit Retry.';
 
 // Launching a cloud CLI's login can take several seconds before the browser
 // opens. Lock the button for this long after a click so impatient
@@ -55,24 +64,51 @@ const GCLOUD_CLI: CliLoginVariant = {
  *  call, which CLI they name, and what the button says — everything else (the
  *  repeat-click lock, the unlock-on-failure, the CLI-missing fallback) is one
  *  implementation rather than two copies drifting apart. */
-function CliLoginButton({ variant, start, hint }: Readonly<{
+function CliLoginButton({ variant, start, hint, onRetry }: Readonly<{
   variant: CliLoginVariant;
   /** Starts the login. Rejects with the variant's `*_NOT_FOUND` marker when
    *  the CLI is absent — the one failure with its own remedy. */
   start: () => Promise<void>;
-  hint: string;
+  hint?: string | undefined;
+  /** Re-runs whatever failed with the expired credentials. Rendered as a second
+   *  button, because starting the login is only half the flow: the CLI resolves
+   *  on spawn and the sign-in itself finishes in a browser this process never
+   *  hears back from, so without an explicit re-run the panel is a dead end. */
+  onRetry?: (() => void | Promise<void>) | undefined;
 }>) {
   const [cliMissing, setCliMissing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  /** Whether the login button has been pressed, which is what lets the retry
+   *  button say "I've signed in" rather than a bare, ambiguous "Retry". */
+  const [started, setStarted] = useState(false);
   const lockTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A retry that succeeds usually unmounts this panel (the caller's query flips
+  // back to loading), so the settle handler below can land after unmount.
+  const mounted = useRef(true);
 
-  useEffect(() => () => {
-    if (lockTimer.current !== null) clearTimeout(lockTimer.current);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (lockTimer.current !== null) clearTimeout(lockTimer.current);
+    };
   }, []);
+
+  const handleRetry = () => {
+    if (onRetry === undefined || retrying) return;
+    setRetrying(true);
+    // `onRetry` is sync for callers that just bump a query key and async for
+    // callers that await the re-fetch; normalise so both clear the spinner.
+    const settled = () => { if (mounted.current) setRetrying(false); };
+    const result: void | Promise<void> = onRetry();
+    void Promise.resolve(result).then(settled, settled);
+  };
 
   const handleClick = () => {
     if (busy) return;
     setBusy(true);
+    setStarted(true);
     lockTimer.current = setTimeout(() => {
       lockTimer.current = null;
       setBusy(false);
@@ -113,15 +149,32 @@ function CliLoginButton({ variant, start, hint }: Readonly<{
         {busy && <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />}
         {busy ? variant.busyLabel : variant.idleLabel}
       </button>
-      <span className="text-xs text-text-secondary">{hint}</span>
+      {onRetry !== undefined && (
+        <button
+          type="button"
+          onClick={handleRetry}
+          disabled={retrying}
+          title="Re-run the check that failed — use this once the browser sign-in is done"
+          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-tertiary/60 px-3 py-1.5 text-xs font-medium text-text-primary transition-colors hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:bg-bg-tertiary/60"
+        >
+          {retrying && <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-text-muted/40 border-t-text-primary" aria-hidden="true" />}
+          {retrying ? 'Retrying…' : started ? "I've signed in — Retry" : 'Retry'}
+        </button>
+      )}
+      <span className="text-xs text-text-secondary">{hint ?? (onRetry !== undefined ? RETRY_HINT : DEFAULT_HINT)}</span>
     </div>
   );
 }
 
-/** Re-runs `aws sso login` for one profile. */
-export function SsoLoginButton({ profile, hint = DEFAULT_HINT }: Readonly<{ profile: string; hint?: string }>) {
+/** Re-runs `aws sso login` for one profile. `onRetry` re-runs the call that
+ *  failed; pass it wherever the panel would otherwise strand the user. */
+export function SsoLoginButton({ profile, hint, onRetry }: Readonly<{
+  profile: string;
+  hint?: string | undefined;
+  onRetry?: (() => void | Promise<void>) | undefined;
+}>) {
   const api = useCostApi();
-  return <CliLoginButton variant={AWS} start={() => api.ssoLogin(profile)} hint={hint} />;
+  return <CliLoginButton variant={AWS} start={() => api.ssoLogin(profile)} hint={hint} onRetry={onRetry} />;
 }
 
 /** Signs one of GCP's two credential stores back in.
@@ -136,10 +189,11 @@ export function SsoLoginButton({ profile, hint = DEFAULT_HINT }: Readonly<{ prof
  *  why this goes through its own API method rather than `ssoLogin(profile)`.
  *  `providerName` names the provider whose failure raised the button, so ADC
  *  is minted with that provider's impersonation rather than another's. */
-export function GcloudLoginButton({ mode = 'adc', providerName, hint = DEFAULT_HINT }: Readonly<{
+export function GcloudLoginButton({ mode = 'adc', providerName, hint, onRetry }: Readonly<{
   mode?: 'adc' | 'cli';
   providerName?: string;
-  hint?: string;
+  hint?: string | undefined;
+  onRetry?: (() => void | Promise<void>) | undefined;
 }> = {}) {
   const api = useCostApi();
   return (
@@ -147,6 +201,7 @@ export function GcloudLoginButton({ mode = 'adc', providerName, hint = DEFAULT_H
       variant={mode === 'cli' ? GCLOUD_CLI : GCLOUD_ADC}
       start={() => api.gcloudLogin(mode, providerName)}
       hint={hint}
+      onRetry={onRetry}
     />
   );
 }
