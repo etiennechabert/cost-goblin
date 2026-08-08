@@ -12,8 +12,9 @@
     "start": "node export-focus.mjs",
     "dry-run": "DRY_RUN=1 node export-focus.mjs"
   },
+  "_dependencyNote": "@google-cloud/bigquery is pinned EXACTLY, not floated. The DATE/TIMESTAMP parameter wrapping in export-focus.mjs depends on the client's parameter-encoding behaviour (see `temporalParam`), and the Dockerfile installs without a lockfile — so a floating range would silently change that behaviour on the next image rebuild. Re-verify that wrapping before bumping.",
   "dependencies": {
-    "@google-cloud/bigquery": "^8.1.1",
+    "@google-cloud/bigquery": "8.3.1",
     "@google-cloud/storage": "^7.21.0"
   }
 }

@@ -37,8 +37,13 @@
 
 CREATE SCHEMA IF NOT EXISTS costgoblin_exporter;
 
+-- `tier` is nullable to match the column the Cloud Run job adds via
+-- `ALTER TABLE ... ADD COLUMN IF NOT EXISTS tier STRING`, so the two can share
+-- this table in either creation order. A NULL here is read as 'hourly' by both
+-- (this script publishes only that tier); see the MERGE below.
 CREATE TABLE IF NOT EXISTS costgoblin_exporter.export_state (
   billing_period DATE NOT NULL,
+  tier STRING,
   watermark TIMESTAMP NOT NULL
 );
 
@@ -90,14 +95,23 @@ WHILE i < ARRAY_LENGTH(periods) DO
   -- Advance to the OBSERVED max, never to CURRENT_TIMESTAMP(): rows landing
   -- while the export runs would otherwise be marked exported and never
   -- picked up again.
+  --
+  -- KEYED BY TIER, even though this script only ever publishes hourly. By
+  -- default it shares `costgoblin_exporter.export_state` with the deployed
+  -- Cloud Run job, and without the tier predicate `ON st.billing_period =
+  -- s.bp` matches the job's DAILY row too — stamping it with an hourly
+  -- watermark, after which the job sees daily as caught up and silently stops
+  -- exporting that tier. Writing the tier explicitly also stops the job's
+  -- `IFNULL(tier, 'hourly')` from having to guess at rows this script wrote.
   MERGE costgoblin_exporter.export_state st
   USING (
     SELECT periods[OFFSET(i)].billing_period AS bp,
-           periods[OFFSET(i)].watermark AS w
+           periods[OFFSET(i)].watermark AS w,
+           'hourly' AS tier
   ) s
-  ON st.billing_period = s.bp
-  WHEN MATCHED THEN UPDATE SET watermark = s.w
-  WHEN NOT MATCHED THEN INSERT (billing_period, watermark) VALUES (s.bp, s.w);
+  ON st.billing_period = s.bp AND IFNULL(st.tier, 'hourly') = s.tier
+  WHEN MATCHED AND s.w > st.watermark THEN UPDATE SET watermark = s.w, tier = s.tier
+  WHEN NOT MATCHED THEN INSERT (billing_period, tier, watermark) VALUES (s.bp, s.tier, s.w);
 
   SET i = i + 1;
 END WHILE;
