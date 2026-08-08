@@ -133,6 +133,16 @@ export interface ExplorerFilterValue {
   readonly rows: number;
 }
 
+/** Columns the Explorer hides until the user makes a column choice. The
+ *  desktop `explorer:get-preferences` handler returns this set when no
+ *  preferences file exists (or its `hiddenColumns` field is unreadable), and
+ *  the UI seeds its pre-load state from it — a persisted `hiddenColumns: []`
+ *  is the user's explicit "Show all" and is honored as-is. Shared through
+ *  core so the two sides can't drift. */
+export const DEFAULT_EXPLORER_HIDDEN_COLUMNS: readonly string[] = [
+  'usage_hour', 'list_cost', 'service', 'usage_amount', 'operation',
+];
+
 /** Persisted user preferences for the Explorer view. Stored as a JSON file
  *  in the userData dir (same pattern as SavingsPreferences). */
 export interface ExplorerPreferences {
