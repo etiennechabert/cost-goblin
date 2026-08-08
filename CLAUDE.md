@@ -164,23 +164,30 @@ npm run check
 
 ## Dependency supply chain
 
-Two npm-native guards live in `.npmrc` (no extra tooling — npm >= 11):
+Two npm-native guards live in `.npmrc` (no extra tooling). **They require npm >= 11.16.0 (Node >= 24.18)** — older npm doesn't recognise `strict-allow-scripts` and installs with *no* protection after one easily-missed `npm warn Unknown project config` line. That fail-open is why `ci.yml` asserts both options are recognised instead of trusting the runner's npm.
 
 - **`strict-allow-scripts=true`** — dependency install scripts are default-DENY. Only the packages pinned in the `allowScripts` field of the root `package.json` may run `preinstall`/`install`/`postinstall`. Anything else hard-fails the install with `ESTRICTALLOWSCRIPTS`. Without this flag `allowScripts` is advisory: npm prints a warning and runs the script anyway.
 - **`min-release-age=7`** — only install versions public for 7+ days, so a compromised release is usually yanked before we'd ever resolve it. Affects resolution (`npm install`) only; **`npm ci` installs the lockfile verbatim and is unaffected**, so CI and releases never fail on it.
 
-`.github/dependabot.yml` carries a matching 7-day `cooldown`. That gates Dependabot's PRs; `min-release-age` gates every install. Neither delays **security** updates — Dependabot security PRs ignore cooldown by design, so `audit-ci` always gets its patch immediately.
+`.github/dependabot.yml` carries a matching 7-day `cooldown`. That gates the PRs Dependabot opens; `min-release-age` gates resolution done here. Neither delays **security** updates — Dependabot security PRs ignore cooldown by design, so `audit-ci` always gets its patch immediately.
+
+> ⚠️ **Scope:** `.npmrc` covers the **root workspace only**. npm reads it from the nearest `package.json` directory, so `workers/signup` and `scripts/gcp-focus-exporter` get *neither* guard — the exporter's Dockerfile runs a bare `npm install --omit=dev` with no lockfile. Both are covered by Dependabot but not by these settings.
 
 **When `npm ci` fails with `ESTRICTALLOWSCRIPTS`:** a dependency introduced a new install script. Do NOT reach for `--dangerously-allow-all-scripts`. Read the script, and if it's legitimate:
-```bash
-npm approve-scripts <pkg>   # then commit the package.json change
-```
-Two caveats, both hit in practice:
-- `npm approve-scripts` is **workspace-unaware** and can miss a nested duplicate (we ship two `esbuild` copies). Always re-run `npm ci` afterwards and trust its error over the command's output.
-- A package can only be **version-pinned** (`pkg@1.2.3`) if its lockfile entry has a `resolved` URL — npm derives trusted identity from that URL, never from the tarball's own `package.json`, which a malicious publisher controls. Every entry now carries `resolved` + `integrity`, so every allowlist entry is an exact pin. **Keep it that way:** if a lockfile entry ever loses those fields, its package can no longer be pinned (only allowed by bare name, i.e. any version). Check with:
 
 ```bash
-node -e "const p=require('./package-lock.json').packages;const b=Object.entries(p).filter(([k,v])=>k.startsWith('node_modules/')&&!v.link&&(!v.resolved||!v.integrity));console.log(b.length?'UNVERIFIED: '+b.length:'all entries verified')"
+npm install --ignore-scripts && npm approve-scripts <pkg> && npm ci
+```
+
+The `--ignore-scripts` install is **not optional**: `approve-scripts` resolves packages from the tree on disk, and `npm ci` deletes `node_modules` then aborts before rewriting it — so running it straight after a failed `npm ci` fails with `ENOMATCH / No installed packages match`. Then commit the `package.json` change.
+
+Two caveats, both hit in practice:
+- With a **stale** `node_modules`, `approve-scripts` can report success while writing a pin for the wrong version. Always finish with `npm ci` and trust its error over the command's output.
+- Entries are exact version pins (npm's `allow-scripts-pin` default), so **any** Dependabot PR that moves `esbuild` (transitive under `vite` and `tsx`) turns CI red until someone runs the flow above — Dependabot can't update `allowScripts` itself. That recurring cost buys version-level review; `allow-scripts-pin=false` trades it for name-only entries if it ever becomes intolerable.
+- A package can only be **version-pinned** (`pkg@1.2.3`) if its lockfile entry has a `resolved` URL — npm derives trusted identity from that URL, never from the tarball's own `package.json`, which a malicious publisher controls. Every entry now carries `resolved` + `integrity`, so every allowlist entry is an exact pin. **Keep it that way:** if a lockfile entry ever loses those fields, its package can no longer be pinned (only allowed by bare name, i.e. any version). The `lockfile integrity` job in `ci.yml` enforces this on every PR; run it locally with:
+
+```bash
+node -e "const p=require('./package-lock.json').packages;const b=Object.entries(p).filter(([k,v])=>k.includes('node_modules/')&&!v.link&&(!v.resolved||!v.integrity));console.log(b.length?'UNVERIFIED: '+b.length+' '+b.slice(0,5).map(([k])=>k).join(' '):'all entries verified')"
 ```
 
 ## Versioning & releases

@@ -84,6 +84,9 @@ updates:
       time: "09:00"
       timezone: "UTC"
     open-pull-requests-limit: 5
+    # Explicit, like the root entry: the default is `auto`, which for anything it
+    # classifies as a library WIDENS ranges instead of bumping them.
+    versioning-strategy: "increase"
     cooldown:
       default-days: 7
     labels:
@@ -114,6 +117,10 @@ updates:
       time: "09:00"
       timezone: "UTC"
     open-pull-requests-limit: 5
+    # Critical here, not just consistency: the default `auto` may WIDEN ranges,
+    # which would rewrite the exact "8.3.1" bigquery pin into a range and destroy
+    # the very guarantee the note above depends on.
+    versioning-strategy: "increase"
     cooldown:
       default-days: 7
     labels:
@@ -122,10 +129,19 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    ignore:
+      # Majors held back entirely — a major of the BigQuery client is exactly
+      # where parameter-encoding behaviour changes. Minor/patch still flow, but
+      # excluded from the group below so they arrive as their own clearly-titled
+      # PR instead of hiding inside a generic grouped bump.
+      - dependency-name: "@google-cloud/bigquery"
+        update-types: ["version-update:semver-major"]
     groups:
       gcp-exporter:
         patterns:
           - "*"
+        exclude-patterns:
+          - "@google-cloud/bigquery"
 
   # The exporter's Docker base image (node:22-slim). Nothing else tracked it, so
   # the base image only ever moved when someone edited the Dockerfile by hand.
