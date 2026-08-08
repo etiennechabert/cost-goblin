@@ -269,6 +269,22 @@ folder — and writes the config itself. It won't let you select the `<PREFIX>`
 folder above the tiers, which is the mistake that makes the daily tier read the
 hourly shards too.
 
+> **`does not have storage.buckets.list access` is expected with the read-only
+> reader, not a misconfiguration.** Listing the buckets in a project is a
+> *project-level* permission; `roles/storage.objectViewer` grants rights on the
+> bucket and deliberately nothing above it, so the bucket dropdown comes back
+> empty. Type the bucket name into the field beneath it and press **Browse** —
+> walking a bucket needs only `storage.objects.list`, which the reader already
+> has, and every step after it behaves normally. To make the dropdown work
+> instead, add a project-level grant, accepting that the reader can then see the
+> name of every bucket in the project:
+>
+> ```bash
+> gcloud projects add-iam-policy-binding PROJECT \
+>   --member=serviceAccount:costgoblin-reader@PROJECT.iam.gserviceaccount.com \
+>   --role=roles/storage.bucketViewer
+> ```
+
 To write the entry by hand instead — a bare service-account key can't list
 projects, for example — take the **Write the config by hand instead** link on
 that same screen, or open the config folder from **Data Management → Generate
@@ -314,6 +330,20 @@ ignoring it. See "Differences from the AWS integration" below.
 
 ### Credentials
 
+CostGoblin only ever **reads the bucket**. It holds no credential that can reach
+BigQuery, the billing account, or any other API — the exporter is what talks to
+BigQuery, and it runs in your project under its own service account. Two object
+permissions on the one bucket are the entire requirement:
+
+| Permission | Used for |
+|---|---|
+| `storage.objects.list` | finding the `billing_period=` folders |
+| `storage.objects.get` | downloading the shards |
+
+Both come from `roles/storage.objectViewer` on the bucket. Nothing at the
+project level is needed — see the `storage.buckets.list` note under "Point
+CostGoblin at it" for the one place that shows.
+
 By default the provider uses **Application Default Credentials**, which is one
 command and no key material on disk:
 
@@ -325,13 +355,21 @@ For least privilege, create a read-only service account and impersonate it —
 no long-lived key, and it can reach nothing but this bucket:
 
 ```bash
+SA=costgoblin-reader@PROJECT.iam.gserviceaccount.com
 gcloud iam service-accounts create costgoblin-reader \
   --display-name="CostGoblin read-only"
 gcloud storage buckets add-iam-policy-binding gs://cost-goblin \
-  --member=serviceAccount:costgoblin-reader@PROJECT.iam.gserviceaccount.com \
+  --member=serviceAccount:${SA} \
   --role=roles/storage.objectViewer
+# Impersonation needs permission to mint that account's tokens. It is NOT
+# implied by roles/editor — only by Owner — so without this the login below
+# fails with "Unable to impersonate", which is exactly the wall the
+# least-privilege reader is most likely to hit.
+gcloud iam service-accounts add-iam-policy-binding ${SA} \
+  --member="user:$(gcloud config get-value account)" \
+  --role=roles/iam.serviceAccountTokenCreator
 gcloud auth application-default login \
-  --impersonate-service-account=costgoblin-reader@PROJECT.iam.gserviceaccount.com
+  --impersonate-service-account=${SA}
 ```
 
 then name it in the config:
