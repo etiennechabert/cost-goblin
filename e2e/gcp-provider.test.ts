@@ -6,6 +6,9 @@ import {
   waitForQuerySettle,
   assertNoReactCrash,
   screenshot,
+  startCoverage,
+  stopAndCollectCoverage,
+  writeCoverage,
   FIXTURE_DATA_DIR,
   FIXTURE_MULTI_CONFIG_DIR,
 } from './helpers.js';
@@ -26,6 +29,7 @@ import {
 
 let app: ElectronApplication;
 let page: Page;
+const allCoverage: unknown[] = [];
 
 /** Each test navigates for itself. Playwright shares one page across a
  *  describe block, so leaning on the previous test's position makes a failure
@@ -39,10 +43,13 @@ test.beforeAll(async () => {
   app = await launchApp({ configDir: FIXTURE_MULTI_CONFIG_DIR, dataDir: FIXTURE_DATA_DIR });
   page = await app.firstWindow();
   await expect(page).toHaveTitle('CostGoblin');
+  await startCoverage(page);
 });
 
 test.afterAll(async () => {
+  await stopAndCollectCoverage(page, allCoverage);
   await app.close();
+  writeCoverage('gcp-provider', allCoverage);
 });
 
 test.describe('mixed AWS + GCP workspace', () => {

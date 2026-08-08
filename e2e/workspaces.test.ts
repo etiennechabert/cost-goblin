@@ -2,7 +2,16 @@ import { test, expect, _electron, type ElectronApplication, type Page } from '@p
 import { join } from 'node:path';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { DESKTOP_DIR, FIXTURE_CONFIG_DIR, FIXTURE_DATA_DIR, SETTINGS_NAV_LABEL, openSettings } from './helpers.js';
+import {
+  DESKTOP_DIR,
+  FIXTURE_CONFIG_DIR,
+  FIXTURE_DATA_DIR,
+  SETTINGS_NAV_LABEL,
+  openSettings,
+  startCoverage,
+  stopAndCollectCoverage,
+  writeCoverage,
+} from './helpers.js';
 
 // Workspace-mode e2e: unlike every other suite (which pins paths via
 // COSTGOBLIN_DATA_DIR/COSTGOBLIN_CONFIG_DIR and therefore runs in "pinned"
@@ -13,6 +22,7 @@ import { DESKTOP_DIR, FIXTURE_CONFIG_DIR, FIXTURE_DATA_DIR, SETTINGS_NAV_LABEL, 
 let app: ElectronApplication;
 let page: Page;
 let userDataDir: string;
+const allCoverage: unknown[] = [];
 
 function appStatePath(): string {
   return join(userDataDir, 'app-state.json');
@@ -62,11 +72,13 @@ test.describe('Workspaces (workspace mode)', () => {
     page = await app.firstWindow();
     await expect(page).toHaveTitle('CostGoblin');
     await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible({ timeout: 15_000 });
+    await startCoverage(page);
   });
 
   test.afterAll(async () => {
     await app.close().catch(() => undefined);
     rmSync(userDataDir, { recursive: true, force: true });
+    writeCoverage('workspaces', allCoverage);
   });
 
   test('settings tab lists both workspaces with active and not-set-up badges', async () => {
@@ -122,6 +134,10 @@ test.describe('Workspaces (workspace mode)', () => {
     await openWorkspacesTab();
     await page.getByRole('button', { name: 'New workspace' }).click();
     await page.getByLabel('Workspace name').fill('client-d');
+
+    // The click below quits the app, so harvest renderer coverage now — the
+    // afterAll runs against an already-closed page where collection would fail.
+    await stopAndCollectCoverage(page, allCoverage);
 
     const closed = app.waitForEvent('close');
     await page.getByRole('button', { name: 'Create & Restart' }).click();

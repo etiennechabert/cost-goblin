@@ -131,7 +131,10 @@ jobs:
         # (COSTGOBLIN_USER_DATA_DIR, not the pinned dirs) — the only e2e coverage
         # of v0.7.0's multi-workspace feature. The test strips the pinned-mode
         # env vars below before launching, so it runs correctly in this matrix.
-        shard: [views-core, views-config, views-defaults, stress, gcp-provider, workspaces]
+        # `csp-verification` and `sandbox-verification` are the repo's only
+        # locks on the renderer security posture — cheap (seconds) but they
+        # only protect anything if they actually run on PRs.
+        shard: [views-core, views-config, views-defaults, stress, gcp-provider, workspaces, csp-verification, sandbox-verification]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
@@ -246,18 +249,30 @@ jobs:
         with:
           name: coverage-unit
           path: coverage
+      # merge-multiple is deliberately OFF: every shard's artifact contains a
+      # file named exactly `lcov.info`, so a merged download would overwrite
+      # them and forward a single arbitrary shard to Sonar. Each artifact
+      # extracts into its own coverage-e2e-shards/<artifact-name>/ dir instead.
       - name: Download E2E coverage shards
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: coverage-e2e-*
           path: coverage-e2e-shards
-          merge-multiple: true
         continue-on-error: true
+      # Concatenating lcov files is safe: Sonar merges duplicate SF records,
+      # taking a line as covered if any report covers it. If no shard produced
+      # coverage, warn loudly and write nothing — an absent report path makes
+      # the scanner log a warning, whereas an empty file would silently pass.
       - name: Merge E2E coverage
         run: |
-          mkdir -p coverage-e2e
-          cat coverage-e2e-shards/lcov.info > coverage-e2e/lcov.info 2>/dev/null || true
-        continue-on-error: true
+          shards=$(find coverage-e2e-shards -name lcov.info 2>/dev/null || true)
+          if [ -z "$shards" ]; then
+            echo "::warning::No E2E coverage shard produced an lcov.info — Sonar runs with unit coverage only."
+          else
+            mkdir -p coverage-e2e
+            echo "$shards" | xargs cat > coverage-e2e/lcov.info
+            echo "Merged shards:"; echo "$shards"
+          fi
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:

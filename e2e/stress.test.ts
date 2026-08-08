@@ -2,7 +2,15 @@ import { test, expect, type ElectronApplication, type Page } from '@playwright/t
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { FIXTURE_CONFIG_DIR, clickNavButton, launchApp, waitForQuerySettle } from './helpers.js';
+import {
+  FIXTURE_CONFIG_DIR,
+  clickNavButton,
+  launchApp,
+  startCoverage,
+  stopAndCollectCoverage,
+  waitForQuerySettle,
+  writeCoverage,
+} from './helpers.js';
 
 // ---------------------------------------------------------------------------
 // Widget growth regression — every widget × every size stays bounded
@@ -19,6 +27,7 @@ test.describe('Widget growth', () => {
 
   let widgetApp: ElectronApplication;
   let widgetPage: Page;
+  const allCoverage: unknown[] = [];
 
   test.beforeAll(async () => {
     mkdirSync(TEMP_CONFIG_DIR, { recursive: true });
@@ -32,9 +41,14 @@ test.describe('Widget growth', () => {
     widgetPage = await widgetApp.firstWindow();
     await expect(widgetPage).toHaveTitle('CostGoblin');
     await widgetPage.setViewportSize({ width: 1400, height: 900 });
+    await startCoverage(widgetPage);
   });
 
-  test.afterAll(async () => { await widgetApp.close(); });
+  test.afterAll(async () => {
+    await stopAndCollectCoverage(widgetPage, allCoverage);
+    await widgetApp.close();
+    writeCoverage('stress', allCoverage);
+  });
 
   for (const widgetType of WIDGET_TYPES) {
     test(`${widgetType} stays bounded at all sizes`, async () => {
