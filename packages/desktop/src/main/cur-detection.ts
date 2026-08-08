@@ -60,7 +60,11 @@ export async function findPreFocusProviders(
 
     let columns: readonly string[];
     try {
-      columns = await describeColumns(join(rawDir, newestPeriodDir, '*.parquet'));
+      // Forward slashes for the DuckDB glob: `join()` yields backslashes on
+      // Windows, which the globber does not treat as separators — the DESCRIBE
+      // would fail there and silently disable this detection on the one
+      // platform whose upgrades most need it (same idiom as rollup-store).
+      columns = await describeColumns(join(rawDir, newestPeriodDir, '*.parquet').replaceAll('\\', '/'));
     } catch {
       // A parquet we can't even describe (transient read error, locked file) is
       // not grounds to nuke — skip it rather than risk deleting readable data.
