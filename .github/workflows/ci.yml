@@ -131,7 +131,10 @@ jobs:
         # (COSTGOBLIN_USER_DATA_DIR, not the pinned dirs) — the only e2e coverage
         # of v0.7.0's multi-workspace feature. The test strips the pinned-mode
         # env vars below before launching, so it runs correctly in this matrix.
-        shard: [views-core, views-config, views-defaults, stress, gcp-provider, workspaces]
+        # `csp-verification` and `sandbox-verification` are the repo's only
+        # locks on the renderer security posture — cheap (seconds) but they
+        # only protect anything if they actually run on PRs.
+        shard: [views-core, views-config, views-defaults, stress, gcp-provider, workspaces, csp-verification, sandbox-verification]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
@@ -246,18 +249,56 @@ jobs:
         with:
           name: coverage-unit
           path: coverage
+      # merge-multiple is deliberately OFF: every shard's artifact contains a
+      # file named exactly `lcov.info`, so a merged download would overwrite
+      # them and forward a single arbitrary shard to Sonar. Each artifact
+      # extracts into its own coverage-e2e-shards/<artifact-name>/ dir instead.
       - name: Download E2E coverage shards
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: coverage-e2e-*
           path: coverage-e2e-shards
-          merge-multiple: true
         continue-on-error: true
+      # Concatenating lcov files is safe: Sonar merges duplicate SF records,
+      # taking a line as covered if any report covers it. The guard is
+      # fail-CLOSED: when the e2e matrix succeeded, every shard listed below
+      # must have produced a NON-EMPTY lcov.info — with e2e green, a missing
+      # or empty shard is by construction a coverage-pipeline bug, not a test
+      # failure. When e2e itself failed, missing shards are expected and only
+      # warned about.
       - name: Merge E2E coverage
+        env:
+          E2E_RESULT: ${{ needs.test-e2e.result }}
         run: |
+          set -euo pipefail
+          # Shards expected to upload coverage. csp/sandbox-verification
+          # deliberately collect none. Keep in sync with the writeCoverage
+          # calls in e2e/*.test.ts.
+          expected="views-core views-config views-defaults stress gcp-provider workspaces"
+          missing=0
           mkdir -p coverage-e2e
-          cat coverage-e2e-shards/lcov.info > coverage-e2e/lcov.info 2>/dev/null || true
-        continue-on-error: true
+          : > coverage-e2e/lcov.info
+          for shard in $expected; do
+            f="coverage-e2e-shards/coverage-e2e-$shard/lcov.info"
+            if [ -s "$f" ]; then
+              # printf guards the record boundary even if a shard's file
+              # arrives without its trailing newline.
+              cat "$f" >> coverage-e2e/lcov.info
+              printf '\n' >> coverage-e2e/lcov.info
+              echo "merged: $shard"
+            else
+              echo "::warning::E2E coverage shard '$shard' is missing or empty."
+              missing=1
+            fi
+          done
+          if [ "$missing" = 1 ] && [ "$E2E_RESULT" = "success" ]; then
+            echo "::error::test-e2e succeeded but at least one coverage shard is missing/empty — the coverage pipeline is broken."
+            exit 1
+          fi
+          if ! [ -s coverage-e2e/lcov.info ]; then
+            rm -f coverage-e2e/lcov.info
+            echo "::warning::No E2E coverage at all — Sonar runs with unit coverage only."
+          fi
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:

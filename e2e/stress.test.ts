@@ -2,7 +2,15 @@ import { test, expect, type ElectronApplication, type Page } from '@playwright/t
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { FIXTURE_CONFIG_DIR, clickNavButton, launchApp, waitForQuerySettle } from './helpers.js';
+import {
+  FIXTURE_CONFIG_DIR,
+  clickNavButton,
+  launchApp,
+  startCoverage,
+  stopAndCollectCoverage,
+  waitForQuerySettle,
+  writeCoverage,
+} from './helpers.js';
 
 // ---------------------------------------------------------------------------
 // Widget growth regression — every widget × every size stays bounded
@@ -19,6 +27,7 @@ test.describe('Widget growth', () => {
 
   let widgetApp: ElectronApplication;
   let widgetPage: Page;
+  const allCoverage: unknown[] = [];
 
   test.beforeAll(async () => {
     mkdirSync(TEMP_CONFIG_DIR, { recursive: true });
@@ -30,11 +39,20 @@ test.describe('Widget growth', () => {
 
     widgetApp = await launchApp({ configDir: TEMP_CONFIG_DIR });
     widgetPage = await widgetApp.firstWindow();
+    // Attach as early as possible: CDP coverage only counts execution after
+    // enabling, so every await before this line is boot code lost to the report.
+    await startCoverage(widgetPage);
     await expect(widgetPage).toHaveTitle('CostGoblin');
     await widgetPage.setViewportSize({ width: 1400, height: 900 });
   });
 
-  test.afterAll(async () => { await widgetApp.close(); });
+  test.afterAll(async () => {
+    await stopAndCollectCoverage(widgetPage, allCoverage);
+    // Write before close: a hung or rejected close() must not discard the
+    // coverage already harvested (writeCoverage is synchronous).
+    writeCoverage('stress', allCoverage);
+    await widgetApp.close();
+  });
 
   for (const widgetType of WIDGET_TYPES) {
     test(`${widgetType} stays bounded at all sizes`, async () => {

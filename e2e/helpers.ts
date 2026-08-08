@@ -39,8 +39,10 @@ export function launchApp(overrides?: { configDir?: string; dataDir?: string }):
 export async function startCoverage(page: Page): Promise<void> {
   try {
     await page.coverage.startJSCoverage({ resetOnNavigation: false });
-  } catch {
-    // coverage API may not be available
+  } catch (err) {
+    // Coverage must never fail a suite, but a silent miss hides a broken
+    // pipeline for the whole shard — leave a trace in the runner log.
+    console.warn(`[coverage] startJSCoverage unavailable: ${String(err)}`);
   }
 }
 
@@ -48,8 +50,9 @@ export async function stopAndCollectCoverage(page: Page, allCoverage: unknown[])
   try {
     const coverage = await page.coverage.stopJSCoverage();
     allCoverage.push(...coverage);
-  } catch {
-    // coverage API may not be available
+  } catch (err) {
+    // Same trade-off as startCoverage: swallow, but never silently.
+    console.warn(`[coverage] stopJSCoverage failed: ${String(err)}`);
   }
 }
 
