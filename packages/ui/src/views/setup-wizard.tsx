@@ -1040,6 +1040,29 @@ function ProfileStep({ state, onSelect, onSkip, onBack }: Readonly<{
   );
 }
 
+/** Error panel shared by the AWS bucket and browse steps: an expired SSO token
+ *  gets one-click re-auth, every other failure a plain Retry — so a credential
+ *  failure is never rendered as a silent empty list. `setup:list-buckets` /
+ *  `setup:browse-s3` funnel EVERY failure into `error`, hence the sniff rather
+ *  than an exhaustive match. */
+function AwsCredentialErrorPanel({ error, profile, onRetry }: Readonly<{
+  error: string;
+  profile: string;
+  onRetry: () => void;
+}>) {
+  if (error.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3" role="alert">
+      <p className="text-sm text-negative break-words">{error}</p>
+      {error.includes('aws sso login') ? (
+        <SsoLoginButton profile={profile} onRetry={onRetry} />
+      ) : (
+        <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
+      )}
+    </div>
+  );
+}
+
 function BucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'bucket' }>;
   onSelect: (bucket: string) => void;
@@ -1062,20 +1085,7 @@ function BucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
         <p className="text-xs text-text-muted mt-0.5">Select the S3 bucket</p>
       </div>
 
-      {state.error.length > 0 && (
-        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3" role="alert">
-          <p className="text-sm text-negative break-words">{state.error}</p>
-          {/* `setup:list-buckets` funnels EVERY failure into `error`, not just
-              expired tokens, so the retry sits outside the credential sniff —
-              an AccessDenied or a dropped connection otherwise left ← Back as
-              the only way on. */}
-          {state.error.includes('aws sso login') ? (
-            <SsoLoginButton profile={state.profile} onRetry={onRetry} />
-          ) : (
-            <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
-          )}
-        </div>
-      )}
+      <AwsCredentialErrorPanel error={state.error} profile={state.profile} onRetry={onRetry} />
 
       {state.loading ? (
         <div className="flex items-center justify-center py-8">
@@ -1153,19 +1163,7 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack, onRetry }: R
         <p className="text-xs text-text-muted mt-0.5">{sourceLabel.description}</p>
       </div>
 
-      {state.error.length > 0 && (
-        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3" role="alert">
-          <p className="text-sm text-negative break-words">{state.error}</p>
-          {/* Mirrors the bucket step: an expired SSO token offers one-click
-              re-auth, everything else (AccessDenied, dropped connection) a
-              plain Retry — so a browse failure is never a silent empty list. */}
-          {state.error.includes('aws sso login') ? (
-            <SsoLoginButton profile={state.profile} onRetry={onRetry} />
-          ) : (
-            <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
-          )}
-        </div>
-      )}
+      <AwsCredentialErrorPanel error={state.error} profile={state.profile} onRetry={onRetry} />
 
       {/* Breadcrumb */}
       <div className="flex items-center gap-1 text-xs font-mono text-text-muted flex-wrap">
@@ -1337,6 +1335,7 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
 
   const isDaily = state.s3Path.length > 0;
   const isHourlyOnly = !isDaily && state.hourlyPath.length > 0;
+  const isCostOptOnly = !isDaily && !isHourlyOnly && state.costOptPath.length > 0;
 
   // The credential card names whichever store this provider authenticates
   // through. Hardcoding "AWS Profile" here was fine while the wizard only
@@ -1374,10 +1373,12 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
       dailyBucket: state.s3Path,
       // The Confirm step shows ONE retention picker; it configures whichever
       // tier is primary for this run. In daily mode it sets daily retention; in
-      // hourly-only mode it sets hourly retention (which upsertWizardProvider
-      // used to ignore, hardcoding 30 days and silently discarding the choice).
+      // hourly-only mode hourly; in a cost-opt-only run cost-opt — each of which
+      // upsertWizardProvider used to ignore, hardcoding the tier and silently
+      // discarding the choice.
       retentionDays: isDaily ? state.retentionDays : undefined,
       ...(isHourlyOnly ? { hourlyRetentionDays: state.retentionDays } : {}),
+      ...(isCostOptOnly ? { costOptRetentionDays: state.retentionDays } : {}),
       ...(state.hourlyPath.length > 0 ? { hourlyBucket: state.hourlyPath } : {}),
       // GCP has no Cost Optimization Hub analogue and `validateGcpSync`
       // rejects the key, so it is never collected — but never sent, either.
@@ -1709,6 +1710,10 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }
 
   function handleReturnToStart() {
+    // Invalidate any in-flight step loader: the ✕ is reachable from a bucket/
+    // browse/beacon/project step whose loader is mid-flight, and its late
+    // response would otherwise teleport the user back into that step.
+    stepRequestRef.current += 1;
     setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
     // The ✕ abandons the whole configuration, so the typed name goes with the
     // collected paths. Left set, a name entered for an abandoned GCP provider
@@ -1861,6 +1866,10 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }
 
   function handleBack() {
+    // Invalidate any in-flight loader before navigating away. Branches that
+    // re-enter a guarded loader (startBucketStep, goToProfileStep, browseTo…)
+    // bump the token again, so this only affects the direct setWizard exits.
+    stepRequestRef.current += 1;
     if (wizard.step === 'profile') {
       setWizard({ step: 'start' });
     } else if (wizard.step === 'beacon') {

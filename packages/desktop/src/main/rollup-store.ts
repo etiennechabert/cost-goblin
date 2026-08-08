@@ -413,14 +413,24 @@ export class RollupStore {
     // which fills in the period list) or calls markSettled() when there's
     // nothing to rebuild.
     this.setStatus({ state: 'computing', done: 0, total: 0, periods: [], active: [] });
-    // Resolve the directory eagerly, while the provider config the providerName
-    // closure reads is guaranteed valid. The enqueued deletion runs in a later
-    // microtask, by which point a caller (clearAllCaches) may already have
-    // nulled that config — reading it there would throw 'No provider configured'
-    // and reject the whole operation (remove-provider, bundle import, pull).
-    const dir = this.rollupDir();
+    // Resolve the directory eagerly AND defensively. Eager (not inside the
+    // enqueued microtask) so a caller that nulls the config right after — e.g.
+    // clearAllCaches — still deletes the right tree. Defensive because other
+    // callers invalidate WITH a null config on purpose: invalidateDimensions →
+    // scheduleRollupReroll and invalidateCostScope both run `void invalidate()
+    // .then(...)` right after invalidateConfig has nulled state.config (e.g. the
+    // setup-wizard's write-config), where providerName() throws. A synchronous
+    // throw there would escape the un-catchable `void ....then()` and reject the
+    // whole handler. When no provider resolves there is no rollup tree to delete
+    // anyway, so skip the rm; the in-memory invalidation above always runs.
+    let dir: string | null = null;
+    try {
+      dir = this.rollupDir();
+    } catch {
+      dir = null;
+    }
     return this.enqueue(async () => {
-      await rm(dir, { recursive: true, force: true });
+      if (dir !== null) await rm(dir, { recursive: true, force: true });
     });
   }
 }

@@ -83,8 +83,16 @@ describe('findPreFocusProviders', () => {
     expect(await findPreFocusProviders(dataDir, () => Promise.reject(new Error('locked')))).toEqual([]);
   });
 
-  it('recognizes the cost-opt tier prefix', async () => {
+  it('ignores the cost-opt tier — it is a different (non-FOCUS-billing) schema', async () => {
+    // Probing cost-opt recommendations for FOCUS billing columns would
+    // false-positive a valid cost-opt export as pre-FOCUS and offer a wipe.
     await seedRaw('aws-main', 'cost-opt-2026-02');
+    expect(await findPreFocusProviders(dataDir, describeFrom({ 'aws-main': CUR_COLUMNS }))).toEqual([]);
+  });
+
+  it('flags a provider on its daily tier even when a cost-opt dir is also present', async () => {
+    await seedRaw('aws-main', 'daily-2026-02');
+    await seedRaw('aws-main', 'cost-opt-2026-03'); // sorts after daily but is ignored
     expect(await findPreFocusProviders(dataDir, describeFrom({ 'aws-main': CUR_COLUMNS }))).toEqual(['aws-main']);
   });
 });

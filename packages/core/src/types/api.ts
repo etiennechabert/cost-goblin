@@ -387,6 +387,8 @@ export interface CostApi {
     retentionDays?: number | undefined;
     /** Hourly-tier retention (the wizard's picker in hourly-only mode). */
     hourlyRetentionDays?: number | undefined;
+    /** Cost-optimization-tier retention (the wizard's picker in a cost-opt-only run). */
+    costOptRetentionDays?: number | undefined;
     hourlyBucket?: string | undefined;
     costOptBucket?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;

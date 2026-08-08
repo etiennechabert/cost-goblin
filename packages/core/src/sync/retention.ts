@@ -44,7 +44,10 @@ interface SyncRetentionConfig {
 
 /** Default retention windows, matching the values used across the app
  *  (setup wizard, auto-sync, and the Data Management UI). */
-const DEFAULT_RETENTION_DAYS = { daily: 365, hourly: 30, costOptimization: 90 } as const;
+/** Per-tier retention default (days), applied whenever a tier config omits
+ *  `retentionDays`. Single source of truth for both the prune paths here and
+ *  the setup wizard's config writer, so the two can't disagree. */
+export const DEFAULT_RETENTION_DAYS = { daily: 365, hourly: 30, costOptimization: 90 } as const;
 
 /** Retention window for every configured tier. Daily is always present; hourly
  *  and cost-optimization only appear when that tier is configured. Used by both

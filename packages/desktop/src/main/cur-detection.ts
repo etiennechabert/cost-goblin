@@ -16,9 +16,12 @@ import { join } from 'node:path';
  *  raw parquet missing either binder-errors every query. */
 const FOCUS_SENTINEL_COLUMNS = ['ChargePeriodStart', 'BilledCost'] as const;
 
-/** Raw period-dir names the sync writes: `{tier}-YYYY-MM`, where the tier
- *  prefixes are `daily` / `hourly` / `cost-opt` (see TIER_RAW_PREFIXES). */
-const RAW_PERIOD_DIR_RE = /^(?:daily|hourly|cost-opt)-\d{4}-(?:0[1-9]|1[0-2])$/;
+/** FOCUS-billing raw period-dir names: `{tier}-YYYY-MM` for the daily/hourly
+ *  tiers only. The cost-optimization tier (`cost-opt-…`) is deliberately
+ *  excluded — it carries Cost Optimization Hub recommendations, a different
+ *  schema that has no FOCUS billing columns, so probing it for FOCUS sentinels
+ *  would false-positive a valid cost-opt export as pre-FOCUS and offer to wipe. */
+const RAW_PERIOD_DIR_RE = /^(?:daily|hourly)-\d{4}-(?:0[1-9]|1[0-2])$/;
 
 /** True when a parquet's columns are a pre-FOCUS (CUR 2.0) shape the query
  *  layer cannot read — missing a FOCUS sentinel column. Pure, exported for
@@ -46,33 +49,35 @@ export async function findPreFocusProviders(
     return []; // no data dir yet → fresh install
   }
 
-  const preFocus: string[] = [];
-  for (const provider of providerDirs) {
+  // Probe providers in parallel — the schema DESCRIBEs are independent, and
+  // this runs on the pre-window boot path where the common (all-FOCUS) case
+  // still pays one probe per provider.
+  const flags = await Promise.all(providerDirs.map(async (provider): Promise<boolean> => {
     const rawDir = join(dataDir, provider, 'raw');
     let rawEntries: string[];
     try {
       rawEntries = await readdir(rawDir);
     } catch {
-      continue; // not a provider tree (no raw/)
+      return false; // not a provider tree (no raw/)
     }
     const newestPeriodDir = rawEntries.filter(e => RAW_PERIOD_DIR_RE.test(e)).sort().at(-1);
-    if (newestPeriodDir === undefined) continue; // no data on disk for this provider
+    if (newestPeriodDir === undefined) return false; // no FOCUS-billing data on disk
 
-    let columns: readonly string[];
     try {
       // Forward slashes for the DuckDB glob: `join()` yields backslashes on
       // Windows, which the globber does not treat as separators — the DESCRIBE
       // would fail there and silently disable this detection on the one
       // platform whose upgrades most need it (same idiom as rollup-store).
-      columns = await describeColumns(join(rawDir, newestPeriodDir, '*.parquet').replaceAll('\\', '/'));
+      const columns = await describeColumns(join(rawDir, newestPeriodDir, '*.parquet').replaceAll('\\', '/'));
+      return isPreFocusColumns(columns);
     } catch {
       // A parquet we can't even describe (transient read error, locked file) is
       // not grounds to nuke — skip it rather than risk deleting readable data.
-      continue;
+      return false;
     }
-    if (isPreFocusColumns(columns)) preFocus.push(provider);
-  }
-  return preFocus;
+  }));
+
+  return providerDirs.filter((_, i) => flags[i] === true);
 }
 
 /** Delete the given providers' on-disk trees and the config file, so the app

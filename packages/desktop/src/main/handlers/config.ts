@@ -85,21 +85,24 @@ export function registerConfigHandlers(app: AppContext): void {
     const raw = await fs.readFile(ctx.configPath, 'utf-8');
     const parsed: unknown = parseYaml(raw);
     if (!isStringRecord(parsed)) throw new Error('Config file is not a YAML object');
-    // Throws on an unknown name (so we never delete data for a provider that
-    // isn't configured) or on removing the last provider.
+    // Compute (don't yet persist) the config without this provider. Throws on an
+    // unknown name (so we never delete data for a provider that isn't configured)
+    // or on removing the last provider.
     const updated = removeProviderEntry(parsed, providerName);
-    await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
     // Validate as a path segment before rm -rf — defence in depth on top of the
     // config-entry match above, so a crafted name can never escape the data dir.
     const safeName = parseProviderName(providerName);
-    await fs.rm(path.join(ctx.dataDir, String(safeName)), { recursive: true, force: true })
-      .catch((err: unknown) => {
-        // The config entry is already gone; a failed data delete leaves a tree
-        // that a same-name re-add could adopt. Surface it rather than hide it.
-        logger.warn(`Removed provider ${providerName} from config but failed to delete its data tree`, {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
+
+    // Delete the on-disk tree BEFORE rewriting the config, and release any
+    // DuckDB handles on its parquet first so the delete isn't blocked by an
+    // in-flight query. Ordering it before the config write means a delete
+    // failure (e.g. a locked file) aborts here with the provider still fully
+    // configured — no half-state where the config forgot a provider whose data
+    // survives for a same-name re-add to adopt. rm's force only swallows ENOENT,
+    // so a real failure still throws and rejects the IPC.
+    ctx.db.cancelPendingQueries();
+    await fs.rm(path.join(ctx.dataDir, String(safeName)), { recursive: true, force: true });
+    await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
     // Removal can change which provider is FIRST — and the RollupStore's
     // paths and in-memory manifest are bound to the first provider's tree.
     // A full cache clear invalidates the store and re-warms it against the

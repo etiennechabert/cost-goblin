@@ -307,10 +307,10 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
   const totalFiles = files.length;
   let globalFilesDone = 0;
   const bytes: ByteState = { bytesDone: undefined, bytesTotal: undefined };
-  /** Periods whose keys had no recognizable period prefix — see the guard
-   *  below. Collected so an all-skipped run fails loudly instead of reporting a
-   *  successful sync of nothing (mirrors the GCP arm's handling). */
-  const skipped: string[] = [];
+  /** Count of periods whose keys had no recognizable period prefix — see the
+   *  guard below. Tracked so an all-skipped run fails loudly instead of
+   *  reporting a successful sync of nothing (mirrors the GCP arm's handling). */
+  let skippedCount = 0;
 
   for (const [period, periodFiles] of periodList) {
     if (options.signal?.aborted) break;
@@ -327,7 +327,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
       // bucket into this one period's staging dir. Skip it (mirrors GCP's
       // isSafePeriodPrefix guard) rather than pull the entire bucket.
       logger.warn(`Skipping period ${period}: ${firstFile.key} is not under a billing_period=/date= folder`);
-      skipped.push(period);
+      skippedCount += 1;
       continue;
     }
     const s3Source = `s3://${s3Path.bucket}/${periodPrefix}`;
@@ -384,7 +384,7 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
   // Every period had an unrecognizable layout: fail loudly instead of stamping
   // the tier 'completed' with a fresh lastSync while nothing was installed (the
   // silent "up to date forever" trap the GCP arm also guards against).
-  if (skipped.length > 0 && skipped.length === periodList.length) {
+  if (skippedCount > 0 && skippedCount === periodList.length) {
     throw new Error(
       `None of the ${String(periodList.length)} period(s) sit under a billing_period=/date= folder — `
       + `the provider's bucket path is probably wrong. Point it at the FOCUS export prefix that contains data/ and metadata/.`,
@@ -395,6 +395,6 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     onProgress({ phase: 'done', filesTotal: totalFiles, filesDone: totalFiles });
   }
 
-  logger.info(`Sync complete: ${String(totalFilesDownloaded)} files across ${String(periodList.length - skipped.length)} periods`);
+  logger.info(`Sync complete: ${String(totalFilesDownloaded)} files across ${String(periodList.length - skippedCount)} periods`);
   return { filesDownloaded: totalFilesDownloaded, rowsProcessed: 0 };
 }

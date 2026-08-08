@@ -147,6 +147,15 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           if (err instanceof Error && err.message === SYNC_ALREADY_RUNNING) {
             return { filesDownloaded: 0, rowsProcessed: 0 };
           }
+          // A user-initiated cancel is not a failure. Auto-syncs are now
+          // cancellable (cancelSync keys by provider:tier and hits whichever
+          // sync owns the key), so return the tier to idle instead of showing
+          // 'Download cancelled' as an error — mirrors the manual path's
+          // handleSyncError.
+          if (err instanceof Error && err.message === 'Download cancelled') {
+            state.syncStatuses[key] = { status: 'idle', lastSync: null };
+            return { filesDownloaded: 0, rowsProcessed: 0 };
+          }
           // Surface credential expiry / opaque `aws s3 sync` download failures as
           // the actionable "run aws sso login" message so the toolbar offers
           // one-click re-auth instead of a raw CLI error (mirrors getInventory).

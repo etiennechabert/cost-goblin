@@ -135,10 +135,27 @@ describe('upsertWizardProvider', () => {
       credentialsProfile: 'default',
       sync: {
         intervalMinutes: 60,
+        // Tier defaults come from the shared DEFAULT_RETENTION_DAYS
+        // (daily 365, hourly 30, cost-opt 90) when the wizard picks none.
         daily: { bucket: 's3://b/daily/', retentionDays: 365 },
         hourly: { bucket: 's3://b/hourly/', retentionDays: 30 },
-        costOptimization: { bucket: 's3://b/co/', retentionDays: 30 },
+        costOptimization: { bucket: 's3://b/co/', retentionDays: 90 },
       },
+    });
+  });
+
+  it('honours the wizard-picked cost-opt retention instead of hardcoding a default', () => {
+    // Cost-opt-only run: no daily/hourly, and the picker value arrives as
+    // costOptRetentionDays (was silently discarded before).
+    const result = upsertWizardProvider({}, {
+      providerName: 'aws-main',
+      profile: 'default',
+      dailyBucket: '',
+      costOptBucket: 's3://b/co/',
+      costOptRetentionDays: 180,
+    });
+    expect(providers(result)[0]).toMatchObject({
+      sync: { costOptimization: { bucket: 's3://b/co/', retentionDays: 180 } },
     });
   });
 

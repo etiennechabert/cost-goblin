@@ -1,4 +1,4 @@
-import { isStringRecord, parseProviderName } from '@costgoblin/core';
+import { DEFAULT_RETENTION_DAYS, isStringRecord, parseProviderName } from '@costgoblin/core';
 
 /** Pure YAML-object transforms behind the two config-writing IPC handlers
  *  (`setup:write-config`, `config:update-aws-profile`). They operate on the
@@ -22,6 +22,9 @@ export interface WizardProviderConfig {
    *  picker showed, so a user's choice was silently discarded and any
    *  hand-configured hourly retention was reset on every re-run. */
   readonly hourlyRetentionDays?: number | undefined;
+  /** Retention for the COST-OPTIMIZATION tier (the wizard's picker in a
+   *  cost-opt-only run). Same fix as hourly — it was hardcoded before. */
+  readonly costOptRetentionDays?: number | undefined;
   readonly hourlyBucket?: string | undefined;
   readonly costOptBucket?: string | undefined;
 }
@@ -89,20 +92,22 @@ export function upsertWizardProvider(
     ? { intervalMinutes: 60 }
     : { ...existingSync, intervalMinutes: 60 };
 
+  // Retention per tier: honour the wizard's picked value, else preserve what the
+  // entry already had, else the shared DEFAULT_RETENTION_DAYS (single source of
+  // truth — the prune paths use the same constant, so a re-config can't drift a
+  // tier's cutoff).
   if (wizard.dailyBucket.length > 0) {
-    const retentionDays = wizard.retentionDays ?? existingTierRetention(existingSync, 'daily') ?? 365;
+    const retentionDays = wizard.retentionDays ?? existingTierRetention(existingSync, 'daily') ?? DEFAULT_RETENTION_DAYS.daily;
     sync['daily'] = { bucket: wizard.dailyBucket, retentionDays };
   }
   // Both arms carry an hourly tier: GCP's FOCUS export is delivered hourly and
-  // the exporter publishes that grain to its own folder. Honour the wizard's
-  // picked hourly retention (hourly-only mode); otherwise preserve whatever the
-  // entry already had rather than resetting it to the default.
+  // the exporter publishes that grain to its own folder.
   if (wizard.hourlyBucket !== undefined && wizard.hourlyBucket.length > 0) {
-    const retentionDays = wizard.hourlyRetentionDays ?? existingTierRetention(existingSync, 'hourly') ?? 30;
+    const retentionDays = wizard.hourlyRetentionDays ?? existingTierRetention(existingSync, 'hourly') ?? DEFAULT_RETENTION_DAYS.hourly;
     sync['hourly'] = { bucket: wizard.hourlyBucket, retentionDays };
   }
   if (type === 'aws' && wizard.costOptBucket !== undefined && wizard.costOptBucket.length > 0) {
-    const retentionDays = existingTierRetention(existingSync, 'costOptimization') ?? 30;
+    const retentionDays = wizard.costOptRetentionDays ?? existingTierRetention(existingSync, 'costOptimization') ?? DEFAULT_RETENTION_DAYS.costOptimization;
     sync['costOptimization'] = { bucket: wizard.costOptBucket, retentionDays };
   }
 

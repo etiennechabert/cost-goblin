@@ -390,6 +390,7 @@ export function registerSetupHandlers(app: AppContext): void {
     dailyBucket: string;
     retentionDays?: number | undefined;
     hourlyRetentionDays?: number | undefined;
+    costOptRetentionDays?: number | undefined;
     hourlyBucket?: string | undefined;
     costOptBucket?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
