@@ -2663,14 +2663,16 @@ gcloud run jobs add-iam-policy-binding $JOB --region=$REGION \
 
 <span class="code-comment"># ---- run it now ----</span>
 gcloud run jobs execute $JOB --region=$REGION --wait
-gcloud storage ls gs://$BUCKET/focus/
+gcloud storage ls gs://$BUCKET/focus/daily/
           </div>
           <p>Each run re-exports only the periods that changed, and writes them as:</p>
           <div class="code-block">
 <span class="code-dir">gs://your-company-billing/focus/</span>
-├── <span class="code-dir">billing_period=2026-07/</span><span class="code-file">shard-000000000000.parquet</span>
-└── <span class="code-dir">billing_period=2026-08/</span><span class="code-file">shard-000000000000.parquet</span>
+└── <span class="code-dir">daily/</span>
+    ├── <span class="code-dir">billing_period=2026-07/</span><span class="code-file">shard-000000000000.parquet</span>
+    └── <span class="code-dir">billing_period=2026-08/</span><span class="code-file">shard-000000000000.parquet</span>
           </div>
+          <div class="step-note">Note the <strong>daily/</strong> segment. It is what lets one bucket serve both grains if you ever deploy with <em>TIERS=daily,hourly</em>, and CostGoblin looks for <em>billing_period=</em> folders directly beneath whatever path you point it at &mdash; so the provider must name the <strong>tier</strong> folder, not the <em>focus/</em> prefix above it.</div>
           <div class="step-note">It runs <strong>daily at 06:00 UTC</strong> by default, which suits almost everyone &mdash; GCP refreshes the billing export only a few times a day, and each run that finds a change re-exports the whole current month, which grows through the month. <em>0 6,18 * * *</em> is a reasonable step up; hourly mostly multiplies month-end cost for no real freshness gain. For a number right now, trigger the job on demand rather than raising the schedule.</div>
           <div class="step-callout"><strong>Why a deployed job and not just a scheduled query:</strong> BigQuery decides how many files to split an export into, and that number is not stable between runs. A re-export producing fewer files leaves the extras behind &mdash; and nothing downstream can tell an orphan from a live one, so the month silently reads high. SQL cannot delete Cloud Storage objects, so the job clears each period's folder before rewriting it. A scheduled query on its own will look like it is working and quietly report inflated costs.</div>
           <div class="step-note">The same export runs standalone as <em>scheduled-query.sql</em> if you want to eyeball the data before deploying anything &mdash; useful for a first look, but not a complete setup, for the reason above.</div>
@@ -2680,12 +2682,38 @@ gcloud storage ls gs://$BUCKET/focus/
         <div class="step">
           <div class="step-header">
             <span class="step-num">3</span>
-            <h4>Connect CostGoblin</h4>
+            <h4>Grant read access</h4>
           </div>
-          <p>Sign in once so the app can read the bucket, then add the provider in <strong>Sync</strong> pointing at <em>gs://your-company-billing/focus</em>:</p>
+          <p>CostGoblin only ever <em>reads the bucket</em>. It holds no credential that can reach BigQuery, your billing account, or any other API &mdash; the exporter above is what talks to BigQuery, and it runs in your project under its own service account. Two object permissions on the one bucket are the entire requirement:</p>
+          <div class="code-block">
+<span class="code-file">storage.objects.list</span>   <span class="code-comment"># find the billing_period= folders</span>
+<span class="code-file">storage.objects.get</span>    <span class="code-comment"># download the shards</span>
+          </div>
+          <p><strong>The simple way</strong> &mdash; sign in as yourself and CostGoblin inherits whatever you can already read:</p>
           <div class="code-block">
 gcloud auth application-default login
           </div>
+          <p style="margin-top:14px"><strong>For least privilege</strong> &mdash; a service account that can reach nothing but this bucket, impersonated so no key material ever lands on disk:</p>
+          <div class="code-block">
+SA=costgoblin-reader@$PROJECT_ID.iam.gserviceaccount.com
+gcloud iam service-accounts create costgoblin-reader \
+  --display-name="CostGoblin read-only"
+gcloud storage buckets add-iam-policy-binding gs://$BUCKET \
+  --member=serviceAccount:$SA --role=<span class="code-file">roles/storage.objectViewer</span>
+gcloud auth application-default login \
+  --impersonate-service-account=$SA
+          </div>
+          <p>Then name it on the provider with <em>impersonateServiceAccount:</em> so the app knows to assume it.</p>
+          <div class="step-callout"><strong>&ldquo;does not have storage.buckets.list access&rdquo; is expected here, not a misconfiguration.</strong> Listing the buckets in a project is a <em>project-level</em> permission, and <em>roles/storage.objectViewer</em> grants rights on the bucket and deliberately nothing above it &mdash; so the wizard's bucket dropdown comes back empty. Type the bucket name into the field beneath it and press <strong>Browse</strong>: walking a bucket needs only <em>storage.objects.list</em>, which the reader already has, and every step after it behaves normally. If you would rather have the dropdown work, add <em>roles/storage.bucketViewer</em> at the project level &mdash; convenience bought by letting the reader see the name of every bucket in the project.</div>
+          <div class="step-note">Two credential stores are in play, by design: the app <em>lists</em> the bucket through Application Default Credentials, while the <em>download</em> runs as gcloud's own active account. If you are signed into both a work and a personal account, listing can succeed while the download fails &mdash; check <em>gcloud auth list</em> and fix it with <em>gcloud config set account you@example.com</em>. Re-running <em>application-default login</em> will not repair a stale CLI account.</div>
+        </div>
+
+        <div class="step">
+          <div class="step-header">
+            <span class="step-num">4</span>
+            <h4>Connect CostGoblin</h4>
+          </div>
+          <p>Add the provider in <strong>Sync</strong> &mdash; either pick <strong>Google Cloud &rarr; Find my export</strong> and let the wizard walk the bucket and write the config, or point it by hand at the tier folder, <em>gs://your-company-billing/focus/daily</em>.</p>
           <p>Each sync downloads only the periods that changed and rewrites them locally into the same FOCUS&nbsp;1.2 shape the AWS exports use &mdash; so both clouds land in one set of dashboards, split by a <strong>provider</strong> dimension.</p>
           <div class="step-note">GCP's managed billing table has a two-year retention. Your local Parquet mirror keeps everything you have ever synced, so it doubles as the long-term archive.</div>
           <div class="step-note"><strong>Coming from the AWS setup?</strong> GCP's FOCUS export is a single export, so a GCP source configures the <strong>daily</strong> tier only &mdash; there is no separate hourly export and no Cost Optimization Hub equivalent. Whatever time granularity the export carries is preserved in your local Parquet, so nothing is discarded.</div>
