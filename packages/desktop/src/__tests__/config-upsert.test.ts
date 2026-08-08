@@ -99,8 +99,8 @@ describe('upsertWizardProvider', () => {
     });
   });
 
-  it('keeps existing sync sub-fields the wizard run did not mention (hourly/costOptimization)', () => {
-    const a = providerA();
+  it('keeps existing sync sub-fields the wizard run did not mention (hourly/costOptimization) and preserves the daily retention', () => {
+    const a = providerA(); // daily retentionDays 90, hourly retentionDays 14
     const result = upsertWizardProvider({ providers: [a] }, {
       providerName: 'aws-main',
       profile: 'main-profile-2',
@@ -114,7 +114,9 @@ describe('upsertWizardProvider', () => {
       sync: {
         hourly: { bucket: 's3://bucket-a/hourly/', retentionDays: 14 },
         intervalMinutes: 60,
-        daily: { bucket: 's3://bucket-a2/daily/', retentionDays: 365 },
+        // Bucket changed but no retention was re-picked → the existing 90 is
+        // preserved, not reset to the default. (Was 365 before the fix.)
+        daily: { bucket: 's3://bucket-a2/daily/', retentionDays: 90 },
       },
     });
   });
@@ -137,6 +139,43 @@ describe('upsertWizardProvider', () => {
         hourly: { bucket: 's3://b/hourly/', retentionDays: 30 },
         costOptimization: { bucket: 's3://b/co/', retentionDays: 30 },
       },
+    });
+  });
+
+  it('honours the wizard-picked hourly retention instead of hardcoding 30', () => {
+    // Hourly-only run: no daily bucket, and the Confirm-step picker value
+    // arrives as hourlyRetentionDays. It used to be discarded (hourly forced to
+    // 30), so the retention picker shown for the hourly tier was a lie.
+    const result = upsertWizardProvider({}, {
+      providerName: 'aws-main',
+      profile: 'default',
+      dailyBucket: '',
+      hourlyBucket: 's3://b/hourly/',
+      hourlyRetentionDays: 90,
+    });
+    expect(providers(result)[0]).toEqual({
+      name: 'aws-main',
+      type: 'aws',
+      credentialsProfile: 'default',
+      sync: {
+        intervalMinutes: 60,
+        hourly: { bucket: 's3://b/hourly/', retentionDays: 90 },
+      },
+    });
+  });
+
+  it('preserves an existing hourly retention when re-configuring the bucket without re-picking it', () => {
+    // Provider A's hourly retention is 14. Re-running the wizard to change the
+    // hourly bucket (no hourlyRetentionDays) must keep 14, not reset it to 30.
+    const a = providerA();
+    const result = upsertWizardProvider({ providers: [a] }, {
+      providerName: 'aws-main',
+      profile: 'main-profile',
+      dailyBucket: 's3://bucket-a/daily/',
+      hourlyBucket: 's3://bucket-a/hourly-v2/',
+    });
+    expect(providers(result)[0]).toMatchObject({
+      sync: { hourly: { bucket: 's3://bucket-a/hourly-v2/', retentionDays: 14 } },
     });
   });
 

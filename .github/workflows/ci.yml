@@ -78,7 +78,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [views-core, views-config, views-defaults, stress, gcp-provider]
+        # `workspaces` boots the app through the real workspace-resolution path
+        # (COSTGOBLIN_USER_DATA_DIR, not the pinned dirs) — the only e2e coverage
+        # of v0.7.0's multi-workspace feature. The test strips the pinned-mode
+        # env vars below before launching, so it runs correctly in this matrix.
+        shard: [views-core, views-config, views-defaults, stress, gcp-provider, workspaces]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6

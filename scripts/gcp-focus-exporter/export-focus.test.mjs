@@ -404,6 +404,26 @@ describe('pendingExports — watermark tier attribution', () => {
   });
 });
 
+describe('scheduled-query.sql (standalone hourly-only exporter)', () => {
+  it('keys BOTH the change-detection join and the MERGE on the hourly tier', async () => {
+    // The shared export_state table also holds the Cloud Run job's daily rows.
+    // The read-side join must filter to the hourly tier the same way the MERGE
+    // does, or a lagging daily watermark re-exports the whole month every run
+    // (and a doubly-stale period would ARRAY_AGG twice). This pins the SQL copy
+    // to the keying the JS pendingExports path is already tested for above.
+    const { readFile } = await import('node:fs/promises');
+    const { fileURLToPath } = await import('node:url');
+    const { dirname, join } = await import('node:path');
+    const here = dirname(fileURLToPath(import.meta.url));
+    const sql = await readFile(join(here, 'scheduled-query.sql'), 'utf-8');
+
+    // The LEFT JOIN that selects which periods to export.
+    expect(sql).toMatch(/LEFT JOIN[\s\S]*?export_state[\s\S]*?ON[\s\S]*?IFNULL\(st\.tier, 'hourly'\) = 'hourly'/);
+    // The MERGE that records progress — already tier-keyed; assert it stays so.
+    expect(sql).toMatch(/ON st\.billing_period = s\.bp AND IFNULL\(st\.tier, 'hourly'\) = s\.tier/);
+  });
+});
+
 describe('normalizeTimestamp', () => {
   it('truncates the nanosecond precision BigQuery returns but will not accept', () => {
     // The exact value a live run read back from `MAX(x_ExportTime)`, which

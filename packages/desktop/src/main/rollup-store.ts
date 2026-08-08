@@ -413,8 +413,14 @@ export class RollupStore {
     // which fills in the period list) or calls markSettled() when there's
     // nothing to rebuild.
     this.setStatus({ state: 'computing', done: 0, total: 0, periods: [], active: [] });
+    // Resolve the directory eagerly, while the provider config the providerName
+    // closure reads is guaranteed valid. The enqueued deletion runs in a later
+    // microtask, by which point a caller (clearAllCaches) may already have
+    // nulled that config — reading it there would throw 'No provider configured'
+    // and reject the whole operation (remove-provider, bundle import, pull).
+    const dir = this.rollupDir();
     return this.enqueue(async () => {
-      await rm(this.rollupDir(), { recursive: true, force: true });
+      await rm(dir, { recursive: true, force: true });
     });
   }
 }

@@ -186,11 +186,19 @@ the **FOCUS 1.2 Data Export** (`FOCUS_1_2_AWS` table, GA Nov 2025), delivered
 as Parquet to S3. Additional providers become *receivers* feeding the same
 schema:
 
+> **Upgrading from v0.6 (CUR 2.0 → FOCUS 1.2).** v0.7.0 replaced the CUR 2.0
+> core schema with FOCUS 1.2 — a breaking change. Existing local CUR data can no
+> longer be read, and a CUR 2.0 export no longer syncs. On first launch after
+> upgrade the app detects pre-FOCUS local data (`cur-detection.ts`), and on the
+> user's confirm clears it and restarts into the setup wizard so they can point
+> at a FOCUS 1.2 Data Export. There is no in-place data migration: create a
+> fresh FOCUS 1.2 export and re-sync.
+
 | Provider | Export Format | Storage | Status |
 |----------|-------------|---------|--------|
 | AWS | FOCUS 1.2 Data Export (Parquet) | S3 | MVP |
 | AWS | Cost Optimization Hub recommendations (Parquet) | S3 | MVP |
-| GCP | BigQuery billing export → FOCUS | BigQuery → Parquet | #517 |
+| GCP | BigQuery FOCUS 1.2 export → GCS (via `scripts/gcp-focus-exporter`) | GCS → Parquet | MVP (v0.7) |
 | Azure | Cost Management FOCUS export | Blob Storage (Parquet/CSV) | Maybe Later |
 
 **Providers are first-class (#516).** A workspace configures N provider

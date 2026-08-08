@@ -11,9 +11,9 @@ import {
 } from '@costgoblin/core';
 import type { GcpProject, GcsBrowseResult } from '@costgoblin/core';
 import { upsertWizardProvider } from '../config-upsert.js';
-import { buildConfigTemplate, buildDimensionsTemplate } from '../config-templates.js';
+import { buildConfigTemplate, buildDimensionsTemplate, PROVIDER_ABSENT_DIMENSIONS } from '../config-templates.js';
 import { classifyManifestColumns, parseManifestColumnNames, selectManifestKey } from '../setup-manifest.js';
-import { extractGcsPrefixNames, parseGcloudProjects } from '../setup-gcp.js';
+import { collectGcsPrefixes, gcsNextPageToken, parseGcloudProjects } from '../setup-gcp.js';
 import type { DetectedReportType } from '../setup-manifest.js';
 import type { AppContext } from './context.js';
 
@@ -135,7 +135,7 @@ export function registerSetupHandlers(app: AppContext): void {
     }
   });
 
-  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: DetectedReportType; missingColumns: string[] }> => {
+  ipcMain.handle('setup:browse-s3', async (_event, params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: DetectedReportType; missingColumns: string[]; error?: string | undefined }> => {
     try {
       const { S3Client, ListObjectsV2Command, GetObjectCommand } = await import('@aws-sdk/client-s3');
       const client = new S3Client({
@@ -191,8 +191,16 @@ export function registerSetupHandlers(app: AppContext): void {
       }
 
       return { prefixes, isBillingExport, detectedType, missingColumns };
-    } catch {
-      return { prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [] };
+    } catch (err: unknown) {
+      // Surface the failure instead of swallowing it into an empty result. An
+      // expired SSO token or an s3:ListBucket AccessDenied while browsing used
+      // to render exactly like a genuinely empty bucket ("No subfolders
+      // found") — no message, no sign-in, no Retry. The wizard's browse step
+      // now shows an error panel, matching the bucket-list step and the GCP
+      // browse leg (the dead end #539/#542 removed everywhere else).
+      const message = err instanceof Error ? err.message : String(err);
+      logger.info('setup:browse-s3 failed', { error: message });
+      return { prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [], error: message };
     }
   });
 
@@ -313,15 +321,9 @@ export function registerSetupHandlers(app: AppContext): void {
       // COMBINED. A single 200-entry page of a bucket that also holds loose
       // objects at this level can be all objects and no folders, which
       // rendered as "No subfolders found" for a bucket that plainly contains
-      // the export. Walk pages until the folders run out, with a hard cap so a
-      // pathological bucket can't hang the wizard.
-      const prefixes: string[] = [];
-      const seen = new Set<string>();
-      let pageToken: string | undefined;
-      let pagesFetched = 0;
-      let truncated = false;
-
-      do {
+      // the export. The walk/dedupe/cap live in `collectGcsPrefixes` (tested);
+      // this callback is just the SDK-specific page fetch.
+      const { prefixes, truncated } = await collectGcsPrefixes(prefix, GCS_BROWSE_MAX_PAGES, async (pageToken) => {
         // The common prefixes live only on the raw `apiResponse` — the SDK
         // types it `unknown`, so `extractGcsPrefixNames` guards every step.
         const [, nextQuery, apiResponse] = await bucket.getFiles({
@@ -331,20 +333,8 @@ export function registerSetupHandlers(app: AppContext): void {
           autoPaginate: false,
           ...(pageToken === undefined ? {} : { pageToken }),
         });
-        for (const name of extractGcsPrefixNames(apiResponse, prefix)) {
-          if (seen.has(name)) continue;
-          seen.add(name);
-          prefixes.push(name);
-        }
-        pagesFetched += 1;
-        pageToken = isStringRecord(nextQuery) && typeof nextQuery['pageToken'] === 'string'
-          ? nextQuery['pageToken']
-          : undefined;
-        if (pageToken !== undefined && pagesFetched >= GCS_BROWSE_MAX_PAGES) {
-          truncated = true;
-          break;
-        }
-      } while (pageToken !== undefined);
+        return { apiResponse, nextPageToken: gcsNextPageToken(nextQuery) };
+      });
 
       const folder = classifyGcsFolder(prefixes);
 
@@ -399,6 +389,7 @@ export function registerSetupHandlers(app: AppContext): void {
     keyFile?: string | undefined;
     dailyBucket: string;
     retentionDays?: number | undefined;
+    hourlyRetentionDays?: number | undefined;
     hourlyBucket?: string | undefined;
     costOptBucket?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;
@@ -486,13 +477,12 @@ export function registerSetupHandlers(app: AppContext): void {
     // GCP's FOCUS export has no ServiceCategory, and the canonicalizer only
     // NULL-fills x_Operation and SkuMeter — so scaffolding them for a gcp
     // provider produces dimensions that render one blank value for every row.
-    // `buildDimensionsTemplate('gcp')` already drops them; this second writer
-    // has to agree or the two setup routes disagree about the same provider.
-    const GCP_ABSENT_DIMENSIONS = new Set(['service_category', 'operation', 'sku_meter']);
+    // `buildDimensionsTemplate('gcp')` already drops them, and the default-
+    // dimension merge (context.ts) skips re-adding them; all three read the
+    // same PROVIDER_ABSENT_DIMENSIONS map so the routes cannot disagree.
+    const absentDims = wizardConfig.type === 'gcp' ? PROVIDER_ABSENT_DIMENSIONS.gcp : PROVIDER_ABSENT_DIMENSIONS.aws;
     const dimensionsYaml = {
-      builtIn: wizardConfig.type === 'gcp'
-        ? builtInDimensions.filter(d => !GCP_ABSENT_DIMENSIONS.has(d.name))
-        : builtInDimensions,
+      builtIn: builtInDimensions.filter(d => !absentDims.has(d.name)),
       tags: tagDimensions,
     };
 

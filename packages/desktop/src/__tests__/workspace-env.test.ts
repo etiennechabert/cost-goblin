@@ -13,6 +13,7 @@ import {
   readAppStateSync,
   renameWorkspaceDir,
   resolveWorkspaceEnv,
+  workspaceDeleteRefusal,
   workspacePaths,
   workspaceSizeBytes,
   writeAppStateSync,
@@ -463,6 +464,37 @@ describe('listWorkspaceNames', () => {
 
   it('returns [] for a missing root', async () => {
     expect(await listWorkspaceNames(join(userData, 'nope'))).toEqual([]);
+  });
+});
+
+describe('workspaceDeleteRefusal', () => {
+  // These three guards are the only barrier between a (possibly stale) IPC
+  // message and deleteWorkspaceDir's rm -rf, so each refusal is pinned.
+  it('refuses to delete the active workspace', () => {
+    expect(workspaceDeleteRefusal(ws('prod'), ws('prod'), [ws('prod'), ws('scratch')]))
+      .toMatch(/active workspace/);
+  });
+
+  it('refuses to delete a workspace that does not exist', () => {
+    expect(workspaceDeleteRefusal(ws('ghost'), ws('prod'), [ws('prod'), ws('scratch')]))
+      .toMatch(/does not exist/);
+  });
+
+  it('refuses to delete the last remaining workspace', () => {
+    expect(workspaceDeleteRefusal(ws('only'), ws('prod'), [ws('only')]))
+      .toMatch(/last workspace/);
+  });
+
+  it('allows deleting an existing, non-active workspace when others remain', () => {
+    expect(workspaceDeleteRefusal(ws('scratch'), ws('prod'), [ws('prod'), ws('scratch')]))
+      .toBeNull();
+  });
+
+  it('checks non-existence before the last-workspace guard (a stale name never reports "last")', () => {
+    // Only one real workspace, but the target isn't it — the message must be
+    // "does not exist", not "last workspace".
+    expect(workspaceDeleteRefusal(ws('ghost'), ws('prod'), [ws('prod')]))
+      .toMatch(/does not exist/);
   });
 });
 

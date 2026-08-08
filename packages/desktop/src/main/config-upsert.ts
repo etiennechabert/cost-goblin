@@ -15,7 +15,13 @@ export interface WizardProviderConfig {
   readonly profile: string;
   readonly keyFile?: string | undefined;
   readonly dailyBucket: string;
+  /** Retention for the DAILY tier (the wizard's picker in daily mode). */
   readonly retentionDays?: number | undefined;
+  /** Retention for the HOURLY tier (the wizard's picker in hourly-only mode).
+   *  Previously the hourly tier was hardcoded to 30 days regardless of what the
+   *  picker showed, so a user's choice was silently discarded and any
+   *  hand-configured hourly retention was reset on every re-run. */
+  readonly hourlyRetentionDays?: number | undefined;
   readonly hourlyBucket?: string | undefined;
   readonly costOptBucket?: string | undefined;
 }
@@ -24,6 +30,15 @@ function providerEntryName(entry: unknown): string | undefined {
   if (!isStringRecord(entry)) return undefined;
   const name = entry['name'];
   return typeof name === 'string' ? name : undefined;
+}
+
+/** The retentionDays already configured for a tier on the entry being
+ *  replaced, if any — so a wizard re-run that doesn't re-pick a tier's
+ *  retention preserves it instead of resetting it to the default. */
+function existingTierRetention(existingSync: Readonly<Record<string, unknown>>, tier: string): number | undefined {
+  const t: unknown = existingSync[tier];
+  if (isStringRecord(t) && typeof t['retentionDays'] === 'number') return t['retentionDays'];
+  return undefined;
 }
 
 /** Upsert the wizard's provider into the parsed config by exact name match:
@@ -75,15 +90,20 @@ export function upsertWizardProvider(
     : { ...existingSync, intervalMinutes: 60 };
 
   if (wizard.dailyBucket.length > 0) {
-    sync['daily'] = { bucket: wizard.dailyBucket, retentionDays: wizard.retentionDays ?? 365 };
+    const retentionDays = wizard.retentionDays ?? existingTierRetention(existingSync, 'daily') ?? 365;
+    sync['daily'] = { bucket: wizard.dailyBucket, retentionDays };
   }
   // Both arms carry an hourly tier: GCP's FOCUS export is delivered hourly and
-  // the exporter publishes that grain to its own folder.
+  // the exporter publishes that grain to its own folder. Honour the wizard's
+  // picked hourly retention (hourly-only mode); otherwise preserve whatever the
+  // entry already had rather than resetting it to the default.
   if (wizard.hourlyBucket !== undefined && wizard.hourlyBucket.length > 0) {
-    sync['hourly'] = { bucket: wizard.hourlyBucket, retentionDays: 30 };
+    const retentionDays = wizard.hourlyRetentionDays ?? existingTierRetention(existingSync, 'hourly') ?? 30;
+    sync['hourly'] = { bucket: wizard.hourlyBucket, retentionDays };
   }
   if (type === 'aws' && wizard.costOptBucket !== undefined && wizard.costOptBucket.length > 0) {
-    sync['costOptimization'] = { bucket: wizard.costOptBucket, retentionDays: 30 };
+    const retentionDays = existingTierRetention(existingSync, 'costOptimization') ?? 30;
+    sync['costOptimization'] = { bucket: wizard.costOptBucket, retentionDays };
   }
 
   const entry: Record<string, unknown> = type === 'gcp'

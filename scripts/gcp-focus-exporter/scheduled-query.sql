@@ -65,7 +65,14 @@ SET periods = (
     FROM `«FOCUS_TABLE»`
     GROUP BY 1
   ) src
-  LEFT JOIN costgoblin_exporter.export_state st ON st.billing_period = src.p
+  -- Match ONLY this script's own tier row. The MERGE below keys on
+  -- (billing_period, IFNULL(tier,'hourly')), so the read side must too: without
+  -- the tier predicate this also joins the Cloud Run job's DAILY row (the table
+  -- is shared by default), and a lagging daily watermark makes every run
+  -- re-export the whole current month's hourly data — or, if both tiers' rows
+  -- are stale, ARRAY_AGG emits the period twice and it exports twice per run.
+  LEFT JOIN costgoblin_exporter.export_state st
+    ON st.billing_period = src.p AND IFNULL(st.tier, 'hourly') = 'hourly'
   WHERE st.watermark IS NULL OR src.w > st.watermark
 );
 

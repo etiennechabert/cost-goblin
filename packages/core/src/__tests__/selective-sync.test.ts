@@ -126,6 +126,51 @@ describe('syncSelectedFiles', () => {
     expect(mockSpawn).toHaveBeenCalledTimes(2);
   });
 
+  it('refuses to mirror the whole bucket when no key has a period folder', async () => {
+    // Flat keys → extractPeriodPrefix('') → source would collapse to
+    // `s3://bucket/` and `aws s3 sync` would pull the entire bucket. The guard
+    // must skip them all and fail loudly, never spawning the sync.
+    mockSpawn.mockImplementation(() => createSuccessfulSpawn());
+    const files = [file('flatfile1.parquet', 'h1'), file('nested/flatfile2.parquet', 'h2')];
+
+    await expect(syncSelectedFiles({
+      bucketPath: 's3://test-bucket/',
+      profile: 'test-profile',
+      providerName,
+      dataDir: '/tmp/test',
+      expectedDataType: 'daily',
+      files,
+    })).rejects.toThrow(/billing_period=/);
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it('skips a flat-layout period but still syncs the valid ones', async () => {
+    mockSpawn.mockImplementation(() => createSuccessfulSpawn());
+    mockReaddir.mockResolvedValue(['data.parquet']);
+    const files = [
+      file('cur/billing_period=2026-03/a.parquet', 'h1'),
+      file('flat.parquet', 'h2'), // groups under 'unknown' → skipped, not mirrored
+    ];
+
+    const result = await syncSelectedFiles({
+      bucketPath: 's3://test-bucket/',
+      profile: 'test-profile',
+      providerName,
+      dataDir: '/tmp/test',
+      expectedDataType: 'daily',
+      files,
+    });
+
+    // Only the valid period was synced; the flat one was skipped.
+    expect(result.filesDownloaded).toBe(1);
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect(mockSpawn).toHaveBeenCalledWith(
+      expect.stringContaining('aws'),
+      expect.arrayContaining(['s3://test-bucket/cur/billing_period=2026-03/']),
+      expect.anything(),
+    );
+  });
+
   it('handles multiple periods in sorted order', async () => {
     mockSpawn.mockImplementation(() => createSuccessfulSpawn());
 

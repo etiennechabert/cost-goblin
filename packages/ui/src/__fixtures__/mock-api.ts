@@ -358,7 +358,10 @@ export class MockCostApi implements CostApi {
   testConnection(): Promise<{ ok: boolean; error?: string | undefined }> { return Promise.resolve({ ok: true }); }
   listAwsProfiles(): Promise<string[]> { return Promise.resolve(['default', 'prod', 'staging']); }
   listS3Buckets(): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }> { return Promise.resolve({ buckets: [{ name: 'my-cur-bucket', region: 'eu-central-1' }] }); }
-  browseS3(): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }> { return Promise.resolve({ prefixes: ['data', 'metadata'], isBillingExport: true, detectedType: 'daily', missingColumns: [] }); }
+  /** Overridable so a test can drive the browse step's error path (an expired
+   *  SSO token / AccessDenied surfaces as `error`, not an empty folder list). */
+  s3BrowseResult: { prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; error?: string | undefined } = { prefixes: ['data', 'metadata'], isBillingExport: true, detectedType: 'daily', missingColumns: [] };
+  browseS3(): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; error?: string | undefined }> { return Promise.resolve(this.s3BrowseResult); }
   listGcpProjects(): Promise<{ projects: readonly GcpProject[]; error?: string | undefined }> {
     return Promise.resolve(this.gcpProjectsResult);
   }

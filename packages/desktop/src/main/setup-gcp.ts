@@ -64,3 +64,54 @@ export function extractGcsPrefixNames(apiResponse: unknown, parentPrefix: string
   }
   return names;
 }
+
+/** Pull the next page token out of a `getFiles({ autoPaginate: false })`
+ *  `nextQuery`. The SDK types it `unknown`, so the shape is probed defensively:
+ *  a missing or oddly-shaped `nextQuery` (e.g. after an SDK upgrade changes it)
+ *  yields `undefined`, terminating the walk with whatever was collected rather
+ *  than looping or throwing. */
+export function gcsNextPageToken(nextQuery: unknown): string | undefined {
+  return isStringRecord(nextQuery) && typeof nextQuery['pageToken'] === 'string'
+    ? nextQuery['pageToken']
+    : undefined;
+}
+
+/** One delimiter-listing page: the raw `apiResponse` (where the common prefixes
+ *  live) and the token for the next page, or `undefined` when this is the last. */
+export interface GcsPrefixPage {
+  readonly apiResponse: unknown;
+  readonly nextPageToken: string | undefined;
+}
+
+/** Walk the pages of a delimiter listing, collecting deduped child folder
+ *  names. Extracted from the `setup:browse-gcs` handler so the token walk,
+ *  cross-page dedupe, and the page cap are unit-testable without the Storage
+ *  SDK. `fetchPage` performs one page; `maxPages` caps a pathological bucket —
+ *  reaching it while a token is still pending sets `truncated`. A `getFiles`
+ *  page bounds `items[] + prefixes[]` COMBINED, so a page of loose objects can
+ *  carry no folders while more pages still do — hence walking rather than
+ *  reading a single page. */
+export async function collectGcsPrefixes(
+  prefix: string,
+  maxPages: number,
+  fetchPage: (pageToken: string | undefined) => Promise<GcsPrefixPage>,
+): Promise<{ prefixes: string[]; truncated: boolean }> {
+  const prefixes: string[] = [];
+  const seen = new Set<string>();
+  let pageToken: string | undefined;
+  let pagesFetched = 0;
+  do {
+    const page = await fetchPage(pageToken);
+    for (const name of extractGcsPrefixNames(page.apiResponse, prefix)) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      prefixes.push(name);
+    }
+    pagesFetched += 1;
+    pageToken = page.nextPageToken;
+    if (pageToken !== undefined && pagesFetched >= maxPages) {
+      return { prefixes, truncated: true };
+    }
+  } while (pageToken !== undefined);
+  return { prefixes, truncated: false };
+}

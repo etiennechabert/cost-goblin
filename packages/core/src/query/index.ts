@@ -16,6 +16,8 @@ export {
   computePeriodsInRange,
   resolveField,
   tryResolveField,
+  sqlEscapeString,
+  NO_ACCOUNT_SENTINEL,
 } from './builder.js';
 export type { QueryContextOptions, BuildSourceOptions, ProviderSourceSpec, ProviderSourceBranch, BaselineDiscoveryParams, ResolvedDimension } from './builder.js';
 

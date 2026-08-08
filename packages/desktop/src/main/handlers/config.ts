@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { asDimensionId, isStringRecord, logger } from '@costgoblin/core';
+import { asDimensionId, isStringRecord, logger, parseProviderName } from '@costgoblin/core';
 import type {
   CostGoblinConfig,
   Dimension,
@@ -73,22 +73,38 @@ export function registerConfigHandlers(app: AppContext): void {
     logger.info(`Updated AWS profile to ${profile}${providerName === undefined ? '' : ` for provider ${providerName}`}`);
   });
 
-  // Removes the provider from the CONFIG only. Its {dataDir}/{name}/ tree is
-  // left orphaned on disk — deliberate: config removal must never be a
-  // data-loss operation. The UI tells the user where the data still lives.
+  // Removes the provider from the config AND deletes its {dataDir}/{name}/ tree.
+  // Deleting the data is deliberate: leaving it orphaned let a later add of the
+  // same name silently adopt this source's months and attribute them to a
+  // different provider (even a different cloud). The confirmation modal warns
+  // the user the download is discarded and must be re-synced if re-added.
   ipcMain.handle('config:remove-provider', async (_event, providerName: string): Promise<void> => {
     const fs = await import('node:fs/promises');
+    const path = await import('node:path');
     const { stringify, parse: parseYaml } = await import('yaml');
     const raw = await fs.readFile(ctx.configPath, 'utf-8');
     const parsed: unknown = parseYaml(raw);
     if (!isStringRecord(parsed)) throw new Error('Config file is not a YAML object');
+    // Throws on an unknown name (so we never delete data for a provider that
+    // isn't configured) or on removing the last provider.
     const updated = removeProviderEntry(parsed, providerName);
     await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
+    // Validate as a path segment before rm -rf — defence in depth on top of the
+    // config-entry match above, so a crafted name can never escape the data dir.
+    const safeName = parseProviderName(providerName);
+    await fs.rm(path.join(ctx.dataDir, String(safeName)), { recursive: true, force: true })
+      .catch((err: unknown) => {
+        // The config entry is already gone; a failed data delete leaves a tree
+        // that a same-name re-add could adopt. Surface it rather than hide it.
+        logger.warn(`Removed provider ${providerName} from config but failed to delete its data tree`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
     // Removal can change which provider is FIRST — and the RollupStore's
     // paths and in-memory manifest are bound to the first provider's tree.
     // A full cache clear invalidates the store and re-warms it against the
     // new first provider instead of serving stale partitions.
     await clearAllCaches();
-    logger.info(`Removed provider ${providerName} from config (data left on disk)`);
+    logger.info(`Removed provider ${providerName} (config entry and on-disk data deleted)`);
   });
 }

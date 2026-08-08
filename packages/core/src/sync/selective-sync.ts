@@ -307,6 +307,10 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
   const totalFiles = files.length;
   let globalFilesDone = 0;
   const bytes: ByteState = { bytesDone: undefined, bytesTotal: undefined };
+  /** Periods whose keys had no recognizable period prefix — see the guard
+   *  below. Collected so an all-skipped run fails loudly instead of reporting a
+   *  successful sync of nothing (mirrors the GCP arm's handling). */
+  const skipped: string[] = [];
 
   for (const [period, periodFiles] of periodList) {
     if (options.signal?.aborted) break;
@@ -317,6 +321,15 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     if (firstFile === undefined) continue;
 
     const periodPrefix = extractPeriodPrefix(firstFile.key);
+    if (periodPrefix.length === 0) {
+      // No `billing_period=`/`date=` folder in the key → the source would
+      // collapse to `s3://bucket/` and `aws s3 sync` would mirror the WHOLE
+      // bucket into this one period's staging dir. Skip it (mirrors GCP's
+      // isSafePeriodPrefix guard) rather than pull the entire bucket.
+      logger.warn(`Skipping period ${period}: ${firstFile.key} is not under a billing_period=/date= folder`);
+      skipped.push(period);
+      continue;
+    }
     const s3Source = `s3://${s3Path.bucket}/${periodPrefix}`;
     const stagingDir = join(providerRawDir(dataDir, providerName), `${tier}-${period}`);
     await mkdir(stagingDir, { recursive: true });
@@ -368,10 +381,20 @@ export async function syncSelectedFiles(options: SelectiveSyncOptions): Promise<
     await saveEtags(dataDir, providerName, tier, period, periodFiles);
   }
 
+  // Every period had an unrecognizable layout: fail loudly instead of stamping
+  // the tier 'completed' with a fresh lastSync while nothing was installed (the
+  // silent "up to date forever" trap the GCP arm also guards against).
+  if (skipped.length > 0 && skipped.length === periodList.length) {
+    throw new Error(
+      `None of the ${String(periodList.length)} period(s) sit under a billing_period=/date= folder — `
+      + `the provider's bucket path is probably wrong. Point it at the FOCUS export prefix that contains data/ and metadata/.`,
+    );
+  }
+
   if (onProgress !== undefined) {
     onProgress({ phase: 'done', filesTotal: totalFiles, filesDone: totalFiles });
   }
 
-  logger.info(`Sync complete: ${String(totalFilesDownloaded)} files across ${String(periodList.length)} periods`);
+  logger.info(`Sync complete: ${String(totalFilesDownloaded)} files across ${String(periodList.length - skipped.length)} periods`);
   return { filesDownloaded: totalFilesDownloaded, rowsProcessed: 0 };
 }
