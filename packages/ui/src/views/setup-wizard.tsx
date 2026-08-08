@@ -6,7 +6,7 @@ import { Card, CardContent } from '../components/ui/card.js';
 import { Button } from '../components/ui/button.js';
 import { BundleSummaryCard, ImportConfigDialog } from '../components/config-sharing.js';
 import { ProfilePicker } from '../components/profile-picker.js';
-import { GcloudLoginButton, SsoLoginButton } from '../components/sso-login-button.js';
+import { GcloudLoginButton, RetryButton, SsoLoginButton } from '../components/sso-login-button.js';
 
 type DataSource = 'daily' | 'hourly' | 'costOptimization';
 
@@ -411,27 +411,43 @@ function isGcpAuthError(message: string): boolean {
 
 /** Error panel shared by the three GCP steps. `GCLOUD_CLI_NOT_FOUND` is a
  *  sentinel the handlers return rather than a message worth showing. */
-function GcpError({ message, mode }: Readonly<{ message: string; mode: 'adc' | 'cli' }>) {
+function GcpError({ message, mode, onRetry }: Readonly<{
+  message: string;
+  mode: 'adc' | 'cli';
+  /** Re-runs the step's own listing/browse call — each GCP step passes its
+   *  loader, since a sign-in that succeeds in the browser leaves this panel
+   *  showing a stale error the renderer never learns to drop. */
+  onRetry: () => void;
+}>) {
   if (message.length === 0) return null;
   const missingCli = message.includes('GCLOUD_CLI_NOT_FOUND');
   return (
-    <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3">
+    <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3" role="alert">
       <p className="text-sm text-negative whitespace-pre-wrap">
         {missingCli
           ? 'The Google Cloud CLI (gcloud) is not installed — CostGoblin needs it to list your projects and download the export.'
           : message}
       </p>
+      {/* Every branch gets a way to re-run the step. Gating the retry on the
+          sign-in branch alone left the failures a sign-in CANNOT fix — a
+          project-level IAM denial, a dropped connection — with no way forward
+          but ← Back, which is the dead end this panel exists to remove. */}
       {missingCli ? (
-        <a
-          href="https://cloud.google.com/sdk/docs/install"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-2 inline-block text-xs text-accent underline underline-offset-2 hover:text-accent-hover"
-        >
-          Install the gcloud CLI
-        </a>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <a
+            href="https://cloud.google.com/sdk/docs/install"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-accent underline underline-offset-2 hover:text-accent-hover"
+          >
+            Install the gcloud CLI
+          </a>
+          <RetryButton onRetry={onRetry} />
+        </div>
+      ) : isGcpAuthError(message) ? (
+        <GcloudLoginButton mode={mode} onRetry={onRetry} />
       ) : (
-        isGcpAuthError(message) && <GcloudLoginButton mode={mode} />
+        <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
       )}
     </div>
   );
@@ -441,11 +457,12 @@ function GcpError({ message, mode }: Readonly<{ message: string; mode: 'adc' | '
  *
  *  Has no AWS counterpart: S3's ListBuckets is account-wide and takes no
  *  arguments, while `storage.getBuckets()` is project-scoped. */
-function GcpProjectStep({ state, onSelect, onManual, onBack }: Readonly<{
+function GcpProjectStep({ state, onSelect, onManual, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'gcp-project' }>;
   onSelect: (projectId: string) => void;
   onManual: () => void;
   onBack: () => void;
+  onRetry: () => void;
 }>) {
   const [filter, setFilter] = useState('');
   const filtered = state.projects.filter(
@@ -464,7 +481,7 @@ function GcpProjectStep({ state, onSelect, onManual, onBack }: Readonly<{
         </p>
       </div>
 
-      <GcpError message={state.error} mode="cli" />
+      <GcpError message={state.error} mode="cli" onRetry={onRetry} />
 
       {state.loading && (
         <div className="flex items-center justify-center py-8">
@@ -528,11 +545,12 @@ function GcpProjectStep({ state, onSelect, onManual, onBack }: Readonly<{
 }
 
 /** Step 2b-ii — pick the bucket. Sister of `BucketStep`, against GCS. */
-function GcpBucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
+function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'gcp-bucket' }>;
   onSelect: (bucket: string) => void;
   onSkip?: (() => void) | undefined;
   onBack: () => void;
+  onRetry: () => void;
 }>) {
   const [filter, setFilter] = useState('');
   const [manual, setManual] = useState('');
@@ -549,7 +567,7 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
         </p>
       </div>
 
-      <GcpError message={state.error} mode="adc" />
+      <GcpError message={state.error} mode="adc" onRetry={onRetry} />
 
       {state.loading ? (
         <div className="flex items-center justify-center py-8">
@@ -695,7 +713,9 @@ function GcpBrowseStep({ state, conflictsWith, onNavigate, onConfirm, onSkip, on
         ))}
       </div>
 
-      <GcpError message={state.error} mode="adc" />
+      {/* Re-browsing the current prefix IS `onNavigate(state.prefix)` — no
+          second callback needed for what the step can already do. */}
+      <GcpError message={state.error} mode="adc" onRetry={() => { onNavigate(state.prefix); }} />
 
       {state.folder.kind === 'tier-parent' && (
         <div className="rounded-lg border border-warning/50 bg-warning-muted px-4 py-3">
@@ -913,11 +933,15 @@ function ProfileStep({ state, onSelect, onSkip, onBack }: Readonly<{
   );
 }
 
-function BucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
+function BucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'bucket' }>;
   onSelect: (bucket: string) => void;
   onSkip?: (() => void) | undefined;
   onBack: () => void;
+  /** Re-lists the buckets. The wizard has no other way back out of an expired-
+   *  token error: ← Back returns to the profile picker, and re-picking the same
+   *  profile was the only route to a second attempt. */
+  onRetry: () => void;
 }>) {
   const [filter, setFilter] = useState('');
   const filtered = state.buckets.filter(b => filter.length === 0 || b.name.toLowerCase().includes(filter.toLowerCase()));
@@ -932,10 +956,16 @@ function BucketStep({ state, onSelect, onSkip, onBack }: Readonly<{
       </div>
 
       {state.error.length > 0 && (
-        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3">
+        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3" role="alert">
           <p className="text-sm text-negative">{state.error}</p>
-          {state.error.includes('aws sso login') && (
-            <SsoLoginButton profile={state.profile} />
+          {/* `setup:list-buckets` funnels EVERY failure into `error`, not just
+              expired tokens, so the retry sits outside the credential sniff —
+              an AccessDenied or a dropped connection otherwise left ← Back as
+              the only way on. */}
+          {state.error.includes('aws sso login') ? (
+            <SsoLoginButton profile={state.profile} onRetry={onRetry} />
+          ) : (
+            <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
           )}
         </div>
       )}
@@ -1356,12 +1386,13 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     return workspaceNaming !== undefined ? { step: 'welcome' } : { step: 'start' };
   });
   const [collectedPaths, setCollectedPaths] = useState({ daily: '', hourly: '', costOpt: '' });
-  // Monotonic token for the GCP loaders. Each resolver rebuilds a whole step
-  // object from captured args, so without this a slow response (a cold ADC
-  // token refresh, or gcloud sitting on a re-auth prompt until the 20s
-  // timeout) would land AFTER the user navigated away and teleport them back.
+  // Monotonic token for every step loader, AWS and GCP alike. Each resolver
+  // rebuilds a whole step object from captured args, so without this a slow
+  // response (a cold ADC token refresh, gcloud sitting on a re-auth prompt
+  // until the 20s timeout, or the AWS SDK retrying against a dead SSO session)
+  // would land AFTER the user navigated away and teleport them back.
   // `handleBeaconApply` already guards the same way via a functional update.
-  const gcpRequestRef = useRef(0);
+  const stepRequestRef = useRef(0);
   const [bucketsLoaded, setBucketsLoaded] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [switchingTo, setSwitchingTo] = useState<string | null>(null);
@@ -1412,38 +1443,45 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   function goToGcpProjectStep(): void {
     // See `goToProfileStep`: the two chains share `collectedPaths`.
     setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
-    const token = ++gcpRequestRef.current;
+    reloadGcpProjects();
+  }
+
+  /** The listing half of `goToGcpProjectStep`, without the `collectedPaths`
+   *  reset — so the step's own Retry re-runs `gcloud projects list` after a
+   *  sign-in without discarding anything the user has already picked. */
+  function reloadGcpProjects(): void {
+    const token = ++stepRequestRef.current;
     setWizard({ step: 'gcp-project', projects: [], loading: true, selected: '', error: '' });
     api.listGcpProjects().then(result => {
-      if (gcpRequestRef.current !== token) return;
+      if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-project', projects: result.projects, loading: false, selected: '', error: result.error ?? '' });
     }).catch((err: unknown) => {
-      if (gcpRequestRef.current !== token) return;
+      if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-project', projects: [], loading: false, selected: '', error: err instanceof Error ? err.message : String(err) });
     });
   }
 
   function startGcpBucketStep(project: string, source: GcpSource): void {
-    const token = ++gcpRequestRef.current;
+    const token = ++stepRequestRef.current;
     setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: true, selected: '', error: '' });
     api.listGcsBuckets(project).then(result => {
-      if (gcpRequestRef.current !== token) return;
+      if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-bucket', project, source, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
     }).catch((err: unknown) => {
-      if (gcpRequestRef.current !== token) return;
+      if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-bucket', project, source, buckets: [], loading: false, selected: '', error: err instanceof Error ? err.message : String(err) });
     });
   }
 
   function gcpBrowseTo(project: string, source: GcpSource, bucket: string, prefix: string): void {
     const path = prefix.split('/').filter(s => s.length > 0);
-    const token = ++gcpRequestRef.current;
+    const token = ++stepRequestRef.current;
     setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: [], loading: true, folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: '', path });
     api.browseGcs({ projectId: project, bucket, prefix }).then(result => {
-      if (gcpRequestRef.current !== token) return;
+      if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: result.prefixes, loading: false, folder: result.folder, hasParquet: result.hasParquet, truncated: result.truncated, error: result.error ?? '', path });
     }).catch((err: unknown) => {
-      if (gcpRequestRef.current !== token) return;
+      if (stepRequestRef.current !== token) return;
       setWizard({ step: 'gcp-browse', project, source, bucket, prefix, prefixes: [], loading: false, folder: { kind: 'unknown' }, hasParquet: false, truncated: false, error: err instanceof Error ? err.message : String(err), path });
     });
   }
@@ -1491,12 +1529,12 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     });
   }
 
+  // Goes through `startBucketStep` rather than repeating its body, so the
+  // token guard and the error path stay in one place.
   useEffect(() => {
     if (isSourceMode && !bucketsLoaded) {
       setBucketsLoaded(true);
-      api.listS3Buckets(initialProfile).then(result => {
-        setWizard({ step: 'bucket', profile: initialProfile, source: initialSource, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
-      }).catch(() => undefined);
+      startBucketStep(initialProfile, initialSource);
     }
   }, [isSourceMode, bucketsLoaded, api, initialProfile, initialSource]);
 
@@ -1535,10 +1573,21 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }
 
   function startBucketStep(profile: string, source: DataSource) {
+    // Token-guarded like the GCP loaders (see `stepRequestRef`): the Retry
+    // button makes a slow listing routine — the user leaves for a browser —
+    // so a response landing after ← Back would teleport them into this step.
+    const token = ++stepRequestRef.current;
     setWizard({ step: 'bucket', profile, source, buckets: [], loading: true, selected: '', error: '' });
     api.listS3Buckets(profile).then(result => {
+      if (stepRequestRef.current !== token) return;
       setWizard({ step: 'bucket', profile, source, buckets: result.buckets, loading: false, selected: '', error: result.error ?? '' });
-    }).catch(() => undefined);
+    }).catch((err: unknown) => {
+      // Surfaced rather than swallowed. The empty catch pinned the step on
+      // "Loading buckets…" forever — no message, and (since the panel is what
+      // hosts them) no sign-in and no Retry.
+      if (stepRequestRef.current !== token) return;
+      setWizard({ step: 'bucket', profile, source, buckets: [], loading: false, selected: '', error: err instanceof Error ? err.message : String(err) });
+    });
   }
 
   function handleBucketSelect(bucket: string) {
@@ -1725,6 +1774,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onSelect={(projectId) => { startGcpBucketStep(projectId, 'daily'); }}
               onManual={() => { setWizard({ step: 'gcp', scaffolded: false, error: '' }); }}
               onBack={handleBack}
+              onRetry={reloadGcpProjects}
             />
           )}
           {wizard.step === 'gcp-bucket' && (
@@ -1733,6 +1783,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onSelect={(bucket) => { gcpBrowseTo(wizard.project, wizard.source, bucket, ''); }}
               onSkip={wizard.source === 'daily' ? undefined : handleGcpSkip}
               onBack={handleBack}
+              onRetry={() => { startGcpBucketStep(wizard.project, wizard.source); }}
             />
           )}
           {wizard.step === 'gcp-browse' && (
@@ -1763,6 +1814,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onSelect={handleBucketSelect}
               onSkip={wizard.source === 'daily' ? undefined : handleBrowseSkip}
               onBack={handleBack}
+              onRetry={() => { startBucketStep(wizard.profile, wizard.source); }}
             />
           )}
           {wizard.step === 'browse' && (

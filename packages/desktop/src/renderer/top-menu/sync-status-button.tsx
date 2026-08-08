@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { CloudDownload, RefreshCw } from 'lucide-react';
-import { Popover, PopoverTrigger, PopoverContent, formatRelativeTime, SsoLoginButton, GcloudLoginButton } from '@costgoblin/ui';
+import { Popover, PopoverTrigger, PopoverContent, formatRelativeTime, SsoLoginButton, GcloudLoginButton, RetryButton } from '@costgoblin/ui';
 import { GCLOUD_ADC_LOGIN_COMMAND, GCLOUD_CLI_LOGIN_COMMAND } from '@costgoblin/core/browser';
 import type { SyncStatus } from '@costgoblin/core/browser';
 
@@ -130,12 +130,31 @@ export function SyncStatusButton({
 }: Readonly<Props>): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [rechecking, setRechecking] = useState(false);
+  // The live re-check, so a second caller can await the real work instead of
+  // being handed an already-settled promise. `rechecking` drives the spinners;
+  // this drives the joining.
+  const recheckRef = useRef<Promise<void> | null>(null);
   const synced = missingPeriods === 0;
 
-  function handleRecheck(): void {
-    if (rechecking) return;
+  // Returns the promise so the credential panel's Retry can await the same
+  // re-check the header icon runs — one action, both spinners.
+  //
+  // A caller arriving while one is already in flight JOINS it rather than
+  // getting a resolved promise back: returning `Promise.resolve()` made the
+  // panel's Retry a silent no-op whenever the header icon was mid-check (the
+  // icon is disabled then, the Retry is not), and the in-flight check had read
+  // the pre-sign-in credentials, so it reported the same error the user had
+  // just fixed.
+  function handleRecheck(): Promise<void> {
+    const running = recheckRef.current;
+    if (running !== null) return running;
     setRechecking(true);
-    void onRecheck().finally(() => { setRechecking(false); });
+    const started = onRecheck().finally(() => {
+      recheckRef.current = null;
+      setRechecking(false);
+    });
+    recheckRef.current = started;
+    return started;
   }
 
   const showError = error !== null;
@@ -191,7 +210,7 @@ export function SyncStatusButton({
           </div>
           <button
             type="button"
-            onClick={handleRecheck}
+            onClick={() => { void handleRecheck(); }}
             disabled={rechecking}
             className="rounded p-1 text-text-muted transition-colors hover:bg-bg-tertiary hover:text-text-primary disabled:opacity-50"
             title="Check for new data"
@@ -201,13 +220,21 @@ export function SyncStatusButton({
           </button>
         </div>
         {showError && (
-          <div className="mb-2 rounded-md border border-negative/50 bg-negative-muted px-2.5 py-1.5 text-xs text-negative">
+          <div className="mb-2 rounded-md border border-negative/50 bg-negative-muted px-2.5 py-1.5 text-xs text-negative" role="alert">
             {error}
+            {/* `onRetry` is the same re-check the header's refresh icon runs —
+                it clears `syncError` on success, so a finished sign-in makes
+                this whole panel disappear without leaving the popover. */}
             {ssoProfile !== null && (
-              <SsoLoginButton profile={ssoProfile} hint="A browser window will open. Refresh above after logging in." />
+              <SsoLoginButton profile={ssoProfile} onRetry={handleRecheck} />
             )}
             {gcloudMode !== null && (
-              <GcloudLoginButton mode={gcloudMode} hint="A browser window will open. Refresh above after logging in." />
+              <GcloudLoginButton mode={gcloudMode} onRetry={handleRecheck} />
+            )}
+            {/* Sync errors are mostly NOT credential errors — a bare Retry so
+                every one of them has a way forward from here. */}
+            {ssoProfile === null && gcloudMode === null && (
+              <div className="mt-2"><RetryButton onRetry={handleRecheck} /></div>
             )}
           </div>
         )}
