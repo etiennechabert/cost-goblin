@@ -478,13 +478,18 @@ function GcpError({ message, mode, onRetry }: Readonly<{
  *  the wizard's place. `role="alert"` for the same reason it uses one: this
  *  panel is inserted already-populated, and a polite region added that way is
  *  inconsistently announced. */
-function GcpBucketListDenied({ project, message, onRetry }: Readonly<{
+function GcpBucketListDenied({ project, message, detailsOpen, onToggleDetails, onRetry }: Readonly<{
   project: string;
   message: string;
+  detailsOpen: boolean;
+  onToggleDetails: (open: boolean) => void;
   onRetry: () => void;
 }>) {
   return (
-    <div className="rounded-lg border border-border bg-bg-tertiary/30 px-4 py-3" role="alert">
+    // `aria-atomic="false"` because `role="alert"` implies atomic: without it,
+    // opening the disclosure re-announces the whole panel — headline, both
+    // paragraphs and the 350-character denial — instead of the text it reveals.
+    <div className="rounded-lg border border-border bg-bg-tertiary/30 px-4 py-3" role="alert" aria-atomic="false">
       <p className="text-sm text-text-primary">
         Couldn&apos;t list the buckets in <code className="text-text-secondary">{project}</code>.
       </p>
@@ -495,7 +500,11 @@ function GcpBucketListDenied({ project, message, onRetry }: Readonly<{
         press Browse. If instead the credential has no access to this project, browsing will fail too;
         the details below name the principal that was denied.
       </p>
-      <details className="mt-2">
+      <details
+        className="mt-2"
+        open={detailsOpen}
+        onToggle={(e) => { onToggleDetails(e.currentTarget.open); }}
+      >
         <summary className="text-xs text-text-muted cursor-pointer hover:text-text-secondary">
           Details, and how to grant the listing permission
         </summary>
@@ -621,7 +630,20 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
 }>) {
   const [filter, setFilter] = useState('');
   const [manual, setManual] = useState('');
-  const filtered = state.buckets.filter(b => filter.length === 0 || b.name.toLowerCase().includes(filter.toLowerCase()));
+  // Survives a re-list along with the rest of this component's state: Retry and
+  // the hourly→daily Back both keep `step` at 'gcp-bucket', so React reuses the
+  // element. Lifted out of the panel for exactly that reason — the panel itself
+  // unmounts whenever `error` clears mid-request, which collapsed the
+  // disclosure on every attempt of the retry loop it tells the user to run.
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  // Applied only while its input is on screen. `filter` outlives the input,
+  // which renders above 5 buckets — so a filter typed against a long list kept
+  // hiding a short one after a re-list, with no box left to clear it.
+  const filterVisible = state.buckets.length > 5;
+  const filtering = filterVisible && filter.length > 0;
+  const filtered = filtering
+    ? state.buckets.filter(b => b.name.toLowerCase().includes(filter.toLowerCase()))
+    : state.buckets;
   const sourceLabel = SOURCE_LABELS[state.source];
   const bucketListDenied = isGcpBucketListDeniedMessage(state.error);
 
@@ -636,7 +658,15 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
       </div>
 
       {bucketListDenied
-        ? <GcpBucketListDenied project={state.project} message={state.error} onRetry={onRetry} />
+        ? (
+          <GcpBucketListDenied
+            project={state.project}
+            message={state.error}
+            detailsOpen={detailsOpen}
+            onToggleDetails={setDetailsOpen}
+            onRetry={onRetry}
+          />
+        )
         : <GcpError message={state.error} mode="adc" onRetry={onRetry} />}
 
       {state.loading ? (
@@ -646,7 +676,7 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
         </div>
       ) : (
         <>
-          {state.buckets.length > 5 && (
+          {filterVisible && (
             <input
               type="text"
               value={filter}
@@ -679,7 +709,7 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
               ))}
               {filtered.length === 0 && (
                 <p className="text-sm text-text-muted text-center py-4">
-                  {filter.length > 0 ? 'No buckets match that filter' : 'No buckets found'}
+                  {filtering ? 'No buckets match that filter' : 'No buckets found'}
                 </p>
               )}
             </div>
@@ -688,15 +718,14 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
       )}
 
       {/* Typing the name skips the enumeration entirely — the escape hatch for
-          a reader that can browse objects but not enumerate buckets. The long
-          label carries that explanation for callers with no panel above; when
-          `GcpBucketListDenied` is showing, it has already said all of this, and
-          repeating it verbatim one field lower read as a second failure. */}
+          a reader that can browse objects but not enumerate buckets.
+          `GcpBucketListDenied` explains that above whenever it applies, so this
+          label stays neutral: the alternative wording diagnosed a permissions
+          problem, and it rendered for a dropped connection and for a project
+          that genuinely has no buckets just as readily as for a real denial. */}
       <div className="flex flex-col gap-1.5 border-t border-border pt-4">
         <label htmlFor="gcs-bucket-manual" className="text-xs text-text-muted">
-          {bucketListDenied || (state.error === '' && state.buckets.length > 0)
-            ? 'Or enter a bucket name directly'
-            : "Can't list buckets? Enter the name directly — browsing objects needs weaker permissions than listing buckets."}
+          Or enter a bucket name directly
         </label>
         <div className="flex gap-2">
           <input

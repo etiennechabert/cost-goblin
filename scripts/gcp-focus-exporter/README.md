@@ -269,16 +269,22 @@ folder — and writes the config itself. It won't let you select the `<PREFIX>`
 folder above the tiers, which is the mistake that makes the daily tier read the
 hourly shards too.
 
-> **`does not have storage.buckets.list access` is expected with the read-only
-> reader, not a misconfiguration.** Listing the buckets in a project is a
-> *project-level* permission; `roles/storage.objectViewer` grants rights on the
-> bucket and deliberately nothing above it, so the bucket dropdown comes back
-> empty, and the wizard says so in place of Google's raw denial. Type the
-> bucket name into the field beneath it and press **Browse** — walking a bucket
-> needs only `storage.objects.list`, which the reader already has, and every
-> step after it behaves normally. To make the dropdown work instead, add a
-> project-level grant, accepting that the reader can then see the name of every
-> bucket in the project:
+> **"Couldn't list the buckets in …" is expected with the read-only reader, not
+> a misconfiguration.** Listing the buckets in a project is a *project-level*
+> permission; `roles/storage.objectViewer` grants rights on the bucket and
+> deliberately nothing above it, so the wizard reports that it could not list
+> them and hides the empty list. Type the bucket name into the field below and
+> press **Browse** — walking a bucket needs only `storage.objects.list`, which
+> the reader already has, and every step after it behaves normally.
+>
+> If **Browse** fails too, the credential has no access to that bucket at all.
+> GCP returns the same denial in both cases — the trailing "(or it may not
+> exist)" is Google declining to say which — so expand **Details** on the bucket
+> step to see the raw message, which names the principal that was refused. That
+> is usually the tell that ADC resolved to a different account than you meant.
+>
+> To make the dropdown work instead, add a project-level grant, accepting that
+> the reader can then see the name of every bucket in the project:
 >
 > ```bash
 > gcloud projects add-iam-policy-binding PROJECT \
@@ -290,11 +296,19 @@ hourly shards too.
 > `storage.buckets.list` — it adds no object access, so the reader stays unable
 > to read anything it could not already read.
 >
-> Note that `roles/storage.objectViewer` *does* list
-> `resourcemanager.projects.list` among its permissions, which looks like it
-> should populate the project dropdown a step earlier. It does not: the role is bound to the **bucket**, and
-> a resource-manager permission is inert at that scope. There is no manual
-> project field to fall back to, so if the project list comes back empty too,
+> An empty list on the *project* step one screen earlier is a different problem
+> with a different fix, and no IAM grant to the reader will touch it: the wizard
+> runs `gcloud projects list`, which authenticates as gcloud's **active
+> account** — never ADC, never the impersonated service account. So the account
+> that lists your projects and the one that reads the bucket are independent,
+> and anyone signed into both a work and a personal account routinely has the
+> wrong one active. Fix it with `gcloud auth login` or:
+>
+> ```bash
+> gcloud config set account you@example.com
+> ```
+>
+> There is no manual project field to fall back to, so if that list stays empty,
 > take **Write the config by hand instead** on that screen and use the YAML
 > below — the wizard's remaining steps only exist to produce it.
 

@@ -33,7 +33,6 @@ export {
   createGcsHandle,
   isGcloudCliAccountError,
   isGcloudDownloadFailure,
-  isGcpBucketListDenied,
   isGcpBucketListDeniedMessage,
   isGcpCredentialError,
   parseGcsPath,

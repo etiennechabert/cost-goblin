@@ -341,7 +341,7 @@ export function Savings() {
         </div>
       )}
       {savingsQuery.status === 'error' && (
-        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">
+        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative break-words">
           {savingsQuery.error.message}
         </div>
       )}

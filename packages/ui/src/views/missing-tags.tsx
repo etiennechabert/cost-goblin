@@ -405,7 +405,7 @@ export function MissingTags({ onEntityClick }: MissingTagsProps = {}) {
         </div>
       )}
       {missingQuery.status === 'error' && (
-        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">
+        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative break-words">
           {missingQuery.error.message}
         </div>
       )}

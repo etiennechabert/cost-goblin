@@ -62,18 +62,12 @@ export function isGcpCredentialError(err: unknown): boolean {
  *  denied principal, which is the only evidence of which identity ran.
  *
  *  Distinct from `isGcpCredentialError`: signing in again cannot grant a
- *  permission, so the two must not share a branch. */
-export function isGcpBucketListDenied(err: unknown): boolean {
-  return err instanceof Error && isGcpBucketListDeniedMessage(err.message);
-}
-
-/** `isGcpBucketListDenied` for callers that already hold the message string.
+ *  permission, so the two must not share a branch.
  *
- *  The renderer keeps `state.error` as a string, so without this it has to
- *  fabricate a throwaway `Error` on every render — including every keystroke
- *  in the wizard's filter and manual-name inputs — purely to satisfy the
- *  `instanceof` guard, and V8 captures a stack trace for each one.
- *
+ *  Takes the MESSAGE, not an `Error`, unlike its siblings: the only caller is
+ *  the setup wizard, which holds `state.error` as a string and would otherwise
+ *  fabricate a throwaway `Error` on every render — including every keystroke in
+ *  its filter and manual-name inputs — purely to satisfy an `instanceof` guard.
  *  One shape covers both denials the app sees: the Cloud Storage SDK names the
  *  permission in its `does not have … access` sentence and a bare API denial
  *  quotes it as `Permission '…' denied`, so matching the permission alone

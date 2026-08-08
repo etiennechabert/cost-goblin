@@ -28,7 +28,7 @@ export class ErrorBoundary extends Component<Props, State> {
         <div className="min-h-screen bg-bg-primary flex items-center justify-center p-8 [-webkit-app-region:drag]">
           <div className="max-w-lg w-full rounded-xl border border-negative/50 bg-negative-muted p-6 [-webkit-app-region:no-drag]">
             <h2 className="text-lg font-semibold text-negative">Something went wrong</h2>
-            <p className="mt-2 text-sm text-text-secondary leading-relaxed">
+            <p className="mt-2 text-sm text-text-secondary leading-relaxed break-words">
               {this.state.error.message}
             </p>
             {this.state.error.message.includes('aws sso login') && (
