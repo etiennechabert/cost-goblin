@@ -23,6 +23,7 @@ let app: ElectronApplication;
 let page: Page;
 let userDataDir: string;
 const allCoverage: unknown[] = [];
+let coverageCollected = false;
 
 function appStatePath(): string {
   return join(userDataDir, 'app-state.json');
@@ -70,15 +71,24 @@ test.describe('Workspaces (workspace mode)', () => {
     app.process().stdout?.on('data', (chunk: Buffer) => { console.log(`[main] ${chunk.toString().trimEnd()}`); });
     app.process().stderr?.on('data', (chunk: Buffer) => { console.log(`[main:err] ${chunk.toString().trimEnd()}`); });
     page = await app.firstWindow();
+    // Attach as early as possible: CDP coverage only counts execution after
+    // enabling — starting after the boot waits below would report the whole
+    // workspace-resolution boot path (this suite's unique contribution) as
+    // uncovered.
+    await startCoverage(page);
     await expect(page).toHaveTitle('CostGoblin');
     await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible({ timeout: 15_000 });
-    await startCoverage(page);
   });
 
   test.afterAll(async () => {
+    // Fallback harvest: if the restart test aborted before its in-test
+    // collection point (earlier failure, --grep run), salvage what the
+    // session has before the app goes away.
+    if (!coverageCollected) await stopAndCollectCoverage(page, allCoverage);
+    // Write before close: a hung close() must not discard harvested coverage.
+    writeCoverage('workspaces', allCoverage);
     await app.close().catch(() => undefined);
     rmSync(userDataDir, { recursive: true, force: true });
-    writeCoverage('workspaces', allCoverage);
   });
 
   test('settings tab lists both workspaces with active and not-set-up badges', async () => {
@@ -138,6 +148,7 @@ test.describe('Workspaces (workspace mode)', () => {
     // The click below quits the app, so harvest renderer coverage now — the
     // afterAll runs against an already-closed page where collection would fail.
     await stopAndCollectCoverage(page, allCoverage);
+    coverageCollected = true;
 
     const closed = app.waitForEvent('close');
     await page.getByRole('button', { name: 'Create & Restart' }).click();

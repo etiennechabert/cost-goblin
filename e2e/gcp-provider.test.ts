@@ -42,14 +42,18 @@ async function openDataSync(): Promise<void> {
 test.beforeAll(async () => {
   app = await launchApp({ configDir: FIXTURE_MULTI_CONFIG_DIR, dataDir: FIXTURE_DATA_DIR });
   page = await app.firstWindow();
-  await expect(page).toHaveTitle('CostGoblin');
+  // Attach as early as possible: CDP coverage only counts execution after
+  // enabling, so every await before this line is boot code lost to the report.
   await startCoverage(page);
+  await expect(page).toHaveTitle('CostGoblin');
 });
 
 test.afterAll(async () => {
   await stopAndCollectCoverage(page, allCoverage);
-  await app.close();
+  // Write before close: a hung or rejected close() must not discard the
+  // coverage already harvested (writeCoverage is synchronous).
   writeCoverage('gcp-provider', allCoverage);
+  await app.close();
 });
 
 test.describe('mixed AWS + GCP workspace', () => {

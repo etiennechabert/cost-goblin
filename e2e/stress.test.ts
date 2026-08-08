@@ -39,15 +39,19 @@ test.describe('Widget growth', () => {
 
     widgetApp = await launchApp({ configDir: TEMP_CONFIG_DIR });
     widgetPage = await widgetApp.firstWindow();
+    // Attach as early as possible: CDP coverage only counts execution after
+    // enabling, so every await before this line is boot code lost to the report.
+    await startCoverage(widgetPage);
     await expect(widgetPage).toHaveTitle('CostGoblin');
     await widgetPage.setViewportSize({ width: 1400, height: 900 });
-    await startCoverage(widgetPage);
   });
 
   test.afterAll(async () => {
     await stopAndCollectCoverage(widgetPage, allCoverage);
-    await widgetApp.close();
+    // Write before close: a hung or rejected close() must not discard the
+    // coverage already harvested (writeCoverage is synchronous).
     writeCoverage('stress', allCoverage);
+    await widgetApp.close();
   });
 
   for (const widgetType of WIDGET_TYPES) {

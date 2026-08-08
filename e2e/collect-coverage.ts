@@ -181,7 +181,10 @@ async function main(): Promise<void> {
     lcovParts.push(lines.join('\n'));
   }
 
-  const lcov = lcovParts.join('\n');
+  // Trailing newline is load-bearing: CI concatenates the per-shard files,
+  // and without it the boundary fuses `end_of_record` with the next shard's
+  // first line into a corrupt record.
+  const lcov = `${lcovParts.join('\n')}\n`;
   const outputPath = join(OUTPUT_DIR, 'lcov.info');
   writeFileSync(outputPath, lcov);
   process.stdout.write(`E2E coverage written to ${outputPath}\n`);
