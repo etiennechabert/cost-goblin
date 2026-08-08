@@ -144,8 +144,15 @@ jobs:
         run: |
           set -euo pipefail
           REL="costgoblin@${GITHUB_REF#refs/tags/v}"
-          npx --yes @sentry/cli@^2 sourcemaps inject packages/desktop/out
-          npx --yes @sentry/cli@^2 sourcemaps upload --release "$REL" packages/desktop/out
+          # --allow-scripts is REQUIRED here, not optional: @sentry/cli ships an
+          # `install` script that downloads its binary, and the repo's .npmrc sets
+          # strict-allow-scripts=true. `npm exec`/`npx` reads that flag but
+          # deliberately ignores package.json#allowScripts, so without this the
+          # command dies with ESTRICTALLOWSCRIPTS. Both steps are
+          # continue-on-error, so the failure would be silent: releases would ship
+          # with no source maps at all.
+          npx --yes --allow-scripts=@sentry/cli @sentry/cli@^2 sourcemaps inject packages/desktop/out
+          npx --yes --allow-scripts=@sentry/cli @sentry/cli@^2 sourcemaps upload --release "$REL" packages/desktop/out
 
       # Native crashes inside DuckDB (the duckdb.node addon + the libduckdb
       # engine) land in Crashpad minidumps. Sentry has no symbols for third-party
@@ -169,7 +176,9 @@ jobs:
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
           SENTRY_URL: ${{ vars.SENTRY_URL || 'https://de.sentry.io' }}
-        run: npx --yes @sentry/cli@^2 debug-files upload node_modules/@duckdb
+        # --allow-scripts: see the source-maps step above — required under
+        # strict-allow-scripts, and this step is continue-on-error too.
+        run: npx --yes --allow-scripts=@sentry/cli @sentry/cli@^2 debug-files upload node_modules/@duckdb
 
       # Build the single arch this runner natively is. --publish never: the
       # binaries + per-arch latest*.yml land in dist/ but nothing is uploaded to

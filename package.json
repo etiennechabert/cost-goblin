@@ -60,7 +60,8 @@
     "vitest": "^4.1.8"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=24",
+    "npm": ">=11.16.0"
   },
   "overrides": {
     "tmp": "^0.2.7",
@@ -75,7 +76,9 @@
     }
   },
   "allowScripts": {
+    "electron-winstaller@5.4.0": true,
+    "esbuild@0.25.12": true,
     "esbuild@0.28.1": true,
-    "electron-winstaller@5.4.0": true
+    "fsevents@2.3.2": true
   }
 }

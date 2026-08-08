@@ -14,6 +14,17 @@ updates:
       timezone: "UTC"
     open-pull-requests-limit: 5
     versioning-strategy: "increase"
+    # Wait 7 days after a version is published before proposing it. Nearly every
+    # npm account-takeover (event-stream, ua-parser-js, Shai-Hulud) is caught and
+    # the malicious version yanked within 24-72h, so a week of latency turns most
+    # of them into a non-event we never even see a PR for.
+    #
+    # This does NOT delay security fixes: cooldown applies to *version* updates
+    # only. Dependabot security updates (driven by the advisory database) ignore
+    # it entirely and still open immediately, so `audit-ci` always gets its patch
+    # without waiting.
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
       - "npm"
@@ -45,6 +56,11 @@ updates:
       time: "09:00"
       timezone: "UTC"
     open-pull-requests-limit: 5
+    # Same 7-day soak as npm. Actions are already SHA-pinned and restricted to an
+    # allowlist (actions/*, github/*, SonarSource/*), so this is defence in depth
+    # against a compromised release of an otherwise-trusted action.
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
       - "ci"
@@ -55,3 +71,93 @@ updates:
       all-actions:
         patterns:
           - "*"
+
+  # The signup Cloudflare Worker. It has its OWN package-lock.json, so unlike the
+  # workspace packages it needs its own config — the "/" entry above does not see
+  # it, and until now it received security updates only (that is what #534 was).
+  # Its deps run in production on the deployed Worker.
+  - package-ecosystem: "npm"
+    directory: "/workers/signup"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    # Explicit, like the root entry: the default is `auto`, which for anything it
+    # classifies as a library WIDENS ranges instead of bumping them.
+    versioning-strategy: "increase"
+    cooldown:
+      default-days: 7
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      signup-worker:
+        patterns:
+          - "*"
+
+  # The GCP FOCUS exporter. It has NO lockfile — its Dockerfile runs a bare
+  # `npm install --omit=dev`, so whatever resolves at image-build time is what
+  # ships. Dependabot can still update the manifest ranges, which is the only
+  # pinning this deployment has.
+  #
+  # NOTE: @google-cloud/bigquery is pinned to an exact version on purpose — the
+  # DATE/TIMESTAMP parameter wrapping in export-focus.mjs depends on that
+  # client's parameter encoding (see `_dependencyNote` in its package.json).
+  # Re-verify `temporalParam` before merging any bump of it.
+  - package-ecosystem: "npm"
+    directory: "/scripts/gcp-focus-exporter"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    # Critical here, not just consistency: the default `auto` may WIDEN ranges,
+    # which would rewrite the exact "8.3.1" bigquery pin into a range and destroy
+    # the very guarantee the note above depends on.
+    versioning-strategy: "increase"
+    cooldown:
+      default-days: 7
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    ignore:
+      # Majors held back entirely — a major of the BigQuery client is exactly
+      # where parameter-encoding behaviour changes. Minor/patch still flow, but
+      # excluded from the group below so they arrive as their own clearly-titled
+      # PR instead of hiding inside a generic grouped bump.
+      - dependency-name: "@google-cloud/bigquery"
+        update-types: ["version-update:semver-major"]
+    groups:
+      gcp-exporter:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "@google-cloud/bigquery"
+
+  # The exporter's Docker base image (node:22-slim). Nothing else tracked it, so
+  # the base image only ever moved when someone edited the Dockerfile by hand.
+  - package-ecosystem: "docker"
+    directory: "/scripts/gcp-focus-exporter"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore"
+      include: "scope"

@@ -41,6 +41,55 @@ jobs:
           node-version: 24
           cache: npm
 
+      # Both .npmrc guards fail OPEN on an npm that doesn't know them: npm prints
+      # a single `Unknown project config` warning and installs with no protection
+      # at all. `strict-allow-scripts` only exists from npm 11.16.0, and Node
+      # 24.0-24.17 ship an older npm — so assert the options are recognised
+      # instead of trusting whatever npm the runner happens to bundle. Runs before
+      # `npm ci` so a fail-open never silently installs.
+      - name: Assert supply-chain guards are active
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail=0
+          for opt in strict-allow-scripts min-release-age; do
+            val=$(npm config get "$opt")
+            if [ "$val" = "undefined" ] || [ -z "$val" ]; then
+              echo "::error::npm $(npm --version) does not recognise '$opt' — the .npmrc guard is silently inert. Needs npm >= 11.16.0."
+              fail=1
+            fi
+          done
+          if [ "$(npm config get strict-allow-scripts)" != "true" ]; then
+            echo "::error::strict-allow-scripts is '$(npm config get strict-allow-scripts)', expected 'true' — dependency install scripts would run unreviewed."
+            fail=1
+          fi
+          [ "$fail" = 0 ] || exit 1
+          echo "OK: npm $(npm --version), strict-allow-scripts=$(npm config get strict-allow-scripts), min-release-age=$(npm config get min-release-age)"
+
+      # An allowScripts entry can only be an exact version pin while its lockfile
+      # entry carries `resolved` (npm derives trusted identity from that URL). If
+      # an entry loses `resolved`/`integrity`, its pin silently stops matching and
+      # a later `npm ci` fails with no clue why — 294 root entries were in exactly
+      # that state before they were backfilled. Catch the regression here instead.
+      - name: Verify every lockfile entry is integrity-pinned
+        shell: bash
+        run: |
+          set -euo pipefail
+          for lock in package-lock.json workers/signup/package-lock.json; do
+            node -e "
+              const p = require('./$lock').packages;
+              const bad = Object.entries(p).filter(([k, v]) =>
+                k.includes('node_modules/') && !v.link && (!v.resolved || !v.integrity));
+              if (bad.length) {
+                console.error('::error file=$lock::' + bad.length +
+                  ' entries lack resolved/integrity, so they cannot be version-pinned: ' +
+                  bad.slice(0, 5).map(([k]) => k).join(', '));
+                process.exit(1);
+              }
+              console.log('$lock: all entries verified');
+            "
+          done
+
       - run: npm ci
 
       - name: Run audit-ci
