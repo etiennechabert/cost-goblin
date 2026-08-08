@@ -355,13 +355,21 @@ For least privilege, create a read-only service account and impersonate it —
 no long-lived key, and it can reach nothing but this bucket:
 
 ```bash
+SA=costgoblin-reader@PROJECT.iam.gserviceaccount.com
 gcloud iam service-accounts create costgoblin-reader \
   --display-name="CostGoblin read-only"
 gcloud storage buckets add-iam-policy-binding gs://cost-goblin \
-  --member=serviceAccount:costgoblin-reader@PROJECT.iam.gserviceaccount.com \
+  --member=serviceAccount:${SA} \
   --role=roles/storage.objectViewer
+# Impersonation needs permission to mint that account's tokens. It is NOT
+# implied by roles/editor — only by Owner — so without this the login below
+# fails with "Unable to impersonate", which is exactly the wall the
+# least-privilege reader is most likely to hit.
+gcloud iam service-accounts add-iam-policy-binding ${SA} \
+  --member="user:$(gcloud config get-value account)" \
+  --role=roles/iam.serviceAccountTokenCreator
 gcloud auth application-default login \
-  --impersonate-service-account=costgoblin-reader@PROJECT.iam.gserviceaccount.com
+  --impersonate-service-account=${SA}
 ```
 
 then name it in the config:

@@ -2695,11 +2695,20 @@ gcloud auth application-default login
           </div>
           <p style="margin-top:14px"><strong>For least privilege</strong> &mdash; a service account that can reach nothing but this bucket, impersonated so no key material ever lands on disk:</p>
           <div class="code-block">
+<span class="code-comment"># set these two — the values you used in step 1 and step 2</span>
+PROJECT_ID=<span class="code-file">your-project</span>
+BUCKET=<span class="code-file">your-company-billing</span>
+
 SA=costgoblin-reader@$PROJECT_ID.iam.gserviceaccount.com
 gcloud iam service-accounts create costgoblin-reader \
-  --display-name="CostGoblin read-only"
+  --project=$PROJECT_ID --display-name="CostGoblin read-only"
 gcloud storage buckets add-iam-policy-binding gs://$BUCKET \
   --member=serviceAccount:$SA --role=<span class="code-file">roles/storage.objectViewer</span>
+<span class="code-comment"># impersonating the reader needs permission to mint its tokens — without</span>
+<span class="code-comment"># this the login below fails with "Unable to impersonate"</span>
+gcloud iam service-accounts add-iam-policy-binding $SA --project=$PROJECT_ID \
+  --member="user:$(gcloud config get-value account)" \
+  --role=<span class="code-file">roles/iam.serviceAccountTokenCreator</span>
 gcloud auth application-default login \
   --impersonate-service-account=$SA
           </div>

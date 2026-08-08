@@ -281,45 +281,87 @@ function log(message, extra) {
   console.log(JSON.stringify({ severity: 'INFO', message, ...extra }));
 }
 
-/** BigQuery TIMESTAMPs round-trip ASYMMETRICALLY: a query RETURNS up to
- *  nanosecond precision (`2026-08-07T23:59:43.834613000Z`, nine fractional
- *  digits) but the query-parameter parser accepts at most microseconds, and
- *  rejects its own output with "Unparseable query parameter ... Invalid
- *  timestamp". Since the watermark's whole job is to be read from one query
- *  and fed back into the next, every value has to pass through here.
+/** Force a timestamp to EXACTLY six fractional digits.
  *
- *  TRUNCATED, never rounded. Truncation can only move a watermark EARLIER,
- *  whose worst case is re-exporting a period that did not change — idempotent
- *  and cheap. Rounding up could move it PAST a row that has not been exported
- *  yet, and that row would never be picked up again: the table is append-only,
- *  so nothing later would re-trip the comparison. */
+ *  Two separate BigQuery quirks meet here, and the fix has to satisfy both.
+ *
+ *  1. A query RETURNS up to nanosecond precision
+ *     (`2026-08-07T23:59:43.834613000Z`) but the query-parameter parser
+ *     accepts at most microseconds and rejects its own output with
+ *     "Unparseable query parameter ... Invalid timestamp". The watermark's
+ *     whole job is to be read from one query and fed into the next, so it
+ *     must be narrowed to six digits.
+ *
+ *  2. The client's width is NOT STABLE. `BigQueryTimestamp` renders
+ *     `pd.toISOString()` (nine digits) when the sub-millisecond component is
+ *     non-zero, but `new Date(...).toJSON()` (THREE digits) when it is zero.
+ *     Both widths are therefore in circulation for the same column.
+ *
+ *  Quirk 2 is why this pads as well as truncates. `watermark <= seen` in
+ *  `pendingExports` is a STRING compare, and a variable-width fraction makes
+ *  it disagree with chronological order: `'…43.834613Z' <= '…43.834Z'` is
+ *  true, because `'Z'` (0x5A) sorts above every digit. A watermark stored on
+ *  a whole millisecond (rendered `.834Z`) followed by a genuinely later
+ *  source value inside that same millisecond then reads as already-seen, and
+ *  the period is skipped while the run logs "nothing changed". A closed month
+ *  gains no further `x_ExportTime`, so that correction would never export.
+ *
+ *  Fixed width restores the property the comparison depends on: for a common
+ *  date-time prefix, lexicographic order equals chronological order.
+ *
+ *  Truncation is lossless, not a rounding choice — BigQuery TIMESTAMP is
+ *  microsecond-precision, so digits seven onward are always zero padding
+ *  added by `PreciseDate`. */
 export function normalizeTimestamp(iso) {
-  return iso.replace(/(\.\d{6})\d+/, '$1');
+  const match = /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})(?:\.(\d+))?(.*)$/.exec(iso);
+  if (match === null) return iso;
+  const [, head, fraction, tail] = match;
+  return `${head}.${`${fraction ?? ''}000000`.slice(0, 6)}${tail}`;
 }
 
 /** BigQuery returns TIMESTAMP as a wrapper object; unwrap to an ISO string.
  *
- *  Normalizing HERE rather than at the point of use keeps the two sides of
- *  `watermark <= seen` in one canonical form — that comparison is a string
- *  compare, so a nanosecond-precision source value against a microsecond
- *  stored one would compare longer-is-greater and re-export every run. */
+ *  Normalizing HERE, at the single unwrap point for every TIMESTAMP read,
+ *  is what puts both sides of `watermark <= seen` in the same width — see
+ *  `normalizeTimestamp` for why that comparison depends on it.
+ *
+ *  An unrecognized shape THROWS rather than falling back to `String(raw)`.
+ *  That fallback fed the comparison a value it had no shape guarantee for:
+ *  a `Date` stringifies to `Sat Mar 15 2026 …`, which outsorts every ISO
+ *  string and re-exports everything forever, and a plain object becomes
+ *  `[object Object]`, whose `[` (0x5B) outranks every digit so that EVERY
+ *  period compares as already-seen and is skipped silently. Both corrupt
+ *  change detection before the malformed value ever reaches BigQuery — and
+ *  by then `clearPeriodFolder` has already deleted the period. Failing here
+ *  is loud, immediate, and names the offending shape. */
 function timestampValue(raw) {
   if (raw === null || raw === undefined) return null;
   if (typeof raw === 'string') return normalizeTimestamp(raw);
   if (typeof raw === 'object' && 'value' in raw && typeof raw.value === 'string') {
     return normalizeTimestamp(raw.value);
   }
-  return String(raw);
+  throw new Error(`Unrecognized TIMESTAMP shape from BigQuery: ${JSON.stringify(raw)}`);
 }
 
-/** Re-wrap a scalar for a DATE or TIMESTAMP query parameter.
+/** The parameter types whose values the client silently drops.
+ *
+ *  Mirrors the client's own `_isCustomType`, which is a substring test:
+ *  anything containing TIME or DATE, plus GEOGRAPHY, RANGE and BigQueryInt.
+ *  So this is deliberately WIDER than the two types used today — `DATETIME`
+ *  and `TIME` are affected identically, and the next parameter added should
+ *  be covered without anyone having to rediscover why. */
+const UNWRAPPED_PARAM_TYPES = /TIME|DATE|GEOGRAPHY|RANGE|BigQueryInt/;
+
+/** Re-wrap a scalar for a parameter type the client unwraps.
  *
  *  The BigQuery Node client SILENTLY DROPS the value of a DATE or TIMESTAMP
- *  parameter handed to it as a plain string alongside an explicit type: the
- *  request goes out carrying a `parameterType` and NO `parameterValue`, and
- *  the server binds it as NULL. STRING parameters are unaffected, which is
- *  exactly how this hid — in the watermark MERGE, `@tier` arrived intact
- *  while `@period` and `@watermark` both went NULL.
+ *  parameter handed to it as a plain string alongside an explicit type: its
+ *  `_getValue` returns `value.value` for these types, which on a bare string
+ *  is `undefined`, and `JSON.stringify` then omits the key. The request goes
+ *  out carrying a `parameterType` and NO `parameterValue`, and the server
+ *  binds NULL. STRING parameters take the other branch and are unaffected,
+ *  which is exactly how this hid — in the watermark MERGE `@tier` arrived
+ *  intact while `@period` and `@watermark` both went NULL.
  *
  *  Both consequences are silent rather than loud. `WHERE
  *  DATE(BillingPeriodStart) = @period` compares against NULL and matches
@@ -327,12 +369,38 @@ function timestampValue(raw) {
  *  had data — a bucket that looks exported and reads as zero cost. Only the
  *  MERGE fails outright, and then just because `billing_period` is NOT NULL.
  *
- *  The client accepts the `{ value }` shape its own `BigQuery.date()` and
- *  `BigQuery.timestamp()` helpers produce, so wrapping by hand fixes it while
- *  keeping this module importable WITHOUT the SDKs — which is what lets the
- *  test suite cover any of this (see the import note at the top). */
+ *  DO NOT "simplify" this to the SDK's own helpers. `BigQuery.timestamp()`
+ *  re-inflates to nine fractional digits
+ *  (`'…43.834613Z'` → `'…43.834613000Z'`), regenerating the very value the
+ *  server rejects as unparseable. Only `BigQuery.date()` would be a safe
+ *  swap, and importing either would cost this module its no-SDK importability
+ *  — the property that lets the test suite cover any of this (see the import
+ *  note at the top).
+ *
+ *  `undefined` throws: `{ value: undefined }` reproduces the original bug
+ *  bit-for-bit, and the whole point is that that failure is invisible. */
 function temporalParam(value) {
+  if (value === undefined) {
+    throw new Error('temporalParam received undefined — this would bind as NULL silently');
+  }
   return { value };
+}
+
+/** Wrap every parameter whose declared type the client would unwrap.
+ *
+ *  Applied centrally, in `query`, rather than at each call site: the trigger
+ *  is a pure function of the `types` map that every caller already passes, so
+ *  deriving it here means a future temporal parameter cannot be added wrong.
+ *  Leaving it to the call sites is what produced the original bug. */
+function bindParams(params, types) {
+  if (params === undefined || types === undefined) return params;
+  return Object.fromEntries(
+    Object.entries(params).map(([name, value]) => {
+      const type = types[name];
+      const needsWrapper = typeof type === 'string' && UNWRAPPED_PARAM_TYPES.test(type);
+      return [name, needsWrapper ? temporalParam(value) : value];
+    }),
+  );
 }
 
 export function createExporter(config, deps = {}) {
@@ -355,7 +423,7 @@ export function createExporter(config, deps = {}) {
     const [rows] = await bigquery.query({
       query: sql,
       location,
-      ...(params === undefined ? {} : { params }),
+      ...(params === undefined ? {} : { params: bindParams(params, types) }),
       ...(types === undefined ? {} : { types }),
     });
     return rows;
@@ -426,7 +494,7 @@ export function createExporter(config, deps = {}) {
               watermark
        FROM \`${stateTable}\``);
     const published = new Map(
-      state.map(r => [`${String(r.period_start)} ${String(r.tier)}`, timestampValue(r.watermark)]),
+      state.map(r => [`${String(r.period_start)}\0${String(r.tier)}`, timestampValue(r.watermark)]),
     );
 
     const pending = [];
@@ -435,7 +503,7 @@ export function createExporter(config, deps = {}) {
         const watermark = timestampValue(row.watermark);
         if (watermark === null) continue;
         const periodStart = String(row.period_start);
-        const seen = published.get(`${periodStart} ${tier}`);
+        const seen = published.get(`${periodStart}\0${tier}`);
         if (seen !== undefined && seen !== null && watermark <= seen) continue;
         pending.push({
           tier,
@@ -477,7 +545,7 @@ export function createExporter(config, deps = {}) {
          overwrite = true
        ) AS
        ${body}`,
-      { period: temporalParam(periodStart) },
+      { period: periodStart },
       { period: 'DATE' },
     );
   }
@@ -486,6 +554,22 @@ export function createExporter(config, deps = {}) {
    * Advance the watermark to the value we OBSERVED at the start of this run,
    * never to the current time: rows that landed while the export was running
    * would otherwise be marked as already-exported and never picked up.
+   *
+   * `IFNULL(st.tier, 'hourly')` must match the READ side's default in
+   * `pendingExports`, not differ from it. With 'daily' here, a legacy
+   * tier-less row (written by `scheduled-query.sql`, which publishes only
+   * hourly) is read as hourly progress but MATCHED by the first daily MERGE,
+   * whose UPDATE then stamps it `tier = 'daily'` and destroys the hourly
+   * watermark. The next run finds no hourly key and re-exports every month
+   * in history at the expensive grain. Before the parameter-binding fix this
+   * MERGE always threw on the NOT NULL `billing_period`, so the clobber was
+   * unreachable — fixing the binding is what armed it.
+   *
+   * The UPDATE is guarded so a watermark can only ever move FORWARD. Cloud
+   * Scheduler fires on schedule regardless of whether the previous execution
+   * is still running (`--task-timeout=30m` in deploy.sh), so two runs can
+   * overlap: the one that started earlier, holding an older observed value,
+   * may finish last and would otherwise regress the watermark.
    */
   async function advanceWatermark(tier, periodStart, watermark) {
     if (dryRun) {
@@ -495,10 +579,10 @@ export function createExporter(config, deps = {}) {
     await query(
       `MERGE \`${stateTable}\` st
        USING (SELECT @period AS bp, @tier AS tier, @watermark AS w) s
-       ON st.billing_period = s.bp AND IFNULL(st.tier, 'daily') = s.tier
-       WHEN MATCHED THEN UPDATE SET watermark = s.w, tier = s.tier
+       ON st.billing_period = s.bp AND IFNULL(st.tier, 'hourly') = s.tier
+       WHEN MATCHED AND s.w > st.watermark THEN UPDATE SET watermark = s.w, tier = s.tier
        WHEN NOT MATCHED THEN INSERT (billing_period, tier, watermark) VALUES (s.bp, s.tier, s.w)`,
-      { period: temporalParam(periodStart), tier, watermark: temporalParam(watermark) },
+      { period: periodStart, tier, watermark },
       { period: 'DATE', tier: 'STRING', watermark: 'TIMESTAMP' },
     );
   }
