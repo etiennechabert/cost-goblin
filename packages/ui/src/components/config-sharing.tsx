@@ -234,7 +234,7 @@ function ShareDataSection(): React.JSX.Element {
           </div>
         </div>
       )}
-      {error !== null && <p className="text-xs text-negative">{error}</p>}
+      {error !== null && <p className="text-xs text-negative break-words">{error}</p>}
     </div>
   );
 }
@@ -468,7 +468,7 @@ function AddSharedSourceSection({ onPulled, onBusyChange }: Readonly<{
   if (state.kind === 'error') {
     return (
       <div className="flex flex-col gap-2 rounded-lg border border-negative/50 bg-negative-muted px-3 py-2">
-        <p className="text-xs text-negative">{state.message}</p>
+        <p className="text-xs text-negative break-words">{state.message}</p>
         <div className="flex items-center gap-2 self-end">
           <button type="button" onClick={() => { setState({ kind: 'entry', error: null }); }} className="text-xs text-text-muted hover:text-text-secondary">Start over</button>
           <Button onClick={startPull} className="bg-accent hover:bg-accent-hover text-white">Retry</Button>
@@ -530,7 +530,7 @@ function AddSharedSourceSection({ onPulled, onBusyChange }: Readonly<{
         spellCheck={false}
         className="w-full rounded-lg border border-border bg-bg-primary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-muted resize-none focus:outline-none focus:border-accent/50"
       />
-      {state.error !== null && <p className="text-xs text-negative">{state.error}</p>}
+      {state.error !== null && <p className="text-xs text-negative break-words">{state.error}</p>}
       <Button onClick={() => { startPreview('key'); }} disabled={key.trim().length === 0} className="bg-accent hover:bg-accent-hover text-white self-start">
         <Plug size={16} className="mr-1.5" />
         Continue
@@ -621,7 +621,7 @@ export function ShareConfigPanel(): React.JSX.Element {
           <p className="text-xs text-positive break-all">Saved to {exportResult.path}</p>
         )}
         {exportResult?.status === 'error' && (
-          <p className="text-xs text-negative">{exportResult.message}</p>
+          <p className="text-xs text-negative break-words">{exportResult.message}</p>
         )}
       </div>
 
@@ -670,7 +670,7 @@ export function ShareConfigPanel(): React.JSX.Element {
             className="w-full rounded-lg border border-border bg-bg-primary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
           />
           {location !== null && !locationValid && (
-            <p className="text-xs text-negative">Enter a full object location like s3://bucket/costgoblin/org-config.yaml</p>
+            <p className="text-xs text-negative break-words">Enter a full object location like s3://bucket/costgoblin/org-config.yaml</p>
           )}
           {locationValid && !locationDiscoverable && (
             <p className="text-xs text-warning">
@@ -698,7 +698,7 @@ export function ShareConfigPanel(): React.JSX.Element {
           <p className="text-xs text-positive break-all">Published to {publishResult.location}</p>
         )}
         {publishResult?.status === 'error' && (
-          <p className="text-xs text-negative">{publishResult.message}</p>
+          <p className="text-xs text-negative break-words">{publishResult.message}</p>
         )}
       </div>
 
@@ -877,7 +877,7 @@ export function ImportConfigPanel({ onApplied, onClose, onBusyChange, onDoneChan
           </p>
           {state.error !== null && (
             <div className="rounded-lg border border-negative/50 bg-negative-muted px-3 py-2">
-              <p className="text-xs text-negative">{state.error}</p>
+              <p className="text-xs text-negative break-words">{state.error}</p>
             </div>
           )}
           <Button onClick={handlePickFile} className="bg-accent hover:bg-accent-hover text-white self-start">
@@ -917,7 +917,7 @@ export function ImportConfigPanel({ onApplied, onClose, onBusyChange, onDoneChan
               className="w-full rounded-lg border border-border bg-bg-primary px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent/50"
             />
             {s3Location.length > 0 && !s3LocationValid && (
-              <p className="text-xs text-negative">Enter a full object location like s3://bucket/costgoblin/org-config.yaml</p>
+              <p className="text-xs text-negative break-words">Enter a full object location like s3://bucket/costgoblin/org-config.yaml</p>
             )}
           </div>
           <Button
@@ -965,7 +965,7 @@ export function ImportConfigPanel({ onApplied, onClose, onBusyChange, onDoneChan
           </div>
           {state.error !== null && (
             <div className="rounded-lg border border-negative/50 bg-negative-muted px-3 py-2">
-              <p className="text-xs text-negative">{state.error}</p>
+              <p className="text-xs text-negative break-words">{state.error}</p>
             </div>
           )}
           <div className="flex items-center justify-end gap-2">

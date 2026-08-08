@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { isCredentialError, isS3SyncDownloadFailure } from '../sync/s3-client.js';
-import { isGcloudCliAccountError, isGcloudDownloadFailure, isGcpCredentialError } from '../sync/gcs-client.js';
+import { isGcloudCliAccountError, isGcloudDownloadFailure, isGcpBucketListDeniedMessage, isGcpCredentialError } from '../sync/gcs-client.js';
+
+/** The verbatim denial a live least-privilege reader produces on the wizard's
+ *  bucket step — `roles/storage.objectViewer` on the bucket, nothing at the
+ *  project level. Kept whole, Troubleshooter URL and all, because its length
+ *  and shape are the reason the raw text is replaced rather than shown. */
+const BUCKET_LIST_DENIED =
+  "costgoblin-reader@billing-504501.iam.gserviceaccount.com does not have storage.buckets.list access to the Google Cloud project. "
+  + "Permission 'storage.buckets.list' denied on resource (or it may not exist). Remediate access with this Troubleshooter URL or share "
+  + 'it with your administrator - https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=CiQwMTlmZTAwMS01MmYxLTc4NDQ.';
 
 /** Every AWS message the suite asserts on, reused as cross-negatives for the
  *  GCP classifiers (and vice versa). The two provider paths share one error
@@ -109,6 +118,33 @@ describe('isGcpCredentialError', () => {
     expect(isGcpCredentialError('a string')).toBe(false);
     expect(isGcpCredentialError(null)).toBe(false);
     expect(isGcpCredentialError(undefined)).toBe(false);
+  });
+});
+
+describe('isGcpBucketListDeniedMessage', () => {
+  it('detects both shapes of the buckets.list denial', () => {
+    expect(isGcpBucketListDeniedMessage(BUCKET_LIST_DENIED)).toBe(true);
+    expect(isGcpBucketListDeniedMessage("Permission 'storage.buckets.list' denied on resource")).toBe(true);
+    expect(isGcpBucketListDeniedMessage('reader@p.iam.gserviceaccount.com does not have storage.buckets.list access')).toBe(true);
+  });
+
+  it('does not claim credential failures, object denials, or the empty message', () => {
+    // Signing in again cannot grant a permission, so the credential branch and
+    // this one must stay disjoint — sharing a branch would offer a sign-in
+    // button for an IAM grant.
+    for (const msg of [...AWS_CREDENTIAL_MESSAGES, 'Could not load the default credentials', 'Reauthentication failed']) {
+      expect(isGcpBucketListDeniedMessage(msg), msg).toBe(false);
+    }
+    // An OBJECT denial is a genuine misconfiguration — the reader cannot walk
+    // the bucket at all, so the "type the name instead" remedy does not apply.
+    expect(isGcpBucketListDeniedMessage('does not have storage.objects.list access')).toBe(false);
+    // The wizard calls this on every render, including before any request has
+    // run, so the no-error case must not light up the panel.
+    expect(isGcpBucketListDeniedMessage('')).toBe(false);
+  });
+
+  it('is not classified as a credential error', () => {
+    expect(isGcpCredentialError(new Error(BUCKET_LIST_DENIED))).toBe(false);
   });
 });
 

@@ -219,8 +219,12 @@ export function SyncStatusButton({
             <RefreshCw size={13} className={rechecking ? 'animate-spin' : undefined} />
           </button>
         </div>
+        {/* `break-words` below because this is the narrowest error surface in
+            the app (w-72) and it receives raw provider strings — GCP's denials
+            end in an IAM Troubleshooter URL with no break opportunity, which
+            otherwise runs straight out of the popover. */}
         {showError && (
-          <div className="mb-2 rounded-md border border-negative/50 bg-negative-muted px-2.5 py-1.5 text-xs text-negative" role="alert">
+          <div className="mb-2 rounded-md border border-negative/50 bg-negative-muted px-2.5 py-1.5 text-xs text-negative break-words" role="alert">
             {error}
             {/* `onRetry` is the same re-check the header's refresh icon runs —
                 it clears `syncError` on success, so a finished sign-in makes

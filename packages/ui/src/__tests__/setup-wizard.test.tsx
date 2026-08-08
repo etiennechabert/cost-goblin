@@ -417,6 +417,14 @@ describe('SetupWizard — GCP', () => {
   });
 });
 
+/** A live least-privilege reader's verbatim denial, Troubleshooter URL and all
+ *  — the length and shape are the reason the panel demotes it rather than
+ *  printing it. Mirrors the core suite's constant of the same name. */
+const BUCKET_LIST_DENIED =
+  'costgoblin-reader@acme-prod.iam.gserviceaccount.com does not have storage.buckets.list access to the Google Cloud project. '
+  + "Permission 'storage.buckets.list' denied on resource (or it may not exist). Remediate access with this Troubleshooter URL or "
+  + 'share it with your administrator - https://console.cloud.google.com/iam-admin/troubleshooter/summary;errorId=CiQwMTlmZTAwMS01MmYx.';
+
 /** The exporter's layout: gs://bucket/<PREFIX>/<TIER>/billing_period=YYYY-MM/.
  *  Keyed by browse prefix so a test can walk the tree the way a user does. */
 function gcpExportLayout(api: MockCostApi): void {
@@ -766,10 +774,111 @@ describe('SetupWizard — GCP browse-and-pick', () => {
     await user.click(screen.getByText('Find my export'));
     await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
     await userClickText(user, 'Acme Production');
-    await waitFor(() => { expect(screen.getByLabelText(/enter the name directly/i)).toBeDefined(); });
-    await user.type(screen.getByLabelText(/enter the name directly/i), 'acme-focus-export');
+    await waitFor(() => { expect(screen.getByLabelText('Or enter a bucket name directly')).toBeDefined(); });
+    await user.type(screen.getByLabelText('Or enter a bucket name directly'), 'acme-focus-export');
     await userClickText(user, 'Browse');
     await waitFor(() => { expect(screen.getByLabelText('Open folder focus')).toBeDefined(); });
+  });
+
+  it('explains a forbidden bucket listing instead of dumping the raw denial', async () => {
+    // Verified against a live least-privilege reader: objectViewer on the
+    // bucket denies storage.buckets.list while every later step succeeds. The
+    // raw sentence made that working setup look broken — 400 characters
+    // ending in a Troubleshooter URL, over "No buckets found".
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsBucketsResult = { buckets: [], error: BUCKET_LIST_DENIED };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+
+    await waitFor(() => { expect(screen.getByText(/couldn't list the buckets in/i)).toBeDefined(); });
+    expect(screen.getByText(/least-privilege reader/i)).toBeDefined();
+    // The fixture DOES contain the Troubleshooter URL — the point is that the
+    // wall of text is demoted into the disclosure rather than deleted. GCP
+    // returns this same denial when the credential has no access to the
+    // project at all, and the principal it names is the only evidence of which
+    // identity ADC resolved to, so it has to stay recoverable.
+    const raw = screen.getByText(BUCKET_LIST_DENIED);
+    expect(raw.closest('details')).not.toBeNull();
+    expect(screen.getByText('Details, and how to grant the listing permission')).toBeDefined();
+    // The empty list must not be reported as a missing export...
+    expect(screen.queryByText('No buckets found')).toBeNull();
+    // ...and the grant the panel discloses is applied in a terminal, so the
+    // user needs a way to re-list without backing out of the step.
+    expect(screen.getByText('Retry')).toBeDefined();
+    // The panel already says all of this; the long label repeated it verbatim
+    // one field lower, which read as a second, separate failure.
+    expect(screen.getByLabelText('Or enter a bucket name directly')).toBeDefined();
+  });
+
+  it('keeps the details open across a retry', async () => {
+    // The panel's own flow is: read the principal out of Details, run the
+    // grant in a terminal, press Retry. Retry clears `error`, which unmounts
+    // the panel — so with the open state held inside it, the disclosure
+    // collapsed on every attempt of the loop the copy tells the user to run.
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsBucketsResult = { buckets: [], error: BUCKET_LIST_DENIED };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+
+    await waitFor(() => { expect(screen.getByText(/couldn't list the buckets in/i)).toBeDefined(); });
+    await userClickText(user, 'Details, and how to grant the listing permission');
+    expect(screen.getByText(BUCKET_LIST_DENIED).closest('details')?.open).toBe(true);
+
+    await userClickText(user, 'Retry');
+    await waitFor(() => { expect(screen.getByText(/couldn't list the buckets in/i)).toBeDefined(); });
+    expect(screen.getByText(BUCKET_LIST_DENIED).closest('details')?.open).toBe(true);
+  });
+
+  it('does not hide buckets behind a filter whose input is gone', async () => {
+    // `filter` outlives the input, which only renders above 5 buckets. A
+    // filter typed against a long list then kept hiding a short one after a
+    // re-list, with no box left on screen to clear it.
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsBucketsResult = { buckets: Array.from({ length: 6 }, (_, i) => ({ name: `acme-bucket-${String(i)}` })), error: '' };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+
+    await waitFor(() => { expect(screen.getByPlaceholderText('Filter buckets...')).toBeDefined(); });
+    await user.type(screen.getByPlaceholderText('Filter buckets...'), 'zzz');
+    expect(screen.getByText('No buckets match that filter')).toBeDefined();
+
+    // Re-list returns few enough buckets that the filter input unmounts.
+    api.gcsBucketsResult = { buckets: [{ name: 'acme-focus-export' }], error: '' };
+    await userClickText(user, '← Back');
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+
+    await waitFor(() => { expect(screen.getByText('acme-focus-export')).toBeDefined(); });
+    expect(screen.queryByPlaceholderText('Filter buckets...')).toBeNull();
+    expect(screen.queryByText('No buckets match that filter')).toBeNull();
+  });
+
+  it('still offers the plain error panel for a non-listing failure', async () => {
+    // Both denial tests route to GcpBucketListDenied, which left GcpError on
+    // this step with no coverage at all — and losing its retry/sign-in
+    // affordances is a regression this repo has already shipped once.
+    const { api, user } = renderWizard();
+    gcpExportLayout(api);
+    api.gcsBucketsResult = { buckets: [], error: 'connect ETIMEDOUT 142.250.74.208:443' };
+    await user.click(screen.getByLabelText('Set up from Google Cloud'));
+    await user.click(screen.getByText('Find my export'));
+    await waitFor(() => { expect(screen.getByText('Acme Production')).toBeDefined(); });
+    await userClickText(user, 'Acme Production');
+
+    await waitFor(() => { expect(screen.getByText(/ETIMEDOUT/)).toBeDefined(); });
+    expect(screen.getByText('Retry')).toBeDefined();
+    expect(screen.queryByText(/least-privilege reader/i)).toBeNull();
+    // Not a permissions refusal, so the absence IS the honest report here.
+    expect(screen.getByText('No buckets found')).toBeDefined();
   });
 
   it('keeps the aws-main default when the user backs out of the GCP chain', async () => {

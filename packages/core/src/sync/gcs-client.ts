@@ -26,6 +26,7 @@ export function parseGcsPath(gcsPath: string): { bucket: string; prefix: string 
 export {
   isGcloudCliAccountError,
   isGcloudDownloadFailure,
+  isGcpBucketListDeniedMessage,
   isGcpCredentialError,
 } from './gcp-credential-errors.js';
 

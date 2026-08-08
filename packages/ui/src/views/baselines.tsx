@@ -224,11 +224,11 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
       </div>
 
       {baselineStatus?.state === 'error' && (
-        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">Recompute failed: {baselineStatus.message}</div>
+        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative break-words">Recompute failed: {baselineStatus.message}</div>
       )}
       {listQuery.status === 'loading' && <div className="flex-1"><CoinRainLoader height={500} count={10} /></div>}
       {listQuery.status === 'error' && (
-        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">{listQuery.error.message}</div>
+        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative break-words">{listQuery.error.message}</div>
       )}
 
       {rows.length > 0 && (
