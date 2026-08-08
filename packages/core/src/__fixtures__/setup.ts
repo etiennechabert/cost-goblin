@@ -94,12 +94,18 @@ function generateCostOptRows(actionTypes: readonly ActionType[], cfg: FixtureCon
 export async function setup(): Promise<void> {
   const dailyParquet = join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw', 'daily-2026-01', 'data.parquet');
   const gcpParquet = join(SYNTHETIC_DIR, FIXTURE_GCP_PROVIDER_NAME, 'raw', 'daily-2026-01', 'part-0.parquet');
+  const hourlyParquet = join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw', 'hourly-2026-02', 'data.parquet');
+  const costOptParquet = join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw', 'cost-opt-2026-02', 'data.parquet');
   try {
-    // Both are checked: a tree generated before the GCP provider existed is
-    // still on developers' disks, and returning early on the AWS file alone
-    // would leave the mixed-workspace fixture permanently missing.
+    // One probe per generated artifact: a tree built before an artifact
+    // existed (pre-GCP, pre-cost-opt — e.g. by the older generate.ts) is
+    // still on developers' disks and CI caches, and returning early on the
+    // AWS daily file alone would leave those fixtures permanently missing —
+    // the Findings e2e suite then fails with an empty recommendations view.
     await access(dailyParquet);
     await access(gcpParquet);
+    await access(hourlyParquet);
+    await access(costOptParquet);
     return;
   } catch {
     // needs generation
