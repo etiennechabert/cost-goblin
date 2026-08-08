@@ -6,6 +6,7 @@ import {
   createExporter,
   isGroupableType,
   loadConfig,
+  normalizeTimestamp,
   parseTiers,
   periodFolder,
 } from './export-focus.mjs';
@@ -309,10 +310,16 @@ describe('loadConfig', () => {
  *  independent bugs (the wrong `IFNULL` default vs. mis-keying the result). */
 function fakeBigQuery(responses) {
   const queries = [];
+  // Params are recorded alongside the SQL because the SQL alone cannot show
+  // what a placeholder was BOUND to, and a silently unbound parameter is a
+  // real failure mode of the client — see `temporalParam`.
+  const calls = [];
   return {
     queries,
-    query: async ({ query: sql }) => {
+    calls,
+    query: async ({ query: sql, params, types }) => {
       queries.push(sql);
+      calls.push({ sql, params, types });
       for (const [marker, rows] of responses) {
         if (sql.includes(marker)) return [rows];
       }
@@ -394,5 +401,86 @@ describe('pendingExports — watermark tier attribution', () => {
     expect(await pendingExports()).toEqual([
       { tier: 'hourly', periodLabel: '2026-03', periodStart: '2026-03-01', watermark: '2026-03-15T00:00:00Z' },
     ]);
+  });
+});
+
+describe('normalizeTimestamp', () => {
+  it('truncates the nanosecond precision BigQuery returns but will not accept', () => {
+    // The exact value a live run read back from `MAX(x_ExportTime)`, which
+    // BigQuery then refused as a TIMESTAMP parameter.
+    expect(normalizeTimestamp('2026-08-07T23:59:43.834613000Z')).toBe('2026-08-07T23:59:43.834613Z');
+  });
+
+  it('leaves microsecond and second precision untouched', () => {
+    expect(normalizeTimestamp('2026-08-07T23:59:43.834613Z')).toBe('2026-08-07T23:59:43.834613Z');
+    expect(normalizeTimestamp('2026-03-15T00:00:00Z')).toBe('2026-03-15T00:00:00Z');
+  });
+
+  it('truncates rather than rounds, so a watermark can never move past an unexported row', () => {
+    expect(normalizeTimestamp('2026-08-07T23:59:43.999999999Z')).toBe('2026-08-07T23:59:43.999999Z');
+  });
+});
+
+describe('DATE and TIMESTAMP parameter binding', () => {
+  /** A live run against a real project bound `@period` and `@watermark` to
+   *  NULL and nobody noticed, because the client drops the value of a
+   *  temporal parameter passed as a bare string and reports nothing. The
+   *  export then wrote a 0-row schema-only shard — `WHERE
+   *  DATE(BillingPeriodStart) = @period` matched nothing — and only the
+   *  watermark MERGE failed, on the NOT NULL `billing_period`.
+   *
+   *  Asserting on the SQL text cannot catch this: the SQL is identical either
+   *  way. The binding is the whole bug, so the binding is what is asserted. */
+  const runOnce = async () => {
+    const bigquery = fakeBigQuery([
+      ['CREATE TABLE IF NOT EXISTS', []],
+      ['ALTER TABLE', []],
+      ['INFORMATION_SCHEMA.COLUMNS', [
+        { column_name: 'BillingPeriodStart', data_type: 'TIMESTAMP' },
+        { column_name: 'ChargePeriodStart', data_type: 'TIMESTAMP' },
+        { column_name: 'ChargePeriodEnd', data_type: 'TIMESTAMP' },
+        { column_name: 'BilledCost', data_type: 'NUMERIC' },
+        { column_name: 'ServiceName', data_type: 'STRING' },
+      ]],
+      ['FROM `proj.ds.tbl`', [
+        { period_label: '2026-03', period_start: '2026-03-01', watermark: { value: '2026-03-15T00:00:00Z' } },
+      ]],
+      ['FROM `proj.state.export_state`', []],
+      ['EXPORT DATA', []],
+      ['MERGE', []],
+    ]);
+    const storage = { bucket: () => ({ deleteFiles: async () => undefined }) };
+    const { run } = createExporter(
+      { ...CONFIG, tiers: ['daily'], dryRun: false },
+      { bigquery, storage },
+    );
+    await run();
+    return bigquery.calls;
+  };
+
+  it('binds the export period as a DATE the client will actually send', async () => {
+    const calls = await runOnce();
+    const exportCall = calls.find(c => c.sql.includes('EXPORT DATA'));
+
+    expect(exportCall.types).toEqual({ period: 'DATE' });
+    // The wrapper, NOT the bare string: `{ period: '2026-03-01' }` with
+    // `types.period = 'DATE'` reaches BigQuery as a parameter carrying a type
+    // and no value, and the WHERE clause silently matches zero rows.
+    expect(exportCall.params).toEqual({ period: { value: '2026-03-01' } });
+  });
+
+  it('binds both temporal params of the watermark MERGE', async () => {
+    const calls = await runOnce();
+    const merge = calls.find(c => c.sql.includes('MERGE'));
+
+    expect(merge.types).toEqual({ period: 'DATE', tier: 'STRING', watermark: 'TIMESTAMP' });
+    expect(merge.params).toEqual({
+      period: { value: '2026-03-01' },
+      // STRING is the one type the client binds correctly from a bare string,
+      // so `tier` stays unwrapped — and that asymmetry is the reason the bug
+      // presented as "billing_period cannot be null" with a valid tier beside it.
+      tier: 'daily',
+      watermark: { value: '2026-03-15T00:00:00Z' },
+    });
   });
 });

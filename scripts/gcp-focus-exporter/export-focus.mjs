@@ -281,12 +281,58 @@ function log(message, extra) {
   console.log(JSON.stringify({ severity: 'INFO', message, ...extra }));
 }
 
-/** BigQuery returns TIMESTAMP as a wrapper object; unwrap to an ISO string. */
+/** BigQuery TIMESTAMPs round-trip ASYMMETRICALLY: a query RETURNS up to
+ *  nanosecond precision (`2026-08-07T23:59:43.834613000Z`, nine fractional
+ *  digits) but the query-parameter parser accepts at most microseconds, and
+ *  rejects its own output with "Unparseable query parameter ... Invalid
+ *  timestamp". Since the watermark's whole job is to be read from one query
+ *  and fed back into the next, every value has to pass through here.
+ *
+ *  TRUNCATED, never rounded. Truncation can only move a watermark EARLIER,
+ *  whose worst case is re-exporting a period that did not change — idempotent
+ *  and cheap. Rounding up could move it PAST a row that has not been exported
+ *  yet, and that row would never be picked up again: the table is append-only,
+ *  so nothing later would re-trip the comparison. */
+export function normalizeTimestamp(iso) {
+  return iso.replace(/(\.\d{6})\d+/, '$1');
+}
+
+/** BigQuery returns TIMESTAMP as a wrapper object; unwrap to an ISO string.
+ *
+ *  Normalizing HERE rather than at the point of use keeps the two sides of
+ *  `watermark <= seen` in one canonical form — that comparison is a string
+ *  compare, so a nanosecond-precision source value against a microsecond
+ *  stored one would compare longer-is-greater and re-export every run. */
 function timestampValue(raw) {
   if (raw === null || raw === undefined) return null;
-  if (typeof raw === 'string') return raw;
-  if (typeof raw === 'object' && 'value' in raw && typeof raw.value === 'string') return raw.value;
+  if (typeof raw === 'string') return normalizeTimestamp(raw);
+  if (typeof raw === 'object' && 'value' in raw && typeof raw.value === 'string') {
+    return normalizeTimestamp(raw.value);
+  }
   return String(raw);
+}
+
+/** Re-wrap a scalar for a DATE or TIMESTAMP query parameter.
+ *
+ *  The BigQuery Node client SILENTLY DROPS the value of a DATE or TIMESTAMP
+ *  parameter handed to it as a plain string alongside an explicit type: the
+ *  request goes out carrying a `parameterType` and NO `parameterValue`, and
+ *  the server binds it as NULL. STRING parameters are unaffected, which is
+ *  exactly how this hid — in the watermark MERGE, `@tier` arrived intact
+ *  while `@period` and `@watermark` both went NULL.
+ *
+ *  Both consequences are silent rather than loud. `WHERE
+ *  DATE(BillingPeriodStart) = @period` compares against NULL and matches
+ *  nothing, so a run publishes a 0-row, schema-only shard over a period that
+ *  had data — a bucket that looks exported and reads as zero cost. Only the
+ *  MERGE fails outright, and then just because `billing_period` is NOT NULL.
+ *
+ *  The client accepts the `{ value }` shape its own `BigQuery.date()` and
+ *  `BigQuery.timestamp()` helpers produce, so wrapping by hand fixes it while
+ *  keeping this module importable WITHOUT the SDKs — which is what lets the
+ *  test suite cover any of this (see the import note at the top). */
+function temporalParam(value) {
+  return { value };
 }
 
 export function createExporter(config, deps = {}) {
@@ -431,7 +477,7 @@ export function createExporter(config, deps = {}) {
          overwrite = true
        ) AS
        ${body}`,
-      { period: periodStart },
+      { period: temporalParam(periodStart) },
       { period: 'DATE' },
     );
   }
@@ -452,7 +498,7 @@ export function createExporter(config, deps = {}) {
        ON st.billing_period = s.bp AND IFNULL(st.tier, 'daily') = s.tier
        WHEN MATCHED THEN UPDATE SET watermark = s.w, tier = s.tier
        WHEN NOT MATCHED THEN INSERT (billing_period, tier, watermark) VALUES (s.bp, s.tier, s.w)`,
-      { period: periodStart, tier, watermark },
+      { period: temporalParam(periodStart), tier, watermark: temporalParam(watermark) },
       { period: 'DATE', tier: 'STRING', watermark: 'TIMESTAMP' },
     );
   }
