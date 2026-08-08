@@ -75,7 +75,8 @@
     }
   },
   "allowScripts": {
-    "esbuild@0.28.1": true,
-    "electron-winstaller@5.4.0": true
+    "electron-winstaller@5.4.0": true,
+    "esbuild": true,
+    "fsevents@2.3.2": true
   }
 }

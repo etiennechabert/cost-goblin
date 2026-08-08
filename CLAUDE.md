@@ -162,6 +162,23 @@ fi
 npm run check
 ```
 
+## Dependency supply chain
+
+Two npm-native guards live in `.npmrc` (no extra tooling — npm >= 11):
+
+- **`strict-allow-scripts=true`** — dependency install scripts are default-DENY. Only the packages pinned in the `allowScripts` field of the root `package.json` may run `preinstall`/`install`/`postinstall`. Anything else hard-fails the install with `ESTRICTALLOWSCRIPTS`. Without this flag `allowScripts` is advisory: npm prints a warning and runs the script anyway.
+- **`min-release-age=7`** — only install versions public for 7+ days, so a compromised release is usually yanked before we'd ever resolve it. Affects resolution (`npm install`) only; **`npm ci` installs the lockfile verbatim and is unaffected**, so CI and releases never fail on it.
+
+`.github/dependabot.yml` carries a matching 7-day `cooldown`. That gates Dependabot's PRs; `min-release-age` gates every install. Neither delays **security** updates — Dependabot security PRs ignore cooldown by design, so `audit-ci` always gets its patch immediately.
+
+**When `npm ci` fails with `ESTRICTALLOWSCRIPTS`:** a dependency introduced a new install script. Do NOT reach for `--dangerously-allow-all-scripts`. Read the script, and if it's legitimate:
+```bash
+npm approve-scripts <pkg>   # then commit the package.json change
+```
+Two caveats, both hit in practice:
+- `npm approve-scripts` is **workspace-unaware** and can miss a nested duplicate (we ship two `esbuild` copies). Always re-run `npm ci` afterwards and trust its error over the command's output.
+- A package can only be **version-pinned** (`pkg@1.2.3`) if its lockfile entry has a `resolved` URL — npm derives trusted identity from that URL, never from the tarball's own `package.json`. ~298 of our lockfile entries currently lack `resolved`/`integrity`, so `esbuild` is allowlisted **by bare name** (any version) rather than pinned. Regenerating the lockfile so every entry carries `resolved` + `integrity` would let us tighten that to an exact pin.
+
 ## Versioning & releases
 
 The project version lives in `package.json` and `packages/desktop/package.json` — **keep the two in sync** (CI rejects a mismatch). Releases are cut by pushing a `v<version>` tag, which triggers `release.yml` (it verifies the tag matches `package.json`, then builds and publishes).

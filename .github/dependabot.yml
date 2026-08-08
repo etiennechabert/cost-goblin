@@ -14,6 +14,17 @@ updates:
       timezone: "UTC"
     open-pull-requests-limit: 5
     versioning-strategy: "increase"
+    # Wait 7 days after a version is published before proposing it. Nearly every
+    # npm account-takeover (event-stream, ua-parser-js, Shai-Hulud) is caught and
+    # the malicious version yanked within 24-72h, so a week of latency turns most
+    # of them into a non-event we never even see a PR for.
+    #
+    # This does NOT delay security fixes: cooldown applies to *version* updates
+    # only. Dependabot security updates (driven by the advisory database) ignore
+    # it entirely and still open immediately, so `audit-ci` always gets its patch
+    # without waiting.
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
       - "npm"
@@ -45,6 +56,11 @@ updates:
       time: "09:00"
       timezone: "UTC"
     open-pull-requests-limit: 5
+    # Same 7-day soak as npm. Actions are already SHA-pinned and restricted to an
+    # allowlist (actions/*, github/*, SonarSource/*), so this is defence in depth
+    # against a compromised release of an otherwise-trusted action.
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
       - "ci"
