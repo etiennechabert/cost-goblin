@@ -58,11 +58,11 @@ describe('DataManagement error states', () => {
     await waitFor(() => {
       expect(screen.getByText('Access Denied: insufficient permissions for s3:ListBucket')).toBeDefined();
     });
-    // Nothing a sign-in can fix, so neither the login button nor its Retry
-    // should appear. (Asserted on the affordances, not the hint copy: a
-    // substring that never matched the full sentence passed vacuously.)
+    // No sign-in would fix this, so no login button — but a bare Retry still
+    // appears, because an Access Denied strands the user exactly as badly as
+    // an expired token and previously offered them nothing at all.
     expect(screen.queryByText('Open SSO Login')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Retry' })).toBeDefined();
   });
 
   it('shows network timeout error', async () => {

@@ -10,7 +10,7 @@ import { OrgAccountsSection } from './data-management-org.js';
 import { SsmParameterSection } from './data-management-ssm.js';
 import { TierPanel, type SyncState } from './data-management-tier.js';
 import { SyncLogPanel } from './data-management-logs.js';
-import { GcloudLoginButton, SsoLoginButton } from '../components/sso-login-button.js';
+import { GcloudLoginButton, RetryButton, SsoLoginButton } from '../components/sso-login-button.js';
 import { SchedulerControls } from '../components/scheduler-controls.js';
 
 function syncStatusToState(s: SyncStatus): SyncState | null {
@@ -447,10 +447,31 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
     const timer = setInterval(() => { setDailyRefreshKey(k => k + 1); }, 5_000);
     return () => { clearInterval(timer); };
   }, [isCredentialError]);
-  // The poll above heals the panel on its own, but only on its next tick and
-  // only for this tier — the login buttons still get an explicit Retry so a
-  // user who has just finished signing in isn't left watching a stale error.
-  const retryInventory = (): void => { setDailyRefreshKey(k => k + 1); };
+  // The poll above heals the panel on its own, but only on its next tick — the
+  // login buttons still get an explicit Retry so a user who has just finished
+  // signing in isn't left watching a stale error.
+  //
+  // All three tiers, not just the one whose error is on screen: expired
+  // credentials fail every query, but only daily's error is rendered, so
+  // refreshing daily alone healed the panel while the hourly and cost-opt
+  // tiers stayed stuck and drew themselves as "0 periods".
+  const retryInventory = (): void => {
+    setDailyRefreshKey(k => k + 1);
+    setHourlyRefreshKey(k => k + 1);
+    setCostOptRefreshKey(k => k + 1);
+  };
+
+  // Which sign-in, if any, this error has a one-click remedy for. Hoisted out
+  // of the JSX so the panel can tell "no remedy" from "no button" and still
+  // offer a bare Retry — an Access Denied or a dropped connection stranded the
+  // user exactly as badly as an expired token did.
+  const awsSsoRemedy = awsProfile !== null && credentialErrorMessage.includes('aws sso login');
+  const gcpAdcRemedy = provider.type === 'gcp' && credentialErrorMessage.includes(GCLOUD_ADC_LOGIN_COMMAND);
+  // Both GCP commands, not just ADC: a stale gcloud CLI account is reported
+  // with `gcloud auth login`, which is not a substring of the ADC command — so
+  // matching only ADC left the one error with a one-click remedy showing no
+  // button, and re-running ADC could never have fixed it anyway.
+  const gcpCliRemedy = provider.type === 'gcp' && !gcpAdcRemedy && credentialErrorMessage.includes(GCLOUD_CLI_LOGIN_COMMAND);
 
   const [selected, setSelected] = useState(new Set<string>());
   const [hourlySelected, setHourlySelected] = useState(new Set<string>());
@@ -692,24 +713,23 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
       )}
 
       {inventoryQuery.status === 'error' && (
-        <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
+        <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3" role="alert">
           <p className="text-sm font-medium text-negative">{inventoryQuery.error.message}</p>
           {/* Each provider's expired-credentials message carries the sign-in
-              command it needs; offer the matching one-click affordance. */}
-          {awsProfile !== null && inventoryQuery.error.message.includes('aws sso login') && (
+              command it needs; offer the matching one-click affordance, and a
+              bare Retry for every failure that has no sign-in remedy. */}
+          {/* `awsSsoRemedy` already narrows `awsProfile` to non-null. */}
+          {awsSsoRemedy && (
             <SsoLoginButton profile={awsProfile} onRetry={retryInventory} />
           )}
-          {/* Both GCP commands, not just ADC: a stale gcloud CLI account is
-              reported with `gcloud auth login`, which is not a substring of
-              the ADC command — so matching only ADC left the one error with a
-              one-click remedy showing no button, and re-running ADC could
-              never have fixed it anyway. */}
-          {provider.type === 'gcp' && inventoryQuery.error.message.includes(GCLOUD_ADC_LOGIN_COMMAND) && (
+          {gcpAdcRemedy && (
             <GcloudLoginButton mode="adc" providerName={name} onRetry={retryInventory} />
           )}
-          {provider.type === 'gcp' && !inventoryQuery.error.message.includes(GCLOUD_ADC_LOGIN_COMMAND)
-            && inventoryQuery.error.message.includes(GCLOUD_CLI_LOGIN_COMMAND) && (
+          {gcpCliRemedy && (
             <GcloudLoginButton mode="cli" providerName={name} onRetry={retryInventory} />
+          )}
+          {!awsSsoRemedy && !gcpAdcRemedy && !gcpCliRemedy && (
+            <div className="mt-2"><RetryButton onRetry={retryInventory} /></div>
           )}
         </div>
       )}

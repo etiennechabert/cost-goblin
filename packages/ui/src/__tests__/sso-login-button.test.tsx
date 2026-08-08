@@ -1,8 +1,8 @@
-import { render, screen, cleanup, act } from '@testing-library/react';
+import { render, screen, cleanup, act, fireEvent } from '@testing-library/react';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
-import { SsoLoginButton } from '../components/sso-login-button.js';
+import { RetryButton, SsoLoginButton } from '../components/sso-login-button.js';
 
 class SsoApi extends MockCostApi {
   calls = 0;
@@ -18,19 +18,42 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function setup(api: SsoApi, onRetry?: () => void | Promise<void>) {
-  render(
-    <CostApiProvider value={api}>
-      <SsoLoginButton profile="prod" onRetry={onRetry} />
-    </CostApiProvider>,
-  );
-  return { button: screen.getByRole('button', { name: /SSO Login/ }) };
+// The 30s launch lock is keyed by profile and deliberately lives at module
+// scope so it survives the remount its own Retry causes (see `launchedAt`).
+// That makes it shared across tests too, so each test that launches a login
+// uses its own profile rather than resetting global state.
+let nextProfile = 0;
+function uniqueProfile(): string {
+  nextProfile += 1;
+  return `prof-${String(nextProfile)}`;
 }
 
+function setup(api: SsoApi, onRetry: () => void | Promise<void> = vi.fn(), profile = uniqueProfile()) {
+  const view = render(
+    <CostApiProvider value={api}>
+      <SsoLoginButton profile={profile} onRetry={onRetry} />
+    </CostApiProvider>,
+  );
+  return { view, profile, api, onRetry };
+}
+
+function loginButton(): HTMLButtonElement {
+  const el = screen.getByRole('button', { name: /SSO Login/ });
+  if (!(el instanceof HTMLButtonElement)) throw new Error('login button missing');
+  return el;
+}
+
+/** The retry button, matched on its accessible name rather than a substring —
+ *  `toContain('Retry')` also matches "Retrying…", which made the label
+ *  assertions pass no matter what the button said. */
 function retryButton(): HTMLButtonElement | null {
   const found = screen.queryAllByRole('button')
-    .find(b => /Retry/.test(b.textContent));
+    .find(b => b.getAttribute('title') === 'Re-run the check that failed');
   return found instanceof HTMLButtonElement ? found : null;
+}
+
+function retryLabel(): string {
+  return retryButton()?.textContent.trim() ?? '';
 }
 
 describe('SsoLoginButton', () => {
@@ -39,94 +62,145 @@ describe('SsoLoginButton', () => {
     let startLogin!: () => void;
     const api = new SsoApi();
     api.result = new Promise<void>((resolve) => { startLogin = resolve; });
-    const { button } = setup(api);
+    setup(api);
 
-    expect(button.textContent).toContain('Open SSO Login');
-    expect((button as HTMLButtonElement).disabled).toBe(false);
+    expect(loginButton().textContent).toContain('Open SSO Login');
+    expect(loginButton().disabled).toBe(false);
 
-    await act(async () => { button.click(); await Promise.resolve(); });
+    await act(async () => { loginButton().click(); await Promise.resolve(); });
     expect(api.calls).toBe(1);
-    expect((button as HTMLButtonElement).disabled).toBe(true);
-    expect(button.textContent).toContain('Opening SSO Login');
+    expect(loginButton().disabled).toBe(true);
+    expect(loginButton().textContent).toContain('Opening SSO Login');
 
-    // Impatient repeat clicks during the multi-second open must not spawn more SSO tabs.
-    await act(async () => { button.click(); button.click(); await Promise.resolve(); });
+    // Impatient repeat clicks during the multi-second spawn must not spawn
+    // more SSO tabs. What enforces that is `disabled` — the `if (busy) return`
+    // in the handler is unreachable from the DOM (neither `.click()` nor
+    // `fireEvent` dispatches to a disabled control), so this asserts the
+    // user-visible contract, not the early return.
+    await act(async () => { fireEvent.click(loginButton()); await Promise.resolve(); });
     expect(api.calls).toBe(1);
 
-    // Browser is now opening (promise resolved) — button stays locked.
+    // Spawn resolved — the browser is now opening, and the lock starts here.
     await act(async () => { startLogin(); await Promise.resolve(); });
-    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(loginButton().disabled).toBe(true);
 
-    // Lock expires after 30s → usable again.
     act(() => { vi.advanceTimersByTime(30_000); });
-    expect((button as HTMLButtonElement).disabled).toBe(false);
-    expect(button.textContent).toContain('Open SSO Login');
+    expect(loginButton().disabled).toBe(false);
+    expect(loginButton().textContent).toContain('Open SSO Login');
   });
 
-  it('unlocks immediately when the login fails to start', async () => {
+  // Regression: the lock used to live in component state, but every caller's
+  // onRetry clears the error that renders this panel — so pressing Retry
+  // unmounted the button and reset the lock, letting a second `aws sso login`
+  // (and a second consent tab) fire seconds after the first.
+  it('keeps the launch lock across a remount', async () => {
+    vi.useFakeTimers();
+    const api = new SsoApi();
+    const profile = uniqueProfile();
+    const { view } = setup(api, vi.fn(), profile);
+
+    await act(async () => { loginButton().click(); await Promise.resolve(); });
+    expect(api.calls).toBe(1);
+    expect(loginButton().disabled).toBe(true);
+
+    // Exactly what a retry does to this subtree.
+    view.unmount();
+    render(
+      <CostApiProvider value={api}>
+        <SsoLoginButton profile={profile} onRetry={vi.fn()} />
+      </CostApiProvider>,
+    );
+
+    expect(loginButton().disabled).toBe(true);
+    await act(async () => { fireEvent.click(loginButton()); await Promise.resolve(); });
+    expect(api.calls).toBe(1);
+
+    // …and it still releases on schedule.
+    act(() => { vi.advanceTimersByTime(30_000); });
+    expect(loginButton().disabled).toBe(false);
+  });
+
+  it('keeps the retry available when the CLI is missing', async () => {
     const api = new SsoApi();
     api.result = Promise.reject(new Error('AWS_CLI_NOT_FOUND'));
-    const { button } = setup(api);
+    const onRetry = vi.fn();
+    setup(api, onRetry);
 
-    await act(async () => {
-      button.click();
-      await Promise.resolve();
-    });
+    await act(async () => { loginButton().click(); await Promise.resolve(); });
 
-    // CLI missing → button is replaced by the install hint, not left spinning.
-    expect(screen.queryByRole('button')).toBeNull();
+    // The login button has nothing left to run, but installing the CLI is
+    // itself a leave-and-come-back action, so the retry must survive.
+    expect(screen.queryByRole('button', { name: /SSO Login/ })).toBeNull();
     expect(screen.getByText(/Install the AWS CLI/i)).toBeDefined();
-  });
-
-  // Without this the panel is a dead end: `aws sso login` resolves the moment
-  // the browser opens, so nothing in the renderer ever learns the sign-in
-  // finished and the expired-credentials error sits there until the view is
-  // remounted (or the app restarted).
-  it('offers no retry affordance when the caller wires none', () => {
-    setup(new SsoApi());
-    expect(retryButton()).toBeNull();
-    expect(screen.getByText(/Refresh this page after logging in/)).toBeDefined();
-  });
-
-  it('runs the caller-supplied retry and points the hint at it', async () => {
-    const onRetry = vi.fn<() => Promise<void>>();
-    let finishRetry!: () => void;
-    onRetry.mockReturnValue(new Promise<void>((resolve) => { finishRetry = resolve; }));
-    setup(new SsoApi(), onRetry);
-
-    expect(screen.getByText(/come back here and hit Retry/)).toBeDefined();
-    const retry = retryButton();
-    expect(retry?.textContent).toContain('Retry');
-
-    await act(async () => { retry?.click(); await Promise.resolve(); });
+    await act(async () => { retryButton()?.click(); await Promise.resolve(); });
     expect(onRetry).toHaveBeenCalledTimes(1);
-    // Locked while the re-fetch is in flight, so an impatient double-click
-    // can't queue a second one.
+  });
+
+  it('does not claim the user signed in when the login never launched', async () => {
+    const api = new SsoApi();
+    api.result = Promise.reject(new Error('spawn aws EACCES'));
+    setup(api);
+
+    await act(async () => { loginButton().click(); await Promise.resolve(); });
+
+    // No browser opened, so no lock and no "I've signed in".
+    expect(loginButton().disabled).toBe(false);
+    expect(retryLabel()).toBe('Retry');
+  });
+
+  it('relabels the retry once a login has actually launched', async () => {
+    const api = new SsoApi();
+    setup(api);
+
+    expect(retryLabel()).toBe('Retry');
+    await act(async () => { loginButton().click(); await Promise.resolve(); });
+    expect(retryLabel()).toBe("I've signed in — Retry");
+  });
+});
+
+describe('RetryButton', () => {
+  it('runs the retry and locks itself while the re-fetch is in flight', async () => {
+    let finish!: () => void;
+    const onRetry = vi.fn<() => Promise<void>>()
+      .mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    render(<RetryButton onRetry={onRetry} />);
+
+    await act(async () => { retryButton()?.click(); await Promise.resolve(); });
+    expect(onRetry).toHaveBeenCalledTimes(1);
     expect(retryButton()?.disabled).toBe(true);
-    expect(retryButton()?.textContent).toContain('Retrying');
-    await act(async () => { retry?.click(); await Promise.resolve(); });
+    expect(retryLabel()).toBe('Retrying…');
+
+    // Inert while in flight. As above, `disabled` is what enforces this; the
+    // handler's `if (retrying) return` is belt-and-braces for a programmatic
+    // caller and cannot be reached by any DOM event.
+    await act(async () => { fireEvent.click(retryButton() as HTMLButtonElement); await Promise.resolve(); });
     expect(onRetry).toHaveBeenCalledTimes(1);
 
-    await act(async () => { finishRetry(); await Promise.resolve(); });
+    await act(async () => { finish(); await Promise.resolve(); });
     expect(retryButton()?.disabled).toBe(false);
+    expect(retryLabel()).toBe('Retry');
   });
 
-  it('unlocks the retry button when the retry itself rejects', async () => {
+  it('unlocks when the retry rejects', async () => {
     const onRetry = vi.fn<() => Promise<void>>().mockRejectedValue(new Error('still expired'));
-    setup(new SsoApi(), onRetry);
+    render(<RetryButton onRetry={onRetry} />);
 
     await act(async () => { retryButton()?.click(); await Promise.resolve(); });
 
+    expect(onRetry).toHaveBeenCalledTimes(1);
     expect(retryButton()?.disabled).toBe(false);
-    expect(retryButton()?.textContent).toContain('Retry');
+    expect(retryLabel()).toBe('Retry');
   });
 
-  it('relabels the retry once the login has been launched', async () => {
-    const api = new SsoApi();
-    const { button } = setup(api, vi.fn());
+  it('unlocks when the retry throws synchronously', async () => {
+    const onRetry = vi.fn(() => { throw new Error('bridge gone'); });
+    render(<RetryButton onRetry={onRetry} />);
 
-    expect(retryButton()?.textContent.trim()).toBe('Retry');
-    await act(async () => { button.click(); await Promise.resolve(); });
-    expect(retryButton()?.textContent).toContain("I've signed in");
+    await act(async () => { retryButton()?.click(); await Promise.resolve(); });
+
+    // Without the try/catch this sat disabled on "Retrying…" forever — the
+    // one affordance the panel has, permanently dead.
+    expect(retryButton()?.disabled).toBe(false);
+    expect(retryLabel()).toBe('Retry');
   });
 });
