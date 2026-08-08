@@ -1,5 +1,5 @@
 import type { ConfigBundleSummary, GcpProject, GcsFolderKind } from '@costgoblin/core/browser';
-import { gcsTiersOverlap, isGcpCredentialError, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
+import { gcsTiersOverlap, isGcpBucketListDeniedMessage, isGcpCredentialError, isValidWorkspaceName, parseProviderName } from '@costgoblin/core/browser';
 import { useState, useEffect, useRef } from 'react';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { Card, CardContent } from '../components/ui/card.js';
@@ -370,7 +370,7 @@ function GcpIntroStep({ state, onBrowse, onScaffold, onDone, onBack }: Readonly<
         >
           {state.scaffolded ? 'Open the config folder again' : 'Write the config by hand instead'}
         </button>
-        {state.error !== '' && <p className="text-xs text-negative">{state.error}</p>}
+        {state.error !== '' && <p className="text-xs text-negative break-words">{state.error}</p>}
         {state.scaffolded && (
           <>
             <p className="text-text-muted text-xs">
@@ -423,7 +423,10 @@ function GcpError({ message, mode, onRetry }: Readonly<{
   const missingCli = message.includes('GCLOUD_CLI_NOT_FOUND');
   return (
     <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3" role="alert">
-      <p className="text-sm text-negative whitespace-pre-wrap">
+      {/* `break-words` is load-bearing: GCP appends an IAM Troubleshooter URL
+          with no break opportunity in it, and `whitespace-pre-wrap` alone let
+          that one token run straight out of the panel and across the window. */}
+      <p className="text-sm text-negative whitespace-pre-wrap break-words">
         {missingCli
           ? 'The Google Cloud CLI (gcloud) is not installed — CostGoblin needs it to list your projects and download the export.'
           : message}
@@ -449,6 +452,70 @@ function GcpError({ message, mode, onRetry }: Readonly<{
       ) : (
         <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
       )}
+    </div>
+  );
+}
+
+/** The `storage.buckets.list` denial, explained instead of dumped.
+ *
+ *  Usually this is the expected outcome of the exporter README's
+ *  least-privilege recipe — `objectViewer` on the BUCKET, while enumerating a
+ *  project's buckets is a project-level permission. GCP's raw sentence made
+ *  that working setup look broken: 400 characters ending in an IAM
+ *  Troubleshooter URL, above an empty list, with the remedy one field lower
+ *  down, which is exactly where the eye does not go.
+ *
+ *  What this must NOT do is state that as a diagnosis. The same denial is
+ *  returned when the principal has no access to the project at all — live here,
+ *  because projects are listed with gcloud's active account and buckets with
+ *  ADC, which are routinely different identities. So the copy stays
+ *  conditional, and the raw message stays one click away: it names the denied
+ *  principal, the only evidence of which identity actually ran.
+ *
+ *  Retry is kept for the reason `GcpError` states — a project-level IAM denial
+ *  is precisely the failure a sign-in cannot fix, and the grant below is
+ *  applied in a terminal, so the user needs a way to re-list without losing
+ *  the wizard's place. `role="alert"` for the same reason it uses one: this
+ *  panel is inserted already-populated, and a polite region added that way is
+ *  inconsistently announced. */
+function GcpBucketListDenied({ project, message, onRetry }: Readonly<{
+  project: string;
+  message: string;
+  onRetry: () => void;
+}>) {
+  return (
+    <div className="rounded-lg border border-border bg-bg-tertiary/30 px-4 py-3" role="alert">
+      <p className="text-sm text-text-primary">
+        Couldn&apos;t list the buckets in <code className="text-text-secondary">{project}</code>.
+      </p>
+      <p className="text-xs text-text-secondary mt-1.5">
+        For a least-privilege reader this is expected and harmless:{' '}
+        <code className="text-text-secondary">roles/storage.objectViewer</code> is granted on the bucket
+        itself, while listing buckets is a project-level permission — so type the bucket name below and
+        press Browse. If instead the credential has no access to this project, browsing will fail too;
+        the details below name the principal that was denied.
+      </p>
+      <details className="mt-2">
+        <summary className="text-xs text-text-muted cursor-pointer hover:text-text-secondary">
+          Details, and how to grant the listing permission
+        </summary>
+        <p className="mt-1.5 whitespace-pre-wrap break-words font-mono text-[11px] text-text-muted">{message}</p>
+        <p className="text-xs text-text-muted mt-2">
+          Granting <code className="text-text-secondary">roles/storage.bucketViewer</code> on{' '}
+          <code className="text-text-secondary">{project}</code> to that principal populates the dropdown,
+          at the cost of letting it see every bucket name in the project. The exact command is in{' '}
+          <a
+            href={GCP_EXPORTER_DOCS}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-accent underline underline-offset-2 hover:text-accent-hover"
+          >
+            the exporter README
+          </a>
+          .
+        </p>
+      </details>
+      <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
     </div>
   );
 }
@@ -556,6 +623,7 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
   const [manual, setManual] = useState('');
   const filtered = state.buckets.filter(b => filter.length === 0 || b.name.toLowerCase().includes(filter.toLowerCase()));
   const sourceLabel = SOURCE_LABELS[state.source];
+  const bucketListDenied = isGcpBucketListDeniedMessage(state.error);
 
   return (
     <div className="flex flex-col gap-5">
@@ -567,7 +635,9 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
         </p>
       </div>
 
-      <GcpError message={state.error} mode="adc" onRetry={onRetry} />
+      {bucketListDenied
+        ? <GcpBucketListDenied project={state.project} message={state.error} onRetry={onRetry} />
+        : <GcpError message={state.error} mode="adc" onRetry={onRetry} />}
 
       {state.loading ? (
         <div className="flex items-center justify-center py-8">
@@ -585,38 +655,46 @@ function GcpBucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
               className="h-9 rounded-md border border-border bg-bg-primary px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent"
             />
           )}
-          <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
-            {filtered.map(bucket => (
-              <button
-                key={bucket.name}
-                type="button"
-                onClick={() => { onSelect(bucket.name); }}
-                className={[
-                  'flex items-center rounded-lg border px-4 py-2.5 text-left text-sm transition-colors',
-                  state.selected === bucket.name
-                    ? 'border-accent bg-accent-muted text-accent'
-                    : 'border-border bg-bg-tertiary/20 text-text-primary hover:bg-bg-tertiary/40',
-                ].join(' ')}
-              >
-                <span className="font-mono text-xs">{bucket.name}</span>
-              </button>
-            ))}
-            {filtered.length === 0 && (
-              <p className="text-sm text-text-muted text-center py-4">No buckets found</p>
-            )}
-          </div>
+          {/* Hidden wholesale when the listing was forbidden. "No buckets
+              found" reads as "your export is missing" when the listing was
+              merely refused, and guarding only that line left this container
+              rendered with no children — still a flex item, so it doubled the
+              gap between the panel above and the manual-entry field below. */}
+          {!bucketListDenied && (
+            <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
+              {filtered.map(bucket => (
+                <button
+                  key={bucket.name}
+                  type="button"
+                  onClick={() => { onSelect(bucket.name); }}
+                  className={[
+                    'flex items-center rounded-lg border px-4 py-2.5 text-left text-sm transition-colors',
+                    state.selected === bucket.name
+                      ? 'border-accent bg-accent-muted text-accent'
+                      : 'border-border bg-bg-tertiary/20 text-text-primary hover:bg-bg-tertiary/40',
+                  ].join(' ')}
+                >
+                  <span className="font-mono text-xs">{bucket.name}</span>
+                </button>
+              ))}
+              {filtered.length === 0 && (
+                <p className="text-sm text-text-muted text-center py-4">
+                  {filter.length > 0 ? 'No buckets match that filter' : 'No buckets found'}
+                </p>
+              )}
+            </div>
+          )}
         </>
       )}
 
-      {/* Listing buckets needs project-level `storage.buckets.list`, but the
-          exporter README's least-privilege recipe grants `objectViewer` on the
-          BUCKET and impersonates a service account. That identity can browse
-          objects yet cannot enumerate buckets — so following the documented
-          setup dead-ended here, one step before the part that would have
-          worked. Typing the name skips the enumeration entirely. */}
+      {/* Typing the name skips the enumeration entirely — the escape hatch for
+          a reader that can browse objects but not enumerate buckets. The long
+          label carries that explanation for callers with no panel above; when
+          `GcpBucketListDenied` is showing, it has already said all of this, and
+          repeating it verbatim one field lower read as a second failure. */}
       <div className="flex flex-col gap-1.5 border-t border-border pt-4">
         <label htmlFor="gcs-bucket-manual" className="text-xs text-text-muted">
-          {state.error === '' && state.buckets.length > 0
+          {bucketListDenied || (state.error === '' && state.buckets.length > 0)
             ? 'Or enter a bucket name directly'
             : "Can't list buckets? Enter the name directly — browsing objects needs weaker permissions than listing buckets."}
         </label>
@@ -848,7 +926,7 @@ function BeaconStep({ state, onApply, onSkip, onBack }: Readonly<{
 
       {state.error.length > 0 && (
         <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3">
-          <p className="text-sm text-negative">{state.error}</p>
+          <p className="text-sm text-negative break-words">{state.error}</p>
         </div>
       )}
 
@@ -957,7 +1035,7 @@ function BucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
 
       {state.error.length > 0 && (
         <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3" role="alert">
-          <p className="text-sm text-negative">{state.error}</p>
+          <p className="text-sm text-negative break-words">{state.error}</p>
           {/* `setup:list-buckets` funnels EVERY failure into `error`, not just
               expired tokens, so the retry sits outside the credential sniff —
               an AccessDenied or a dropped connection otherwise left ← Back as

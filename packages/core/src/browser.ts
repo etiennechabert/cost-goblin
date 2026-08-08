@@ -22,7 +22,7 @@ export { gcsTiersOverlap } from './sync/gcs-export-layout.js';
 // The wizard classifies GCP errors to decide whether to offer an inline
 // sign-in. Same leaf-module reasoning: never re-export this from
 // `gcs-client.ts`, which imports node:fs and the Cloud Storage SDK.
-export { isGcpCredentialError } from './sync/gcp-credential-errors.js';
+export { isGcpBucketListDenied, isGcpBucketListDeniedMessage, isGcpCredentialError } from './sync/gcp-credential-errors.js';
 export { isDiscoverableBeaconLocation, splitS3Location, suggestedConfigBeaconLocation } from './config/sharing-location.js';
 export { DEFAULT_COST_SCOPE, DEFAULT_MARKETPLACE_ATTRIBUTION, BUILTIN_EXCLUSION_RULES } from './config/cost-scope-seed.js';
 export {

@@ -273,17 +273,30 @@ hourly shards too.
 > reader, not a misconfiguration.** Listing the buckets in a project is a
 > *project-level* permission; `roles/storage.objectViewer` grants rights on the
 > bucket and deliberately nothing above it, so the bucket dropdown comes back
-> empty. Type the bucket name into the field beneath it and press **Browse** —
-> walking a bucket needs only `storage.objects.list`, which the reader already
-> has, and every step after it behaves normally. To make the dropdown work
-> instead, add a project-level grant, accepting that the reader can then see the
-> name of every bucket in the project:
+> empty, and the wizard says so in place of Google's raw denial. Type the
+> bucket name into the field beneath it and press **Browse** — walking a bucket
+> needs only `storage.objects.list`, which the reader already has, and every
+> step after it behaves normally. To make the dropdown work instead, add a
+> project-level grant, accepting that the reader can then see the name of every
+> bucket in the project:
 >
 > ```bash
 > gcloud projects add-iam-policy-binding PROJECT \
 >   --member=serviceAccount:costgoblin-reader@PROJECT.iam.gserviceaccount.com \
 >   --role=roles/storage.bucketViewer
 > ```
+>
+> `roles/storage.bucketViewer` is exactly `storage.buckets.get` +
+> `storage.buckets.list` — it adds no object access, so the reader stays unable
+> to read anything it could not already read.
+>
+> Note that `roles/storage.objectViewer` *does* list
+> `resourcemanager.projects.list` among its permissions, which looks like it
+> should populate the project dropdown a step earlier. It does not: the role is bound to the **bucket**, and
+> a resource-manager permission is inert at that scope. There is no manual
+> project field to fall back to, so if the project list comes back empty too,
+> take **Write the config by hand instead** on that screen and use the YAML
+> below — the wizard's remaining steps only exist to produce it.
 
 To write the entry by hand instead — a bare service-account key can't list
 projects, for example — take the **Write the config by hand instead** link on

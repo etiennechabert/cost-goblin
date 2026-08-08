@@ -33,6 +33,8 @@ export {
   createGcsHandle,
   isGcloudCliAccountError,
   isGcloudDownloadFailure,
+  isGcpBucketListDenied,
+  isGcpBucketListDeniedMessage,
   isGcpCredentialError,
   parseGcsPath,
 } from './gcs-client.js';

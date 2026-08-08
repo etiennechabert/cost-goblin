@@ -714,7 +714,7 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
 
       {inventoryQuery.status === 'error' && (
         <div className="rounded-lg border border-negative/50 bg-negative-muted px-4 py-3" role="alert">
-          <p className="text-sm font-medium text-negative">{inventoryQuery.error.message}</p>
+          <p className="text-sm font-medium text-negative break-words">{inventoryQuery.error.message}</p>
           {/* Each provider's expired-credentials message carries the sign-in
               command it needs; offer the matching one-click affordance, and a
               bare Retry for every failure that has no sign-in remedy. */}
@@ -900,7 +900,7 @@ function ProfileSwapModal({ currentProfile, providerName, onClose, onSaved }: Re
           <p className="text-sm text-text-secondary mt-4">Loading profiles…</p>
         )}
         {profilesQuery.status === 'error' && (
-          <p className="text-sm text-negative mt-4">{profilesQuery.error.message}</p>
+          <p className="text-sm text-negative mt-4 break-words">{profilesQuery.error.message}</p>
         )}
         {profilesQuery.status === 'success' && profiles.length === 0 && (
           <p className="text-sm text-warning mt-4">No AWS profiles found in ~/.aws.</p>
@@ -919,7 +919,7 @@ function ProfileSwapModal({ currentProfile, providerName, onClose, onSaved }: Re
         )}
 
         {error !== null && (
-          <p className="text-xs text-negative mt-3">{error}</p>
+          <p className="text-xs text-negative mt-3 break-words">{error}</p>
         )}
 
         <div className="flex items-center justify-end gap-2 mt-5">

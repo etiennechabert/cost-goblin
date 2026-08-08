@@ -102,7 +102,7 @@ export function EntityPopup({
             <p className="text-sm text-text-secondary">Loading…</p>
           )}
           {detailQuery.status === 'error' && (
-            <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative">
+            <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3 text-sm text-negative break-words">
               {detailQuery.error.message}
             </div>
           )}

@@ -41,6 +41,47 @@ export function isGcpCredentialError(err: unknown): boolean {
   );
 }
 
+/** The principal authenticated fine but cannot ENUMERATE buckets.
+ *
+ *  Usually the expected outcome of the exporter README's least-privilege
+ *  recipe: `roles/storage.objectViewer` is granted on the BUCKET, and listing
+ *  the buckets in a project is a project-level permission — so a reader that
+ *  can walk every object in the export dead-ends on the one screen before the
+ *  part that works. Verified against a live reader: `storage.buckets.list` is
+ *  denied while `gcloud storage ls` of the bucket, its prefixes and its
+ *  `billing_period=` folders all succeed.
+ *
+ *  USUALLY, not always — and callers must not present it as a diagnosis. GCP
+ *  returns this same sentence when the principal has no access to the project
+ *  at all, and when the project does not exist; the trailing "(or it may not
+ *  exist)" is Google declining to distinguish them, since saying which would
+ *  leak the project's existence. That case is live here, not theoretical: the
+ *  wizard lists projects with gcloud's ACTIVE ACCOUNT but lists buckets with
+ *  ADC, the same split `isGcloudCliAccountError` below exists for. So a UI
+ *  built on this predicate must keep the raw message reachable — it names the
+ *  denied principal, which is the only evidence of which identity ran.
+ *
+ *  Distinct from `isGcpCredentialError`: signing in again cannot grant a
+ *  permission, so the two must not share a branch. */
+export function isGcpBucketListDenied(err: unknown): boolean {
+  return err instanceof Error && isGcpBucketListDeniedMessage(err.message);
+}
+
+/** `isGcpBucketListDenied` for callers that already hold the message string.
+ *
+ *  The renderer keeps `state.error` as a string, so without this it has to
+ *  fabricate a throwaway `Error` on every render — including every keystroke
+ *  in the wizard's filter and manual-name inputs — purely to satisfy the
+ *  `instanceof` guard, and V8 captures a stack trace for each one.
+ *
+ *  One shape covers both denials the app sees: the Cloud Storage SDK names the
+ *  permission in its `does not have … access` sentence and a bare API denial
+ *  quotes it as `Permission '…' denied`, so matching the permission alone
+ *  catches both without pretending to tell them apart. */
+export function isGcpBucketListDeniedMessage(message: string): boolean {
+  return message.includes('storage.buckets.list');
+}
+
 /** The gcloud CLI's OWN sign-in is the problem, not Application Default
  *  Credentials.
  *
