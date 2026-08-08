@@ -88,6 +88,41 @@ describe('SetupWizard', () => {
     expect(beaconSpy).toHaveBeenCalledWith({ profile: 'default', bucket: 'my-cur-bucket' });
   });
 
+  it('surfaces an AWS browse credential failure with a sign-in instead of an empty folder', async () => {
+    // The AWS leg used to swallow a browse failure into "No subfolders found"
+    // (the exact dead end #539/#542 removed everywhere else). An expired SSO
+    // token must now show the message and one-click re-auth.
+    const { api, user } = renderWizard();
+    api.s3BrowseResult = {
+      prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [],
+      error: 'Your AWS SSO session has expired. Run `aws sso login` and retry.',
+    };
+    await user.click(screen.getByLabelText('Set up from AWS'));
+    await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
+    await user.click(screen.getByText('default'));
+    await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
+    await user.click(screen.getByText('my-cur-bucket'));
+    await waitFor(() => { expect(screen.getByText(/session has expired/)).toBeDefined(); });
+    expect(screen.getByText('Open SSO Login')).toBeDefined();
+    expect(screen.queryByText('No subfolders found')).toBeNull();
+  });
+
+  it('offers a plain Retry when an AWS browse failure is not a credential error', async () => {
+    const { api, user } = renderWizard();
+    api.s3BrowseResult = {
+      prefixes: [], isBillingExport: false, detectedType: 'unknown', missingColumns: [],
+      error: 'AccessDenied: not authorized to perform s3:ListBucket',
+    };
+    await user.click(screen.getByLabelText('Set up from AWS'));
+    await waitFor(() => { expect(screen.getByText('default')).toBeDefined(); });
+    await user.click(screen.getByText('default'));
+    await waitFor(() => { expect(screen.getByText('my-cur-bucket')).toBeDefined(); });
+    await user.click(screen.getByText('my-cur-bucket'));
+    await waitFor(() => { expect(screen.getByText(/AccessDenied/)).toBeDefined(); });
+    expect(screen.getByText('Retry')).toBeDefined();
+    expect(screen.queryByText('No subfolders found')).toBeNull();
+  });
+
   it('offers a discovered team configuration and applies it with the chosen profile', async () => {
     const { api, user, onComplete } = renderWizard();
     api.checkConfigBeacon = (params: CheckConfigBeaconParams): Promise<CheckConfigBeaconResult> => Promise.resolve({

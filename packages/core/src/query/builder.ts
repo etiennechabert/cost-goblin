@@ -7,10 +7,18 @@ import { OU_PATH_SOURCE_KEY } from '../types/config.js';
 import type { CostMetric, CostScopeConfig, ExclusionRule, MarketplaceAttributionConfig, MarketplaceAttributionRule } from '../types/cost-scope.js';
 import { DEFAULT_COST_METRIC } from '../types/cost-scope.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
-import { costExprFor, LIST_METRIC_CHARGE_CATEGORIES } from './cost-metric.js';
+import { costExprFor, isUsageOnlyMetric, USAGE_ONLY_METRIC_CHARGE_CATEGORIES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
 import { assertDateString, assertHourString, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
+
+/** Label for rows whose SubAccountId is NULL. FOCUS allows a null SubAccountId
+ *  and GCP emits it for charges not tied to a project (account-level taxes,
+ *  fees, adjustments). Projecting NULL raw made the account entity render blank
+ *  and, because the entity join and drill-down filters can never match a NULL,
+ *  its detail view came back empty. A sentinel keeps the row labelled, grouped,
+ *  filterable, and drillable. It cannot collide with a real account id. */
+export const NO_ACCOUNT_SENTINEL = '(no account)';
 
 function assertFiniteNumber(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
@@ -18,7 +26,10 @@ function assertFiniteNumber(value: number, name: string): void {
   }
 }
 
-function sqlEscapeString(value: string): string {
+/** Escape a string for safe interpolation inside a single-quoted SQL literal.
+ *  Use for config/user-derived literals that cannot go through a QueryBuilder
+ *  parameter (e.g. handlers that build raw SQL strings). */
+export function sqlEscapeString(value: string): string {
   return value.replaceAll("'", "''");
 }
 
@@ -504,14 +515,15 @@ export function buildSource(opts: BuildSourceOptions): string {
       COALESCE(${tablePrefix}ConsumedQuantity, 0) AS usage_amount,
       ${listCostExpr} AS list_cost,`;
 
-  // The `list` metric reports list price for usage that actually happened.
-  // Purchase/Tax/Credit rows have no retail equivalent, and including them
-  // just adds zero-cost rows that bloat group-by buckets. Restrict at the
-  // source level so every downstream query (Explorer, custom views, MCP,
-  // materialized base) sees a consistent slice.
-  const listCategoryLiterals = LIST_METRIC_CHARGE_CATEGORIES.map(t => `'${t}'`).join(', ');
-  const metricWhere = costMetric === 'list'
-    ? `\n    WHERE COALESCE(${tablePrefix}ChargeCategory, '') IN (${listCategoryLiterals})`
+  // The rate-comparison metrics (`list` and `contracted`) report a rate applied
+  // to usage that actually happened. Purchase/Tax/Credit rows have no retail
+  // equivalent, and for `contracted` they double-count the commitment fee (see
+  // USAGE_ONLY_METRIC_CHARGE_CATEGORIES). Restrict at the source level so every
+  // downstream query (Explorer, custom views, MCP, materialized base) sees a
+  // consistent slice.
+  const usageOnlyCategoryLiterals = USAGE_ONLY_METRIC_CHARGE_CATEGORIES.map(t => `'${t}'`).join(', ');
+  const metricWhere = isUsageOnlyMetric(costMetric)
+    ? `\n    WHERE COALESCE(${tablePrefix}ChargeCategory, '') IN (${usageOnlyCategoryLiterals})`
     : '';
 
   // One SELECT branch per provider. Branches differ in two ways only: the
@@ -531,7 +543,7 @@ export function buildSource(opts: BuildSourceOptions): string {
     return `SELECT
       '${sqlEscapeString(String(branch.name))}' AS provider,
       ${dateExpr},
-      ${tablePrefix}SubAccountId AS account_id,
+      COALESCE(${tablePrefix}SubAccountId, '${NO_ACCOUNT_SENTINEL}') AS account_id,
       COALESCE(${tablePrefix}SubAccountName, '') AS account_name,
       COALESCE(${tablePrefix}RegionId, '') AS region,
       ${serviceExpr} AS service,

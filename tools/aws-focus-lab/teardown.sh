@@ -86,13 +86,16 @@ teardown_site() { # $1=profile
   [[ -n "$acct" ]] || { RESIDUAL+=("account id for ${profile} — could not resolve, skipped site teardown"); return 0; }
   bucket="${PREFIX}-site-${acct}"
 
-  try aws cloudwatch delete-alarms --profile "$profile" --region "$CDN_METRIC_REGION" \
-    --alarm-names "${PREFIX}-cdn-request-spike"
-
+  # Keep the spike alarm when we keep the distribution it watches — deleting it
+  # here (before the --skip-cloudfront return) left a live public distribution
+  # with no request-spike monitoring.
   if [[ "$SKIP_CLOUDFRONT" == true ]]; then
-    log "leaving CloudFront and its origin bucket in place (--skip-cloudfront)"
+    log "leaving CloudFront, its origin bucket, and its spike alarm in place (--skip-cloudfront)"
     return 0
   fi
+
+  try aws cloudwatch delete-alarms --profile "$profile" --region "$CDN_METRIC_REGION" \
+    --alarm-names "${PREFIX}-cdn-request-spike"
 
   dist_id=$(aws cloudfront list-distributions --profile "$profile" \
     --query "DistributionList.Items[?Comment=='${PREFIX}'].Id | [0]" --output text 2>/dev/null)

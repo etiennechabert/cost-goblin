@@ -300,9 +300,15 @@ function isSafePeriodPrefix(prefix: string): boolean {
 /** Staging lives under `meta/`, never under `raw/`. The query layer globs
  *  `raw/{tier}-*​/*.parquet`, so a staging dir named `daily-…` under `raw/`
  *  would be read live — mixing list-of-struct tags into a MAP-tag union and
- *  failing every tag expression mid-sync. */
-function stagingDirFor(dataDir: string, provider: ProviderName, period: string): string {
-  return join(providerMetaDir(dataDir, provider), 'staging-gcp', period);
+ *  failing every tag expression mid-sync.
+ *
+ *  The tier is part of the path: the exporter publishes daily and hourly under
+ *  identical `billing_period=YYYY-MM/shard-*.parquet` names, so a period-only
+ *  staging dir let a concurrent daily+hourly sync `rm -rf` each other's shards
+ *  mid-transfer and install a cross-tier or partial month with etags recorded
+ *  complete. Keying it by tier makes the two tiers' staging disjoint. */
+function stagingDirFor(dataDir: string, provider: ProviderName, tier: string, period: string): string {
+  return join(providerMetaDir(dataDir, provider), 'staging-gcp', tier, period);
 }
 
 /**
@@ -374,7 +380,7 @@ export async function syncGcpSelectedFiles(
         + `the provider's bucket path is probably above the tier folder the exporter writes to`,
       );
     }
-    const stagingDir = stagingDirFor(dataDir, providerName, period);
+    const stagingDir = stagingDirFor(dataDir, providerName, tier, period);
     const periodBytes = syncedFiles.reduce((sum, f) => sum + f.size, 0);
     const sizeByKey = new Map(syncedFiles.map(f => [f.key, f.size]));
     // The file gcloud most recently announced; it is in flight until the next

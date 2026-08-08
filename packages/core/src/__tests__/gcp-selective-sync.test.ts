@@ -167,7 +167,9 @@ describe('syncGcpSelectedFiles', () => {
     // Staging under raw/ would be picked up by the query layer's
     // raw/{tier}-*/*.parquet glob mid-sync, mixing export shards into a read.
     expect(observedArgv[3]).not.toContain(join('raw', 'daily-'));
-    expect(observedArgv[3]).toContain(join('meta', 'staging-gcp', '2026-03'));
+    // Staging is keyed by tier so a concurrent daily+hourly sync of the same
+    // month cannot clobber each other's shards.
+    expect(observedArgv[3]).toContain(join('meta', 'staging-gcp', 'daily', '2026-03'));
     // Mirrors deletions so a re-export with fewer shards leaves no orphans.
     expect(observedArgv).toContain('--delete-unmatched-destination-objects');
   });
@@ -243,8 +245,10 @@ describe('syncGcpSelectedFiles', () => {
       bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
       files: [file('focus/billing_period=2026-01/s.parquet')],
     });
-    const stagingRoot = join(dataDir, String(providerName), 'meta', 'staging-gcp');
-    await expect(readdir(stagingRoot)).resolves.toEqual([]);
+    // The tier subdir survives (cheap, empty), but it holds no leftover period
+    // staging dirs — that is what would double the on-disk footprint.
+    const stagingTierRoot = join(dataDir, String(providerName), 'meta', 'staging-gcp', 'daily');
+    await expect(readdir(stagingTierRoot)).resolves.toEqual([]);
   });
 
   it('fails loudly when no period is under a billing_period folder, instead of mirroring the bucket', async () => {

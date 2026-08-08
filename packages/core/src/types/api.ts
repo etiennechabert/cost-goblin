@@ -279,7 +279,7 @@ export interface CostApi {
   testConnection(params: { profile: string; bucket: string }): Promise<{ ok: boolean; error?: string | undefined }>;
   listAwsProfiles(): Promise<string[]>;
   listS3Buckets(profile: string): Promise<{ buckets: { name: string; region: string }[]; error?: string | undefined }>;
-  browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[] }>;
+  browseS3(params: { profile: string; bucket: string; prefix: string }): Promise<{ prefixes: string[]; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; error?: string | undefined }>;
   /** Projects visible to the gcloud CLI's active account. Backed by
    *  `gcloud projects list`, not an SDK call: the CLI is already a hard
    *  requirement of the GCP download path, so this adds no dependency where
@@ -383,7 +383,12 @@ export interface CostApi {
     profile: string;
     keyFile?: string | undefined;
     dailyBucket: string;
+    /** Daily-tier retention (the wizard's picker in daily mode). */
     retentionDays?: number | undefined;
+    /** Hourly-tier retention (the wizard's picker in hourly-only mode). */
+    hourlyRetentionDays?: number | undefined;
+    /** Cost-optimization-tier retention (the wizard's picker in a cost-opt-only run). */
+    costOptRetentionDays?: number | undefined;
     hourlyBucket?: string | undefined;
     costOptBucket?: string | undefined;
     tags?: { tagName: string; label: string; concept?: string | undefined }[] | undefined;

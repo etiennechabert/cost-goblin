@@ -5,6 +5,11 @@ import { initWorkerLifecycle } from './worker-lifecycle.js';
 /** A log line forwarded from the sync worker thread. */
 export type SyncLogSink = (level: SyncLogLevel, message: string, ts: number) => void;
 
+/** Rejection message when a sync is started for a (provider, tier) that already
+ *  has one in flight. Callers treat this as a coalesced no-op rather than a
+ *  failure — the running sync will deliver the same data. */
+export const SYNC_ALREADY_RUNNING = 'A sync for this provider and tier is already in progress';
+
 export interface SyncOptions {
   readonly bucketPath: string;
   /** How the provider authenticates. Crosses the worker-thread boundary by
@@ -19,6 +24,13 @@ export interface SyncOptions {
   readonly tier?: 'daily' | 'hourly' | 'cost-optimization' | undefined;
   readonly files: readonly ManifestFileEntry[];
   readonly onProgress?: ((progress: SyncProgress) => void) | undefined;
+  /** Stable `{provider}:{tier}` identity for this sync. It is the single
+   *  authority for both mutual exclusion (a second start for the same key is
+   *  rejected with {@link SYNC_ALREADY_RUNNING}) and cancellation (`cancelSync`
+   *  targets the in-flight worker request by this key). Replacing the old
+   *  handler-local counter — which drifted from the worker's real request id
+   *  whenever auto-sync ran, so cancel hit the wrong download or none. */
+  readonly syncKey: string;
 }
 
 export interface SyncResult {
@@ -28,7 +40,9 @@ export interface SyncResult {
 
 export interface SyncClient {
   syncPeriods(options: SyncOptions): Promise<SyncResult>;
-  cancelSync(id: number): void;
+  /** Cancel the in-flight sync for `syncKey`, if any. No-op when nothing is
+   *  running under that key. */
+  cancelSync(syncKey: string): void;
   terminate(): Promise<void>;
 }
 
@@ -82,6 +96,10 @@ export async function createSyncClient(workerPath: string, onLog?: SyncLogSink):
     },
   );
   const { worker, pending } = lifecycle;
+  /** In-flight worker request id per `syncKey`. One entry at most per key: a
+   *  second start for a live key is rejected below, so this doubles as the
+   *  per-(provider,tier) mutex and the cancellation target. */
+  const activeByKey = new Map<string, number>();
 
   worker.on('message', (msg: unknown) => {
     if (!isWorkerResponse(msg)) return;
@@ -118,12 +136,19 @@ export async function createSyncClient(workerPath: string, onLog?: SyncLogSink):
   return {
     syncPeriods(options: SyncOptions): Promise<SyncResult> {
       if (lifecycle.fatalError !== null) return Promise.reject(lifecycle.fatalError);
+      // Airtight per-key mutex: this method runs synchronously up to the
+      // postMessage, so two starts for the same key can never both pass. Guards
+      // the GCP staging/etag corruption a concurrent manual+auto sync caused.
+      if (activeByKey.has(options.syncKey)) return Promise.reject(new Error(SYNC_ALREADY_RUNNING));
       const id = lifecycle.nextId++;
+      activeByKey.set(options.syncKey, id);
+      const settle = (): void => { if (activeByKey.get(options.syncKey) === id) activeByKey.delete(options.syncKey); };
       const startedAt = Date.now();
       const startedAtIso = new Date(startedAt).toISOString();
       return new Promise<SyncResult>((resolve, reject) => {
         pending.set(id, {
           resolve: (result) => {
+            settle();
             logger.debug('sync:complete', {
               id,
               startedAt: startedAtIso,
@@ -135,6 +160,7 @@ export async function createSyncClient(workerPath: string, onLog?: SyncLogSink):
             resolve(result);
           },
           reject: (err) => {
+            settle();
             logger.debug('sync:failed', {
               id,
               startedAt: startedAtIso,
@@ -158,7 +184,9 @@ export async function createSyncClient(workerPath: string, onLog?: SyncLogSink):
         });
       });
     },
-    cancelSync(id: number): void {
+    cancelSync(syncKey: string): void {
+      const id = activeByKey.get(syncKey);
+      if (id === undefined) return;
       worker.postMessage({ kind: 'cancel', id });
     },
     async terminate(): Promise<void> {

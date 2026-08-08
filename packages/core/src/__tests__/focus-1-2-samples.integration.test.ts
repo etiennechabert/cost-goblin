@@ -9,11 +9,11 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { DuckDBInstance } from '@duckdb/node-api';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildSource } from '../query/builder.js';
+import { buildSource, NO_ACCOUNT_SENTINEL } from '../query/builder.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asProviderName } from '../types/branded.js';
 import {
@@ -177,6 +177,66 @@ describe('AWS FOCUS 1.2 Data Export', () => {
       WHERE CommitmentDiscountStatus <> '' GROUP BY 1 ORDER BY 1`);
     expect(rows.map(r => r['status'])).toEqual(['Unused', 'Used']);
   });
+
+  it('does not double-count commitment spend on the contracted metric', async () => {
+    // Under FOCUS a commitment's ContractedCost is booked twice: once on the
+    // Purchase row (the commitment fee) and again on the covered usage rows.
+    // Summing every charge category double-counts it, so the contracted metric
+    // must restrict to usage rows — the same slice list uses.
+    const nativeFile = sample('aws', 'native').parquetPath;
+    const [naive] = await rowsOf(
+      `SELECT ROUND(SUM(COALESCE(ContractedCost, 0)), 2) AS total FROM read_parquet('${nativeFile}')`,
+    );
+    const [usageOnly] = await rowsOf(
+      `SELECT ROUND(SUM(COALESCE(ContractedCost, 0)), 2) AS total FROM read_parquet('${nativeFile}')
+       WHERE COALESCE(ChargeCategory, '') = 'Usage'`,
+    );
+    // The all-rows sum (the old, buggy metric) is strictly larger than the
+    // usage-only sum — the difference is the double-counted Purchase row(s).
+    expect(num(naive?.['total'])).toBeGreaterThan(num(usageOnly?.['total']));
+
+    // The contracted metric now equals the usage-only sum, not the naive one.
+    const contractedSource = buildSource({
+      dataDir, tier: 'daily', dimensions: WITH_TAGS,
+      providers: [{ name: asProviderName(sample('aws', 'native').providerName), periods: [SAMPLE_MONTH] }],
+      costMetric: 'contracted',
+    });
+    const [row] = await rowsOf(`SELECT ROUND(SUM(cost), 2) AS total FROM ${contractedSource}`);
+    expect(num(row?.['total'])).toBeCloseTo(num(usageOnly?.['total']), 2);
+  });
+
+  it('labels a NULL SubAccountId as a groupable, drillable sentinel account', async () => {
+    // FOCUS allows a null SubAccountId and GCP emits it for project-less
+    // charges (account-level taxes/fees). Projected raw it rendered as a blank
+    // entity the drill-down filter could never match. Materialize an AWS export
+    // with every SubAccountId nulled and prove the sentinel carries the cost.
+    const noAcctDir = join(dataDir, 'aws-noacct', 'raw', `daily-${SAMPLE_MONTH}`);
+    await mkdir(noAcctDir, { recursive: true });
+    const noAcctPath = join(noAcctDir, 'data.parquet');
+    await conn.run(
+      `COPY (SELECT * REPLACE (CAST(NULL AS VARCHAR) AS SubAccountId)
+             FROM read_parquet('${sample('aws', 'native').parquetPath}'))
+       TO '${noAcctPath}' (FORMAT PARQUET)`,
+    );
+
+    const source = buildSource({
+      dataDir, tier: 'daily', dimensions: NO_TAGS,
+      providers: [{ name: asProviderName('aws-noacct'), periods: [SAMPLE_MONTH] }],
+      costMetric: 'billed',
+    });
+
+    // Every row groups under one non-null sentinel bucket (never blank/NULL).
+    const grouped = await rowsOf(`SELECT account_id, ROUND(SUM(cost), 2) AS total FROM ${source} GROUP BY account_id`);
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0]?.['account_id']).toBe(NO_ACCOUNT_SENTINEL);
+    expect(num(grouped[0]?.['total'])).toBeCloseTo(SAMPLE_BILLED_TOTAL, 2);
+
+    // Drill-down filters on the sentinel value and matches the full total —
+    // the bug was that `account_id = ''`/`IS NULL` matched nothing, so the
+    // detail view came back at $0 while the overview row showed the cost.
+    const [detail] = await rowsOf(`SELECT ROUND(SUM(cost), 2) AS total FROM ${source} WHERE account_id = '${NO_ACCOUNT_SENTINEL}'`);
+    expect(num(detail?.['total'])).toBeCloseTo(SAMPLE_BILLED_TOTAL, 2);
+  });
 });
 
 describe('Azure Cost Management FOCUS 1.2 export (provider not supported yet)', () => {
@@ -231,7 +291,15 @@ describe('Azure Cost Management FOCUS 1.2 export (provider not supported yet)', 
   });
 });
 
-describe('GCP FOCUS 1.2 BigQuery export (provider not supported yet)', () => {
+// NOTE: GCP ships as a provider in v0.7.0. These tests exercise the fixtures'
+// REFERENCE projection (contractProjection in load.ts), which is deliberately
+// richer than the shipped adapter on one point: it INFERS commitment Used/Unused
+// from the credit sign, whereas gcp-canonicalize.ts NULL-fills
+// CommitmentDiscountStatus (see 'leaves service_category empty' and the shipped
+// path's own tests in gcp-aws-union.integration.test.ts). So the commitment
+// assertions below describe what a GCP export *can* yield, not what CostGoblin
+// currently surfaces for GCP rows.
+describe('GCP FOCUS 1.2 BigQuery export (canonicalized locally by the shipped adapter)', () => {
   it('omits three unconditionally-mandatory FOCUS 1.2 columns', () => {
     // Not a gap in our tooling — a gap in Google's export. Pinned here so a
     // future export revision that closes it is noticed.

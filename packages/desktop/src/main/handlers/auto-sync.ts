@@ -16,7 +16,7 @@ import { resolveBucketPath } from '@costgoblin/core';
 import { deleteLocalPeriodFiles, cascadeRollupForDeletedMonth, changedRollupMonths } from './sync.js';
 import { resolveProvider, syncStatusKey } from '../sync-id.js';
 import { type AppContext, isAnyCredentialError, prefsPath, toUserFriendlyError } from './context.js';
-import type { SyncClient } from '../sync-client.js';
+import { type SyncClient, SYNC_ALREADY_RUNNING } from '../sync-client.js';
 import { recordSyncLog } from '../sync-log.js';
 
 type Tier = 'daily' | 'hourly' | 'cost-optimization';
@@ -90,6 +90,14 @@ export function registerAutoSyncHandlers(app: AppContext): void {
         const bucket = resolveBucketPath(provider, t);
 
         const key = syncStatusKey(provider.name, t);
+        // Never race a manual sync (or another scheduler pass) for the same
+        // provider/tier: a concurrent start shares GCP staging/etag state and
+        // can install a partial month stamped complete. Skip quietly and let
+        // the in-flight sync deliver the data; the SyncClient enforces this
+        // airtightly too, this just avoids overwriting the live status.
+        if (state.syncStatuses[key]?.status === 'syncing') {
+          return { filesDownloaded: 0, rowsProcessed: 0 };
+        }
         state.syncStatuses[key] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: files.length, filesDone: 0, bytesTotal: 0, bytesDone: 0, message: '' };
         try {
           const result = await syncClient.syncPeriods({
@@ -99,6 +107,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
             dataDir: ctx.dataDir,
             tier: t,
             files,
+            syncKey: key,
             onProgress: (progress) => {
               const bytesDone = progress.bytesDone ?? 0;
               const bytesTotal = progress.bytesTotal ?? 0;
@@ -132,6 +141,21 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           }
           return result;
         } catch (err: unknown) {
+          // A duplicate-start rejection means another sync already owns this
+          // key (the pre-check can lose a same-tick race). It is a no-op, not a
+          // failure — must not clobber the live sync's status with 'failed'.
+          if (err instanceof Error && err.message === SYNC_ALREADY_RUNNING) {
+            return { filesDownloaded: 0, rowsProcessed: 0 };
+          }
+          // A user-initiated cancel is not a failure. Auto-syncs are now
+          // cancellable (cancelSync keys by provider:tier and hits whichever
+          // sync owns the key), so return the tier to idle instead of showing
+          // 'Download cancelled' as an error — mirrors the manual path's
+          // handleSyncError.
+          if (err instanceof Error && err.message === 'Download cancelled') {
+            state.syncStatuses[key] = { status: 'idle', lastSync: null };
+            return { filesDownloaded: 0, rowsProcessed: 0 };
+          }
           // Surface credential expiry / opaque `aws s3 sync` download failures as
           // the actionable "run aws sso login" message so the toolbar offers
           // one-click re-auth instead of a raw CLI error (mirrors getInventory).

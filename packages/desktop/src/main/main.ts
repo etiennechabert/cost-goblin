@@ -1,10 +1,10 @@
-import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { Session } from 'node:inspector';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { logger, parseJsonObject, isStringRecord, parseTelemetryPreferences } from '@costgoblin/core';
+import { logger, parseJsonObject, isStringRecord, parseTelemetryPreferences, sqlEscapeString } from '@costgoblin/core';
 import { telemetry } from './telemetry/controller.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -25,6 +25,7 @@ import { validateProfileLabel } from './validators/path-validator.js';
 import { resolveWorkspaceEnv } from './workspace-env.js';
 import type { WorkspaceEnv } from './workspace-env.js';
 import { migrateProviderLayoutSync } from './provider-layout-migration.js';
+import { clearPreFocusData, findPreFocusProviders } from './cur-detection.js';
 
 // Log level: debug in dev (NODE_ENV=development or electron-vite serving
 // the renderer), or when COSTGOBLIN_LOG_LEVEL=debug. Otherwise info.
@@ -250,6 +251,26 @@ async function createWindow(db: DuckDBClient, syncClient: SyncClient, rollupConc
 }
 
 async function main(): Promise<void> {
+  // Single-instance lock (packaged builds only): a second instance can switch to
+  // a different workspace and then delete or rename the one THIS instance has
+  // DuckDB handles and a sync worker pointed at — the first in-app destructive
+  // directory operations (workspaces:delete/rename) assume one instance. Gated
+  // on isPackaged so dev runs and the e2e suite (which launch multiple instances
+  // sharing a userData dir) are unaffected. Focus the existing window instead.
+  if (app.isPackaged) {
+    if (!app.requestSingleInstanceLock()) {
+      app.quit();
+      return;
+    }
+    app.on('second-instance', () => {
+      const [win] = BrowserWindow.getAllWindows();
+      if (win !== undefined) {
+        if (win.isMinimized()) win.restore();
+        win.focus();
+      }
+    });
+  }
+
   // Redirect the whole userData tree first (e2e/workspace-mode tests) — must
   // precede every app.getPath('userData') read, including the MCP token path.
   const userDataOverride = process.env['COSTGOBLIN_USER_DATA_DIR'];
@@ -306,6 +327,45 @@ async function main(): Promise<void> {
 
   logger.info('DuckDB worker ready');
 
+  // Upgrade guard: a v0.6.x install has AWS CUR 2.0 parquet in raw/, which the
+  // FOCUS 1.2 query layer can't read (every dashboard would binder-error and
+  // the CUR bucket syncs nothing). Detect it before opening the window and,
+  // on the user's confirm, wipe the old data + config so the app restarts into
+  // the setup wizard pointed at a FOCUS 1.2 export. No-op on a FOCUS install or
+  // a fresh one, so the common path pays only one schema-only DESCRIBE.
+  try {
+    const preFocusProviders = await findPreFocusProviders(wsEnv.dataDir, async (glob) => {
+      const rows = await db.runQuery(`DESCRIBE SELECT * FROM read_parquet('${sqlEscapeString(glob)}')`);
+      return rows.map(r => String(r['column_name']));
+    });
+    if (preFocusProviders.length > 0) {
+      const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        title: 'CostGoblin now reads FOCUS 1.2',
+        message: 'Your local data is in the old AWS CUR 2.0 format',
+        detail:
+          'CostGoblin 0.7 reads the FOCUS 1.2 billing schema. Your existing local data '
+          + '(and your current CUR 2.0 export) can no longer be read.\n\n'
+          + 'Clearing it and restarting setup lets you point CostGoblin at a FOCUS 1.2 '
+          + 'Data Export. In the AWS console: Billing and Cost Management → Data Exports → '
+          + 'Create export → FOCUS 1.2, as Parquet.',
+        buttons: ['Clear data and restart setup', 'Quit'],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (response !== 0) {
+        app.quit();
+        return;
+      }
+      await clearPreFocusData(wsEnv.dataDir, resolveConfigPath(wsEnv.configBase, 'costgoblin'), preFocusProviders);
+      logger.info(`Cleared pre-FOCUS (CUR 2.0) data for ${String(preFocusProviders.length)} provider(s); restarting setup`);
+    }
+  } catch (err: unknown) {
+    // A detection failure must never block launch — fall through to the normal
+    // boot (the user hits the same binder errors, but the app still opens).
+    logger.warn(`pre-FOCUS data check failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   const syncWorkerPath = join(__dirname, '..', 'worker', 'sync-worker.cjs');
   const syncClient = await createSyncClient(syncWorkerPath, recordSyncLog);
   logger.info('Sync worker ready');
@@ -347,6 +407,18 @@ async function bootstrap(): Promise<void> {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`Fatal error: ${message}\n`);
+    // A GUI launch discards stderr, so a boot failure (e.g. the legacy-layout
+    // migration hitting Windows EPERM while an antivirus/indexer holds a file)
+    // otherwise looked like the app silently not starting. showErrorBox is safe
+    // before 'ready' and gives the user the actual reason. Best-effort: if even
+    // the dialog fails, still exit non-zero.
+    try {
+      dialog.showErrorBox(
+        'CostGoblin could not start',
+        `${message}\n\nIf this persists after a restart, the app's data folder may be locked by `
+        + 'another program (antivirus, backup, or file indexer). Close it and try again.',
+      );
+    } catch { /* headless / no display — stderr above is the fallback */ }
     process.exit(1);
   }
 }

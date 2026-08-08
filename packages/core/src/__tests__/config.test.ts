@@ -375,6 +375,22 @@ describe('validateDimensions', () => {
     })).toThrow(ConfigValidationError);
   });
 
+  it('rejects a tagName that smuggles a SQL string-literal breakout', () => {
+    // tagName is interpolated into the alias-suggestions DuckDB query; a single
+    // quote is never a valid tag key and would break out of the literal.
+    expect(() => validateDimensions({
+      builtIn: [],
+      tags: [{ tagName: "x' UNION SELECT content FROM read_text('/etc/passwd') --", label: 'X' }],
+    })).toThrow(ConfigValidationError);
+  });
+
+  it('accepts a tagName with dashes/colons (legitimate cloud tag keys)', () => {
+    expect(() => validateDimensions({
+      builtIn: [],
+      tags: [{ tagName: 'cost-center:team', label: 'Team' }],
+    })).not.toThrow();
+  });
+
   it('drops alias entries with empty lists', () => {
     const dims = validateDimensions({
       builtIn: [],

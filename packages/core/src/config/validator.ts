@@ -434,6 +434,16 @@ function validateTagDimension(tag: unknown, i: number) {
       tagName = stripped;
     }
   }
+  // Defense-in-depth: a real cloud tag key never contains a single quote, and
+  // tagName is interpolated into DuckDB SQL by the alias-suggestions handler.
+  // Reject it at load time so a shared/imported config cannot smuggle a
+  // string-literal breakout even if a call site forgets to escape.
+  if (tagName !== undefined && tagName.includes("'")) {
+    throw new ConfigValidationError(
+      `${ctx}.tagName "${tagName}" contains a single quote, which is not a valid tag key. ` +
+      `This prevents SQL injection via shared or imported configs.`,
+    );
+  }
   assertString(tag['label'], `${ctx}.label`);
 
   const accountTagFallback = optionalNonEmptyString(tag['accountTagFallback']);

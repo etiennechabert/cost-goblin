@@ -11,6 +11,17 @@
 
 export type TemplateProviderType = 'aws' | 'gcp';
 
+/** Built-in dimensions a provider's FOCUS export cannot populate — scaffolding
+ *  them produces a dimension that renders one blank value for every row. GCP's
+ *  export has no ServiceCategory, and the canonicalizer NULL-fills x_Operation
+ *  and SkuMeter. Shared by the setup writer (which omits them for a gcp
+ *  provider) and the default-dimension merge (which must not resurrect them for
+ *  a workspace whose every provider is one that cannot fill them). */
+export const PROVIDER_ABSENT_DIMENSIONS: Record<TemplateProviderType, ReadonlySet<string>> = {
+  aws: new Set<string>(),
+  gcp: new Set(['service_category', 'operation', 'sku_meter']),
+};
+
 const AWS_PROVIDER = `  - name: aws-main
     type: aws
     credentialsProfile: default  # <- your AWS CLI profile name

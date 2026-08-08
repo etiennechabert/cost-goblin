@@ -31,7 +31,7 @@ type WizardStep =
   | { step: 'profile'; profiles: string[]; loading: boolean; selected: string }
   | { step: 'bucket'; profile: string; source: DataSource; buckets: { name: string; region: string }[]; loading: boolean; selected: string; error: string }
   | { step: 'beacon'; profile: string; source: DataSource; bucket: string; content: string; summary: ConfigBundleSummary; applying: boolean; error: string }
-  | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; path: string[] }
+  | { step: 'browse'; profile: string; source: DataSource; bucket: string; prefix: string; prefixes: string[]; loading: boolean; isBillingExport: boolean; detectedType: 'daily' | 'hourly' | 'cost-optimization' | 'cur-legacy' | 'unknown'; missingColumns: string[]; path: string[]; error: string }
   | { step: 'confirm'; cloud: 'aws'; profile: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number }
   | { step: 'confirm'; cloud: 'gcp'; project: string; s3Path: string; hourlyPath: string; costOptPath: string; retentionDays: number };
 
@@ -911,7 +911,7 @@ function GcpBrowseStep({ state, conflictsWith, onNavigate, onConfirm, onSkip, on
               </button>
             );
           })}
-          {state.prefixes.length === 0 && (
+          {state.prefixes.length === 0 && state.error.length === 0 && (
             <p className="text-sm text-text-muted text-center py-4">No subfolders found</p>
           )}
         </div>
@@ -1040,6 +1040,29 @@ function ProfileStep({ state, onSelect, onSkip, onBack }: Readonly<{
   );
 }
 
+/** Error panel shared by the AWS bucket and browse steps: an expired SSO token
+ *  gets one-click re-auth, every other failure a plain Retry — so a credential
+ *  failure is never rendered as a silent empty list. `setup:list-buckets` /
+ *  `setup:browse-s3` funnel EVERY failure into `error`, hence the sniff rather
+ *  than an exhaustive match. */
+function AwsCredentialErrorPanel({ error, profile, onRetry }: Readonly<{
+  error: string;
+  profile: string;
+  onRetry: () => void;
+}>) {
+  if (error.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3" role="alert">
+      <p className="text-sm text-negative break-words">{error}</p>
+      {error.includes('aws sso login') ? (
+        <SsoLoginButton profile={profile} onRetry={onRetry} />
+      ) : (
+        <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
+      )}
+    </div>
+  );
+}
+
 function BucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'bucket' }>;
   onSelect: (bucket: string) => void;
@@ -1062,20 +1085,7 @@ function BucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
         <p className="text-xs text-text-muted mt-0.5">Select the S3 bucket</p>
       </div>
 
-      {state.error.length > 0 && (
-        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3" role="alert">
-          <p className="text-sm text-negative break-words">{state.error}</p>
-          {/* `setup:list-buckets` funnels EVERY failure into `error`, not just
-              expired tokens, so the retry sits outside the credential sniff —
-              an AccessDenied or a dropped connection otherwise left ← Back as
-              the only way on. */}
-          {state.error.includes('aws sso login') ? (
-            <SsoLoginButton profile={state.profile} onRetry={onRetry} />
-          ) : (
-            <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
-          )}
-        </div>
-      )}
+      <AwsCredentialErrorPanel error={state.error} profile={state.profile} onRetry={onRetry} />
 
       {state.loading ? (
         <div className="flex items-center justify-center py-8">
@@ -1132,12 +1142,16 @@ function BucketStep({ state, onSelect, onSkip, onBack, onRetry }: Readonly<{
   );
 }
 
-function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
+function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack, onRetry }: Readonly<{
   state: Extract<WizardStep, { step: 'browse' }>;
   onNavigate: (prefix: string) => void;
   onConfirm: () => void;
   onSkip?: (() => void) | undefined;
   onBack: () => void;
+  /** Re-lists the current folder. The browse step can fail on an expired token
+   *  or an s3:ListBucket denial that struck between the bucket step and here;
+   *  without this the only way on was ← Back. */
+  onRetry: () => void;
 }>) {
   const sourceLabel = SOURCE_LABELS[state.source];
 
@@ -1148,6 +1162,8 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
         <p className="text-sm text-text-secondary mt-1">Navigate to the folder containing <code className="text-text-primary">data/</code> and <code className="text-text-primary">metadata/</code></p>
         <p className="text-xs text-text-muted mt-0.5">{sourceLabel.description}</p>
       </div>
+
+      <AwsCredentialErrorPanel error={state.error} profile={state.profile} onRetry={onRetry} />
 
       {/* Breadcrumb */}
       <div className="flex items-center gap-1 text-xs font-mono text-text-muted flex-wrap">
@@ -1254,7 +1270,7 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack }: Readonly<{
               </button>
             );
           })}
-          {state.prefixes.length === 0 && (
+          {state.prefixes.length === 0 && state.error.length === 0 && (
             <p className="text-sm text-text-muted text-center py-4">No subfolders found</p>
           )}
         </div>
@@ -1310,6 +1326,7 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
   onBack: () => void;
 }>) {
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const api = useCostApi();
 
   const nameError = providerNaming.fixed
@@ -1318,6 +1335,7 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
 
   const isDaily = state.s3Path.length > 0;
   const isHourlyOnly = !isDaily && state.hourlyPath.length > 0;
+  const isCostOptOnly = !isDaily && !isHourlyOnly && state.costOptPath.length > 0;
 
   // The credential card names whichever store this provider authenticates
   // through. Hardcoding "AWS Profile" here was fine while the wizard only
@@ -1343,6 +1361,7 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
   function handleSave() {
     if (nameError !== null) return;
     setSaving(true);
+    setSaveError(null);
     api.writeConfig({
       providerName: providerNaming.value,
       type: state.cloud,
@@ -1352,14 +1371,28 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
       // `upsertWizardProvider` ignores it.
       profile: state.cloud === 'gcp' ? '' : state.profile,
       dailyBucket: state.s3Path,
+      // The Confirm step shows ONE retention picker; it configures whichever
+      // tier is primary for this run. In daily mode it sets daily retention; in
+      // hourly-only mode hourly; in a cost-opt-only run cost-opt — each of which
+      // upsertWizardProvider used to ignore, hardcoding the tier and silently
+      // discarding the choice.
       retentionDays: isDaily ? state.retentionDays : undefined,
+      ...(isHourlyOnly ? { hourlyRetentionDays: state.retentionDays } : {}),
+      ...(isCostOptOnly ? { costOptRetentionDays: state.retentionDays } : {}),
       ...(state.hourlyPath.length > 0 ? { hourlyBucket: state.hourlyPath } : {}),
       // GCP has no Cost Optimization Hub analogue and `validateGcpSync`
       // rejects the key, so it is never collected — but never sent, either.
       ...(state.cloud !== 'gcp' && state.costOptPath.length > 0 ? { costOptBucket: state.costOptPath } : {}),
     }).then(() => {
       onComplete();
-    }).catch(() => { setSaving(false); });
+    }).catch((err: unknown) => {
+      // Surface the failure instead of silently resetting the button — a
+      // writeConfig error (e.g. an invalid provider name reaching the YAML
+      // upsert, or a disk/permission failure) otherwise left the user pressing
+      // Complete Setup with nothing happening and no path forward.
+      setSaving(false);
+      setSaveError(err instanceof Error ? err.message : String(err));
+    });
   }
 
   const paths: { label: string; value: string }[] = [];
@@ -1433,6 +1466,13 @@ function ConfirmStep({ state, providerNaming, onRetentionChange, onComplete, onB
           <p className="text-xs text-text-muted mt-1.5">How far back to download billing data</p>
         </div>
       </div>
+
+      {saveError !== null && (
+        <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3" role="alert">
+          <p className="text-sm font-medium text-negative">Couldn&apos;t save your configuration</p>
+          <p className="text-xs text-text-secondary mt-0.5 break-words">{saveError}</p>
+        </div>
+      )}
 
       <div className="flex items-center justify-between pt-2">
         <button type="button" onClick={onBack} className="text-sm text-text-muted hover:text-text-secondary">← Back</button>
@@ -1651,10 +1691,18 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     // the AWS leg survived a ← Back to the hub and was written into a gcp
     // provider, whose loader then refuses the config on the next launch.
     setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
+    // Token-guarded like the other step loaders: a slow profile listing landing
+    // after the user navigated on would otherwise teleport them back here.
+    const token = ++stepRequestRef.current;
     setWizard({ step: 'profile', profiles: [], loading: true, selected: '' });
     api.listAwsProfiles().then(profiles => {
+      if (stepRequestRef.current !== token) return;
       setWizard({ step: 'profile', profiles, loading: false, selected: '' });
-    }).catch(() => undefined);
+    }).catch(() => {
+      if (stepRequestRef.current !== token) return;
+      // Leave the spinner-free empty picker rather than hanging on "loading".
+      setWizard({ step: 'profile', profiles: [], loading: false, selected: '' });
+    });
   }
 
   function handleWelcomeNext() {
@@ -1662,6 +1710,10 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }
 
   function handleReturnToStart() {
+    // Invalidate any in-flight step loader: the ✕ is reachable from a bucket/
+    // browse/beacon/project step whose loader is mid-flight, and its late
+    // response would otherwise teleport the user back into that step.
+    stepRequestRef.current += 1;
     setCollectedPaths({ daily: '', hourly: '', costOpt: '' });
     // The ✕ abandons the whole configuration, so the typed name goes with the
     // collected paths. Left set, a name entered for an abandoned GCP provider
@@ -1704,14 +1756,23 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
     // published at the bucket's beacon key before walking prefixes by hand.
     // Skipped in source mode (adding hourly/cost-opt to an existing setup).
     if (source === 'daily' && !isSourceMode) {
+      // Token-guarded: the beacon probe is an S3 GetObject that can sit in SDK
+      // retries for seconds on a dying SSO session. Without the guard a late
+      // 'found' response yanked the user out of a step they had since left
+      // (including out of the GCP flow) into an AWS beacon screen.
+      const token = ++stepRequestRef.current;
       setWizard({ ...wizard, selected: bucket, loading: true });
       api.checkConfigBeacon({ profile, bucket }).then(result => {
+        if (stepRequestRef.current !== token) return;
         if (result.status === 'found') {
           setWizard({ step: 'beacon', profile, source, bucket, content: result.content, summary: result.summary, applying: false, error: '' });
         } else {
           browseTo(profile, source, bucket, '');
         }
-      }).catch(() => { browseTo(profile, source, bucket, ''); });
+      }).catch(() => {
+        if (stepRequestRef.current !== token) return;
+        browseTo(profile, source, bucket, '');
+      });
       return;
     }
     browseTo(profile, source, bucket, '');
@@ -1735,10 +1796,21 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
 
   function browseTo(profile: string, source: DataSource, bucket: string, prefix: string) {
     const path = prefix.split('/').filter(s => s.length > 0);
-    setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: [], loading: true, isBillingExport: false, detectedType: 'unknown', missingColumns: [], path });
+    // Token-guarded like the GCP browse leg: a slow ListObjects response (a
+    // dying SSO session sits in SDK retries for seconds) must not land after
+    // the user navigated away and overwrite the current step.
+    const token = ++stepRequestRef.current;
+    setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: [], loading: true, isBillingExport: false, detectedType: 'unknown', missingColumns: [], path, error: '' });
     api.browseS3({ profile, bucket, prefix }).then(result => {
-      setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: result.prefixes, loading: false, isBillingExport: result.isBillingExport, detectedType: result.detectedType, missingColumns: result.missingColumns, path });
-    }).catch(() => undefined);
+      if (stepRequestRef.current !== token) return;
+      setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: result.prefixes, loading: false, isBillingExport: result.isBillingExport, detectedType: result.detectedType, missingColumns: result.missingColumns, path, error: result.error ?? '' });
+    }).catch((err: unknown) => {
+      // Surfaced rather than swallowed. The empty catch (and the handler's
+      // swallow-to-empty) rendered an expired token / AccessDenied as "No
+      // subfolders found" — the browse-step dead end #539/#542 exist to remove.
+      if (stepRequestRef.current !== token) return;
+      setWizard({ step: 'browse', profile, source, bucket, prefix, prefixes: [], loading: false, isBillingExport: false, detectedType: 'unknown', missingColumns: [], path, error: err instanceof Error ? err.message : String(err) });
+    });
   }
 
   function handleNavigate(prefix: string) {
@@ -1794,6 +1866,10 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
   }
 
   function handleBack() {
+    // Invalidate any in-flight loader before navigating away. Branches that
+    // re-enter a guarded loader (startBucketStep, goToProfileStep, browseTo…)
+    // bump the token again, so this only affects the direct setWizard exits.
+    stepRequestRef.current += 1;
     if (wizard.step === 'profile') {
       setWizard({ step: 'start' });
     } else if (wizard.step === 'beacon') {
@@ -1931,6 +2007,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               onConfirm={handleBrowseConfirm}
               onSkip={wizard.source === 'daily' ? undefined : handleBrowseSkip}
               onBack={handleBack}
+              onRetry={() => { browseTo(wizard.profile, wizard.source, wizard.bucket, wizard.prefix); }}
             />
           )}
           {wizard.step === 'confirm' && (

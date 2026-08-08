@@ -23,13 +23,22 @@ export function costExprFor(metric: CostMetric, prefix: string): string {
   return `COALESCE(${prefix}${METRIC_COLUMNS[metric]}, 0)`;
 }
 
-/** Charge categories that carry a list price. Purchase/Tax/Credit/Adjustment
- *  rows have no retail equivalent, and including them just adds zero-cost
- *  rows that bloat group-by buckets — so the `list` metric restricts to
- *  usage rows. Commitment-covered usage remains `ChargeCategory='Usage'`
- *  in FOCUS (flagged via `PricingCategory='Committed'`), so this keeps the
- *  same slice the CUR-era `Usage`/`SavingsPlanCoveredUsage`/`DiscountedUsage`
- *  filter selected. */
-export const LIST_METRIC_CHARGE_CATEGORIES: readonly string[] = [
+/** Charge categories the rate-comparison metrics (`list` and `contracted`)
+ *  restrict to. Purchase/Tax/Credit/Adjustment rows have no retail equivalent,
+ *  and for `contracted` they are the source of a double-count: a commitment's
+ *  ContractedCost is booked twice under FOCUS — once on the Purchase row
+ *  (the commitment fee) and again on the covered `ChargeCategory='Usage'`
+ *  rows (flagged `PricingCategory='Committed'`). Summing every category would
+ *  count the commitment twice, so both list and contracted are restricted to
+ *  usage rows — the same pre/post-negotiation slice, comparable apples-to-apples.
+ *  `billed`/`effective` remain the all-rows invoice totals. */
+export const USAGE_ONLY_METRIC_CHARGE_CATEGORIES: readonly string[] = [
   'Usage',
 ] as const;
+
+/** Metrics that report a rate applied to actual usage (as opposed to the
+ *  all-rows invoice totals `billed`/`effective`). These restrict to
+ *  {@link USAGE_ONLY_METRIC_CHARGE_CATEGORIES}. */
+export function isUsageOnlyMetric(metric: CostMetric): boolean {
+  return metric === 'list' || metric === 'contracted';
+}

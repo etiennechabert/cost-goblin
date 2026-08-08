@@ -41,6 +41,7 @@ import {
   toUserFriendlyError,
 } from './context.js';
 import { triggerAutoSyncNow } from '../auto-sync.js';
+import { SYNC_ALREADY_RUNNING } from '../sync-client.js';
 import { parseSyncId, resolveProvider, resolveSyncId } from '../sync-id.js';
 import { recordSyncLog } from '../sync-log.js';
 import { traceSpan, SPAN_OP } from '../telemetry/tracing.js';
@@ -167,8 +168,6 @@ export function changedRollupMonths(periods: readonly string[]): string[] {
 
 export function registerSyncHandlers(app: AppContext): void {
   const { ctx, state, getConfig } = app;
-  const syncWorkerIds = new Map<string, number>();
-  let nextWorkerId = 0;
 
   ipcMain.handle('sync:status', async (_event, syncId: string = 'default'): Promise<SyncStatus> => {
     // While onboarding (no config / no providers) nothing was ever synced.
@@ -270,9 +269,18 @@ export function registerSyncHandlers(app: AppContext): void {
     const config = await getConfig();
     const { provider, tier, key } = resolveSyncId(syncId, config.providers);
 
+    // Coalesce with an already-running sync of this exact provider/tier. Without
+    // this a manual "Sync now" racing the auto-sync scheduler (which fires
+    // immediately after an SSO/gcloud re-login) launched a second download; for
+    // GCP the two shared staging/install state and could install a partial
+    // month stamped complete. The SyncClient enforces the same rule airtightly;
+    // this is the fast, quiet path so the UI never sees a spurious error.
+    if (state.syncStatuses[key]?.status === 'syncing') {
+      recordSyncLog('info', `Sync '${key}' already in progress; ignoring duplicate request`);
+      return { filesDownloaded: 0, rowsProcessed: 0 };
+    }
+
     const bucketPath = resolveBucketPath(provider, tier);
-    const workerId = nextWorkerId++;
-    syncWorkerIds.set(key, workerId);
     state.syncStatuses[key] = { status: 'syncing', phase: 'downloading', progress: 0, filesTotal: fileEntries.length, filesDone: 0, bytesTotal: 0, bytesDone: 0, message: '' };
 
     recordSyncLog('info', `Sync started: ${provider.name}/${tier} (${String(fileEntries.length)} file(s))`);
@@ -292,7 +300,6 @@ export function registerSyncHandlers(app: AppContext): void {
           return r;
         },
       );
-      syncWorkerIds.delete(key);
 
       const now = new Date();
       state.syncStatuses[key] = { status: 'completed', lastSync: now, filesDownloaded: result.filesDownloaded };
@@ -319,7 +326,13 @@ export function registerSyncHandlers(app: AppContext): void {
       }
       return result;
     } catch (err: unknown) {
-      syncWorkerIds.delete(key);
+      // Backstop: the SyncClient rejects a duplicate start airtightly (the
+      // handler's own status check can lose a same-tick race). Treat it as the
+      // coalesced no-op it is, and leave the in-flight sync's status untouched.
+      if (err instanceof Error && err.message === SYNC_ALREADY_RUNNING) {
+        recordSyncLog('info', `Sync '${key}' already in progress; ignoring duplicate request`);
+        return { filesDownloaded: 0, rowsProcessed: 0 };
+      }
       const error = handleSyncError(err, key, providerAuth(provider), state);
       if (error.message === 'Download cancelled') {
         return { filesDownloaded: 0, rowsProcessed: 0 };
@@ -333,9 +346,13 @@ export function registerSyncHandlers(app: AppContext): void {
     const providers = config?.providers ?? [];
     if (providers.length === 0) return; // nothing configured → nothing running
     const { key } = resolveSyncId(syncId, providers);
-    const workerId = syncWorkerIds.get(key);
-    if (workerId !== undefined) {
-      ctx.syncClient.cancelSync(workerId);
+    // Cancel by the same {provider}:{tier} key the sync was started under. The
+    // SyncClient owns the mapping to the live worker request id, so this always
+    // targets the right download (or no-ops when nothing is running for the
+    // key) — the old handler-local counter drifted from the worker's id
+    // whenever auto-sync ran and aborted the wrong sync or none.
+    ctx.syncClient.cancelSync(key);
+    if (state.syncStatuses[key]?.status === 'syncing') {
       logger.info(`Sync '${key}' cancelled by user`);
       recordSyncLog('warn', `Sync '${key}' cancelled by user`);
     }
@@ -527,6 +544,7 @@ async function runSync(
     dataDir: ctx.dataDir,
     tier,
     files: fileEntries,
+    syncKey: statusKey,
     onProgress: (progress) => {
       const bytesDone = progress.bytesDone ?? 0;
       const bytesTotal = progress.bytesTotal ?? 0;

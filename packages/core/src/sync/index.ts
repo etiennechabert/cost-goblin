@@ -87,6 +87,7 @@ export {
 
 export {
   type TierRetention,
+  DEFAULT_RETENTION_DAYS,
   retentionCutoffPeriod,
   periodsOutsideRetention,
   configuredTierRetentions,

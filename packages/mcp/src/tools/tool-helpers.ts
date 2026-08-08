@@ -15,7 +15,6 @@ import type {
   DimensionsConfig,
   Dollars,
   FilterMap,
-  ProviderName,
   ProviderSourceSpec,
   QueryContextOptions,
   TagValue,
@@ -70,13 +69,6 @@ export function toFilterMap(raw: Record<string, readonly string[]> | undefined):
 
 export function toDollars(n: number): Dollars {
   return asDollars(n);
-}
-
-/** First configured provider's name, or null while onboarding (no readable
- *  config / empty provider list). Mirrors desktop getFirstProviderName. */
-export async function getFirstProviderName(ctx: McpContext): Promise<ProviderName | null> {
-  const config = await ctx.getConfig().catch(() => null);
-  return config?.providers[0]?.name ?? null;
 }
 
 /** ProviderSourceSpec list for QueryContextOptions: EVERY configured
@@ -194,10 +186,14 @@ export async function computeDataCoverage(
   ctx: McpContext,
   dateRange?: { readonly start: string; readonly end: string },
 ): Promise<DataCoverage> {
-  const { listLocalMonths, computePeriodsInRange } = await import('@costgoblin/core');
-  const provider = await getFirstProviderName(ctx);
-  const available = provider === null ? [] : await listLocalMonths(ctx.dataDir, provider, 'daily');
-  if (provider === null || available.length === 0) {
+  const { computePeriodsInRange } = await import('@costgoblin/core');
+  // Coverage must describe the SAME data the query tools return, and those
+  // union every configured provider (getQueryProviders). Computing it off the
+  // first provider alone reported "no synced data" while a later provider's
+  // rows came back in the query — actively misleading the MCP client.
+  const providers = await getQueryProviders(ctx, 'daily');
+  const available = [...new Set(providers.flatMap(p => p.availablePeriods ?? []))].sort();
+  if (available.length === 0) {
     return {
       availableMonths: [],
       latestDay: null,
@@ -212,14 +208,21 @@ export async function computeDataCoverage(
   const latestMonth = available[available.length - 1];
   let latestDay: string | null = null;
   if (latestMonth !== undefined) {
-    const glob = `${ctx.dataDir}/${String(provider)}/raw/daily-${latestMonth}/*.parquet`;
-    try {
-      const rows = await ctx.runQuery(
-        `SELECT MAX(ChargePeriodStart::DATE)::VARCHAR AS d FROM read_parquet('${glob}')`,
-      );
-      const v = rows[0]?.['d'];
-      if (typeof v === 'string' && v.length >= 10) latestDay = v.slice(0, 10);
-    } catch { /* fall through */ }
+    // The overall latest day lives in the overall latest month — but more than
+    // one provider may hold that month, so MAX() must span every provider that
+    // has it, not just the first.
+    const globs = providers
+      .filter(p => (p.availablePeriods ?? []).includes(latestMonth))
+      .map(p => `'${ctx.dataDir}/${String(p.name)}/raw/daily-${latestMonth}/*.parquet'`);
+    if (globs.length > 0) {
+      try {
+        const rows = await ctx.runQuery(
+          `SELECT MAX(ChargePeriodStart::DATE)::VARCHAR AS d FROM read_parquet([${globs.join(', ')}])`,
+        );
+        const v = rows[0]?.['d'];
+        if (typeof v === 'string' && v.length >= 10) latestDay = v.slice(0, 10);
+      } catch { /* fall through */ }
+    }
   }
   const earliestDay = earliestMonth !== undefined ? `${earliestMonth}-01` : null;
 

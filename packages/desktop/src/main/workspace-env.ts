@@ -385,6 +385,29 @@ export async function deleteWorkspaceDir(workspacesRoot: string, name: Workspace
   await rm(join(workspacesRoot, name), { recursive: true, force: true });
 }
 
+/** Pure decision behind `workspaces:delete`. Returns the refusal message, or
+ *  null when `name` may be deleted. Extracted from the handler so the three
+ *  data-loss guards — never the active workspace, never a non-existent one,
+ *  never the last remaining one — are unit-testable without an Electron/IPC
+ *  harness. `deleteWorkspaceDir` is `rm -rf`, so these guards are the only
+ *  barrier between a (possibly stale) IPC message and permanent data loss. */
+export function workspaceDeleteRefusal(
+  name: WorkspaceName,
+  activeName: WorkspaceName,
+  existingNames: readonly WorkspaceName[],
+): string | null {
+  if (name === activeName) {
+    return 'Cannot delete the active workspace — switch to another workspace first.';
+  }
+  if (!existingNames.includes(name)) {
+    return `Workspace "${name}" does not exist.`;
+  }
+  if (existingNames.length <= 1) {
+    return 'Cannot delete the last workspace.';
+  }
+  return null;
+}
+
 /** Total bytes of all files under a workspace directory. Tolerant of races:
  *  entries deleted mid-walk are skipped; a missing root yields 0. */
 export async function workspaceSizeBytes(workspacePath: string): Promise<number> {

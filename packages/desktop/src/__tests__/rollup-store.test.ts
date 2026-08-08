@@ -185,4 +185,16 @@ describe('RollupStore', () => {
     expect(store.isReady()).toBe(false);
     await expect(stat(join(dataDir, 'aws', 'rollup'))).rejects.toThrow();
   });
+
+  it('invalidate() resets state without throwing when no provider resolves', async () => {
+    // invalidateDimensions → scheduleRollupReroll and invalidateCostScope call
+    // `void invalidate().then(...)` right after invalidateConfig nulled the
+    // config — providerName() then throws. invalidate() must resolve (skip the
+    // rm, keep the in-memory reset) rather than throw synchronously and reject
+    // the whole setup:write-config handler.
+    const throwingProvider = (): ProviderName => { throw new Error('No provider configured'); };
+    const store = new RollupStore({ dataDir, providerName: throwingProvider, runQuery });
+    await expect(store.invalidate()).resolves.toBeUndefined();
+    expect(store.isReady()).toBe(false);
+  });
 });

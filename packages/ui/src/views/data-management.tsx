@@ -848,7 +848,7 @@ function ProviderSection({ provider, soleProvider, refreshSignal, onCounts, onCo
       {showRemove && (
         <ConfirmModal
           title={`Remove provider "${name}"`}
-          message="This removes the provider from the configuration only. Its downloaded data stays on disk in the workspace data folder until you delete it — nothing is lost by removing the entry."
+          message="This removes the provider from your configuration and deletes its downloaded data from the workspace data folder. If you add this provider back later, you'll need to re-sync it from the source."
           confirmLabel="Remove"
           destructive
           onConfirm={() => {

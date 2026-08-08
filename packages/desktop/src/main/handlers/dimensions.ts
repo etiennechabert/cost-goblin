@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { applyNormalizationRule, applyStripPatterns, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions } from '@costgoblin/core';
+import { applyNormalizationRule, applyStripPatterns, buildGrainProbeQuery, buildSource, computeRollupEstimate, dimensionsConfigToYaml, emptyRollupEstimate, generateAliasSuggestions, isStringRecord, rollupGrainColumns, rollupGrainDimensions, sqlEscapeString } from '@costgoblin/core';
 import type { AliasSuggestion, DimensionsConfig, NormalizationRule, RollupGrainEstimate } from '@costgoblin/core';
 import { type AppContext, loadOrgAccountsMap } from './context.js';
 import { toNum, toStr } from './query-utils.js';
@@ -338,7 +338,7 @@ export function registerDimensionsHandlers(app: AppContext): void {
       )
       SELECT DISTINCT tag_val
       FROM tags
-      WHERE tag_key = '${tagName}'
+      WHERE tag_key = '${sqlEscapeString(tagName)}'
         AND tag_val IS NOT NULL AND tag_val != ''
       ORDER BY tag_val
     `);

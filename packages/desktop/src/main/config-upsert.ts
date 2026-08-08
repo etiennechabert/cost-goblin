@@ -1,4 +1,4 @@
-import { isStringRecord, parseProviderName } from '@costgoblin/core';
+import { DEFAULT_RETENTION_DAYS, isStringRecord, parseProviderName } from '@costgoblin/core';
 
 /** Pure YAML-object transforms behind the two config-writing IPC handlers
  *  (`setup:write-config`, `config:update-aws-profile`). They operate on the
@@ -15,7 +15,16 @@ export interface WizardProviderConfig {
   readonly profile: string;
   readonly keyFile?: string | undefined;
   readonly dailyBucket: string;
+  /** Retention for the DAILY tier (the wizard's picker in daily mode). */
   readonly retentionDays?: number | undefined;
+  /** Retention for the HOURLY tier (the wizard's picker in hourly-only mode).
+   *  Previously the hourly tier was hardcoded to 30 days regardless of what the
+   *  picker showed, so a user's choice was silently discarded and any
+   *  hand-configured hourly retention was reset on every re-run. */
+  readonly hourlyRetentionDays?: number | undefined;
+  /** Retention for the COST-OPTIMIZATION tier (the wizard's picker in a
+   *  cost-opt-only run). Same fix as hourly — it was hardcoded before. */
+  readonly costOptRetentionDays?: number | undefined;
   readonly hourlyBucket?: string | undefined;
   readonly costOptBucket?: string | undefined;
 }
@@ -24,6 +33,15 @@ function providerEntryName(entry: unknown): string | undefined {
   if (!isStringRecord(entry)) return undefined;
   const name = entry['name'];
   return typeof name === 'string' ? name : undefined;
+}
+
+/** The retentionDays already configured for a tier on the entry being
+ *  replaced, if any — so a wizard re-run that doesn't re-pick a tier's
+ *  retention preserves it instead of resetting it to the default. */
+function existingTierRetention(existingSync: Readonly<Record<string, unknown>>, tier: string): number | undefined {
+  const t: unknown = existingSync[tier];
+  if (isStringRecord(t) && typeof t['retentionDays'] === 'number') return t['retentionDays'];
+  return undefined;
 }
 
 /** Upsert the wizard's provider into the parsed config by exact name match:
@@ -74,16 +92,23 @@ export function upsertWizardProvider(
     ? { intervalMinutes: 60 }
     : { ...existingSync, intervalMinutes: 60 };
 
+  // Retention per tier: honour the wizard's picked value, else preserve what the
+  // entry already had, else the shared DEFAULT_RETENTION_DAYS (single source of
+  // truth — the prune paths use the same constant, so a re-config can't drift a
+  // tier's cutoff).
   if (wizard.dailyBucket.length > 0) {
-    sync['daily'] = { bucket: wizard.dailyBucket, retentionDays: wizard.retentionDays ?? 365 };
+    const retentionDays = wizard.retentionDays ?? existingTierRetention(existingSync, 'daily') ?? DEFAULT_RETENTION_DAYS.daily;
+    sync['daily'] = { bucket: wizard.dailyBucket, retentionDays };
   }
   // Both arms carry an hourly tier: GCP's FOCUS export is delivered hourly and
   // the exporter publishes that grain to its own folder.
   if (wizard.hourlyBucket !== undefined && wizard.hourlyBucket.length > 0) {
-    sync['hourly'] = { bucket: wizard.hourlyBucket, retentionDays: 30 };
+    const retentionDays = wizard.hourlyRetentionDays ?? existingTierRetention(existingSync, 'hourly') ?? DEFAULT_RETENTION_DAYS.hourly;
+    sync['hourly'] = { bucket: wizard.hourlyBucket, retentionDays };
   }
   if (type === 'aws' && wizard.costOptBucket !== undefined && wizard.costOptBucket.length > 0) {
-    sync['costOptimization'] = { bucket: wizard.costOptBucket, retentionDays: 30 };
+    const retentionDays = wizard.costOptRetentionDays ?? existingTierRetention(existingSync, 'costOptimization') ?? DEFAULT_RETENTION_DAYS.costOptimization;
+    sync['costOptimization'] = { bucket: wizard.costOptBucket, retentionDays };
   }
 
   const entry: Record<string, unknown> = type === 'gcp'

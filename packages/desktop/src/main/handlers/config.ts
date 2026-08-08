@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { asDimensionId, isStringRecord, logger } from '@costgoblin/core';
+import { asDimensionId, isStringRecord, logger, parseProviderName } from '@costgoblin/core';
 import type {
   CostGoblinConfig,
   Dimension,
@@ -73,22 +73,41 @@ export function registerConfigHandlers(app: AppContext): void {
     logger.info(`Updated AWS profile to ${profile}${providerName === undefined ? '' : ` for provider ${providerName}`}`);
   });
 
-  // Removes the provider from the CONFIG only. Its {dataDir}/{name}/ tree is
-  // left orphaned on disk — deliberate: config removal must never be a
-  // data-loss operation. The UI tells the user where the data still lives.
+  // Removes the provider from the config AND deletes its {dataDir}/{name}/ tree.
+  // Deleting the data is deliberate: leaving it orphaned let a later add of the
+  // same name silently adopt this source's months and attribute them to a
+  // different provider (even a different cloud). The confirmation modal warns
+  // the user the download is discarded and must be re-synced if re-added.
   ipcMain.handle('config:remove-provider', async (_event, providerName: string): Promise<void> => {
     const fs = await import('node:fs/promises');
+    const path = await import('node:path');
     const { stringify, parse: parseYaml } = await import('yaml');
     const raw = await fs.readFile(ctx.configPath, 'utf-8');
     const parsed: unknown = parseYaml(raw);
     if (!isStringRecord(parsed)) throw new Error('Config file is not a YAML object');
+    // Compute (don't yet persist) the config without this provider. Throws on an
+    // unknown name (so we never delete data for a provider that isn't configured)
+    // or on removing the last provider.
     const updated = removeProviderEntry(parsed, providerName);
+    // Validate as a path segment before rm -rf — defence in depth on top of the
+    // config-entry match above, so a crafted name can never escape the data dir.
+    const safeName = parseProviderName(providerName);
+
+    // Delete the on-disk tree BEFORE rewriting the config, and release any
+    // DuckDB handles on its parquet first so the delete isn't blocked by an
+    // in-flight query. Ordering it before the config write means a delete
+    // failure (e.g. a locked file) aborts here with the provider still fully
+    // configured — no half-state where the config forgot a provider whose data
+    // survives for a same-name re-add to adopt. rm's force only swallows ENOENT,
+    // so a real failure still throws and rejects the IPC.
+    ctx.db.cancelPendingQueries();
+    await fs.rm(path.join(ctx.dataDir, String(safeName)), { recursive: true, force: true });
     await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
     // Removal can change which provider is FIRST — and the RollupStore's
     // paths and in-memory manifest are bound to the first provider's tree.
     // A full cache clear invalidates the store and re-warms it against the
     // new first provider instead of serving stale partitions.
     await clearAllCaches();
-    logger.info(`Removed provider ${providerName} from config (data left on disk)`);
+    logger.info(`Removed provider ${providerName} (config entry and on-disk data deleted)`);
   });
 }

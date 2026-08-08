@@ -76,15 +76,20 @@ describe('cost metric column selection', () => {
     expect(sql).toMatch(/COALESCE\(ListCost, 0\) AS cost/);
   });
 
-  it('list metric restricts source to usage-bearing charge categories', () => {
-    const sql = buildQuery({ costMetric: 'list', rules: [] });
-    // Filter is inlined in the source subquery so every downstream query
-    // (Explorer, custom views, MCP, materialized base) sees the same slice.
-    expect(sql).toContain("WHERE COALESCE(ChargeCategory, '') IN ('Usage')");
+  it('rate-comparison metrics restrict source to usage-bearing charge categories', () => {
+    // list AND contracted both report a rate applied to actual usage. Restricting
+    // both keeps the pre/post-negotiation comparison apples-to-apples and stops
+    // `contracted` from double-counting the commitment fee (Purchase row +
+    // covered-usage rows). Filter is inlined in the source subquery so every
+    // downstream query (Explorer, custom views, MCP, materialized base) sees it.
+    for (const costMetric of ['list', 'contracted'] as const) {
+      const sql = buildQuery({ costMetric, rules: [] });
+      expect(sql).toContain("WHERE COALESCE(ChargeCategory, '') IN ('Usage')");
+    }
   });
 
-  it('non-list metrics do not inject the charge-category filter', () => {
-    for (const costMetric of ['billed', 'effective', 'contracted'] as const) {
+  it('invoice-total metrics do not inject the charge-category filter', () => {
+    for (const costMetric of ['billed', 'effective'] as const) {
       const sql = buildQuery({ costMetric, rules: [] });
       expect(sql).not.toContain("IN ('Usage')");
     }

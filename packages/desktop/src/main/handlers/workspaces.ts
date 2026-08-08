@@ -9,6 +9,7 @@ import {
   listWorkspaceNames,
   readAppStateSync,
   renameWorkspaceDir,
+  workspaceDeleteRefusal,
   workspacePaths,
   workspaceSizeBytes,
 } from '../workspace-env.js';
@@ -183,12 +184,11 @@ export function registerWorkspacesHandlers(app: AppContext): void {
   ipcMain.handle('workspaces:delete', async (_event, rawName: unknown): Promise<WorkspacesInfo> => {
     const ws = requireWorkspaceMode();
     const name = parseWorkspaceName(typeof rawName === 'string' ? rawName : '');
-    if (name === ws.name) {
-      throw new Error('Cannot delete the active workspace — switch to another workspace first.');
-    }
+    // All three data-loss guards live in one pure, tested function so a
+    // refactor can't reorder them past the rm -rf below.
     const names = await listWorkspaceNames(ws.workspacesRoot);
-    if (!names.includes(name)) throw new Error(`Workspace "${name}" does not exist.`);
-    if (names.length <= 1) throw new Error('Cannot delete the last workspace.');
+    const refusal = workspaceDeleteRefusal(name, ws.name, names);
+    if (refusal !== null) throw new Error(refusal);
     await deleteWorkspaceDir(ws.workspacesRoot, name);
     await updatePrefsFile(ws.appStatePath, (current) => moveLastUsedKey(current, name, null));
     logger.info(`Workspace deleted: ${name}`);
