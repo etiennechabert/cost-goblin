@@ -130,7 +130,11 @@ function isPlainRecord(v: unknown): v is Record<string, unknown> {
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
   if (isPlainRecord(value)) {
-    return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${stableStringify(value[k])}`).join(',')}}`;
+    const entries = Object.keys(value)
+      .sort((a, b) => a.localeCompare(b))
+      .map(k => `${JSON.stringify(k)}:${stableStringify(value[k])}`)
+      .join(',');
+    return `{${entries}}`;
   }
   return JSON.stringify(value);
 }

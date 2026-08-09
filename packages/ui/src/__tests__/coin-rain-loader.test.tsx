@@ -1,6 +1,6 @@
 import { render, screen, act, within } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { CoinRainLoader, COIN_SIZE } from '../components/coin-rain-loader.js';
+import { CoinRainLoader, COIN_SIZE, coinRandom } from '../components/coin-rain-loader.js';
 import { setReducedMotion } from './setup.js';
 
 const HEIGHT = 200;
@@ -9,8 +9,8 @@ const HEIGHT = 200;
  *  Stub a realistic width so the x clamp is exercised like the y one. */
 const WIDTH = 400;
 /** Enough coins that a broken clamp is caught reliably rather than ~40% of the
- *  time: placement is random and unseeded, so a handful of samples is a coin
- *  flip, not a bound. */
+ *  time: placement draws from an arbitrary point in the shared PRNG stream, so
+ *  a handful of samples is a coin flip, not a bound. */
 const COUNT = 40;
 
 function withWidth(width: number): () => void {
@@ -88,8 +88,8 @@ describe('CoinRainLoader', () => {
     // Placement is random, so sampling it only catches a bad clamp some of the
     // time. Pin the worst corner instead: the smallest scale (largest gap
     // between the layout box and the painted disc) at the largest offset.
-    // Math.random is consumed as scale, then x, then y.
-    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValue(0.999999);
+    // The random source is consumed as scale, then x, then y.
+    vi.spyOn(coinRandom, 'next').mockReturnValueOnce(0).mockReturnValue(0.999999);
     setReducedMotion(true);
     const restoreWidth = withWidth(WIDTH);
     try {

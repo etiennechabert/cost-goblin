@@ -24,6 +24,14 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** The bundle's credentials profile. The field was renamed profile →
+ *  credentialsProfile with #516; accept the legacy key too so a stale renderer
+ *  bundle can't brick imports. */
+function bundleCredentialsProfile(raw: Record<string, unknown>): string {
+  if (typeof raw['credentialsProfile'] === 'string') return raw['credentialsProfile'];
+  return typeof raw['profile'] === 'string' ? raw['profile'] : '';
+}
+
 /** S3 errors that mean "nothing published here" rather than "broken".
  *  AccessDenied is included: without s3:ListBucket a missing key surfaces
  *  as 403, and a beacon the user cannot read is equivalent to no beacon. */
@@ -75,11 +83,7 @@ export function registerSharingHandlers(app: AppContext): void {
   });
 
   ipcMain.handle('sharing:apply-bundle', async (_event, raw: unknown): Promise<ApplyConfigBundleResult> => {
-    // The field was renamed profile → credentialsProfile with #516; accept
-    // the legacy key too so a stale renderer bundle can't brick imports.
-    const credentialsProfile = isStringRecord(raw)
-      ? (typeof raw['credentialsProfile'] === 'string' ? raw['credentialsProfile'] : (typeof raw['profile'] === 'string' ? raw['profile'] : ''))
-      : '';
+    const credentialsProfile = isStringRecord(raw) ? bundleCredentialsProfile(raw) : '';
     if (!isStringRecord(raw) || typeof raw['content'] !== 'string' || credentialsProfile.length === 0) {
       return { status: 'error', message: 'Invalid import parameters' };
     }

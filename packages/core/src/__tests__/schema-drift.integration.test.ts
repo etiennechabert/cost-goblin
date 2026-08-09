@@ -105,34 +105,19 @@ describe('FOCUS schema drift across months (DuckDB end-to-end)', () => {
     ).rejects.toThrow(/x_Operation/);
   });
 
-  it('effective over the mixed span (list form): both export revisions union cleanly', async () => {
-    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: ['2025-10', '2026-04'] }], costMetric: 'effective' });
+  it.each([
+    // effective — old month 6 + 3 + 2 = 11; new month 8 + 5 + 100 (Tax) + 1 = 114.
+    { metric: 'effective', label: 'explicit periods', providers: [{ name: PROVIDER, periods: ['2025-10', '2026-04'] }], oldTotal: 11, newTotal: 114 },
+    { metric: 'effective', label: 'wildcard fallback, no periods', providers: [{ name: PROVIDER }], oldTotal: 11, newTotal: 114 },
+    // billed — 7 + 4 + 2 = 13; 9 + 8 + 100 + 1 = 118.
+    { metric: 'billed', label: 'explicit periods', providers: [{ name: PROVIDER, periods: ['2025-10', '2026-04'] }], oldTotal: 13, newTotal: 118 },
+    // list restricts to Usage charge categories — 10 + 5 + 3 = 18; 12 + 9 + 2 = 23 (Tax row excluded).
+    { metric: 'list', label: 'explicit periods', providers: [{ name: PROVIDER, periods: ['2025-10', '2026-04'] }], oldTotal: 18, newTotal: 23 },
+  ] as const)('$metric over the mixed span ($label): both export revisions union cleanly', async ({ metric, providers, oldTotal, newTotal }) => {
+    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers, costMetric: metric });
     const totals = await monthTotals(conn, source);
-    // Old month: 6 + 3 + 2 = 11.
-    expect(totals['2025-10']).toBe(11);
-    // New month: 8 + 5 + 100 (Tax) + 1 = 114.
-    expect(totals['2026-04']).toBe(114);
-  });
-
-  it('effective over the mixed span (wildcard fallback, no periods): same correct numbers', async () => {
-    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER }], costMetric: 'effective' });
-    const totals = await monthTotals(conn, source);
-    expect(totals['2025-10']).toBe(11);
-    expect(totals['2026-04']).toBe(114);
-  });
-
-  it('billed over the mixed span reads BilledCost in both shapes', async () => {
-    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: ['2025-10', '2026-04'] }], costMetric: 'billed' });
-    const totals = await monthTotals(conn, source);
-    expect(totals['2025-10']).toBe(13); // 7 + 4 + 2
-    expect(totals['2026-04']).toBe(118); // 9 + 8 + 100 + 1
-  });
-
-  it('list metric restricts to Usage charge categories in both shapes', async () => {
-    const source = buildSource({ dataDir, tier: 'daily', dimensions, providers: [{ name: PROVIDER, periods: ['2025-10', '2026-04'] }], costMetric: 'list' });
-    const totals = await monthTotals(conn, source);
-    expect(totals['2025-10']).toBe(18); // 10 + 5 + 3
-    expect(totals['2026-04']).toBe(23); // 12 + 9 + 2 — Tax row excluded
+    expect(totals['2025-10']).toBe(oldTotal);
+    expect(totals['2026-04']).toBe(newTotal);
   });
 
   it('the missing x_ column is NULL-filled and coalesced, so grouping on it spans both shapes', async () => {

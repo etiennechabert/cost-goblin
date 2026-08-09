@@ -285,6 +285,7 @@ describe('loadConfig', () => {
     // `periodFolder` joins with a single slash; a prefix of `/focus/` would
     // otherwise produce a `//` key that GCS treats as a distinct folder.
     expect(loadConfig({ ...BASE, PREFIX: '/focus/' }).prefix).toBe('focus');
+    expect(loadConfig({ ...BASE, PREFIX: '///a/b///' }).prefix).toBe('a/b');
   });
 
   it('requires the three identifying variables', () => {
@@ -446,14 +447,20 @@ describe('normalizeTimestamp', () => {
     // `'…43.834613Z' <= '…43.834Z'` === true, because 'Z' (0x5A) sorts above
     // every digit — so a period that genuinely moved reads as already-seen and
     // is skipped while the run logs "nothing changed since the last run".
-    const stored = normalizeTimestamp('2026-08-07T23:59:43.834Z');
+    const rawStored = '2026-08-07T23:59:43.834Z';
+    const stored = normalizeTimestamp(rawStored);
     const later = normalizeTimestamp('2026-08-07T23:59:43.834613000Z');
-    expect('2026-08-07T23:59:43.834613Z' <= '2026-08-07T23:59:43.834Z').toBe(true); // the bug
+    expect(later <= rawStored).toBe(true); // the bug
     expect(later <= stored).toBe(false); // fixed
   });
 
   it('leaves an unparseable value alone rather than corrupting it', () => {
     expect(normalizeTimestamp('not-a-timestamp')).toBe('not-a-timestamp');
+  });
+
+  it('truncates an arbitrarily long fraction and keeps a non-Z tail intact', () => {
+    expect(normalizeTimestamp(`2026-08-07T23:59:43.${'9'.repeat(1000)}Z`)).toBe('2026-08-07T23:59:43.999999Z');
+    expect(normalizeTimestamp('2026-08-07 23:59:43.12+00')).toBe('2026-08-07 23:59:43.120000+00');
   });
 });
 

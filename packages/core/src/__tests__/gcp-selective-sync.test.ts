@@ -533,4 +533,14 @@ describe('parseGcloudCompletedBytes', () => {
     // A zero total would make the progress fraction a division by zero.
     expect(parseGcloudCompletedBytes('Completed files 0/0 | 0.0B/0.0B')).toBeNull();
   });
+
+  it('rejects a long unit-less digit run without pathological backtracking', () => {
+    expect(parseGcloudCompletedBytes(`Completed files 3/10 | ${'9'.repeat(10_000)}`)).toBeNull();
+    expect(parseGcloudCompletedBytes(`${'1.'.repeat(5_000)}MiB`)).toBeNull();
+  });
+
+  it('still matches a byte pair whose first number starts mid-line after other digits', () => {
+    expect(parseGcloudCompletedBytes('files 37 done, 12.0MiB/40.0MiB'))
+      .toEqual({ bytesDone: 12 * 1024 * 1024, bytesTotal: 40 * 1024 * 1024 });
+  });
 });

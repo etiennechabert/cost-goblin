@@ -106,7 +106,7 @@ function isProgressNoise(line: string): boolean {
  *  observed default) the manifest-derived count carries it. Returns null on
  *  any line without both counts so callers keep the previous numbers. */
 export function parseGcloudCompletedBytes(line: string): { bytesDone: number; bytesTotal: number } | null {
-  const match = /([\d.]+)\s*(B|KiB|MiB|GiB|TiB)\s*\/\s*([\d.]+)\s*(B|KiB|MiB|GiB|TiB)/i.exec(line);
+  const match = /(?<![\d.])([\d.]+)\s*(B|KiB|MiB|GiB|TiB)\s*\/\s*([\d.]+)\s*(B|KiB|MiB|GiB|TiB)/i.exec(line);
   if (match === null) return null;
   const [, doneNum, doneUnit, totalNum, totalUnit] = match;
   if (doneNum === undefined || doneUnit === undefined || totalNum === undefined || totalUnit === undefined) return null;

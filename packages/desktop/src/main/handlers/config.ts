@@ -70,7 +70,8 @@ export function registerConfigHandlers(app: AppContext): void {
     const updated = swapProviderCredentialsProfile(parsed, profile, providerName);
     await fs.writeFile(ctx.configPath, stringify(updated), 'utf-8');
     invalidateConfig();
-    logger.info(`Updated AWS profile to ${profile}${providerName === undefined ? '' : ` for provider ${providerName}`}`);
+    const providerSuffix = providerName === undefined ? '' : ` for provider ${providerName}`;
+    logger.info(`Updated AWS profile to ${profile}${providerSuffix}`);
   });
 
   // Removes the provider from the config AND deletes its {dataDir}/{name}/ tree.

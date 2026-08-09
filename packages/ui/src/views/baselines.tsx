@@ -74,64 +74,17 @@ function Kpi({ label, value, accent }: Readonly<{ label: string; value: string; 
   );
 }
 
-export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: BaselineRecomputeStatus | undefined }>) {
-  const api = useCostApi();
-  const [statusFilter, setStatusFilter] = useState<TriageFilter>('open');
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'potential', desc: true }]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [showNew, setShowNew] = useState(false);
-  const [triageQueue, setTriageQueue] = useState<readonly string[] | null>(null);
-  const [triageIdx, setTriageIdx] = useState(0);
-  const [showRecompute, setShowRecompute] = useState(false);
+function runningLabel(status: Extract<BaselineRecomputeStatus, { state: 'running' }>): string {
+  return status.phase === 'discovering' ? 'Discovering baselines…' : `Computing ${String(status.done)} / ${String(status.total)}`;
+}
 
-  async function startTriage(): Promise<void> {
-    const res = await api.listBaselines({ triage: 'new' });
-    const ids = res.items.map((r) => r.spec.id);
-    if (ids.length === 0) return;
-    setTriageQueue(ids);
-    setTriageIdx(0);
-  }
-  function endTriage(): void {
-    setTriageQueue(null);
-    setTriageIdx(0);
-    setRefreshKey((n) => n + 1);
-  }
-
-  const running = baselineStatus?.state === 'running';
-  const progressLabel = baselineStatus?.state === 'running'
-    ? (baselineStatus.phase === 'discovering' ? 'Discovering baselines…' : `Computing ${String(baselineStatus.done)} / ${String(baselineStatus.total)}`)
-    : '';
-  const progressPct = baselineStatus?.state === 'running' && baselineStatus.phase === 'computing' && baselineStatus.total > 0
-    ? Math.round((baselineStatus.done / baselineStatus.total) * 100)
-    : null;
-  const prevState = useRef<string | undefined>(baselineStatus?.state);
-  useEffect(() => {
-    if (prevState.current === 'running' && baselineStatus?.state === 'idle') setRefreshKey((n) => n + 1);
-    prevState.current = baselineStatus?.state;
-  }, [baselineStatus?.state]);
-
-  const listQuery = useQuery(
-    () => api.listBaselines(statusFilter === 'all' ? {} : { triage: statusFilter }),
-    [api, statusFilter, refreshKey],
-  );
-  const result: BaselinesListResult | null = listQuery.status === 'success' ? listQuery.data : null;
-  // Counts are filter-independent (same tally in every response), so hold the
-  // last-good set across the brief loading window on a filter switch — otherwise
-  // every chip's badge blinks away and the bar reflows on each click.
-  const lastCounts = useRef<BaselinesListResult['counts'] | null>(null);
-  if (result !== null) lastCounts.current = result.counts;
-  const counts = result?.counts ?? lastCounts.current;
-  const rows = result?.items ?? [];
-  const orderedIds = rows.map((r) => r.spec.id);
-  const selIdx = selectedId !== null ? orderedIds.indexOf(selectedId) : -1;
-
-  const columns = useMemo<readonly TableColumn<BaselineRecord>[]>(() => [
+function buildColumns(onOpen: (id: string) => void): readonly TableColumn<BaselineRecord>[] {
+  return [
     {
       id: 'scope', header: 'Scope', sortable: false,
       accessorFn: (r) => r.scopeLabel,
       cell: (_v, r) => (
-        <button type="button" onClick={() => { setSelectedId(r.spec.id); }} className="text-left">
+        <button type="button" onClick={() => { onOpen(r.spec.id); }} className="text-left">
           <span className="text-text-primary text-xs font-medium hover:text-accent">{r.spec.name ?? r.scopeLabel}</span>
           {r.spec.source === 'manual' && <span className="ml-1 text-[9px] text-text-muted">(manual)</span>}
         </button>
@@ -162,7 +115,60 @@ export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: Baseli
       accessorFn: (r) => r.savings.realizedMonthly,
       cell: (_v, r) => <span className={r.savings.realizedMonthly > 0 ? 'text-positive' : 'text-text-muted'}>{formatDollars(r.savings.realizedMonthly)}</span>,
     },
-  ], []);
+  ];
+}
+
+export function Baselines({ baselineStatus }: Readonly<{ baselineStatus?: BaselineRecomputeStatus | undefined }>) {
+  const api = useCostApi();
+  const [statusFilter, setStatusFilter] = useState<TriageFilter>('open');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'potential', desc: true }]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showNew, setShowNew] = useState(false);
+  const [triageQueue, setTriageQueue] = useState<readonly string[] | null>(null);
+  const [triageIdx, setTriageIdx] = useState(0);
+  const [showRecompute, setShowRecompute] = useState(false);
+
+  async function startTriage(): Promise<void> {
+    const res = await api.listBaselines({ triage: 'new' });
+    const ids = res.items.map((r) => r.spec.id);
+    if (ids.length === 0) return;
+    setTriageQueue(ids);
+    setTriageIdx(0);
+  }
+  function endTriage(): void {
+    setTriageQueue(null);
+    setTriageIdx(0);
+    setRefreshKey((n) => n + 1);
+  }
+
+  const running = baselineStatus?.state === 'running';
+  const progressLabel = baselineStatus?.state === 'running' ? runningLabel(baselineStatus) : '';
+  const progressPct = baselineStatus?.state === 'running' && baselineStatus.phase === 'computing' && baselineStatus.total > 0
+    ? Math.round((baselineStatus.done / baselineStatus.total) * 100)
+    : null;
+  const prevState = useRef<string | undefined>(baselineStatus?.state);
+  useEffect(() => {
+    if (prevState.current === 'running' && baselineStatus?.state === 'idle') setRefreshKey((n) => n + 1);
+    prevState.current = baselineStatus?.state;
+  }, [baselineStatus?.state]);
+
+  const listQuery = useQuery(
+    () => api.listBaselines(statusFilter === 'all' ? {} : { triage: statusFilter }),
+    [api, statusFilter, refreshKey],
+  );
+  const result: BaselinesListResult | null = listQuery.status === 'success' ? listQuery.data : null;
+  // Counts are filter-independent (same tally in every response), so hold the
+  // last-good set across the brief loading window on a filter switch — otherwise
+  // every chip's badge blinks away and the bar reflows on each click.
+  const lastCounts = useRef<BaselinesListResult['counts'] | null>(null);
+  if (result !== null) lastCounts.current = result.counts;
+  const counts = result?.counts ?? lastCounts.current;
+  const rows = result?.items ?? [];
+  const orderedIds = rows.map((r) => r.spec.id);
+  const selIdx = selectedId !== null ? orderedIds.indexOf(selectedId) : -1;
+
+  const columns = useMemo<readonly TableColumn<BaselineRecord>[]>(() => buildColumns(setSelectedId), []);
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -281,7 +287,9 @@ function NewBaselineDialog({ onClose, onCreated }: Readonly<{ onClose: () => voi
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const effectiveDim = dimId.length > 0 ? dimId : (builtIns[0] !== undefined ? String(builtIns[0].name) : '');
+  const firstBuiltIn = builtIns[0];
+  const fallbackDim = firstBuiltIn !== undefined ? String(firstBuiltIn.name) : '';
+  const effectiveDim = dimId.length > 0 ? dimId : fallbackDim;
 
   async function create(): Promise<void> {
     if (effectiveDim.length === 0 || value.length === 0) { setError('Pick a dimension and a value.'); return; }
@@ -297,13 +305,13 @@ function NewBaselineDialog({ onClose, onCreated }: Readonly<{ onClose: () => voi
         <p className="text-xs text-text-muted mt-1">Scope a baseline to a stable built-in dimension value (tags are intentionally excluded).</p>
         <div className="mt-4 flex flex-col gap-3">
           <label className="flex flex-col gap-1 text-xs text-text-secondary">
-            Dimension
+            <span>Dimension</span>
             <select value={effectiveDim} onChange={(e) => { setDimId(e.target.value); }} className="rounded-md border border-border bg-bg-primary px-2 py-1 text-sm text-text-primary">
               {builtIns.map((d) => <option key={String(d.name)} value={String(d.name)}>{d.label}</option>)}
             </select>
           </label>
           <label className="flex flex-col gap-1 text-xs text-text-secondary">
-            Value
+            <span>Value</span>
             <input value={value} onChange={(e) => { setValue(e.target.value); }} placeholder="e.g. Amazon Relational Database Service" className="rounded-md border border-border bg-bg-primary px-2 py-1 text-sm text-text-primary placeholder:text-text-muted" />
           </label>
           {error !== null && <p className="text-xs text-negative">{error}</p>}
@@ -375,8 +383,9 @@ function RecomputeDialog({ onClose, onStarted }: Readonly<{ onClose: () => void;
 
   const pending = (s: typeof cfgQuery.status): boolean => s !== 'success' && s !== 'error';
   const loading = pending(cfgQuery.status) || pending(dimsQuery.status);
-  const loadError = cfgQuery.status === 'error' ? cfgQuery.error.message
-    : dimsQuery.status === 'error' ? dimsQuery.error.message : null;
+  const dimsError = dimsQuery.status === 'error' ? dimsQuery.error.message : null;
+  const loadError = cfgQuery.status === 'error' ? cfgQuery.error.message : dimsError;
+  const idleRunLabel = startFresh ? 'Wipe & recompute' : 'Recompute';
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -420,7 +429,7 @@ function RecomputeDialog({ onClose, onStarted }: Readonly<{ onClose: () => void;
         <div className="mt-4 flex justify-end gap-2">
           <DialogClose><button type="button" className="rounded-md border border-border px-3 py-1 text-xs text-text-secondary">Cancel</button></DialogClose>
           <button type="button" disabled={busy || loading} onClick={() => { void run(); }} className="rounded-md bg-accent/15 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/25 disabled:opacity-50">
-            {busy ? 'Starting…' : startFresh ? 'Wipe & recompute' : 'Recompute'}
+            {busy ? 'Starting…' : idleRunLabel}
           </button>
         </div>
       </DialogContent>

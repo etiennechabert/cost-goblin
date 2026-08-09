@@ -85,7 +85,7 @@ const TAG_SOURCE_COLUMNS: readonly string[] = ['x_Tags', 'Tags', 'x_Labels', 'x_
 /** Source-only columns consumed to synthesize contract columns. They are not
  *  passed through — carrying both `x_ServiceId` and the `x_ServiceCode`
  *  derived from it would just be two names for one value. */
-const CONSUMED_SOURCE_COLUMNS: readonly string[] = [...TAG_SOURCE_COLUMNS, 'x_ServiceId', 'SkuId'];
+const CONSUMED_SOURCE_COLUMNS: ReadonlySet<string> = new Set([...TAG_SOURCE_COLUMNS, 'x_ServiceId', 'SkuId']);
 
 // ---------------------------------------------------------------------------
 // DuckDB surface — the narrowest slice this module uses, so tests can hand in
@@ -302,7 +302,7 @@ function buildProjection(source: ReadonlyMap<string, string>): Projection {
   // Keeps the recipe's `SELECT *` honest: preview-era schema additions reach
   // the local archive even though nothing queries them yet.
   for (const [name] of source) {
-    if (emitted.has(name) || CONSUMED_SOURCE_COLUMNS.includes(name)) continue;
+    if (emitted.has(name) || CONSUMED_SOURCE_COLUMNS.has(name)) continue;
     if (!isSafeColumnIdentifier(name)) {
       logger.warn(`Dropping GCP export column with an unsafe name: ${name}`);
       continue;

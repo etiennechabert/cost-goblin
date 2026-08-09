@@ -29,6 +29,14 @@ function isValidColumn(col: string): boolean {
   return VALID_COLUMNS.has(col) || col.startsWith('tag_');
 }
 
+function sortDirectionSql(direction: 'asc' | 'desc'): string {
+  return direction === 'asc' ? 'ASC' : 'DESC';
+}
+
+function groupedSortColumn(column: string): string {
+  return column === 'cost' ? 'SUM(cost)' : column;
+}
+
 export async function exploreData(
   ctx: McpContext,
   params: {
@@ -86,7 +94,7 @@ export async function exploreData(
       col === 'usage_date' ? `usage_date::VARCHAR AS usage_date` : col,
     );
     const sortExpr = params.sort !== undefined && isValidColumn(params.sort.column)
-      ? `${params.sort.column === 'cost' ? 'SUM(cost)' : params.sort.column} ${params.sort.direction === 'asc' ? 'ASC' : 'DESC'}`
+      ? `${groupedSortColumn(params.sort.column)} ${sortDirectionSql(params.sort.direction)}`
       : 'SUM(cost) DESC';
 
     const aggCols = [
@@ -132,7 +140,7 @@ export async function exploreData(
   }
 
   const sortExpr = params.sort !== undefined && isValidColumn(params.sort.column)
-    ? `${params.sort.column} ${params.sort.direction === 'asc' ? 'ASC' : 'DESC'}`
+    ? `${params.sort.column} ${sortDirectionSql(params.sort.direction)}`
     : 'ABS(cost) DESC';
 
   const rawCols = [

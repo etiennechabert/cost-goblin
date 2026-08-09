@@ -35,8 +35,25 @@ const ROTATION_FRONT_ON = 0;
 const SCALE_MIN = 0.7;
 const SCALE_RANGE = 0.5;
 
+/** mulberry32 — a tiny seeded PRNG. The coins are pure decoration, so the
+ *  randomness is deliberately non-cryptographic and deterministic. */
+function mulberry32(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Shared random source for coin placement. An object so tests can pin
+ *  worst-case draws by spying on `next`. */
+export const coinRandom = { next: mulberry32(0x0c01_90b1) };
+
 function randomScale(): number {
-  return SCALE_MIN + Math.random() * SCALE_RANGE;
+  return SCALE_MIN + coinRandom.next() * SCALE_RANGE;
 }
 
 /** Largest offset that keeps a scaled coin fully inside `extent`. `scale()` is
@@ -61,7 +78,7 @@ function staticOffset(extent: number, scale: number): number {
   // be narrower than one coin): centre what cannot fit rather than clamping to
   // an edge, so a too-small box still shows the coins.
   if (max <= min) return (extent - COIN_SIZE) / 2;
-  return min + Math.random() * (max - min);
+  return min + coinRandom.next() * (max - min);
 }
 
 /** A coin placed for the static (reduced-motion) render: inside the visible
@@ -85,14 +102,14 @@ function createStaticCoin(id: number, containerWidth: number, containerHeight: n
 }
 
 function createCoin(id: number, containerWidth: number, containerHeight: number): Coin {
-  const startAtMin = Math.random() < 0.5;
-  const speedMag = 0.5 + Math.random() * 1.5;
+  const startAtMin = coinRandom.next() < 0.5;
+  const speedMag = 0.5 + coinRandom.next() * 1.5;
   return {
     id,
-    x: Math.random() * Math.max(containerWidth - COIN_SIZE, 0),
-    y: -COIN_SIZE - Math.random() * containerHeight * 0.6,
+    x: coinRandom.next() * Math.max(containerWidth - COIN_SIZE, 0),
+    y: -COIN_SIZE - coinRandom.next() * containerHeight * 0.6,
     vy: 0.37,
-    vx: (Math.random() - 0.5) * 0.1,
+    vx: (coinRandom.next() - 0.5) * 0.1,
     rotation: startAtMin ? ROTATION_MIN : ROTATION_MAX,
     // Sign points the rotation toward the opposite limit.
     rotationSpeed: startAtMin ? speedMag : -speedMag,
@@ -121,7 +138,7 @@ function advanceCoins(prev: Coin[], w: number, h: number): Coin[] {
 }
 
 export function CoinRainLoader({ height = 120, count = 5 }: Readonly<{ height?: number; count?: number }>) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLOutputElement>(null);
   const [coins, setCoins] = useState<Coin[]>([]);
   const reduced = useReducedMotion();
 
@@ -151,15 +168,15 @@ export function CoinRainLoader({ height = 120, count = 5 }: Readonly<{ height?: 
   }, [count, height, reduced]);
 
   return (
-    <div
+    // Motion is the only "still working" signal this loader gives, and the
+    // reduced-motion scatter has none at all, so announce it instead —
+    // <output> is an implicit status live region. The spoken content of a live
+    // region is its text — not its label — and the coins are decorative `$`
+    // glyphs, so they are hidden and a real text node carries the message.
+    // Mirrors the announcer in App.tsx.
+    <output
       ref={containerRef}
-      // Motion is the only "still working" signal this loader gives, and the
-      // reduced-motion scatter has none at all, so announce it instead. The
-      // spoken content of a live region is its text — not its label — and the
-      // coins are decorative `$` glyphs, so they are hidden and a real text
-      // node carries the message. Mirrors the announcer in App.tsx.
-      role="status"
-      className="relative overflow-hidden"
+      className="relative block overflow-hidden"
       style={{ height, perspective: '600px' }}
     >
       <span className="sr-only">Loading</span>
@@ -195,6 +212,6 @@ export function CoinRainLoader({ height = 120, count = 5 }: Readonly<{ height?: 
           $
         </div>
       ))}
-    </div>
+    </output>
   );
 }

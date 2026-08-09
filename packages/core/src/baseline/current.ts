@@ -7,6 +7,11 @@ function midnightUtcMs(date: string): number {
   return Date.parse(`${date}T00:00:00Z`);
 }
 
+function compareByDate(a: BaselineDailyPoint, b: BaselineDailyPoint): number {
+  if (a.date < b.date) return -1;
+  return a.date > b.date ? 1 : 0;
+}
+
 /** Average daily cost over the most recent `windowDays` *calendar* days of the
  *  series. The stored history is sparse — it omits $0 days — so a positional
  *  slice of the last N points would silently exclude idle days and overstate the
@@ -17,9 +22,9 @@ function midnightUtcMs(date: string): number {
  *  pre-sort. */
 export function computeCurrent(series: readonly BaselineDailyPoint[], windowDays: number): BaselineCurrent | null {
   if (series.length === 0) return null;
-  const sorted = [...series].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const sorted = [...series].sort(compareByDate);
   const first = sorted[0];
-  const last = sorted[sorted.length - 1];
+  const last = sorted.at(-1);
   if (first === undefined || last === undefined) return null;
   const endMs = midnightUtcMs(last.date);
   const earliestMs = midnightUtcMs(first.date);

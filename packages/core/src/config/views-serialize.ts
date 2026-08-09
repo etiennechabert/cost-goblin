@@ -27,6 +27,7 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
       return base;
     case 'pie':
     case 'stackedBar':
+    case 'pareto':
       addGroupByFields(base, w);
       return base;
     case 'bubble':
@@ -43,9 +44,6 @@ export function widgetToYaml(w: WidgetSpec): Record<string, unknown> {
     case 'priceVolume':
       addGroupByFields(base, w);
       if (w.topN !== undefined) base['topN'] = w.topN;
-      return base;
-    case 'pareto':
-      addGroupByFields(base, w);
       return base;
     case 'burndown':
       if (w.budget !== undefined) base['budget'] = w.budget;

@@ -24,8 +24,8 @@ import type {
   DistributionSlice,
   OrgNode,
   ProviderName,
+  ProviderSourceSpec,
 } from '@costgoblin/core';
-import type { ProviderSourceSpec } from '@costgoblin/core';
 import type { RawRow } from '../duckdb-client.js';
 import type { RollupStore } from '../rollup-store.js';
 

@@ -421,6 +421,11 @@ function GcpError({ message, mode, onRetry }: Readonly<{
 }>) {
   if (message.length === 0) return null;
   const missingCli = message.includes('GCLOUD_CLI_NOT_FOUND');
+  const retryAction = isGcpAuthError(message) ? (
+    <GcloudLoginButton mode={mode} onRetry={onRetry} />
+  ) : (
+    <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
+  );
   return (
     <div className="rounded-lg border border-negative bg-negative-muted px-4 py-3" role="alert">
       {/* `break-words` is load-bearing: GCP appends an IAM Troubleshooter URL
@@ -447,11 +452,7 @@ function GcpError({ message, mode, onRetry }: Readonly<{
           </a>
           <RetryButton onRetry={onRetry} />
         </div>
-      ) : isGcpAuthError(message) ? (
-        <GcloudLoginButton mode={mode} onRetry={onRetry} />
-      ) : (
-        <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
-      )}
+      ) : retryAction}
     </div>
   );
 }
@@ -520,8 +521,7 @@ function GcpBucketListDenied({ project, message, detailsOpen, onToggleDetails, o
             className="text-accent underline underline-offset-2 hover:text-accent-hover"
           >
             the exporter README
-          </a>
-          .
+          </a>.
         </p>
       </details>
       <div className="mt-2"><RetryButton onRetry={onRetry} /></div>
@@ -1154,6 +1154,7 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack, onRetry }: R
   onRetry: () => void;
 }>) {
   const sourceLabel = SOURCE_LABELS[state.source];
+  const selectableLabel = state.isBillingExport ? 'Use this location' : 'Select an export folder';
 
   return (
     <div className="flex flex-col gap-5">
@@ -1287,12 +1288,16 @@ function BrowseStep({ state, onNavigate, onConfirm, onSkip, onBack, onRetry }: R
             disabled={!state.isBillingExport || state.detectedType === 'cur-legacy'}
             className="bg-accent hover:bg-accent-hover text-white px-8"
           >
-            {state.detectedType === 'cur-legacy' ? 'CUR 2.0 not supported' : state.isBillingExport ? 'Use this location' : 'Select an export folder'}
+            {state.detectedType === 'cur-legacy' ? 'CUR 2.0 not supported' : selectableLabel}
           </Button>
         </div>
       </div>
     </div>
   );
+}
+
+function defaultProviderName(cloud: 'aws' | 'gcp'): string {
+  return cloud === 'gcp' ? 'gcp-main' : 'aws-main';
 }
 
 /** Validation error for the provider-name field, or null when the name is
@@ -2016,7 +2021,7 @@ export function SetupWizard({ onComplete, source: initialSource, profile: initia
               providerNaming={{
                 value: providerNameFixed || providerNameEdited || mode === 'add'
                   ? providerName
-                  : (wizard.cloud === 'gcp' ? 'gcp-main' : 'aws-main'),
+                  : defaultProviderName(wizard.cloud),
                 fixed: providerNameFixed,
                 checkTaken: mode === 'add',
                 takenNames: existingProviders,

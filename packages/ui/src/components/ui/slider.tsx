@@ -8,7 +8,8 @@ export const Slider = React.forwardRef<
   React.ComponentRef<typeof SliderPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root>
 >(({ className, ...props }, ref) => {
-  const count = Array.isArray(props.value) ? props.value.length : Array.isArray(props.defaultValue) ? props.defaultValue.length : 1;
+  const defaultCount = Array.isArray(props.defaultValue) ? props.defaultValue.length : 1;
+  const count = Array.isArray(props.value) ? props.value.length : defaultCount;
   return (
     <SliderPrimitive.Root
       ref={ref}

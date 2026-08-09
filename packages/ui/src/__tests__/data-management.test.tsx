@@ -22,24 +22,14 @@ function renderDataManagement(api?: MockCostApi) {
 afterEach(cleanup);
 
 describe('DataManagement', () => {
-  it('renders heading', async () => {
+  it.each([
+    { name: 'renders heading', text: 'Data Management' },
+    { name: 'shows org sync prompt when not synced', text: 'AWS Organizations not synced' },
+    { name: 'shows daily tier panel', text: 'Daily' },
+  ])('$name', async ({ text }) => {
     renderDataManagement();
     await waitFor(() => {
-      expect(screen.getByText('Data Management')).toBeDefined();
-    });
-  });
-
-  it('shows org sync prompt when not synced', async () => {
-    renderDataManagement();
-    await waitFor(() => {
-      expect(screen.getByText('AWS Organizations not synced')).toBeDefined();
-    });
-  });
-
-  it('shows daily tier panel', async () => {
-    renderDataManagement();
-    await waitFor(() => {
-      expect(screen.getByText('Daily')).toBeDefined();
+      expect(screen.getByText(text)).toBeDefined();
     });
   });
 

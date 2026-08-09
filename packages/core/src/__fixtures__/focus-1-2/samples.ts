@@ -218,18 +218,15 @@ function billingEvents(): readonly BillingEvent[] {
     kind: 'unused-commitment', ...monthSpan,
     accountIdx: 0, regionIdx: 0, serviceIdx: 0, resourceSeq: 1,
     quantity: 0, billed: 0, effective: 84.5, list: 0, contracted: 0, tags: {},
-  });
-  events.push({
+  }, {
     kind: 'purchase', ...monthSpan,
     accountIdx: 0, regionIdx: 0, serviceIdx: 0, resourceSeq: 1,
     quantity: 0, billed: 1460.0, effective: 0, list: 0, contracted: 1460.0, tags: {},
-  });
-  events.push({
+  }, {
     kind: 'tax', ...monthSpan,
     accountIdx: 0, regionIdx: 0, serviceIdx: 0, resourceSeq: 0,
     quantity: 0, billed: 372.15, effective: 372.15, list: 0, contracted: 372.15, tags: {},
-  });
-  events.push({
+  }, {
     kind: 'credit', ...monthSpan,
     accountIdx: 0, regionIdx: 0, serviceIdx: 0, resourceSeq: 0,
     quantity: 0, billed: -215.4, effective: -215.4, list: 0, contracted: -215.4, tags: {},
@@ -373,8 +370,10 @@ const GCP: SampleVocabulary = {
   commitmentUnit: 'hour',
   // GCP labels are lowercase by API constraint; dashes replace spaces.
   tagKeys: { team: 'team', system: 'system', environment: 'environment' },
-  resourceId: (service, region, account, seq) =>
-    `//${service.namespace}/projects/${account.id}/${service.namespace === 'compute.googleapis.com' ? `zones/${region.id}-a` : `locations/${region.id}`}/${service.resourceKind}/${service.resourceKind.slice(0, -1)}-${String(seq).padStart(4, '0')}`,
+  resourceId: (service, region, account, seq) => {
+    const location = service.namespace === 'compute.googleapis.com' ? `zones/${region.id}-a` : `locations/${region.id}`;
+    return `//${service.namespace}/projects/${account.id}/${location}/${service.resourceKind}/${service.resourceKind.slice(0, -1)}-${String(seq).padStart(4, '0')}`;
+  },
   resourceName: (service, seq) => `${service.resourceKind.slice(0, -1)}-${String(seq).padStart(4, '0')}`,
 };
 
@@ -422,15 +421,23 @@ interface RenderContext {
   readonly commitmentStatus: string;
 }
 
+/** The service a row is billed against. Non-usage rows are not billed against
+ *  a workload service. Letting them inherit one books VAT and commitment fees
+ *  as compute spend, complete with a compute SKU — the exact misattribution
+ *  this fixture exists to expose. A credit is the exception: it offsets a
+ *  service, so it keeps one. */
+function serviceFor(event: BillingEvent, vocab: SampleVocabulary): SampleService {
+  switch (event.kind) {
+    case 'marketplace': return vocab.marketplaceService;
+    case 'tax': return vocab.taxService;
+    case 'purchase':
+    case 'unused-commitment': return vocab.commitmentService;
+    default: return at(vocab.services, event.serviceIdx);
+  }
+}
+
 function contextOf(event: BillingEvent, vocab: SampleVocabulary): RenderContext {
-  // Non-usage rows are not billed against a workload service. Letting them
-  // inherit one books VAT and commitment fees as compute spend, complete with
-  // a compute SKU — the exact misattribution this fixture exists to expose.
-  // A credit is the exception: it offsets a service, so it keeps one.
-  const service = event.kind === 'marketplace' ? vocab.marketplaceService
-    : event.kind === 'tax' ? vocab.taxService
-    : event.kind === 'purchase' || event.kind === 'unused-commitment' ? vocab.commitmentService
-    : at(vocab.services, event.serviceIdx);
+  const service = serviceFor(event, vocab);
   const account = at(vocab.accounts, event.accountIdx);
   const region = at(vocab.regions, event.regionIdx);
   const committed = event.kind === 'committed-usage' || event.kind === 'unused-commitment';
@@ -443,14 +450,38 @@ function contextOf(event: BillingEvent, vocab: SampleVocabulary): RenderContext 
   const commitmentRow = event.kind === 'purchase' || event.kind === 'unused-commitment';
   const noResource = event.kind === 'tax' || event.kind === 'credit';
 
+  let resourceId = '';
+  let resourceName = '';
+  let resourceRole: RenderContext['resourceRole'] = 'none';
+  if (commitmentRow) {
+    resourceId = vocab.commitmentId;
+    resourceName = vocab.commitmentName;
+    resourceRole = 'commitment';
+  } else if (!noResource) {
+    resourceId = vocab.resourceId(service, region, account, event.resourceSeq);
+    resourceName = vocab.resourceName(service, event.resourceSeq);
+    resourceRole = 'resource';
+  }
+
+  let pricingCategory = '';
+  if (committed) pricingCategory = 'Committed';
+  else if (event.kind === 'usage' || event.kind === 'marketplace') pricingCategory = 'Standard';
+
+  let commitmentStatus = '';
+  if (event.kind === 'committed-usage') commitmentStatus = 'Used';
+  else if (event.kind === 'unused-commitment') commitmentStatus = 'Unused';
+
   return {
     event, vocab, service, account, region, resourceless,
-    resourceId: commitmentRow ? vocab.commitmentId : noResource ? '' : vocab.resourceId(service, region, account, event.resourceSeq),
-    resourceName: commitmentRow ? vocab.commitmentName : noResource ? '' : vocab.resourceName(service, event.resourceSeq),
-    resourceRole: commitmentRow ? 'commitment' : noResource ? 'none' : 'resource',
-    pricingCategory: committed ? 'Committed' : event.kind === 'usage' || event.kind === 'marketplace' ? 'Standard' : '',
-    commitmentStatus: event.kind === 'committed-usage' ? 'Used' : event.kind === 'unused-commitment' ? 'Unused' : '',
+    resourceId, resourceName, resourceRole, pricingCategory, commitmentStatus,
   };
+}
+
+/** The ResourceType cell: the workload's own kind on a resource row, the
+ *  commitment product on a commitment row, blank otherwise. */
+function resourceTypeOf(ctx: RenderContext, resourceValue: string): string {
+  if (ctx.resourceRole === 'resource') return resourceValue;
+  return ctx.resourceRole === 'commitment' ? ctx.vocab.commitmentType : '';
 }
 
 /** Event tags rendered into this provider's key casing, in concept order.
@@ -525,7 +556,7 @@ function awsRow(ctx: RenderContext): Record<string, string> {
     RegionName: ctx.resourceless ? '' : region.name,
     ResourceId: ctx.resourceId,
     ResourceName: ctx.resourceName,
-    ResourceType: ctx.resourceRole === 'resource' ? service.resourceKind : ctx.resourceRole === 'commitment' ? vocab.commitmentType : '',
+    ResourceType: resourceTypeOf(ctx, service.resourceKind),
     ServiceCategory: service.category,
     ServiceName: service.name,
     ServiceSubcategory: service.subcategory,
@@ -599,14 +630,14 @@ function azureRow(ctx: RenderContext): Record<string, string> {
     ResourceId: ctx.resourceId,
     ResourceName: ctx.resourceName,
     // Azure reports the ARM resource type.
-    ResourceType: ctx.resourceRole === 'resource' ? service.operation : ctx.resourceRole === 'commitment' ? vocab.commitmentType : '',
+    ResourceType: resourceTypeOf(ctx, service.operation),
     ServiceCategory: service.category,
     ServiceName: service.name,
     ServiceSubcategory: service.subcategory,
     SkuId: service.skuId,
     SkuMeter: service.skuMeter,
     SkuPriceDetails: ctx.resourceless ? '' : JSON.stringify({ MeterId: service.skuId, TierMinimumUnits: 0 }),
-    SkuPriceId: service.skuId === '' ? '' : `${service.skuId}/${service.skuMeter.replace(/ /g, '-')}`,
+    SkuPriceId: service.skuId === '' ? '' : `${service.skuId}/${service.skuMeter.replaceAll(' ', '-')}`,
     SubAccountId: account.id,
     SubAccountName: account.name,
     SubAccountType: account.type,
@@ -635,11 +666,13 @@ function gcpRow(ctx: RenderContext): Record<string, string> {
   // is the residual charged for capacity that went unconsumed. Both are the
   // same credit type, so a reader that ignores the sign cannot tell a used
   // commitment from an unused one.
+  const promoCredits = event.kind === 'credit'
+    ? [{ Id: 'promo-2026-05', FullName: 'Promotional credit', Type: 'PROMOTION', Name: 'Promotional credit', Amount: event.billed }]
+    : [];
   const credits = isCommitment
     ? [{ Id: vocab.commitmentId, FullName: vocab.commitmentName, Type: 'COMMITTED_USAGE_DISCOUNT', Name: vocab.commitmentName, Amount: round2(event.effective - event.list) }]
-    : event.kind === 'credit'
-      ? [{ Id: 'promo-2026-05', FullName: 'Promotional credit', Type: 'PROMOTION', Name: 'Promotional credit', Amount: event.billed }]
-      : [];
+    : promoCredits;
+  const nonTaxCostType = event.kind === 'credit' ? 'adjustment' : 'regular';
   return {
     // Only Compute Engine rows are zonal; everything else is regional.
     AvailabilityZone: ctx.resourceless || service.namespace !== 'compute.googleapis.com' ? '' : `${region.id}-a`,
@@ -680,7 +713,7 @@ function gcpRow(ctx: RenderContext): Record<string, string> {
     SubAccountId: account.id,
     SubAccountName: account.name,
     x_ConsumptionModelId: '',
-    x_CostType: event.kind === 'tax' ? 'tax' : event.kind === 'credit' ? 'adjustment' : 'regular',
+    x_CostType: event.kind === 'tax' ? 'tax' : nonTaxCostType,
     x_Credits: JSON.stringify(credits),
     x_CurrencyConversionRate: '1.000000',
     x_ExportTime: '2026-06-02 04:17:33',

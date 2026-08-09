@@ -89,8 +89,8 @@ describe('redactValueDeep', () => {
   it('preserves benign primitives and null/undefined', () => {
     expect(redactValueDeep(42)).toBe(42);
     expect(redactValueDeep(true)).toBe(true);
-    expect(redactValueDeep(null)).toBe(null);
-    expect(redactValueDeep(undefined)).toBe(undefined);
+    expect(redactValueDeep(null)).toBeNull();
+    expect(redactValueDeep(undefined)).toBeUndefined();
   });
 
   it('redacts a 12-digit account ID that arrives as a number', () => {

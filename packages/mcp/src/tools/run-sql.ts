@@ -105,7 +105,7 @@ export function validateRunSqlQuery(sql: string): string | null {
   }
 
   for (const fn of BLOCKED_FUNCTIONS) {
-    if (new RegExp(`\\b${fn}\\s*\\(`, 'i').test(scrubbed)) {
+    if (new RegExp(String.raw`\b${fn}\s*\(`, 'i').test(scrubbed)) {
       return `The function ${fn}() is not allowed in run_sql — query the provided \`costs\` table instead.`;
     }
   }

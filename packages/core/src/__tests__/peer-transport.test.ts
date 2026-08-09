@@ -154,7 +154,7 @@ describe('encrypted peer transport (TLS-PSK)', () => {
       // A cap below the true size (a publisher under-reporting its file) aborts.
       await expect(fetchFile(endpoint, path, size - 1)).rejects.toThrow();
       // The honest advertised size still transfers fully.
-      expect((await fetchFile(endpoint, path, size)).length).toBe(size);
+      expect(await fetchFile(endpoint, path, size)).toHaveLength(size);
     } finally {
       await server.close();
     }

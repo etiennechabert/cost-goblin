@@ -5,8 +5,8 @@ FROM node:25-slim
 WORKDIR /app
 
 # Copied first so a change to the script alone reuses the cached install layer.
-COPY package.json ./
-RUN npm install --omit=dev --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
 COPY export-focus.mjs ./
 

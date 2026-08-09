@@ -25,25 +25,15 @@ describe('getThisMonth', () => {
     vi.useRealTimers();
   });
 
-  it('returns current month start and end', () => {
-    vi.setSystemTime(new Date('2024-03-15'));
+  it.each([
+    { name: 'returns current month start and end', now: '2024-03-15', expectedStart: '2024-03-01', expectedEnd: '2024-03-31' },
+    { name: 'handles February in leap year', now: '2024-02-15', expectedStart: '2024-02-01', expectedEnd: '2024-02-29' },
+    { name: 'handles February in non-leap year', now: '2023-02-15', expectedStart: '2023-02-01', expectedEnd: '2023-02-28' },
+  ])('$name', ({ now, expectedStart, expectedEnd }) => {
+    vi.setSystemTime(new Date(now));
     const { start, end } = getThisMonth();
-    expect(start).toBe('2024-03-01');
-    expect(end).toBe('2024-03-31');
-  });
-
-  it('handles February in leap year', () => {
-    vi.setSystemTime(new Date('2024-02-15'));
-    const { start, end } = getThisMonth();
-    expect(start).toBe('2024-02-01');
-    expect(end).toBe('2024-02-29');
-  });
-
-  it('handles February in non-leap year', () => {
-    vi.setSystemTime(new Date('2023-02-15'));
-    const { start, end } = getThisMonth();
-    expect(start).toBe('2023-02-01');
-    expect(end).toBe('2023-02-28');
+    expect(start).toBe(expectedStart);
+    expect(end).toBe(expectedEnd);
   });
 });
 
@@ -56,25 +46,15 @@ describe('getLastMonth', () => {
     vi.useRealTimers();
   });
 
-  it('returns previous month start and end', () => {
-    vi.setSystemTime(new Date('2024-03-15'));
+  it.each([
+    { name: 'returns previous month start and end', now: '2024-03-15', expectedStart: '2024-02-01', expectedEnd: '2024-02-29' },
+    { name: 'handles December when current is January', now: '2024-01-15', expectedStart: '2023-12-01', expectedEnd: '2023-12-31' },
+    { name: 'handles year boundary', now: '2025-01-10', expectedStart: '2024-12-01', expectedEnd: '2024-12-31' },
+  ])('$name', ({ now, expectedStart, expectedEnd }) => {
+    vi.setSystemTime(new Date(now));
     const { start, end } = getLastMonth();
-    expect(start).toBe('2024-02-01');
-    expect(end).toBe('2024-02-29');
-  });
-
-  it('handles December when current is January', () => {
-    vi.setSystemTime(new Date('2024-01-15'));
-    const { start, end } = getLastMonth();
-    expect(start).toBe('2023-12-01');
-    expect(end).toBe('2023-12-31');
-  });
-
-  it('handles year boundary', () => {
-    vi.setSystemTime(new Date('2025-01-10'));
-    const { start, end } = getLastMonth();
-    expect(start).toBe('2024-12-01');
-    expect(end).toBe('2024-12-31');
+    expect(start).toBe(expectedStart);
+    expect(end).toBe(expectedEnd);
   });
 });
 
@@ -87,32 +67,16 @@ describe('getCurrentQuarter', () => {
     vi.useRealTimers();
   });
 
-  it('returns Q1 when in Q1', () => {
-    vi.setSystemTime(new Date('2024-02-15'));
+  it.each([
+    { name: 'returns Q1 when in Q1', now: '2024-02-15', expectedStart: '2024-01-01', expectedEnd: '2024-03-31' },
+    { name: 'returns Q2 when in Q2', now: '2024-05-15', expectedStart: '2024-04-01', expectedEnd: '2024-06-30' },
+    { name: 'returns Q3 when in Q3', now: '2024-08-15', expectedStart: '2024-07-01', expectedEnd: '2024-09-30' },
+    { name: 'returns Q4 when in Q4', now: '2024-11-15', expectedStart: '2024-10-01', expectedEnd: '2024-12-31' },
+  ])('$name', ({ now, expectedStart, expectedEnd }) => {
+    vi.setSystemTime(new Date(now));
     const { start, end } = getCurrentQuarter();
-    expect(start).toBe('2024-01-01');
-    expect(end).toBe('2024-03-31');
-  });
-
-  it('returns Q2 when in Q2', () => {
-    vi.setSystemTime(new Date('2024-05-15'));
-    const { start, end } = getCurrentQuarter();
-    expect(start).toBe('2024-04-01');
-    expect(end).toBe('2024-06-30');
-  });
-
-  it('returns Q3 when in Q3', () => {
-    vi.setSystemTime(new Date('2024-08-15'));
-    const { start, end } = getCurrentQuarter();
-    expect(start).toBe('2024-07-01');
-    expect(end).toBe('2024-09-30');
-  });
-
-  it('returns Q4 when in Q4', () => {
-    vi.setSystemTime(new Date('2024-11-15'));
-    const { start, end } = getCurrentQuarter();
-    expect(start).toBe('2024-10-01');
-    expect(end).toBe('2024-12-31');
+    expect(start).toBe(expectedStart);
+    expect(end).toBe(expectedEnd);
   });
 });
 

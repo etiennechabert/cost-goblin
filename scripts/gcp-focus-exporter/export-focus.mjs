@@ -74,7 +74,7 @@ const PREFIX_PATTERN = /^[A-Za-z0-9._\-/]*$/;
 const PERIOD_LABEL = /^\d{4}-(0[1-9]|1[0-2])$/;
 /** BigQuery column identifiers. Applied to names read back from
  *  INFORMATION_SCHEMA before they are interpolated into generated SQL. */
-const COLUMN_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const COLUMN_NAME = /^[A-Za-z_]\w*$/;
 
 export const TIERS = ['daily', 'hourly'];
 
@@ -118,7 +118,7 @@ export function loadConfig(env = process.env) {
     focusTable: checked(required('FOCUS_TABLE', env), TABLE_REF, 'FOCUS_TABLE'),
     stateTable: checked(required('STATE_TABLE', env), TABLE_REF, 'STATE_TABLE'),
     bucketName: checked(required('BUCKET', env), BUCKET_NAME, 'BUCKET'),
-    prefix: checked(((env.PREFIX ?? '').trim() || 'focus').replace(/^\/+|\/+$/g, ''), PREFIX_PATTERN, 'PREFIX'),
+    prefix: checked(((env.PREFIX ?? '').trim() || 'focus').replace(/^\/+|(?<!\/)\/+$/g, ''), PREFIX_PATTERN, 'PREFIX'),
     tiers: parseTiers(env.TIERS),
     // `||`, not `??`: container env vars are routinely SET BUT EMPTY, and an
     // empty BQ_LOCATION reaches every query as `location: ''` — an EU dataset
@@ -313,10 +313,11 @@ function log(message, extra) {
  *  microsecond-precision, so digits seven onward are always zero padding
  *  added by `PreciseDate`. */
 export function normalizeTimestamp(iso) {
-  const match = /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})(?:\.(\d+))?(.*)$/.exec(iso);
+  const match = /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})(?:\.(\d+)(?!\d))?(.*)$/.exec(iso);
   if (match === null) return iso;
   const [, head, fraction, tail] = match;
-  return `${head}.${`${fraction ?? ''}000000`.slice(0, 6)}${tail}`;
+  const padded = `${fraction ?? ''}000000`.slice(0, 6);
+  return `${head}.${padded}${tail}`;
 }
 
 /** BigQuery returns TIMESTAMP as a wrapper object; unwrap to an ISO string.
@@ -621,14 +622,12 @@ export function createExporter(config, deps = {}) {
   return { run, fetchColumns, pendingExports };
 }
 
-async function main() {
-  await createExporter(loadConfig()).run();
-}
-
 // Guarded so the helpers above can be imported by the test suite without the
 // job running (and without the required-env check firing).
 if (process.argv[1] !== undefined && process.argv[1] === fileURLToPath(import.meta.url)) {
-  main().catch((err) => {
+  try {
+    await createExporter(loadConfig()).run();
+  } catch (err) {
     console.error(JSON.stringify({
       severity: 'ERROR',
       message: err instanceof Error ? err.message : String(err),
@@ -638,5 +637,5 @@ if (process.argv[1] !== undefined && process.argv[1] === fileURLToPath(import.me
     // alert on it — a silently "successful" no-op export is the failure mode
     // that leaves you looking at stale cost data without knowing.
     process.exit(1);
-  });
+  }
 }

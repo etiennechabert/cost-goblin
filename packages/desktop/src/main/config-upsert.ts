@@ -111,6 +111,10 @@ export function upsertWizardProvider(
     sync['costOptimization'] = { bucket: wizard.costOptBucket, retentionDays };
   }
 
+  const carriedKeyFile: Record<string, unknown> = isStringRecord(target) && typeof target['keyFile'] === 'string'
+    ? { keyFile: target['keyFile'] }
+    : {};
+
   const entry: Record<string, unknown> = type === 'gcp'
     ? {
         name: wizard.providerName,
@@ -122,11 +126,7 @@ export function upsertWizardProvider(
         // sends a keyFile, so without this a re-run silently deleted a
         // hand-written one and the sync fell back to ADC — 403ing on a bucket
         // granted only to the service account.
-        ...(wizard.keyFile !== undefined && wizard.keyFile.length > 0
-          ? { keyFile: wizard.keyFile }
-          : isStringRecord(target) && typeof target['keyFile'] === 'string'
-            ? { keyFile: target['keyFile'] }
-            : {}),
+        ...(wizard.keyFile !== undefined && wizard.keyFile.length > 0 ? { keyFile: wizard.keyFile } : carriedKeyFile),
         // Carried from the entry being replaced. `WizardProviderConfig` has no
         // field for it, so building the entry from the payload alone silently
         // deleted it — after which the download half ran as the signed-in user

@@ -49,7 +49,6 @@ export async function queryDailyCosts(
   const rows = await ctx.runPreparedQuery(sql, queryParams);
 
   const dayMap = new Map<string, Record<string, number>>();
-  const groupSet = new Set<string>();
   let totalCost = 0;
 
   for (const row of rows) {
@@ -65,7 +64,6 @@ export async function queryDailyCosts(
     const group = typeof row['group_name'] === 'string' ? row['group_name'] : '';
     const cost = toNum(row['cost']);
 
-    groupSet.add(group);
     totalCost += cost;
 
     const existing = dayMap.get(date);

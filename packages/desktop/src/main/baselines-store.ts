@@ -126,9 +126,9 @@ function scopeKey(scope: BaselineScope): string {
   const parts: string[] = [];
   for (const [dim, vals] of Object.entries(scope.filters)) {
     if (vals === undefined) continue;
-    parts.push(`${dim}=${[...vals].map(String).sort().join('|')}`);
+    parts.push(`${dim}=${[...vals].map(String).sort((a, b) => a.localeCompare(b)).join('|')}`);
   }
-  return `filter:${parts.sort().join('&')}`;
+  return `filter:${[...parts].sort((a, b) => a.localeCompare(b)).join('&')}`;
 }
 
 function scopeFilters(scope: BaselineScope): FilterMap {
@@ -519,7 +519,7 @@ export class BaselineStore {
         // Start fresh: wipe ALL discovered baselines (incl. user-edited) so the
         // new grain rediscovers from a clean slate. Manual baselines are kept.
         if (opts.startFresh) {
-          for (const s of [...this.specs.values()]) if (s.source === 'discovered') this.forget(s.id);
+          for (const s of this.specs.values()) if (s.source === 'discovered') this.forget(s.id);
         }
         this.setStatus({ state: 'running', phase: 'discovering', done: 0, total: 0 });
         await this.discover(deps);
@@ -889,7 +889,10 @@ function clampHistory(points: readonly BaselineDailyPoint[], end: string): reado
   const start = dateNDaysAgo(end, HISTORY_WINDOW_DAYS);
   return points
     .filter((p) => String(p.date) >= start && String(p.date) <= end)
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    .sort((a, b) => {
+      if (a.date < b.date) return -1;
+      return a.date > b.date ? 1 : 0;
+    });
 }
 
 async function snapshotBasis(deps: BaselineEngineDeps): Promise<BaselineCostBasis> {

@@ -122,7 +122,7 @@ describe('baseline discovery query (DuckDB)', () => {
     const [ref] = await queryAll(
       `SELECT COUNT(*) AS n, SUM(c) AS t FROM (SELECT account_id, service, SUM(cost) AS c FROM ${src} WHERE usage_date BETWEEN '2026-01-01' AND '2026-02-28' GROUP BY account_id, service)`,
     );
-    expect(rows.length).toBe(Number(ref?.['n']));
+    expect(rows).toHaveLength(Number(ref?.['n']));
     const totalSum = rows.reduce((acc, r) => acc + Number(r['total']), 0);
     expect(totalSum).toBeCloseTo(Number(ref?.['t']), 2);
     // one row per tuple — not a per-day fan-out

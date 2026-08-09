@@ -294,7 +294,7 @@ export function registerSyncHandlers(app: AppContext): void {
           attributes: { 'sync.tier': tier, 'sync.provider': provider.name, 'sync.files_requested': fileEntries.length },
         },
         async (span) => {
-          const r = await runSync(ctx, providerAuth(provider), provider.name, bucketPath, tier, fileEntries, key, state);
+          const r = await runSync({ ctx, auth: providerAuth(provider), providerName: provider.name, bucketPath, tier, fileEntries, statusKey: key, state });
           span?.setAttribute('sync.files_downloaded', r.filesDownloaded);
           span?.setAttribute('sync.rows_processed', r.rowsProcessed);
           return r;
@@ -527,16 +527,17 @@ export function registerSyncHandlers(app: AppContext): void {
   });
 }
 
-async function runSync(
-  ctx: IpcContext,
-  auth: ProviderAuth,
-  providerName: ProviderName,
-  bucketPath: string,
-  tier: ExpectedDataType,
-  fileEntries: readonly ManifestFileEntry[],
-  statusKey: string,
-  state: AppState,
-): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
+async function runSync(opts: Readonly<{
+  ctx: IpcContext;
+  auth: ProviderAuth;
+  providerName: ProviderName;
+  bucketPath: string;
+  tier: ExpectedDataType;
+  fileEntries: readonly ManifestFileEntry[];
+  statusKey: string;
+  state: AppState;
+}>): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
+  const { ctx, auth, providerName, bucketPath, tier, fileEntries, statusKey, state } = opts;
   return ctx.syncClient.syncPeriods({
     bucketPath,
     auth,

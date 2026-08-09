@@ -44,42 +44,20 @@ describe('SQL Injection Prevention', () => {
       expect(result.sql).not.toContain("DROP TABLE");
     });
 
-    it('handles double quotes in filter values safely', () => {
+    it.each([
+      { kind: 'double quotes', value: 'test"value"with"quotes' },
+      { kind: 'SQL comment sequences', value: 'test--comment' },
+      { kind: 'multi-line values with newlines', value: 'test\nvalue\nwith\nnewlines' },
+    ])('handles $kind in filter values safely', ({ value }) => {
       const result = buildCostQuery(
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: [asTagValue('test"value"with"quotes')] },
+          filters: { [asDimensionId('account')]: [asTagValue(value)] },
         },
         { dataDir: '/data', dimensions, providers },
       );
-      expect(result.params).toContain('test"value"with"quotes');
-      expect(result.sql).toContain('account_id = $');
-    });
-
-    it('handles SQL comment sequences in filter values', () => {
-      const result = buildCostQuery(
-        {
-          groupBy: asDimensionId('service'),
-          dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: [asTagValue('test--comment')] },
-        },
-        { dataDir: '/data', dimensions, providers },
-      );
-      expect(result.params).toContain('test--comment');
-      expect(result.sql).toContain('account_id = $');
-    });
-
-    it('handles multi-line values with newlines', () => {
-      const result = buildCostQuery(
-        {
-          groupBy: asDimensionId('service'),
-          dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId('account')]: [asTagValue('test\nvalue\nwith\nnewlines')] },
-        },
-        { dataDir: '/data', dimensions, providers },
-      );
-      expect(result.params).toContain('test\nvalue\nwith\nnewlines');
+      expect(result.params).toContain(value);
       expect(result.sql).toContain('account_id = $');
     });
 

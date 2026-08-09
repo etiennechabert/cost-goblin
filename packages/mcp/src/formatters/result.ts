@@ -15,6 +15,12 @@ export interface DataCoverage {
   readonly missingInRange: readonly string[];
 }
 
+function lagWord(lagDays: number): string {
+  if (lagDays === 0) return 'today';
+  if (lagDays === 1) return '1 day ago';
+  return `${String(lagDays)} days ago`;
+}
+
 export function dataCoverageBanner(coverage: DataCoverage): string {
   if (coverage.availableMonths.length === 0) {
     return '*Data coverage: no synced data found.*';
@@ -24,10 +30,7 @@ export function dataCoverageBanner(coverage: DataCoverage): string {
     parts.push(`${coverage.earliestDay} to ${coverage.latestDay} (${String(coverage.totalDays)} days)`);
   }
   if (coverage.latestDay !== null && coverage.lagDays !== null) {
-    const lagWord = coverage.lagDays === 0 ? 'today'
-      : coverage.lagDays === 1 ? '1 day ago'
-      : `${String(coverage.lagDays)} days ago`;
-    parts.push(`Latest day: ${coverage.latestDay} (${lagWord})`);
+    parts.push(`Latest day: ${coverage.latestDay} (${lagWord(coverage.lagDays)})`);
   }
   if (coverage.missingInRange.length > 0) {
     parts.push(`Missing periods in your requested range: ${coverage.missingInRange.join(', ')}`);
@@ -98,8 +101,7 @@ function formatTableMarkdown(table: Table): string {
   const rows = table.rows.map(row => row.map((cell, i) => formatCell(cell, table.columns[i]?.type)));
   const sections: string[] = [];
   if (table.title !== undefined && table.title.length > 0) {
-    sections.push(`### ${table.title}`);
-    sections.push('');
+    sections.push(`### ${table.title}`, '');
   }
   sections.push(markdownTable(colDefs, rows));
   if (table.footer !== undefined && table.footer.length > 0) {
@@ -111,11 +113,9 @@ function formatTableMarkdown(table: Table): string {
 export function formatAsMarkdown(result: StructuredResult): string {
   const parts: string[] = [];
   if (result.coverage !== undefined) {
-    parts.push(dataCoverageBanner(result.coverage));
-    parts.push('');
+    parts.push(dataCoverageBanner(result.coverage), '');
   }
-  parts.push(`## ${result.title}`);
-  parts.push('');
+  parts.push(`## ${result.title}`, '');
   if (result.meta !== undefined) {
     for (const field of result.meta) {
       parts.push(`**${field.label}**: ${formatCell(field.value, field.type)}`);
@@ -124,8 +124,7 @@ export function formatAsMarkdown(result: StructuredResult): string {
   }
   if (result.notes !== undefined) {
     for (const note of result.notes) {
-      parts.push(note);
-      parts.push('');
+      parts.push(note, '');
     }
   }
   if (result.tables !== undefined) {

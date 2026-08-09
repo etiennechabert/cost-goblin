@@ -95,6 +95,6 @@ describe('summarizeEventForOutbox', () => {
   it('handles unrecognised payloads without throwing', () => {
     const entry = summarizeEventForOutbox(42, at);
     expect(entry.kind).toBe('other');
-    expect(entry.eventId).toBe(null);
+    expect(entry.eventId).toBeNull();
   });
 });

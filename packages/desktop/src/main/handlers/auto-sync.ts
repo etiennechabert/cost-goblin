@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { getDataInventory, getLocalDataInventory, extractPeriod, providerAuth, writeTierLastSync } from '@costgoblin/core';
+import { getDataInventory, getLocalDataInventory, extractPeriod, providerAuth, resolveBucketPath, writeTierLastSync } from '@costgoblin/core';
 import type { AutoSyncStatus, ProviderConfig } from '@costgoblin/core';
 import {
   startAutoSync,
@@ -12,7 +12,6 @@ import {
   readAutoSyncIntervalMinutes,
   writeAutoSyncIntervalMinutes,
 } from '../auto-sync.js';
-import { resolveBucketPath } from '@costgoblin/core';
 import { deleteLocalPeriodFiles, cascadeRollupForDeletedMonth, changedRollupMonths } from './sync.js';
 import { resolveProvider, syncStatusKey } from '../sync-id.js';
 import { type AppContext, isAnyCredentialError, prefsPath, toUserFriendlyError } from './context.js';
@@ -32,29 +31,29 @@ function computeSyncFraction(bytesDone: number, bytesTotal: number, filesDone: n
   return 0;
 }
 
+// Resolve one provider's full config (credentials, buckets) by name — the
+// scheduler passes only the name, so every call re-reads config and picks
+// up edits between passes. An unknown name throws and surfaces as that
+// provider's ProviderSyncError instead of silently syncing the wrong one.
+async function providerByName(app: AppContext, providerName: string): Promise<ProviderConfig> {
+  const config = await app.getConfig();
+  return resolveProvider(config.providers, providerName);
+}
+
+// Rollup maintenance is bound to the FIRST provider (the single
+// RollupStore rolls up its tree only); other providers' data is queried
+// raw, so their changes must never re-roll it.
+async function isFirstProvider(app: AppContext, provider: ProviderConfig): Promise<boolean> {
+  const first = await app.getFirstProviderName();
+  return first !== null && provider.name === first;
+}
+
 export function registerAutoSyncHandlers(app: AppContext): void {
   const { ctx, state, getConfig } = app;
 
   const autoSyncPrefsPath = () => prefsPath(ctx.stateDir, 'app-preferences');
 
   function buildAutoSyncDeps(syncClient: SyncClient) {
-    // Resolve one provider's full config (credentials, buckets) by name — the
-    // scheduler passes only the name, so every call re-reads config and picks
-    // up edits between passes. An unknown name throws and surfaces as that
-    // provider's ProviderSyncError instead of silently syncing the wrong one.
-    async function providerByName(providerName: string): Promise<ProviderConfig> {
-      const config = await getConfig();
-      return resolveProvider(config.providers, providerName);
-    }
-
-    // Rollup maintenance is bound to the FIRST provider (the single
-    // RollupStore rolls up its tree only); other providers' data is queried
-    // raw, so their changes must never re-roll it.
-    async function isFirstProvider(provider: ProviderConfig): Promise<boolean> {
-      const first = await app.getFirstProviderName();
-      return first !== null && provider.name === first;
-    }
-
     return {
       onLog: recordSyncLog,
       getPrefsPath: autoSyncPrefsPath,
@@ -63,7 +62,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
         return { providers: [...config.providers] };
       },
       getInventory: async (providerName: string, tier: string) => {
-        const provider = await providerByName(providerName);
+        const provider = await providerByName(app, providerName);
         const t = asTier(tier);
         const bucket = resolveBucketPath(provider, t);
         let inv;
@@ -85,7 +84,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
         };
       },
       syncPeriods: async (providerName: string, files: { key: string; contentHash: string; size: number }[], tier: string) => {
-        const provider = await providerByName(providerName);
+        const provider = await providerByName(app, providerName);
         const t = asTier(tier);
         const bucket = resolveBucketPath(provider, t);
 
@@ -133,7 +132,7 @@ export function registerAutoSyncHandlers(app: AppContext): void {
           // mirroring the manual data:sync-periods path — first provider's
           // daily only; everything else just refreshes caches.
           if (result.filesDownloaded > 0) {
-            if (t === 'daily' && await isFirstProvider(provider)) {
+            if (t === 'daily' && await isFirstProvider(app, provider)) {
               app.maintainRollup(changedRollupMonths(files.map(f => extractPeriod(f.key))));
             } else {
               app.warmupBase();
@@ -165,18 +164,18 @@ export function registerAutoSyncHandlers(app: AppContext): void {
         }
       },
       getLocalPeriods: async (providerName: string, tier: string) => {
-        const provider = await providerByName(providerName);
+        const provider = await providerByName(app, providerName);
         const inv = await getLocalDataInventory(ctx.dataDir, provider.name, asTier(tier));
         return [...inv.local.periods];
       },
       deletePeriods: async (providerName: string, periods: readonly string[], tier: string) => {
-        const provider = await providerByName(providerName);
+        const provider = await providerByName(app, providerName);
         for (const period of periods) {
           await deleteLocalPeriodFiles(ctx.dataDir, provider.name, period, asTier(tier));
         }
         // Cascade the auto-prune into the rollup, once per unique daily month —
         // first provider only (the RollupStore is bound to it).
-        if (asTier(tier) === 'daily' && await isFirstProvider(provider)) {
+        if (asTier(tier) === 'daily' && await isFirstProvider(app, provider)) {
           for (const month of changedRollupMonths(periods)) {
             await cascadeRollupForDeletedMonth(app, month);
           }
