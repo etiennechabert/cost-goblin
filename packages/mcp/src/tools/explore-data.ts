@@ -1,6 +1,7 @@
 import {
   buildSource,
   computePeriodsInRange,
+  isSafeColumnIdentifier,
   logger,
 } from '@costgoblin/core';
 import type { DateRange } from '@costgoblin/core';
@@ -26,7 +27,10 @@ const VALID_COLUMNS: ReadonlySet<string> = new Set([
 ]);
 
 function isValidColumn(col: string): boolean {
-  return VALID_COLUMNS.has(col) || col.startsWith('tag_');
+  // The tag_ branch admits caller-supplied names into bare SQL positions
+  // (SELECT/GROUP BY/ORDER BY), so it must stay identifier-shaped — a bare
+  // prefix check would wave through `tag_x = read_csv(...)`.
+  return VALID_COLUMNS.has(col) || (col.startsWith('tag_') && isSafeColumnIdentifier(col));
 }
 
 function sortDirectionSql(direction: 'asc' | 'desc'): string {

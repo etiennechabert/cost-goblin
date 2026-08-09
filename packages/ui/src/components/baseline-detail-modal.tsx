@@ -2,26 +2,13 @@ import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import type { BaselineDetail, BaselineDailyPoint, BaselineSnapshot, BaselineTriageStatus, BaselineUpdatePatch, ManualBand } from '@costgoblin/core/browser';
 import { asDateString, asDollars, BASELINE_TRIAGE_STATUSES, runRateSeries } from '@costgoblin/core/browser';
 
-const TRIAGE_LABEL: Readonly<Record<BaselineTriageStatus, string>> = {
-  'new': 'New', 'tracking': 'Tracking', 'acting': 'Acting',
-  'resolved': 'Resolved', 'dismissed': 'Dismissed', 'ignored': 'Ignored',
-};
-
 /** "Closed" outcomes — picking one auto-advances to the next case so you can
  *  sweep a review list quickly. */
 const DISMISS_STATUSES = new Set<BaselineTriageStatus>(['resolved', 'dismissed', 'ignored']);
 
-function triageChipClass(status: BaselineTriageStatus): string {
-  switch (status) {
-    case 'tracking': return 'text-accent bg-accent/10 border-accent/30';
-    case 'acting': return 'text-warning bg-warning/10 border-warning/30';
-    case 'resolved': return 'text-positive bg-positive/10 border-positive/30';
-    case 'new': return 'text-text-secondary bg-bg-tertiary/30 border-border';
-    default: return 'text-text-muted bg-bg-tertiary/30 border-border';
-  }
-}
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
+import { TRIAGE_LABEL, triageChipClass } from '../lib/triage.js';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog.js';
 import { Slider } from './ui/slider.js';
 import { CoinRainLoader } from './coin-rain-loader.js';

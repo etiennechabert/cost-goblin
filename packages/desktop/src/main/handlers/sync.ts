@@ -31,12 +31,12 @@ import type {
   ProviderConfig,
   ProviderName,
   PruneResult,
+  SyncProgress,
   SyncStatus,
 } from '@costgoblin/core';
 import {
   type AppContext,
   type AppState,
-  type IpcContext,
   isAnyCredentialError,
   toUserFriendlyError,
 } from './context.js';
@@ -294,7 +294,16 @@ export function registerSyncHandlers(app: AppContext): void {
           attributes: { 'sync.tier': tier, 'sync.provider': provider.name, 'sync.files_requested': fileEntries.length },
         },
         async (span) => {
-          const r = await runSync({ ctx, auth: providerAuth(provider), providerName: provider.name, bucketPath, tier, fileEntries, statusKey: key, state });
+          const r = await ctx.syncClient.syncPeriods({
+            bucketPath,
+            auth: providerAuth(provider),
+            providerName: provider.name,
+            dataDir: ctx.dataDir,
+            tier,
+            files: fileEntries,
+            syncKey: key,
+            onProgress: syncProgressReporter(state, key),
+          });
           span?.setAttribute('sync.files_downloaded', r.filesDownloaded);
           span?.setAttribute('sync.rows_processed', r.rowsProcessed);
           return r;
@@ -527,41 +536,24 @@ export function registerSyncHandlers(app: AppContext): void {
   });
 }
 
-async function runSync(opts: Readonly<{
-  ctx: IpcContext;
-  auth: ProviderAuth;
-  providerName: ProviderName;
-  bucketPath: string;
-  tier: ExpectedDataType;
-  fileEntries: readonly ManifestFileEntry[];
-  statusKey: string;
-  state: AppState;
-}>): Promise<{ filesDownloaded: number; rowsProcessed: number }> {
-  const { ctx, auth, providerName, bucketPath, tier, fileEntries, statusKey, state } = opts;
-  return ctx.syncClient.syncPeriods({
-    bucketPath,
-    auth,
-    providerName,
-    dataDir: ctx.dataDir,
-    tier,
-    files: fileEntries,
-    syncKey: statusKey,
-    onProgress: (progress) => {
-      const bytesDone = progress.bytesDone ?? 0;
-      const bytesTotal = progress.bytesTotal ?? 0;
-      const fraction = computeSyncFraction(bytesDone, bytesTotal, progress.filesDone, progress.filesTotal);
-      state.syncStatuses[statusKey] = {
-        status: 'syncing',
-        phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
-        progress: fraction,
-        filesTotal: progress.filesTotal,
-        filesDone: progress.filesDone,
-        bytesTotal,
-        bytesDone,
-        message: progress.message ?? '',
-      };
-    },
-  });
+/** Folds SyncClient progress events into the renderer-visible status entry
+ *  for `statusKey`. */
+function syncProgressReporter(state: AppState, statusKey: string): (progress: SyncProgress) => void {
+  return (progress) => {
+    const bytesDone = progress.bytesDone ?? 0;
+    const bytesTotal = progress.bytesTotal ?? 0;
+    const fraction = computeSyncFraction(bytesDone, bytesTotal, progress.filesDone, progress.filesTotal);
+    state.syncStatuses[statusKey] = {
+      status: 'syncing',
+      phase: progress.phase === 'repartitioning' ? 'repartitioning' : 'downloading',
+      progress: fraction,
+      filesTotal: progress.filesTotal,
+      filesDone: progress.filesDone,
+      bytesTotal,
+      bytesDone,
+      message: progress.message ?? '',
+    };
+  };
 }
 
 function handleSyncError(

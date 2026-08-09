@@ -62,10 +62,9 @@ export function isBillingPeriodFolder(folderName: string): boolean {
  *  trailing slash, or a parent path, is caught as well as an exact match. */
 export function gcsTiersOverlap(a: string, b: string): boolean {
   const norm = (v: string): string => {
-    const stripped = v.startsWith('gs://') ? v.slice('gs://'.length) : v;
-    let end = stripped.length;
-    while (end > 0 && stripped.charAt(end - 1) === '/') end--;
-    return `${stripped.slice(0, end)}/`;
+    let s = v.startsWith('gs://') ? v.slice('gs://'.length) : v;
+    while (s.endsWith('/')) s = stripTrailingSlash(s);
+    return `${s}/`;
   };
   const [x, y] = [norm(a), norm(b)];
   return x === y || x.startsWith(y) || y.startsWith(x);

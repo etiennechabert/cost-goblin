@@ -12,6 +12,7 @@ import {
   buildBaselineTotalsQuery,
   buildDailyCostsQuery,
   buildDimCardinalityQuery,
+  compareByDate,
   computeBands,
   computeCurrent,
   computeOrgAccountsDigest,
@@ -120,15 +121,23 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
 }
 
+/** Codepoint order, NOT localeCompare: scopeKey is an identity, and collation
+ *  ties distinct strings (NFC vs NFD spellings), which would make the key
+ *  depend on input order instead of being canonical. */
+function compareCodepoint(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 /** Canonical identity for a scope — discovered baselines are unique per tuple. */
 function scopeKey(scope: BaselineScope): string {
   if (scope.kind === 'view') return `view:${scope.viewId}`;
   const parts: string[] = [];
   for (const [dim, vals] of Object.entries(scope.filters)) {
     if (vals === undefined) continue;
-    parts.push(`${dim}=${[...vals].map(String).sort((a, b) => a.localeCompare(b)).join('|')}`);
+    parts.push(`${dim}=${[...vals].map(String).sort(compareCodepoint).join('|')}`);
   }
-  return `filter:${[...parts].sort((a, b) => a.localeCompare(b)).join('&')}`;
+  return `filter:${[...parts].sort(compareCodepoint).join('&')}`;
 }
 
 function scopeFilters(scope: BaselineScope): FilterMap {
@@ -889,10 +898,7 @@ function clampHistory(points: readonly BaselineDailyPoint[], end: string): reado
   const start = dateNDaysAgo(end, HISTORY_WINDOW_DAYS);
   return points
     .filter((p) => String(p.date) >= start && String(p.date) <= end)
-    .sort((a, b) => {
-      if (a.date < b.date) return -1;
-      return a.date > b.date ? 1 : 0;
-    });
+    .sort(compareByDate);
 }
 
 async function snapshotBasis(deps: BaselineEngineDeps): Promise<BaselineCostBasis> {

@@ -13,7 +13,11 @@ function formatDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function compareByDate(a: BaselineDailyPoint, b: BaselineDailyPoint): number {
+/** Chronological order for daily points. Codepoint comparison is deliberate:
+ *  ISO `YYYY-MM-DD` dates sort chronologically byte-wise, and this ordering
+ *  feeds baseline math in core and the history clamp in desktop — every
+ *  consumer must agree on it, so there is exactly one copy. */
+export function compareByDate(a: BaselineDailyPoint, b: BaselineDailyPoint): number {
   if (a.date < b.date) return -1;
   return a.date > b.date ? 1 : 0;
 }

@@ -446,6 +446,21 @@ describe('MCP server E2E', () => {
     expect(text).toContain('eu-central-1');
   });
 
+  it('explore_data rejects a tag_-prefixed sort column that is not a bare identifier', async () => {
+    // The tag_ pass-through must stay identifier-shaped: a bare prefix check
+    // would interpolate this straight into ORDER BY and execute read_csv.
+    const { text, isError } = await client.callTool('explore_data', {
+      dateRange: { start: '2026-01-01', end: '2026-01-07' },
+      sort: { column: "tag_x = read_csv('no-such-file.csv')", direction: 'asc' },
+      groupByColumns: ["tag_y, read_csv('no-such-file.csv')"],
+      limit: 5,
+    });
+    // Both hostile columns are dropped: the group-by list empties (raw mode)
+    // and the sort falls back to the default, so the query still succeeds.
+    expect(isError).toBe(false);
+    expect(text).toContain('Raw Data');
+  });
+
   // ---------- run_sql ----------
 
   it('run_sql executes ad-hoc query with explicit date range', async () => {

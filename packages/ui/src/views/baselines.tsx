@@ -6,6 +6,7 @@ import { useCostApi } from '../hooks/use-cost-api.js';
 import { useQuery } from '../hooks/use-query.js';
 import { DataTable } from '../components/data-table.js';
 import type { TableColumn } from '../lib/table-types.js';
+import { TRIAGE_LABEL, TRIAGE_TONE, triageChipClass, type TriageTone } from '../lib/triage.js';
 import { CoinRainLoader } from '../components/coin-rain-loader.js';
 import { formatDollars } from '../components/format.js';
 import { BaselineMicroBar } from '../components/baseline-micro-bar.js';
@@ -25,44 +26,23 @@ const STATUS_FILTERS: readonly { id: TriageFilter; label: string }[] = [
   { id: 'ignored', label: 'Ignored' },
 ];
 
-const TRIAGE_LABEL: Readonly<Record<BaselineTriageStatus, string>> = {
-  'new': 'New', 'tracking': 'Tracking', 'acting': 'Acting',
-  'resolved': 'Resolved', 'dismissed': 'Dismissed', 'ignored': 'Ignored',
-};
-
-type ChipTone = 'accent' | 'warning' | 'positive' | 'neutral';
-
-/** Single source of truth for the status palette — the chip, dot, and active
- *  styles all derive from a status's tone, so the colors can't drift apart. */
-const STATUS_TONE: Readonly<Record<BaselineTriageStatus, ChipTone>> = {
-  'new': 'neutral', tracking: 'accent', acting: 'warning', resolved: 'positive', dismissed: 'neutral', ignored: 'neutral',
-};
-const TONE_CHIP: Readonly<Record<ChipTone, string>> = {
-  accent: 'text-accent bg-accent/10 border-accent/30',
-  warning: 'text-warning bg-warning/10 border-warning/30',
-  positive: 'text-positive bg-positive/10 border-positive/30',
-  neutral: 'text-text-secondary bg-bg-tertiary/30 border-border',
-};
-const TONE_DOT: Readonly<Record<ChipTone, string>> = {
+const TONE_DOT: Readonly<Record<TriageTone, string>> = {
   accent: 'bg-accent', warning: 'bg-warning', positive: 'bg-positive', neutral: 'bg-text-muted',
 };
 // Stronger tint for the active filter chip, so even neutral statuses read
 // clearly as selected (the muted base alone was almost indistinguishable).
-const TONE_ACTIVE: Readonly<Record<ChipTone, string>> = {
+const TONE_ACTIVE: Readonly<Record<TriageTone, string>> = {
   accent: 'text-accent bg-accent/15 border-accent/60',
   warning: 'text-warning bg-warning/15 border-warning/60',
   positive: 'text-positive bg-positive/15 border-positive/60',
   neutral: 'text-text-primary bg-bg-tertiary border-text-muted/60',
 };
 
-function triageChip(status: BaselineTriageStatus): string {
-  return TONE_CHIP[STATUS_TONE[status]];
-}
 function filterDot(id: TriageFilter): string | undefined {
-  return id === 'open' || id === 'all' ? undefined : TONE_DOT[STATUS_TONE[id]];
+  return id === 'open' || id === 'all' ? undefined : TONE_DOT[TRIAGE_TONE[id]];
 }
 function activeFilterClass(id: TriageFilter): string {
-  return id === 'open' || id === 'all' ? TONE_ACTIVE.accent : TONE_ACTIVE[STATUS_TONE[id]];
+  return id === 'open' || id === 'all' ? TONE_ACTIVE.accent : TONE_ACTIVE[TRIAGE_TONE[id]];
 }
 
 function Kpi({ label, value, accent }: Readonly<{ label: string; value: string; accent?: string | undefined }>) {
@@ -98,7 +78,7 @@ function buildColumns(onOpen: (id: string) => void): readonly TableColumn<Baseli
     {
       id: 'status', header: 'Status',
       accessorFn: (r) => r.triageStatus,
-      cell: (_v, r) => <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${triageChip(r.triageStatus)}`}>{TRIAGE_LABEL[r.triageStatus]}</span>,
+      cell: (_v, r) => <span className={`inline-block rounded-full border px-2 py-0.5 text-[10px] font-medium ${triageChipClass(r.triageStatus)}`}>{TRIAGE_LABEL[r.triageStatus]}</span>,
     },
     {
       id: 'band', header: 'Average / band', sortable: false,

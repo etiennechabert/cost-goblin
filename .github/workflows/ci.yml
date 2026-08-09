@@ -75,7 +75,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for lock in package-lock.json workers/signup/package-lock.json; do
+          for lock in package-lock.json workers/signup/package-lock.json scripts/gcp-focus-exporter/package-lock.json; do
             node -e "
               const p = require('./$lock').packages;
               const bad = Object.entries(p).filter(([k, v]) =>

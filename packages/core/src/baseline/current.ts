@@ -1,15 +1,11 @@
 import type { BaselineCurrent, BaselineDailyPoint } from '../types/baseline.js';
 import { asDateString, asDollars } from '../types/branded.js';
+import { compareByDate } from './window.js';
 
 const DAY_MS = 86_400_000;
 
 function midnightUtcMs(date: string): number {
   return Date.parse(`${date}T00:00:00Z`);
-}
-
-function compareByDate(a: BaselineDailyPoint, b: BaselineDailyPoint): number {
-  if (a.date < b.date) return -1;
-  return a.date > b.date ? 1 : 0;
 }
 
 /** Average daily cost over the most recent `windowDays` *calendar* days of the

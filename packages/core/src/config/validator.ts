@@ -54,9 +54,11 @@ function isValidNormalizationRule(value: string): value is NormalizationRule {
 }
 
 function hasControlChar(value: string): boolean {
-  for (let i = 0; i < value.length; i++) {
-    const code = value.codePointAt(i);
-    if (code === undefined || code < 0x20 || code === 0x7f) return true;
+  // Control chars are single BMP units, so comparing each code point's string
+  // form directly is exact — and avoids the `| undefined` arm codePointAt(i)
+  // would force for an index the loop already guarantees is in range.
+  for (const ch of value) {
+    if (ch < '\u0020' || ch === '\u007f') return true;
   }
   return false;
 }

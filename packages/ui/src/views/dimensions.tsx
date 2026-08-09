@@ -121,6 +121,14 @@ function isPlainRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+/** Codepoint order, NOT localeCompare: this feeds a canonical serialization,
+ *  and collation ties distinct strings (NFC vs NFD spellings), which would make
+ *  the "stable" output depend on key insertion order. */
+function compareCodepoint(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 /** Order-insensitive serialization for dirty-checking: recursively sorts object
  *  keys so two configs that differ only in key insertion order compare equal.
  *  Array order is preserved (dimension/order arrays are semantically ordered).
@@ -131,7 +139,7 @@ function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
   if (isPlainRecord(value)) {
     const entries = Object.keys(value)
-      .sort((a, b) => a.localeCompare(b))
+      .sort(compareCodepoint)
       .map(k => `${JSON.stringify(k)}:${stableStringify(value[k])}`)
       .join(',');
     return `{${entries}}`;
