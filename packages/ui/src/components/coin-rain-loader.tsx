@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useReducedMotion } from '../hooks/use-reduced-motion.js';
 
 interface Coin {
   id: number;
@@ -20,6 +21,33 @@ const COIN_SIZE = 36;
 // would spend half its time with the coin fully side-on (invisibly thin).
 const ROTATION_MIN = 90;
 const ROTATION_MAX = 270;
+
+// Midpoint of the oscillation: the fully face-on view. Only the animated path
+// ever leaves this angle, so it is the one rotation a coin that never moves
+// can be frozen at and still read as a coin.
+const ROTATION_FACE_ON = (ROTATION_MIN + ROTATION_MAX) / 2;
+
+/** A coin placed for the static (reduced-motion) render: inside the visible
+ *  box rather than above it, and face-on rather than at an oscillation
+ *  endpoint. Both matter — the animated spawn is off-screen above the
+ *  container and the endpoints are exactly edge-on, so a coin frozen with
+ *  either would be invisible, which is the opposite of what a loading
+ *  indicator is for. Bounds use the rendered size (COIN_SIZE * scale, the
+ *  transform is centre-origin) so nothing clips against `overflow-hidden`. */
+function createStaticCoin(id: number, containerWidth: number, containerHeight: number): Coin {
+  const scale = 0.7 + Math.random() * 0.5;
+  const rendered = COIN_SIZE * scale;
+  return {
+    id,
+    x: Math.random() * Math.max(containerWidth - rendered, 0),
+    y: Math.random() * Math.max(containerHeight - rendered, 0),
+    vy: 0,
+    vx: 0,
+    rotation: ROTATION_FACE_ON,
+    rotationSpeed: 0,
+    scale,
+  };
+}
 
 function createCoin(id: number, containerWidth: number, containerHeight: number): Coin {
   const startAtMin = Math.random() < 0.5;
@@ -60,32 +88,40 @@ function advanceCoins(prev: Coin[], w: number, h: number): Coin[] {
 export function CoinRainLoader({ height = 120, count = 5 }: Readonly<{ height?: number; count?: number }>) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [coins, setCoins] = useState<Coin[]>([]);
-  const frameRef = useRef(0);
+  const reduced = useReducedMotion();
 
+  // Seeding and arming share one `reduced` value from a single render. Reading
+  // the preference separately in two effects would let them disagree across
+  // commits — coins seeded to fall, then a loop that never arms, leaving an
+  // empty box for the whole query. Re-runs on a preference flip, so toggling
+  // the OS setting mid-load re-seeds instead of waiting for a remount.
   useEffect(() => {
     const el = containerRef.current;
     if (el === null) return;
-    setCoins(Array.from({ length: count }, (_, i) => createCoin(i, el.offsetWidth, height)));
-  }, [count, height]);
-
-  useEffect(() => {
-    if (coins.length === 0) return;
-    const el = containerRef.current;
-    if (el === null) return;
-
     const w = el.offsetWidth;
+    setCoins(Array.from({ length: count }, (_, i) => (
+      reduced ? createStaticCoin(i, w, height) : createCoin(i, w, height)
+    )));
+    if (reduced) return;
+
+    let frame = 0;
     function tick() {
       setCoins(prev => advanceCoins(prev, w, height));
-      frameRef.current = requestAnimationFrame(tick);
+      frame = requestAnimationFrame(tick);
     }
-
-    frameRef.current = requestAnimationFrame(tick);
-    return () => { cancelAnimationFrame(frameRef.current); };
-  }, [coins.length, height]);
+    frame = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(frame); };
+  }, [count, height, reduced]);
 
   return (
     <div
       ref={containerRef}
+      // Motion is the only "still working" signal this loader gives; with it
+      // removed the static scatter is indistinguishable from a finished render,
+      // so the status role and label carry that meaning instead — for screen
+      // readers in both modes, and visually for reduced-motion users.
+      role="status"
+      aria-label="Loading"
       className="relative overflow-hidden"
       style={{ height, perspective: '600px' }}
     >
@@ -108,8 +144,11 @@ export function CoinRainLoader({ height = 120, count = 5 }: Readonly<{ height?: 
             color: '#5A3D00',
             fontSize: 20,
             lineHeight: 1,
-            willChange: 'transform',
-            transition: 'transform 0.03s linear',
+            // Both only mean anything while the transform is being rewritten
+            // each frame. On the static path `will-change` would pin a
+            // compositor layer per coin — a dozen-plus app-wide — for elements
+            // that never change.
+            ...(reduced ? {} : { willChange: 'transform', transition: 'transform 0.03s linear' }),
           }}
         >
           $
