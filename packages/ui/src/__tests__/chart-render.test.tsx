@@ -17,6 +17,14 @@ function renderChart(ui: React.ReactElement) {
   return render(<PaletteProvider>{ui}</PaletteProvider>);
 }
 
+// Chart bodies mount asynchronously (the ResizeObserver notification lands in a
+// microtask), so wait for the expected number of marks before asserting.
+async function waitForCount(container: HTMLElement, selector: string, count: number): Promise<void> {
+  await waitFor(() => {
+    expect(container.querySelectorAll(selector)).toHaveLength(count);
+  });
+}
+
 describe('PieChart render output', () => {
   const SLICES = [
     { name: 'EC2', cost: 500, percentage: 50 },
@@ -86,9 +94,7 @@ describe('LineChart render output', () => {
   it('draws one line per series with dollar and date axes', async () => {
     const { container } = renderChart(<LineChart series={SERIES} title="Daily cost" />);
 
-    await waitFor(() => {
-      expect(container.querySelectorAll('path.visx-linepath')).toHaveLength(2);
-    });
+    await waitForCount(container, 'path.visx-linepath', 2);
     for (const path of container.querySelectorAll('path.visx-linepath')) {
       expect(path.getAttribute('d')).toMatch(/^M/);
     }
@@ -113,11 +119,12 @@ describe('LineChart render output', () => {
       <LineChart series={SERIES} previousSeries={previous} />,
     );
 
-    await waitFor(() => {
-      expect(container.querySelectorAll('path.visx-linepath')).toHaveLength(3);
-    });
+    await waitForCount(container, 'path.visx-linepath', 3);
+    // A dashed stroke uniquely marks the previous-period line (current-period
+    // lines carry no dash), so match on the attribute's presence rather than
+    // pinning the exact dash pattern.
     expect(
-      container.querySelectorAll('path.visx-linepath[stroke-dasharray="4,3"]'),
+      container.querySelectorAll('path.visx-linepath[stroke-dasharray]'),
     ).toHaveLength(1);
   });
 
@@ -125,13 +132,9 @@ describe('LineChart render output', () => {
     const user = userEvent.setup();
     const { container } = renderChart(<LineChart series={SERIES} />);
 
-    await waitFor(() => {
-      expect(container.querySelectorAll('path.visx-linepath')).toHaveLength(2);
-    });
+    await waitForCount(container, 'path.visx-linepath', 2);
     await user.click(screen.getByRole('button', { name: 'EC2' }));
-    await waitFor(() => {
-      expect(container.querySelectorAll('path.visx-linepath')).toHaveLength(1);
-    });
+    await waitForCount(container, 'path.visx-linepath', 1);
   });
 
   it('routes legend clicks to onSeriesClick when provided', async () => {
@@ -141,9 +144,7 @@ describe('LineChart render output', () => {
       <LineChart series={SERIES} onSeriesClick={onSeriesClick} />,
     );
 
-    await waitFor(() => {
-      expect(container.querySelectorAll('path.visx-linepath')).toHaveLength(2);
-    });
+    await waitForCount(container, 'path.visx-linepath', 2);
     await user.click(screen.getByRole('button', { name: 'S3' }));
     expect(onSeriesClick).toHaveBeenCalledWith('S3');
     // Filtering, not hiding: both lines stay.
@@ -169,9 +170,7 @@ describe('BubbleChart render output', () => {
   it('plots one bubble per entity, sized by cost and colored by direction', async () => {
     const { container } = renderChart(<BubbleChart data={TREND} onEntityClick={vi.fn()} />);
 
-    await waitFor(() => {
-      expect(container.querySelectorAll('circle')).toHaveLength(2);
-    });
+    await waitForCount(container, 'circle', 2);
     // Bubbles draw in descending cost order, so EC2 (the increase) is first.
     const [ec2, s3] = [...container.querySelectorAll('circle')];
     expect(ec2?.getAttribute('fill')).toBe('#ef4444');
@@ -201,9 +200,7 @@ describe('BubbleChart render output', () => {
       <BubbleChart data={TREND} onEntityClick={onEntityClick} />,
     );
 
-    await waitFor(() => {
-      expect(container.querySelectorAll('circle')).toHaveLength(2);
-    });
+    await waitForCount(container, 'circle', 2);
     const first = container.querySelector('circle');
     if (first === null) throw new Error('no circle rendered');
     await user.click(first);

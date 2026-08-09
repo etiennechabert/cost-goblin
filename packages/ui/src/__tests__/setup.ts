@@ -19,31 +19,35 @@ configure({ asyncUtilTimeout: 5000 });
 // per observed element — asynchronously, like the real observer's
 // first-observation notification — so charts mount their internals after
 // "layout settles".
-export const MOCK_CONTAINER_WIDTH = 800;
-export const MOCK_CONTAINER_HEIGHT = 600;
+const MOCK_CONTAINER_WIDTH = 800;
+const MOCK_CONTAINER_HEIGHT = 600;
+
+// Every mocked resize reports the same fixed size — only `target` varies per
+// entry — so build the size/rect once and share them across every entry.
+const MOCK_SIZE: ResizeObserverSize = {
+  inlineSize: MOCK_CONTAINER_WIDTH,
+  blockSize: MOCK_CONTAINER_HEIGHT,
+};
+const MOCK_SIZES: ReadonlyArray<ResizeObserverSize> = [MOCK_SIZE];
+const MOCK_CONTENT_RECT: DOMRectReadOnly = {
+  x: 0,
+  y: 0,
+  top: 0,
+  left: 0,
+  width: MOCK_CONTAINER_WIDTH,
+  height: MOCK_CONTAINER_HEIGHT,
+  right: MOCK_CONTAINER_WIDTH,
+  bottom: MOCK_CONTAINER_HEIGHT,
+  toJSON: () => ({}),
+};
 
 function makeResizeEntry(target: Element): ResizeObserverEntry {
-  const size: ResizeObserverSize = {
-    inlineSize: MOCK_CONTAINER_WIDTH,
-    blockSize: MOCK_CONTAINER_HEIGHT,
-  };
-  const contentRect: DOMRectReadOnly = {
-    x: 0,
-    y: 0,
-    top: 0,
-    left: 0,
-    width: MOCK_CONTAINER_WIDTH,
-    height: MOCK_CONTAINER_HEIGHT,
-    right: MOCK_CONTAINER_WIDTH,
-    bottom: MOCK_CONTAINER_HEIGHT,
-    toJSON: () => ({}),
-  };
   return {
     target,
-    contentRect,
-    borderBoxSize: [size],
-    contentBoxSize: [size],
-    devicePixelContentBoxSize: [size],
+    contentRect: MOCK_CONTENT_RECT,
+    borderBoxSize: MOCK_SIZES,
+    contentBoxSize: MOCK_SIZES,
+    devicePixelContentBoxSize: MOCK_SIZES,
   };
 }
 
@@ -101,10 +105,9 @@ class MockIntersectionObserver implements IntersectionObserver {
     this.targets.add(target);
     if (autoIntersect) this.fire(target, true);
   }
-  fire(target: Element, isIntersecting: boolean): void {
-    if (!this.targets.has(target)) return;
+  private makeEntry(target: Element, isIntersecting: boolean): IntersectionObserverEntry {
     const rect = target.getBoundingClientRect();
-    const entry: IntersectionObserverEntry = {
+    return {
       isIntersecting,
       target,
       intersectionRatio: isIntersecting ? 1 : 0,
@@ -113,10 +116,17 @@ class MockIntersectionObserver implements IntersectionObserver {
       intersectionRect: rect,
       rootBounds: null,
     };
-    this.cb([entry], this);
   }
+  fire(target: Element, isIntersecting: boolean): void {
+    if (!this.targets.has(target)) return;
+    this.cb([this.makeEntry(target, isIntersecting)], this);
+  }
+  // Deliver every observed target in a single callback, like the real
+  // IntersectionObserver, so a callback that disconnect()s mid-batch can't
+  // cause the remaining targets to be silently dropped.
   fireAll(isIntersecting: boolean): void {
-    for (const target of [...this.targets]) this.fire(target, isIntersecting);
+    const entries = [...this.targets].map((target) => this.makeEntry(target, isIntersecting));
+    if (entries.length > 0) this.cb(entries, this);
   }
   unobserve(target: Element): void {
     this.targets.delete(target);
