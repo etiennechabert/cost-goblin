@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { asDimensionId, asDollars, asProviderName, asTagValue, buildRollupPartitionQuery, computeOrgAccountsDigest, computeShapeSignature, rollupGrainColumns } from '@costgoblin/core';
 import type {
+  BaselineDailyPoint,
   BaselineRecomputeStatus,
   BaselineRecord,
   BaselineScope,
@@ -17,7 +18,7 @@ import type {
   TagValue,
 } from '@costgoblin/core';
 import { BaselineStore, type BaselineEngineDeps } from '../main/baselines-store.js';
-import { RollupStore, type RollupShape, type ResolveSourceArgs } from '../main/rollup-store.js';
+import { RollupStore, type ResolveSourceArgs, type RollupShape } from '../main/rollup-store.js';
 import { fetchRows, fetchRowsPrepared } from './helpers/duckdb-rows.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -96,6 +97,20 @@ function accountServiceScope(account: string, service: string): BaselineScope {
   filters[asDimensionId('account_id')] = [asTagValue(account)];
   filters[asDimensionId('service')] = [asTagValue(service)];
   return { kind: 'filter', filters };
+}
+
+/** Assert a stored daily-history series matches a direct `d`/`c` SQL aggregation
+ *  (date string + summed cost), row-for-row. */
+function expectDailyHistoryMatches(
+  history: readonly BaselineDailyPoint[] | undefined,
+  expected: readonly Record<string, unknown>[],
+): void {
+  const points = history ?? [];
+  expect(points.length).toBe(expected.length);
+  points.forEach((p, i) => {
+    expect(String(p.date)).toBe(str(expected[i]?.['d']));
+    expect(p.cost).toBeCloseTo(num(expected[i]?.['c']), 6);
+  });
 }
 
 function filterKeys(scope: BaselineScope): readonly string[] {
@@ -286,11 +301,7 @@ describe('BaselineStore', () => {
         `SELECT ChargePeriodStart::DATE::VARCHAR AS d, SUM(BilledCost) AS c FROM ${GLOB}
          WHERE ServiceName = '${EC2}' AND SubAccountId = '${topAccount}' GROUP BY 1 ORDER BY 1`,
       );
-      expect(detail.dailyHistory.length).toBe(expectedDaily.length);
-      detail.dailyHistory.forEach((p, i) => {
-        expect(String(p.date)).toBe(str(expectedDaily[i]?.['d']));
-        expect(p.cost).toBeCloseTo(num(expectedDaily[i]?.['c']), 6);
-      });
+      expectDailyHistoryMatches(detail.dailyHistory, expectedDaily);
 
       expect(detail.windowDays).toBe(30);
       expect(detail.record.stats?.dataPoints).toBe(expectedDaily.length);
@@ -730,10 +741,11 @@ describe('BaselineStore', () => {
       // only the service group-by column and the pre-aggregated cost.
       expect(resolveCalls).toHaveLength(1);
       const call = resolveCalls[0];
-      expect(call?.tier).toBe('daily');
-      expect([...(call?.requiredPeriods ?? [])]).toEqual(['2026-01', '2026-02']);
-      expect([...(call?.neededColumns ?? [])].sort()).toEqual(['cost', 'service']);
-      if (call !== undefined) expect(rollup.resolveSource(call)).toContain('rollup.parquet');
+      if (call === undefined) throw new Error('expected one resolveSource call');
+      expect(call.tier).toBe('daily');
+      expect([...call.requiredPeriods]).toEqual(['2026-01', '2026-02']);
+      expect([...call.neededColumns].sort()).toEqual(['cost', 'service']);
+      expect(rollup.resolveSource(call)).toContain('rollup.parquet');
 
       // The single recompute query read the materialized partitions, never raw.
       expect(prepared).toHaveLength(1);
@@ -748,11 +760,7 @@ describe('BaselineStore', () => {
          WHERE ServiceName = '${EC2}' AND ChargePeriodStart::DATE BETWEEN '${MAT_START}' AND '${MAT_END}'
          GROUP BY 1 ORDER BY 1`,
       );
-      expect(detail?.dailyHistory.length).toBe(expectedDaily.length);
-      detail?.dailyHistory.forEach((p, i) => {
-        expect(String(p.date)).toBe(str(expectedDaily[i]?.['d']));
-        expect(p.cost).toBeCloseTo(num(expectedDaily[i]?.['c']), 6);
-      });
+      expectDailyHistoryMatches(detail?.dailyHistory, expectedDaily);
       expect(created.stats).not.toBeNull();
     });
 
@@ -764,22 +772,27 @@ describe('BaselineStore', () => {
 
       const created = await store.create(deps, { scope: accountServiceScope(topEc2Account, EC2) });
 
-      // The rollup-fit check must require BOTH filter columns, not just the
-      // primary group-by (account_id) — a scope routed to a rollup missing the
-      // secondary column (service) would fail to bind. Regression guard for the
-      // neededColumns set in recomputeOne.
+      // Regression guard for the neededColumns set in recomputeOne: the
+      // rollup-fit check must list EVERY filter column, not just the primary
+      // group-by (account_id). This exact-set equality is the assertion that
+      // bites if recomputeOne regresses to [groupBy, 'cost'] — the numeric
+      // check below can't catch that, because the fixture rollup carries the
+      // `service` column (so resolveSource returns the glob either way) and
+      // buildFilterClauses binds both filters independent of neededColumns.
       expect(resolveCalls).toHaveLength(1);
       const call = resolveCalls[0];
-      expect([...(call?.neededColumns ?? [])].sort()).toEqual(['account_id', 'cost', 'service']);
-      // A rollup carrying both columns satisfies the check → the query routes to it.
-      if (call !== undefined) expect(rollup.resolveSource(call)).toContain('rollup.parquet');
+      if (call === undefined) throw new Error('expected one resolveSource call');
+      expect([...call.neededColumns].sort()).toEqual(['account_id', 'cost', 'service']);
+      // Both columns are in-grain, so the scope resolves to the rollup glob.
+      expect(rollup.resolveSource(call)).toContain('rollup.parquet');
       expect(prepared).toHaveLength(1);
       expect(prepared[0]?.materialized).toBe(true);
       expect(prepared[0]?.sql).toContain('rollup.parquet');
 
-      // Both filters bound: history equals a raw aggregation filtered on account
-      // AND service. If the secondary filter hadn't bound, this account's series
-      // would carry every service's spend and the totals would diverge.
+      // End-to-end correctness of the rollup-routed query: the per-day series
+      // equals a raw aggregation filtered on BOTH account AND service over the
+      // same window (confirming the query applied both filters and the right
+      // date bounds against the pre-aggregated partitions).
       const detail = await store.getDetail(deps, created.spec.id);
       const expectedDaily = await sql(
         `SELECT ChargePeriodStart::DATE::VARCHAR AS d, SUM(BilledCost) AS c FROM ${GLOB}
@@ -788,11 +801,7 @@ describe('BaselineStore', () => {
          GROUP BY 1 ORDER BY 1`,
       );
       expect(expectedDaily.length).toBeGreaterThan(0);
-      expect(detail?.dailyHistory.length).toBe(expectedDaily.length);
-      detail?.dailyHistory.forEach((p, i) => {
-        expect(String(p.date)).toBe(str(expectedDaily[i]?.['d']));
-        expect(p.cost).toBeCloseTo(num(expectedDaily[i]?.['c']), 6);
-      });
+      expectDailyHistoryMatches(detail?.dailyHistory, expectedDaily);
     });
   });
 });
