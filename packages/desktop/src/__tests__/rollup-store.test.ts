@@ -7,24 +7,7 @@ import { mkdtemp, rm, stat, readdir } from 'node:fs/promises';
 import { buildRollupPartitionQuery, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, type ProviderName, type RollupStatus, asDimensionId, asProviderName } from '@costgoblin/core';
 import { RollupStore, type RollupShape } from '../main/rollup-store.js';
 import type { RawRow } from '../main/duckdb-client.js';
-
-async function fetchRows(conn: DuckDBConnection, sql: string): Promise<RawRow[]> {
-  const result = await conn.run(sql);
-  const cols = result.columnCount;
-  const names: string[] = [];
-  for (let i = 0; i < cols; i++) names.push(result.columnName(i));
-  const rows: RawRow[] = [];
-  let chunk = await result.fetchChunk();
-  while (chunk !== null && chunk.rowCount > 0) {
-    for (let r = 0; r < chunk.rowCount; r++) {
-      const row: Record<string, unknown> = {};
-      for (let c = 0; c < cols; c++) { const n = names[c]; if (n !== undefined) row[n] = chunk.getColumnVector(c).getItem(r); }
-      rows.push(row);
-    }
-    chunk = await result.fetchChunk();
-  }
-  return rows;
-}
+import { fetchRows } from './helpers/duckdb-rows.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // core synthetic fixtures live under packages/core/src/__fixtures__/synthetic
