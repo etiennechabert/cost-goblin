@@ -9,7 +9,8 @@ import {
   migrateLegacyDimensionId,
   parseJsonObject,
 } from '@costgoblin/core';
-import type { ExplorerPreferences } from '@costgoblin/core';
+import type { ExplorerPreferences, ExplorerPreferencesUpdate } from '@costgoblin/core';
+import { updatePrefsFile } from './prefs-file.js';
 
 function isDateRange(
   value: unknown,
@@ -104,4 +105,32 @@ export async function readExplorerPreferences(
     ...(validGranularity !== null && { lastUsedGranularity: validGranularity }),
     ...(compareEnabled !== undefined && { compareEnabled }),
   };
+}
+
+/** Persist an Explorer preferences update by MERGING it onto whatever is
+ *  already on disk, then writing the result back.
+ *
+ *  The Explorer and CustomView both write this file (EntityDetail too, where
+ *  it is mounted). Only the Explorer manages column visibility; the others
+ *  persist just a date range / granularity and omit `hiddenColumns` /
+ *  `columnOrder`. Merging (rather than overwriting) means those views can't
+ *  clobber the user's curated column set — the classic failure being a
+ *  date-range save writing `hiddenColumns: []`, which
+ *  `readExplorerPreferences` reads back as the explicit "Show all" and
+ *  reveals every column.
+ *
+ *  Goes through `updatePrefsFile` so the read-modify-write is serialized per
+ *  path: with several writers on one file, two unserialized cycles would both
+ *  read the same base and the later write would drop the earlier one's slice
+ *  — reintroducing the very lost-update this function exists to prevent.
+ *
+ *  The merge is over the raw persisted JSON: CUR-era column ids are migrated
+ *  on READ (`readExplorerPreferences`), so carrying the raw on-disk values
+ *  forward untouched here is safe — and it also preserves any field this
+ *  build doesn't know about. */
+export async function writeExplorerPreferences(
+  filePath: string,
+  update: ExplorerPreferencesUpdate,
+): Promise<void> {
+  await updatePrefsFile(filePath, (current) => ({ ...current, ...update }));
 }

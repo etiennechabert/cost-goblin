@@ -176,6 +176,7 @@ export type {
   ExplorerFilterValue,
   ExplorerFilterValuesParams,
   ExplorerPreferences,
+  ExplorerPreferencesUpdate,
   AggregatedTableParams,
   AggregatedTableRow,
   AggregatedTableResult,

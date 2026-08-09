@@ -146,32 +146,31 @@ export function ExplorerView(): React.JSX.Element {
     });
   }, [api]);
 
-  // Persist all preferences on change. Fire-and-forget — the UI already
+  // Persist preferences on change. Fire-and-forget — the UI already
   // reflects the new state locally, so a write failure just means the
   // preference won't survive a reload (rare edge case, not worth surfacing).
-  // One helper keeps all fields in sync on every save.
-  function saveAllPrefs(
-    hidden: readonly string[],
-    order: readonly string[],
-    range: DateRange,
-    gran: Granularity,
-  ) {
+  // Saves are merged onto the on-disk prefs, so each of these sends ONLY the
+  // fields it is actually changing.
+  function saveSessionPrefs(range: DateRange, gran: Granularity) {
     api.saveExplorerPreferences({
-      hiddenColumns: hidden,
-      columnOrder: order,
       lastUsedDateRange: range,
       lastUsedGranularity: gran,
     }).catch(() => undefined);
   }
 
+  // Column writes carry only the column fields — and only ever run from a
+  // deliberate user action in the column picker. Crucially they are NOT sent
+  // on the date-range path below: on a failed prefs load this component's
+  // column state is still the DEFAULT seed, and echoing that back would
+  // overwrite the user's real on-disk set with the defaults.
   function updateHiddenColumns(next: readonly string[]) {
     setHiddenColumns(next);
-    saveAllPrefs(next, columnOrder, dateRange, granularity);
+    api.saveExplorerPreferences({ hiddenColumns: next }).catch(() => undefined);
   }
 
   function updateColumnOrder(next: readonly string[]) {
     setColumnOrder(next);
-    saveAllPrefs(hiddenColumns, next, dateRange, granularity);
+    api.saveExplorerPreferences({ columnOrder: next }).catch(() => undefined);
   }
 
   // Save date range / granularity whenever they change. Skip saves until
@@ -180,7 +179,7 @@ export function ExplorerView(): React.JSX.Element {
   // redundant writes when restoring persisted values on mount.
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
-    saveAllPrefs(hiddenColumns, columnOrder, dateRange, granularity);
+    saveSessionPrefs(dateRange, granularity);
   }, [dateRange, granularity]);
 
   const cancelReadyRef = useRef(false);

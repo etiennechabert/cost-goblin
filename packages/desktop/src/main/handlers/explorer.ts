@@ -21,6 +21,7 @@ import type {
   ExplorerOverviewParams,
   ExplorerOverviewResult,
   ExplorerPreferences,
+  ExplorerPreferencesUpdate,
   ExplorerRowsParams,
   ExplorerRowsResult,
   ExplorerSampleRow,
@@ -36,7 +37,7 @@ import type {
 import type { RawRow } from '../duckdb-client.js';
 import { type AppContext, prefsPath } from './context.js';
 import { buildAccountReverseMap, columnForDimension, resolveRollupSource, toNum, toStr } from './query-utils.js';
-import { readExplorerPreferences } from './explorer-prefs.js';
+import { readExplorerPreferences, writeExplorerPreferences } from './explorer-prefs.js';
 import { resolveScopeMetric } from './explorer-scope.js';
 
 const DEFAULT_WINDOW_DAYS = 30;
@@ -419,9 +420,8 @@ export function registerExplorerHandlers(app: AppContext): void {
       () => getQueryDimensions().then(dimensionIdSet, () => undefined),
     ));
 
-  ipcMain.handle('explorer:save-preferences', async (_event, prefs: ExplorerPreferences): Promise<void> => {
-    const fs = await import('node:fs/promises');
-    await fs.writeFile(await explorerPrefsPath(), JSON.stringify(prefs, null, 2));
+  ipcMain.handle('explorer:save-preferences', async (_event, prefs: ExplorerPreferencesUpdate): Promise<void> => {
+    await writeExplorerPreferences(await explorerPrefsPath(), prefs);
   });
 
   // Histogram + totals. Depends on filters/range/granularity/scope/metric/
