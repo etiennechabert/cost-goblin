@@ -1,5 +1,5 @@
 import { DuckDBInstance } from '@duckdb/node-api';
-import { mkdir, access, writeFile } from 'node:fs/promises';
+import { mkdir, access } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,7 +10,6 @@ import { writeGcpProvider } from './gcp-fixture.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYNTHETIC_DIR = join(__dirname, 'synthetic');
-const MARKER = join(SYNTHETIC_DIR, '.generated');
 
 type FixtureConfig = FocusFixtureConfig;
 
@@ -92,20 +91,21 @@ function generateCostOptRows(actionTypes: readonly ActionType[], cfg: FixtureCon
 }
 
 export async function setup(): Promise<void> {
-  const dailyParquet = join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw', 'daily-2026-01', 'data.parquet');
-  const gcpParquet = join(SYNTHETIC_DIR, FIXTURE_GCP_PROVIDER_NAME, 'raw', 'daily-2026-01', 'part-0.parquet');
-  const hourlyParquet = join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw', 'hourly-2026-02', 'data.parquet');
-  const costOptParquet = join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw', 'cost-opt-2026-02', 'data.parquet');
+  // One probe per generated artifact: a tree built before an artifact existed
+  // (pre-GCP, pre-cost-opt — e.g. by the older generate.ts) is still on
+  // developers' disks and CI caches, and returning early on the AWS daily file
+  // alone would leave those fixtures permanently missing — the Findings e2e
+  // suite then fails with an empty recommendations view. Keep this list in sync
+  // with the artifacts generated below: a tier added there but not here is
+  // silently accepted from a stale tree.
+  const expectedArtifacts = [
+    join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw', 'daily-2026-01', 'data.parquet'),
+    join(SYNTHETIC_DIR, FIXTURE_GCP_PROVIDER_NAME, 'raw', 'daily-2026-01', 'part-0.parquet'),
+    join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw', 'hourly-2026-02', 'data.parquet'),
+    join(SYNTHETIC_DIR, FIXTURE_PROVIDER_NAME, 'raw', 'cost-opt-2026-02', 'data.parquet'),
+  ];
   try {
-    // One probe per generated artifact: a tree built before an artifact
-    // existed (pre-GCP, pre-cost-opt — e.g. by the older generate.ts) is
-    // still on developers' disks and CI caches, and returning early on the
-    // AWS daily file alone would leave those fixtures permanently missing —
-    // the Findings e2e suite then fails with an empty recommendations view.
-    await access(dailyParquet);
-    await access(gcpParquet);
-    await access(hourlyParquet);
-    await access(costOptParquet);
+    await Promise.all(expectedArtifacts.map((artifact) => access(artifact)));
     return;
   } catch {
     // needs generation
@@ -208,5 +208,4 @@ export async function setup(): Promise<void> {
   await conn.run(`INSERT INTO cost_opt VALUES ${costOptRows.join(',')}`);
   await conn.run(`COPY (SELECT * FROM cost_opt) TO '${join(costOptDir, 'data.parquet')}' (FORMAT PARQUET)`);
 
-  await writeFile(MARKER, new Date().toISOString());
 }

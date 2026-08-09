@@ -5,7 +5,7 @@
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { setup } from '../packages/core/src/__fixtures__/setup.js';
-import { launchApp, ROOT } from './helpers.js';
+import { closeApp, launchApp, ROOT } from './helpers.js';
 
 const OUTPUT_DIR = join(ROOT, 'docs', 'screenshots');
 mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -125,7 +125,7 @@ async function main() {
   await page.screenshot({ path: join(OUTPUT_DIR, 'dimensions.png') });
   console.log('✓ dimensions.png');
 
-  await app.close();
+  await closeApp(app);
   console.log('\nDone — screenshots saved to docs/screenshots/');
 }
 

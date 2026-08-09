@@ -4,6 +4,7 @@ import { mkdtempSync, readdirSync, copyFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
   launchApp,
+  closeApp,
   FIXTURE_CONFIG_DIR,
   startCoverage,
   stopAndCollectCoverage,
@@ -78,7 +79,7 @@ test.describe('default dashboards', () => {
 
   test.afterAll(async () => {
     await stopAndCollectCoverage(page, allCoverage);
-    await app.close();
+    await closeApp(app);
     writeCoverage('views-defaults', allCoverage);
   });
 

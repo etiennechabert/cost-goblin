@@ -1,12 +1,13 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
 import {
   launchApp,
+  closeApp,
   startCoverage,
   stopAndCollectCoverage,
   screenshot,
   assertNoReactCrash,
   waitForQuerySettle,
-  hasVisibleData,
+  expectVisibleData,
   navigateTo,
   navigateToText,
   selectDatePreset,
@@ -32,7 +33,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await stopAndCollectCoverage(page, allCoverage);
-  await app.close();
+  await closeApp(app);
   writeCoverage('views-core', allCoverage);
 });
 
@@ -130,7 +131,7 @@ test.describe('Cost Overview', () => {
     // Fixture data plus the pinned COSTGOBLIN_NOW clock guarantee the default
     // range holds data — "—" or $0.00 here means the pipeline broke.
     await expect(page.locator('.tabular-nums').first()).toBeVisible();
-    expect(await hasVisibleData(page)).toBe(true);
+    await expectVisibleData(page);
 
     await screenshot(page, 'overview-summary');
   });
@@ -156,7 +157,7 @@ test.describe('Cost Overview', () => {
 
     // 90 days back from the pinned clock covers the whole fixture window, so
     // the reloaded total must be a real dollar amount.
-    expect(await hasVisibleData(page)).toBe(true);
+    await expectVisibleData(page);
 
     // switch back
     await selectDatePreset(page, 'Last 30 days');
@@ -247,12 +248,15 @@ test.describe('Cost Overview', () => {
   });
 
   test('pie chart containers are rendered when data exists', async () => {
-    const pieContainers = page.locator('select');
-    const selectCount = await pieContainers.count();
-    // With no data in the current range, pie charts may not render selects
-    if (selectCount >= 2) {
-      await screenshot(page, 'overview-pie-charts');
-    }
+    // The seed Cost Overview shows three pie widgets grouped by Account, Region
+    // and Service (seed-views.ts). Dashboard pies render as an <svg> under an
+    // <h3> title — no dimension <select> — and the pinned clock keeps the range
+    // in data, so assert the pie headings appear rather than silently skipping.
+    // Account and Region are pie-only here (Service is also the stacked-bar
+    // title), so checking those two confirms the pies rendered.
+    await expect(page.getByRole('heading', { name: 'Account', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Region', exact: true })).toBeVisible();
+    await screenshot(page, 'overview-pie-charts');
   });
 
   test('pie chart dimension dropdown switches the dimension', async () => {
@@ -325,7 +329,7 @@ test.describe('Cost Overview', () => {
     await selectDatePreset(page, 'Last 365 days');
     await waitForQuerySettle(page);
 
-    expect(await hasVisibleData(page)).toBe(true);
+    await expectVisibleData(page);
     const tables = page.locator('table');
     expect(await tables.count()).toBeGreaterThan(0);
 
@@ -433,7 +437,7 @@ test.describe('Cost Trends', () => {
     // Both the current and the previous period sit inside the fixture window
     // (pinned clock), and the previous test restored the thresholds to 0/0 —
     // an empty or error state here is a regression, not an acceptable branch.
-    expect(await hasVisibleData(page)).toBe(true);
+    await expectVisibleData(page);
 
     const summaryLine = page.locator('text=/\\d+ items/');
     await expect(summaryLine.first()).toBeVisible();
@@ -540,7 +544,7 @@ test.describe('Missing Tags', () => {
     await minCostInput.fill('0');
     await waitForQuerySettle(page);
 
-    expect(await hasVisibleData(page)).toBe(true);
+    await expectVisibleData(page);
     await expect(page.getByText('Actionable', { exact: false }).first()).toBeVisible();
     await expect(page.getByText('untagged resources in taggable categories').first()).toBeVisible();
     await screenshot(page, 'missing-tags-state');
@@ -603,14 +607,14 @@ test.describe('Findings', () => {
   test('table column headers are sortable', async () => {
     await expect(page.locator('table').first()).toBeVisible();
 
-    // click sortable headers
+    // Fixtures ship cost-optimization data and the pinned clock keeps it in
+    // range, so every sortable header must be present — assert each is visible,
+    // then exercise the ascending/descending sort toggles.
     for (const header of ['Account', 'Monthly Cost', 'Savings/mo']) {
       const th = page.locator('th').filter({ hasText: header }).first();
-      const isVisible = await th.isVisible().catch(() => false);
-      if (isVisible) {
-        await th.click();
-        await th.click(); // click again to reverse sort
-      }
+      await expect(th).toBeVisible();
+      await th.click();
+      await th.click(); // click again to reverse sort
     }
     await screenshot(page, 'savings-sorted');
   });

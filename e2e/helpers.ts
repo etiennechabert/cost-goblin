@@ -1,6 +1,6 @@
 import { expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
 import { join } from 'node:path';
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 export const ROOT = join(import.meta.dirname, '..');
@@ -25,7 +25,11 @@ export const FIXTURE_MULTI_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '_
  *  honours it via COSTGOBLIN_NOW (see packages/desktop/src/renderer/fake-clock.ts). */
 export const FIXTURE_NOW = '2026-03-02T12:00:00Z';
 
-export function launchApp(overrides?: { configDir?: string; dataDir?: string }): Promise<ElectronApplication> {
+// Per-launch temp root, keyed by the app it was created for, so closeApp can
+// delete the throwaway fixture copy on teardown.
+const RUN_ROOTS = new WeakMap<ElectronApplication, string>();
+
+export async function launchApp(overrides?: { configDir?: string; dataDir?: string }): Promise<ElectronApplication> {
   const dataDir = overrides?.dataDir ?? process.env['COSTGOBLIN_DATA_DIR'] ?? FIXTURE_DATA_DIR;
   const configDir = overrides?.configDir ?? process.env['COSTGOBLIN_CONFIG_DIR'] ?? FIXTURE_CONFIG_DIR;
   // Pinned mode writes app state NEXT TO the data dir (stateDir =
@@ -40,7 +44,7 @@ export function launchApp(overrides?: { configDir?: string; dataDir?: string }):
   const runConfigDir = join(runRoot, 'config');
   cpSync(dataDir, runDataDir, { recursive: true });
   cpSync(configDir, runConfigDir, { recursive: true });
-  return _electron.launch({
+  const app = await _electron.launch({
     args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],
     env: {
       ...process.env,
@@ -51,19 +55,30 @@ export function launchApp(overrides?: { configDir?: string; dataDir?: string }):
       COSTGOBLIN_CONFIG_DIR: runConfigDir,
     },
   });
+  RUN_ROOTS.set(app, runRoot);
+  return app;
 }
 
 /** Close, but never let a stalled Electron exit fail a suite. Under system
  *  load the process occasionally wedges on quit behind boot-time DuckDB work
  *  (a known flake — see the coverage-ordering comments in stress/gcp); after
  *  15s give up and SIGKILL. Per-launch state is a throwaway temp dir, so a
- *  hard kill loses nothing. */
+ *  hard kill loses nothing. Every suite must use this instead of a bare
+ *  app.close() so the guard covers the DuckDB-heavy shards too, and so the
+ *  per-launch fixture copy is removed rather than leaked into $TMPDIR. */
 export async function closeApp(app: ElectronApplication): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const closed = await Promise.race([
     app.close().then(() => true, () => true),
-    new Promise<boolean>((resolve) => setTimeout(() => { resolve(false); }, 15_000)),
+    new Promise<boolean>((resolve) => { timer = setTimeout(() => { resolve(false); }, 15_000); }),
   ]);
+  if (timer !== undefined) clearTimeout(timer);
   if (!closed) app.process().kill('SIGKILL');
+  const runRoot = RUN_ROOTS.get(app);
+  if (runRoot !== undefined) {
+    RUN_ROOTS.delete(app);
+    rmSync(runRoot, { recursive: true, force: true });
+  }
 }
 
 export async function startCoverage(page: Page): Promise<void> {
@@ -139,6 +154,15 @@ export async function hasVisibleData(page: Page): Promise<boolean> {
   if (count === 0) return false;
   const text = await dollarCells.first().textContent();
   return text !== null && text.includes('$') && !text.includes('$0.00');
+}
+
+/** Assert the current view has loaded real dollar data, retrying until the
+ *  cost cells actually paint. `waitForQuerySettle` only waits out the shared
+ *  "Loading" text (driven by the dimensions query) plus a fixed 300ms, which
+ *  can race the per-widget cost queries on a slow runner — so poll rather than
+ *  snapshotting `hasVisibleData` once. */
+export async function expectVisibleData(page: Page): Promise<void> {
+  await expect.poll(() => hasVisibleData(page), { timeout: LOAD_TIMEOUT }).toBe(true);
 }
 
 // The settings rework split the app into "view mode" (looking at cost data) and
