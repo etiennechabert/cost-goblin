@@ -1,6 +1,7 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
 import {
   launchApp,
+  closeApp,
   clickNavButton,
   selectDatePreset,
   waitForQuerySettle,
@@ -53,7 +54,7 @@ test.afterAll(async () => {
   // Write before close: a hung or rejected close() must not discard the
   // coverage already harvested (writeCoverage is synchronous).
   writeCoverage('gcp-provider', allCoverage);
-  await app.close();
+  await closeApp(app);
 });
 
 test.describe('mixed AWS + GCP workspace', () => {

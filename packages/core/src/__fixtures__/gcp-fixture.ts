@@ -11,10 +11,11 @@ type Conn = Awaited<ReturnType<Awaited<ReturnType<typeof DuckDBInstance.create>>
  * Write the second provider's tree, in the shape a real GCP sync leaves
  * behind: BigQuery's delivered Parquet put through the actual canonicalizer.
  *
- * Shared by BOTH fixture generators — the vitest global setup and
- * `generate.ts --generate`, which is what CI runs before the e2e shards. They
- * each write the same synthetic tree by different routes, so a GCP provider
- * added to only one of them exists locally and is missing in CI.
+ * Shared by BOTH fixture generators — setup.ts (used by the DuckDB-layer
+ * vitest suites and Playwright's globalSetup, which is what builds the tree
+ * before the e2e shards) and the older `generate.ts --generate`. They each
+ * write the same synthetic tree by different routes, so a GCP provider added to
+ * only one of them exists locally and is missing in CI.
  *
  * Derives from the caller's `synthetic` table rather than generating fresh
  * rows, deliberately: the two providers then share accounts and tag values, so

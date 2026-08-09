@@ -139,7 +139,7 @@ Slow (seconds). Run before commits, always in CI.
 ### Fixture Data
 - Real company data is in `data/raw/` — NEVER committed (gitignored + pre-commit guard)
 - `profile.json` extracted from real data — committed (statistical shape, no PII)
-- Synthetic Parquet files generated from profile — committed, deterministic (seeded random)
+- Synthetic Parquet files — generated on demand, deterministic (seeded random), NEVER committed. `setup.ts` is the complete generator (daily + hourly + GCP + cost-opt tiers, freshness-probed); Playwright's globalSetup and the DuckDB-layer vitest suites call it. `generate.ts --generate` is the older partial generator (no cost-opt) — don't rely on it to build a tree for e2e.
 - Service names are real (not sensitive). Account IDs, tag values, costs are synthetic.
 - A second fixture family lives in `packages/core/src/__fixtures__/focus-1-2/`: committed **CSV** samples of each provider's native FOCUS 1.2 export, regenerated with `write-samples.ts` (see Commands) and pinned byte-for-byte by a drift test.
 

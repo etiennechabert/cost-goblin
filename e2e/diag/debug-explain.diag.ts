@@ -1,8 +1,15 @@
+/**
+ * DIAGNOSTIC, not a test suite — boots against the developer's real local
+ * data dirs and prints EXPLAIN ANALYZE for the slowest Cost Overview queries.
+ * Excluded from `npx playwright test` (playwright.config.ts testMatch);
+ * run explicitly with:
+ *   npx playwright test --config playwright.diag.config.ts e2e/diag/debug-explain.diag.ts
+ */
 import { test, expect, _electron, type ElectronApplication } from '@playwright/test';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-const ROOT = join(import.meta.dirname, '..');
+const ROOT = join(import.meta.dirname, '..', '..');
 const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
 
 test('run EXPLAIN ANALYZE on Cost Overview queries', async () => {

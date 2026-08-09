@@ -547,6 +547,15 @@ contextBridge.exposeInMainWorld('costgoblinRollup', {
 contextBridge.exposeInMainWorld('costgoblinDebug', {
   isDev(): boolean { return process.env['NODE_ENV'] === 'development'; },
   isE2E(): boolean { return process.env['COSTGOBLIN_E2E'] === '1'; },
+  /** COSTGOBLIN_NOW, parsed to epoch ms — e2e runs pin the renderer clock so
+   *  relative date presets land inside the fixture data window. Null when the
+   *  variable is unset or unparseable (every real launch). */
+  fakeNowMs(): number | null {
+    const raw = process.env['COSTGOBLIN_NOW'];
+    if (raw === undefined || raw === '') return null;
+    const ms = Date.parse(raw);
+    return Number.isNaN(ms) ? null : ms;
+  },
   getMemoryMB(): Promise<number> { return invoke<number>('debug:get-memory-mb'); },
   getGitBranch(): Promise<string | null> { return invoke<string | null>('debug:get-git-branch'); },
   getBranchPr(): Promise<BranchPrInfo | null> { return invoke<BranchPrInfo | null>('debug:get-branch-pr'); },
