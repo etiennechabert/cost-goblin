@@ -44,6 +44,22 @@ const FIXED_OVERVIEW: ExplorerOverviewResult = {
   ],
 };
 
+/** Deterministic sample rows with static dates inside the FIXED_OVERVIEW
+ *  window, so nothing in this suite depends on the wall clock. Mirrors the
+ *  base MockCostApi rows (same services/accounts/regions the assertions key
+ *  off) but replaces the base's `new Date()` dates with hardcoded ones. */
+const FIXED_ROWS: ExplorerRowsResult = {
+  sampleRows: [
+    { date: '2026-03-10', hour: '', accountId: '111', accountName: 'prod-main', region: 'eu-central-1', service: 'Amazon EC2', serviceCategory: 'Compute', chargeCategory: 'Usage', operation: 'RunInstances', skuMeter: 'EUC1-BoxUsage:t3.medium', description: '$0.0464 per On Demand Linux t3.medium Instance Hour', resourceId: 'i-0abc', usageAmount: 24, cost: 1_180.5, listCost: 1_200, tags: { tag_team: 'platform', tag_env: 'prod' } },
+    { date: '2026-03-10', hour: '', accountId: '222', accountName: 'staging', region: 'us-east-1', service: 'Amazon RDS', serviceCategory: 'Databases', chargeCategory: 'Usage', operation: 'CreateDBInstance', skuMeter: 'RDS:db.t4g.micro', description: 'Aurora MySQL db.t4g.micro', resourceId: 'arn:rds:...', usageAmount: 12, cost: 420, listCost: 500, tags: { tag_team: 'data', tag_env: 'staging' } },
+    { date: '2026-03-01', hour: '', accountId: '111', accountName: 'prod-main', region: 'eu-central-1', service: 'Amazon S3', serviceCategory: 'Storage', chargeCategory: 'Usage', operation: 'PutObject', skuMeter: 'EUC1-Requests-Tier1', description: 'PUT requests', resourceId: 'arn:s3:::...', usageAmount: 12_000, cost: 3.6, listCost: 3.6, tags: { tag_team: 'platform', tag_env: 'prod' } },
+  ],
+  tagColumns: [
+    { id: 'tag_team', label: 'Team' },
+    { id: 'tag_env', label: 'Environment' },
+  ],
+};
+
 /** The view's default range: last 30 days ending at the lag cutoff
  *  (DEFAULT_LAG_DAYS = 2, the mock cost scope sets no override). */
 function defaultRange(): { start: string; end: string } {
@@ -67,7 +83,7 @@ class ExplorerMockApi extends MockCostApi {
 
   override queryExplorerRows(params?: ExplorerRowsParams): Promise<ExplorerRowsResult> {
     if (params !== undefined) this.rowsCalls.push(params);
-    return super.queryExplorerRows();
+    return Promise.resolve(FIXED_ROWS);
   }
 
   override getExplorerFilterValues(params?: ExplorerFilterValuesParams): Promise<ExplorerFilterValue[]> {
