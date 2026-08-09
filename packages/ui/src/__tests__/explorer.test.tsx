@@ -11,17 +11,18 @@ import type {
   ExplorerRowsParams,
   ExplorerRowsResult,
 } from '@costgoblin/core/browser';
-import { asBucketPath, asProviderName } from '@costgoblin/core/browser';
+import { asBucketPath, asProviderName, DEFAULT_EXPLORER_HIDDEN_COLUMNS } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { ExplorerView } from '../views/explorer.js';
 import { daysAgo } from '../lib/dates.js';
 
-/** Mirrors the view's DEFAULT_HIDDEN set, served as *saved* preferences.
- *  The prefs response is authoritative (the view overwrites its initial
- *  hidden state with it), and any real profile that has saved once carries
- *  exactly this list — so this is the representative loaded state. */
-const SAVED_HIDDEN = ['usage_hour', 'list_cost', 'service', 'usage_amount', 'operation'];
+/** The default hidden set, served as *saved* preferences. The prefs response
+ *  is authoritative (the view overwrites its initial hidden state with it),
+ *  and any real profile that has saved once carries exactly this list — so
+ *  this is the representative loaded state. Derived from the shared constant
+ *  so the suite can't drift from the real default. */
+const SAVED_HIDDEN = [...DEFAULT_EXPLORER_HIDDEN_COLUMNS];
 
 /** Deterministic histogram: 10 daily buckets, 2026-03-01 → 2026-03-10.
  *  The drag-select tests depend on the bar count and dates. */
@@ -151,6 +152,54 @@ function dragHistogram(fromX: number, toX: number): void {
   fireEvent.mouseDown(bars, { clientX: fromX, clientY: 100, button: 0 });
   fireEvent.mouseMove(window, { clientX: toX, clientY: 100 });
   fireEvent.mouseUp(window);
+}
+
+// ── First-run column-visibility contract ─────────────────────────────────
+// The desktop `explorer:get-preferences` handler owns the first-run contract:
+// with no prefs file on disk it returns DEFAULT_EXPLORER_HIDDEN_COLUMNS
+// (base MockCostApi mirrors that), while a persisted `hiddenColumns: []` is
+// the user's explicit "Show all". The view applies whatever the handler
+// returns verbatim, so the tests below pin both halves of that contract —
+// including the failed-load path, which must fall back to the default seed
+// rather than revealing every column. These use the base MockCostApi (not
+// ExplorerMockApi) so the first-run response comes from the real default set.
+
+/** Display labels of the DEFAULT_EXPLORER_HIDDEN_COLUMNS ids, minus
+ *  `usage_hour` ("Hour") which the daily granularity drops from the column
+ *  set before visibility preferences even apply. */
+const DEFAULT_HIDDEN_LABELS = ['List', 'Service', 'Usage', 'Operation'];
+
+class PrefsApi extends MockCostApi {
+  private readonly prefs: ExplorerPreferences;
+  constructor(prefs: ExplorerPreferences) {
+    super();
+    this.prefs = prefs;
+  }
+  override getExplorerPreferences(): Promise<ExplorerPreferences> {
+    return Promise.resolve(this.prefs);
+  }
+}
+
+class FailingPrefsApi extends MockCostApi {
+  override getExplorerPreferences(): Promise<ExplorerPreferences> {
+    return Promise.reject(new Error('prefs unavailable'));
+  }
+}
+
+function renderColumns(api: MockCostApi) {
+  return render(
+    <CostApiProvider value={api}>
+      <ExplorerView />
+    </CostApiProvider>,
+  );
+}
+
+/** Table-scoped column header labels, once the table has rendered. Delegates
+ *  to visibleHeaders so the sort-arrow stripping lives in one place and stray
+ *  headers (an open column-picker) can't leak into the result. */
+async function headerLabels(): Promise<string[]> {
+  await screen.findByRole('table');
+  return visibleHeaders();
 }
 
 // Pin the clock so the wall-clock-derived default range (daysAgo(...)) is
@@ -487,6 +536,44 @@ describe('ExplorerView', () => {
       expect(await screen.findByText('rows exploded')).toBeDefined();
       expect(await screen.findByText('No data in the selected range.')).toBeDefined();
       expect(screen.queryByRole('table')).toBeNull();
+    });
+  });
+
+  describe('column visibility (first-run contract)', () => {
+    it('hides the default column set on a fresh profile (first-run prefs)', async () => {
+      renderColumns(new MockCostApi());
+      const headers = await headerLabels();
+      expect(headers).toContain('Date');
+      expect(headers).toContain('Charge Category');
+      expect(headers).toContain('Service Category');
+      for (const label of DEFAULT_HIDDEN_LABELS) {
+        expect(headers).not.toContain(label);
+      }
+    });
+
+    it('shows every column when the user saved an explicit "Show all"', async () => {
+      renderColumns(new PrefsApi({ hiddenColumns: [], columnOrder: [] }));
+      const headers = await headerLabels();
+      for (const label of DEFAULT_HIDDEN_LABELS) {
+        expect(headers).toContain(label);
+      }
+    });
+
+    it('honors a saved custom hidden set', async () => {
+      renderColumns(new PrefsApi({ hiddenColumns: ['region', 'description'], columnOrder: [] }));
+      const headers = await headerLabels();
+      expect(headers).not.toContain('Region');
+      expect(headers).not.toContain('Description');
+      expect(headers).toContain('Operation');
+    });
+
+    it('keeps the default hidden set when preferences fail to load', async () => {
+      renderColumns(new FailingPrefsApi());
+      const headers = await headerLabels();
+      expect(headers).toContain('Date');
+      for (const label of DEFAULT_HIDDEN_LABELS) {
+        expect(headers).not.toContain(label);
+      }
     });
   });
 });

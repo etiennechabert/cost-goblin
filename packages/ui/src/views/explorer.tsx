@@ -11,7 +11,7 @@ import type {
   ExplorerSort,
   Granularity,
 } from '@costgoblin/core/browser';
-import { asDateString, asHourString } from '@costgoblin/core/browser';
+import { DEFAULT_EXPLORER_HIDDEN_COLUMNS, asDateString, asHourString } from '@costgoblin/core/browser';
 import type { SortingState } from '@tanstack/react-table';
 import { useCostApi } from '../hooks/use-cost-api.js';
 import { useLagDays } from '../hooks/use-lag-days.js';
@@ -89,10 +89,6 @@ const BASE_COLUMNS: readonly TableColumn<ExplorerSampleRow>[] = [
   { id: 'operation', header: 'Operation', dimId: 'operation', clickable: true, accessorFn: r => r.operation },
 ];
 
-const DEFAULT_HIDDEN: ReadonlySet<string> = new Set([
-  'usage_hour', 'list_cost', 'service', 'usage_amount', 'operation',
-]);
-
 export function ExplorerView(): React.JSX.Element {
   const api = useCostApi();
   const lagDays = useLagDays();
@@ -106,7 +102,7 @@ export function ExplorerView(): React.JSX.Element {
   const [costMetric, setCostMetric] = useState<CostMetric>('effective');
   const [overview, setOverview] = useState<OverviewState>({ data: null, loading: true, error: null });
   const [rows, setRows] = useState<RowsState>({ data: null, loading: true, error: null });
-  const [hiddenColumns, setHiddenColumns] = useState<readonly string[]>([...DEFAULT_HIDDEN]);
+  const [hiddenColumns, setHiddenColumns] = useState<readonly string[]>([...DEFAULT_EXPLORER_HIDDEN_COLUMNS]);
   const [columnOrder, setColumnOrder] = useState<readonly string[]>([]);
   const [hourlyHint, setHourlyHint] = useState(false);
   const overviewDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -144,8 +140,8 @@ export function ExplorerView(): React.JSX.Element {
       }
       prefsLoadedRef.current = true;
     }).catch(() => {
-      setHiddenColumns([]);
-      setColumnOrder([]);
+      // Keep the DEFAULT_EXPLORER_HIDDEN_COLUMNS initial state — a failed
+      // prefs load must not reveal every column.
       prefsLoadedRef.current = true;
     });
   }, [api]);

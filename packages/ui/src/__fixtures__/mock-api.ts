@@ -62,8 +62,9 @@ import {
   type TelemetryOutboxEntry,
   type CreateWorkspaceSource,
   type WorkspacesInfo,
+  type ExplorerPreferences,
 } from '@costgoblin/core/browser';
-import { DEFAULT_COST_SCOPE, computeRollupEstimate } from '@costgoblin/core/browser';
+import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, computeRollupEstimate } from '@costgoblin/core/browser';
 
 const MOCK_PEER_HOST = 'mock-peer.local';
 
@@ -561,8 +562,10 @@ export class MockCostApi implements CostApi {
       { value: 'AWS Lambda', label: 'AWS Lambda', cost: 4_100, rows: 1_200 },
     ]);
   }
-  getExplorerPreferences(): Promise<{ hiddenColumns: readonly string[]; columnOrder: readonly string[] }> {
-    return Promise.resolve({ hiddenColumns: [], columnOrder: [] });
+  // Mirrors the desktop handler's first-run contract: no prefs file on disk
+  // means the default hidden set, not "show everything".
+  getExplorerPreferences(): Promise<ExplorerPreferences> {
+    return Promise.resolve({ hiddenColumns: [...DEFAULT_EXPLORER_HIDDEN_COLUMNS], columnOrder: [] });
   }
   saveExplorerPreferences(): Promise<void> { return Promise.resolve(); }
   getAliasSuggestions(tagName: string): Promise<AliasSuggestion[]> {

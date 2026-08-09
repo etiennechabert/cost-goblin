@@ -180,3 +180,4 @@ export type {
   AggregatedTableRow,
   AggregatedTableResult,
 } from './explorer.js';
+export { DEFAULT_EXPLORER_HIDDEN_COLUMNS } from './explorer.js';
