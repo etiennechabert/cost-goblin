@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildCostQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildDailyCostsQuery } from '../query/builder.js';
+import { buildCostQuery, buildTrendQuery, buildMissingTagsQuery, buildNonResourceCostQuery, buildEntityDetailQuery, buildDailyCostsQuery, buildSource } from '../query/builder.js';
+import { SecurityError } from '../query/identifier-validator.js';
 import type { DimensionsConfig } from '../types/config.js';
 import { asDimensionId, asDateString, asDollars, asEntityRef, asProviderName, asTagValue } from '../types/branded.js';
 
@@ -281,6 +282,72 @@ describe('SQL Injection Prevention', () => {
         },
         { dataDir: '/data', dimensions, providers },
       )).toThrow('Unknown dimension');
+    });
+
+    it('rejects a malicious filter KEY with SecurityError before it reaches the SQL', () => {
+      // Filter VALUES are parameterized, but the KEY resolves to a field
+      // expression that is interpolated — resolveField must reject unknown ids.
+      const run = () => buildCostQuery(
+        {
+          groupBy: asDimensionId('service'),
+          dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
+          filters: { [asDimensionId("evil'; DROP TABLE costs; --")]: [asTagValue('harmless')] },
+        },
+        { dataDir: '/data', dimensions, providers },
+      );
+      expect(run).toThrow(SecurityError);
+      expect(run).toThrow('Unknown dimension');
+    });
+  });
+
+  describe('Source path components are validated at construction', () => {
+    it('rejects a malicious period in the read_parquet glob with SecurityError', () => {
+      expect(() => buildSource({
+        dataDir: '/data',
+        tier: 'daily',
+        dimensions,
+        providers: [{ name: asProviderName('aws'), periods: ["2026-01'*') UNION SELECT 1 --"] }],
+      })).toThrow(SecurityError);
+      expect(() => buildSource({
+        dataDir: '/data',
+        tier: 'daily',
+        dimensions,
+        providers: [{ name: asProviderName('aws'), periods: ['2026-01', '../../../etc/passwd'] }],
+      })).toThrow(SecurityError);
+    });
+
+    it('rejects an unknown tier with SecurityError', () => {
+      expect(() => buildSource({
+        dataDir: '/data',
+        tier: "daily'*') UNION SELECT 1 --",
+        dimensions,
+        providers: [{ name: asProviderName('aws') }],
+      })).toThrow(SecurityError);
+      expect(() => buildSource({
+        dataDir: '/data',
+        tier: 'weekly',
+        dimensions,
+        providers: [{ name: asProviderName('aws') }],
+      })).toThrow(SecurityError);
+    });
+
+    it('accepts valid tiers and periods and emits the expected globs', () => {
+      const narrowed = buildSource({
+        dataDir: '/data',
+        tier: 'daily',
+        dimensions,
+        providers: [{ name: asProviderName('aws'), periods: ['2026-01', '2026-02'] }],
+      });
+      expect(narrowed).toContain("'/data/aws/raw/daily-2026-01/*.parquet'");
+      expect(narrowed).toContain("'/data/aws/raw/daily-2026-02/*.parquet'");
+
+      const wildcard = buildSource({
+        dataDir: '/data',
+        tier: 'hourly',
+        dimensions,
+        providers: [{ name: asProviderName('aws') }],
+      });
+      expect(wildcard).toContain("'/data/aws/raw/hourly-*/*.parquet'");
     });
   });
 

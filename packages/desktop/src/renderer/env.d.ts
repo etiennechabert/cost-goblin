@@ -24,6 +24,7 @@ declare global {
   interface DebugApi {
     isDev(): boolean;
     isE2E(): boolean;
+    fakeNowMs(): number | null;
     getMemoryMB(): Promise<number>;
     getGitBranch(): Promise<string | null>;
     getBranchPr(): Promise<BranchPrInfo | null>;

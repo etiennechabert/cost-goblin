@@ -1,6 +1,7 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
 import {
   launchApp,
+  closeApp,
   startCoverage,
   stopAndCollectCoverage,
   screenshot,
@@ -28,7 +29,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await stopAndCollectCoverage(page, allCoverage);
-  await app.close();
+  await closeApp(app);
   writeCoverage('views-config', allCoverage);
 });
 
