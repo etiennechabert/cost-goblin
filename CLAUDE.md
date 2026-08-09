@@ -261,7 +261,7 @@ Keep replies professional and free of any AI attribution (see global git rules).
 - Tailwind CSS v4 (styling)
 - visx from Airbnb (charts — D3 primitives as React components)
 - TanStack Table (headless table with virtual scrolling)
-- Framer Motion (subtle animations)
+- No animation library — Tailwind utilities for CSS motion, hand-rolled rAF where JS is needed. JS-driven motion must gate on `useReducedMotion` (`packages/ui/src/hooks/use-reduced-motion.ts`); CSS motion should use Tailwind's `motion-reduce:` variant.
 - Lucide React (icons)
 
 ## What NOT To Do

@@ -12,7 +12,10 @@ interface Coin {
   scale: number;
 }
 
-const COIN_SIZE = 36;
+/** Layout size of a coin, before its centre-origin `scale` transform.
+ *  Exported so tests compute painted extents from the real value rather than
+ *  restating it. */
+export const COIN_SIZE = 36;
 
 // Rotation (rotateY) oscillates between 25% (90°) and 75% (270°) of a full
 // turn. Each coin starts at one of the two endpoints at random and rotates
@@ -22,28 +25,60 @@ const COIN_SIZE = 36;
 const ROTATION_MIN = 90;
 const ROTATION_MAX = 270;
 
-// Midpoint of the oscillation: the fully face-on view. Only the animated path
-// ever leaves this angle, so it is the one rotation a coin that never moves
-// can be frozen at and still read as a coin.
-const ROTATION_FACE_ON = (ROTATION_MIN + ROTATION_MAX) / 2;
+// Every angle in the oscillation range is past 90°, i.e. the coin's back face.
+// While it tumbles that reads as a spin, but a frozen coin at 180° is simply a
+// mirror image — backwards `$`, gradient highlight on the wrong side. 0° is
+// the front face and projects to the same full width, so it is the angle to
+// park a coin that will never move.
+const ROTATION_FRONT_ON = 0;
+
+const SCALE_MIN = 0.7;
+const SCALE_RANGE = 0.5;
+
+function randomScale(): number {
+  return SCALE_MIN + Math.random() * SCALE_RANGE;
+}
+
+/** Largest offset that keeps a scaled coin fully inside `extent`. `scale()` is
+ *  centre-origin on a COIN_SIZE box, so the painted disc spans
+ *  `offset + (COIN_SIZE ± COIN_SIZE * scale) / 2` — clamping against
+ *  `COIN_SIZE * scale` alone would let every coin under 1× hang past the edge
+ *  and get sliced by `overflow-hidden`. */
+function maxStaticOffset(extent: number, scale: number): number {
+  return extent - (COIN_SIZE + COIN_SIZE * scale) / 2;
+}
+
+/** Smallest offset that keeps a scaled coin fully inside the box — negative
+ *  for coins scaled above 1×, whose disc overhangs the layout box. */
+function minStaticOffset(scale: number): number {
+  return (COIN_SIZE * scale - COIN_SIZE) / 2;
+}
+
+function staticOffset(extent: number, scale: number): number {
+  const min = minStaticOffset(scale);
+  const max = maxStaticOffset(extent, scale);
+  // Degenerate container (jsdom reports offsetWidth 0, and real containers can
+  // be narrower than one coin): centre what cannot fit rather than clamping to
+  // an edge, so a too-small box still shows the coins.
+  if (max <= min) return (extent - COIN_SIZE) / 2;
+  return min + Math.random() * (max - min);
+}
 
 /** A coin placed for the static (reduced-motion) render: inside the visible
- *  box rather than above it, and face-on rather than at an oscillation
- *  endpoint. Both matter — the animated spawn is off-screen above the
+ *  box rather than above it, and front-on rather than at an oscillation
+ *  endpoint. Both matter — the animated spawn sits off-screen above the
  *  container and the endpoints are exactly edge-on, so a coin frozen with
  *  either would be invisible, which is the opposite of what a loading
- *  indicator is for. Bounds use the rendered size (COIN_SIZE * scale, the
- *  transform is centre-origin) so nothing clips against `overflow-hidden`. */
+ *  indicator is for. */
 function createStaticCoin(id: number, containerWidth: number, containerHeight: number): Coin {
-  const scale = 0.7 + Math.random() * 0.5;
-  const rendered = COIN_SIZE * scale;
+  const scale = randomScale();
   return {
     id,
-    x: Math.random() * Math.max(containerWidth - rendered, 0),
-    y: Math.random() * Math.max(containerHeight - rendered, 0),
+    x: staticOffset(containerWidth, scale),
+    y: staticOffset(containerHeight, scale),
     vy: 0,
     vx: 0,
-    rotation: ROTATION_FACE_ON,
+    rotation: ROTATION_FRONT_ON,
     rotationSpeed: 0,
     scale,
   };
@@ -61,7 +96,7 @@ function createCoin(id: number, containerWidth: number, containerHeight: number)
     rotation: startAtMin ? ROTATION_MIN : ROTATION_MAX,
     // Sign points the rotation toward the opposite limit.
     rotationSpeed: startAtMin ? speedMag : -speedMag,
-    scale: 0.7 + Math.random() * 0.5,
+    scale: randomScale(),
   };
 }
 
@@ -102,7 +137,9 @@ export function CoinRainLoader({ height = 120, count = 5 }: Readonly<{ height?: 
     setCoins(Array.from({ length: count }, (_, i) => (
       reduced ? createStaticCoin(i, w, height) : createCoin(i, w, height)
     )));
-    if (reduced) return;
+    // `count === 0` would otherwise spin forever: advanceCoins returns a fresh
+    // empty array each tick, so React never bails out of the re-render.
+    if (reduced || count === 0) return;
 
     let frame = 0;
     function tick() {
@@ -116,18 +153,20 @@ export function CoinRainLoader({ height = 120, count = 5 }: Readonly<{ height?: 
   return (
     <div
       ref={containerRef}
-      // Motion is the only "still working" signal this loader gives; with it
-      // removed the static scatter is indistinguishable from a finished render,
-      // so the status role and label carry that meaning instead — for screen
-      // readers in both modes, and visually for reduced-motion users.
+      // Motion is the only "still working" signal this loader gives, and the
+      // reduced-motion scatter has none at all, so announce it instead. The
+      // spoken content of a live region is its text — not its label — and the
+      // coins are decorative `$` glyphs, so they are hidden and a real text
+      // node carries the message. Mirrors the announcer in App.tsx.
       role="status"
-      aria-label="Loading"
       className="relative overflow-hidden"
       style={{ height, perspective: '600px' }}
     >
+      <span className="sr-only">Loading</span>
       {coins.map(c => (
         <div
           key={c.id}
+          aria-hidden="true"
           className="absolute pointer-events-none select-none flex items-center justify-center rounded-full font-black"
           style={{
             left: c.x,
@@ -144,11 +183,13 @@ export function CoinRainLoader({ height = 120, count = 5 }: Readonly<{ height?: 
             color: '#5A3D00',
             fontSize: 20,
             lineHeight: 1,
-            // Both only mean anything while the transform is being rewritten
-            // each frame. On the static path `will-change` would pin a
-            // compositor layer per coin — a dozen-plus app-wide — for elements
-            // that never change.
-            ...(reduced ? {} : { willChange: 'transform', transition: 'transform 0.03s linear' }),
+            // Only meaningful while the transform is being rewritten each
+            // frame; on the static path it would pin a compositor layer per
+            // coin — a dozen-plus app-wide — for elements that never change.
+            // (A `transition` here used to smooth the rotation, but at frame
+            // pacing it was retargeted before it could ever complete, and
+            // measured as ~40% of the loader's total CPU in Chromium.)
+            ...(reduced ? {} : { willChange: 'transform' }),
           }}
         >
           $

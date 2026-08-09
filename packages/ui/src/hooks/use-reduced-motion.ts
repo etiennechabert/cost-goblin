@@ -1,6 +1,9 @@
 import { useSyncExternalStore } from 'react';
 
-const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
+/** Exported so the jsdom test shim matches on the identical string. A private
+ *  copy there would silently stop matching if this one were ever reworded,
+ *  leaving every test on the animated path with nothing to fail. */
+export const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 
 /** True when the environment exposes matchMedia — false under jsdom without
  *  the test shim, and in the node-environment vitest projects that import UI

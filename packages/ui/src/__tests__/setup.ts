@@ -1,5 +1,6 @@
 import { cleanup, configure } from '@testing-library/react';
 import { afterEach } from 'vitest';
+import { REDUCED_MOTION_QUERY } from '../hooks/use-reduced-motion.js';
 
 // Query results are applied inside startTransition (use-query.ts), so success
 // renders are time-sliced and can land past testing-library's 1s default
@@ -26,35 +27,17 @@ configure({ asyncUtilTimeout: 5000 });
 // That is a silent answer where jsdom previously threw, so a future consumer
 // of a different query (a `prefers-color-scheme` or breakpoint hook) must
 // extend this rather than assume the default is meaningful for it.
-const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 let reducedMotion = false;
 
 // Extends EventTarget rather than hand-rolling listener bookkeeping, so
 // add/removeEventListener behave like the real thing (correct DOM signatures,
 // duplicate-listener and removal semantics) and `instanceof EventTarget`
 // holds — a subscriber that works against this mock works against a browser.
-// jsdom ships no MediaQueryListEvent constructor, so supply one. Subclassing
-// Event inherits everything the interface needs beyond `matches`/`media`,
-// which keeps the listener signatures identical to the real DOM ones.
-class MockMediaQueryListEvent extends Event implements MediaQueryListEvent {
-  readonly matches: boolean;
-  readonly media: string;
-
-  constructor(media: string, matches: boolean) {
-    super('change');
-    this.media = media;
-    this.matches = matches;
-  }
-}
-
-type LegacyListener = (this: MediaQueryList, ev: MediaQueryListEvent) => unknown;
-
 class MockMediaQueryList extends EventTarget implements MediaQueryList {
   readonly media: string;
-  onchange: LegacyListener | null = null;
-  /** Wrappers registered for deprecated-API callbacks, so removeListener can
-   *  unregister the same function reference addListener passed. */
-  private readonly legacyWrappers = new Map<LegacyListener, EventListener>();
+  /** Declared for the DOM interface. Nothing in this repo assigns it, so it is
+   *  never invoked; subscribe with addEventListener. */
+  onchange = null;
 
   constructor(media: string) {
     super();
@@ -67,36 +50,25 @@ class MockMediaQueryList extends EventTarget implements MediaQueryList {
     return this.media === REDUCED_MOTION_QUERY && reducedMotion;
   }
 
-  addListener(callback: LegacyListener | null): void {
-    if (callback === null || this.legacyWrappers.has(callback)) return;
-    const wrapper: EventListener = () => { callback.call(this, this.changeEvent()); };
-    this.legacyWrappers.set(callback, wrapper);
-    this.addEventListener('change', wrapper);
+  // The deprecated aliases exist only to satisfy MediaQueryList. Modelling them
+  // faithfully needs a MediaQueryListEvent, which jsdom does not ship — so they
+  // fail loudly rather than silently registering a listener that never fires.
+  addListener(): void {
+    throw new Error('MockMediaQueryList: use addEventListener("change", …)');
   }
 
-  removeListener(callback: LegacyListener | null): void {
-    if (callback === null) return;
-    const wrapper = this.legacyWrappers.get(callback);
-    if (wrapper === undefined) return;
-    this.legacyWrappers.delete(callback);
-    this.removeEventListener('change', wrapper);
+  removeListener(): void {
+    throw new Error('MockMediaQueryList: use removeEventListener("change", …)');
   }
 
-  private changeEvent(): MediaQueryListEvent {
-    return new MockMediaQueryListEvent(this.media, this.matches);
-  }
-
-  /** Notify subscribers, mirroring how a browser fires the query's change
-   *  event — including the `onchange` property handler. */
   notifyChange(): void {
-    this.onchange?.call(this, this.changeEvent());
-    this.dispatchEvent(this.changeEvent());
+    this.dispatchEvent(new Event('change'));
   }
 }
 
-// One instance per query: matchMedia is called on every getSnapshot, and a
-// fresh object each time would leave the set of live lists growing unbounded
-// within a test and dispatch to detached copies.
+// One instance per query. useReducedMotion calls matchMedia on every snapshot
+// read, and subscribes on a separate call — they must land on the same object
+// for a dispatch to reach the subscriber.
 const mediaQueryLists = new Map<string, MockMediaQueryList>();
 
 globalThis.matchMedia = (query: string): MediaQueryList => {
@@ -257,6 +229,8 @@ afterEach(() => {
   cleanup();
   autoIntersect = true;
   intersectionObservers.clear();
-  reducedMotion = false;
-  mediaQueryLists.clear();
+  // Reset through the setter so anything still subscribed is notified, and
+  // keep the MediaQueryList instances: only one query is ever created, and
+  // discarding them would orphan a subscriber that outlived cleanup().
+  setReducedMotion(false);
 });
