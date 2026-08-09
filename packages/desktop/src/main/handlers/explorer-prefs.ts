@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import {
   DEFAULT_EXPLORER_HIDDEN_COLUMNS,
   asDateString,
@@ -9,7 +9,7 @@ import {
   migrateLegacyDimensionId,
   parseJsonObject,
 } from '@costgoblin/core';
-import type { ExplorerPreferences } from '@costgoblin/core';
+import type { ExplorerPreferences, ExplorerPreferencesUpdate } from '@costgoblin/core';
 
 function isDateRange(
   value: unknown,
@@ -104,4 +104,34 @@ export async function readExplorerPreferences(
     ...(validGranularity !== null && { lastUsedGranularity: validGranularity }),
     ...(compareEnabled !== undefined && { compareEnabled }),
   };
+}
+
+/** Persist an Explorer preferences update by MERGING it onto whatever is
+ *  already on disk, then writing the result back.
+ *
+ *  The Explorer, EntityDetail, and CustomView views share this one file.
+ *  Only the Explorer manages column visibility; the other two persist just a
+ *  date range / granularity and omit `hiddenColumns` / `columnOrder`. Merging
+ *  (rather than overwriting) means those views can't clobber the user's
+ *  curated column set — the classic failure being a date-range save writing
+ *  `hiddenColumns: []`, which `readExplorerPreferences` reads back as the
+ *  explicit "Show all" and reveals every column.
+ *
+ *  The merge is over the raw persisted JSON: CUR-era column ids are migrated
+ *  on READ (`readExplorerPreferences`), so carrying the raw on-disk values
+ *  forward untouched here is safe — and it also preserves any field this
+ *  build doesn't know about. */
+export async function writeExplorerPreferences(
+  filePath: string,
+  update: ExplorerPreferencesUpdate,
+): Promise<void> {
+  let existing: Readonly<Record<string, unknown>> = {};
+  try {
+    const parsed = parseJsonObject(await readFile(filePath, 'utf-8'));
+    if (parsed !== null) existing = parsed;
+  } catch {
+    // No file yet (or unreadable) — nothing to preserve; write the update as-is.
+  }
+  const merged = { ...existing, ...update };
+  await writeFile(filePath, JSON.stringify(merged, null, 2));
 }

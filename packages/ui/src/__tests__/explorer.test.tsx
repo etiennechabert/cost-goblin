@@ -8,6 +8,7 @@ import type {
   ExplorerOverviewParams,
   ExplorerOverviewResult,
   ExplorerPreferences,
+  ExplorerPreferencesUpdate,
   ExplorerRowsParams,
   ExplorerRowsResult,
 } from '@costgoblin/core/browser';
@@ -75,7 +76,7 @@ class ExplorerMockApi extends MockCostApi {
   readonly overviewCalls: ExplorerOverviewParams[] = [];
   readonly rowsCalls: ExplorerRowsParams[] = [];
   readonly filterValueCalls: ExplorerFilterValuesParams[] = [];
-  readonly savedPreferences: ExplorerPreferences[] = [];
+  readonly savedPreferences: ExplorerPreferencesUpdate[] = [];
 
   override queryExplorerOverview(params?: ExplorerOverviewParams): Promise<ExplorerOverviewResult> {
     if (params !== undefined) this.overviewCalls.push(params);
@@ -96,7 +97,7 @@ class ExplorerMockApi extends MockCostApi {
     return Promise.resolve({ hiddenColumns: SAVED_HIDDEN, columnOrder: [] });
   }
 
-  override saveExplorerPreferences(prefs?: ExplorerPreferences): Promise<void> {
+  override saveExplorerPreferences(prefs?: ExplorerPreferencesUpdate): Promise<void> {
     if (prefs !== undefined) this.savedPreferences.push(prefs);
     return Promise.resolve();
   }

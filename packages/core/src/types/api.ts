@@ -40,6 +40,7 @@ import type {
   ExplorerOverviewParams,
   ExplorerOverviewResult,
   ExplorerPreferences,
+  ExplorerPreferencesUpdate,
   ExplorerRowsParams,
   ExplorerRowsResult,
   AggregatedTableParams,
@@ -333,7 +334,10 @@ export interface CostApi {
    *  every value remaining under the other filters. */
   getExplorerFilterValues(params: ExplorerFilterValuesParams): Promise<ExplorerFilterValue[]>;
   getExplorerPreferences(): Promise<ExplorerPreferences>;
-  saveExplorerPreferences(prefs: ExplorerPreferences): Promise<void>;
+  /** Persist a partial preferences update. Omitted fields are preserved on
+   *  disk — in particular a view that doesn't manage columns omits
+   *  `hiddenColumns` / `columnOrder` so it can't clobber the user's set. */
+  saveExplorerPreferences(prefs: ExplorerPreferencesUpdate): Promise<void>;
   getAutoSyncEnabled(): Promise<boolean>;
   setAutoSyncEnabled(enabled: boolean): Promise<void>;
   /** Minimum minutes between auto-sync runs. Default: 24 × 60 (one day).

@@ -45,6 +45,7 @@ import type {
   ExplorerOverviewParams,
   ExplorerOverviewResult,
   ExplorerPreferences,
+  ExplorerPreferencesUpdate,
   ExplorerRowsParams,
   ExplorerRowsResult,
   AggregatedTableParams,
@@ -337,7 +338,7 @@ const api: CostApi = {
   getExplorerPreferences(): Promise<ExplorerPreferences> {
     return invoke<ExplorerPreferences>('explorer:get-preferences');
   },
-  saveExplorerPreferences(prefs: ExplorerPreferences): Promise<void> {
+  saveExplorerPreferences(prefs: ExplorerPreferencesUpdate): Promise<void> {
     return invoke<undefined>('explorer:save-preferences', prefs).then(() => undefined);
   },
   getAliasSuggestions(tagName: string): Promise<AliasSuggestion[]> {

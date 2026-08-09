@@ -91,10 +91,6 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   const [pie2DimId, setPie2DimId] = useState<DimensionId | null>(null);
   const [pie3DimId, setPie3DimId] = useState<DimensionId | null>(null);
   const prefsLoadedRef = useRef(false);
-  const columnPrefsRef = useRef<{ hiddenColumns: readonly string[]; columnOrder: readonly string[] }>({
-    hiddenColumns: [],
-    columnOrder: [],
-  });
 
   const dateRangeKey = `${dateRange.start}_${dateRange.end}_${String(dateRange.startHour ?? '')}_${String(dateRange.endHour ?? '')}`;
   const entityFilter: FilterMap = { [asDimensionId(dimension)]: [asTagValue(entity)] };
@@ -113,11 +109,6 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   // Load persisted date range and granularity on mount
   useEffect(() => {
     api.getExplorerPreferences().then(prefs => {
-      // Store column preferences to preserve them when saving
-      columnPrefsRef.current = {
-        hiddenColumns: prefs.hiddenColumns,
-        columnOrder: prefs.columnOrder,
-      };
       if (prefs.lastUsedDateRange !== undefined) {
         setDateRange(prefs.lastUsedDateRange);
       }
@@ -133,13 +124,13 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
   // Save date range and granularity whenever they change. Skip saves until
   // after preferences have loaded — the prefsLoadedRef flag is set in the
   // mount effect once the initial load completes (or fails). This prevents
-  // redundant writes when restoring persisted values on mount. Preserve
-  // column preferences from Explorer to avoid overwriting them.
+  // redundant writes when restoring persisted values on mount. This view
+  // doesn't manage column visibility, so it omits hiddenColumns/columnOrder
+  // entirely — the save merges onto the on-disk prefs, leaving the user's
+  // curated column set (owned by the Explorer) untouched.
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
     api.saveExplorerPreferences({
-      hiddenColumns: columnPrefsRef.current.hiddenColumns,
-      columnOrder: columnPrefsRef.current.columnOrder,
       lastUsedDateRange: dateRange,
       lastUsedGranularity: granularity,
     }).catch(() => undefined);

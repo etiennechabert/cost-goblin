@@ -133,10 +133,6 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   const defaultsAppliedRef = useRef(initialFilter !== undefined);
   const [hourlyHint, setHourlyHint] = useState(false);
   const prefsLoadedRef = useRef(false);
-  const columnPrefsRef = useRef<{ hiddenColumns: readonly string[]; columnOrder: readonly string[] }>({
-    hiddenColumns: [],
-    columnOrder: [],
-  });
 
   const dimensionsQuery = useQuery(() => api.getDimensions(), [api]);
   const rawDimensions: Dimension[] = dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
@@ -173,14 +169,13 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
     api.cancelPendingQueries().catch(() => undefined);
   }, [dateRange, granularity, filtersKeyRef, compareEnabled, api]);
 
-  // Load column preferences on mount. Date range, granularity, and comparison
-  // always start at defaults (30d daily, comparison off) for a clean session.
+  // Read prefs on mount purely to gate the first save. This view restores
+  // nothing — date range, granularity, and comparison always start at
+  // defaults (30d daily, comparison off) for a clean session — but flipping
+  // prefsLoadedRef only after the async read resolves keeps the mount-time
+  // save effect from firing and writing defaults over the shared file.
   useEffect(() => {
-    api.getExplorerPreferences().then(prefs => {
-      columnPrefsRef.current = {
-        hiddenColumns: prefs.hiddenColumns,
-        columnOrder: prefs.columnOrder,
-      };
+    api.getExplorerPreferences().then(() => {
       prefsLoadedRef.current = true;
     }).catch(() => {
       prefsLoadedRef.current = true;
@@ -188,15 +183,16 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   }, [api]);
 
   // Save preferences with debounce — rapid parameter changes (e.g. applying
-  // two filters back-to-back) only trigger a single write.
+  // two filters back-to-back) only trigger a single write. This view doesn't
+  // manage column visibility, so it omits hiddenColumns/columnOrder entirely —
+  // the save merges onto the on-disk prefs, leaving the user's curated column
+  // set (owned by the Explorer) untouched.
   const savePendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
     if (savePendingRef.current !== null) clearTimeout(savePendingRef.current);
     savePendingRef.current = setTimeout(() => {
       api.saveExplorerPreferences({
-        hiddenColumns: columnPrefsRef.current.hiddenColumns,
-        columnOrder: columnPrefsRef.current.columnOrder,
         lastUsedDateRange: dateRange,
         lastUsedGranularity: granularity,
         compareEnabled,
