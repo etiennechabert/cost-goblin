@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
-import { asDimensionId, asDollars, asProviderName, asTagValue } from '@costgoblin/core';
+import { asDimensionId, asDollars, asProviderName, asTagValue, buildRollupPartitionQuery, computeOrgAccountsDigest, computeShapeSignature, rollupGrainColumns } from '@costgoblin/core';
 import type {
   BaselineRecomputeStatus,
   BaselineRecord,
@@ -17,6 +17,7 @@ import type {
   TagValue,
 } from '@costgoblin/core';
 import { BaselineStore, type BaselineEngineDeps } from '../main/baselines-store.js';
+import { RollupStore, type RollupShape, type ResolveSourceArgs } from '../main/rollup-store.js';
 import { fetchRows, fetchRowsPrepared } from './helpers/duckdb-rows.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -84,6 +85,15 @@ function rec(v: unknown): Record<string, unknown> {
 
 function svcScope(service: string): BaselineScope {
   const filters: Partial<Record<DimensionId, readonly TagValue[]>> = {};
+  filters[asDimensionId('service')] = [asTagValue(service)];
+  return { kind: 'filter', filters };
+}
+
+/** A two-dimension filter scope. `account_id` is inserted first so it becomes
+ *  the primary group-by — the recompute must still bind BOTH columns. */
+function accountServiceScope(account: string, service: string): BaselineScope {
+  const filters: Partial<Record<DimensionId, readonly TagValue[]>> = {};
+  filters[asDimensionId('account_id')] = [asTagValue(account)];
   filters[asDimensionId('service')] = [asTagValue(service)];
   return { kind: 'filter', filters };
 }
@@ -626,6 +636,163 @@ describe('BaselineStore', () => {
 
     it('returns [] for an unknown id', async () => {
       expect(await store.getDrift(deps, 'nope', 'account_id')).toEqual([]);
+    });
+  });
+
+  // The other suites stub rollupStore to null/undefined, so every query takes
+  // the raw single-provider path and matSource's rollup branch is never run.
+  // Here we materialize a REAL rollup for the fixture provider and wire a stub
+  // whose built signature matches the shape the store recomputes, so recompute
+  // actually routes through the pre-aggregated partitions.
+  describe('materialized rollup routing', () => {
+    // Move the clock into February with a short lookback so the recompute's date
+    // range spans ONLY the two months we materialize — resolveSource requires
+    // every touched period to be a valid partition.
+    const MAT_NOW = '2026-02-20T12:00:00.000Z';
+    const MAT_LOOKBACK = 48;
+    const MAT_START = '2026-01-01'; // dateNDaysAgo(MAT_END, 48)
+    const MAT_END = '2026-02-18';   // dateNDaysAgo('2026-02-20', lagDays 2)
+
+    let rollup: RollupStore;
+    let builtSignature: string;
+    let topEc2Account: string;
+
+    interface Captured {
+      readonly deps: BaselineEngineDeps;
+      readonly resolveCalls: ResolveSourceArgs[];
+      readonly prepared: { sql: string; materialized: boolean }[];
+    }
+
+    // Wrap makeDeps so we can observe the rollup-fit check and how each prepared
+    // query was dispatched (materialized vs raw), and route resolveSource to the
+    // real store built below.
+    const makeCapturingDeps = (stateDir: string): Captured => {
+      const resolveCalls: ResolveSourceArgs[] = [];
+      const prepared: { sql: string; materialized: boolean }[] = [];
+      const deps: BaselineEngineDeps = {
+        ...makeDeps(stateDir),
+        runPreparedQuery: (q, params, materialized) => {
+          prepared.push({ sql: q, materialized: materialized === true });
+          return fetchRowsPrepared(conn, q, params);
+        },
+        rollupStore: {
+          getBuiltSignature: () => rollup.getBuiltSignature(),
+          resolveSource: (args) => { resolveCalls.push(args); return rollup.resolveSource(args); },
+        },
+      };
+      return { deps, resolveCalls, prepared };
+    };
+
+    beforeAll(async () => {
+      vi.setSystemTime(new Date(MAT_NOW));
+      const rollupDataDir = await mkdtemp(join(tmpdir(), 'cg-baselines-rollup-'));
+      tmpDirs.push(rollupDataDir);
+      rollup = new RollupStore({ dataDir: rollupDataDir, providerName: () => FIXTURE_PROVIDER, runQuery: (q) => fetchRows(conn, q) });
+      // Same shape the store recomputes in matSource: costMetric/rules from the
+      // (basis) cost scope, grain from the dimensions, org digest of the absent
+      // org-accounts.json. lagDays and marketplace don't enter the signature.
+      builtSignature = computeShapeSignature({
+        dimensions,
+        costMetric: costScope.costMetric,
+        rules: costScope.rules,
+        orgAccountsDigest: computeOrgAccountsDigest(''),
+      });
+      const shape: RollupShape = { signature: builtSignature, grainDimensions: rollupGrainColumns(dimensions) };
+      const buildSql = (period: string, outPath: string): string =>
+        buildRollupPartitionQuery(period, 'daily', outPath, {
+          dataDir: SYNTHETIC_DIR, dimensions, costScope,
+          providers: [{ name: FIXTURE_PROVIDER, availablePeriods: [period] }],
+        });
+      await rollup.maintainPeriods(['2026-01', '2026-02'], buildSql, { '2026-01': { f: 'h1' }, '2026-02': { f: 'h2' } }, shape);
+
+      const [top] = await sql(
+        `SELECT SubAccountId AS a FROM ${GLOB}
+         WHERE ServiceName = '${EC2}' AND ChargePeriodStart::DATE BETWEEN '${MAT_START}' AND '${MAT_END}'
+         GROUP BY 1 ORDER BY SUM(BilledCost) DESC LIMIT 1`,
+      );
+      topEc2Account = str(top?.['a']);
+    });
+
+    it('materializes both fixture months into a rollup the store can adopt', () => {
+      expect([...rollup.getValidPeriods()].sort()).toEqual(['2026-01', '2026-02']);
+      expect(rollup.getBuiltSignature()).toBe(builtSignature);
+    });
+
+    it('routes a recompute through the rollup partitions instead of raw parquet', async () => {
+      const stateDir = await newStateDir();
+      const store = new BaselineStore(stateDir);
+      const { deps, resolveCalls, prepared } = makeCapturingDeps(stateDir);
+      await store.setConfig({ ...DISCOVERY_CONFIG, lookbackDays: MAT_LOOKBACK });
+
+      const created = await store.create(deps, { scope: svcScope(EC2), name: 'EC2 (rollup)' });
+
+      // matSource resolved the rollup for exactly the two built months, needing
+      // only the service group-by column and the pre-aggregated cost.
+      expect(resolveCalls).toHaveLength(1);
+      const call = resolveCalls[0];
+      expect(call?.tier).toBe('daily');
+      expect([...(call?.requiredPeriods ?? [])]).toEqual(['2026-01', '2026-02']);
+      expect([...(call?.neededColumns ?? [])].sort()).toEqual(['cost', 'service']);
+      if (call !== undefined) expect(rollup.resolveSource(call)).toContain('rollup.parquet');
+
+      // The single recompute query read the materialized partitions, never raw.
+      expect(prepared).toHaveLength(1);
+      expect(prepared[0]?.materialized).toBe(true);
+      expect(prepared[0]?.sql).toContain('rollup.parquet');
+      expect(prepared[0]?.sql).not.toContain('/raw/');
+
+      // Numbers still match a direct raw aggregation over the same window.
+      const detail = await store.getDetail(deps, created.spec.id);
+      const expectedDaily = await sql(
+        `SELECT ChargePeriodStart::DATE::VARCHAR AS d, SUM(BilledCost) AS c FROM ${GLOB}
+         WHERE ServiceName = '${EC2}' AND ChargePeriodStart::DATE BETWEEN '${MAT_START}' AND '${MAT_END}'
+         GROUP BY 1 ORDER BY 1`,
+      );
+      expect(detail?.dailyHistory.length).toBe(expectedDaily.length);
+      detail?.dailyHistory.forEach((p, i) => {
+        expect(String(p.date)).toBe(str(expectedDaily[i]?.['d']));
+        expect(p.cost).toBeCloseTo(num(expectedDaily[i]?.['c']), 6);
+      });
+      expect(created.stats).not.toBeNull();
+    });
+
+    it('binds every filter column of a multi-dimension scope against the rollup', async () => {
+      const stateDir = await newStateDir();
+      const store = new BaselineStore(stateDir);
+      const { deps, resolveCalls, prepared } = makeCapturingDeps(stateDir);
+      await store.setConfig({ ...DISCOVERY_CONFIG, lookbackDays: MAT_LOOKBACK });
+
+      const created = await store.create(deps, { scope: accountServiceScope(topEc2Account, EC2) });
+
+      // The rollup-fit check must require BOTH filter columns, not just the
+      // primary group-by (account_id) — a scope routed to a rollup missing the
+      // secondary column (service) would fail to bind. Regression guard for the
+      // neededColumns set in recomputeOne.
+      expect(resolveCalls).toHaveLength(1);
+      const call = resolveCalls[0];
+      expect([...(call?.neededColumns ?? [])].sort()).toEqual(['account_id', 'cost', 'service']);
+      // A rollup carrying both columns satisfies the check → the query routes to it.
+      if (call !== undefined) expect(rollup.resolveSource(call)).toContain('rollup.parquet');
+      expect(prepared).toHaveLength(1);
+      expect(prepared[0]?.materialized).toBe(true);
+      expect(prepared[0]?.sql).toContain('rollup.parquet');
+
+      // Both filters bound: history equals a raw aggregation filtered on account
+      // AND service. If the secondary filter hadn't bound, this account's series
+      // would carry every service's spend and the totals would diverge.
+      const detail = await store.getDetail(deps, created.spec.id);
+      const expectedDaily = await sql(
+        `SELECT ChargePeriodStart::DATE::VARCHAR AS d, SUM(BilledCost) AS c FROM ${GLOB}
+         WHERE ServiceName = '${EC2}' AND SubAccountId = '${topEc2Account}'
+           AND ChargePeriodStart::DATE BETWEEN '${MAT_START}' AND '${MAT_END}'
+         GROUP BY 1 ORDER BY 1`,
+      );
+      expect(expectedDaily.length).toBeGreaterThan(0);
+      expect(detail?.dailyHistory.length).toBe(expectedDaily.length);
+      detail?.dailyHistory.forEach((p, i) => {
+        expect(String(p.date)).toBe(str(expectedDaily[i]?.['d']));
+        expect(p.cost).toBeCloseTo(num(expectedDaily[i]?.['c']), 6);
+      });
     });
   });
 });
