@@ -132,11 +132,6 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
   // the "always re-apply on open" contract.
   const defaultsAppliedRef = useRef(initialFilter !== undefined);
   const [hourlyHint, setHourlyHint] = useState(false);
-  const prefsLoadedRef = useRef(false);
-  const columnPrefsRef = useRef<{ hiddenColumns: readonly string[]; columnOrder: readonly string[] }>({
-    hiddenColumns: [],
-    columnOrder: [],
-  });
 
   const dimensionsQuery = useQuery(() => api.getDimensions(), [api]);
   const rawDimensions: Dimension[] = dimensionsQuery.status === 'success' ? dimensionsQuery.data : [];
@@ -160,12 +155,10 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
 
   // Cancel in-flight DuckDB queries when query-affecting state changes so
   // stale queries don't hog pool connections while new ones queue behind them.
-  // Skip until one render AFTER preferences have loaded — the prefs restore
-  // itself triggers a state change that we must not cancel.
+  // Skip the mount run — the initial render isn't a change to cancel.
   const cancelReadyRef = useRef(false);
   const filtersKeyRef = JSON.stringify(filters);
   useEffect(() => {
-    if (!prefsLoadedRef.current) return;
     if (!cancelReadyRef.current) {
       cancelReadyRef.current = true;
       return;
@@ -173,30 +166,29 @@ function CustomViewInner({ spec, headerSubtitle, initialFilter, rollupStatus }: 
     api.cancelPendingQueries().catch(() => undefined);
   }, [dateRange, granularity, filtersKeyRef, compareEnabled, api]);
 
-  // Load column preferences on mount. Date range, granularity, and comparison
-  // always start at defaults (30d daily, comparison off) for a clean session.
-  useEffect(() => {
-    api.getExplorerPreferences().then(prefs => {
-      columnPrefsRef.current = {
-        hiddenColumns: prefs.hiddenColumns,
-        columnOrder: prefs.columnOrder,
-      };
-      prefsLoadedRef.current = true;
-    }).catch(() => {
-      prefsLoadedRef.current = true;
-    });
-  }, [api]);
-
   // Save preferences with debounce — rapid parameter changes (e.g. applying
-  // two filters back-to-back) only trigger a single write.
+  // two filters back-to-back) only trigger a single write. This view doesn't
+  // manage column visibility, so it omits hiddenColumns/columnOrder entirely —
+  // the save merges onto the on-disk prefs, leaving the user's curated column
+  // set (owned by the Explorer) untouched.
+  //
+  // The gate is a plain mount-skip: this view restores nothing from prefs
+  // (date range, granularity and comparison always start at defaults for a
+  // clean session), so the only thing to suppress is the save that the mount
+  // render would otherwise fire, writing those defaults over the shared file.
+  // Gating on an async prefs read instead would drop any change the user made
+  // while that read was still in flight — a ref flip doesn't re-run the effect.
+  const saveReadyRef = useRef(false);
   const savePendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!prefsLoadedRef.current) return;
+    if (!saveReadyRef.current) {
+      saveReadyRef.current = true;
+      return;
+    }
     if (savePendingRef.current !== null) clearTimeout(savePendingRef.current);
     savePendingRef.current = setTimeout(() => {
+      savePendingRef.current = null;
       api.saveExplorerPreferences({
-        hiddenColumns: columnPrefsRef.current.hiddenColumns,
-        columnOrder: columnPrefsRef.current.columnOrder,
         lastUsedDateRange: dateRange,
         lastUsedGranularity: granularity,
         compareEnabled,

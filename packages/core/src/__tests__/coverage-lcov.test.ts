@@ -1,0 +1,475 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, it, expect } from 'vitest';
+import {
+  createCoverageReport,
+  isCoverageShardFile,
+  isProjectSourcePath,
+  isRendererBundleUrl,
+  mergeIstanbulFile,
+  parseIstanbulFileCoverage,
+} from '../e2e-coverage/collect.js';
+import { generateLcov } from '../e2e-coverage/lcov.js';
+import { auditCoverageReport } from '../e2e-coverage/audit.js';
+import * as barrel from '../e2e-coverage/index.js';
+import type { IstanbulFileCoverage } from '../e2e-coverage/types.js';
+
+/** An istanbul location node, in the shape v8-to-istanbul emits. */
+function loc(line: number): unknown {
+  return { start: { line, column: 0 }, end: { line, column: 40 } };
+}
+
+/**
+ * One entry of `v8ToIstanbul().toIstanbul()`, typed as `unknown` so the parser
+ * is exercised the way the collector calls it.
+ */
+function istanbulEntry(options: {
+  statements: { line: number; count: number }[];
+  functions: { name: string; line: number; count: number }[];
+  branches: { lines: number[]; counts: number[] }[];
+}): unknown {
+  const statementMap: Record<string, unknown> = {};
+  const s: Record<string, number> = {};
+  options.statements.forEach((statement, index) => {
+    statementMap[String(index)] = loc(statement.line);
+    s[String(index)] = statement.count;
+  });
+
+  const fnMap: Record<string, unknown> = {};
+  const f: Record<string, number> = {};
+  options.functions.forEach((fn, index) => {
+    fnMap[String(index)] = { name: fn.name, decl: loc(fn.line), loc: loc(fn.line), line: fn.line };
+    f[String(index)] = fn.count;
+  });
+
+  const branchMap: Record<string, unknown> = {};
+  const b: Record<string, number[]> = {};
+  options.branches.forEach((branch, index) => {
+    branchMap[String(index)] = {
+      type: 'branch',
+      line: branch.lines[0],
+      locations: branch.lines.map(loc),
+    };
+    b[String(index)] = branch.counts;
+  });
+
+  return { path: '/repo/file.ts', all: false, statementMap, s, fnMap, f, branchMap, b };
+}
+
+function parsed(value: unknown): IstanbulFileCoverage {
+  const result = parseIstanbulFileCoverage(value);
+  if (result === null) throw new Error('expected the istanbul entry to parse');
+  return result;
+}
+
+describe('the e2e-coverage barrel', () => {
+  // `e2e/collect-coverage.ts` is the only consumer, and it is outside tsc,
+  // eslint and vitest — so a re-export dropped here surfaces as a CI-runtime
+  // SyntaxError across every e2e shard rather than as a failing test.
+  //
+  // The names are read out of the collector rather than listed here: a
+  // hardcoded list goes stale the moment someone adds an import to the
+  // collector and forgets the barrel, which is the exact failure this guards.
+  it('exports everything the collector imports', () => {
+    const collector = readFileSync(
+      join(import.meta.dirname, '..', '..', '..', '..', 'e2e', 'collect-coverage.ts'),
+      'utf-8',
+    );
+    const importBlock = /import\s*\{([^}]*)\}\s*from\s*'[^']*e2e-coverage\/index\.js';/.exec(
+      collector,
+    );
+    if (importBlock?.[1] === undefined) {
+      throw new Error('e2e/collect-coverage.ts no longer imports the e2e-coverage barrel');
+    }
+
+    const imported = importBlock[1]
+      .split(',')
+      .map(name => name.trim())
+      .filter(name => name !== '');
+    expect(imported.length).toBeGreaterThan(0);
+
+    for (const name of imported) {
+      expect(barrel).toHaveProperty(name);
+      expect(typeof Reflect.get(barrel, name)).toBe('function');
+    }
+  });
+});
+
+describe('isCoverageShardFile', () => {
+  it('accepts the per-suite shards and the legacy single-suite name', () => {
+    expect(isCoverageShardFile('coverage.json')).toBe(true);
+    expect(isCoverageShardFile('coverage-views-core.json')).toBe(true);
+    expect(isCoverageShardFile('coverage-gcp_provider.json')).toBe(true);
+  });
+
+  it('rejects anything else in the spool directory', () => {
+    expect(isCoverageShardFile('coverage-.json')).toBe(false);
+    expect(isCoverageShardFile('coverage.json.tmp')).toBe(false);
+    expect(isCoverageShardFile('lcov.info')).toBe(false);
+    expect(isCoverageShardFile('nested/coverage.json')).toBe(false);
+  });
+});
+
+describe('isRendererBundleUrl', () => {
+  it('accepts the Vite renderer bundle', () => {
+    expect(isRendererBundleUrl('file:///app/out/renderer/assets/index-a1b2c3.js')).toBe(true);
+  });
+
+  it('rejects every other script V8 reports', () => {
+    expect(isRendererBundleUrl('file:///app/out/renderer/assets/index-a1b2c3.css')).toBe(false);
+    expect(isRendererBundleUrl('file:///app/out/renderer/assets/vendor-a1b2c3.js')).toBe(false);
+    expect(isRendererBundleUrl('file:///app/out/preload/preload.js')).toBe(false);
+    expect(isRendererBundleUrl('node:internal/bootstrap')).toBe(false);
+  });
+});
+
+describe('isProjectSourcePath', () => {
+  it('accepts workspace sources', () => {
+    expect(isProjectSourcePath('packages/ui/src/App.tsx')).toBe(true);
+    expect(isProjectSourcePath('packages/core/src/types/config.ts')).toBe(true);
+  });
+
+  it('rejects dependencies and files outside the workspaces', () => {
+    expect(isProjectSourcePath('node_modules/react/index.js')).toBe(false);
+    expect(isProjectSourcePath('packages/ui/node_modules/visx/index.js')).toBe(false);
+    expect(isProjectSourcePath('e2e/helpers.ts')).toBe(false);
+    expect(isProjectSourcePath('../outside/src/x.ts')).toBe(false);
+  });
+});
+
+describe('parseIstanbulFileCoverage', () => {
+  it('narrows a v8-to-istanbul entry to the fields lcov needs', () => {
+    const entry = parsed(
+      istanbulEntry({
+        statements: [
+          { line: 1, count: 1 },
+          { line: 2, count: 0 },
+        ],
+        functions: [{ name: 'render', line: 1, count: 3 }],
+        branches: [{ lines: [2], counts: [1] }],
+      }),
+    );
+
+    expect(entry.statements).toEqual([
+      { line: 1, count: 1 },
+      { line: 2, count: 0 },
+    ]);
+    expect(entry.functions).toEqual([{ name: 'render', line: 1, count: 3 }]);
+    expect(entry.branches).toEqual([
+      { blockId: 0, locations: [{ branchId: 0, line: 2, count: 1 }] },
+    ]);
+  });
+
+  it('names an unnamed function after its line, so the key stays shard-stable', () => {
+    // v8-to-istanbul never emits an empty name (it only builds an fnMap entry
+    // when V8 named the function), so this is the untrusted-input path. The
+    // fallback must not use the fnMap id: ids are positional and shift between
+    // shards, which is what the name+line merge key exists to avoid.
+    const entry = parsed(
+      istanbulEntry({
+        statements: [],
+        functions: [{ name: '', line: 7, count: 0 }],
+        branches: [],
+      }),
+    );
+
+    expect(entry.functions).toEqual([{ name: 'anon_7', line: 7, count: 0 }]);
+  });
+
+  it('treats a count missing from an existing map as never executed', () => {
+    const entry = parsed({
+      statementMap: { '0': loc(1), '1': loc(2) },
+      s: { '0': 4 }, // no entry for statement 1
+      fnMap: { '0': { name: 'run', loc: loc(1) } },
+      f: {},
+      branchMap: { '0': { locations: [loc(2), loc(3)] } },
+      b: { '0': [4] }, // only one count for two locations
+    });
+
+    expect(entry.statements).toEqual([
+      { line: 1, count: 4 },
+      { line: 2, count: 0 },
+    ]);
+    expect(entry.functions).toEqual([{ name: 'run', line: 1, count: 0 }]);
+    expect(entry.branches).toEqual([
+      {
+        blockId: 0,
+        locations: [
+          { branchId: 0, line: 2, count: 4 },
+          { branchId: 1, line: 3, count: 0 },
+        ],
+      },
+    ]);
+  });
+
+  it('rejects an entry missing a whole count map rather than reading it as uncovered', () => {
+    // Defaulting `s` to {} would mark every line count 0 — a report that looks
+    // full but measures nothing, which the audit grades `ok`. The collector
+    // must hear about this, so the parser refuses it.
+    const complete = {
+      statementMap: { '0': loc(1) },
+      s: { '0': 1 },
+      fnMap: {},
+      f: {},
+      branchMap: {},
+      b: {},
+    };
+    expect(parseIstanbulFileCoverage(complete)).not.toBeNull();
+
+    for (const missing of ['statementMap', 's', 'fnMap', 'f', 'branchMap', 'b']) {
+      const withoutKey = Object.fromEntries(
+        Object.entries(complete).filter(([key]) => key !== missing),
+      );
+      expect(parseIstanbulFileCoverage(withoutKey)).toBeNull();
+    }
+  });
+
+  it('returns null for anything that is not a file entry', () => {
+    expect(parseIstanbulFileCoverage(null)).toBeNull();
+    expect(parseIstanbulFileCoverage('coverage')).toBeNull();
+    expect(parseIstanbulFileCoverage([])).toBeNull();
+    expect(parseIstanbulFileCoverage({})).toBeNull();
+    // branchMap is an array rather than a record — not the shape we expect.
+    expect(
+      parseIstanbulFileCoverage({
+        statementMap: {},
+        s: {},
+        fnMap: {},
+        f: {},
+        branchMap: [],
+        b: {},
+      }),
+    ).toBeNull();
+  });
+
+  it('keeps the raw ids when it skips a malformed branch entry', () => {
+    // Renumbering off the survivors would shift branch 1 down to blockId 0 and
+    // collide it with a well-formed shard's real branch 0 on that line.
+    const entry = parsed({
+      statementMap: {},
+      s: {},
+      fnMap: {},
+      f: {},
+      branchMap: {
+        '0': { locations: 'not-an-array' },
+        '1': { locations: [loc(9)] },
+      },
+      b: { '0': [1], '1': [2] },
+    });
+
+    expect(entry.branches).toEqual([
+      { blockId: 1, locations: [{ branchId: 0, line: 9, count: 2 }] },
+    ]);
+  });
+});
+
+describe('mergeIstanbulFile', () => {
+  it('takes the highest count each shard reported', () => {
+    const report = createCoverageReport();
+    const path = '/repo/packages/ui/src/App.tsx';
+
+    mergeIstanbulFile(
+      report,
+      path,
+      parsed(
+        istanbulEntry({
+          statements: [
+            { line: 1, count: 1 },
+            { line: 2, count: 0 },
+          ],
+          functions: [{ name: 'render', line: 1, count: 0 }],
+          branches: [],
+        }),
+      ),
+    );
+    mergeIstanbulFile(
+      report,
+      path,
+      parsed(
+        istanbulEntry({
+          statements: [
+            { line: 1, count: 0 },
+            { line: 2, count: 5 },
+          ],
+          functions: [{ name: 'render', line: 1, count: 2 }],
+          branches: [],
+        }),
+      ),
+    );
+
+    const merged = report.get(path);
+    expect(merged?.lines.get(1)).toBe(1);
+    expect(merged?.lines.get(2)).toBe(5);
+    expect(merged?.functions.get('render:1')).toEqual({ name: 'render', line: 1, count: 2 });
+  });
+
+  it('accumulates each file independently', () => {
+    const report = createCoverageReport();
+    const entry = parsed(
+      istanbulEntry({
+        statements: [{ line: 1, count: 1 }],
+        functions: [{ name: 'render', line: 1, count: 4 }],
+        branches: [
+          { lines: [1], counts: [1] },
+          { lines: [2], counts: [0] },
+        ],
+      }),
+    );
+
+    mergeIstanbulFile(report, '/repo/packages/ui/src/A.tsx', entry);
+    mergeIstanbulFile(report, '/repo/packages/ui/src/B.tsx', entry);
+    // A third merge into A only — B must not move.
+    mergeIstanbulFile(
+      report,
+      '/repo/packages/ui/src/A.tsx',
+      parsed(
+        istanbulEntry({
+          statements: [{ line: 1, count: 9 }],
+          functions: [{ name: 'render', line: 1, count: 9 }],
+          branches: [],
+        }),
+      ),
+    );
+
+    expect(report.size).toBe(2);
+    expect(report.get('/repo/packages/ui/src/A.tsx')?.lines.get(1)).toBe(9);
+    expect(report.get('/repo/packages/ui/src/B.tsx')?.lines.get(1)).toBe(1);
+    expect(report.get('/repo/packages/ui/src/B.tsx')?.functions.get('render:1')).toEqual({
+      name: 'render',
+      line: 1,
+      count: 4,
+    });
+    // Both files carry the ids the parser assigned, spelled out rather than
+    // compared against each other — a self-comparison also passes on two
+    // empty arrays.
+    const expectedBranches = [
+      { line: 1, blockId: 0, branchId: 0, count: 1 },
+      { line: 2, blockId: 1, branchId: 0, count: 0 },
+    ];
+    expect(report.get('/repo/packages/ui/src/A.tsx')?.branches).toEqual(expectedBranches);
+    expect(report.get('/repo/packages/ui/src/B.tsx')?.branches).toEqual(expectedBranches);
+  });
+});
+
+describe('generateLcov', () => {
+  it('renders a file record lcov parsers accept', () => {
+    const report = createCoverageReport();
+    mergeIstanbulFile(
+      report,
+      'packages/ui/src/App.tsx',
+      parsed(
+        istanbulEntry({
+          statements: [
+            { line: 1, count: 1 },
+            { line: 2, count: 0 },
+            { line: 3, count: 2 },
+          ],
+          functions: [{ name: 'render', line: 1, count: 3 }],
+          branches: [
+            { lines: [2], counts: [1] },
+            { lines: [3], counts: [0] },
+          ],
+        }),
+      ),
+    );
+
+    expect(generateLcov(report)).toBe(
+      [
+        'TN:',
+        'SF:packages/ui/src/App.tsx',
+        'FN:1,render',
+        'FNF:1',
+        'FNH:1',
+        'FNDA:3,render',
+        'DA:1,1',
+        'DA:2,0',
+        'DA:3,2',
+        'LF:3',
+        'LH:2',
+        'BRDA:2,0,0,1',
+        'BRDA:3,1,0,-',
+        'BRF:2',
+        'BRH:1',
+        'end_of_record',
+      ].join('\n') + '\n',
+    );
+  });
+
+  it('keeps a function name that contains a colon intact', () => {
+    // V8 names the function in `{ 'view:reset': () => … }` exactly that, and
+    // the merge key is `name:line` — so the name cannot be recovered by
+    // splitting the key, and two such names on one line would collide.
+    const report = createCoverageReport();
+    mergeIstanbulFile(
+      report,
+      'packages/ui/src/handlers.ts',
+      parsed(
+        istanbulEntry({
+          statements: [],
+          functions: [
+            { name: 'view:reset', line: 42, count: 2 },
+            { name: 'view:clear', line: 42, count: 0 },
+          ],
+          branches: [],
+        }),
+      ),
+    );
+
+    const lcov = generateLcov(report);
+    expect(lcov).toContain('FN:42,view:reset');
+    expect(lcov).toContain('FN:42,view:clear');
+    expect(lcov).toContain('FNDA:2,view:reset');
+    expect(lcov).toContain('FNDA:0,view:clear');
+    expect(lcov).toContain('FNF:2');
+    expect(lcov).toContain('FNH:1');
+  });
+
+  it('emits lines in ascending order regardless of merge order', () => {
+    const report = createCoverageReport();
+    mergeIstanbulFile(
+      report,
+      'packages/core/src/x.ts',
+      parsed(
+        istanbulEntry({
+          statements: [
+            { line: 12, count: 1 },
+            { line: 3, count: 1 },
+            { line: 7, count: 0 },
+          ],
+          functions: [],
+          branches: [],
+        }),
+      ),
+    );
+
+    const daLines = generateLcov(report)
+      .split('\n')
+      .filter(line => line.startsWith('DA:'));
+    expect(daLines).toEqual(['DA:3,1', 'DA:7,0', 'DA:12,1']);
+  });
+
+  it('collapses repeats of one branch position to a single record, keeping the max', () => {
+    // Deliberately not "dedupes across shards": a branch's blockId is only
+    // stable when both entries numbered branchMap the same way, which shards
+    // exercising different functions do not (see mergeIstanbulFile). What is
+    // pinned here is the collapse within one collector run.
+    const report = createCoverageReport();
+    const path = 'packages/core/src/x.ts';
+    const entry = (count: number): unknown =>
+      istanbulEntry({ statements: [], functions: [], branches: [{ lines: [4], counts: [count] }] });
+
+    mergeIstanbulFile(report, path, parsed(entry(0)));
+    mergeIstanbulFile(report, path, parsed(entry(6)));
+
+    const lcov = generateLcov(report);
+    expect(lcov).toContain('BRDA:4,0,0,6');
+    expect(lcov).toContain('BRF:1');
+    expect(lcov).toContain('BRH:1');
+  });
+
+  it('renders an empty report as a one-byte file, which is why emptiness is rejected separately', () => {
+    // CI's `[ -s "$f" ]` merge guard accepts this as a valid shard.
+    expect(generateLcov(createCoverageReport())).toBe('\n');
+    expect(auditCoverageReport(createCoverageReport()).status).toBe('empty');
+  });
+});

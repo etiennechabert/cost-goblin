@@ -62,7 +62,7 @@ Follow this sequence for EVERY feature:
 8. Run: npm run check → full verification (MUST pass before moving on)
 9. If working on UI: npm run dev in desktop/ to visually verify
 10. After pushing & opening the PR — close the review loop (see "After pushing"):
-    - Ask the user to run `/code-review ultra --fix` (user-triggered & billed — you can't launch it), then apply its fixes and re-run npm run check
+    - Run `/code-review max --fix` yourself (via the `Skill` tool), review the fixes it applies, and re-run npm run check
     - Address every sentry[bot] review comment on the PR
 ```
 
@@ -138,7 +138,7 @@ Slow (seconds). Run before commits, always in CI.
 
 The window is hidden by default (`COSTGOBLIN_HEADLESS=1`, set by `launchApp`) so a run can't steal focus or be clicked/closed by accident mid-test. Screenshots and every assertion work unchanged. To watch a run: `COSTGOBLIN_HEADLESS=0 npx playwright test e2e/<suite>.test.ts`.
 
-**Coverage-attach ordering:** suites that *collect coverage* must open the app with `launchAppWithCoverage()`, or `attachCoverage(await app.firstWindow())` when they build their own launch. (`csp-verification` and `sandbox-verification` deliberately collect none and just call `launchApp`.) Never await anything between `firstWindow()` and the attach — a late attach silently inflates the shard toward 100% rather than failing. See the `attachCoverage` doc comment in `e2e/helpers.ts`. `collect-coverage.ts` fails the run on *gross* inflation (>25 function-less files holding >30% of hits); a partial late attach still slips through, so the ordering is a rule to follow, not one the tooling can fully police.
+**Coverage-attach ordering:** suites that *collect coverage* must open the app with `launchAppWithCoverage()`, or `attachCoverage(await app.firstWindow())` when they build their own launch. (`csp-verification` and `sandbox-verification` deliberately collect none and just call `launchApp`.) Never await anything between `firstWindow()` and the attach — a late attach silently inflates the shard toward 100% rather than failing. See the `attachCoverage` doc comment in `e2e/helpers.ts`. The run fails on *gross* inflation (>25 function-less files holding >30% of hits — `auditCoverageReport` in `packages/core/src/e2e-coverage/audit.ts`, which `e2e/collect-coverage.ts` calls); a partial late attach still slips through, so the ordering is a rule to follow, not one the tooling can fully police.
 
 ### Fixture Data
 - Real company data is in `data/raw/` — NEVER committed (gitignored + pre-commit guard)
@@ -215,14 +215,14 @@ So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` �
 
 A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, run BOTH of the following before considering the work finished.
 
-### 1. `/code-review ultra --fix`
+### 1. `/code-review max --fix`
 
-At the end of a dev cycle (changes just pushed), run `/code-review ultra --fix` — a deep, multi-agent review that runs in the cloud and applies its findings to the working tree.
+At the end of a dev cycle (changes just pushed), run `/code-review max --fix` — a deep, multi-agent review that applies its findings to the working tree.
 
-- **It is user-triggered and billed — you (Claude) cannot launch it** (not via Bash, the `Skill` tool, or otherwise). When a cycle wraps, prompt the user to run it; don't attempt to invoke it yourself.
-- `ultra` reviews the current branch; `/code-review ultra <PR#>` reviews a specific GitHub PR. `--fix` applies the review's findings to the working tree after it completes (use `--comment` instead to post them as inline PR comments).
+- **Run it yourself via the `Skill` tool** when a cycle wraps; you don't need to wait for the user to trigger it.
+- `max` reviews the current branch; `/code-review max <PR#>` reviews a specific GitHub PR. `--fix` applies the review's findings to the working tree after it completes (use `--comment` instead to post them as inline PR comments).
 - After it applies fixes: review the resulting diff, run `npm run check` (build the worker first — see the versioning note above), then commit and push. Treat anything it changed as a normal change that must pass verification.
-- The lighter effort levels (`/code-review` at low…max, optionally `--fix` / `--comment`) you *can* run yourself via the `Skill` tool for a quick local pass mid-development — only `ultra` is off-limits to you.
+- The lighter effort levels (`/code-review` at low…high, optionally `--fix` / `--comment`) run faster for a quick pass mid-development; `max` is the thorough end-of-cycle pass.
 
 ### 2. Sentry comments
 
@@ -265,13 +265,13 @@ Keep replies professional and free of any AI attribution (see global git rules).
 - Tailwind CSS v4 (styling)
 - visx from Airbnb (charts — D3 primitives as React components)
 - TanStack Table (headless table with virtual scrolling)
-- Framer Motion (subtle animations)
+- No animation library — Tailwind utilities for CSS motion, hand-rolled rAF where JS is needed. JS-driven motion must gate on `useReducedMotion` (`packages/ui/src/hooks/use-reduced-motion.ts`); CSS motion should use Tailwind's `motion-reduce:` variant.
 - Lucide React (icons)
 
 ## What NOT To Do
 
 - Do NOT skip `npm run check`. Every change must pass before moving on.
-- Do NOT consider a pushed change "done" until `/code-review ultra --fix` has been run on it and every `sentry[bot]` comment is addressed.
+- Do NOT consider a pushed change "done" until `/code-review max --fix` has been run on it and every `sentry[bot]` comment is addressed.
 - Do NOT add `any`, `@ts-ignore`, or `eslint-disable` to make code compile.
 - Do NOT write tests after implementation. Write them before or alongside.
 - Do NOT import from `core` into `ui` for anything except types.

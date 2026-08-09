@@ -28,6 +28,17 @@ export default defineConfig({
           environment: 'jsdom',
           setupFiles: ['packages/ui/src/__tests__/setup.ts'],
           passWithNoTests: true,
+          // Must exceed setup.ts's asyncUtilTimeout (5s). Left at vitest's
+          // default the two are equal, so a stuck waitFor is killed by the
+          // test timeout at the same moment it would have reported its
+          // assertion diff, and CI shows only an opaque "Test timed out in
+          // 5000ms" instead of what was being waited on. The headroom also
+          // covers multi-step RTL tests (several sequential waits, 250ms
+          // debounces) on loaded runners — though a test that has already
+          // spent most of its budget on earlier waits can still be killed
+          // before its final wait reports, so this narrows the opaque-failure
+          // window rather than closing it.
+          testTimeout: 15_000,
         },
       },
     ],
