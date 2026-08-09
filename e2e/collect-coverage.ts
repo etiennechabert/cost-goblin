@@ -181,6 +181,16 @@ async function main(): Promise<void> {
     lcovParts.push(lines.join('\n'));
   }
 
+  // A report with no records would still be a non-empty file (the trailing
+  // newline below), which is exactly what CI's `[ -s "$f" ]` merge guard
+  // accepts — a silent total outage reported as green. Fail instead.
+  if (merged.size === 0) {
+    process.stderr.write(
+      '::error::E2E coverage produced no source records — the coverage pipeline is broken.\n',
+    );
+    process.exit(1);
+  }
+
   // Trailing newline is load-bearing: CI concatenates the per-shard files,
   // and without it the boundary fuses `end_of_record` with the next shard's
   // first line into a corrupt record.
@@ -189,6 +199,43 @@ async function main(): Promise<void> {
   writeFileSync(outputPath, lcov);
   process.stdout.write(`E2E coverage written to ${outputPath}\n`);
   process.stdout.write(`  ${String(merged.size)} source files covered\n`);
+
+  // Fail closed on a fabricated report.
+  //
+  // v8-to-istanbul is subtractive: every line starts at count 1 ("covered")
+  // and is only zeroed by a count-0 range (v8-to-istanbul/lib/line.js). So a
+  // file V8 reported NO functions for is emitted as 100% covered rather than
+  // uncovered. When a shard loses the coverage-attach race badly, most of the
+  // bundle lands in that state and the shard reports ~90% — and because Sonar
+  // unions the shard reports, one such shard lifted the whole project number.
+  // That is the saw-tooth: main alternated between ~66% and ~82%.
+  //
+  // Measured over all 12 shard artifacts of the two runs that bracketed the
+  // last swing (CI runs 31297825638 and 31298668331):
+  //   10 honest shards : 10-11 zero-function files,  10.7-13.8% of hits
+  //   2 inflated shards: 69-70 zero-function files,  49.8-52.4% of hits
+  // Both conditions must blow out together to fail, and each threshold sits
+  // ~2.5x above anything a healthy shard has produced. The small honest
+  // baseline is real: type-only and constant modules (packages/core/src/types/*,
+  // ui/components/ui/button.tsx) genuinely contain no functions.
+  const fabricated = [...merged.values()].filter(
+    cov => cov.functions.size === 0 && cov.lines.size > 20,
+  );
+  const hits = (cov: FileCoverage): number =>
+    [...cov.lines.values()].filter(count => count > 0).length;
+  const fabricatedHits = fabricated.reduce((sum, cov) => sum + hits(cov), 0);
+  const totalHits = [...merged.values()].reduce((sum, cov) => sum + hits(cov), 0);
+  const fabricatedShare = totalHits === 0 ? 0 : fabricatedHits / totalHits;
+
+  if (fabricated.length > 25 && fabricatedShare > 0.3) {
+    process.stderr.write(
+      `::error::${String(fabricated.length)} files reported no functions at all and were credited ` +
+        `${(fabricatedShare * 100).toFixed(1)}% of this shard's covered lines — the report is fabricated, ` +
+        'not measured. The suite almost certainly attached coverage too late: call startCoverage(page) ' +
+        'immediately after app.firstWindow(), before any other await.\n',
+    );
+    process.exit(1);
+  }
 }
 
 void main();
