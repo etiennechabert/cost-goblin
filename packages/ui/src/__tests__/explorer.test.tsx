@@ -1,6 +1,6 @@
 import { render, screen, waitFor, cleanup, fireEvent, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { afterEach, describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import type {
   CostGoblinConfig,
   ExplorerFilterValue,
@@ -153,7 +153,21 @@ function dragHistogram(fromX: number, toX: number): void {
   fireEvent.mouseUp(window);
 }
 
-afterEach(cleanup);
+// Pin the clock so the wall-clock-derived default range (daysAgo(...)) is
+// identical when the view captures it at mount and when the assertions
+// recompute it. Otherwise a UTC-midnight rollover mid-test shifts the range
+// payloads by a day and drops the "Last 30 days" trigger label. Fake only
+// Date so real setTimeout/interval still drive the 250ms debounce, waitFor,
+// and userEvent.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-03-15T12:00:00Z'));
+});
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe('ExplorerView', () => {
   describe('initial load', () => {
