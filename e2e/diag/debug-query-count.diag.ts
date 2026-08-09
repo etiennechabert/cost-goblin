@@ -1,8 +1,15 @@
+/**
+ * DIAGNOSTIC, not a test suite — boots against the developer's real local
+ * data dirs and compares the query log of the first vs second Cost Overview
+ * load to check the materialized base kicks in. Excluded from
+ * `npx playwright test` (playwright.config.ts testMatch); run explicitly with:
+ *   npx playwright test --config playwright.diag.config.ts e2e/diag/debug-query-count.diag.ts
+ */
 import { test, expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-const ROOT = join(import.meta.dirname, '..');
+const ROOT = join(import.meta.dirname, '..', '..');
 const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
 
 function launchApp(): Promise<ElectronApplication> {

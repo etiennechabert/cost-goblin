@@ -73,6 +73,24 @@ describe('normalize SQL ↔ JS parity', () => {
     expect(await evalScalar(conn, sqlExpr)).toBeNull();
   });
 
+  // Alias keys and values come from a git-shareable YAML config, so a value
+  // containing a single quote must arrive escaped inside the CASE literals —
+  // otherwise it breaks out of the string position. Locked by real execution:
+  // an unescaped quote would make DuckDB fail to parse the expression.
+  it('escapes single quotes in alias values and canonical names', async () => {
+    const aliasWithQuote = buildAliasSqlCase(`'o''brien-team'`, {
+      aliases: { platform: ["o'brien-team"] },
+    });
+    expect(aliasWithQuote).toContain("'o''brien-team'");
+    expect(await evalScalar(conn, aliasWithQuote)).toBe('platform');
+
+    const canonicalWithQuote = buildAliasSqlCase(`'ob'`, {
+      aliases: { "o'brien": ['ob'] },
+    });
+    expect(canonicalWithQuote).toContain("'o''brien'");
+    expect(await evalScalar(conn, canonicalWithQuote)).toBe("o'brien");
+  });
+
   // Regression: an empty alias list used to emit `WHEN field IN () THEN ...`,
   // a DuckDB parse error that broke every query on the dimension.
   it('empty alias lists still produce parseable SQL', async () => {

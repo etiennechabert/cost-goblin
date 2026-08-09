@@ -1,13 +1,22 @@
+/**
+ * DIAGNOSTIC, not a test suite — walks every view against the developer's
+ * real local data dirs, captures the DuckDB query log + EXPLAIN plans, and
+ * writes a report to $TMPDIR (its only assertion is a placeholder). Some
+ * selectors predate the current nav model and may need updating before a run.
+ * Excluded from `npx playwright test` (playwright.config.ts testMatch);
+ * run explicitly with:
+ *   npx playwright test --config playwright.diag.config.ts e2e/diag/perf-queries.diag.ts
+ */
 import { test, expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { clickNavButton, ensureViewMode } from './helpers.js';
+import { clickNavButton, ensureViewMode } from '../helpers.js';
 
 // Page names that now live behind the Settings gear rather than the top nav.
 const SETTINGS_NAMES = new Set(['Cost Scope', 'Dimensions', 'Views', 'Sync', 'AI Assistant']);
 
-const ROOT = join(import.meta.dirname, '..');
+const ROOT = join(import.meta.dirname, '..', '..');
 const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
 const REPORT_DIR = join(tmpdir(), 'costgoblin-perf');
 mkdirSync(REPORT_DIR, { recursive: true });

@@ -9,7 +9,7 @@ import { DEFAULT_COST_METRIC } from '../types/cost-scope.js';
 import { buildAliasSqlCase, normalizeTagValue, resolveAlias } from '../normalize/normalize.js';
 import { costExprFor, isUsageOnlyMetric, USAGE_ONLY_METRIC_CHARGE_CATEGORIES } from './cost-metric.js';
 import { QueryBuilder, type ParameterizedQuery } from './parameterized.js';
-import { assertDateString, assertHourString, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
+import { assertBillingPeriod, assertDateString, assertHourString, assertTier, isSafeColumnIdentifier, SecurityError } from './identifier-validator.js';
 import { rollupGrainColumns, rollupGrainDimensions } from '../rollup/grain.js';
 
 /** Label for rows whose SubAccountId is NULL. FOCUS allows a null SubAccountId
@@ -437,6 +437,12 @@ function buildRawTagSelects(dimensions: DimensionsConfig): string[] {
 }
 
 function buildParquetSource(dataDir: string, provider: ProviderName, tier: string, periods: readonly string[] | undefined): string {
+  // The path components land inside a single-quoted SQL glob literal, so each
+  // untrusted-shaped one is validated at this interpolation site: tier and
+  // every period must match their allow-list/pattern (provider names are
+  // parse-validated at config load — see parseProviderName — and dataDir is
+  // an app-controlled path, per the trust notes in security.test.ts).
+  assertTier(tier);
   // union_by_name unifies columns by name across files, filling absent columns
   // with NULL. FOCUS pins the core column set, but AWS adds x_ extension
   // columns over time, so a multi-month read can still span two export
@@ -444,7 +450,10 @@ function buildParquetSource(dataDir: string, provider: ProviderName, tier: strin
   // read spanning a month that omits a referenced column.
   const rawRoot = `${dataDir}/${String(provider)}/raw`;
   if (periods !== undefined && periods.length > 0) {
-    const paths = periods.map(p => `'${rawRoot}/${tier}-${p}/*.parquet'`).join(', ');
+    const paths = periods.map(p => {
+      assertBillingPeriod(p);
+      return `'${rawRoot}/${tier}-${p}/*.parquet'`;
+    }).join(', ');
     return `read_parquet([${paths}], union_by_name=true)`;
   }
   return `read_parquet('${rawRoot}/${tier}-*/*.parquet', union_by_name=true)`;
@@ -1260,9 +1269,10 @@ export function buildRollupPartitionQuery(
   outPath: string,
   opts: QueryContextOptions,
 ): string {
-  if (!/^\d{4}-\d{2}$/.test(period)) {
-    throw new SecurityError(`Invalid rollup period "${period}" — expected YYYY-MM.`);
-  }
+  // Same canonical period check the read_parquet glob applies downstream
+  // (buildParquetSource → assertBillingPeriod); kept here to fail fast before
+  // the surrounding date-bound math runs.
+  assertBillingPeriod(period);
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
   const grain = rollupGrainColumns(dimensions);
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
@@ -1335,9 +1345,9 @@ export function buildGrainProbeQuery(
   grainColumns: readonly string[],
   opts: QueryContextOptions,
 ): string {
-  if (!/^\d{4}-\d{2}$/.test(period)) {
-    throw new SecurityError(`Invalid probe period "${period}" — expected YYYY-MM.`);
-  }
+  // Canonical period check (matches buildParquetSource → assertBillingPeriod),
+  // run up front so a bad period fails before the probe SQL is assembled.
+  assertBillingPeriod(period);
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 
