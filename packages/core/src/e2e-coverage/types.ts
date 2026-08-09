@@ -7,8 +7,14 @@
 export interface FileCoverage {
   /** Line number → highest execution count any shard reported for that line. */
   readonly lines: Map<number, number>;
-  /** `name:line` → the function's declaration line and highest count seen. */
-  readonly functions: Map<string, { line: number; count: number }>;
+  /**
+   * `name:line` → the function's name, declaration line and highest count seen.
+   * The name is carried in the value rather than recovered from the key: a V8
+   * function name can itself contain a colon (an object literal with a quoted
+   * key like `'view:reset'` names its function exactly that), which no amount
+   * of splitting the key can undo.
+   */
+  readonly functions: Map<string, { name: string; line: number; count: number }>;
   /** One entry per branch location; deduplicated when lcov is generated. */
   readonly branches: { line: number; blockId: number; branchId: number; count: number }[];
 }
@@ -35,9 +41,21 @@ export interface IstanbulFunction {
   readonly count: number;
 }
 
-/** One branch of a file, with its per-location counts zipped in. */
+/**
+ * One branch of a file, with its per-location counts zipped in.
+ *
+ * `blockId` and `branchId` are the raw positions the entry held in istanbul's
+ * `branchMap` and `locations` — carried explicitly, not re-derived from array
+ * position, so that skipping a malformed entry cannot renumber the ones after
+ * it. They are what the lcov `BRDA` record and its dedup key are built from.
+ */
 export interface IstanbulBranch {
-  readonly locations: readonly { readonly line: number; readonly count: number }[];
+  readonly blockId: number;
+  readonly locations: readonly {
+    readonly branchId: number;
+    readonly line: number;
+    readonly count: number;
+  }[];
 }
 
 /**

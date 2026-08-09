@@ -1,24 +1,20 @@
 import type { CoverageReport, FileCoverage } from './types.js';
 
-/** The function key is `name:line`; the name is everything before the colon. */
-function functionName(key: string): string {
-  return key.split(':')[0] ?? key;
-}
-
 function fileRecord(filePath: string, coverage: FileCoverage): string {
   const lines: string[] = [];
   lines.push('TN:');
   lines.push(`SF:${filePath}`);
 
-  for (const [key, fn] of coverage.functions) {
-    lines.push(`FN:${String(fn.line)},${functionName(key)}`);
+  let functionsHit = 0;
+  const functionData: string[] = [];
+  for (const fn of coverage.functions.values()) {
+    lines.push(`FN:${String(fn.line)},${fn.name}`);
+    functionData.push(`FNDA:${String(fn.count)},${fn.name}`);
+    if (fn.count > 0) functionsHit++;
   }
   lines.push(`FNF:${String(coverage.functions.size)}`);
-  const functionsHit = [...coverage.functions.values()].filter(fn => fn.count > 0).length;
   lines.push(`FNH:${String(functionsHit)}`);
-  for (const [key, fn] of coverage.functions) {
-    lines.push(`FNDA:${String(fn.count)},${functionName(key)}`);
-  }
+  lines.push(...functionData);
 
   let linesHit = 0;
   for (const [line, count] of [...coverage.lines.entries()].sort((a, b) => a[0] - b[0])) {
@@ -29,19 +25,20 @@ function fileRecord(filePath: string, coverage: FileCoverage): string {
   lines.push(`LH:${String(linesHit)}`);
 
   // Deduplicate by taking the max count per line+block+branch: a branch shows
-  // up once per shard that loaded the file.
-  const branches = new Map<string, number>();
+  // up once per V8 entry that loaded the file.
+  const branches = new Map<string, { line: number; blockId: number; branchId: number; count: number }>();
   for (const branch of coverage.branches) {
     const key = `${String(branch.line)}:${String(branch.blockId)}:${String(branch.branchId)}`;
-    branches.set(key, Math.max(branches.get(key) ?? 0, branch.count));
+    const previous = branches.get(key);
+    if (previous === undefined || branch.count > previous.count) branches.set(key, branch);
   }
   let branchesHit = 0;
-  for (const [key, count] of branches) {
-    const [line, block, branch] = key.split(':');
+  for (const branch of branches.values()) {
+    const count = branch.count > 0 ? String(branch.count) : '-';
     lines.push(
-      `BRDA:${line ?? '0'},${block ?? '0'},${branch ?? '0'},${count > 0 ? String(count) : '-'}`,
+      `BRDA:${String(branch.line)},${String(branch.blockId)},${String(branch.branchId)},${count}`,
     );
-    if (count > 0) branchesHit++;
+    if (branch.count > 0) branchesHit++;
   }
   lines.push(`BRF:${String(branches.size)}`);
   lines.push(`BRH:${String(branchesHit)}`);

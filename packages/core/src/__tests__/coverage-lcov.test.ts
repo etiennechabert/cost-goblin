@@ -9,6 +9,7 @@ import {
 } from '../e2e-coverage/collect.js';
 import { generateLcov } from '../e2e-coverage/lcov.js';
 import { auditCoverageReport } from '../e2e-coverage/audit.js';
+import * as barrel from '../e2e-coverage/index.js';
 import type { IstanbulFileCoverage } from '../e2e-coverage/types.js';
 
 /** An istanbul location node, in the shape v8-to-istanbul emits. */
@@ -58,6 +59,29 @@ function parsed(value: unknown): IstanbulFileCoverage {
   if (result === null) throw new Error('expected the istanbul entry to parse');
   return result;
 }
+
+describe('the e2e-coverage barrel', () => {
+  // `e2e/collect-coverage.ts` is the only consumer, and it is outside tsc,
+  // eslint and vitest — so a re-export dropped here surfaces as a CI-runtime
+  // SyntaxError across every e2e shard rather than as a failing test. Pin the
+  // exact names it destructures.
+  it('exports everything the collector imports', () => {
+    for (const name of [
+      'auditCoverageReport',
+      'createCoverageReport',
+      'describeCoverageFailure',
+      'generateLcov',
+      'isCoverageShardFile',
+      'isProjectSourcePath',
+      'isRendererBundleUrl',
+      'mergeIstanbulFile',
+      'parseIstanbulFileCoverage',
+    ]) {
+      expect(barrel).toHaveProperty(name);
+      expect(typeof Reflect.get(barrel, name)).toBe('function');
+    }
+  });
+});
 
 describe('isCoverageShardFile', () => {
   it('accepts the per-suite shards and the legacy single-suite name', () => {
@@ -119,7 +143,9 @@ describe('parseIstanbulFileCoverage', () => {
       { line: 2, count: 0 },
     ]);
     expect(entry.functions).toEqual([{ name: 'render', line: 1, count: 3 }]);
-    expect(entry.branches).toEqual([{ locations: [{ line: 2, count: 1 }] }]);
+    expect(entry.branches).toEqual([
+      { blockId: 0, locations: [{ branchId: 0, line: 2, count: 1 }] },
+    ]);
   });
 
   it('names unnamed functions after their fnMap id', () => {
@@ -134,28 +160,52 @@ describe('parseIstanbulFileCoverage', () => {
     expect(entry.functions).toEqual([{ name: 'anon_0', line: 7, count: 0 }]);
   });
 
-  it('treats a missing count as never executed', () => {
+  it('treats a count missing from an existing map as never executed', () => {
     const entry = parsed({
       statementMap: { '0': loc(1), '1': loc(2) },
+      s: { '0': 4 }, // no entry for statement 1
       fnMap: { '0': { name: 'run', loc: loc(1) } },
+      f: {},
       branchMap: { '0': { locations: [loc(2), loc(3)] } },
-      // No s / f / b at all, and only a partial count list for the branch.
-      b: { '0': [4] },
+      b: { '0': [4] }, // only one count for two locations
     });
 
     expect(entry.statements).toEqual([
-      { line: 1, count: 0 },
+      { line: 1, count: 4 },
       { line: 2, count: 0 },
     ]);
     expect(entry.functions).toEqual([{ name: 'run', line: 1, count: 0 }]);
     expect(entry.branches).toEqual([
       {
+        blockId: 0,
         locations: [
-          { line: 2, count: 4 },
-          { line: 3, count: 0 },
+          { branchId: 0, line: 2, count: 4 },
+          { branchId: 1, line: 3, count: 0 },
         ],
       },
     ]);
+  });
+
+  it('rejects an entry missing a whole count map rather than reading it as uncovered', () => {
+    // Defaulting `s` to {} would mark every line count 0 — a report that looks
+    // full but measures nothing, which the audit grades `ok`. The collector
+    // must hear about this, so the parser refuses it.
+    const complete = {
+      statementMap: { '0': loc(1) },
+      s: { '0': 1 },
+      fnMap: {},
+      f: {},
+      branchMap: {},
+      b: {},
+    };
+    expect(parseIstanbulFileCoverage(complete)).not.toBeNull();
+
+    for (const missing of ['statementMap', 's', 'fnMap', 'f', 'branchMap', 'b']) {
+      const withoutKey = Object.fromEntries(
+        Object.entries(complete).filter(([key]) => key !== missing),
+      );
+      expect(parseIstanbulFileCoverage(withoutKey)).toBeNull();
+    }
   });
 
   it('returns null for anything that is not a file entry', () => {
@@ -164,7 +214,36 @@ describe('parseIstanbulFileCoverage', () => {
     expect(parseIstanbulFileCoverage([])).toBeNull();
     expect(parseIstanbulFileCoverage({})).toBeNull();
     // branchMap is an array rather than a record — not the shape we expect.
-    expect(parseIstanbulFileCoverage({ statementMap: {}, fnMap: {}, branchMap: [] })).toBeNull();
+    expect(
+      parseIstanbulFileCoverage({
+        statementMap: {},
+        s: {},
+        fnMap: {},
+        f: {},
+        branchMap: [],
+        b: {},
+      }),
+    ).toBeNull();
+  });
+
+  it('keeps the raw ids when it skips a malformed branch entry', () => {
+    // Renumbering off the survivors would shift branch 1 down to blockId 0 and
+    // collide it with a well-formed shard's real branch 0 on that line.
+    const entry = parsed({
+      statementMap: {},
+      s: {},
+      fnMap: {},
+      f: {},
+      branchMap: {
+        '0': { locations: 'not-an-array' },
+        '1': { locations: [loc(9)] },
+      },
+      b: { '0': [1], '1': [2] },
+    });
+
+    expect(entry.branches).toEqual([
+      { blockId: 1, locations: [{ branchId: 0, line: 9, count: 2 }] },
+    ]);
   });
 });
 
@@ -205,7 +284,7 @@ describe('mergeIstanbulFile', () => {
     const merged = report.get(path);
     expect(merged?.lines.get(1)).toBe(1);
     expect(merged?.lines.get(2)).toBe(5);
-    expect(merged?.functions.get('render:1')).toEqual({ line: 1, count: 2 });
+    expect(merged?.functions.get('render:1')).toEqual({ name: 'render', line: 1, count: 2 });
   });
 
   it('keeps files separate and restarts block ids per file', () => {
@@ -277,6 +356,35 @@ describe('generateLcov', () => {
         'end_of_record',
       ].join('\n') + '\n',
     );
+  });
+
+  it('keeps a function name that contains a colon intact', () => {
+    // V8 names the function in `{ 'view:reset': () => … }` exactly that, and
+    // the merge key is `name:line` — so the name cannot be recovered by
+    // splitting the key, and two such names on one line would collide.
+    const report = createCoverageReport();
+    mergeIstanbulFile(
+      report,
+      'packages/ui/src/handlers.ts',
+      parsed(
+        istanbulEntry({
+          statements: [],
+          functions: [
+            { name: 'view:reset', line: 42, count: 2 },
+            { name: 'view:clear', line: 42, count: 0 },
+          ],
+          branches: [],
+        }),
+      ),
+    );
+
+    const lcov = generateLcov(report);
+    expect(lcov).toContain('FN:42,view:reset');
+    expect(lcov).toContain('FN:42,view:clear');
+    expect(lcov).toContain('FNDA:2,view:reset');
+    expect(lcov).toContain('FNDA:0,view:clear');
+    expect(lcov).toContain('FNF:2');
+    expect(lcov).toContain('FNH:1');
   });
 
   it('emits lines in ascending order regardless of merge order', () => {

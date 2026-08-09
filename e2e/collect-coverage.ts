@@ -97,26 +97,40 @@ async function main(): Promise<void> {
     for (const [filePath, data] of Object.entries(converter.toIstanbul())) {
       if (!isProjectSourcePath(relative(ROOT, filePath))) continue;
       const fileData = parseIstanbulFileCoverage(data);
-      if (fileData === null) continue;
+      // Not skippable: an entry we cannot read is a file dropped from the
+      // report, and dropping predominantly-uncovered files RAISES the number.
+      // The audit cannot see that — the report is neither empty nor fabricated
+      // — so this has to fail here. The pre-extraction collector crashed on
+      // the same input; this is the same outcome with a usable message.
+      if (fileData === null) {
+        fail(
+          `${filePath} came back from v8-to-istanbul in an unrecognised shape — ` +
+            'the collector cannot tell covered from uncovered lines and refuses to guess. ' +
+            'Check whether v8-to-istanbul changed its toIstanbul() output.',
+        );
+      }
       mergeIstanbulFile(merged, filePath, fileData);
     }
   }
 
   const verdict = auditCoverageReport(merged);
-
-  // Rejected before writing: an empty report still renders as a one-byte file
-  // (lcov's trailing newline), which is exactly what CI's `[ -s "$f" ]` merge
-  // guard accepts — a silent total outage reported as green.
-  if (verdict.status === 'empty') fail(describeCoverageFailure(verdict));
-
   const outputPath = join(OUTPUT_DIR, 'lcov.info');
+
+  // Both rejections happen BEFORE the report is written, and that ordering is
+  // load-bearing. CI uploads `coverage-e2e/lcov.info` with `if: always()`, the
+  // sonarcloud job's condition gates on lint and test-unit but not test-e2e,
+  // and its merge loop accepts any shard file that is non-empty — so a report
+  // written here reaches SonarCloud whatever exit code follows it. A rejected
+  // report that still lands on disk is a rejected report that still moves the
+  // number. The diagnostic copy below is named so the artifact glob misses it.
+  if (verdict.status !== 'ok') {
+    writeFileSync(`${outputPath}.rejected`, generateLcov(merged));
+    fail(describeCoverageFailure(verdict));
+  }
+
   writeFileSync(outputPath, generateLcov(merged));
   process.stdout.write(`E2E coverage written to ${outputPath}\n`);
   process.stdout.write(`  ${String(merged.size)} source files covered\n`);
-
-  // Written before being rejected, so the shard is still available as a CI
-  // artifact to diagnose the fabrication against.
-  if (verdict.status === 'fabricated') fail(describeCoverageFailure(verdict));
 }
 
 void main();

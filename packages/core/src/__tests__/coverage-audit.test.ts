@@ -27,16 +27,21 @@ function fileCoverage(group: FileGroup): FileCoverage {
   const count = group.covered === false ? 0 : 1;
   for (let line = 1; line <= group.lines; line++) coverage.lines.set(line, count);
   for (let i = 0; i < group.functions; i++) {
-    coverage.functions.set(`fn${String(i)}:${String(i + 1)}`, { line: i + 1, count });
+    const name = `fn${String(i)}`;
+    coverage.functions.set(`${name}:${String(i + 1)}`, { name, line: i + 1, count });
   }
   return coverage;
 }
 
 function report(...groups: FileGroup[]): CoverageReport {
   const merged = createCoverageReport();
+  // Numbered across all groups, not per group: two groups sharing a prefix
+  // would otherwise overwrite each other's keys and silently shrink the
+  // report a threshold assertion is counting on.
+  let index = 0;
   for (const group of groups) {
     for (let i = 0; i < group.count; i++) {
-      merged.set(`${group.prefix}${String(i)}.ts`, fileCoverage(group));
+      merged.set(`${group.prefix}${String(index++)}.ts`, fileCoverage(group));
     }
   }
   return merged;
