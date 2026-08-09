@@ -62,7 +62,7 @@ Follow this sequence for EVERY feature:
 8. Run: npm run check → full verification (MUST pass before moving on)
 9. If working on UI: npm run dev in desktop/ to visually verify
 10. After pushing & opening the PR — close the review loop (see "After pushing"):
-    - Ask the user to run `/code-review ultra --fix` (user-triggered & billed — you can't launch it), then apply its fixes and re-run npm run check
+    - Run `/code-review max --fix` yourself (via the `Skill` tool), review the fixes it applies, and re-run npm run check
     - Address every sentry[bot] review comment on the PR
 ```
 
@@ -211,14 +211,14 @@ So the lifecycle is: tag `v0.2.6` released → first PR bumps both to `0.2.7` �
 
 A development cycle isn't done when the code is pushed. Once the changes are pushed and the PR is open, run BOTH of the following before considering the work finished.
 
-### 1. `/code-review ultra --fix`
+### 1. `/code-review max --fix`
 
-At the end of a dev cycle (changes just pushed), run `/code-review ultra --fix` — a deep, multi-agent review that runs in the cloud and applies its findings to the working tree.
+At the end of a dev cycle (changes just pushed), run `/code-review max --fix` — a deep, multi-agent review that applies its findings to the working tree.
 
-- **It is user-triggered and billed — you (Claude) cannot launch it** (not via Bash, the `Skill` tool, or otherwise). When a cycle wraps, prompt the user to run it; don't attempt to invoke it yourself.
-- `ultra` reviews the current branch; `/code-review ultra <PR#>` reviews a specific GitHub PR. `--fix` applies the review's findings to the working tree after it completes (use `--comment` instead to post them as inline PR comments).
+- **Run it yourself via the `Skill` tool** when a cycle wraps; you don't need to wait for the user to trigger it.
+- `max` reviews the current branch; `/code-review max <PR#>` reviews a specific GitHub PR. `--fix` applies the review's findings to the working tree after it completes (use `--comment` instead to post them as inline PR comments).
 - After it applies fixes: review the resulting diff, run `npm run check` (build the worker first — see the versioning note above), then commit and push. Treat anything it changed as a normal change that must pass verification.
-- The lighter effort levels (`/code-review` at low…max, optionally `--fix` / `--comment`) you *can* run yourself via the `Skill` tool for a quick local pass mid-development — only `ultra` is off-limits to you.
+- The lighter effort levels (`/code-review` at low…high, optionally `--fix` / `--comment`) run faster for a quick pass mid-development; `max` is the thorough end-of-cycle pass.
 
 ### 2. Sentry comments
 
@@ -267,7 +267,7 @@ Keep replies professional and free of any AI attribution (see global git rules).
 ## What NOT To Do
 
 - Do NOT skip `npm run check`. Every change must pass before moving on.
-- Do NOT consider a pushed change "done" until `/code-review ultra --fix` has been run on it and every `sentry[bot]` comment is addressed.
+- Do NOT consider a pushed change "done" until `/code-review max --fix` has been run on it and every `sentry[bot]` comment is addressed.
 - Do NOT add `any`, `@ts-ignore`, or `eslint-disable` to make code compile.
 - Do NOT write tests after implementation. Write them before or alongside.
 - Do NOT import from `core` into `ui` for anything except types.
