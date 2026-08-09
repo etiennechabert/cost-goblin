@@ -121,13 +121,15 @@ export function EntityDetail({ entity, dimension, onBack }: Readonly<EntityDetai
     });
   }, [api]);
 
-  // Save date range and granularity whenever they change. Skip saves until
-  // after preferences have loaded — the prefsLoadedRef flag is set in the
-  // mount effect once the initial load completes (or fails). This prevents
-  // redundant writes when restoring persisted values on mount. This view
-  // doesn't manage column visibility, so it omits hiddenColumns/columnOrder
-  // entirely — the save merges onto the on-disk prefs, leaving the user's
-  // curated column set (owned by the Explorer) untouched.
+  // Save date range and granularity whenever they change. The gate only
+  // suppresses the save on the very first render, before the mount effect
+  // below has loaded (or failed to load) prefs — it does NOT suppress the
+  // save caused by the restore itself, which sets the ref in the same batched
+  // callback as the state it restores, so opening the view writes back the
+  // values it just read. This view doesn't manage column visibility, so it
+  // omits hiddenColumns/columnOrder entirely — the save merges onto the
+  // on-disk prefs, leaving the user's curated column set (owned by the
+  // Explorer) untouched.
   useEffect(() => {
     if (!prefsLoadedRef.current) return;
     api.saveExplorerPreferences({

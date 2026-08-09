@@ -335,8 +335,8 @@ export interface CostApi {
   getExplorerFilterValues(params: ExplorerFilterValuesParams): Promise<ExplorerFilterValue[]>;
   getExplorerPreferences(): Promise<ExplorerPreferences>;
   /** Persist a partial preferences update. Omitted fields are preserved on
-   *  disk — in particular a view that doesn't manage columns omits
-   *  `hiddenColumns` / `columnOrder` so it can't clobber the user's set. */
+   *  disk — send only the fields being changed. See
+   *  `ExplorerPreferencesUpdate` for why that matters. */
   saveExplorerPreferences(prefs: ExplorerPreferencesUpdate): Promise<void>;
   getAutoSyncEnabled(): Promise<boolean>;
   setAutoSyncEnabled(enabled: boolean): Promise<void>;

@@ -169,19 +169,16 @@ export interface ExplorerPreferences {
  *  optional: the persistence layer merges an update onto whatever is already
  *  on disk, so an omitted field is preserved rather than cleared.
  *
- *  This matters because the Explorer, EntityDetail, and CustomView views all
- *  persist to the *same* file. Only the Explorer manages column visibility;
- *  the other two persist just a date range / granularity and therefore OMIT
- *  `hiddenColumns` / `columnOrder`. Merging preserves the user's curated
- *  column set, so a date-range save can never silently clobber it (e.g. by
- *  writing `[]`, which reads back as the explicit "Show all"). */
-export interface ExplorerPreferencesUpdate {
-  readonly hiddenColumns?: readonly string[];
-  readonly columnOrder?: readonly string[];
-  readonly lastUsedDateRange?: DateRange;
-  readonly lastUsedGranularity?: Granularity;
-  readonly compareEnabled?: boolean;
-}
+ *  This matters because several views persist to the *same* file. Only the
+ *  Explorer manages column visibility; the others persist just a date range /
+ *  granularity and therefore OMIT `hiddenColumns` / `columnOrder`. Merging
+ *  preserves the user's curated column set, so a date-range save can never
+ *  silently clobber it (e.g. by writing `[]`, which reads back as the
+ *  explicit "Show all"). See `writeExplorerPreferences` for the enforcement.
+ *
+ *  Derived from `ExplorerPreferences` rather than restated, so a field added
+ *  there can never be silently unsavable here. */
+export type ExplorerPreferencesUpdate = Partial<ExplorerPreferences>;
 
 export interface ExplorerFilterValuesParams {
   readonly dimensionId: string;

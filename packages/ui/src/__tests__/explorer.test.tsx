@@ -8,7 +8,6 @@ import type {
   ExplorerOverviewParams,
   ExplorerOverviewResult,
   ExplorerPreferences,
-  ExplorerPreferencesUpdate,
   ExplorerRowsParams,
   ExplorerRowsResult,
 } from '@costgoblin/core/browser';
@@ -76,7 +75,6 @@ class ExplorerMockApi extends MockCostApi {
   readonly overviewCalls: ExplorerOverviewParams[] = [];
   readonly rowsCalls: ExplorerRowsParams[] = [];
   readonly filterValueCalls: ExplorerFilterValuesParams[] = [];
-  readonly savedPreferences: ExplorerPreferencesUpdate[] = [];
 
   override queryExplorerOverview(params?: ExplorerOverviewParams): Promise<ExplorerOverviewResult> {
     if (params !== undefined) this.overviewCalls.push(params);
@@ -97,10 +95,6 @@ class ExplorerMockApi extends MockCostApi {
     return Promise.resolve({ hiddenColumns: SAVED_HIDDEN, columnOrder: [] });
   }
 
-  override saveExplorerPreferences(prefs?: ExplorerPreferencesUpdate): Promise<void> {
-    if (prefs !== undefined) this.savedPreferences.push(prefs);
-    return Promise.resolve();
-  }
 }
 
 /** An AWS provider with an hourly tier — flips useHourlyConfigured to true. */
@@ -283,18 +277,19 @@ describe('ExplorerView', () => {
       await waitFor(() => {
         expect(visibleHeaders()).toContain('Operation');
       });
-      expect(api.savedPreferences.at(-1)).toEqual({
+      // A column write carries ONLY the column field it changes. It must not
+      // echo the session fields (or the other column field) back: the desktop
+      // handler merges, and on a failed prefs load those would still hold this
+      // component's default seed and would overwrite the user's on-disk set.
+      expect(api.savedExplorerPreferences.at(-1)).toEqual({
         hiddenColumns: ['usage_hour', 'list_cost', 'service', 'usage_amount'],
-        columnOrder: [],
-        lastUsedDateRange: defaultRange(),
-        lastUsedGranularity: 'daily',
       });
 
       await user.click(screen.getByRole('checkbox', { name: /Region/ }));
       await waitFor(() => {
         expect(visibleHeaders()).not.toContain('Region');
       });
-      expect(api.savedPreferences.at(-1)?.hiddenColumns).toEqual(
+      expect(api.savedExplorerPreferences.at(-1)?.hiddenColumns).toEqual(
         ['usage_hour', 'list_cost', 'service', 'usage_amount', 'region'],
       );
     });
@@ -436,9 +431,9 @@ describe('ExplorerView', () => {
       expect(api.overviewCalls[1]?.dateRange).toEqual(expected);
       expect(api.rowsCalls[1]?.dateRange).toEqual(expected);
       await waitFor(() => {
-        expect(api.savedPreferences.at(-1)?.lastUsedDateRange).toEqual(expected);
+        expect(api.savedExplorerPreferences.at(-1)?.lastUsedDateRange).toEqual(expected);
       });
-      expect(api.savedPreferences.at(-1)?.lastUsedGranularity).toBe('daily');
+      expect(api.savedExplorerPreferences.at(-1)?.lastUsedGranularity).toBe('daily');
     });
   });
 
@@ -574,6 +569,31 @@ describe('ExplorerView', () => {
       expect(headers).toContain('Date');
       for (const label of DEFAULT_HIDDEN_LABELS) {
         expect(headers).not.toContain(label);
+      }
+    });
+
+    it('never writes column fields on a session save, so a failed load cannot clobber them', async () => {
+      // After a failed load this component's column state is the DEFAULT seed,
+      // NOT the user's persisted set. If a date-range save echoed that state
+      // back, it would overwrite the user's real on-disk columns with the
+      // defaults — the same clobber this contract exists to prevent, and one
+      // the merge can't catch because the fields would be genuinely present.
+      class FailingPrefsExplorerApi extends ExplorerMockApi {
+        override getExplorerPreferences(): Promise<ExplorerPreferences> {
+          return Promise.reject(new Error('prefs unavailable'));
+        }
+      }
+      const { api } = renderExplorer(new FailingPrefsExplorerApi());
+      await screen.findAllByRole('img');
+
+      dragHistogram(5, 250); // changes the range -> fires the session save
+
+      await waitFor(() => {
+        expect(api.savedExplorerPreferences.length).toBeGreaterThan(0);
+      });
+      for (const prefs of api.savedExplorerPreferences) {
+        expect('hiddenColumns' in prefs).toBe(false);
+        expect('columnOrder' in prefs).toBe(false);
       }
     });
   });

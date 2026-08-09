@@ -208,6 +208,27 @@ describe('writeExplorerPreferences', () => {
     expect(prefs.columnOrder).toEqual([]);
   });
 
+  it('serializes concurrent read-modify-write cycles instead of losing a slice', async () => {
+    await writeFile(prefsFile, JSON.stringify({ hiddenColumns: ['region'], columnOrder: [] }));
+    // Fired together, as the renderer does (saves are fire-and-forget). An
+    // unserialized merge would let both read the same base and the later
+    // write would drop the earlier one's field.
+    await Promise.all([
+      writeExplorerPreferences(prefsFile, { hiddenColumns: ['cost', 'service'] }),
+      writeExplorerPreferences(prefsFile, { lastUsedDateRange: dr('2026-06-01', '2026-06-30') }),
+    ]);
+    const prefs = await readExplorerPreferences(prefsFile, noLiveIds);
+    expect(prefs.hiddenColumns).toEqual(['cost', 'service']);
+    expect(prefs.lastUsedDateRange).toEqual({ start: '2026-06-01', end: '2026-06-30' });
+  });
+
+  // NOTE: writeExplorerPreferences also skips keys whose update value is
+  // `undefined` (a bare spread would set the key, JSON.stringify would drop
+  // it, and the on-disk value would be DELETED rather than preserved). That
+  // guard defends the untyped IPC boundary only — `exactOptionalPropertyTypes`
+  // makes the payload unrepresentable for any typed caller, so it cannot be
+  // exercised from here without an `as` cast, which the repo bans.
+
   it('preserves unknown sibling fields already in the file', async () => {
     await writeFile(prefsFile, JSON.stringify({
       hiddenColumns: ['region'],

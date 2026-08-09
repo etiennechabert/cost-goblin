@@ -1,19 +1,17 @@
 import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import type { ExplorerPreferences, ExplorerPreferencesUpdate } from '@costgoblin/core/browser';
+import type { ExplorerPreferences } from '@costgoblin/core/browser';
 import { asDateString } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { EntityDetail } from '../views/entity-detail.js';
 
-/** Records every preferences write. Its `getExplorerPreferences` returns a
- *  non-empty hidden set plus a restorable date range: the restore triggers a
- *  save, and the recorded payload lets us prove the view never echoes the
- *  column fields back. */
+/** Serves a non-empty hidden set plus a restorable date range: the restore
+ *  triggers a save, and MockCostApi's recorded payloads then let us prove the
+ *  view never echoes the column fields back. */
 class RecordingPrefsApi extends MockCostApi {
-  readonly saved: ExplorerPreferencesUpdate[] = [];
   override getExplorerPreferences(): Promise<ExplorerPreferences> {
     return Promise.resolve({
       hiddenColumns: ['region', 'description'],
@@ -21,10 +19,6 @@ class RecordingPrefsApi extends MockCostApi {
       lastUsedDateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
       lastUsedGranularity: 'daily',
     });
-  }
-  override saveExplorerPreferences(prefs?: ExplorerPreferencesUpdate): Promise<void> {
-    if (prefs !== undefined) this.saved.push(prefs);
-    return Promise.resolve();
   }
 }
 
@@ -108,16 +102,16 @@ describe('EntityDetail', () => {
 
     // Restoring the persisted range triggers exactly one save.
     await waitFor(() => {
-      expect(api.saved.length).toBeGreaterThan(0);
+      expect(api.savedExplorerPreferences.length).toBeGreaterThan(0);
     });
 
     // The view doesn't manage columns, so a save must omit hiddenColumns /
     // columnOrder entirely — otherwise it could clobber the Explorer's set.
-    for (const prefs of api.saved) {
+    for (const prefs of api.savedExplorerPreferences) {
       expect('hiddenColumns' in prefs).toBe(false);
       expect('columnOrder' in prefs).toBe(false);
     }
-    expect(api.saved.at(-1)?.lastUsedDateRange).toEqual({ start: '2026-01-01', end: '2026-01-31' });
-    expect(api.saved.at(-1)?.lastUsedGranularity).toBe('daily');
+    expect(api.savedExplorerPreferences.at(-1)?.lastUsedDateRange).toEqual({ start: '2026-01-01', end: '2026-01-31' });
+    expect(api.savedExplorerPreferences.at(-1)?.lastUsedGranularity).toBe('daily');
   });
 });

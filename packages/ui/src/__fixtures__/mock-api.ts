@@ -63,6 +63,7 @@ import {
   type CreateWorkspaceSource,
   type WorkspacesInfo,
   type ExplorerPreferences,
+  type ExplorerPreferencesUpdate,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, computeRollupEstimate } from '@costgoblin/core/browser';
 
@@ -562,12 +563,23 @@ export class MockCostApi implements CostApi {
       { value: 'AWS Lambda', label: 'AWS Lambda', cost: 4_100, rows: 1_200 },
     ]);
   }
+  /** Every preferences update this mock has been asked to persist, in order.
+   *  Lets a test assert the payload SHAPE — most importantly that a view
+   *  which doesn't own column visibility omits `hiddenColumns`/`columnOrder`
+   *  rather than echoing them back (the clobber this contract prevents). */
+  readonly savedExplorerPreferences: ExplorerPreferencesUpdate[] = [];
   // Mirrors the desktop handler's first-run contract: no prefs file on disk
   // means the default hidden set, not "show everything".
   getExplorerPreferences(): Promise<ExplorerPreferences> {
     return Promise.resolve({ hiddenColumns: [...DEFAULT_EXPLORER_HIDDEN_COLUMNS], columnOrder: [] });
   }
-  saveExplorerPreferences(): Promise<void> { return Promise.resolve(); }
+  // Declares the parameter (rather than taking none) so this mock actually
+  // type-checks against the CostApi signature — a no-arg method structurally
+  // satisfies any signature, which would silently hide a boundary change.
+  saveExplorerPreferences(prefs: ExplorerPreferencesUpdate): Promise<void> {
+    this.savedExplorerPreferences.push(prefs);
+    return Promise.resolve();
+  }
   getAliasSuggestions(tagName: string): Promise<AliasSuggestion[]> {
     const suggestions: Record<string, AliasSuggestion[]> = {
       'team': [
