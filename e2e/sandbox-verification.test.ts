@@ -1,5 +1,5 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
-import { launchApp } from './helpers.js';
+import { closeApp, launchApp } from './helpers.js';
 
 let app: ElectronApplication;
 let page: Page;
@@ -11,7 +11,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await app.close();
+  await closeApp(app);
 });
 
 test('renderer is sandboxed', async () => {

@@ -4,6 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os';
 import {
   DESKTOP_DIR,
+  closeApp,
   FIXTURE_CONFIG_DIR,
   FIXTURE_DATA_DIR,
   SETTINGS_NAV_LABEL,
@@ -87,7 +88,7 @@ test.describe('Workspaces (workspace mode)', () => {
     if (!coverageCollected) await stopAndCollectCoverage(page, allCoverage);
     // Write before close: a hung close() must not discard harvested coverage.
     writeCoverage('workspaces', allCoverage);
-    await app.close().catch(() => undefined);
+    await closeApp(app);
     rmSync(userDataDir, { recursive: true, force: true });
   });
 

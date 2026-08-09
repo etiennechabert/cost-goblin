@@ -1,0 +1,16 @@
+# App state files. In pinned mode the desktop app writes its state next to
+# the data dir (stateDir = dirname(dataDir)), so a launch pointed straight at
+# __fixtures__/synthetic drops state here — that's how explorer-preferences.json
+# once ended up committed. e2e/helpers.ts launchApp now copies the fixtures to
+# a temp dir per run; this guard covers manual launches.
+app-preferences.json
+ui-preferences.json
+explorer-preferences.json
+savings-preferences.json
+telemetry-outbox.jsonl
+baselines.json
+baselines-data.json
+org-accounts.json
+org-account-tags.json
+region-names.json
+dismissed-suggestions.json

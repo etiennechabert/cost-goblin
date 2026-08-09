@@ -1,11 +1,12 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import {
   FIXTURE_CONFIG_DIR,
   clickNavButton,
   launchApp,
+  closeApp,
   startCoverage,
   stopAndCollectCoverage,
   waitForQuerySettle,
@@ -16,10 +17,6 @@ import {
 // Widget growth regression — every widget × every size stays bounded
 // ---------------------------------------------------------------------------
 test.describe('Widget growth', () => {
-  const isCI = process.env['CI'] === 'true';
-  const SOURCE_CONFIG_DIR = isCI
-    ? FIXTURE_CONFIG_DIR
-    : join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config');
   const TEMP_CONFIG_DIR = join(tmpdir(), `costgoblin-widget-growth-${String(Date.now())}`);
   const VIEWS_YAML = buildWidgetMatrixYaml();
 
@@ -32,7 +29,7 @@ test.describe('Widget growth', () => {
   test.beforeAll(async () => {
     mkdirSync(TEMP_CONFIG_DIR, { recursive: true });
     for (const f of ['costgoblin.yaml', 'dimensions.yaml', 'org-tree.yaml']) {
-      const src = join(SOURCE_CONFIG_DIR, f);
+      const src = join(FIXTURE_CONFIG_DIR, f);
       if (existsSync(src)) writeFileSync(join(TEMP_CONFIG_DIR, f), readFileSync(src));
     }
     writeFileSync(join(TEMP_CONFIG_DIR, 'views.yaml'), VIEWS_YAML);
@@ -51,7 +48,7 @@ test.describe('Widget growth', () => {
     // Write before close: a hung or rejected close() must not discard the
     // coverage already harvested (writeCoverage is synchronous).
     writeCoverage('stress', allCoverage);
-    await widgetApp.close();
+    await closeApp(widgetApp);
   });
 
   for (const widgetType of WIDGET_TYPES) {

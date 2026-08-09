@@ -1,5 +1,5 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
-import { launchApp } from './helpers.js';
+import { closeApp, launchApp } from './helpers.js';
 
 // The production renderer loads over file:// (win.loadFile), where Playwright
 // never surfaces response headers — the previous header-string capture hung
@@ -28,7 +28,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await app.close();
+  await closeApp(app);
 });
 
 test('inline script injection is blocked by script-src', async () => {

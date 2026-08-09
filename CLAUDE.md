@@ -139,7 +139,7 @@ Slow (seconds). Run before commits, always in CI.
 ### Fixture Data
 - Real company data is in `data/raw/` — NEVER committed (gitignored + pre-commit guard)
 - `profile.json` extracted from real data — committed (statistical shape, no PII)
-- Synthetic Parquet files generated from profile — committed, deterministic (seeded random)
+- Synthetic Parquet files — generated on demand, deterministic (seeded random), NEVER committed. `setup.ts` is the complete generator (daily + hourly + GCP + cost-opt tiers, freshness-probed); Playwright's globalSetup and the DuckDB-layer vitest suites call it. `generate.ts --generate` is the older partial generator (no cost-opt) — don't rely on it to build a tree for e2e.
 - Service names are real (not sensitive). Account IDs, tag values, costs are synthetic.
 - A second fixture family lives in `packages/core/src/__fixtures__/focus-1-2/`: committed **CSV** samples of each provider's native FOCUS 1.2 export, regenerated with `write-samples.ts` (see Commands) and pinned byte-for-byte by a drift test.
 
@@ -251,8 +251,9 @@ Keep replies professional and free of any AI attribution (see global git rules).
 **ALL database queries MUST use parameterized queries** — never string interpolation. Config files can be shared via git and could contain malicious values.
 
 - **User-controlled values** (dates, filter values, thresholds, entity values) → use `QueryBuilder.addParam()` to produce `$1`, `$2`, ... placeholders
-- **Identifiers** (dimension IDs, column names) → validated by `resolveField` / `validateColumnName` against the dimensions config allow-list; unknown identifiers throw `SecurityError`
-- **Config string literals** interpolated into SQL (e.g. `missingValueTemplate`, `accountTagFallback`) → escaped with `sqlEscapeString`
+- **Identifiers** (dimension IDs, column names) → resolved by `resolveField` against the dimensions config allow-list; unknown identifiers throw `SecurityError`. Raw column identifiers interpolated as bare SQL (config `field`s, rollup grain columns) are shape-checked by `isSafeColumnIdentifier` at config load and at each interpolation site (not inside `resolveField`)
+- **Parquet path components** → validated where the `read_parquet` glob is built (`buildParquetSource`): `assertTier` / `assertBillingPeriod` reject unknown tiers and non-`YYYY-MM` periods; provider names are parse-validated at config load (`parseProviderName`)
+- **Config string literals** interpolated into SQL (e.g. `missingValueTemplate`, `accountTagFallback`) → escaped with `sqlEscapeString`; alias/canonical values via the equivalent single-quote doubling in `buildAliasCases` (locked by DuckDB-executed tests in `sql-escaping.integration.test.ts` / `normalize-sql.test.ts`)
 
 ## Frontend Stack
 
