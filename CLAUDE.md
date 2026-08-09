@@ -251,8 +251,9 @@ Keep replies professional and free of any AI attribution (see global git rules).
 **ALL database queries MUST use parameterized queries** — never string interpolation. Config files can be shared via git and could contain malicious values.
 
 - **User-controlled values** (dates, filter values, thresholds, entity values) → use `QueryBuilder.addParam()` to produce `$1`, `$2`, ... placeholders
-- **Identifiers** (dimension IDs, column names) → validated by `resolveField` / `validateColumnName` against the dimensions config allow-list; unknown identifiers throw `SecurityError`
-- **Config string literals** interpolated into SQL (e.g. `missingValueTemplate`, `accountTagFallback`) → escaped with `sqlEscapeString`
+- **Identifiers** (dimension IDs, column names) → resolved by `resolveField` against the dimensions config allow-list; unknown identifiers throw `SecurityError`. Raw column identifiers interpolated as bare SQL (config `field`s, rollup grain columns) are shape-checked by `isSafeColumnIdentifier` at config load and at each interpolation site (not inside `resolveField`)
+- **Parquet path components** → validated where the `read_parquet` glob is built (`buildParquetSource`): `assertTier` / `assertBillingPeriod` reject unknown tiers and non-`YYYY-MM` periods; provider names are parse-validated at config load (`parseProviderName`)
+- **Config string literals** interpolated into SQL (e.g. `missingValueTemplate`, `accountTagFallback`) → escaped with `sqlEscapeString`; alias/canonical values via the equivalent single-quote doubling in `buildAliasCases` (locked by DuckDB-executed tests in `sql-escaping.integration.test.ts` / `normalize-sql.test.ts`)
 
 ## Frontend Stack
 
