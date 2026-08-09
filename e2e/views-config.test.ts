@@ -6,7 +6,6 @@ import {
   assertNoReactCrash,
   waitForQuerySettle,
   waitForCostScopePreview,
-  hasVisibleData,
   navigateTo,
   clickNavButton,
   LOAD_TIMEOUT,

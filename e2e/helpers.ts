@@ -20,14 +20,21 @@ export const FIXTURE_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtu
 export const FIXTURE_MULTI_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'config-multi');
 
 /** Launch the Electron window hidden (`show: false`, see main.ts) unless the
- *  caller opts out. A visible window steals focus from whatever the developer
- *  is doing and can be clicked or closed by accident mid-run, which corrupts
- *  the very interactions the suite is asserting on. Nothing needs the window
- *  on screen: Playwright drives the renderer over CDP, `toBeVisible()` is
- *  DOM-based, and `page.screenshot()` captures a hidden window just fine.
+ *  caller opts out with `COSTGOBLIN_HEADLESS=0`. A visible window steals focus
+ *  from whatever the developer is doing and can be clicked or closed by
+ *  accident mid-run, which corrupts the very interactions the suite is
+ *  asserting on. Nothing needs it on screen: Playwright drives the renderer
+ *  over CDP, `toBeVisible()` is DOM-based, and `page.screenshot()` captures a
+ *  hidden window just fine.
  *
- *  To watch a run: `COSTGOBLIN_HEADLESS=0 npx playwright test e2e/<suite>.test.ts`. */
-export const HEADLESS = process.env['COSTGOBLIN_HEADLESS'] ?? '1';
+ *  Normalized rather than forwarded raw, because main.ts tests `=== '1'` and
+ *  so treats every other value as "show". Passing the env through verbatim
+ *  would make an empty string — what a YAML `env:` entry fed by an unset input
+ *  produces — and the natural guesses `true`/`yes` all silently show the
+ *  window, the opposite of what they read like. Only an explicit '0' opts out.
+ *
+ *  See CLAUDE.md's Layer 4 section for the developer-facing version. */
+export const HEADLESS = process.env['COSTGOBLIN_HEADLESS'] === '0' ? '0' : '1';
 
 /** "Today" for every app launched by `launchApp`: the day after the fixture
  *  window (generate.ts pins 2026-01-01..2026-03-01), so relative presets like
@@ -77,7 +84,10 @@ export async function launchApp(overrides?: { configDir?: string; dataDir?: stri
  *  app.close() instead, so the guard covers the DuckDB-heavy shards too, and
  *  so the per-launch fixture copy is removed rather than leaked into $TMPDIR.
  *  Covered suites get this for free via {@link finishCoverage}. */
-export async function closeApp(app: ElectronApplication): Promise<void> {
+export async function closeApp(app: ElectronApplication | undefined): Promise<void> {
+  // Tolerate undefined: a suite whose beforeAll threw before assigning still
+  // runs afterAll, and a TypeError from teardown would replace the real error.
+  if (app === undefined) return;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const closed = await Promise.race([
     app.close().then(() => true, () => true),
@@ -133,10 +143,27 @@ const COVERAGE = new WeakMap<Page, CoverageSession>();
  * this only when the suite must build its own `_electron.launch` (see
  * workspaces.test.ts, which deliberately launches without the pinned-mode env
  * vars). Do not add a bare `startJSCoverage` call site — the ordering lived as
- * a hand-copied comment in six suites and three of them drifted, which is the
- * bug these helpers exist to make unstateable.
+ * a hand-copied comment in six suites and three of them drifted.
+ *
+ * Be honest about how much this enforces. Taking a `Page` means
+ * `firstWindow()` → something slow → `attachCoverage(page)` still type-checks
+ * and still inflates the shard; the helpers make the right order the easy one,
+ * they do not make the wrong one unwriteable. Nor does any signature close the
+ * residual race — `startJSCoverage` is itself an async CDP round-trip against
+ * the renderer's `loadFile`. Genuinely retiring the invariant means gating the
+ * renderer (defer `loadFile` behind a `COSTGOBLIN_E2E` handshake) or asserting
+ * at runtime that the bundle has not executed yet. Until then the backstop is
+ * the fail-closed guard in collect-coverage.ts, which catches gross inflation
+ * but not a partial one.
  */
 export async function attachCoverage(page: Page): Promise<Page> {
+  // `app.firstWindow()` returns the same Page object every time, so a second
+  // attach would reset the session and silently discard whatever a mid-test
+  // collectCoverage had already harvested. Refuse instead.
+  if (COVERAGE.has(page)) {
+    console.warn('[coverage] attachCoverage called twice for one page — keeping the existing session');
+    return page;
+  }
   // Register before awaiting, so collect/write still find a (possibly empty)
   // session if the attach itself fails.
   COVERAGE.set(page, { entries: [], collected: false });
@@ -157,18 +184,29 @@ export async function launchAppWithCoverage(
   overrides?: { configDir?: string; dataDir?: string },
 ): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await launchApp(overrides);
-  const page = await attachCoverage(await app.firstWindow());
-  await expect(page).toHaveTitle('CostGoblin');
-  return { app, page };
+  // Everything past this point can throw (firstWindow times out, the title
+  // assert fails) — and callers assign via destructuring, so a throw leaves
+  // them holding `undefined` with no way to close what we just spawned. Own
+  // the cleanup here rather than orphaning an Electron process and its
+  // fixture copy for the rest of the run.
+  try {
+    const page = await attachCoverage(await app.firstWindow());
+    await expect(page).toHaveTitle('CostGoblin');
+    return { app, page };
+  } catch (err) {
+    await closeApp(app);
+    throw err;
+  }
 }
 
 /** Stop profiling and harvest the records into the page's session.
  *
  *  Idempotent, so a suite whose last test quits the app can harvest early
  *  (while the renderer is still alive) and let the normal teardown no-op
- *  rather than fail against a dead page. The flag is set before the await:
- *  once a harvest has been attempted, retrying it on a page that has since
- *  gone away only produces a second warning. */
+ *  rather than warn against a dead page. The flag is set only after a
+ *  SUCCESSFUL harvest: latching it up front would mean one transient
+ *  "Target closed" on the early call permanently disables the teardown
+ *  fallback, and the shard would be silently lost. */
 export async function collectCoverage(page: Page): Promise<void> {
   const session = COVERAGE.get(page);
   if (session === undefined) {
@@ -176,20 +214,34 @@ export async function collectCoverage(page: Page): Promise<void> {
     return;
   }
   if (session.collected) return;
-  session.collected = true;
   try {
     const coverage = await page.coverage.stopJSCoverage();
     session.entries.push(...coverage);
+    session.collected = true;
   } catch (err) {
-    // Same trade-off as attachCoverage: swallow, but never silently.
+    // Same trade-off as attachCoverage: swallow, but never silently. Leaving
+    // `collected` false lets the teardown fallback try once more.
     console.warn(`[coverage] stopJSCoverage failed: ${String(err)}`);
   }
 }
 
 function writeCoverage(shardName: string, page: Page): void {
+  const target = join(V8_DIR, `coverage-${shardName}.json`);
   const entries = COVERAGE.get(page)?.entries ?? [];
-  if (entries.length > 0) {
-    writeFileSync(join(V8_DIR, `coverage-${shardName}.json`), JSON.stringify(entries));
+  try {
+    if (entries.length === 0) {
+      // Say so, and clear any same-named file from an earlier run: V8_DIR is a
+      // stable path, so a silent no-write would let collect-coverage.ts pick up
+      // stale records and report them as this run's measurement.
+      console.warn(`[coverage] no records harvested for '${shardName}' — writing no shard`);
+      rmSync(target, { force: true });
+      return;
+    }
+    writeFileSync(target, JSON.stringify(entries));
+  } catch (err) {
+    // Coverage must never fail a suite — the sibling helpers both hold this
+    // line, and a full or read-only $TMPDIR must not turn a green shard red.
+    console.warn(`[coverage] writing shard '${shardName}' failed: ${String(err)}`);
   }
 }
 
@@ -202,13 +254,21 @@ function writeCoverage(shardName: string, page: Page): void {
  *  letting it strand an Electron process: losing a shard costs one number in
  *  the report, leaving the app running wedges the whole runner. */
 export async function finishCoverage(
-  app: ElectronApplication,
-  page: Page,
+  app: ElectronApplication | undefined,
+  page: Page | undefined,
   shardName: string,
 ): Promise<void> {
   try {
-    await collectCoverage(page);
-    writeCoverage(shardName, page);
+    // Both may be undefined when beforeAll threw before assigning them;
+    // afterAll still runs, and teardown must not bury that original error.
+    if (page !== undefined) {
+      await collectCoverage(page);
+      writeCoverage(shardName, page);
+      // Match closeApp's discipline with RUN_ROOTS: the harvested records are
+      // multi-megabyte, and the suite's module-level `page` keeps the key —
+      // and so the entries — reachable for the rest of the run otherwise.
+      COVERAGE.delete(page);
+    }
   } finally {
     await closeApp(app);
   }

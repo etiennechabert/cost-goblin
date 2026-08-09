@@ -88,8 +88,14 @@ test.describe('Workspaces (workspace mode)', () => {
   test.afterAll(async () => {
     // finishCoverage's harvest is a no-op once the restart test below has
     // collected, and a fallback when it hasn't (earlier failure, --grep run).
-    await finishCoverage(app, page, 'workspaces');
-    rmSync(userDataDir, { recursive: true, force: true });
+    // The finally is load-bearing: this suite bypasses launchApp, so it holds
+    // the only handle on the seeded tree — a throw out of finishCoverage would
+    // leak a full copy of the fixture data into $TMPDIR.
+    try {
+      await finishCoverage(app, page, 'workspaces');
+    } finally {
+      rmSync(userDataDir, { recursive: true, force: true });
+    }
   });
 
   test('settings tab lists both workspaces with active and not-set-up badges', async () => {

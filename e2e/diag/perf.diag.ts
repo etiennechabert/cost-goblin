@@ -11,7 +11,7 @@ import { test, expect, _electron, type ElectronApplication, type Page } from '@p
 import { join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { clickNavButton } from '../helpers.js';
+import { clickNavButton, HEADLESS } from '../helpers.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const DESKTOP_DIR = join(ROOT, 'packages', 'desktop');
@@ -71,7 +71,7 @@ function launchApp(): Promise<ElectronApplication> {
       ...process.env,
       NODE_ENV: 'production',
       COSTGOBLIN_PERF_MODE: '1',
-      COSTGOBLIN_HEADLESS: '1',
+      COSTGOBLIN_HEADLESS: HEADLESS,
       COSTGOBLIN_DATA_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'data'),
       COSTGOBLIN_CONFIG_DIR: join(homedir(), 'Library', 'Application Support', '@costgoblin', 'desktop', 'config'),
     },
