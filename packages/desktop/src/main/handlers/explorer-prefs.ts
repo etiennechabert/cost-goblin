@@ -2,17 +2,23 @@ import { readFile } from 'node:fs/promises';
 import {
   DEFAULT_EXPLORER_HIDDEN_COLUMNS,
   asDateString,
+  asHourString,
+  isDateString,
+  isHourString,
   isStringRecord,
   migrateLegacyDimensionId,
   parseJsonObject,
 } from '@costgoblin/core';
 import type { ExplorerPreferences } from '@costgoblin/core';
 
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function isDateRange(value: unknown): value is { start: string; end: string } {
+function isDateRange(
+  value: unknown,
+): value is { start: string; end: string; startHour?: string; endHour?: string } {
   if (!isStringRecord(value)) return false;
-  return typeof value['start'] === 'string' && typeof value['end'] === 'string';
+  if (typeof value['start'] !== 'string' || typeof value['end'] !== 'string') return false;
+  if (value['startHour'] !== undefined && typeof value['startHour'] !== 'string') return false;
+  if (value['endHour'] !== undefined && typeof value['endHour'] !== 'string') return false;
+  return true;
 }
 
 function isStringArray(value: unknown): value is readonly string[] {
@@ -53,7 +59,12 @@ export async function readExplorerPreferences(
   // Persisted prefs may carry CUR-era column ids (#515) — rename them so
   // saved layouts survive the FOCUS migration. Live dimension ids are
   // exempt (a current tag key like `user:team` derives a `tag_user_*` id).
-  const liveIds = await loadLiveIds();
+  // Only pay for the dimensions load when there is actually an id to migrate
+  // (the "Show all" / empty / corrupt cases have nothing to rename).
+  const needsMigration =
+    (isStringArray(rawHidden) && rawHidden.length > 0) ||
+    (isStringArray(rawOrder) && rawOrder.length > 0);
+  const liveIds = needsMigration ? await loadLiveIds() : undefined;
   const hiddenColumns = isStringArray(rawHidden)
     ? rawHidden.map(id => migrateLegacyDimensionId(id, liveIds))
     : [...DEFAULT_EXPLORER_HIDDEN_COLUMNS];
@@ -62,8 +73,21 @@ export async function readExplorerPreferences(
     : [];
 
   const validDateRange =
-    isDateRange(rawDateRange) && ISO_DATE_RE.test(rawDateRange.start) && ISO_DATE_RE.test(rawDateRange.end)
-      ? { start: asDateString(rawDateRange.start), end: asDateString(rawDateRange.end) }
+    isDateRange(rawDateRange) && isDateString(rawDateRange.start) && isDateString(rawDateRange.end)
+      ? {
+          start: asDateString(rawDateRange.start),
+          end: asDateString(rawDateRange.end),
+          // Preserve a persisted hourly sub-window, but only atomically —
+          // both bounds must be well-formed HourStrings, else fall back to
+          // the whole-day range (the view writes the pair together).
+          ...(rawDateRange.startHour !== undefined &&
+            rawDateRange.endHour !== undefined &&
+            isHourString(rawDateRange.startHour) &&
+            isHourString(rawDateRange.endHour) && {
+              startHour: asHourString(rawDateRange.startHour),
+              endHour: asHourString(rawDateRange.endHour),
+            }),
+        }
       : null;
 
   // Validate lastUsedGranularity: must be 'daily' or 'hourly'

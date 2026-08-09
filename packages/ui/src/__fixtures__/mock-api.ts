@@ -62,6 +62,7 @@ import {
   type TelemetryOutboxEntry,
   type CreateWorkspaceSource,
   type WorkspacesInfo,
+  type ExplorerPreferences,
 } from '@costgoblin/core/browser';
 import { DEFAULT_COST_SCOPE, DEFAULT_EXPLORER_HIDDEN_COLUMNS, computeRollupEstimate } from '@costgoblin/core/browser';
 
@@ -563,7 +564,7 @@ export class MockCostApi implements CostApi {
   }
   // Mirrors the desktop handler's first-run contract: no prefs file on disk
   // means the default hidden set, not "show everything".
-  getExplorerPreferences(): Promise<{ hiddenColumns: readonly string[]; columnOrder: readonly string[] }> {
+  getExplorerPreferences(): Promise<ExplorerPreferences> {
     return Promise.resolve({ hiddenColumns: [...DEFAULT_EXPLORER_HIDDEN_COLUMNS], columnOrder: [] });
   }
   saveExplorerPreferences(): Promise<void> { return Promise.resolve(); }

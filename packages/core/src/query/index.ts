@@ -25,7 +25,7 @@ export { costExprFor } from './cost-metric.js';
 
 export { QUERY_CANCELLED_MESSAGE } from './cancellation.js';
 
-export { assertBillingPeriod, assertDateString, assertHourString, assertTier, SecurityError } from './identifier-validator.js';
+export { assertBillingPeriod, assertDateString, assertHourString, assertTier, isDateString, isHourString, SecurityError } from './identifier-validator.js';
 
 export type { ParameterizedQuery } from './parameterized.js';
 export { QueryBuilder } from './parameterized.js';
