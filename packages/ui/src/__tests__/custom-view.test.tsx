@@ -3,6 +3,7 @@ import { afterEach, describe, it, expect } from 'vitest';
 import { asDimensionId } from '@costgoblin/core/browser';
 import type { ViewSpec } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
+import { PaletteProvider } from '../hooks/use-palette.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { CustomView } from '../views/custom-view.js';
 
@@ -28,9 +29,11 @@ afterEach(cleanup);
 
 function renderView(spec: ViewSpec = SPEC) {
   return render(
-    <CostApiProvider value={new MockCostApi()}>
-      <CustomView spec={spec} headerSubtitle="hello" />
-    </CostApiProvider>,
+    <PaletteProvider>
+      <CostApiProvider value={new MockCostApi()}>
+        <CustomView spec={spec} headerSubtitle="hello" />
+      </CostApiProvider>
+    </PaletteProvider>,
   );
 }
 
