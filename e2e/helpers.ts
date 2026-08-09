@@ -19,6 +19,16 @@ export const FIXTURE_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtu
  *  the tree is invisible to every other suite's totals. */
 export const FIXTURE_MULTI_CONFIG_DIR = join(ROOT, 'packages', 'core', 'src', '__fixtures__', 'config-multi');
 
+/** Launch the Electron window hidden (`show: false`, see main.ts) unless the
+ *  caller opts out. A visible window steals focus from whatever the developer
+ *  is doing and can be clicked or closed by accident mid-run, which corrupts
+ *  the very interactions the suite is asserting on. Nothing needs the window
+ *  on screen: Playwright drives the renderer over CDP, `toBeVisible()` is
+ *  DOM-based, and `page.screenshot()` captures a hidden window just fine.
+ *
+ *  To watch a run: `COSTGOBLIN_HEADLESS=0 npx playwright test e2e/<suite>.test.ts`. */
+export const HEADLESS = process.env['COSTGOBLIN_HEADLESS'] ?? '1';
+
 /** "Today" for every app launched by `launchApp`: the day after the fixture
  *  window (generate.ts pins 2026-01-01..2026-03-01), so relative presets like
  *  "Last 30 days" resolve to dates that actually hold fixture data. The app
@@ -50,6 +60,7 @@ export async function launchApp(overrides?: { configDir?: string; dataDir?: stri
       ...process.env,
       NODE_ENV: 'production',
       COSTGOBLIN_E2E: '1',
+      COSTGOBLIN_HEADLESS: HEADLESS,
       COSTGOBLIN_NOW: process.env['COSTGOBLIN_NOW'] ?? FIXTURE_NOW,
       COSTGOBLIN_DATA_DIR: runDataDir,
       COSTGOBLIN_CONFIG_DIR: runConfigDir,
@@ -61,11 +72,11 @@ export async function launchApp(overrides?: { configDir?: string; dataDir?: stri
 
 /** Close, but never let a stalled Electron exit fail a suite. Under system
  *  load the process occasionally wedges on quit behind boot-time DuckDB work
- *  (a known flake — see the coverage-ordering comments in stress/gcp); after
- *  15s give up and SIGKILL. Per-launch state is a throwaway temp dir, so a
- *  hard kill loses nothing. Every suite must use this instead of a bare
- *  app.close() so the guard covers the DuckDB-heavy shards too, and so the
- *  per-launch fixture copy is removed rather than leaked into $TMPDIR. */
+ *  (a known flake); after 15s give up and SIGKILL. Per-launch state is a
+ *  throwaway temp dir, so a hard kill loses nothing. Never call a bare
+ *  app.close() instead, so the guard covers the DuckDB-heavy shards too, and
+ *  so the per-launch fixture copy is removed rather than leaked into $TMPDIR.
+ *  Covered suites get this for free via {@link finishCoverage}. */
 export async function closeApp(app: ElectronApplication): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const closed = await Promise.race([
@@ -81,7 +92,54 @@ export async function closeApp(app: ElectronApplication): Promise<void> {
   }
 }
 
-export async function startCoverage(page: Page): Promise<void> {
+// ---------------------------------------------------------------------------
+// V8 coverage
+// ---------------------------------------------------------------------------
+
+/** Harvested V8 records per covered page, so no suite has to hand-carry an
+ *  `allCoverage` array between its attach, collect and write calls. */
+interface CoverageSession {
+  entries: unknown[];
+  collected: boolean;
+}
+const COVERAGE = new WeakMap<Page, CoverageSession>();
+
+/**
+ * Attach V8 coverage to a freshly opened window.
+ *
+ * **Call this immediately after `app.firstWindow()`, before any other await.**
+ * That ordering is load-bearing, and getting it wrong fails loudly nowhere —
+ * it silently inflates the shard instead:
+ *
+ * CDP's `Profiler.startPreciseCoverage` only counts execution after it takes
+ * effect, so every await in the gap is a window in which the renderer's
+ * deferred module bundle can run. Functions that ran pre-attach are ABSENT
+ * from V8's report, not reported as zero — and v8-to-istanbul is subtractive,
+ * starting every line at "covered" and zeroing it only when a count-0 range
+ * says so. A file V8 never mentioned therefore comes out at 100%. Since Sonar
+ * unions the shards, one lost race lifts the whole project number: this is
+ * what made main's coverage saw-tooth between ~66% and ~82% (#556). The
+ * `toHaveTitle('CostGoblin')` check was the specific culprit — the title is
+ * static HTML, so it can resolve before the bundle executes.
+ *
+ * Returning the page lets the invariant be expressed as a single expression
+ * with no room for an await in the gap:
+ *
+ * ```ts
+ * page = await attachCoverage(await app.firstWindow());
+ * ```
+ *
+ * Prefer {@link launchAppWithCoverage}, which does the whole dance. Reach for
+ * this only when the suite must build its own `_electron.launch` (see
+ * workspaces.test.ts, which deliberately launches without the pinned-mode env
+ * vars). Do not add a bare `startJSCoverage` call site — the ordering lived as
+ * a hand-copied comment in six suites and three of them drifted, which is the
+ * bug these helpers exist to make unstateable.
+ */
+export async function attachCoverage(page: Page): Promise<Page> {
+  // Register before awaiting, so collect/write still find a (possibly empty)
+  // session if the attach itself fails.
+  COVERAGE.set(page, { entries: [], collected: false });
   try {
     await page.coverage.startJSCoverage({ resetOnNavigation: false });
   } catch (err) {
@@ -89,15 +147,70 @@ export async function startCoverage(page: Page): Promise<void> {
     // pipeline for the whole shard — leave a trace in the runner log.
     console.warn(`[coverage] startJSCoverage unavailable: ${String(err)}`);
   }
+  return page;
 }
 
-export async function stopAndCollectCoverage(page: Page, allCoverage: unknown[]): Promise<void> {
+/** Launch the app, attach coverage in the one correct order, and confirm the
+ *  window is really the app. The standard suite opening — see
+ *  {@link attachCoverage} for why the ordering inside cannot be rearranged. */
+export async function launchAppWithCoverage(
+  overrides?: { configDir?: string; dataDir?: string },
+): Promise<{ app: ElectronApplication; page: Page }> {
+  const app = await launchApp(overrides);
+  const page = await attachCoverage(await app.firstWindow());
+  await expect(page).toHaveTitle('CostGoblin');
+  return { app, page };
+}
+
+/** Stop profiling and harvest the records into the page's session.
+ *
+ *  Idempotent, so a suite whose last test quits the app can harvest early
+ *  (while the renderer is still alive) and let the normal teardown no-op
+ *  rather than fail against a dead page. The flag is set before the await:
+ *  once a harvest has been attempted, retrying it on a page that has since
+ *  gone away only produces a second warning. */
+export async function collectCoverage(page: Page): Promise<void> {
+  const session = COVERAGE.get(page);
+  if (session === undefined) {
+    console.warn('[coverage] collectCoverage on a page that never attached — shard will be empty');
+    return;
+  }
+  if (session.collected) return;
+  session.collected = true;
   try {
     const coverage = await page.coverage.stopJSCoverage();
-    allCoverage.push(...coverage);
+    session.entries.push(...coverage);
   } catch (err) {
-    // Same trade-off as startCoverage: swallow, but never silently.
+    // Same trade-off as attachCoverage: swallow, but never silently.
     console.warn(`[coverage] stopJSCoverage failed: ${String(err)}`);
+  }
+}
+
+function writeCoverage(shardName: string, page: Page): void {
+  const entries = COVERAGE.get(page)?.entries ?? [];
+  if (entries.length > 0) {
+    writeFileSync(join(V8_DIR, `coverage-${shardName}.json`), JSON.stringify(entries));
+  }
+}
+
+/** The standard suite teardown: harvest, persist, close.
+ *
+ *  Write before close is deliberate. `writeCoverage` is synchronous, while
+ *  `closeApp` can burn 15s on a wedged quit and then rmSync the run root — if
+ *  either throws, a shard persisted afterwards would never exist and the whole
+ *  shard's coverage would be lost. The `finally` keeps that ordering without
+ *  letting it strand an Electron process: losing a shard costs one number in
+ *  the report, leaving the app running wedges the whole runner. */
+export async function finishCoverage(
+  app: ElectronApplication,
+  page: Page,
+  shardName: string,
+): Promise<void> {
+  try {
+    await collectCoverage(page);
+    writeCoverage(shardName, page);
+  } finally {
+    await closeApp(app);
   }
 }
 
@@ -285,10 +398,4 @@ export async function selectDatePreset(page: Page, presetLabel: string): Promise
   await trigger.click();
   // Inside the popover, click the preset text
   await page.getByText(presetLabel, { exact: true }).click();
-}
-
-export function writeCoverage(shardName: string, allCoverage: unknown[]): void {
-  if (allCoverage.length > 0) {
-    writeFileSync(join(V8_DIR, `coverage-${shardName}.json`), JSON.stringify(allCoverage));
-  }
 }

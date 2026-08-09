@@ -136,6 +136,10 @@ No Electron, no DuckDB, no file system.
 Full app launch pinned to fixture data via `COSTGOBLIN_DATA_DIR` / `COSTGOBLIN_CONFIG_DIR` env vars (see `e2e/helpers.ts`).
 Slow (seconds). Run before commits, always in CI.
 
+The window is hidden by default (`COSTGOBLIN_HEADLESS=1`, set by `launchApp`) so a run can't steal focus or be clicked/closed by accident mid-test. Screenshots and every assertion work unchanged. To watch a run: `COSTGOBLIN_HEADLESS=0 npx playwright test e2e/<suite>.test.ts`.
+
+**Coverage-attach ordering:** suites must open the app with `launchAppWithCoverage()`, or `attachCoverage(await app.firstWindow())` when they build their own launch. Never await anything between `firstWindow()` and the attach — a late attach silently inflates the shard toward 100% rather than failing. See the `attachCoverage` doc comment in `e2e/helpers.ts`; `collect-coverage.ts` fails the run when it detects the result.
+
 ### Fixture Data
 - Real company data is in `data/raw/` — NEVER committed (gitignored + pre-commit guard)
 - `profile.json` extracted from real data — committed (statistical shape, no PII)
