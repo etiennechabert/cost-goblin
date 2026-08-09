@@ -4,14 +4,14 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os';
 import {
   DESKTOP_DIR,
-  closeApp,
   FIXTURE_CONFIG_DIR,
   FIXTURE_DATA_DIR,
+  HEADLESS,
   SETTINGS_NAV_LABEL,
   openSettings,
-  startCoverage,
-  stopAndCollectCoverage,
-  writeCoverage,
+  attachCoverage,
+  collectCoverage,
+  finishCoverage,
 } from './helpers.js';
 
 // Workspace-mode e2e: unlike every other suite (which pins paths via
@@ -23,8 +23,6 @@ import {
 let app: ElectronApplication;
 let page: Page;
 let userDataDir: string;
-const allCoverage: unknown[] = [];
-let coverageCollected = false;
 
 function appStatePath(): string {
   return join(userDataDir, 'app-state.json');
@@ -65,31 +63,39 @@ test.describe('Workspaces (workspace mode)', () => {
     }
     app = await _electron.launch({
       args: [join(DESKTOP_DIR, 'out', 'main', 'main.js')],
-      env: { ...env, NODE_ENV: 'production', COSTGOBLIN_E2E: '1', COSTGOBLIN_USER_DATA_DIR: userDataDir },
+      env: {
+        ...env,
+        NODE_ENV: 'production',
+        COSTGOBLIN_E2E: '1',
+        COSTGOBLIN_HEADLESS: HEADLESS,
+        COSTGOBLIN_USER_DATA_DIR: userDataDir,
+      },
     });
     // Surface main-process logs in the test output — a silent main-side quit
     // or crash is otherwise invisible from the renderer.
     app.process().stdout?.on('data', (chunk: Buffer) => { console.log(`[main] ${chunk.toString().trimEnd()}`); });
     app.process().stderr?.on('data', (chunk: Buffer) => { console.log(`[main:err] ${chunk.toString().trimEnd()}`); });
-    page = await app.firstWindow();
-    // Attach as early as possible: CDP coverage only counts execution after
-    // enabling — starting after the boot waits below would report the whole
-    // workspace-resolution boot path (this suite's unique contribution) as
-    // uncovered.
-    await startCoverage(page);
+    // Not launchAppWithCoverage: that helper pins COSTGOBLIN_DATA_DIR /
+    // COSTGOBLIN_CONFIG_DIR, which is exactly the mode this suite exists to
+    // avoid. attachCoverage still enforces the ordering invariant — see its
+    // doc comment for why nothing may be awaited between firstWindow() and
+    // the attach.
+    page = await attachCoverage(await app.firstWindow());
     await expect(page).toHaveTitle('CostGoblin');
     await expect(page.getByRole('heading', { name: 'Cost Overview' })).toBeVisible({ timeout: 15_000 });
   });
 
   test.afterAll(async () => {
-    // Fallback harvest: if the restart test aborted before its in-test
-    // collection point (earlier failure, --grep run), salvage what the
-    // session has before the app goes away.
-    if (!coverageCollected) await stopAndCollectCoverage(page, allCoverage);
-    // Write before close: a hung close() must not discard harvested coverage.
-    writeCoverage('workspaces', allCoverage);
-    await closeApp(app);
-    rmSync(userDataDir, { recursive: true, force: true });
+    // finishCoverage's harvest is a no-op once the restart test below has
+    // collected, and a fallback when it hasn't (earlier failure, --grep run).
+    // The finally is load-bearing: this suite bypasses launchApp, so it holds
+    // the only handle on the seeded tree — a throw out of finishCoverage would
+    // leak a full copy of the fixture data into $TMPDIR.
+    try {
+      await finishCoverage(app, page, 'workspaces');
+    } finally {
+      rmSync(userDataDir, { recursive: true, force: true });
+    }
   });
 
   test('settings tab lists both workspaces with active and not-set-up badges', async () => {
@@ -148,8 +154,7 @@ test.describe('Workspaces (workspace mode)', () => {
 
     // The click below quits the app, so harvest renderer coverage now — the
     // afterAll runs against an already-closed page where collection would fail.
-    await stopAndCollectCoverage(page, allCoverage);
-    coverageCollected = true;
+    await collectCoverage(page);
 
     const closed = app.waitForEvent('close');
     await page.getByRole('button', { name: 'Create & Restart' }).click();

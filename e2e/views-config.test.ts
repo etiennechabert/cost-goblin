@@ -1,44 +1,25 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
 import {
-  launchApp,
-  closeApp,
-  startCoverage,
-  stopAndCollectCoverage,
+  launchAppWithCoverage,
+  finishCoverage,
   screenshot,
   assertNoReactCrash,
   waitForQuerySettle,
   waitForCostScopePreview,
-  hasVisibleData,
   navigateTo,
   clickNavButton,
-  writeCoverage,
   LOAD_TIMEOUT,
 } from './helpers.js';
-
-const allCoverage: unknown[] = [];
 
 let app: ElectronApplication;
 let page: Page;
 
 test.beforeAll(async () => {
-  app = await launchApp();
-  page = await app.firstWindow();
-  // Attach before any other await: the title is static HTML, so awaiting it
-  // first lets the module bundle win the race, and functions that ran
-  // pre-attach are simply ABSENT from V8's report. v8-to-istanbul treats an
-  // absent function as covered (it zeroes down from "all covered"), so a lost
-  // race inflates this shard toward 100%. collect-coverage.ts fails the run
-  // if it detects one.
-  await startCoverage(page);
-  await expect(page).toHaveTitle('CostGoblin');
+  ({ app, page } = await launchAppWithCoverage());
 });
 
 test.afterAll(async () => {
-  await stopAndCollectCoverage(page, allCoverage);
-  // Write before close: a hung or rejected close() must not discard the
-  // coverage already harvested (writeCoverage is synchronous).
-  writeCoverage('views-config', allCoverage);
-  await closeApp(app);
+  await finishCoverage(app, page, 'views-config');
 });
 
 // ---------------------------------------------------------------------------

@@ -170,6 +170,11 @@ describe('describeCoverageFailure', () => {
     const message = describeCoverageFailure(verdict);
     expect(message).toContain('70 files reported no functions at all');
     expect(message).toContain('58.3%');
-    expect(message).toContain('startCoverage(page) immediately after app.firstWindow()');
+    // Names the helpers a suite should actually reach for. These are real
+    // exports of e2e/helpers.ts — if either is renamed, this assertion is what
+    // stops CI's loudest error message from pointing at a function that no
+    // longer exists.
+    expect(message).toContain('launchAppWithCoverage()');
+    expect(message).toContain('attachCoverage(await app.firstWindow())');
   });
 });

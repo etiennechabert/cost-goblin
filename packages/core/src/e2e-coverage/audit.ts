@@ -90,8 +90,9 @@ export function describeCoverageFailure(failure: CoverageFailure): string {
       return (
         `${String(failure.zeroFunction.files)} files reported no functions at all and were credited ` +
         `${(failure.zeroFunction.hitShare * 100).toFixed(1)}% of this shard's covered lines — the report is fabricated, ` +
-        'not measured. The suite almost certainly attached coverage too late: call startCoverage(page) ' +
-        'immediately after app.firstWindow(), before any other await.'
+        'not measured. The suite almost certainly attached coverage too late. Open it with ' +
+        "helpers.ts's launchAppWithCoverage(), or attachCoverage(await app.firstWindow()) if it must " +
+        'build its own launch — never anything that awaits between firstWindow() and the attach.'
       );
   }
 }

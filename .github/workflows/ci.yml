@@ -288,8 +288,8 @@ jobs:
         run: |
           set -euo pipefail
           # Shards expected to upload coverage. csp/sandbox-verification
-          # deliberately collect none. Keep in sync with the writeCoverage
-          # calls in e2e/*.test.ts.
+          # deliberately collect none. Keep in sync with the shard names passed
+          # to finishCoverage(app, page, '<shard>') in e2e/*.test.ts.
           expected="views-core views-config views-defaults stress gcp-provider workspaces"
           missing=0
           mkdir -p coverage-e2e

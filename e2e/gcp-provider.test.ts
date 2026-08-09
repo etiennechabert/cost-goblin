@@ -1,15 +1,12 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
 import {
-  launchApp,
-  closeApp,
+  launchAppWithCoverage,
+  finishCoverage,
   clickNavButton,
   selectDatePreset,
   waitForQuerySettle,
   assertNoReactCrash,
   screenshot,
-  startCoverage,
-  stopAndCollectCoverage,
-  writeCoverage,
   FIXTURE_DATA_DIR,
   FIXTURE_MULTI_CONFIG_DIR,
 } from './helpers.js';
@@ -30,7 +27,6 @@ import {
 
 let app: ElectronApplication;
 let page: Page;
-const allCoverage: unknown[] = [];
 
 /** Each test navigates for itself. Playwright shares one page across a
  *  describe block, so leaning on the previous test's position makes a failure
@@ -41,20 +37,14 @@ async function openDataSync(): Promise<void> {
 }
 
 test.beforeAll(async () => {
-  app = await launchApp({ configDir: FIXTURE_MULTI_CONFIG_DIR, dataDir: FIXTURE_DATA_DIR });
-  page = await app.firstWindow();
-  // Attach as early as possible: CDP coverage only counts execution after
-  // enabling, so every await before this line is boot code lost to the report.
-  await startCoverage(page);
-  await expect(page).toHaveTitle('CostGoblin');
+  ({ app, page } = await launchAppWithCoverage({
+    configDir: FIXTURE_MULTI_CONFIG_DIR,
+    dataDir: FIXTURE_DATA_DIR,
+  }));
 });
 
 test.afterAll(async () => {
-  await stopAndCollectCoverage(page, allCoverage);
-  // Write before close: a hung or rejected close() must not discard the
-  // coverage already harvested (writeCoverage is synchronous).
-  writeCoverage('gcp-provider', allCoverage);
-  await closeApp(app);
+  await finishCoverage(app, page, 'gcp-provider');
 });
 
 test.describe('mixed AWS + GCP workspace', () => {
