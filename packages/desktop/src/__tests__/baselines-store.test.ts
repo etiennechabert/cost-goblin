@@ -49,7 +49,9 @@ const dimensions: DimensionsConfig = {
   ],
   tags: [],
 };
-const costScope: CostScopeConfig = { costMetric: 'billed', rules: [] };
+// lagDays pinned explicitly so QUERY_END/TRAILING_START derive from test-owned
+// config, not the store's private `?? 2` fallback.
+const costScope: CostScopeConfig = { costMetric: 'billed', rules: [], lagDays: 2 };
 
 const DISCOVERY_CONFIG: BaselinesDiscoveryConfig = {
   lookbackDays: 365,
