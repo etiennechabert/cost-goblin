@@ -7,6 +7,7 @@ export { cn } from './lib/utils.js';
 
 export { useCostApi, CostApiProvider } from './hooks/use-cost-api.js';
 export { useQuery } from './hooks/use-query.js';
+export { useReducedMotion } from './hooks/use-reduced-motion.js';
 export { UnsavedChangesProvider, useUnsavedChanges, useConfirmLeave } from './hooks/use-unsaved-changes.js';
 
 export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/card.js';

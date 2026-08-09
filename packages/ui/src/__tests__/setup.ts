@@ -1,15 +1,92 @@
 import { cleanup, configure } from '@testing-library/react';
 import { afterEach } from 'vitest';
+import { REDUCED_MOTION_QUERY } from '../hooks/use-reduced-motion.js';
 
 // Query results are applied inside startTransition (use-query.ts), so success
 // renders are time-sliced and can land past testing-library's 1s default
-// waitFor/findBy timeout on loaded CI runners, especially while an urgent
-// loader animation keeps preempting the deferred commit, and more so for
-// data-heavy views (charts, large tables) that only render after a mock query
-// resolves. Give async utilities more headroom. A passing assertion still
-// resolves as soon as its condition is met, so this only affects genuinely
-// slow or failing waits, not overall suite speed.
+// waitFor/findBy timeout on loaded CI runners, more so for data-heavy views
+// (charts, large tables) that only render after a mock query resolves. Give
+// async utilities more headroom. A passing assertion still resolves as soon
+// as its condition is met, so this only affects genuinely slow or failing
+// waits, not overall suite speed. Kept below the ui project's testTimeout —
+// see the note on it in vitest.config.ts.
 configure({ asyncUtilTimeout: 5000 });
+
+// jsdom implements no matchMedia at all, so components that read a media
+// query (useReducedMotion) would take their no-matchMedia fallback in every
+// test and the real branch would never run. Install a minimal one.
+//
+// It defaults to NOT reducing motion — the setting the overwhelming majority
+// of users have — so tests exercise the same path they do, matching the
+// ResizeObserver/IntersectionObserver mocks below (both report the state that
+// keeps components on their production path). Tests covering the
+// reduced-motion branch flip `setReducedMotion(true)`; `afterEach` restores
+// the default.
+//
+// Only `prefers-reduced-motion` is modelled; every other query reports false.
+// That is a silent answer where jsdom previously threw, so a future consumer
+// of a different query (a `prefers-color-scheme` or breakpoint hook) must
+// extend this rather than assume the default is meaningful for it.
+let reducedMotion = false;
+
+// Extends EventTarget rather than hand-rolling listener bookkeeping, so
+// add/removeEventListener behave like the real thing (correct DOM signatures,
+// duplicate-listener and removal semantics) and `instanceof EventTarget`
+// holds — a subscriber that works against this mock works against a browser.
+class MockMediaQueryList extends EventTarget implements MediaQueryList {
+  readonly media: string;
+  /** Declared for the DOM interface. Nothing in this repo assigns it, so it is
+   *  never invoked; subscribe with addEventListener. */
+  onchange = null;
+
+  constructor(media: string) {
+    super();
+    this.media = media;
+  }
+
+  // A getter, not a snapshot: useSyncExternalStore re-reads `matches` after
+  // every change notification, off the instance it already holds.
+  get matches(): boolean {
+    return this.media === REDUCED_MOTION_QUERY && reducedMotion;
+  }
+
+  // The deprecated aliases exist only to satisfy MediaQueryList. Modelling them
+  // faithfully needs a MediaQueryListEvent, which jsdom does not ship — so they
+  // fail loudly rather than silently registering a listener that never fires.
+  addListener(): void {
+    throw new Error('MockMediaQueryList: use addEventListener("change", …)');
+  }
+
+  removeListener(): void {
+    throw new Error('MockMediaQueryList: use removeEventListener("change", …)');
+  }
+
+  notifyChange(): void {
+    this.dispatchEvent(new Event('change'));
+  }
+}
+
+// One instance per query. useReducedMotion calls matchMedia on every snapshot
+// read, and subscribes on a separate call — they must land on the same object
+// for a dispatch to reach the subscriber.
+const mediaQueryLists = new Map<string, MockMediaQueryList>();
+
+globalThis.matchMedia = (query: string): MediaQueryList => {
+  const existing = mediaQueryLists.get(query);
+  if (existing !== undefined) return existing;
+  const created = new MockMediaQueryList(query);
+  mediaQueryLists.set(query, created);
+  return created;
+};
+
+/** Set the reduced-motion preference the suite reports, dispatching `change`
+ *  to anything subscribed — so a component using useReducedMotion reacts as it
+ *  would to a real OS toggle, not just at its next mount. */
+export function setReducedMotion(value: boolean): void {
+  if (reducedMotion === value) return;
+  reducedMotion = value;
+  mediaQueryLists.get(REDUCED_MOTION_QUERY)?.notifyChange();
+}
 
 // jsdom performs no layout, so every element measures 0×0 and the real
 // ResizeObserver never exists. Charts gate their SVG bodies on a measured
@@ -152,4 +229,8 @@ afterEach(() => {
   cleanup();
   autoIntersect = true;
   intersectionObservers.clear();
+  // Reset through the setter so anything still subscribed is notified, and
+  // keep the MediaQueryList instances: only one query is ever created, and
+  // discarding them would orphan a subscriber that outlived cleanup().
+  setReducedMotion(false);
 });
