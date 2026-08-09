@@ -1269,9 +1269,10 @@ export function buildRollupPartitionQuery(
   outPath: string,
   opts: QueryContextOptions,
 ): string {
-  if (!/^\d{4}-\d{2}$/.test(period)) {
-    throw new SecurityError(`Invalid rollup period "${period}" — expected YYYY-MM.`);
-  }
+  // Same canonical period check the read_parquet glob applies downstream
+  // (buildParquetSource → assertBillingPeriod); kept here to fail fast before
+  // the surrounding date-bound math runs.
+  assertBillingPeriod(period);
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
   const grain = rollupGrainColumns(dimensions);
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
@@ -1344,9 +1345,9 @@ export function buildGrainProbeQuery(
   grainColumns: readonly string[],
   opts: QueryContextOptions,
 ): string {
-  if (!/^\d{4}-\d{2}$/.test(period)) {
-    throw new SecurityError(`Invalid probe period "${period}" — expected YYYY-MM.`);
-  }
+  // Canonical period check (matches buildParquetSource → assertBillingPeriod),
+  // run up front so a bad period fails before the probe SQL is assembled.
+  assertBillingPeriod(period);
   const { dataDir, dimensions, orgAccountsPath, providers, accountReverseMap, costScope } = opts;
   const costMetric = costScope?.costMetric ?? DEFAULT_COST_METRIC;
 

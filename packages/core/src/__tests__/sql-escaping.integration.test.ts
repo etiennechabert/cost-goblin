@@ -56,7 +56,10 @@ describe('SQL escaping of config literals (DuckDB execution)', () => {
   let orgAccountsPath: string;
 
   beforeAll(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), 'cg-sql-escaping-'));
+    // Normalize to forward slashes so the dataDir that lands in the
+    // read_parquet glob matches the (also-normalized) parquet/org-accounts
+    // paths on Windows; a no-op on POSIX.
+    dataDir = (await mkdtemp(join(tmpdir(), 'cg-sql-escaping-'))).replaceAll('\\', '/');
     const monthDir = join(dataDir, 'aws', 'raw', 'daily-2026-01');
     await mkdir(monthDir, { recursive: true });
 
@@ -95,6 +98,7 @@ describe('SQL escaping of config literals (DuckDB execution)', () => {
 
   afterAll(async () => {
     conn.disconnectSync();
+    db.closeSync();
     await rm(dataDir, { recursive: true, force: true });
   });
 

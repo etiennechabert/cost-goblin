@@ -287,22 +287,16 @@ describe('SQL Injection Prevention', () => {
     it('rejects a malicious filter KEY with SecurityError before it reaches the SQL', () => {
       // Filter VALUES are parameterized, but the KEY resolves to a field
       // expression that is interpolated — resolveField must reject unknown ids.
-      expect(() => buildCostQuery(
+      const run = () => buildCostQuery(
         {
           groupBy: asDimensionId('service'),
           dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
           filters: { [asDimensionId("evil'; DROP TABLE costs; --")]: [asTagValue('harmless')] },
         },
         { dataDir: '/data', dimensions, providers },
-      )).toThrow(SecurityError);
-      expect(() => buildCostQuery(
-        {
-          groupBy: asDimensionId('service'),
-          dateRange: { start: asDateString('2026-01-01'), end: asDateString('2026-01-31') },
-          filters: { [asDimensionId("evil'; DROP TABLE costs; --")]: [asTagValue('harmless')] },
-        },
-        { dataDir: '/data', dimensions, providers },
-      )).toThrow('Unknown dimension');
+      );
+      expect(run).toThrow(SecurityError);
+      expect(run).toThrow('Unknown dimension');
     });
   });
 
