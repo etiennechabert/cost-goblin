@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, rm, stat } from 'node:fs/promises';
 import { buildRollupPartitionQuery, rollupGrainColumns, type DimensionsConfig, type CostScopeConfig, type ProviderName, asDimensionId, asProviderName } from '@costgoblin/core';
 import { RollupStore, type RollupShape, type BuildPartitionSql } from '../main/rollup-store.js';
 import type { RawRow } from '../main/duckdb-client.js';
+import { fetchRows } from './helpers/duckdb-rows.js';
 
 // FOCUS 1.2 pins the core column set (all four cost columns always present),
 // so the CUR-era mixed-schema machinery — per-period column probing, the
@@ -119,23 +120,7 @@ describe('RollupStore cold rebuild over multiple months', () => {
     db = await DuckDBInstance.create();
     conn = await db.connect();
     dataDir = await mkdtemp(join(tmpdir(), 'cg-rollup-drift-'));
-    runQuery = async (sql: string): Promise<RawRow[]> => {
-      const result = await conn.run(sql);
-      const cols = result.columnCount;
-      const names: string[] = [];
-      for (let i = 0; i < cols; i++) names.push(result.columnName(i));
-      const rows: RawRow[] = [];
-      let chunk = await result.fetchChunk();
-      while (chunk !== null && chunk.rowCount > 0) {
-        for (let r = 0; r < chunk.rowCount; r++) {
-          const row: Record<string, unknown> = {};
-          for (let c = 0; c < cols; c++) { const n = names[c]; if (n !== undefined) row[n] = chunk.getColumnVector(c).getItem(r); }
-          rows.push(row);
-        }
-        chunk = await result.fetchChunk();
-      }
-      return rows;
-    };
+    runQuery = (sql: string): Promise<RawRow[]> => fetchRows(conn, sql);
     await writeMonth('2025-10', false);
     await writeMonth('2026-04', true);
   });

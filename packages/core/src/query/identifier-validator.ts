@@ -78,12 +78,22 @@ export function assertBillingPeriod(value: string): void {
 const DATE_STRING_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
 /**
+ * Predicate form of {@link assertDateString}: true when `value` is a
+ * well-formed YYYY-MM-DD calendar date. Use when a bad value should be
+ * ignored/normalized rather than rejected — e.g. validating a persisted,
+ * hand-editable config field.
+ */
+export function isDateString(value: string): boolean {
+  return DATE_STRING_PATTERN.test(value);
+}
+
+/**
  * Validate that a string is a well-formed YYYY-MM-DD date.
  * Throws SecurityError if the format is invalid, preventing SQL injection
  * via date values interpolated into queries.
  */
 export function assertDateString(value: string): void {
-  if (!DATE_STRING_PATTERN.test(value)) {
+  if (!isDateString(value)) {
     throw new SecurityError(
       `Invalid date string "${value}" - must be YYYY-MM-DD format. ` +
       `This prevents SQL injection via untrusted date values.`
@@ -97,12 +107,20 @@ export function assertDateString(value: string): void {
 const HOUR_STRING_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]) ([01]\d|2[0-3]):00:00$/;
 
 /**
+ * Predicate form of {@link assertHourString}: true when `value` is a
+ * well-formed YYYY-MM-DD HH:00:00 hour timestamp.
+ */
+export function isHourString(value: string): boolean {
+  return HOUR_STRING_PATTERN.test(value);
+}
+
+/**
  * Validate that a string is a well-formed YYYY-MM-DD HH:00:00 hour timestamp.
  * Throws SecurityError if the format is invalid, preventing SQL injection
  * via hour values interpolated into queries.
  */
 export function assertHourString(value: string): void {
-  if (!HOUR_STRING_PATTERN.test(value)) {
+  if (!isHourString(value)) {
     throw new SecurityError(
       `Invalid hour string "${value}" - must be YYYY-MM-DD HH:00:00 format. ` +
       `This prevents SQL injection via untrusted hour values.`

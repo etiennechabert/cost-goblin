@@ -11,17 +11,18 @@ import type {
   ExplorerRowsParams,
   ExplorerRowsResult,
 } from '@costgoblin/core/browser';
-import { asBucketPath, asProviderName } from '@costgoblin/core/browser';
+import { asBucketPath, asProviderName, DEFAULT_EXPLORER_HIDDEN_COLUMNS } from '@costgoblin/core/browser';
 import { CostApiProvider } from '../hooks/use-cost-api.js';
 import { MockCostApi } from '../__fixtures__/mock-api.js';
 import { ExplorerView } from '../views/explorer.js';
 import { daysAgo } from '../lib/dates.js';
 
-/** Mirrors the view's DEFAULT_HIDDEN set, served as *saved* preferences.
- *  The prefs response is authoritative (the view overwrites its initial
- *  hidden state with it), and any real profile that has saved once carries
- *  exactly this list — so this is the representative loaded state. */
-const SAVED_HIDDEN = ['usage_hour', 'list_cost', 'service', 'usage_amount', 'operation'];
+/** The default hidden set, served as *saved* preferences. The prefs response
+ *  is authoritative (the view overwrites its initial hidden state with it),
+ *  and any real profile that has saved once carries exactly this list — so
+ *  this is the representative loaded state. Derived from the shared constant
+ *  so the suite can't drift from the real default. */
+const SAVED_HIDDEN = [...DEFAULT_EXPLORER_HIDDEN_COLUMNS];
 
 /** Deterministic histogram: 10 daily buckets, 2026-03-01 → 2026-03-10.
  *  The drag-select tests depend on the bar count and dates. */
@@ -193,14 +194,12 @@ function renderColumns(api: MockCostApi) {
   );
 }
 
-/** Column header labels across the document, with the sort-arrow glyph the
- *  sortable-header button appends stripped so labels compare exactly. */
+/** Table-scoped column header labels, once the table has rendered. Delegates
+ *  to visibleHeaders so the sort-arrow stripping lives in one place and stray
+ *  headers (an open column-picker) can't leak into the result. */
 async function headerLabels(): Promise<string[]> {
-  await waitFor(() => {
-    expect(screen.getAllByRole('columnheader').length).toBeGreaterThan(0);
-  }, { timeout: 3000 });
-  return screen.getAllByRole('columnheader')
-    .map(h => h.textContent.replace(/[↑↓↕]/gu, '').trim());
+  await screen.findByRole('table');
+  return visibleHeaders();
 }
 
 // Pin the clock so the wall-clock-derived default range (daysAgo(...)) is

@@ -96,4 +96,42 @@ describe('readExplorerPreferences', () => {
     expect(rejected.lastUsedGranularity).toBeUndefined();
     expect(rejected.compareEnabled).toBeUndefined();
   });
+
+  it('preserves a persisted hourly sub-window (startHour/endHour) across reload', async () => {
+    await writeFile(prefsFile, JSON.stringify({
+      hiddenColumns: [],
+      columnOrder: [],
+      lastUsedDateRange: {
+        start: '2026-07-15', end: '2026-07-15',
+        startHour: '2026-07-15 03:00:00', endHour: '2026-07-15 09:00:00',
+      },
+      lastUsedGranularity: 'hourly',
+    }));
+    const prefs = await readExplorerPreferences(prefsFile, noLiveIds);
+    expect(prefs.lastUsedDateRange).toEqual({
+      start: '2026-07-15', end: '2026-07-15',
+      startHour: '2026-07-15 03:00:00', endHour: '2026-07-15 09:00:00',
+    });
+    expect(prefs.lastUsedGranularity).toBe('hourly');
+  });
+
+  it('drops the hourly window when either hour bound is malformed, keeping the day range', async () => {
+    await writeFile(prefsFile, JSON.stringify({
+      hiddenColumns: [],
+      columnOrder: [],
+      lastUsedDateRange: { start: '2026-07-15', end: '2026-07-15', startHour: '3am', endHour: '2026-07-15 09:00:00' },
+    }));
+    const prefs = await readExplorerPreferences(prefsFile, noLiveIds);
+    expect(prefs.lastUsedDateRange).toEqual({ start: '2026-07-15', end: '2026-07-15' });
+  });
+
+  it('rejects a calendar-impossible lastUsedDateRange (strict date validation)', async () => {
+    await writeFile(prefsFile, JSON.stringify({
+      hiddenColumns: [],
+      columnOrder: [],
+      lastUsedDateRange: { start: '2026-02-30', end: '2026-13-01' },
+    }));
+    const prefs = await readExplorerPreferences(prefsFile, noLiveIds);
+    expect(prefs.lastUsedDateRange).toBeUndefined();
+  });
 });

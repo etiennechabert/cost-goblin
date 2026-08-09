@@ -102,7 +102,7 @@ export function ExplorerView(): React.JSX.Element {
   const [costMetric, setCostMetric] = useState<CostMetric>('effective');
   const [overview, setOverview] = useState<OverviewState>({ data: null, loading: true, error: null });
   const [rows, setRows] = useState<RowsState>({ data: null, loading: true, error: null });
-  const [hiddenColumns, setHiddenColumns] = useState<readonly string[]>(DEFAULT_EXPLORER_HIDDEN_COLUMNS);
+  const [hiddenColumns, setHiddenColumns] = useState<readonly string[]>([...DEFAULT_EXPLORER_HIDDEN_COLUMNS]);
   const [columnOrder, setColumnOrder] = useState<readonly string[]>([]);
   const [hourlyHint, setHourlyHint] = useState(false);
   const overviewDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
