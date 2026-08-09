@@ -74,6 +74,7 @@ async function main(): Promise<void> {
 
   // Merged coverage per source file (across multiple test groups)
   const merged = createCoverageReport();
+  const withoutSourceMap: string[] = [];
 
   for (const entry of relevant) {
     const urlPath = entry.url.replace(/^file:\/\//, '');
@@ -83,6 +84,12 @@ async function main(): Promise<void> {
     try {
       sourceMap = readFileSync(sourceMapPath, 'utf-8');
     } catch {
+      // A whole bundle's worth of coverage, dropped. Expected locally, where
+      // V8_DIR outlives a rebuild and still holds entries for bundle hashes
+      // whose .map is gone — so this warns rather than fails. It must not do
+      // it silently: this is the same "a dropped file raises the number"
+      // shape that the parse failure below refuses outright.
+      withoutSourceMap.push(urlPath);
       continue;
     }
 
@@ -111,6 +118,15 @@ async function main(): Promise<void> {
       }
       mergeIstanbulFile(merged, filePath, fileData);
     }
+  }
+
+  if (withoutSourceMap.length > 0) {
+    process.stderr.write(
+      `::warning::Skipped ${String(withoutSourceMap.length)} of ${String(relevant.length)} ` +
+        `coverage entries with no source map alongside them: ${withoutSourceMap.join(', ')}. ` +
+        'Their coverage is missing from this report. If this is CI, the build and the V8 dump ' +
+        'have gone out of sync.\n',
+    );
   }
 
   const verdict = auditCoverageReport(merged);

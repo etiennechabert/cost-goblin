@@ -30,11 +30,17 @@ const ZERO_FUNCTION_FILE_LIMIT = 25;
 const ZERO_FUNCTION_HIT_SHARE_LIMIT = 0.3;
 
 /**
- * Files this short are ignored by the guard. A handful of covered lines with
+ * The largest file the guard ignores — a zero-function file of up to this many
+ * lines does not count, one line longer does. A handful of covered lines with
  * no functions is an ordinary constant or barrel module, and counting them
  * would put the honest baseline within reach of the file threshold.
+ *
+ * Named for the largest *ignored* size rather than the smallest suspicious one
+ * because that is what the `>` below compares against: retuning this to "the
+ * file size I want to start catching" would move the boundary a line the wrong
+ * way.
  */
-const MIN_SUSPICIOUS_LINES = 20;
+const LARGEST_IGNORED_FILE_LINES = 20;
 
 function hits(coverage: FileCoverage): number {
   return [...coverage.lines.values()].filter(count => count > 0).length;
@@ -44,7 +50,7 @@ function hits(coverage: FileCoverage): number {
 export function measureZeroFunctionFiles(report: CoverageReport): ZeroFunctionStats {
   const all = [...report.values()];
   const suspects = all.filter(
-    coverage => coverage.functions.size === 0 && coverage.lines.size > MIN_SUSPICIOUS_LINES,
+    coverage => coverage.functions.size === 0 && coverage.lines.size > LARGEST_IGNORED_FILE_LINES,
   );
   const suspectHits = suspects.reduce((sum, coverage) => sum + hits(coverage), 0);
   const totalHits = all.reduce((sum, coverage) => sum + hits(coverage), 0);

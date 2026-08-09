@@ -166,6 +166,19 @@ jobs:
           name: coverage-e2e-${{ matrix.shard }}
           path: coverage-e2e/lcov.info
           if-no-files-found: ignore
+      # A report the collector rejected is written under .rejected and NEVER as
+      # lcov.info, so it cannot reach the merge step below. Keep it anyway: the
+      # ::error:: annotation gives the file count and share, this gives the
+      # per-file breakdown needed to see WHICH files were fabricated. The
+      # artifact name deliberately sits outside the `coverage-e2e-*` pattern the
+      # sonarcloud job downloads.
+      - name: Upload rejected E2E coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rejected-coverage-${{ matrix.shard }}
+          path: coverage-e2e/lcov.info.rejected
+          if-no-files-found: ignore
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

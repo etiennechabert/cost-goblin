@@ -103,9 +103,14 @@ export function parseIstanbulFileCoverage(value: unknown): IstanbulFileCoverage 
     if (!isStringRecord(fn)) continue;
     const line = startLineOf(fn['loc']);
     if (line === null) continue;
+    // Unnamed functions are keyed by line, not by istanbul's id: the id is
+    // positional and shifts between shards, which is exactly what the merge
+    // key is chosen to avoid. Unreachable through v8-to-istanbul — it only
+    // builds an fnMap entry when V8 gave the function a name — but the input
+    // here is untrusted `unknown`, so the fallback has to be shard-stable too.
     const name = fn['name'];
     functions.push({
-      name: typeof name === 'string' && name !== '' ? name : `anon_${id}`,
+      name: typeof name === 'string' && name !== '' ? name : `anon_${String(line)}`,
       line,
       count: countAt(functionCounts, id),
     });

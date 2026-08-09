@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   createCoverageReport,
@@ -63,20 +65,30 @@ function parsed(value: unknown): IstanbulFileCoverage {
 describe('the e2e-coverage barrel', () => {
   // `e2e/collect-coverage.ts` is the only consumer, and it is outside tsc,
   // eslint and vitest — so a re-export dropped here surfaces as a CI-runtime
-  // SyntaxError across every e2e shard rather than as a failing test. Pin the
-  // exact names it destructures.
+  // SyntaxError across every e2e shard rather than as a failing test.
+  //
+  // The names are read out of the collector rather than listed here: a
+  // hardcoded list goes stale the moment someone adds an import to the
+  // collector and forgets the barrel, which is the exact failure this guards.
   it('exports everything the collector imports', () => {
-    for (const name of [
-      'auditCoverageReport',
-      'createCoverageReport',
-      'describeCoverageFailure',
-      'generateLcov',
-      'isCoverageShardFile',
-      'isProjectSourcePath',
-      'isRendererBundleUrl',
-      'mergeIstanbulFile',
-      'parseIstanbulFileCoverage',
-    ]) {
+    const collector = readFileSync(
+      join(import.meta.dirname, '..', '..', '..', '..', 'e2e', 'collect-coverage.ts'),
+      'utf-8',
+    );
+    const importBlock = /import\s*\{([^}]*)\}\s*from\s*'[^']*e2e-coverage\/index\.js';/.exec(
+      collector,
+    );
+    if (importBlock?.[1] === undefined) {
+      throw new Error('e2e/collect-coverage.ts no longer imports the e2e-coverage barrel');
+    }
+
+    const imported = importBlock[1]
+      .split(',')
+      .map(name => name.trim())
+      .filter(name => name !== '');
+    expect(imported.length).toBeGreaterThan(0);
+
+    for (const name of imported) {
       expect(barrel).toHaveProperty(name);
       expect(typeof Reflect.get(barrel, name)).toBe('function');
     }
@@ -148,7 +160,11 @@ describe('parseIstanbulFileCoverage', () => {
     ]);
   });
 
-  it('names unnamed functions after their fnMap id', () => {
+  it('names an unnamed function after its line, so the key stays shard-stable', () => {
+    // v8-to-istanbul never emits an empty name (it only builds an fnMap entry
+    // when V8 named the function), so this is the untrusted-input path. The
+    // fallback must not use the fnMap id: ids are positional and shift between
+    // shards, which is what the name+line merge key exists to avoid.
     const entry = parsed(
       istanbulEntry({
         statements: [],
@@ -157,7 +173,7 @@ describe('parseIstanbulFileCoverage', () => {
       }),
     );
 
-    expect(entry.functions).toEqual([{ name: 'anon_0', line: 7, count: 0 }]);
+    expect(entry.functions).toEqual([{ name: 'anon_7', line: 7, count: 0 }]);
   });
 
   it('treats a count missing from an existing map as never executed', () => {
@@ -287,12 +303,12 @@ describe('mergeIstanbulFile', () => {
     expect(merged?.functions.get('render:1')).toEqual({ name: 'render', line: 1, count: 2 });
   });
 
-  it('keeps files separate and restarts block ids per file', () => {
+  it('accumulates each file independently', () => {
     const report = createCoverageReport();
     const entry = parsed(
       istanbulEntry({
         statements: [{ line: 1, count: 1 }],
-        functions: [],
+        functions: [{ name: 'render', line: 1, count: 4 }],
         branches: [
           { lines: [1], counts: [1] },
           { lines: [2], counts: [0] },
@@ -302,15 +318,36 @@ describe('mergeIstanbulFile', () => {
 
     mergeIstanbulFile(report, '/repo/packages/ui/src/A.tsx', entry);
     mergeIstanbulFile(report, '/repo/packages/ui/src/B.tsx', entry);
+    // A third merge into A only — B must not move.
+    mergeIstanbulFile(
+      report,
+      '/repo/packages/ui/src/A.tsx',
+      parsed(
+        istanbulEntry({
+          statements: [{ line: 1, count: 9 }],
+          functions: [{ name: 'render', line: 1, count: 9 }],
+          branches: [],
+        }),
+      ),
+    );
 
     expect(report.size).toBe(2);
-    expect(report.get('/repo/packages/ui/src/A.tsx')?.branches).toEqual([
+    expect(report.get('/repo/packages/ui/src/A.tsx')?.lines.get(1)).toBe(9);
+    expect(report.get('/repo/packages/ui/src/B.tsx')?.lines.get(1)).toBe(1);
+    expect(report.get('/repo/packages/ui/src/B.tsx')?.functions.get('render:1')).toEqual({
+      name: 'render',
+      line: 1,
+      count: 4,
+    });
+    // Both files carry the ids the parser assigned, spelled out rather than
+    // compared against each other — a self-comparison also passes on two
+    // empty arrays.
+    const expectedBranches = [
       { line: 1, blockId: 0, branchId: 0, count: 1 },
       { line: 2, blockId: 1, branchId: 0, count: 0 },
-    ]);
-    expect(report.get('/repo/packages/ui/src/B.tsx')?.branches).toEqual(
-      report.get('/repo/packages/ui/src/A.tsx')?.branches,
-    );
+    ];
+    expect(report.get('/repo/packages/ui/src/A.tsx')?.branches).toEqual(expectedBranches);
+    expect(report.get('/repo/packages/ui/src/B.tsx')?.branches).toEqual(expectedBranches);
   });
 });
 
@@ -411,14 +448,18 @@ describe('generateLcov', () => {
     expect(daLines).toEqual(['DA:3,1', 'DA:7,0', 'DA:12,1']);
   });
 
-  it('deduplicates a branch reported by several shards, keeping the max', () => {
+  it('collapses repeats of one branch position to a single record, keeping the max', () => {
+    // Deliberately not "dedupes across shards": a branch's blockId is only
+    // stable when both entries numbered branchMap the same way, which shards
+    // exercising different functions do not (see mergeIstanbulFile). What is
+    // pinned here is the collapse within one collector run.
     const report = createCoverageReport();
     const path = 'packages/core/src/x.ts';
-    const shard = (count: number): unknown =>
+    const entry = (count: number): unknown =>
       istanbulEntry({ statements: [], functions: [], branches: [{ lines: [4], counts: [count] }] });
 
-    mergeIstanbulFile(report, path, parsed(shard(0)));
-    mergeIstanbulFile(report, path, parsed(shard(6)));
+    mergeIstanbulFile(report, path, parsed(entry(0)));
+    mergeIstanbulFile(report, path, parsed(entry(6)));
 
     const lcov = generateLcov(report);
     expect(lcov).toContain('BRDA:4,0,0,6');
