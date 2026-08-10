@@ -14,8 +14,8 @@ import {
   readTierLastSync,
   writeTierLastSync,
   resolveBucketPath,
+  findAwsCli,
   findGcloudCli,
-  gcloudCliFound,
   gcloudSearchPaths,
   logger,
   providerAuth,
@@ -375,18 +375,19 @@ export function registerSyncHandlers(app: AppContext): void {
 
   ipcMain.handle('data:sso-login', async (_event, profile: string): Promise<void> => {
     const { spawn } = await import('node:child_process');
-    const { delimiter } = await import('node:path');
-    const currentPath = process.env['PATH'] ?? '';
-    const extraPaths = process.platform === 'win32'
-      ? []
-      : ['/usr/local/bin', '/opt/homebrew/bin', '/usr/bin'];
-    const fullPath = [...new Set([...currentPath.split(delimiter), ...extraPaths])].join(delimiter);
+    // Absolute trusted install only (`findAwsCli`), never a bare name: the
+    // old spawn('aws', ...) resolved from the inherited PATH first, so a
+    // writable early PATH entry could substitute the binary that runs the
+    // whole SSO credential flow. An absolute aws.exe also needs no shell on
+    // Windows, which stops the IPC-supplied profile from ever being joined
+    // into a cmd.exe command line. A miss reports the marker the UI already
+    // renders as "install the AWS CLI".
+    const awsBin = findAwsCli();
+    if (awsBin === null) throw new Error('AWS_CLI_NOT_FOUND');
     return new Promise<void>((resolve, reject) => {
-      const child = spawn('aws', ['sso', 'login', '--profile', profile], {
+      const child = spawn(awsBin, ['sso', 'login', '--profile', profile], {
         stdio: 'ignore',
         detached: true,
-        shell: process.platform === 'win32',
-        env: { ...process.env, PATH: fullPath },
       });
       child.on('error', (err: NodeJS.ErrnoException) => {
         if (err.code === 'ENOENT') {
@@ -417,10 +418,11 @@ export function registerSyncHandlers(app: AppContext): void {
     const { spawn } = await import('node:child_process');
     const { delimiter } = await import('node:path');
     const currentPath = process.env['PATH'] ?? '';
-    // Reuses core's own probe list rather than a second hand-written copy:
-    // they disagreed on Windows, where `findGcloudCli` looks under
-    // PROGRAMFILES/LOCALAPPDATA but this handler relied on bare PATH — so sync
-    // found gcloud and the re-auth button did not.
+    // Child-env PATH augmentation only — gcloud itself is spawned by the
+    // absolute path below, but the launcher script still resolves its own
+    // helpers (python, bundled components) from PATH. Derived from core's
+    // candidate list rather than a second hand-written copy, which had
+    // already drifted once (omitting every Windows location).
     const fullPath = [...new Set([...currentPath.split(delimiter), ...gcloudSearchPaths()])].join(delimiter);
 
     const mode: GcloudLoginMode = rawMode === 'cli' ? 'cli' : 'adc';
@@ -454,14 +456,13 @@ export function registerSyncHandlers(app: AppContext): void {
       loginArgs.push(`--impersonate-service-account=${impersonate}`);
     }
 
-    // Windows ships gcloud as `gcloud.cmd`, which Node refuses to spawn without
-    // a shell (CVE-2024-27980) — but cmd.exe starts successfully whether or not
-    // gcloud exists, so the ENOENT below can never fire there. Probe the disk
-    // first, or the "install the Cloud SDK" branch is unreachable on Windows
-    // and the button simply spins for its 30-second lock.
-    const useShell = process.platform === 'win32';
-    if (useShell && !gcloudCliFound()) throw new Error('GCLOUD_CLI_NOT_FOUND');
+    // `findGcloudCli` returning null is the "not installed" signal on every
+    // platform — it cannot come from spawn: on Windows gcloud is a `.cmd`
+    // that needs a shell (CVE-2024-27980), and cmd.exe starts successfully
+    // whether or not gcloud exists, so ENOENT never fires there.
     const bin = findGcloudCli();
+    if (bin === null) throw new Error('GCLOUD_CLI_NOT_FOUND');
+    const useShell = process.platform === 'win32';
 
     return new Promise<void>((resolve, reject) => {
       const child = spawn(

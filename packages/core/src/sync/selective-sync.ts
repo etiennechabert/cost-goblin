@@ -1,30 +1,6 @@
 import { spawn } from 'node:child_process';
 import { mkdir, rm, readdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
-
-let cachedAwsPath: string | null = null;
-function findAwsCli(): string {
-  if (cachedAwsPath !== null) return cachedAwsPath;
-
-  const candidates = process.platform === 'win32'
-    ? [
-        join(process.env['PROGRAMFILES'] ?? String.raw`C:\Program Files`, 'Amazon', 'AWSCLIV2', 'aws.exe'),
-      ]
-    : [
-        '/opt/homebrew/bin/aws',
-        '/usr/local/bin/aws',
-        '/usr/bin/aws',
-        '/usr/local/sbin/aws',
-        '/opt/local/bin/aws',
-      ];
-
-  for (const p of candidates) {
-    if (existsSync(p)) { cachedAwsPath = p; return p; }
-  }
-  cachedAwsPath = 'aws';
-  return cachedAwsPath;
-}
 import { logger } from '../logger/logger.js';
 import type { ProviderName } from '../types/branded.js';
 import { providerRawDir, providerRoot } from './provider-paths.js';
@@ -39,6 +15,7 @@ import {
   parseAwsCompletedBytes,
   saveEtags,
 } from './sync-utils.js';
+import { findAwsCli } from './trusted-binaries.js';
 
 export type { ExpectedDataType } from './sync-utils.js';
 
@@ -69,9 +46,17 @@ function runAwsS3Sync(options: {
   readonly onLine?: ((line: string) => void) | undefined;
 }): Promise<void> {
   return new Promise((resolve, reject) => {
-    const args = ['s3', 'sync', options.source, options.dest, '--profile', options.profile];
-
+    // Absolute trusted install only — never a bare-name PATH lookup, which
+    // would let a writable early PATH entry substitute the binary that holds
+    // the AWS session. Same message as the ENOENT branch below so the failure
+    // reads identically wherever it surfaces.
     const awsBin = findAwsCli();
+    if (awsBin === null) {
+      reject(new Error('AWS CLI not found — install it with: brew install awscli'));
+      return;
+    }
+
+    const args = ['s3', 'sync', options.source, options.dest, '--profile', options.profile];
     const proc = spawn(awsBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     if (options.signal !== undefined) {

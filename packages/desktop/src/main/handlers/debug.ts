@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { app as electronApp, ipcMain } from 'electron';
-import { parseJsonObject } from '@costgoblin/core';
+import { findGhCli, findGitCli, parseJsonObject } from '@costgoblin/core';
 import type { AppContext } from './context.js';
 
 const execFileAsync = promisify(execFile);
@@ -45,8 +45,13 @@ export function registerDebugHandlers(app: AppContext): void {
   // the version string. Detached HEAD also returns null.
   ipcMain.handle('debug:get-git-branch', async (): Promise<string | null> => {
     if (electronApp.isPackaged) return null;
+    // Absolute trusted installs only (`findGitCli` / `findGhCli` below) —
+    // never the inherited PATH, where a writable early entry could substitute
+    // the binary. A miss just loses the label, like every other error here.
+    const git = findGitCli();
+    if (git === null) return null;
     try {
-      const { stdout } = await execFileAsync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      const { stdout } = await execFileAsync(git, ['rev-parse', '--abbrev-ref', 'HEAD'], {
         cwd: electronApp.getAppPath(),
       });
       const branch = stdout.trim();
@@ -62,8 +67,10 @@ export function registerDebugHandlers(app: AppContext): void {
   // absence just leaves the plain branch name.
   ipcMain.handle('debug:get-branch-pr', async (): Promise<{ url: string; title: string; number: number } | null> => {
     if (electronApp.isPackaged) return null;
+    const gh = findGhCli();
+    if (gh === null) return null;
     try {
-      const { stdout } = await execFileAsync('gh', ['pr', 'view', '--json', 'url,title,number'], {
+      const { stdout } = await execFileAsync(gh, ['pr', 'view', '--json', 'url,title,number'], {
         cwd: electronApp.getAppPath(),
       });
       const pr = parseJsonObject(stdout);

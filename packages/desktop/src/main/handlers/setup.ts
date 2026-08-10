@@ -3,7 +3,6 @@ import {
   GCS_READ_ONLY_SCOPE,
   classifyGcsFolder,
   findGcloudCli,
-  gcloudCliFound,
   gcloudSearchPaths,
   logger,
   parseS3Path,
@@ -219,15 +218,15 @@ export function registerSetupHandlers(app: AppContext): void {
     const { delimiter } = await import('node:path');
     const { StringDecoder } = await import('node:string_decoder');
 
-    // Windows ships gcloud as `gcloud.cmd`, which Node refuses to spawn
-    // without a shell (CVE-2024-27980) — and cmd.exe starts fine whether or
-    // not gcloud exists, so ENOENT can never fire there. Probe the disk first
-    // or the "not installed" branch is unreachable on Windows.
-    const useShell = process.platform === 'win32';
-    if (useShell && !gcloudCliFound()) {
+    // `findGcloudCli` returning null is the "not installed" signal on every
+    // platform — it cannot come from spawn: on Windows gcloud is a `.cmd`
+    // that needs a shell (CVE-2024-27980), and cmd.exe starts fine whether or
+    // not gcloud exists, so ENOENT can never fire there.
+    const bin = findGcloudCli();
+    if (bin === null) {
       return { projects: [], error: 'GCLOUD_CLI_NOT_FOUND' };
     }
-    const bin = findGcloudCli();
+    const useShell = process.platform === 'win32';
     const currentPath = process.env['PATH'] ?? '';
     const fullPath = [...new Set([...currentPath.split(delimiter), ...gcloudSearchPaths()])].join(delimiter);
     const args = ['projects', 'list', '--format=json'];

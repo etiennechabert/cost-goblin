@@ -16,6 +16,13 @@ import { asProviderName } from '../types/branded.js';
 vi.mock('node:child_process');
 vi.mock('../logger/logger.js');
 
+// The suite must not depend on whether the machine running it has gcloud
+// installed; individual cases flip this to null to exercise the miss path.
+const { mockFindGcloudCli } = vi.hoisted(() => ({
+  mockFindGcloudCli: vi.fn((): string | null => '/mock/trusted/gcloud'),
+}));
+vi.mock('../sync/trusted-binaries.js', () => ({ findGcloudCli: mockFindGcloudCli }));
+
 const providerName = asProviderName('gcp-main');
 
 const file = (key: string, hash = 'h', size = 10): ManifestFileEntry => ({ key, contentHash: hash, size });
@@ -316,6 +323,18 @@ describe('syncGcpSelectedFiles', () => {
     expect(failure).not.toContain('503');
     expect(failure).not.toContain('Copying gs://');
     expect(failure).not.toContain('Average throughput');
+  });
+
+  it('rejects without spawning when no trusted gcloud install exists', async () => {
+    // A miss must disable the feature, not degrade to a bare-name spawn that
+    // PATH order — and therefore a writable early PATH entry — would resolve.
+    mockFindGcloudCli.mockReturnValueOnce(null);
+
+    await expect(syncGcpSelectedFiles({
+      bucketPath: 'gs://focus-export/focus', providerName, dataDir, expectedDataType: 'daily',
+      files: [file('focus/billing_period=2026-01/s.parquet')],
+    })).rejects.toThrow('Google Cloud CLI not found');
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it('leaves an already-installed period untouched when the download fails', async () => {

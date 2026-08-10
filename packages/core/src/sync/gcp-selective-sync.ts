@@ -1,9 +1,7 @@
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { mkdir, rename, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { logger } from '../logger/logger.js';
 import type { ProviderName } from '../types/branded.js';
 import { canonicalizeGcpPeriod } from './gcp-canonicalize.js';
@@ -12,6 +10,7 @@ import type { ManifestFileEntry } from './manifest.js';
 import { providerMetaDir, providerRawDir } from './provider-paths.js';
 import type { ProgressCallback } from './s3-client.js';
 import { extractPeriodPrefix, getRawDirPrefix, groupByPeriod, saveEtags } from './sync-utils.js';
+import { findGcloudCli } from './trusted-binaries.js';
 
 /** The GCP sync mirrors the AWS one seam for seam: the vendor SDK lists the
  *  bucket (change detection), and the vendor CLI moves the bytes. `gcloud
@@ -25,54 +24,6 @@ import { extractPeriodPrefix, getRawDirPrefix, groupByPeriod, saveEtags } from '
  *  files the query layer reads. BigQuery cannot emit MAP-typed tags, so each
  *  period is canonicalized (`gcp-canonicalize.ts`) into a temp dir and then
  *  swapped into `raw/daily-YYYY-MM/` in one move. */
-
-let cachedGcloudPath: string | null = null;
-
-/** Absolute paths the CLI is installed to, most-specific first. Exported so
- *  the desktop sign-in handler augments PATH from the SAME list the sync path
- *  probes — two hand-written copies had already drifted, the handler's
- *  omitting every Windows location, so sync found gcloud and the re-auth
- *  button did not. */
-export function gcloudCliCandidates(): string[] {
-  return process.platform === 'win32'
-    ? [
-        join(process.env['PROGRAMFILES'] ?? String.raw`C:\Program Files`, 'Google', 'Cloud SDK', 'google-cloud-sdk', 'bin', 'gcloud.cmd'),
-        join(process.env['LOCALAPPDATA'] ?? '', 'Google', 'Cloud SDK', 'google-cloud-sdk', 'bin', 'gcloud.cmd'),
-      ]
-    : [
-        '/opt/homebrew/bin/gcloud',
-        '/usr/local/bin/gcloud',
-        '/usr/bin/gcloud',
-        '/opt/local/bin/gcloud',
-        join(homedir(), 'google-cloud-sdk', 'bin', 'gcloud'),
-      ];
-}
-
-/** The directories of `gcloudCliCandidates`, for PATH augmentation. */
-export function gcloudSearchPaths(): string[] {
-  return [...new Set(gcloudCliCandidates().map(p => dirname(p)))];
-}
-
-/** Whether an actual gcloud executable was located on disk.
- *
- *  Distinct from `findGcloudCli` because that falls back to the bare name so
- *  a POSIX PATH lookup can still succeed. On Windows the binary is a `.cmd`,
- *  which cannot be spawned without a shell (Node CVE-2024-27980) — and a shell
- *  starts successfully whether or not gcloud exists, so ENOENT never fires
- *  there. Callers that need to report "the CLI is not installed" must ask
- *  this before spawning rather than wait for an error that cannot arrive. */
-export function gcloudCliFound(): boolean {
-  return gcloudCliCandidates().some(p => p.length > 0 && existsSync(p));
-}
-
-export function findGcloudCli(): string {
-  if (cachedGcloudPath !== null) return cachedGcloudPath;
-  for (const p of gcloudCliCandidates()) {
-    if (p.length > 0 && existsSync(p)) { cachedGcloudPath = p; return p; }
-  }
-  cachedGcloudPath = 'gcloud';
-  return cachedGcloudPath;
-}
 
 /** `gcloud storage rsync` announces each transfer as it STARTS:
  *
@@ -169,6 +120,16 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
       env['CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE'] = options.keyFile;
     }
 
+    // Absolute trusted install only — never a bare-name PATH lookup, which
+    // would let a writable early PATH entry substitute the binary that holds
+    // the GCP session. Same message as the ENOENT branch below so the failure
+    // reads identically wherever it surfaces.
+    const gcloudPath = findGcloudCli();
+    if (gcloudPath === null) {
+      reject(new Error('Google Cloud CLI not found — install it with: brew install --cask google-cloud-sdk'));
+      return;
+    }
+
     // The Windows Cloud SDK ships `gcloud.cmd`, and since Node 18.20.2 /
     // 20.12.2 (CVE-2024-27980) spawning a `.cmd` without a shell fails with
     // EINVAL — which is not in the emit-as-'error' list, so it would throw out
@@ -176,7 +137,6 @@ function runGcloudStorageRsync(options: GcloudRsyncOptions): Promise<void> {
     // Arguments are quoted because the staging destination is a user path that
     // routinely contains spaces; `isSafePeriodPrefix` has already rejected the
     // shell metacharacters that quoting alone would not contain.
-    const gcloudPath = findGcloudCli();
     const useShell = process.platform === 'win32';
     const proc = spawn(
       useShell ? `"${gcloudPath}"` : gcloudPath,

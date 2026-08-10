@@ -61,10 +61,16 @@ export {
   type GcpSelectiveSyncOptions,
   parseGcloudCompletedBytes,
   syncGcpSelectedFiles,
-  findGcloudCli,
-  gcloudCliFound,
-  gcloudSearchPaths,
 } from './gcp-selective-sync.js';
+
+export {
+  findAwsCli,
+  findGcloudCli,
+  findGhCli,
+  findGitCli,
+  findTrustedBinary,
+  gcloudSearchPaths,
+} from './trusted-binaries.js';
 
 export {
   type CanonicalizeConnection,
