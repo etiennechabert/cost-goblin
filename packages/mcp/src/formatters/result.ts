@@ -228,7 +228,9 @@ export function formatAsCsv(result: StructuredResult): string {
       const table = result.tables[ti];
       if (table === undefined) continue;
       if (ti > 0) lines.push('');
-      lines.push(...tableToCsvLines(table));
+      // Per-line push, not push(...spread): a run_sql export can exceed V8's
+      // max argument count (~65k) and spread would throw RangeError.
+      for (const line of tableToCsvLines(table)) lines.push(line);
     }
   }
   return lines.join('\n');

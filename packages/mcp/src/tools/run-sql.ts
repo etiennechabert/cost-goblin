@@ -141,6 +141,11 @@ function resolveDateRange(param: { start: string; end: string } | undefined): { 
  *  it covers the range, else the per-provider Parquet union. Returns null when
  *  no provider has data in range. */
 async function buildCostsCte(ctx: McpContext, dateRange: { start: string; end: string }): Promise<string | null> {
+  // Both bounds are interpolated into SQL literals below — assert at the
+  // interpolation site (not just in resolveDateRange), matching how core's
+  // query builder re-asserts before every BETWEEN interpolation.
+  assertDateString(dateRange.start);
+  assertDateString(dateRange.end);
   const matSource = ctx.materializedBase.getSource(dateRange, 'daily');
   if (matSource !== undefined) {
     return `costs AS (SELECT * FROM ${matSource} WHERE usage_date BETWEEN '${dateRange.start}' AND '${dateRange.end}')`;
@@ -172,10 +177,12 @@ async function buildCostsCte(ctx: McpContext, dateRange: { start: string; end: s
 function columnsOf(firstRow: Readonly<Record<string, unknown>>): Column[] {
   return Object.keys(firstRow).map(name => {
     const sample = firstRow[name];
+    // bigint counts as numeric: toCellRows converts bigint cells to Number, so
+    // the column type must agree or COUNT(*)/integer SUM columns render as text.
     return {
       key: name,
       header: name,
-      type: typeof sample === 'number' ? 'number' : 'string',
+      type: typeof sample === 'number' || typeof sample === 'bigint' ? 'number' : 'string',
     };
   });
 }
@@ -215,10 +222,13 @@ export async function runSql(
     return emptyRangeResult(ctx, dateRange, format, `Query Result`);
   }
 
-  const hasLimit = /\bLIMIT\s+\d+\s*$/i.test(userSql);
+  // The validator tolerates one trailing ';' — strip it here too, or the
+  // appended LIMIT (and anything after the ';') is a second, invalid statement.
+  const bareSql = userSql.replace(/;\s*$/, '');
+  const hasLimit = /\bLIMIT\s+\d+(?:\s+OFFSET\s+\d+)?\s*$/i.test(bareSql);
   const wrappedSql = hasLimit
-    ? `WITH ${costsCte}\n${userSql}`
-    : `WITH ${costsCte}\n${userSql}\nLIMIT ${String(limit)}`;
+    ? `WITH ${costsCte}\n${bareSql}`
+    : `WITH ${costsCte}\n${bareSql}\nLIMIT ${String(limit)}`;
 
   logger.info('run-sql', { userSqlLength: userSql.length, limit });
 
@@ -240,7 +250,9 @@ export async function runSql(
   }
 
   const columns = columnsOf(firstRow);
-  const tableRows = toCellRows(rows, Object.keys(firstRow));
+  // Cells iterate the columns' own key order — headers and cells share one
+  // source of truth, so they cannot drift apart.
+  const tableRows = toCellRows(rows, columns.map(c => c.key));
 
   const meta: { label: string; value: string | number; type?: 'number' }[] = [
     { label: 'Rows', value: rows.length, type: 'number' },

@@ -36,6 +36,15 @@ export function toStr(v: unknown): string {
   return '';
 }
 
+/** Monday of the week containing a YYYY-MM-DD UTC date, as YYYY-MM-DD — the
+ *  shared week-bucket key for the weekly trend views. */
+export function mondayOf(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  const day = d.getUTCDay();
+  const monday = new Date(d.getTime() - ((day === 0 ? 6 : day - 1) * 86_400_000));
+  return monday.toISOString().slice(0, 10);
+}
+
 export function toDateRange(dr: { start: string; end: string }): DateRange {
   return { start: asDateString(dr.start), end: asDateString(dr.end) };
 }

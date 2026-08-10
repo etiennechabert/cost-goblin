@@ -12,6 +12,7 @@ import {
   defaultDateRange,
   emptyRangeResult,
   lookupDimension,
+  mondayOf,
   resolveEntityName,
   resolveFormat,
   structuredToolResult,
@@ -122,10 +123,7 @@ export async function queryEntityDetail(
   } else if (sortedDays.length > 31) {
     const weekMap = new Map<string, number>();
     for (const [date, data] of sortedDays) {
-      const d = new Date(`${date}T00:00:00Z`);
-      const day = d.getUTCDay();
-      const monday = new Date(d.getTime() - ((day === 0 ? 6 : day - 1) * 86_400_000));
-      const weekKey = monday.toISOString().slice(0, 10);
+      const weekKey = mondayOf(date);
       weekMap.set(weekKey, (weekMap.get(weekKey) ?? 0) + data.cost);
     }
     const weeklyCols: Column[] = [

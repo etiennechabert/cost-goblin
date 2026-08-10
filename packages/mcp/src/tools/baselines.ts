@@ -78,23 +78,22 @@ function parseManualBand(v: unknown): ManualBand | undefined {
 
 /** Band config: persisted user override wins, else the same env-configurable
  *  defaults the desktop store uses, so the run-rate band matches. */
-function parseBandConfig(specsRaw: unknown): { lowerPct: number; upperPct: number; windowDays: number } {
+function parseBandConfig(config: unknown): { lowerPct: number; upperPct: number; windowDays: number } {
   let lowerPct = envNum('COSTGOBLIN_BASELINES_LOWER_PCT', 10);
   let upperPct = envNum('COSTGOBLIN_BASELINES_UPPER_PCT', 90);
   let windowDays = envNum('COSTGOBLIN_BASELINES_WINDOW_DAYS', 30);
-  if (isRecord(specsRaw) && isRecord(specsRaw['config'])) {
-    const c = specsRaw['config'];
-    if (typeof c['lowerPct'] === 'number') lowerPct = c['lowerPct'];
-    if (typeof c['upperPct'] === 'number') upperPct = c['upperPct'];
-    if (typeof c['windowDays'] === 'number') windowDays = c['windowDays'];
+  if (isRecord(config)) {
+    if (typeof config['lowerPct'] === 'number') lowerPct = config['lowerPct'];
+    if (typeof config['upperPct'] === 'number') upperPct = config['upperPct'];
+    if (typeof config['windowDays'] === 'number') windowDays = config['windowDays'];
   }
   return { lowerPct, upperPct, windowDays };
 }
 
-function parseSpecs(specsRaw: unknown): Spec[] {
+function parseSpecs(baselines: unknown): Spec[] {
   const specs: Spec[] = [];
-  if (!isRecord(specsRaw) || !Array.isArray(specsRaw['baselines'])) return specs;
-  for (const s of specsRaw['baselines']) {
+  if (!Array.isArray(baselines)) return specs;
+  for (const s of baselines) {
     if (!isRecord(s)) continue;
     specs.push({
       id: str(s['id']),
@@ -107,20 +106,20 @@ function parseSpecs(specsRaw: unknown): Spec[] {
   return specs;
 }
 
-function parseHistory(dataRaw: unknown): Map<string, readonly BaselineDailyPoint[]> {
+function parseHistory(historyRaw: unknown): Map<string, readonly BaselineDailyPoint[]> {
   const history = new Map<string, readonly BaselineDailyPoint[]>();
-  if (!isRecord(dataRaw) || !isRecord(dataRaw['history'])) return history;
-  for (const [id, pts] of Object.entries(dataRaw['history'])) {
+  if (!isRecord(historyRaw)) return history;
+  for (const [id, pts] of Object.entries(historyRaw)) {
     if (!Array.isArray(pts)) continue;
     history.set(id, pts.filter(isRecord).map((p) => ({ date: asDateString(str(p['date'])), cost: asDollars(num(p['cost'])) })));
   }
   return history;
 }
 
-function parseSnapshots(dataRaw: unknown): Map<string, readonly Record<string, unknown>[]> {
+function parseSnapshots(snapshotsRaw: unknown): Map<string, readonly Record<string, unknown>[]> {
   const snapshots = new Map<string, readonly Record<string, unknown>[]>();
-  if (!isRecord(dataRaw) || !isRecord(dataRaw['snapshots'])) return snapshots;
-  for (const [id, snaps] of Object.entries(dataRaw['snapshots'])) {
+  if (!isRecord(snapshotsRaw)) return snapshots;
+  for (const [id, snaps] of Object.entries(snapshotsRaw)) {
     if (Array.isArray(snaps)) snapshots.set(id, snaps.filter(isRecord));
   }
   return snapshots;
@@ -133,11 +132,15 @@ async function load(ctx: McpContext): Promise<Loaded> {
   try { specsRaw = JSON.parse(await readFile(join(base, 'baselines.json'), 'utf-8')); } catch { specsRaw = {}; }
   try { dataRaw = JSON.parse(await readFile(join(base, 'baselines-data.json'), 'utf-8')); } catch { dataRaw = {}; }
 
+  // The two state files' top-level layout is narrowed HERE, once — the parsers
+  // below receive only the slice they own.
+  const specsRoot = isRecord(specsRaw) ? specsRaw : {};
+  const dataRoot = isRecord(dataRaw) ? dataRaw : {};
   return {
-    specs: parseSpecs(specsRaw),
-    history: parseHistory(dataRaw),
-    snapshots: parseSnapshots(dataRaw),
-    ...parseBandConfig(specsRaw),
+    specs: parseSpecs(specsRoot['baselines']),
+    history: parseHistory(dataRoot['history']),
+    snapshots: parseSnapshots(dataRoot['snapshots']),
+    ...parseBandConfig(specsRoot['config']),
   };
 }
 

@@ -597,8 +597,7 @@ export class BaselineStore {
     };
 
     // 1) Probe cardinality of the enabled built-ins to drop high-card dims.
-    const enabledFields = [...new Set(dimensions.builtIn.filter((d) => d.enabled !== false).map((d) => d.field))];
-    const { cardinalityByColumn, lineItems } = await this.probeDimCardinality(deps, enabledFields, dateRange, opts);
+    const { cardinalityByColumn, lineItems } = await this.probeDimCardinality(deps, dateRange, opts);
 
     const grain = resolveDiscoveryGrain({
       dimensions,
@@ -614,9 +613,10 @@ export class BaselineStore {
 
     const grainIds = grain.map((d) => d.name);
     const grainCols = grain.map((d) => d.field);
-    const tupleKeyOf = (values: Record<string, string>): string => grain.map((d) => `${d.name}=${values[d.field] ?? ''}`).sort().join('&');
-    const lookbackMonths = Math.max(1, cfg.lookbackDays / 30);
-    const minTotal = cfg.minMonthlyCost * lookbackMonths;
+    // Auto-ignore threshold over the whole window: minMonthlyCost scaled by the
+    // lookback months. The daily query's minTotalCost is this same number
+    // (clamped to >= 0 there); reconcileDiscovered compares the raw value.
+    const minTotal = cfg.minMonthlyCost * Math.max(1, cfg.lookbackDays / 30);
 
     // Both discovery queries hit the same source/columns — resolve the rollup
     // once (computeShapeSignature isn't free).
@@ -630,7 +630,7 @@ export class BaselineStore {
       { ...opts, ...(mat === undefined ? {} : { materializedSource: mat }) },
     );
     const totalsRows = await deps.runPreparedQuery(totalsQ.sql, totalsQ.params, mat !== undefined);
-    const tuples = foldTotalsByTuple(totalsRows, grain, tupleKeyOf);
+    const tuples = foldTotalsByTuple(totalsRows, grain);
     logger.info('baselines: discovered tuples', { count: tuples.size });
 
     // 3) Bounded per-day query — only for tuples worth tracking (>= the
@@ -641,18 +641,13 @@ export class BaselineStore {
       { ...opts, ...(mat === undefined ? {} : { materializedSource: mat }) },
     );
     const dailyRows = await deps.runPreparedQuery(dailyQ.sql, dailyQ.params, mat !== undefined);
-    const dailyByTuple = foldDailyByTuple(dailyRows, grain, tupleKeyOf);
+    const dailyByTuple = foldDailyByTuple(dailyRows, grain);
 
     // 4+5) Upsert a baseline per live tuple; prune or blank the vanished ones.
-    this.reconcileDiscovered({
-      tuples,
-      grain,
-      basis: await snapshotBasis(deps),
-      dailyByTuple,
-      historyEnd: dateRange.end,
-      lookbackMonths,
-      minMonthlyCost: cfg.minMonthlyCost,
-    });
+    const basis = await snapshotBasis(deps);
+    // ^ last await before the synchronous reconcile: it indexes this.specs
+    // after this point, so baselines the user deleted mid-discovery stay gone.
+    this.reconcileDiscovered({ tuples, grain, basis, dailyByTuple, historyEnd: dateRange.end, minTotal });
   }
 
   /** Probe cardinality of the enabled built-ins (used to drop high-cardinality
@@ -660,10 +655,10 @@ export class BaselineStore {
    *  empty grain guard rather than failing the whole recompute. */
   private async probeDimCardinality(
     deps: BaselineEngineDeps,
-    enabledFields: readonly string[],
     dateRange: DateRange,
     opts: QueryContextOptions,
   ): Promise<{ cardinalityByColumn: Record<string, number>; lineItems: number }> {
+    const enabledFields = [...new Set(opts.dimensions.builtIn.filter((d) => d.enabled !== false).map((d) => d.field))];
     const cardinalityByColumn: Record<string, number> = {};
     let lineItems = 0;
     try {
@@ -705,12 +700,16 @@ export class BaselineStore {
     readonly basis: BaselineCostBasis;
     readonly dailyByTuple: ReadonlyMap<string, readonly BaselineDailyPoint[]>;
     readonly historyEnd: string;
-    readonly lookbackMonths: number;
-    readonly minMonthlyCost: number;
+    /** UNCLAMPED whole-window auto-ignore threshold (minMonthlyCost × lookback
+     *  months) — the same number the daily query's minTotalCost derives from. */
+    readonly minTotal: number;
   }): void {
     const { existingByScope, manualScopes } = this.indexSpecsByScope();
 
     const seenScopes = new Set<string>();
+    // One timestamp for the whole batch — nothing reads per-tuple-distinct
+    // times, and this skips thousands of Date allocations per recompute.
+    const now = new Date().toISOString();
     for (const [key, tuple] of args.tuples) {
       const scope = buildScope(args.grain, tuple.values);
       const scopeId = scopeKey(scope);
@@ -719,17 +718,16 @@ export class BaselineStore {
       if (manualScopes.has(scopeId)) continue;
       seenScopes.add(scopeId);
       const existing = existingByScope.get(scopeId);
-      const now = new Date().toISOString();
       const spec: BaselineSpec = existing !== undefined
         ? { ...existing, basis: args.basis, basisSnapshotAt: now, updatedAt: now }
         : { id: randomUUID(), source: 'discovered', scope, basis: args.basis, basisSnapshotAt: now, createdAt: now, updatedAt: now };
       this.specs.set(spec.id, spec);
       this.histories.set(spec.id, clampHistory(args.dailyByTuple.get(key) ?? [], args.historyEnd));
       if (!this.userTriaged.has(spec.id)) {
-        if (tuple.total / args.lookbackMonths < args.minMonthlyCost) this.triageStatuses.set(spec.id, 'ignored');
+        if (tuple.total < args.minTotal) this.triageStatuses.set(spec.id, 'ignored');
         else this.triageStatuses.delete(spec.id); // un-ignore once it grows past the threshold
       }
-      // finalizeFromHistory runs once for every spec in recompute()'s loop.
+      // finalizeFromHistory runs once for every spec in recomputeAll()'s loop.
     }
 
     for (const [key, spec] of existingByScope) {
@@ -935,34 +933,37 @@ interface DiscoveredTuple {
   readonly total: number;
 }
 
+/** One tuple's grain values, pulled off a query row. */
+function tupleValuesOf(r: RawRow, grain: readonly GrainDim[]): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const d of grain) values[d.field] = str(r[d.field]);
+  return values;
+}
+
+/** Canonical per-run tuple identity. The totals and daily folds MUST share this
+ *  exact key — reconcileDiscovered joins their maps by it, and a mismatch is
+ *  silently swallowed as empty history (`get(key) ?? []`), not raised. */
+function tupleKeyFor(grain: readonly GrainDim[], values: Record<string, string>): string {
+  return grain.map((d) => `${d.name}=${values[d.field] ?? ''}`).sort().join('&');
+}
+
 /** Folds the totals query's one-row-per-tuple result into a map keyed by tuple
  *  identity: grain values + total cost over the window. */
-function foldTotalsByTuple(
-  rows: readonly RawRow[],
-  grain: readonly GrainDim[],
-  tupleKeyOf: (values: Record<string, string>) => string,
-): Map<string, DiscoveredTuple> {
+function foldTotalsByTuple(rows: readonly RawRow[], grain: readonly GrainDim[]): Map<string, DiscoveredTuple> {
   const tuples = new Map<string, DiscoveredTuple>();
   for (const r of rows) {
-    const values: Record<string, string> = {};
-    for (const d of grain) values[d.field] = str(r[d.field]);
-    tuples.set(tupleKeyOf(values), { values, total: num(r['total']) });
+    const values = tupleValuesOf(r, grain);
+    tuples.set(tupleKeyFor(grain, values), { values, total: num(r['total']) });
   }
   return tuples;
 }
 
 /** Folds the per-day discovery query's rows into daily history points grouped
  *  by tuple identity. */
-function foldDailyByTuple(
-  rows: readonly RawRow[],
-  grain: readonly GrainDim[],
-  tupleKeyOf: (values: Record<string, string>) => string,
-): Map<string, BaselineDailyPoint[]> {
+function foldDailyByTuple(rows: readonly RawRow[], grain: readonly GrainDim[]): Map<string, BaselineDailyPoint[]> {
   const byTuple = new Map<string, BaselineDailyPoint[]>();
   for (const r of rows) {
-    const values: Record<string, string> = {};
-    for (const d of grain) values[d.field] = str(r[d.field]);
-    const key = tupleKeyOf(values);
+    const key = tupleKeyFor(grain, tupleValuesOf(r, grain));
     let pts = byTuple.get(key);
     if (pts === undefined) { pts = []; byTuple.set(key, pts); }
     pts.push({ date: asDateString(str(r['date'])), cost: asDollars(num(r['cost'])) });
@@ -970,7 +971,7 @@ function foldDailyByTuple(
   return byTuple;
 }
 
-function buildScope(grain: readonly { readonly name: DimensionId; readonly field: string }[], values: Record<string, string>): BaselineScope {
+function buildScope(grain: readonly GrainDim[], values: Record<string, string>): BaselineScope {
   const fm: Partial<Record<DimensionId, readonly TagValue[]>> = {};
   for (const d of grain) fm[d.name] = [asTagValue(values[d.field] ?? '')];
   return { kind: 'filter', filters: fm };
